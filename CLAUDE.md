@@ -239,7 +239,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   compensación.
 - **Una plantilla de WhatsApp rechazada con "An error occurred while sending the template for
   approval" no la rechazó Meta:** es Zenvia que no logró enviarla. El contenido, el tono y la
-  categoría nunca se revisaron, así que cambiarlos no sirve — mirá el `name` (sólo minúsculas,
+  categoría nunca se revisaron, así que cambiarlos no sirve — mira el `name` (sólo minúsculas,
   dígitos y guiones bajos), el `examples` (sin `$`, `#`, `%`) y el `Content-Type` del PDF de
   ejemplo. Costó cuatro intentos el 2026-09-04. El procedimiento entero está en
   [README § Plantilla de WhatsApp](README.md#plantilla-de-whatsapp-zenvia).
