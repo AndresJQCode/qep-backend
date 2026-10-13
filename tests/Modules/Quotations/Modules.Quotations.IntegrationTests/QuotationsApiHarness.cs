@@ -6,6 +6,7 @@ using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -884,6 +885,10 @@ internal static class QuotationsApiHarness
         /// <summary>The stub that replaces the PDF service; exposes the last document rendered.</summary>
         public StubPdfRenderer PdfRenderer { get; } = new();
 
+        /// <summary>Spec 2026-10-13 §7: el interceptor de <see cref="OutboxSaveFailureInterceptor"/>, uno por host. La prueba lo
+        /// arma justo antes de la llamada que quiere hacer fallar y lo desarma después.</summary>
+        public OutboxSaveFailureInterceptor SaveFailure { get; } = new();
+
         /// <summary>Doble de <c>IPublicObjectStorage</c> (spec 2026-09-15): el publicador real de
         /// comprobantes copia entre buckets de R2, que en una prueba no existen. Anota las copias y
         /// los borrados para que la prueba los vea. Queda configurado sólo con
@@ -968,6 +973,10 @@ internal static class QuotationsApiHarness
                 // publicar el PDF no debe darse por bueno. Estas pruebas no ejercitan R2.
                 services.RemoveAll<IQuotationPdfStorage>();
                 services.AddSingleton<IQuotationPdfStorage, StubPdfStorage>();
+
+                // Spec 2026-10-13 §7: se suma a la configuración que dejó AddQuotationsInfrastructure (EF Core 9+ compone las
+                // dos), así que llega al DbContext del request y también al de IQuotationSendFailureLog. Desarmado no hace nada.
+                services.ConfigureDbContext<QuotationsDbContext>(options => options.AddInterceptors(SaveFailure));
 
                 // El worker de exportaciones toma jobs cada 5 s por su cuenta: en una prueba
                 // competiría con el tick que la prueba corre a mano (RunExportJobAsync) y la
@@ -1068,6 +1077,29 @@ internal static class QuotationsApiHarness
         public void Upload(string key, byte[] content) => _objects[key] = content.ToArray();
 
         public bool Exists(string key) => _objects.ContainsKey(key);
+    }
+
+    /// <summary>Spec 2026-10-13 §7: hace fallar el SaveChanges que intenta guardar un evento dado del outbox, después de que el
+    /// handler lo publicó. Con eso la prueba ve que el cambio y su evento se guardan juntos o ninguno. Desarmado
+    /// (<see cref="FailWhenSaving"/> en <c>null</c>) no hace nada, así que puede quedar registrado en todos los hosts.</summary>
+    public sealed class OutboxSaveFailureInterceptor : SaveChangesInterceptor
+    {
+        /// <summary>El <c>event_name</c> cuyo SaveChanges tiene que fallar; <c>null</c> lo desarma.</summary>
+        public string? FailWhenSaving { get; set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(eventData);
+            if (FailWhenSaving is { } eventName && eventData.Context is { } context
+                && context.ChangeTracker.Entries<QuotationsOutboxMessage>().Any(entry =>
+                    entry.State == EntityState.Added && string.Equals(entry.Entity.EventName, eventName, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException($"Simulated failure while saving '{eventName}'.");
+            }
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
     }
 
     /// <summary>

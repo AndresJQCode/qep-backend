@@ -43,6 +43,8 @@ public static class QuotationsInfrastructureExtensions
         services.AddScoped<IExportEventPublisher, ExportJobEventPublisher>();
         // Spec 2026-09-16, D9: el aviso a Storage de que un pedido adjuntó comprobantes públicos.
         services.AddScoped<IOrderPaymentProofEventPublisher, OrderPaymentProofEventPublisher>();
+        // Spec 2026-10-13 §4.5: enviada, convertida y pedido anulado, para Pipeline. En la misma unidad de trabajo que el cambio.
+        services.AddScoped<IQuotationLifecycleEventPublisher, QuotationLifecycleEventPublisher>();
         services.AddHostedService<ExportJobWorker>();
         // Sin estado: una instancia por proceso alcanza. Cada export crea su propio temporal.
         services.AddSingleton<IExportWorkbookWriter, OpenXmlExportWorkbookWriter>();

@@ -16,7 +16,7 @@ public sealed record CancelOrderCommand(Guid TenantId, Guid OrderId, string? Rea
 ///
 /// Sin validador a propósito: las reglas del motivo son del dominio y responden con sus códigos
 /// (<c>order.order.cancellation_reason_required</c>/<c>_too_long</c>), no con
-/// <c>validation.failed</c>. Sin evento de outbox, igual que aprobar.
+/// <c>validation.failed</c>. Escribe <c>quotations.order.cancelled.v1</c> (spec 2026-10-13 §4.5) en la misma unidad de trabajo: con él, Pipeline reabre el negocio ganado por esta cotización.
 ///
 /// La auditoría registra la acción y el pedido, no el motivo: el payload de auditoría no tiene
 /// dónde llevar texto libre (sólo <c>changedFields</c>). El motivo queda en el propio pedido.
@@ -25,6 +25,7 @@ public sealed class CancelOrderHandler(
     IOrderRepository repository,
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
+    IQuotationLifecycleEventPublisher lifecycleEvents,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock)
@@ -56,6 +57,7 @@ public sealed class CancelOrderHandler(
             order.Id.ToString(),
             "success",
             now);
+        lifecycleEvents.PublishOrderCancelled(order, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return order.ToDto();

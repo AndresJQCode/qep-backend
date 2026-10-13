@@ -29,6 +29,7 @@ public sealed class SendQuotationHandler(
     IQuotationRepository repository,
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
+    IQuotationLifecycleEventPublisher lifecycleEvents,
     IQuotationPdfProvider pdfProvider,
     IQuotationPdfStorage pdfStorage,
     IQuotationCustomerLookup customerLookup,
@@ -141,6 +142,8 @@ public sealed class SendQuotationHandler(
                 quotation.Id.ToString(),
                 "success",
                 now);
+            // Spec 2026-10-13 §4.5: en el mismo SaveChanges que el Sent. También en un reenvío (H5): Pipeline es idempotente.
+            lifecycleEvents.PublishSent(quotation, now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
 
             return quotation.ToDto();

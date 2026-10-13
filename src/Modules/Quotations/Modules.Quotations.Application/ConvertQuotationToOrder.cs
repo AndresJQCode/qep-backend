@@ -56,6 +56,7 @@ public sealed class ConvertQuotationToOrderHandler(
     IQuotationFileLookup fileLookup,
     IPaymentProofPublisher paymentProofPublisher,
     IOrderPaymentProofEventPublisher paymentProofEvents,
+    IQuotationLifecycleEventPublisher lifecycleEvents,
     IOrderNumberGenerator numberGenerator,
     IDocumentNumberingFormatLookup numberingFormats,
     IMembershipDirectory membershipDirectory,
@@ -178,6 +179,8 @@ public sealed class ConvertQuotationToOrderHandler(
                 paymentProofEvents.PublishAttached(command.TenantId, order.Id, attached, now);
             }
 
+            // Spec 2026-10-13 §4.5 y D25: dentro de la transacción del contador, con la cotización ya Converted y el pedido creado.
+            lifecycleEvents.PublishConverted(quotation, order, now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }

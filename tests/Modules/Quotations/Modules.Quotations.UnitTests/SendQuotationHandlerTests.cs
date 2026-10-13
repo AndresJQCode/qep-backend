@@ -61,6 +61,43 @@ public sealed class SendQuotationHandlerTests
         Assert.Equal("3001234567", harness.Sender.Sent.ToPhone);
     }
 
+    // Spec 2026-10-13 §4.5: el envío deja quotations.quotation.sent.v1 en la misma unidad de trabajo, con el total y la moneda
+    // con los que Pipeline mueve el monto del negocio.
+    [Fact]
+    public async Task SendPublishesTheSentEventWithTheTotalAndCurrency()
+    {
+        var harness = NewHandler();
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        var published = Assert.Single(harness.Lifecycle.Published);
+        Assert.Equal(("sent", CurrentQuotationId, "COP"), (published.Event, published.QuotationId, published.Currency));
+        Assert.True(published.Total > 0m);
+    }
+
+    // H5 del spec 2026-10-13: reenviar es el mismo hecho para el agregado; el consumidor es idempotente.
+    [Fact]
+    public async Task AResendPublishesTheSentEventAgain()
+    {
+        var harness = NewHandler(alreadySent: true);
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("sent", Assert.Single(harness.Lifecycle.Published).Event);
+    }
+
+    // Un envío que no llegó a guardarse no avisa nada: el evento sólo existe si la cotización quedó en Sent.
+    [Fact]
+    public async Task AFailedSendPublishesNothing()
+    {
+        var harness = NewHandler(whatsAppFailure: new TaskCanceledException("A task was canceled."));
+
+        await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Empty(harness.Lifecycle.Published);
+    }
+
     // Con datos propios de facturacion, la cotizacion se le puede mandar a ese telefono en vez
     // del cliente: quien factura no siempre es quien recibe el WhatsApp. Lo elige la pantalla y
     // viaja como opcion cerrada --Customer o Billing--, no como un telefono suelto.
@@ -337,7 +374,8 @@ public sealed class SendQuotationHandlerTests
         RecordingPdfStorage Storage,
         StubQuotationRepository Repository,
         RecordingQuotationAuditPublisher Audit,
-        RecordingQuotationSendFailureLog FailureLog);
+        RecordingQuotationSendFailureLog FailureLog,
+        RecordingQuotationLifecycleEventPublisher Lifecycle);
 
     private static Harness NewHandler(
         bool withValidUntil = true,
@@ -384,11 +422,13 @@ public sealed class SendQuotationHandlerTests
             "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false);
 
         var failureLog = new RecordingQuotationSendFailureLog();
+        var lifecycle = new RecordingQuotationLifecycleEventPublisher();
 
         var handler = new SendQuotationHandler(
             repository,
             new NoOpQuotationsUnitOfWork(),
             audit,
+            lifecycle,
             new QuotationPdfProvider(
                 repository,
                 new StubQuotationResponseComposer(),
@@ -410,6 +450,6 @@ public sealed class SendQuotationHandlerTests
             new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now));
 
-        return new Harness(handler, sender, storage, repository, audit, failureLog);
+        return new Harness(handler, sender, storage, repository, audit, failureLog, lifecycle);
     }
 }
