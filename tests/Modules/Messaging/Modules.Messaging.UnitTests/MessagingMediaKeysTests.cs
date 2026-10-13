@@ -18,6 +18,22 @@ public sealed class MessagingMediaKeysTests
         Assert.Equal(MessagingMediaKeys.For(tenantId, messageId), MediaTransfer.KeyFor(tenantId, messageId));
     }
 
+    [Theory]
+    [InlineData(".JPG", ".jpg")]
+    [InlineData("pdf", ".pdf")]
+    [InlineData(".xlsx", ".xlsx")]
+    public void TheStagingKeyIsScopedByTenantConversationAndMemberWithANormalizedExtension(string extension, string expected)
+    {
+        var tenantId = Guid.CreateVersion7();
+        var conversationId = Guid.CreateVersion7();
+        var memberId = Guid.CreateVersion7();
+        var uploadId = Guid.CreateVersion7();
+
+        Assert.Equal(
+            $"messaging/staging/{tenantId}/{conversationId}/{memberId}/{uploadId}{expected}",
+            MessagingMediaKeys.Staging(tenantId, conversationId, memberId, uploadId, extension));
+    }
+
     [Fact]
     public void TheUploadFailureCodeIsTheOneOfTheContract() =>
         Assert.Equal("messaging.media.upload_failed", MessagingErrorCodes.MediaUploadFailed);
