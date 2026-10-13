@@ -255,6 +255,52 @@ public sealed class QuotationEventApplierTests
         Assert.Equal((false, version), (deal.IsClosed, deal.Version));
     }
 
+    // Orden (a): el order.cancelled del pedido X llega ANTES que su converted. La anulación adopta X; el converted de X es "el mismo
+    // pedido", no una conversión nueva: no borra la anulación ni gana el negocio por un pedido anulado.
+    [Fact]
+    public async Task ACancellationBeforeItsConvertedKeepsTheCancellationAndDoesNotWin()
+    {
+        var bed = new ApplierBed();
+        var clientId = Guid.CreateVersion7();
+        var quotationId = Guid.CreateVersion7();
+        var orderId = Guid.CreateVersion7();
+        await bed.Applier.ApplySentAsync(bed.Fact(clientId, quotationId), Later, Ct);
+        await bed.Applier.ApplyOrderCancelledAsync(new OrderCancelledFact(bed.TenantId, orderId, quotationId), Later.AddDays(1), Ct);
+
+        await bed.Applier.ApplyConvertedAsync(bed.Fact(clientId, quotationId, orderId: orderId), Later.AddDays(2), Ct);
+
+        var deal = Assert.Single(bed.Deals.Items);
+        var snapshot = Assert.Single(bed.Quotations.Items);
+        Assert.Equal((false, (DateTimeOffset?)Later.AddDays(1)), (deal.IsClosed, snapshot.OrderCancelledAt));
+        Assert.Equal((orderId, DealQuotationStatus.Converted), ((Guid)snapshot.OrderId!, snapshot.Status));
+        Assert.DoesNotContain(bed.Audit.Entries, entry => entry.Action == PipelineAuditActions.DealWon);
+    }
+
+    // Orden (b): un order.cancelled viejo del pedido X llega cuando el vigente ya es Y. No marca la foto ni reabre el negocio.
+    [Fact]
+    public async Task AStaleCancellationOfAReplacedOrderChangesNothing()
+    {
+        var bed = new ApplierBed();
+        var clientId = Guid.CreateVersion7();
+        var quotationId = Guid.CreateVersion7();
+        var oldOrder = Guid.CreateVersion7();
+        var currentOrder = Guid.CreateVersion7();
+        await bed.Applier.ApplySentAsync(bed.Fact(clientId, quotationId), Later, Ct);
+        await bed.Applier.ApplyConvertedAsync(bed.Fact(clientId, quotationId, orderId: oldOrder), Later.AddDays(1), Ct);
+        await bed.Applier.ApplyConvertedAsync(bed.Fact(clientId, quotationId, orderId: currentOrder), Later.AddDays(2), Ct);
+        bed.Deals.Flush();
+        var deal = Assert.Single(bed.Deals.Items);
+        var snapshot = Assert.Single(bed.Quotations.Items);
+        Assert.Equal((bed.Pipeline.WonStage.Id, (Guid?)currentOrder), (deal.StageId, snapshot.OrderId));
+        var version = deal.Version;
+
+        await bed.Applier.ApplyOrderCancelledAsync(new OrderCancelledFact(bed.TenantId, oldOrder, quotationId), Later.AddDays(3), Ct);
+
+        Assert.Equal((bed.Pipeline.WonStage.Id, true, version), (deal.StageId, deal.IsClosed, deal.Version));
+        Assert.Null(snapshot.OrderCancelledAt);
+        Assert.DoesNotContain(bed.Audit.Entries, entry => entry.Action == PipelineAuditActions.DealReopened);
+    }
+
     // §4.4: sólo reabre el pedido de la cotización que ganó (la principal). Otra cotización del MISMO negocio ganado, convertida y
     // con su pedido anulado, deja el negocio en Ganado y sólo marca su foto. La precondición se afirma: sin ella la prueba no
     // distinguiría un aplicador que mira la principal de uno que reabre cualquier negocio enlazado.

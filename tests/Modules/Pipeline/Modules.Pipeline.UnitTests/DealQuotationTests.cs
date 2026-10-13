@@ -41,7 +41,7 @@ public sealed class DealQuotationTests
         var orderId = Guid.CreateVersion7();
         var customerId = quotation.CustomerId;
         quotation.Refresh("COT-0001", customerId, 1_000m, "COP", converted: true, orderId, Now);
-        quotation.MarkOrderCancelled(Now.AddDays(1));
+        quotation.MarkOrderCancelled(orderId, Now.AddDays(1));
 
         quotation.Refresh("COT-0001", customerId, 1_000m, "COP", converted: true, orderId, Now.AddDays(2));
         quotation.Refresh("COT-0001", customerId, 1_000m, "COP", converted: true, null, Now.AddDays(3));
@@ -55,8 +55,9 @@ public sealed class DealQuotationTests
     {
         var quotation = Sent();
         var customerId = quotation.CustomerId;
-        quotation.Refresh("COT-0001", customerId, 1_000m, "COP", converted: true, Guid.CreateVersion7(), Now);
-        quotation.MarkOrderCancelled(Now.AddDays(1));
+        var oldOrder = Guid.CreateVersion7();
+        quotation.Refresh("COT-0001", customerId, 1_000m, "COP", converted: true, oldOrder, Now);
+        quotation.MarkOrderCancelled(oldOrder, Now.AddDays(1));
         var newOrder = Guid.CreateVersion7();
 
         quotation.Refresh("COT-0001", customerId, 1_000m, "COP", converted: true, newOrder, Now.AddDays(2));
@@ -74,9 +75,46 @@ public sealed class DealQuotationTests
         Assert.Equal((Guid?)dealId, quotation.DealId);
 
         quotation.Unlink(Now);
-        quotation.MarkOrderCancelled(Now.AddDays(1));
+        quotation.MarkOrderCancelled(Guid.CreateVersion7(), Now.AddDays(1));
 
         Assert.Null(quotation.DealId);
         Assert.Equal((DateTimeOffset?)Now.AddDays(1), quotation.OrderCancelledAt);
+    }
+
+    // Una anulación sin pedido conocido lo adopta: el converted del mismo pedido que llegue después ya es "el mismo".
+    [Fact]
+    public void ACancellationWithoutAKnownOrderAdoptsItsOrderId()
+    {
+        var quotation = Sent();
+        var orderId = Guid.CreateVersion7();
+
+        quotation.MarkOrderCancelled(orderId, Now.AddDays(1));
+
+        Assert.Equal(((Guid?)orderId, (DateTimeOffset?)Now.AddDays(1)), (quotation.OrderId, quotation.OrderCancelledAt));
+    }
+
+    [Fact]
+    public void ACancellationOfTheCurrentOrderStampsIt()
+    {
+        var quotation = Sent();
+        var orderId = Guid.CreateVersion7();
+        quotation.Refresh("COT-0001", quotation.CustomerId, 1_000m, "COP", converted: true, orderId, Now);
+
+        quotation.MarkOrderCancelled(orderId, Now.AddDays(1));
+
+        Assert.Equal(((Guid?)orderId, (DateTimeOffset?)Now.AddDays(1)), (quotation.OrderId, quotation.OrderCancelledAt));
+    }
+
+    // Un order.cancelled viejo (de un pedido que ya no es el vigente) no marca la foto.
+    [Fact]
+    public void ACancellationOfAnotherOrderChangesNothing()
+    {
+        var quotation = Sent();
+        var current = Guid.CreateVersion7();
+        quotation.Refresh("COT-0001", quotation.CustomerId, 1_000m, "COP", converted: true, current, Now);
+
+        quotation.MarkOrderCancelled(Guid.CreateVersion7(), Now.AddDays(1));
+
+        Assert.Equal(((Guid?)current, (DateTimeOffset?)null, Now), (quotation.OrderId, quotation.OrderCancelledAt, quotation.UpdatedAt));
     }
 }

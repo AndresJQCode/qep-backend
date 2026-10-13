@@ -87,9 +87,20 @@ public sealed class DealQuotation
         UpdatedAt = now;
     }
 
-    public void MarkOrderCancelled(DateTimeOffset now)
+    /// <summary>Marca como anulado el pedido <paramref name="orderId"/>. Sin pedido conocido (el order.cancelled llegó antes que el
+    /// converted) lo adopta, así el converted del mismo pedido no se toma por una conversión nueva. Si el pedido vigente es otro,
+    /// el aviso es viejo y no cambia nada.</summary>
+    /// <returns><c>false</c> si el aviso no es del pedido vigente y se ignoró.</returns>
+    public bool MarkOrderCancelled(Guid orderId, DateTimeOffset now)
     {
+        if (OrderId is { } current && current != orderId)
+        {
+            return false;
+        }
+
+        OrderId = orderId;
         OrderCancelledAt = now;
         UpdatedAt = now;
+        return true;
     }
 }

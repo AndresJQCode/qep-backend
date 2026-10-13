@@ -47,7 +47,12 @@ public sealed class QuotationEventApplier(
             return true;
         }
 
-        snapshot.MarkOrderCancelled(now);
+        // Un aviso de un pedido que ya no es el vigente de la cotización (llegó tarde) no marca la foto ni reabre nada.
+        if (!snapshot.MarkOrderCancelled(fact.OrderId, now))
+        {
+            return true;
+        }
+
         if (snapshot.DealId is not { } dealId || await deals.FindAsync(fact.TenantId, dealId, cancellationToken) is not { } deal)
         {
             return true;
