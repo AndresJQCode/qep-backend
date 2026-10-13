@@ -122,6 +122,29 @@ public sealed class SettingsApiTests
         Assert.Equal(6, (await client.GetFromJsonAsync<PipelineStagesDto>(StagesUrl(tenant.TenantId), Ct))!.Stages.Count);
     }
 
+    // Quitar una etapa vacía sí se puede: la etapa desaparece del GET y la versión sube.
+    [Fact]
+    public async Task RemovingAnEmptyStageDeletesItAndBumpsTheVersion()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenant, client) = await TenantAsync(factory, connectionString, AllPermissions);
+        using var _ = client;
+        var stages = (await client.GetFromJsonAsync<PipelineStagesDto>(StagesUrl(tenant.TenantId), Ct))!;
+        var layout = Layout(stages);
+        layout.RemoveAll(stage => stage.Name == "Negociación");
+
+        var response = await client.PutAsJsonAsync(StagesUrl(tenant.TenantId), new ReplaceStagesRequest(stages.Version, layout), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var reread = (await client.GetFromJsonAsync<PipelineStagesDto>(StagesUrl(tenant.TenantId), Ct))!;
+        Assert.Equal(["Nuevo", "Calificado", "Cotizado", "Ganado", "Perdido"], reread.Stages.Select(stage => stage.Name));
+        Assert.Equal(stages.Version + 1, reread.Version);
+        Assert.Equal(0L, await CountAsync(connectionString,
+            "SELECT count(*) FROM pipeline.stages WHERE name = 'Negociación' AND pipeline_id = @p", ("p", stages.PipelineId)));
+    }
+
     [Fact]
     public async Task ABrokenLayoutIs422LayoutInvalidAndABlankNameIsValidationFailed()
     {
