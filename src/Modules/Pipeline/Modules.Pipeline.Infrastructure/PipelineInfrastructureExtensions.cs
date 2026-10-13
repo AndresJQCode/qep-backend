@@ -26,6 +26,12 @@ public static class PipelineInfrastructureExtensions
         services.AddScoped<IPipelineUnitOfWork, PipelineUnitOfWork>();
         // §6.3: auditoría atómica propia (nunca el IAuditRecorder de Tenancy).
         services.AddScoped<IPipelineAuditRecorder, PipelineAuditRecorder>();
+        // La membresía de quien llama, una vez por request; el detalle del negocio, los pasos comunes de sus escrituras y el único
+        // camino para crear uno (API y triage).
+        services.AddScoped<PipelineCaller>();
+        services.AddScoped<DealDetailBuilder>();
+        services.AddScoped<DealCommandSteps>();
+        services.AddScoped<DealCreator>();
         return services;
     }
 }

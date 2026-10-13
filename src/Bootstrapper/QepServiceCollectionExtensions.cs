@@ -624,6 +624,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<ReplacePipelineStagesCommand, PipelineStagesDto>, ReplacePipelineStagesHandler>();
         services.AddScoped<IQueryHandler<GetPipelineReasonsQuery, ReasonListDto>, GetPipelineReasonsHandler>();
         services.AddScoped<ICommandHandler<ReplacePipelineReasonsCommand, ReasonListDto>, ReplacePipelineReasonsHandler>();
+        // Pipeline (spec 2026-10-13 §6): negocios.
+        services.AddScoped<IQueryHandler<GetDealQuery, DealDetailDto>, GetDealHandler>();
+        services.AddScoped<ICommandHandler<CreateDealCommand, DealDetailDto>, CreateDealHandler>();
+        services.AddScoped<ICommandHandler<UpdateDealCommand, DealDetailDto>, UpdateDealHandler>();
+        services.AddScoped<ICommandHandler<MoveDealCommand, DealDetailDto>, MoveDealHandler>();
+        services.AddScoped<ICommandHandler<WinDealCommand, DealDetailDto>, WinDealHandler>();
+        services.AddScoped<ICommandHandler<LoseDealCommand, DealDetailDto>, LoseDealHandler>();
+        services.AddScoped<ICommandHandler<ReopenDealCommand, DealDetailDto>, ReopenDealHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
