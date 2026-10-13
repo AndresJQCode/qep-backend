@@ -10,4 +10,24 @@
     <Deterministic>true</Deterministic>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
+
+  <!-- Avisos de SixLabors.ImageSharp 3.1.12 (la 4.x es la única corregida). Se silencian porque
+       ninguno es alcanzable desde Storage:
+       - GHSA-j3p4-wp97-rph4: TIFF con float + ecualización de histograma. No ecualizamos nunca.
+       - GHSA-j9gm-c75j-xc9q y GHSA-jjfr-hcj7-qf5w: codificadores TIFF CCITT T4/T6. Sólo
+         codificamos WebP.
+       - GHSA-gwg2-r3hj-4w44: perfiles ICC con ColorProfileHandling.Convert. Usamos el valor por
+         defecto y además descartamos el perfil ICC.
+       - GHSA-wmxv-xphr-5c9g: bucle infinito al decodificar BigTIFF. Es el único alcanzable por
+         contenido subido, y lo cierra ImageSharpConfiguration: el decodificador de TIFF no está
+         registrado, así que un TIFF falla como storage.image.invalid.
+       Quitar estas supresiones exige subir a ImageSharp 4.x, y la 4.x pide una licencia de Six
+       Labors (sixlabors.lic o SixLaborsLicenseKey): sin ella los builds Release fallan. -->
+  <ItemGroup>
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-j3p4-wp97-rph4" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-j9gm-c75j-xc9q" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-jjfr-hcj7-qf5w" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-gwg2-r3hj-4w44" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-wmxv-xphr-5c9g" />
+  </ItemGroup>
 </Project>
