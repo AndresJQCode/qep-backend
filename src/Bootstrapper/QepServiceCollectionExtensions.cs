@@ -636,6 +636,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<SetPrimaryQuotationCommand, DealDetailDto>, SetPrimaryQuotationHandler>();
         // Pipeline (spec 2026-10-13 §6): el tablero.
         services.AddScoped<IQueryHandler<GetBoardQuery, PipelineBoardDto>, GetBoardHandler>();
+        // Pipeline (spec 2026-10-13 §5.1): triage.
+        services.AddScoped<IQueryHandler<ListTriageQuery, TriageListDto>, ListTriageHandler>();
+        services.AddScoped<ICommandHandler<DecideTriageCommand, TriageResultDto>, DecideTriageHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
