@@ -245,7 +245,14 @@ public sealed class UpdateDealHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var context = await steps.LoadAsync(command.TenantId, command.DealId, command.Version, cancellationToken);
         var callerId = await caller.RequireAsync(command.TenantId, cancellationToken);
-        await DealOwners.EnsureMemberAsync(members, command.TenantId, command.OwnerMemberId!.Value, callerId, cancellationToken);
+
+        // Un negocio puede conservar un dueño que ya no está activo (los que crea un evento de cotización quedan con el asesor de la
+        // cotización, y un asesor puede suspenderse después): editar sin cambiar de dueño no exige reasignar. Sólo un dueño NUEVO
+        // tiene que ser una membresía activa.
+        if (command.OwnerMemberId!.Value != context.Deal.OwnerMemberId)
+        {
+            await DealOwners.EnsureMemberAsync(members, command.TenantId, command.OwnerMemberId.Value, callerId, cancellationToken);
+        }
 
         context.Deal.Update(command.Title, command.OwnerMemberId.Value, command.Amount, Currencies.Normalize(command.Currency),
             command.ExpectedCloseDate, context.Now);

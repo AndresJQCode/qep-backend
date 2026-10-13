@@ -247,6 +247,37 @@ public sealed class DealApiTests
         Assert.Equal(PipelineErrorCodes.DealOwnerNotMember, (await ProblemAsync(patch)).Code);
     }
 
+    // Un negocio puede conservar un dueño que dejó de estar activo (los que crea un evento de cotización, o un asesor suspendido
+    // después): editar el título con el mismo dueño no exige reasignar. Reasignar a otro inactivo sigue siendo 422.
+    [Fact]
+    public async Task PatchKeepingAnInactiveOwnerIsAllowedButReassigningToAnInactiveOneIsNot()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (advisor, _) = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Marta Ruiz");
+        var (otherInactive, _) = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Pedro Gil", state: "Suspended");
+        var create = await setup.Client.PostAsJsonAsync(
+            DealsUrl(setup.Tenant.TenantId), new CreateDealRequest(setup.CustomerId, "Dotación", null, null, null, advisor), Ct);
+        var deal = (await create.Content.ReadFromJsonAsync<DealDetailDto>(Ct))!;
+        await ExecuteAsync(connectionString, "UPDATE tenancy.memberships SET state = 'Suspended' WHERE id = @id", ("id", advisor));
+
+        var sameOwner = await setup.Client.PatchAsJsonAsync(
+            $"{DealsUrl(setup.Tenant.TenantId)}/{deal.Id}",
+            new UpdateDealRequest("Dotación renovada", advisor, null, "COP", null, deal.Version), Ct);
+        var patched = (await sameOwner.Content.ReadFromJsonAsync<DealDetailDto>(Ct))!;
+        var reassigned = await setup.Client.PatchAsJsonAsync(
+            $"{DealsUrl(setup.Tenant.TenantId)}/{deal.Id}",
+            new UpdateDealRequest("Dotación renovada", otherInactive, null, "COP", null, patched.Version), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, sameOwner.StatusCode);
+        Assert.Equal(("Dotación renovada", advisor), (patched.Title, patched.OwnerMemberId));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, reassigned.StatusCode);
+        Assert.Equal(PipelineErrorCodes.DealOwnerNotMember, (await ProblemAsync(reassigned)).Code);
+    }
+
     // Un miembro activo sin nombre ni correo no aparece en el diccionario de nombres, pero sí es miembro: puede ser dueño.
     [Fact]
     public async Task AnActiveMemberWithoutNameOrEmailCanOwnADeal()
