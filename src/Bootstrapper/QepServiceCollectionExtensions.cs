@@ -678,6 +678,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IMessagingAssignees, MessagingAssignees>();
         // Messaging (spec 2026-10-09 §6.4 y §8.6): la copia de los medios entrantes, en el bucket privado de Storage.
         services.AddScoped<IMessagingMediaStore, MessagingMediaStore>();
+        // Messaging-media-reply: el staging de los adjuntos del asesor (R1, R13) en el mismo bucket privado y el compresor de
+        // imágenes (R12); el compresor no guarda estado y es singleton.
+        services.AddScoped<IMessagingUploadStaging, MessagingUploadStaging>();
+        services.AddSingleton<IMessagingImageCompressor, ImageSharpMessagingImageCompressor>();
 
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
