@@ -101,7 +101,7 @@ public sealed class GetBoardHandler(
                 .Where(row => row.Amount is not null)
                 .OrderBy(row => Currencies.OrderOf(row.Currency))
                 .ThenBy(row => row.Currency, StringComparer.Ordinal)
-                .Select(row => new CurrencyTotalDto(row.Currency, row.Amount!.Value, Math.Round(row.Amount.Value * stage.Probability / 100m, 2)))
+                .Select(row => new CurrencyTotalDto(row.Currency, row.Amount!.Value, Math.Round(row.Amount.Value * stage.Probability / 100m, 2, MidpointRounding.AwayFromZero)))
                 .ToArray();
             var stageCards = cards
                 .Where(card => card.StageId == stage.Id)

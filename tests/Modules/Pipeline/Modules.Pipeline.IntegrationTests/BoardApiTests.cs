@@ -82,6 +82,23 @@ public sealed class BoardApiTests
             column.Totals);
     }
 
+    // El ponderado redondea como el resto del dinero del repo (lejos de cero): 1,05 × 10 % = 0,105 → 0,11, no el 0,10 del
+    // redondeo bancario.
+    [Fact]
+    public async Task TheWeightedTotalRoundsAMidpointAwayFromZero()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        await CreateAsync(setup, 1.05m);
+
+        var column = Column(await BoardAsync(setup), "Nuevo");
+
+        Assert.Equal(10, column.Probability);
+        Assert.Equal([new CurrencyTotalDto("COP", 1.05m, 0.11m)], column.Totals);
+    }
+
     // D34: una columna con sólo negocios sin monto (lo normal después del triage) los cuenta y no trae totales, ni siquiera uno
     // en cero por moneda.
     [Fact]
