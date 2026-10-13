@@ -692,6 +692,12 @@ public static class QepServiceCollectionExtensions
         // imágenes (R12); el compresor no guarda estado y es singleton.
         services.AddScoped<IMessagingUploadStaging, MessagingUploadStaging>();
         services.AddSingleton<IMessagingImageCompressor, ImageSharpMessagingImageCompressor>();
+        // Pipeline (spec 2026-10-13 D9): conversaciones por el DbContext de Messaging, clientes por Customers y nombres de
+        // miembros con el mismo adaptador que Messaging (una sola copia de «DisplayName ?? correo»). El único punto donde Pipeline
+        // toca esos módulos.
+        services.AddScoped<IPipelineConversationDirectory, PipelineConversationDirectory>();
+        services.AddScoped<IPipelineCustomerDirectory, PipelineCustomerDirectory>();
+        services.AddScoped<IPipelineMemberNames, MessagingMemberNames>();
 
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
