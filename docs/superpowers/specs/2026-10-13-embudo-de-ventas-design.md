@@ -6,7 +6,8 @@ eventos de outbox nuevos). Tenancy (clave de módulo `pipeline` y migración del
 permisos y sus políticas). Bootstrapper (adaptadores de los puertos de lectura sobre Messaging, Customers y
 membresías). **Frontend:** `qep-frontend`, slice aparte (§9).
 **Estado:** diseño aprobado por el owner en conversación el 2026-10-13, incluidas las resoluciones D25–D36
-de lo que había quedado pendiente y el resumen de negocios en la ficha del cliente (D36).
+de lo que había quedado pendiente, el resumen de negocios en la ficha del cliente (D36), el tope del triage
+(D37) y su carrera entre asesores (D38).
 **Base de investigación:** `../reports/Embudos de ventas en CRM.md` (carpeta `reports/` de la raíz del
 workspace). Se cita como contexto; la autoridad sigue siendo el código.
 **Ramas:** `feature/embudo-de-ventas` desde `develop` `7ad43ef` en `qep-backend`.
@@ -67,6 +68,7 @@ diseño, manda el real.
 | H16 | Las rutas de módulo cuelgan de `/api/v1/tenants/{tenantId:guid}/<modulo>`. | `src/Modules/Messaging/Modules.Messaging.Api/MessagingEndpoints.cs:24` |
 | H17 | Cada módulo tiene su `<Modulo>LayerTests.cs`; el de Messaging sólo admite Tenancy y Audit entre los módulos y prohíbe referenciar Integrations, Customers y Storage. | `tests/ArchitectureTests/ArchitectureTests/MessagingLayerTests.cs:10-64` |
 | H18 | La ingesta actual **siempre** deja la conversación con cliente: si la conversación no existe o no tiene `CustomerId`, llama a `EnsureAsync`, que busca por BSUID, luego por teléfono y si no encuentra **crea un cliente `Incomplete`**. Sólo una fila vieja sin BSUID que no volvió a recibir un entrante puede quedar con `CustomerId` nulo. | `src/Modules/Messaging/Modules.Messaging.Infrastructure/Webhook/WebhookDeliveryProcessor.cs:204-213`; `src/Modules/Customers/Modules.Customers.Application/ICustomerWhatsAppDirectory.cs:29-31`; `Conversation.cs:46-48` |
+| H19 | Agregar la clave `pipeline` a `/modules` no rompe el frontend. En `develop` de `qep-frontend`, las claves que no conoce se descartan al leer la respuesta; `main` no consume `/modules`. | `qep-frontend` `src/features/auth/services/tenancy.api.ts:164` (`develop`) |
 
 ## 3. Decisiones
 
@@ -109,6 +111,7 @@ diseño, manda el real.
 | D35 | Las conversaciones **sin `CustomerId`** (filas viejas sin BSUID) quedan **fuera del triage**. | La ingesta actual siempre crea o encuentra un cliente, `Incomplete` si hace falta (H18): el caso sin cliente sólo existe en filas viejas, y desaparece con su siguiente entrante. |
 | D36 | **Resumen de negocios del cliente** para la ficha que se abre desde la conversación: `GET pipeline/customers/{customerId}/summary` (§6.4). Lo sirve **Pipeline**, no Customers; la pantalla hace una segunda llamada. | Customers no puede referenciar Pipeline (regla de capas). Sin la capacidad o sin permiso responde 403 y la ficha oculta la sección. |
 | D37 | **Tope del triage:** `GET triage` y `ListOpenAsync` aplican el criterio de D33: como máximo 200 conversaciones pendientes, las de último entrante más reciente primero, y el `Count` real del total. | El contador de la bandeja tiene que decir la verdad aunque la lista se corte; sin tope, un tenant con miles de conversaciones abiertas vuelve pesada cada carga. |
+| D38 | **Carrera del triage:** cada decisión guarda el `LastInboundAt` de la conversación contra el que se tomó (`decided_against_inbound_at`, no nulo; sin entrante, `1970-01-01T00:00:00Z`). Un índice único `IX_triage_decisions_conversation_inbound` sobre `(tenant_id, conversation_id, decided_against_inbound_at)` hace que la segunda decisión simultánea falle; la unidad de trabajo de Pipeline la traduce **por nombre de índice** a `pipeline.triage.already_decided` (422). El negocio que esa decisión creaba va en el mismo `SaveChanges` y se revierte con ella. | Dos asesores que deciden la misma conversación a la vez pasan los dos la comprobación de «pendiente»: sólo la base puede elegir uno. Un mensaje nuevo del cliente es un instante nuevo y permite decidir otra vez (D20). La columna no admite nulos porque Postgres no considera iguales dos `NULL` en un índice único. |
 
 ## 4. Dominio
 
@@ -249,13 +252,16 @@ Sin migración en Quotations: la tabla es `platform.outbox_messages`.
 
 ### 5.1 Triage
 
-Pendiente (D20, D35): conversación `Open` en Messaging, **con `CustomerId`**, cuyo cliente **no** tiene
-negocio abierto, y sin decisión en `pipeline.triage_decisions` posterior a su `LastInboundAt`. Sin la
-capacidad `messaging` no hay conversaciones y el triage queda vacío (D30).
+Pendiente (D20, D35, D38): conversación `Open` en Messaging, **con `CustomerId`**, cuyo cliente **no** tiene
+negocio abierto, y sin decisión en `pipeline.triage_decisions` tomada contra su `LastInboundAt` actual (es
+decir, la última decisión tiene `decided_against_inbound_at` anterior a ese entrante, o no hay decisión). Sin
+entrante, se compara contra `1970-01-01T00:00:00Z`. Sin la capacidad `messaging` no hay conversaciones y el
+triage queda vacío (D30).
 
 `pipeline.triage_decisions`: `id`, `tenant_id`, `conversation_id`, `customer_id`, `kind`
-(`Created`/`Dismissed`, texto), `deal_id?`, `dismiss_reason_id?`, `decided_at`, `actor_kind`,
-`actor_member_id`. Append-only; vale la última.
+(`Created`/`Dismissed`, texto), `deal_id?`, `dismiss_reason_id?`, `decided_at`, `decided_against_inbound_at`
+(D38), `actor_kind`, `actor_member_id`. Append-only; vale la última. Índice único
+`IX_triage_decisions_conversation_inbound` sobre `(tenant_id, conversation_id, decided_against_inbound_at)`.
 
 Acciones desde el panel del chat (`POST triage/{conversationId}`), sólo dos (D29):
 
@@ -265,7 +271,8 @@ Acciones desde el panel del chat (`POST triage/{conversationId}`), sólo dos (D2
 - **Descartar** (`dismiss`) con motivo del catálogo → `pipeline.triage.dismiss_reason_required` sin motivo.
 
 Conversación que ya no está pendiente al crear o descartar → `pipeline.triage.not_pending` (otro asesor se
-adelantó). Conversación inexistente en el tenant → 404 `pipeline.triage.conversation_not_found`.
+adelantó). Si los dos deciden en el mismo instante, el índice de D38 deja pasar uno y el otro recibe
+`pipeline.triage.already_decided`; su negocio no queda. Conversación inexistente en el tenant → 404 `pipeline.triage.conversation_not_found`.
 
 Enlazar una **cotización** a un negocio no es triage: vive en el negocio
 (`deals/{dealId}/quotations/{quotationId}/link`).
@@ -401,7 +408,7 @@ política el síntoma es 500, no 403.
 | `pipeline.deal.quotation_not_linked`, `pipeline.deal.quotation_not_found`, `pipeline.deal.quotation_customer_mismatch` | 422 |
 | `pipeline.deal.customer_not_found`, `pipeline.deal.owner_not_member` | 422 |
 | `pipeline.stage.layout_invalid`, `pipeline.stage.has_deals` | 422 |
-| `pipeline.triage.not_pending`, `pipeline.triage.dismiss_reason_required` | 422 |
+| `pipeline.triage.not_pending`, `pipeline.triage.already_decided` (D38), `pipeline.triage.dismiss_reason_required` | 422 |
 | `validation.failed` con el mapa `errors` | 422 |
 | `concurrency.conflict` | 412 |
 | `tenancy.module_not_enabled` | 403 |
