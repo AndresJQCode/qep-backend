@@ -299,6 +299,12 @@ internal sealed record SentText(MessagingSender Sender, SendTarget Target, strin
 
 internal sealed record UploadedMedia(MessagingSender Sender, byte[] Content, string MimeType);
 
+internal sealed record StreamUploadedMedia(MessagingSender Sender, byte[] Content, long DeclaredLength, string MimeType, string FileName);
+
+internal sealed record SentImage(MessagingSender Sender, SendTarget Target, string MediaId, string? Caption, string CallbackData, string? ContextWamid);
+
+internal sealed record SentDocument(MessagingSender Sender, SendTarget Target, string MediaId, string FileName, string? Caption, string CallbackData, string? ContextWamid);
+
 internal sealed record SentTemplate(MessagingSender Sender, SendTarget Target, TemplateSend Template, string CallbackData);
 
 internal sealed record SentAudio(MessagingSender Sender, SendTarget Target, string MediaId, string CallbackData, string? ContextWamid);
@@ -342,6 +348,53 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
         }
 
         return Task.FromResult(NextUpload);
+    }
+
+    public List<StreamUploadedMedia> StreamUploads { get; } = [];
+
+    /// <summary>Corre cuando "Meta" recibe la subida por stream, antes de contestar: sirve para ver qué había pasado ya (p. ej. si
+    /// ya existía el reclamo).</summary>
+    public Action? DuringStreamUpload { get; set; }
+
+    /// <summary>Lee el stream completo, como Meta: lo que la prueba ve es lo que de verdad viajó.</summary>
+    public async Task<MessagingGraphResult<string>> UploadMediaAsync(
+        MessagingSender sender, Stream content, long contentLength, string mimeType, string fileName, CancellationToken cancellationToken)
+    {
+        using var buffer = new MemoryStream();
+        await content.CopyToAsync(buffer, cancellationToken);
+        StreamUploads.Add(new StreamUploadedMedia(sender, buffer.ToArray(), contentLength, mimeType, fileName));
+        DuringStreamUpload?.Invoke();
+        if (UploadException is { } exception)
+        {
+            throw exception;
+        }
+
+        return NextUpload;
+    }
+
+    public List<SentImage> ImageSends { get; } = [];
+
+    public List<SentDocument> DocumentSends { get; } = [];
+
+    /// <summary>Como <see cref="SendTextAsync"/>: devuelve <see cref="NextSend"/> y corre <see cref="DuringSend"/>.</summary>
+    public Task<SendResult> SendImageAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string? caption, string callbackData, string? contextWamid, CancellationToken cancellationToken)
+    {
+        ImageSends.Add(new SentImage(sender, target, mediaId, caption, callbackData, contextWamid));
+        DuringSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(NextSend);
+    }
+
+    /// <summary>Como <see cref="SendImageAsync"/>.</summary>
+    public Task<SendResult> SendDocumentAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string fileName, string? caption, string callbackData, string? contextWamid,
+        CancellationToken cancellationToken)
+    {
+        DocumentSends.Add(new SentDocument(sender, target, mediaId, fileName, caption, callbackData, contextWamid));
+        DuringSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(NextSend);
     }
 
     /// <summary>Como <see cref="SendTextAsync"/>: devuelve <see cref="NextSend"/> y corre <see cref="DuringSend"/>.</summary>

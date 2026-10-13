@@ -31,6 +31,12 @@ internal sealed partial class WhatsAppCloudClient(
 
     public static readonly TimeSpan UploadTimeout = TimeSpan.FromSeconds(30);
 
+    /// <summary>Messaging-media-reply: imágenes y documentos de hasta 100 MB, de R2 a Meta dentro del request. Ni los 10 s del
+    /// compartido ni los 30 s de la nota de voz alcanzan para un documento grande por una red lenta.</summary>
+    public const string MediaHttpClientName = "messaging.meta-graph-media";
+
+    public static readonly TimeSpan MediaUploadTimeout = TimeSpan.FromMinutes(5);
+
     /// <summary>Spec 2026-10-11 §6.4: el nombre del archivo en la subida. Meta no lo muestra en una nota de voz.</summary>
     public const string VoiceFileName = "voice.ogg";
 
@@ -53,6 +59,12 @@ internal sealed partial class WhatsAppCloudClient(
     {
         ConfigureClient(client);
         client.Timeout = UploadTimeout;
+    }
+
+    internal static void ConfigureMediaClient(HttpClient client)
+    {
+        ConfigureClient(client);
+        client.Timeout = MediaUploadTimeout;
     }
 
     private string Version => string.IsNullOrWhiteSpace(options.Value.GraphApiVersion) ? DefaultGraphApiVersion : options.Value.GraphApiVersion.Trim();
@@ -157,20 +169,55 @@ internal sealed partial class WhatsAppCloudClient(
         return PostMessageAsync(sender, MessagePayload(target, "template", content, callbackData, null), cancellationToken);
     }
 
-    public async Task<MessagingGraphResult<string>> UploadMediaAsync(
-        MessagingSender sender, ReadOnlyMemory<byte> content, string mimeType, CancellationToken cancellationToken)
+    public Task<SendResult> SendImageAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string? caption, string callbackData, string? contextWamid, CancellationToken cancellationToken)
+    {
+        var content = new JsonObject { ["id"] = mediaId };
+        if (caption is not null)
+        {
+            content["caption"] = caption;
+        }
+
+        return PostMessageAsync(sender, MessagePayload(target, "image", content, callbackData, contextWamid), cancellationToken);
+    }
+
+    public Task<SendResult> SendDocumentAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string fileName, string? caption, string callbackData, string? contextWamid,
+        CancellationToken cancellationToken)
+    {
+        var content = new JsonObject { ["id"] = mediaId, ["filename"] = fileName };
+        if (caption is not null)
+        {
+            content["caption"] = caption;
+        }
+
+        return PostMessageAsync(sender, MessagePayload(target, "document", content, callbackData, contextWamid), cancellationToken);
+    }
+
+    public Task<MessagingGraphResult<string>> UploadMediaAsync(
+        MessagingSender sender, ReadOnlyMemory<byte> content, string mimeType, CancellationToken cancellationToken) =>
+        UploadAsync(sender, new ReadOnlyMemoryContent(content), mimeType, VoiceFileName, UploadHttpClientName, cancellationToken);
+
+    public Task<MessagingGraphResult<string>> UploadMediaAsync(
+        MessagingSender sender, Stream content, long contentLength, string mimeType, string fileName, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        return UploadAsync(sender, new SizedStreamContent(content, contentLength), mimeType, fileName, MediaHttpClientName, cancellationToken);
+    }
+
+    private async Task<MessagingGraphResult<string>> UploadAsync(
+        MessagingSender sender, HttpContent file, string mimeType, string fileName, string clientName, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(sender);
-        var file = new ReadOnlyMemoryContent(content);
         file.Headers.ContentType = new MediaTypeHeaderValue(mimeType);
         using var form = new MultipartFormDataContent
         {
             { new StringContent("whatsapp"), "messaging_product" },
             { new StringContent(mimeType), "type" },
-            { file, "file", VoiceFileName },
+            { file, "file", fileName },
         };
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{Version}/{sender.PhoneNumberId}/media") { Content = form };
-        var answer = await SendAsync("upload", request, sender.AccessToken, null, cancellationToken, UploadHttpClientName);
+        var answer = await SendAsync("upload", request, sender.AccessToken, null, cancellationToken, clientName);
         using var response = answer.Response;
         if (response is null)
         {

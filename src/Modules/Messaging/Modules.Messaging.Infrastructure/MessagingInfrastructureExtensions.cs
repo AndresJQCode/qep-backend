@@ -58,6 +58,10 @@ public static class MessagingInfrastructureExtensions
         services.AddHttpClient(WhatsAppCloudClient.UploadHttpClientName, WhatsAppCloudClient.ConfigureUploadClient)
             .ConfigurePrimaryHttpMessageHandler(() => WhatsAppCloudClient.CreatePrimaryHandler())
             .RemoveAllLoggers();
+        // Messaging-media-reply: la subida de imágenes y documentos (hasta 100 MB), con 5 minutos.
+        services.AddHttpClient(WhatsAppCloudClient.MediaHttpClientName, WhatsAppCloudClient.ConfigureMediaClient)
+            .ConfigurePrimaryHttpMessageHandler(() => WhatsAppCloudClient.CreatePrimaryHandler())
+            .RemoveAllLoggers();
         services.AddSingleton<IWhatsAppCloudClient, WhatsAppCloudClient>();
         services.AddScoped<IOutboundMessages, OutboundMessages>();
         // Spec 2026-10-11 §5.1: el catálogo de plantillas aprobadas, 5 minutos por (tenant, conexión) en IMemoryCache.
