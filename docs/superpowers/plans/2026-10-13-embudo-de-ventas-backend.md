@@ -8,15 +8,15 @@
 
 **Tech Stack:** .NET 10, EF Core 10 + Npgsql 10, FluentValidation 12, xUnit v3, Testcontainers (`postgres:18-alpine`).
 
-**Spec:** `docs/superpowers/specs/2026-10-13-embudo-de-ventas-design.md` (commit `c74b955`, más D38 sin commitear: la carrera del triage).
+**Spec:** `docs/superpowers/specs/2026-10-13-embudo-de-ventas-design.md` (commit `c74b955`; D38, la carrera del triage, está commiteada junto con este plan en `5ae2679`).
 
 Este plan cubre **sólo el backend**; el frontend es otro slice en `qep-frontend`. Rutas, formas JSON, nombres de eventos y códigos de error son **contrato**: no se cambian sin cambiar el spec. Quien ejecuta lee el spec, este plan y el `CLAUDE.md` del repo.
 
 ## Antes de empezar (leer una vez)
 
-- **Rutas.** Se trabaja en el checkout principal. Abajo, `$B` es
-  `C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend`. El estado del shell no persiste: cada bloque vuelve a definir `$B`. Los comandos son **PowerShell** (Windows 5.1: sin `&&`, `curl.exe` y no `curl`).
-- **Rama.** `feature/embudo-de-ventas` (el spec es `c74b955`). Se comprueba con `git branch --show-current` **en el momento** de commitear; si es otra, se aborta.
+- **Rutas.** Se trabaja en el worktree de la rama, **no** en el checkout principal (ese está en `develop`, el developer mergea ahí en paralelo, y no puede tomar una rama que el worktree ya tiene). Abajo, `$B` es
+  `C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas`. El estado del shell no persiste: cada bloque vuelve a definir `$B`. Los comandos son **PowerShell** (Windows 5.1: sin `&&`, `curl.exe` y no `curl`).
+- **Rama.** `feature/embudo-de-ventas`, con base `5ae2679` (el spec es `c74b955`; `5ae2679` le suma sólo docs: D38 y este plan). Se comprueba con `git branch --show-current` **en el momento** de commitear; si es otra, se aborta.
 - **`Api.exe` o `dotnet … Api.dll` corriendo bloquea** `dotnet build`, `dotnet test` y `dotnet ef` (`MSB3021`). Antes del primer build de cada tarea:
 
   ```powershell
@@ -76,7 +76,7 @@ Este plan cubre **sólo el backend**; el frontend es otro slice en `qep-frontend
 - Triage (D20, D29, D35, D37, D38): sólo `create` y `dismiss`; excluye conversaciones sin `CustomerId`; máximo 200 ítems con el `Count` real, el entrante más reciente primero (sin entrante, al final). Cada decisión guarda el `LastInboundAt` contra el que se tomó (`decided_against_inbound_at`, no nulo; sin entrante, `TriageDecision.NoInbound` = `1970-01-01T00:00:00Z`) y el índice único `IX_triage_decisions_conversation_inbound` sobre `(tenant_id, conversation_id, decided_against_inbound_at)` hace que la segunda decisión concurrente falle con `pipeline.triage.already_decided` (422), traducido por **nombre de índice** en `PipelineUnitOfWork`; el negocio creado en ese mismo `SaveChanges` se revierte con ella.
 - Límites: título 1–200, nota de pérdida ≤ 500, nombre de etapa 1–60, nombre de motivo 1–80, 1–20 etapas, 1–30 motivos activos por catálogo, días de estancamiento 1–365, probabilidad 0–100, monto 0–999 999 999 999,99 con ≤ 2 decimales, número de cotización ≤ 40.
 - Auditoría por `IPipelineAuditRecorder`, `source = "pipeline"`, en el mismo `SaveChanges`. Lo del worker con `AuditActorType.System` y actor `Guid.Empty`.
-- Sin claves de configuración nuevas, sin paquetes NuGet nuevos. Migraciones: `AddPipelineModuleKey` (Tenancy) y `InitialPipeline` (Pipeline).
+- Sin claves de configuración nuevas, sin paquetes NuGet nuevos. Migraciones: `AddPipelineModuleKey` (Tenancy) y `AddPipeline` (Pipeline, el nombre de spec §9).
 
 ## Review Focus
 
@@ -93,7 +93,7 @@ Este plan cubre **sólo el backend**; el frontend es otro slice en `qep-frontend
 | P1 | Los tres permisos son **de núcleo** (`RequiredModules: []`), no `[ModuleKeys.Pipeline]` como dice el spec §6.1. Cada handler revisa la capacidad con `TenantModuleGuard`. | Con `[pipeline]`, la máscara de entitlements quita el permiso y el 403 sale `authorization.denied`, no el `tenancy.module_not_enabled` que piden §6.2 y §6.4. Es el mismo choque que resolvió Messaging (`MessagingPermissions`, comentario de clase). |
 | P2 | El consumidor copia `ClaimedOutboxConsumer` e `IdentityInboxClaims` de Identity, no el anti-join de Storage. | H10 del spec: el patrón con reclamo es el de Identity; ningún módulo referencia la infraestructura de otro, así que se copia. |
 | P3 | Un negocio está cerrado si y sólo si `closed_at` no es nulo; `Win`/`Lose` lo fijan y `Reopen` lo limpia. Las consultas filtran por `closed_at`. | El dominio sigue validando contra el `kind` de la etapa; la columna evita un join a `stages` en cada consulta. |
-| P4 | El historial lo escribe la unidad de trabajo: antes de `SaveChanges` recorre los `Deal` rastreados y agrega lo que `PullHistory()` devuelve. | D19: ningún camino (handler o worker) puede cambiar la etapa sin su fila. |
+| P4 | El historial lo escribe la unidad de trabajo: antes de `SaveChanges` recorre los `Deal` rastreados y agrega lo que `PullHistory()` devuelve. Cada fila lleva un `ordinal` que asigna el **dominio** (contador por negocio, `Deal.HistoryCount`: 1, 2, 3…), único por `(tenant_id, deal_id, ordinal)`; todo orden del historial y la «última etapa abierta» de `Reopen` usan ese ordinal. El índice de §4.3 `(tenant_id, deal_id, occurred_at)` se crea igual. | D19: ningún camino (handler o worker) puede cambiar la etapa sin su fila. El ordinal, porque EF no inserta en orden de `Add` (ordena por clave, y dos `Guid` v7 del mismo milisegundo salen en cualquier orden) y `occurred_at` empata cuando dos cambios caen en el mismo `SaveChanges` (crear y ganar). |
 | P5 | `PATCH /deals/{id}` lleva **todos** los campos editables (título, dueño, monto, moneda, fecha esperada) y los reemplaza. | El formulario repinta el negocio entero; un `null` parcial sería ambiguo (¿borrar el monto o no tocarlo?). |
 | P6 | Límites que el spec no fija: ver Global Constraints. | Topes contra errores de digitación, como `PosLimits`. |
 | P7 | Códigos nuevos además de los del spec: `pipeline.deal.title_invalid`, `pipeline.deal.amount_invalid`, `pipeline.deal.loss_note_invalid`, `pipeline.stage.not_found`, `pipeline.reason.layout_invalid`, `pipeline.triage.dismiss_reason_not_found` (y `pipeline.triage.already_decided`, que viene del spec D38). | Reglas del dominio que necesitan su código (el validador da el campo, el dominio el código). |
@@ -103,8 +103,9 @@ Este plan cubre **sólo el backend**; el frontend es otro slice en `qep-frontend
 | P11 | Enlazar a mano una cotización que ya está en otro negocio la **mueve**; si era la principal allá, ese negocio queda sin principal y con el monto manual. | Una cotización pertenece a lo sumo a un negocio (§4.4); D27 ya define qué pasa con el negocio que la pierde. |
 | P12 | Un evento de un tenant sin la capacidad `pipeline` (o sin fila en `tenancy.tenants`) se marca procesado sin efecto. | §4.4: activar el módulo después no rellena el pasado. |
 | P13 | En el triage, una conversación sin entrante (`LastInboundAt` nulo) se decide contra `TriageDecision.NoInbound`: sin decisión está pendiente; con una, decidida. Va al final del orden. | D20 sólo habla del entrante; sin él, la decisión es lo único que hay, y la columna de D38 no admite nulos. |
+| P14 | La línea base de la suite se mide en la Task 0, **antes** del primer cambio, en el worktree limpio sobre `5ae2679` (sin `git stash`: no hay nada local que apartar). | Después de los commits ya no hay forma de volver a la base. `5ae2679` sólo suma docs sobre `c74b955`, así que la base de código es la misma. |
 | P15 | Spec D38: la carrera de dos asesores que deciden la misma conversación a la vez la cierra la base, no el handler. Pendiente = no hay decisión cuyo `decided_against_inbound_at` sea el `LastInboundAt` actual (o uno posterior). | El chequeo de pendiente y el `SaveChanges` no son atómicos; el índice único sí. Un entrante nuevo es un instante nuevo y permite decidir otra vez (D20). |
-| P14 | La línea base de la suite se mide en la Task 0, **antes** del primer cambio, con `git stash` para apartar lo local. | Después de los commits ya no hay forma de volver a la base con `git stash`. |
+| P16 | D37: el tope de 200 y el `Count` real los aplica **la consulta** de `ListOpenAsync`, no el handler. Para eso el puerto pasa a `ListOpenAsync(Guid tenantId, int limit, CancellationToken) → PipelineConversationPage(int Count, IReadOnlyList<PipelineConversation> Items)` y devuelve sólo las **pendientes**: el adaptador de Bootstrapper filtra con dos `NOT EXISTS` sobre `pipeline.deals` y `pipeline.triage_decisions` (misma base), ordena, corta con `LIMIT` y cuenta con `count(*) OVER ()`. `TriageRules.IsPending` sigue siendo la regla para una conversación (decidir, ficha); la consulta es esa misma regla en SQL. | D37 pide el tope en `ListOpenAsync` y un `Count` real de **pendientes**: cortar en la consulta antes de saber cuáles están pendientes daría menos de 200 y un conteo falso. La firma de §5.3 no tiene dónde llevar el conteo. La regla queda escrita dos veces (C# y SQL); la sostienen `TriageRulesTests` de un lado y `OpenConversationsAreThePendingOnesCappedWithTheRealCount` y `TriageApiTests` del otro. |
 
 ## File Structure
 
@@ -118,17 +119,17 @@ Este plan cubre **sólo el backend**; el frontend es otro slice en `qep-frontend
 | `src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/QuotationLifecycleEventPublisher.cs` (nuevo) | Escribe en el outbox de `QuotationsDbContext`. |
 | `src/Modules/Quotations/Modules.Quotations.Application/SendQuotation.cs`, `ConvertQuotationToOrder.cs`, `CancelOrder.cs` | Publican el evento antes del `SaveChangesAsync`. |
 | `src/Modules/Pipeline/Modules.Pipeline.Domain/*` (nuevo) | `PipelineErrorCodes`, `PipelineDomainException`, `PipelineEnums`, `DealActor`, `SalesPipeline` (+ `PipelineStage`, `StageInput`, `SeedStage`, `PipelineSeed`), `PipelineReason` (+ `ReasonInput`, `ReasonCatalog`), `PipelineRules` (`TriageRules`, `StallRules`), `TriageDecision`, `Deal`, `DealStageHistoryEntry`, `DealQuotation`. |
-| `src/Modules/Pipeline/Modules.Pipeline.Application/*` (nuevo) | `PipelinePermissions`, `PipelineSupport` (autorización, `PipelineCaller`, 404), `PipelinePorts`, `PipelineDirectories`, `PipelineDtos`, `Settings`, `Deals`, `DealDetailBuilder`, `Board`, `Triage`, `CustomerSummary`, `QuotationEvents`. |
-| `src/Modules/Pipeline/Modules.Pipeline.Infrastructure/*` (nuevo) | `PipelineDbContext` (+ factory), `PipelineUnitOfWork`, repositorios, `PipelineBoardQueries`, `PipelineAuditRecorder`, `PipelineProvisioner`, `PipelineInbox` (inbox, proyección del outbox y reclamo), `Messaging/ClaimedOutboxConsumer`, `Messaging/QuotationEventsProcessor`, `Messaging/QuotationEventsWorker`, `PipelineInfrastructureExtensions`, `PipelineDatabaseInitializer`, migración `InitialPipeline`. |
+| `src/Modules/Pipeline/Modules.Pipeline.Application/*` (nuevo) | `PipelinePermissions`, `PipelineSupport` (autorización, `PipelineCaller`, 404), `PipelinePorts`, `PipelineDirectories`, `PipelineDtos`, `Settings`, `Deals` (+ `DealCreator`, `DealDraft`), `DealCardMapper`, `DealDetailBuilder`, `Board`, `Triage`, `CustomerSummary`, `QuotationEvents`. |
+| `src/Modules/Pipeline/Modules.Pipeline.Infrastructure/*` (nuevo) | `PipelineDbContext` (+ factory), `PipelineUnitOfWork`, repositorios, `PipelineBoardQueries`, `PipelineAuditRecorder`, `PipelineProvisioner`, `PipelineInbox` (inbox, proyección del outbox y reclamo), `Messaging/ClaimedOutboxConsumer`, `Messaging/QuotationEventsProcessor`, `Messaging/QuotationEventsWorker`, `PipelineInfrastructureExtensions`, `PipelineDatabaseInitializer`, migración `AddPipeline`. |
 | `src/Modules/Pipeline/Modules.Pipeline.Api/PipelineEndpoints.cs` (nuevo) | Las rutas y los cuerpos de request. |
-| `src/Bootstrapper/PipelineConversationDirectory.cs`, `PipelineCustomerDirectory.cs`, `PipelineMemberNames.cs` (nuevos) | Adaptadores de los puertos de lectura. |
+| `src/Bootstrapper/PipelineConversationDirectory.cs`, `PipelineCustomerDirectory.cs` (nuevos), `MessagingMemberNames.cs` (implementa también `IPipelineMemberNames`) | Adaptadores de los puertos de lectura. |
 | `src/Bootstrapper/QepServiceCollectionExtensions.cs` | Infraestructura, adaptadores, handlers, validadores, permisos, roles y políticas. |
 | `src/Bootstrapper/Bootstrapper.csproj`, `src/Api/Api.csproj`, `src/Api/Program.cs`, `Backend.slnx` | Referencias, mapeo de rutas y migración al arrancar. |
 | `tests/Modules/Pipeline/Modules.Pipeline.UnitTests/*` (nuevo) | Dominio y `QuotationEventApplier` con dobles. |
 | `tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/*` (nuevo) | Harness, persistencia, adaptadores, API y worker contra Postgres. |
 | `tests/ArchitectureTests/ArchitectureTests/PipelineLayerTests.cs` (nuevo), `CompositionRootTests.cs`, `ArchitectureTests.csproj` | Capas, conteo de permisos y roles. |
-| `tests/Modules/Tenancy/...` | Listas de claves con `pipeline`. |
-| `tests/Modules/Quotations/...` | Doble del publicador y pruebas de los tres eventos. |
+| `tests/Modules/Tenancy/...` | Listas de claves con `pipeline` y conteos del catálogo en 9 (`OperatorReadHandlerTests`, `TenantModulesApiTests`, `OperatorConsoleApiTests`). |
+| `tests/Modules/Quotations/...` | Doble del publicador, pruebas de los tres eventos y `OutboxSaveFailureInterceptor` en `QuotationsApiHarness` (spec §7). |
 | `README.md`, `CLAUDE.md` | Módulo nuevo, contrato y gotchas (Task 15). |
 
 ---
@@ -139,25 +140,24 @@ Este plan cubre **sólo el backend**; el frontend es otro slice en `qep-frontend
 
 **Interfaces:**
 - Consumes: nada.
-- Produces: la lista de pruebas que **ya** fallan en `c74b955`, por nombre completo, que la Task 15 usa para separar regresiones de fallas previas (conocidas: dos de `OrderExportApiTests` y algunas de integración de Messaging).
+- Produces: la lista de pruebas que **ya** fallan en `5ae2679` (el código de `c74b955`: `5ae2679` sólo suma docs), por nombre completo, que la Task 15 usa para separar regresiones de fallas previas (conocidas: dos de `OrderExportApiTests` y algunas de integración de Messaging).
 
-- [ ] **Step 1: Apartar lo local y comprobar la base**
+- [ ] **Step 1: Comprobar la base**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B log -1 --format=%h
 git -C $B status --short
-git -C $B stash push --include-untracked -m "baseline-embudo"
-git -C $B status --short
+git -C $B diff --stat 5ae2679 HEAD -- src tests Backend.slnx Directory.Packages.props
 ```
 
-Esperado: `c74b955` y, después del `stash`, `git status` vacío. Si el `stash` dice `No local changes to save`, sigue igual (y en el Step 3 no se hace `pop`).
+Esperado: `5ae2679` (o un commit encima que sólo toca `docs/`, como la enmienda de este plan: el `diff --stat` contra `5ae2679` sale vacío) y `git status` vacío. El worktree está limpio, así que no hay nada que apartar: **sin** `git stash` (los `.atl/*` modificados del developer viven en el checkout principal, no acá). Si `git status` muestra algo, se detiene la tarea y se avisa: la línea base tiene que ser la de la rama sin tocar.
 
 - [ ] **Step 2: Correr la suite completa una vez y guardar las fallas por nombre**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 $S = "$env:TEMP\embudo-baseline"
 if (Test-Path $S) { Remove-Item -Recurse -Force $S }
 New-Item -ItemType Directory -Force $S | Out-Null
@@ -174,16 +174,14 @@ $failed | Sort-Object -Unique | Out-File -Encoding utf8 "$S\baseline-failures.tx
 
 `-LiteralPath` a propósito: los `.trx` con corchetes en el nombre (`[1].trx`) se saltan con `-Path`. El `Out-File` es para un `.txt` del scratchpad, no para código. Se copia el conteo y la lista al handoff.
 
-- [ ] **Step 3: Devolver lo local**
+- [ ] **Step 3: Comprobar que la corrida no dejó nada en el árbol**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
-git -C $B stash list
-git -C $B stash pop
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 git -C $B status --short
 ```
 
-Esperado: vuelven `.atl/.skill-registry.cache.json` y `.atl/skill-registry.md` modificados (son del developer; **nunca** se commitean en este plan).
+Esperado: vacío (`bin/` y `obj/` están en `.gitignore`). Si aparece algo, se anota en el handoff y no se commitea en este plan.
 
 ---
 
@@ -194,8 +192,9 @@ Esperado: vuelven `.atl/.skill-registry.cache.json` y `.atl/skill-registry.md` m
 - Modify: `src/Modules/Tenancy/Modules.Tenancy.Infrastructure/Persistence/TenancyDbContext.cs:110`
 - Modify: `src/Modules/Tenancy/Modules.Tenancy.Application/ChangeTenantModules.cs:28`
 - Modify: `tests/Modules/Tenancy/Modules.Tenancy.UnitTests/TenantModuleKeysTests.cs`
-- Modify: `tests/Modules/Tenancy/Modules.Tenancy.UnitTests/OperatorReadHandlerTests.cs:68`
-- Modify: `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/TenantModulesApiTests.cs:103-107`
+- Modify: `tests/Modules/Tenancy/Modules.Tenancy.UnitTests/OperatorReadHandlerTests.cs:68,101`
+- Modify: `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/TenantModulesApiTests.cs:103-107,151,184`
+- Modify: `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/OperatorConsoleApiTests.cs:206`
 - Create (generados): `src/Modules/Tenancy/Modules.Tenancy.Infrastructure/Persistence/Migrations/<ts>_AddPipelineModuleKey.cs`, `.Designer.cs`; Modify (generado): `TenancyDbContextModelSnapshot.cs`
 
 **Interfaces:**
@@ -246,10 +245,41 @@ En `TenantModulesApiTests.cs:103-107`:
         Assert.All(modules.Modules.Where(module => module.Key is not ("pos" or "messaging" or "pipeline")), module =>
 ```
 
+Los **conteos** del catálogo también están escritos a mano, y no son listas: el aviso del Step 5 no los cubre. Donde la prueba lee
+el DTO en proceso, el conteo sale del catálogo; donde lee el JSON de la API, queda el `9` literal, porque ahí el número es contrato
+de la respuesta:
+
+`OperatorReadHandlerTests.cs:101` (`TheListCarriesTotalModulesTheOperatorMarkAndTheSummary`):
+
+```csharp
+        Assert.All(page.Items, item => Assert.Equal(TenantModuleKeys.All.Count, item.TotalModules));
+```
+
+`TenantModulesApiTests.cs:151` (`ASimulatedTenantSeesEverythingOn`, JSON de `GET /modules`):
+
+```csharp
+        Assert.Equal(9, modules.Modules.Count);
+```
+
+`TenantModulesApiTests.cs:184` (`WithoutARowTheAnswerDependsOnTheScheme`, `TenantModulesResponse.From` en proceso):
+
+```csharp
+        Assert.Equal(TenantModuleKeys.All.Count, response.Modules.Count);
+```
+
+`OperatorConsoleApiTests.cs:206` (`AnOperatorListsTenantsWithTheSummaryAndSearches`, JSON de la consola; los activos siguen en 6
+porque `pipeline` no entra en `DefaultForNewTenants`):
+
+```csharp
+        Assert.All(all.Items, item => Assert.Equal((6, 9, "Active", false), (item.ActiveModules, item.TotalModules, item.Status, item.IsOperator)));
+```
+
+Los tres archivos ya tienen `using Modules.Tenancy.Domain;`.
+
 - [ ] **Step 2: Correr y verificar que fallan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet test "$B\tests\Modules\Tenancy\Modules.Tenancy.UnitTests\Modules.Tenancy.UnitTests.csproj" --filter "FullyQualifiedName~TenantModuleKeysTests"
 ```
 
@@ -294,7 +324,7 @@ Y el comentario de `DefaultForNewTenants`: `/// <summary>Los seis de hoy, sin <c
 `ChangeTenantModules.cs:28`: `.WithMessage("A batch has at most nine changes.");` y comprobar que ninguna prueba espera el texto viejo:
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 Get-ChildItem -Path "$B\src","$B\tests" -Recurse -Filter *.cs | Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' } | Select-String -SimpleMatch "at most eight"
 ```
 
@@ -303,7 +333,7 @@ Si aparece en una prueba, cambiarla a `nine`.
 - [ ] **Step 4: Generar la migración**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet ef migrations add AddPipelineModuleKey --project "$B\src\Modules\Tenancy\Modules.Tenancy.Infrastructure" --context TenancyDbContext -o Persistence/Migrations
@@ -345,23 +375,23 @@ Si aparece cualquier otra operación (`AddColumn`, `AlterColumn`…), el modelo 
 - [ ] **Step 5: Correr y verificar que pasan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet test "$B\tests\Modules\Tenancy\Modules.Tenancy.UnitTests\Modules.Tenancy.UnitTests.csproj" --no-build --filter "FullyQualifiedName~TenantModuleKeysTests|FullyQualifiedName~TenantModuleSetTests|FullyQualifiedName~OperatorReadHandlerTests|FullyQualifiedName~ChangeTenantModulesHandlerTests"
-dotnet test "$B\tests\Modules\Tenancy\Modules.Tenancy.IntegrationTests\Modules.Tenancy.IntegrationTests.csproj" --no-build --filter "FullyQualifiedName~TenantModulesApiTests"
+dotnet test "$B\tests\Modules\Tenancy\Modules.Tenancy.IntegrationTests\Modules.Tenancy.IntegrationTests.csproj" --no-build --filter "FullyQualifiedName~TenantModulesApiTests|FullyQualifiedName~OperatorConsoleApiTests"
 dotnet test "$B\tests\Modules\Authorization\Modules.Authorization.UnitTests\Modules.Authorization.UnitTests.csproj" --no-build --filter "FullyQualifiedName~ModuleEntitlementMaskTests"
 ```
 
-Esperado: todo verde. Si otra clase de éstas compara la lista de claves literal, se actualiza con `pipeline` al final (es el contrato: «último de la lista»).
+Esperado: todo verde. Si otra clase de éstas compara la lista de claves literal, se actualiza con `pipeline` al final (es el contrato: «último de la lista»); si compara un conteo (`8`), pasa a `TenantModuleKeys.All.Count` en proceso o a `9` contra JSON, como arriba.
 
 - [ ] **Step 6: Commit**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B status --short
-git -C $B add src/Modules/Tenancy/Modules.Tenancy.Domain/TenantModuleKey.cs src/Modules/Tenancy/Modules.Tenancy.Infrastructure/Persistence/TenancyDbContext.cs src/Modules/Tenancy/Modules.Tenancy.Application/ChangeTenantModules.cs src/Modules/Tenancy/Modules.Tenancy.Infrastructure/Persistence/Migrations tests/Modules/Tenancy/Modules.Tenancy.UnitTests/TenantModuleKeysTests.cs tests/Modules/Tenancy/Modules.Tenancy.UnitTests/OperatorReadHandlerTests.cs tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/TenantModulesApiTests.cs
+git -C $B add src/Modules/Tenancy/Modules.Tenancy.Domain/TenantModuleKey.cs src/Modules/Tenancy/Modules.Tenancy.Infrastructure/Persistence/TenancyDbContext.cs src/Modules/Tenancy/Modules.Tenancy.Application/ChangeTenantModules.cs src/Modules/Tenancy/Modules.Tenancy.Infrastructure/Persistence/Migrations tests/Modules/Tenancy/Modules.Tenancy.UnitTests/TenantModuleKeysTests.cs tests/Modules/Tenancy/Modules.Tenancy.UnitTests/OperatorReadHandlerTests.cs tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/TenantModulesApiTests.cs tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/OperatorConsoleApiTests.cs
 git -C $B commit -m "feat(tenancy): capacidad pipeline, última del catálogo y dependiente de customers"
 git -C $B log -1 --format=%B
 ```
@@ -379,6 +409,7 @@ git -C $B log -1 --format=%B
 - Modify: `src/Modules/Quotations/Modules.Quotations.Application/CancelOrder.cs:10-59`
 - Modify: `tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationsTestDoubles.cs` (al final)
 - Modify: `tests/Modules/Quotations/Modules.Quotations.UnitTests/SendQuotationHandlerTests.cs:334-414`
+- Modify: `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationsApiHarness.cs` (`QepApiFactory`, `:866-990`, y un tipo anidado nuevo después de `InMemoryObjectStorage`)
 - Create: `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationLifecycleEventsApiTests.cs`
 
 **Interfaces:**
@@ -386,6 +417,7 @@ git -C $B log -1 --format=%B
 - Produces:
   - `public interface IQuotationLifecycleEventPublisher { void PublishSent(Quotation quotation, DateTimeOffset occurredAt); void PublishConverted(Quotation quotation, Order order, DateTimeOffset occurredAt); void PublishOrderCancelled(Order order, DateTimeOffset occurredAt); }`
   - Filas en `platform.outbox_messages` con `event_name` `quotations.quotation.sent.v1`, `quotations.quotation.converted.v1` y `quotations.order.cancelled.v1` y el payload camelCase de Global Constraints. Las lee `QuotationEventsProcessor` (Task 11) **por nombre**.
+  - En el harness de Quotations: `QuotationsApiHarness.OutboxSaveFailureInterceptor` (un `SaveChangesInterceptor` con `string? FailWhenSaving`) y `QepApiFactory.SaveFailure`, registrado en todo `QuotationsDbContext` del host con `services.ConfigureDbContext<QuotationsDbContext>(…AddInterceptors…)`. Desarmado no hace nada; sólo lo usan las tres pruebas de «si el `SaveChanges` falla, no hay evento» (spec §7).
 
 - [ ] **Step 1: Escribir las pruebas que fallan**
 
@@ -464,6 +496,57 @@ En `SendQuotationHandlerTests.cs`:
 
         Assert.Empty(harness.Lifecycle.Published);
     }
+```
+
+En `QuotationsApiHarness.cs`, el gancho para hacer fallar el `SaveChanges` **después** de que el handler publicó (spec §7: «si el
+`SaveChanges` falla, no hay evento»). Las pruebas negativas de abajo (`ARejectedSendWritesNoEvent`, la segunda conversión, la segunda
+anulación) se rechazan **antes** de `Publish*` y no ejercen la transacción compartida; éstas sí. Es un interceptor real de EF en el
+host, no un doble de la unidad de trabajo: así la prueba pasa por `QuotationsUnitOfWork`, la transacción del contador de pedidos y
+el `ApiExceptionHandler` de verdad.
+
+1. `using Microsoft.EntityFrameworkCore.Diagnostics;` junto a los `using` de EF del archivo.
+
+2. Tipo anidado nuevo, después de `InMemoryObjectStorage` (mismo criterio que los otros dobles públicos del harness):
+
+```csharp
+    /// <summary>Spec 2026-10-13 §7: hace fallar el SaveChanges que intenta guardar un evento dado del outbox, después de que el
+    /// handler lo publicó. Con eso la prueba ve que el cambio y su evento se guardan juntos o ninguno. Desarmado
+    /// (<see cref="FailWhenSaving"/> en <c>null</c>) no hace nada, así que puede quedar registrado en todos los hosts.</summary>
+    public sealed class OutboxSaveFailureInterceptor : SaveChangesInterceptor
+    {
+        /// <summary>El <c>event_name</c> cuyo SaveChanges tiene que fallar; <c>null</c> lo desarma.</summary>
+        public string? FailWhenSaving { get; set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(eventData);
+            if (FailWhenSaving is { } eventName && eventData.Context is { } context
+                && context.ChangeTracker.Entries<QuotationsOutboxMessage>().Any(entry =>
+                    entry.State == EntityState.Added && string.Equals(entry.Entity.EventName, eventName, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException($"Simulated failure while saving '{eventName}'.");
+            }
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+    }
+```
+
+3. En `QepApiFactory`, la propiedad junto a `PdfRenderer`:
+
+```csharp
+        /// <summary>Spec 2026-10-13 §7: el interceptor de <see cref="OutboxSaveFailureInterceptor"/>, uno por host. La prueba lo
+        /// arma justo antes de la llamada que quiere hacer fallar y lo desarma después.</summary>
+        public OutboxSaveFailureInterceptor SaveFailure { get; } = new();
+```
+
+y, en `ConfigureServices`, después del bloque de `IQuotationPdfStorage`:
+
+```csharp
+                // Spec 2026-10-13 §7: se suma a la configuración que dejó AddQuotationsInfrastructure (EF Core 9+ compone las
+                // dos), así que llega al DbContext del request y también al de IQuotationSendFailureLog. Desarmado no hace nada.
+                services.ConfigureDbContext<QuotationsDbContext>(options => options.AddInterceptors(SaveFailure));
 ```
 
 `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationLifecycleEventsApiTests.cs`:
@@ -603,13 +686,97 @@ public sealed class QuotationLifecycleEventsApiTests
         Assert.Equal(order.Id, root.GetProperty("orderId").GetGuid());
         Assert.Equal(quotation.Id, root.GetProperty("quotationId").GetGuid());
     }
+
+    // Spec 2026-10-13 §7: el evento va en el mismo SaveChanges que el Sent. Si guardar falla después de publicar, no queda ni el
+    // evento ni la cotización enviada. El handler de envío envuelve la falla en quotation.send.failed (422).
+    [Fact]
+    public async Task ASendWhoseSaveFailsLeavesNoEventAndTheQuotationInDraft()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        // Lo que hace CreateSentQuotationAsync, sin el envío: cuenta de cobro, producto y PDF.
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId,
+            billingAccount: new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency));
+        (await client.PostAsJsonAsync($"{QuotationsUrl(tenantId)}/{quotation.Id}/items", new AddQuotationItemRequest(productId, 1m), Ct))
+            .EnsureSuccessStatusCode();
+        var pdf = await CreateAvailablePdfFileAsync(client, factory, tenantId);
+        factory.SaveFailure.FailWhenSaving = Sent;
+
+        var response = await client.PostAsJsonAsync($"{QuotationsUrl(tenantId)}/{quotation.Id}/send", new SendQuotationRequest(pdf), Ct);
+
+        factory.SaveFailure.FailWhenSaving = null;
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        Assert.Equal("quotation.send.failed", problem.RootElement.GetProperty("code").GetString());
+        Assert.Empty(await OutboxMessagesAsync(factory, Sent));
+        var current = await client.GetFromJsonAsync<QuotationResponse>($"{QuotationsUrl(tenantId)}/{quotation.Id}", Ct);
+        Assert.Equal("Draft", current!.Status);
+    }
+
+    // Spec 2026-10-13 §7: la conversión publica dentro de la transacción del contador. Si guardar falla, no queda evento, la
+    // cotización sigue Sent y se puede convertir después (no quedó un pedido a medias).
+    [Fact]
+    public async Task AConversionWhoseSaveFailsLeavesNoEventAndNoOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var proof = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        factory.SaveFailure.FailWhenSaving = Converted;
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
+            new ConvertQuotationToOrderRequest("FullPaymentReceived", null, [new OrderPaymentProofRequest(proof, quotation.Total)]),
+            Ct);
+
+        factory.SaveFailure.FailWhenSaving = null;
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Empty(await OutboxMessagesAsync(factory, Converted));
+        var current = await client.GetFromJsonAsync<QuotationResponse>($"{QuotationsUrl(tenantId)}/{quotation.Id}", Ct);
+        Assert.Equal("Sent", current!.Status);
+        await ConvertAsync(client, factory, tenantId, quotation);
+        Assert.Single(await OutboxMessagesAsync(factory, Converted));
+    }
+
+    // Spec 2026-10-13 §7: la anulación y su evento, juntos o ninguno. Si guardar falla, el pedido sigue sin anular y con su versión.
+    [Fact]
+    public async Task ACancellationWhoseSaveFailsLeavesNoEventAndTheOrderUncancelled()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var order = await ConvertAsync(client, factory, tenantId, quotation);
+        factory.SaveFailure.FailWhenSaving = Cancelled;
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/orders/{order.Id}/cancel", new CancelOrderRequest("El cliente desistió"), Ct);
+
+        factory.SaveFailure.FailWhenSaving = null;
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Empty(await OutboxMessagesAsync(factory, Cancelled));
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>($"/api/v1/tenants/{tenantId}/orders/{order.Id}", Ct);
+        Assert.Equal((order.Version, (DateTimeOffset?)null), (detail!.Order.Version, detail.Order.CancelledAt));
+    }
 }
 ```
 
 - [ ] **Step 2: Correr y verificar que fallan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet test "$B\tests\Modules\Quotations\Modules.Quotations.UnitTests\Modules.Quotations.UnitTests.csproj" --filter "FullyQualifiedName~SendQuotationHandlerTests"
 ```
 
@@ -742,7 +909,7 @@ internal sealed class QuotationLifecycleEventPublisher(QuotationsDbContext dbCon
 - [ ] **Step 4: Correr y verificar que pasan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet test "$B\tests\Modules\Quotations\Modules.Quotations.UnitTests\Modules.Quotations.UnitTests.csproj" --no-build --filter "FullyQualifiedName~SendQuotationHandlerTests"
@@ -750,15 +917,15 @@ dotnet test "$B\tests\Modules\Quotations\Modules.Quotations.IntegrationTests\Mod
 dotnet test "$B\tests\ArchitectureTests\ArchitectureTests\ArchitectureTests.csproj" --no-build --filter "FullyQualifiedName~QuotationsLayerTests|FullyQualifiedName~CompositionRootTests"
 ```
 
-Esperado: `SendQuotationHandlerTests` verde (las tres nuevas incluidas), 4 verdes en `QuotationLifecycleEventsApiTests`, capas y composición verdes.
+Esperado: `SendQuotationHandlerTests` verde (las tres nuevas incluidas), 7 verdes en `QuotationLifecycleEventsApiTests` (4 de payload y rechazo, 3 de `SaveChanges` que falla), capas y composición verdes. Si una de las tres de falla da otro status (por ejemplo, el envío sale 500 en vez de 422), se mira primero si el interceptor llegó al `DbContext` del request y no se cambia el handler para que la prueba pase.
 
 - [ ] **Step 5: Commit**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B status --short
-git -C $B add src/Modules/Quotations/Modules.Quotations.Application/IQuotationLifecycleEventPublisher.cs src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/QuotationLifecycleEventPublisher.cs src/Modules/Quotations/Modules.Quotations.Infrastructure/QuotationsInfrastructureExtensions.cs src/Modules/Quotations/Modules.Quotations.Application/SendQuotation.cs src/Modules/Quotations/Modules.Quotations.Application/ConvertQuotationToOrder.cs src/Modules/Quotations/Modules.Quotations.Application/CancelOrder.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationsTestDoubles.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/SendQuotationHandlerTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationLifecycleEventsApiTests.cs
+git -C $B add src/Modules/Quotations/Modules.Quotations.Application/IQuotationLifecycleEventPublisher.cs src/Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/QuotationLifecycleEventPublisher.cs src/Modules/Quotations/Modules.Quotations.Infrastructure/QuotationsInfrastructureExtensions.cs src/Modules/Quotations/Modules.Quotations.Application/SendQuotation.cs src/Modules/Quotations/Modules.Quotations.Application/ConvertQuotationToOrder.cs src/Modules/Quotations/Modules.Quotations.Application/CancelOrder.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationsTestDoubles.cs tests/Modules/Quotations/Modules.Quotations.UnitTests/SendQuotationHandlerTests.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationsApiHarness.cs tests/Modules/Quotations/Modules.Quotations.IntegrationTests/QuotationLifecycleEventsApiTests.cs
 git -C $B commit -m "feat(quotations): eventos de cotización enviada, convertida y pedido anulado en el outbox"
 git -C $B log -1 --format=%B
 ```
@@ -1072,7 +1239,7 @@ app.MapPipelineEndpoints();
 ```
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet restore "$B\Backend.slnx" --force-evaluate
 git -C $B status --short -- '*.lock.json'
 dotnet build "$B\Backend.slnx" --no-restore
@@ -1224,7 +1391,7 @@ Y después de `TheAdminAndAdvisorRolesCarryTheMessagingPermissionsAsCore`:
 ```
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet test "$B\tests\ArchitectureTests\ArchitectureTests\ArchitectureTests.csproj" --no-build --filter "FullyQualifiedName~PipelineLayerTests|FullyQualifiedName~CompositionRootTests"
@@ -1304,7 +1471,7 @@ En `QepServiceCollectionExtensions.cs`:
 - [ ] **Step 4: Correr y verificar que pasan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet test "$B\tests\ArchitectureTests\ArchitectureTests\ArchitectureTests.csproj" --no-build
@@ -1315,7 +1482,7 @@ Esperado: todo `ArchitectureTests` verde (es un proyecto chico y lo tocan los tr
 - [ ] **Step 5: Commit**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B status --short
 git -C $B add Backend.slnx src/Modules/Pipeline tests/Modules/Pipeline src/Api/Api.csproj src/Api/Program.cs src/Bootstrapper/Bootstrapper.csproj src/Bootstrapper/QepServiceCollectionExtensions.cs tests/ArchitectureTests/ArchitectureTests/ArchitectureTests.csproj tests/ArchitectureTests/ArchitectureTests/PipelineLayerTests.cs tests/ArchitectureTests/ArchitectureTests/CompositionRootTests.cs
@@ -1325,7 +1492,7 @@ git -C $B status --short -- '*.lock.json'
 Agregar uno por uno, con su ruta, los `packages.lock.json` modificados que listó el último comando (los de `src/Modules/Pipeline` y `tests/Modules/Pipeline` ya entraron con su carpeta). Antes, comprobar que `src/Modules/Pipeline` y `tests/Modules/Pipeline` no traen `bin/` ni `obj/` (los ignora `.gitignore`; si `git status` los muestra, se detiene y se avisa). Después:
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 git -C $B commit -m "feat(pipeline): proyectos del módulo, pruebas de capas y permisos del embudo"
 git -C $B log -1 --format=%B
 ```
@@ -1721,7 +1888,7 @@ public sealed class PipelineRulesTests
 - [ ] **Step 2: Correr y verificar que fallan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.UnitTests\Modules.Pipeline.UnitTests.csproj" --filter "FullyQualifiedName~SalesPipelineTests|FullyQualifiedName~ReasonCatalogTests|FullyQualifiedName~PipelineRulesTests"
 ```
 
@@ -2319,7 +2486,7 @@ public sealed class TriageDecision
 - [ ] **Step 4: Correr y verificar que pasan, más las capas**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.UnitTests\Modules.Pipeline.UnitTests.csproj" --no-build --filter "FullyQualifiedName~SalesPipelineTests|FullyQualifiedName~ReasonCatalogTests|FullyQualifiedName~PipelineRulesTests"
@@ -2331,7 +2498,7 @@ Esperado: todo verde (`SalesPipelineTests`: 7 hechos + 19 casos de la teoría; `
 - [ ] **Step 5: Commit**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B status --short
 git -C $B add src/Modules/Pipeline/Modules.Pipeline.Domain/PipelineDomainException.cs src/Modules/Pipeline/Modules.Pipeline.Domain/PipelineEnums.cs src/Modules/Pipeline/Modules.Pipeline.Domain/DealActor.cs src/Modules/Pipeline/Modules.Pipeline.Domain/SalesPipeline.cs src/Modules/Pipeline/Modules.Pipeline.Domain/PipelineReason.cs src/Modules/Pipeline/Modules.Pipeline.Domain/PipelineRules.cs src/Modules/Pipeline/Modules.Pipeline.Domain/TriageDecision.cs tests/Modules/Pipeline/Modules.Pipeline.UnitTests/SalesPipelineTests.cs tests/Modules/Pipeline/Modules.Pipeline.UnitTests/ReasonCatalogTests.cs tests/Modules/Pipeline/Modules.Pipeline.UnitTests/PipelineRulesTests.cs
@@ -2352,12 +2519,12 @@ git -C $B log -1 --format=%B
 **Interfaces:**
 - Consumes: `SalesPipeline`, `PipelineStage`, `StageKind`, `DealSource`, `DealActor`, `ActorKind`, `DealQuotationStatus`, `PipelineDomainException`, `PipelineErrorCodes` (Tasks 3 y 4).
 - Produces:
-  - `Deal` con `Id`, `TenantId`, `PipelineId`, `CustomerId`, `OwnerMemberId`, `Title`, `decimal? Amount`, `Currency`, `DateOnly? ExpectedCloseDate`, `StageId`, `StageEnteredAt`, `Guid? PrimaryQuotationId`, `Source`, `Guid? OriginConversationId`, `Guid? LossReasonId`, `string? LossNote`, `DateTimeOffset? ClosedAt`, `LastChangedAt`, `CreatedAt`, `UpdatedAt`, `Version`, `bool IsClosed`; constantes `TitleMaxLength = 200`, `LossNoteMaxLength = 500`, `MaxAmount = 999_999_999_999.99m`.
+  - `Deal` con `Id`, `TenantId`, `PipelineId`, `CustomerId`, `OwnerMemberId`, `Title`, `decimal? Amount`, `Currency`, `DateOnly? ExpectedCloseDate`, `StageId`, `StageEnteredAt`, `Guid? PrimaryQuotationId`, `Source`, `Guid? OriginConversationId`, `Guid? LossReasonId`, `string? LossNote`, `DateTimeOffset? ClosedAt`, `LastChangedAt`, `CreatedAt`, `UpdatedAt`, `Version`, `int HistoryCount` (contador de filas de historial del negocio, P4), `bool IsClosed`; constantes `TitleMaxLength = 200`, `LossNoteMaxLength = 500`, `MaxAmount = 999_999_999_999.99m`.
   - `static Deal Create(Guid tenantId, SalesPipeline pipeline, Guid customerId, Guid ownerMemberId, string? title, decimal? amount, string currency, DateOnly? expectedCloseDate, DealSource source, Guid? originConversationId, DealActor actor, DateTimeOffset now)`.
   - `void Update(string? title, Guid ownerMemberId, decimal? amount, string currency, DateOnly? expectedCloseDate, DateTimeOffset now)`.
   - `bool MoveTo(SalesPipeline pipeline, Guid stageId, DealActor actor, DateTimeOffset now)`, `bool AdvanceToQuotationStage(SalesPipeline pipeline, DealActor actor, DateTimeOffset now)`, `void Win(SalesPipeline pipeline, DealActor actor, DateTimeOffset now)`, `void Lose(SalesPipeline pipeline, Guid? lossReasonId, string? note, DealActor actor, DateTimeOffset now)`, `void Reopen(SalesPipeline pipeline, Guid? lastOpenStageId, DealActor actor, DateTimeOffset now)`.
   - `void SetPrimaryQuotation(Guid quotationId, decimal total, string currency, DateTimeOffset now)`, `void FollowPrimary(decimal total, string currency, DateTimeOffset now)`, `void ClearPrimary(DateTimeOffset now)`, `IReadOnlyList<DealStageHistoryEntry> PullHistory()`.
-  - `DealStageHistoryEntry` con `Id`, `TenantId`, `DealId`, `PipelineId`, `Guid? FromStageId`, `ToStageId`, `OccurredAt`, `ActorKind`, `Guid? ActorMemberId`, `decimal? Amount`, `Currency`, `Probability`.
+  - `DealStageHistoryEntry` con `Id`, `TenantId`, `DealId`, `PipelineId`, `int Ordinal` (1, 2, 3… por negocio, lo asigna `Deal`; P4), `Guid? FromStageId`, `ToStageId`, `OccurredAt`, `ActorKind`, `Guid? ActorMemberId`, `decimal? Amount`, `Currency`, `Probability`.
   - `DealQuotation` con `TenantId`, `QuotationId`, `Guid? DealId`, `CustomerId`, `QuotationNumber`, `Total`, `Currency`, `Status`, `Guid? OrderId`, `DateTimeOffset? OrderCancelledAt`, `UpdatedAt`; `const int NumberMaxLength = 40`; `static Create(Guid tenantId, Guid quotationId, string quotationNumber, Guid customerId, decimal total, string currency, DateTimeOffset now)`, `Refresh(string quotationNumber, Guid customerId, decimal total, string currency, bool converted, Guid? orderId, DateTimeOffset now)`, `LinkTo(Guid dealId, DateTimeOffset now)`, `Unlink(DateTimeOffset now)`, `MarkOrderCancelled(DateTimeOffset now)`.
 
 - [ ] **Step 1: Escribir las pruebas que fallan**
@@ -2401,6 +2568,24 @@ public sealed class DealTests
         var row = Assert.Single(deal.PullHistory());
         Assert.Equal(((Guid?)null, pipeline.FirstOpenStage.Id, ActorKind.User, (Guid?)OwnerId), (row.FromStageId, row.ToStageId, row.ActorKind, row.ActorMemberId));
         Assert.Equal(((decimal?)1_000m, "COP", 10, deal.Id, pipeline.Id), (row.Amount, row.Currency, row.Probability, row.DealId, row.PipelineId));
+        Assert.Equal((1, 1), (row.Ordinal, deal.HistoryCount));
+    }
+
+    // P4 del plan: el orden del historial lo da el dominio, no la base. Dos cambios en el mismo SaveChanges (crear y ganar, en el
+    // worker) tienen el mismo instante y EF no inserta en orden de Add; el ordinal los separa, y sigue contando entre guardados.
+    [Fact]
+    public void EveryHistoryRowTakesTheNextOrdinalOfItsDeal()
+    {
+        var pipeline = Pipeline();
+        var deal = NewDeal(pipeline);
+        deal.Win(pipeline, DealActor.ForSystem, Now);
+
+        var first = deal.PullHistory();
+        deal.Reopen(pipeline, null, Advisor, Now.AddDays(1));
+
+        Assert.Equal([1, 2], first.Select(row => row.Ordinal));
+        Assert.Equal(3, Assert.Single(deal.PullHistory()).Ordinal);
+        Assert.Equal(3, deal.HistoryCount);
     }
 
     [Fact]
@@ -2697,7 +2882,7 @@ public sealed class DealQuotationTests
 - [ ] **Step 2: Correr y verificar que fallan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.UnitTests\Modules.Pipeline.UnitTests.csproj" --filter "FullyQualifiedName~DealTests|FullyQualifiedName~DealQuotationTests"
 ```
 
@@ -2713,6 +2898,7 @@ namespace Modules.Pipeline.Domain;
 /// <summary>
 /// Spec 2026-10-13 §4.3 y D19: una fila del historial de etapas, append-only. La foto del monto, la moneda y la probabilidad
 /// es la del momento: el forecast del slice 2 la necesita así. Sin FK a <c>stages</c>: una etapa borrada no puede borrar historia.
+/// <see cref="Ordinal"/> es el orden de escritura dentro del negocio (P4 del plan): lo asigna <see cref="Deal"/>, no la base.
 /// </summary>
 public sealed class DealStageHistoryEntry
 {
@@ -2725,6 +2911,10 @@ public sealed class DealStageHistoryEntry
     public Guid DealId { get; private set; }
 
     public Guid PipelineId { get; private set; }
+
+    /// <summary>1, 2, 3… por negocio, en el orden en que el dominio escribió las filas. Dos filas del mismo SaveChanges comparten
+    /// <see cref="OccurredAt"/> y EF no las inserta en orden de <c>Add</c>: sólo este número dice cuál fue primero.</summary>
+    public int Ordinal { get; private set; }
 
     public Guid? FromStageId { get; private set; }
 
@@ -2743,7 +2933,7 @@ public sealed class DealStageHistoryEntry
     public int Probability { get; private set; }
 
     internal static DealStageHistoryEntry Create(
-        Guid tenantId, Guid dealId, Guid pipelineId, Guid? fromStageId, Guid toStageId, DateTimeOffset occurredAt,
+        Guid tenantId, Guid dealId, Guid pipelineId, int ordinal, Guid? fromStageId, Guid toStageId, DateTimeOffset occurredAt,
         DealActor actor, decimal? amount, string currency, int probability) =>
         new()
         {
@@ -2751,6 +2941,7 @@ public sealed class DealStageHistoryEntry
             TenantId = tenantId,
             DealId = dealId,
             PipelineId = pipelineId,
+            Ordinal = ordinal,
             FromStageId = fromStageId,
             ToStageId = toStageId,
             OccurredAt = occurredAt,
@@ -2833,6 +3024,10 @@ public sealed class Deal
     public DateTimeOffset UpdatedAt { get; private set; }
 
     public long Version { get; private set; }
+
+    /// <summary>P4 del plan: cuántas filas de historial lleva el negocio. La siguiente fila toma <c>HistoryCount + 1</c> como
+    /// <see cref="DealStageHistoryEntry.Ordinal"/>. Viaja con el negocio y lo protege su <see cref="Version"/>.</summary>
+    public int HistoryCount { get; private set; }
 
     public bool IsClosed => ClosedAt is not null;
 
@@ -3027,9 +3222,12 @@ public sealed class Deal
         Record(from, target, actor, now);
     }
 
-    private void Record(Guid? fromStageId, PipelineStage to, DealActor actor, DateTimeOffset now) =>
+    private void Record(Guid? fromStageId, PipelineStage to, DealActor actor, DateTimeOffset now)
+    {
+        HistoryCount++;
         _pendingHistory.Add(DealStageHistoryEntry.Create(
-            TenantId, Id, PipelineId, fromStageId, to.Id, now, actor, Amount, Currency, to.Probability));
+            TenantId, Id, PipelineId, HistoryCount, fromStageId, to.Id, now, actor, Amount, Currency, to.Probability));
+    }
 
     private void EnsureOpen()
     {
@@ -3159,7 +3357,7 @@ public sealed class DealQuotation
 - [ ] **Step 4: Correr y verificar que pasan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.UnitTests\Modules.Pipeline.UnitTests.csproj" --no-build --filter "FullyQualifiedName~DealTests|FullyQualifiedName~DealQuotationTests"
@@ -3170,7 +3368,7 @@ Esperado: todo verde.
 - [ ] **Step 5: Commit**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B status --short
 git -C $B add src/Modules/Pipeline/Modules.Pipeline.Domain/Deal.cs src/Modules/Pipeline/Modules.Pipeline.Domain/DealStageHistoryEntry.cs src/Modules/Pipeline/Modules.Pipeline.Domain/DealQuotation.cs tests/Modules/Pipeline/Modules.Pipeline.UnitTests/DealTests.cs tests/Modules/Pipeline/Modules.Pipeline.UnitTests/DealQuotationTests.cs
@@ -3180,7 +3378,7 @@ git -C $B log -1 --format=%B
 
 ---
 
-### Task 6: Persistencia — puertos, `PipelineDbContext`, migración `InitialPipeline`, unidad de trabajo, embudo en el primer acceso y harness
+### Task 6: Persistencia — puertos, `PipelineDbContext`, migración `AddPipeline`, unidad de trabajo, embudo en el primer acceso y harness
 
 **Files:**
 - Create: `src/Modules/Pipeline/Modules.Pipeline.Application/PipelinePorts.cs`
@@ -3188,7 +3386,7 @@ git -C $B log -1 --format=%B
 - Create: `src/Modules/Pipeline/Modules.Pipeline.Infrastructure/PipelineDatabaseInitializer.cs`
 - Modify: `src/Modules/Pipeline/Modules.Pipeline.Infrastructure/PipelineInfrastructureExtensions.cs`
 - Modify: `src/Api/Program.cs` (`using Modules.Pipeline.Infrastructure;` y la migración después de la de Messaging, `:229`)
-- Create (generados): `src/Modules/Pipeline/Modules.Pipeline.Infrastructure/Persistence/Migrations/<ts>_InitialPipeline.cs`, `.Designer.cs`, `PipelineDbContextModelSnapshot.cs`
+- Create (generados): `src/Modules/Pipeline/Modules.Pipeline.Infrastructure/Persistence/Migrations/<ts>_AddPipeline.cs`, `.Designer.cs`, `PipelineDbContextModelSnapshot.cs`
 - Create: `tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/PipelineApiHarness.cs`
 - Test: `tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/PipelinePersistenceTests.cs`
 
@@ -3200,7 +3398,7 @@ git -C $B log -1 --format=%B
   - `IDealQuotationRepository`: `FindAsync(Guid tenantId, Guid quotationId, ct) → Task<DealQuotation?>` (tracking), `ListByDealAsync(Guid tenantId, Guid dealId, ct)`, `ListUnlinkedByCustomerAsync(Guid tenantId, Guid customerId, ct)` (las dos → `Task<IReadOnlyList<DealQuotation>>`), `void Add(DealQuotation)`.
   - `IPipelineReasonRepository`: `ListAsync(Guid tenantId, ReasonKind kind, ct) → Task<IReadOnlyList<PipelineReason>>` (tracking, activos e inactivos), `FindActiveAsync(Guid tenantId, ReasonKind kind, Guid reasonId, ct) → Task<PipelineReason?>`, `FindNamesAsync(Guid tenantId, IReadOnlyCollection<Guid> reasonIds, ct) → Task<IReadOnlyDictionary<Guid, string>>`, `void Add(PipelineReason)`.
   - `ITriageDecisionRepository`: `FindLatestAsync(Guid tenantId, IReadOnlyCollection<Guid> conversationIds, ct) → Task<IReadOnlyDictionary<Guid, TriageDecision>>`, `void Add(TriageDecision)`.
-  - `IPipelineUnitOfWork.SaveChangesAsync(ct) → Task<int>` (vacía el historial pendiente; versión vieja → `RequestConcurrencyException("concurrency.conflict")`; FK de etapa → `pipeline.stage.has_deals`; índice de triage de D38 → `pipeline.triage.already_decided`).
+  - `IPipelineUnitOfWork.SaveChangesAsync(ct) → Task<int>` (vacía el historial pendiente; versión vieja, o el índice único `IX_deal_stage_history_deal_ordinal` del ordinal de P4 → `RequestConcurrencyException("concurrency.conflict")`; FK de etapa → `pipeline.stage.has_deals`; índice de triage de D38 → `pipeline.triage.already_decided`).
   - `IPipelineAuditRecorder.Record(Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset occurredAt)` y `PipelineAuditActions` (constantes abajo).
 - Produces (Infrastructure): `PipelineDbContext` (público, `Schema = "pipeline"`, `DbSet`s `Pipelines`, `Stages`, `Deals`, `History`, `DealQuotations`, `Reasons`, `TriageDecisions`; internos `Inbox`, `Outbox`, `AuditEntries`), `PipelineInboxMessage`, `PipelineOutboxRecord`, `PipelineInboxClaims.TryClaimAsync` (los usa la Task 11), `InitializePipelineDatabaseAsync`.
 - Produces (pruebas): `PipelineApiHarness` con `StartDatabaseAsync`, `QepApiFactory`, `CreateClient`, `RegisterTenantAsync`, `OwnerMembershipIdAsync`, `SeedMemberAsync`, `EnablePipelineAsync`, `EnableMessagingAsync`, `DisableModuleAsync`, `SeedCustomerAsync`, `SeedConversationAsync`, `ProblemAsync`, `CountAsync`, `ScalarAsync`, `ExecuteAsync`, `PipelineUrl`, `ReadPermissions`, `ManagePermissions`, `AllPermissions`.
@@ -3576,7 +3774,8 @@ public sealed class PipelinePersistenceTests
         Assert.Equal(5L, await CountAsync(connectionString, "SELECT count(*) FROM pipeline.reasons WHERE tenant_id = @t AND kind = 'Dismiss'", ("t", tenantId)));
     }
 
-    // P4: la fila de historial viaja en el mismo SaveChanges que el negocio, y la última abierta sale de la fila de cierre.
+    // P4: la fila de historial viaja en el mismo SaveChanges que el negocio, y la última abierta sale de la fila de cierre. Mover
+    // y perder van en un solo SaveChanges: EF no los inserta en orden de Add, así que el orden tiene que salir del ordinal.
     [Fact]
     public async Task EveryStageChangeIsSavedWithItsHistoryRow()
     {
@@ -3601,11 +3800,15 @@ public sealed class PipelinePersistenceTests
         using var reader = factory.Services.CreateScope();
         var deals = reader.ServiceProvider.GetRequiredService<IDealRepository>();
         var history = await deals.ListHistoryAsync(tenantId, saved.Id, Ct);
-        Assert.Equal(3, history.Count);
+        Assert.Equal([1, 2, 3], history.Select(entry => entry.Ordinal));
         Assert.Null(history[0].FromStageId);
         Assert.Equal(negotiation, history[1].ToStageId);
         Assert.Equal(negotiation, await deals.FindLastOpenStageIdAsync(tenantId, saved.Id, Ct));
         Assert.Equal(3L, await ScalarAsync<long>(connectionString, "SELECT version FROM pipeline.deals WHERE id = @id", ("id", saved.Id)));
+        Assert.Equal(3, await ScalarAsync<int>(connectionString, "SELECT history_count FROM pipeline.deals WHERE id = @id", ("id", saved.Id)));
+        // Spec §4.3: el índice por negocio y tiempo existe con esas columnas.
+        Assert.Contains("(tenant_id, deal_id, occurred_at)", await ScalarAsync<string>(connectionString,
+            "SELECT indexdef FROM pg_indexes WHERE schemaname = 'pipeline' AND indexname = 'IX_deal_stage_history_deal'"), StringComparison.Ordinal);
     }
 
     // Review Focus 3: otro proceso (el worker) cambió el negocio entre la lectura y el commit.
@@ -3695,7 +3898,7 @@ public sealed class PipelinePersistenceTests
 - [ ] **Step 2: Correr y verificar que fallan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.IntegrationTests\Modules.Pipeline.IntegrationTests.csproj" --filter "FullyQualifiedName~PipelinePersistenceTests"
 ```
 
@@ -3735,10 +3938,12 @@ public interface IDealRepository
     /// <summary>D12: las etapas con al menos un negocio, abierto o cerrado. Ésas no se borran.</summary>
     Task<IReadOnlySet<Guid>> StagesWithDealsAsync(Guid tenantId, Guid pipelineId, CancellationToken cancellationToken);
 
-    /// <summary>D15: la etapa de origen de la fila más reciente del historial, que en un negocio cerrado es la de cierre.</summary>
+    /// <summary>D15: la etapa de origen de la fila de mayor <see cref="DealStageHistoryEntry.Ordinal"/>, que en un negocio cerrado
+    /// es la de cierre. Por ordinal y no por <c>occurred_at</c>: crear y ganar en el mismo SaveChanges empatan en el instante (P4).</summary>
     Task<Guid?> FindLastOpenStageIdAsync(Guid tenantId, Guid dealId, CancellationToken cancellationToken);
 
-    /// <summary>El historial del negocio, en el orden en que se escribió.</summary>
+    /// <summary>El historial del negocio, por <see cref="DealStageHistoryEntry.Ordinal"/> ascendente: el orden en que el dominio lo
+    /// escribió.</summary>
     Task<IReadOnlyList<DealStageHistoryEntry>> ListHistoryAsync(Guid tenantId, Guid dealId, CancellationToken cancellationToken);
 
     void Add(Deal deal);
@@ -3917,8 +4122,8 @@ public sealed class PipelineDbContext(DbContextOptions<PipelineDbContext> option
     /// <summary>D12: <c>PipelineUnitOfWork</c> discrimina por este nombre para responder <c>pipeline.stage.has_deals</c>.</summary>
     public const string DealStageForeignKey = "FK_deals_stages_stage_id";
 
-    /// <summary>P4 del plan: columna identidad que ordena el historial sin depender de la resolución del reloj.</summary>
-    internal const string HistorySequence = "Sequence";
+    /// <summary>P4 del plan: <c>PipelineUnitOfWork</c> discrimina por este nombre para responder <c>concurrency.conflict</c>.</summary>
+    public const string DealHistoryOrdinalIndex = "IX_deal_stage_history_deal_ordinal";
 
     public DbSet<SalesPipeline> Pipelines => Set<SalesPipeline>();
 
@@ -4026,6 +4231,8 @@ public sealed class PipelineDbContext(DbContextOptions<PipelineDbContext> option
         deal.Property(value => value.CreatedAt).HasColumnName("created_at");
         deal.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         deal.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
+        // P4 del plan: de acá sale el ordinal de la próxima fila de historial.
+        deal.Property(value => value.HistoryCount).HasColumnName("history_count");
         deal.Ignore(value => value.IsClosed);
         // D12: la base garantiza que no se borre una etapa con negocios, aunque un negocio llegue entre la lectura de
         // StagesWithDealsAsync y el commit. PipelineUnitOfWork traduce la violación a pipeline.stage.has_deals.
@@ -4046,10 +4253,11 @@ public sealed class PipelineDbContext(DbContextOptions<PipelineDbContext> option
             table.HasCheckConstraint("CK_deal_stage_history_actor_kind", "actor_kind IN ('User','System')"));
         history.HasKey(value => value.Id);
         history.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
-        history.Property<long>(HistorySequence).HasColumnName("sequence").UseIdentityAlwaysColumn();
         history.Property(value => value.TenantId).HasColumnName("tenant_id");
         history.Property(value => value.DealId).HasColumnName("deal_id");
         history.Property(value => value.PipelineId).HasColumnName("pipeline_id");
+        // P4 del plan: el orden lo da el dominio (Deal.HistoryCount), no la base.
+        history.Property(value => value.Ordinal).HasColumnName("ordinal");
         history.Property(value => value.FromStageId).HasColumnName("from_stage_id");
         history.Property(value => value.ToStageId).HasColumnName("to_stage_id");
         history.Property(value => value.OccurredAt).HasColumnName("occurred_at");
@@ -4058,7 +4266,12 @@ public sealed class PipelineDbContext(DbContextOptions<PipelineDbContext> option
         history.Property(value => value.Amount).HasColumnName("amount").HasPrecision(14, 2);
         history.Property(value => value.Currency).HasColumnName("currency").HasMaxLength(3);
         history.Property(value => value.Probability).HasColumnName("probability");
-        history.HasIndex(value => new { value.TenantId, value.DealId }, "IX_deal_stage_history_deal");
+        // Spec §4.3: el índice del historial por negocio y tiempo, para el forecast del slice 2.
+        history.HasIndex(value => new { value.TenantId, value.DealId, value.OccurredAt }, "IX_deal_stage_history_deal");
+        // P4 del plan: el orden de escritura. Único: dos escrituras concurrentes del mismo negocio leyeron el mismo HistoryCount y
+        // proponen el mismo ordinal. Si el INSERT del historial sale antes que el UPDATE del negocio, choca acá y no en el token de
+        // versión; PipelineUnitOfWork lo traduce igual a concurrency.conflict.
+        history.HasIndex(value => new { value.TenantId, value.DealId, value.Ordinal }, DealHistoryOrdinalIndex).IsUnique();
     }
 
     private static void ConfigureDealQuotation(ModelBuilder modelBuilder)
@@ -4187,7 +4400,7 @@ using Npgsql;
 namespace Modules.Pipeline.Infrastructure.Persistence;
 
 /// <summary>P4 del plan: el historial pendiente de cada negocio rastreado entra en el mismo SaveChanges (D19). La versión vieja es
-/// <c>concurrency.conflict</c> (412). Borrar una etapa que ganó un negocio entre la lectura y el commit choca con
+/// <c>concurrency.conflict</c> (412), venga del token de <c>deals</c> o del índice único del ordinal del historial. Borrar una etapa que ganó un negocio entre la lectura y el commit choca con
 /// <c>FK_deals_stages_stage_id</c> y sale <c>pipeline.stage.has_deals</c> (422), discriminando por nombre de restricción y no sólo
 /// por SqlState (CLAUDE.md). Igual con D38: la segunda decisión de triage contra el mismo entrante choca con
 /// <c>IX_triage_decisions_conversation_inbound</c> y sale <c>pipeline.triage.already_decided</c> (422); como todo va en un solo
@@ -4211,6 +4424,15 @@ internal sealed class PipelineUnitOfWork(PipelineDbContext dbContext) : IPipelin
         {
             throw new RequestConcurrencyException(
                 "concurrency.conflict", "The deal or the pipeline changed while the operation was being committed.", exception);
+        }
+        // P4: el mismo conflicto de versión, visto desde el historial (otra escritura ya usó este ordinal).
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, PipelineDbContext.DealHistoryOrdinalIndex, StringComparison.Ordinal))
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict", "The deal changed while the operation was being committed.", exception);
         }
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException postgres &&
@@ -4288,14 +4510,14 @@ internal sealed class DealRepository(PipelineDbContext dbContext) : IDealReposit
     public Task<Guid?> FindLastOpenStageIdAsync(Guid tenantId, Guid dealId, CancellationToken cancellationToken) =>
         dbContext.History.AsNoTracking()
             .Where(entry => entry.TenantId == tenantId && entry.DealId == dealId)
-            .OrderByDescending(entry => EF.Property<long>(entry, PipelineDbContext.HistorySequence))
+            .OrderByDescending(entry => entry.Ordinal)
             .Select(entry => entry.FromStageId)
             .FirstOrDefaultAsync(cancellationToken);
 
     public async Task<IReadOnlyList<DealStageHistoryEntry>> ListHistoryAsync(Guid tenantId, Guid dealId, CancellationToken cancellationToken) =>
         await dbContext.History.AsNoTracking()
             .Where(entry => entry.TenantId == tenantId && entry.DealId == dealId)
-            .OrderBy(entry => EF.Property<long>(entry, PipelineDbContext.HistorySequence))
+            .OrderBy(entry => entry.Ordinal)
             .ToListAsync(cancellationToken);
 
     public void Add(Deal deal) => dbContext.Deals.Add(deal);
@@ -4547,20 +4769,20 @@ await app.Services.InitializePipelineDatabaseAsync(
 - [ ] **Step 5: Generar la migración**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
-dotnet ef migrations add InitialPipeline --project "$B\src\Modules\Pipeline\Modules.Pipeline.Infrastructure" --context PipelineDbContext -o Persistence/Migrations
+dotnet ef migrations add AddPipeline --project "$B\src\Modules\Pipeline\Modules.Pipeline.Infrastructure" --context PipelineDbContext -o Persistence/Migrations
 if ($LASTEXITCODE -ne 0) { throw "ef falló" }
-Select-String -Path "$B\src\Modules\Pipeline\Modules.Pipeline.Infrastructure\Persistence\Migrations\*_InitialPipeline.cs" -Pattern "CreateTable\(|EnsureSchema|audit|outbox_messages"
+Select-String -Path "$B\src\Modules\Pipeline\Modules.Pipeline.Infrastructure\Persistence\Migrations\*_AddPipeline.cs" -Pattern "CreateTable\(|EnsureSchema|audit|outbox_messages"
 ```
 
-Esperado en `Select-String`: `EnsureSchema` de `pipeline` y **ocho** `CreateTable(` (`pipelines`, `stages`, `deals`, `deal_stage_history`, `deal_quotations`, `reasons`, `triage_decisions`, `inbox_messages`) y **ninguna** línea con `audit` ni `outbox_messages` (son proyecciones excluidas). Si aparecen, falta un `ExcludeFromMigrations`/`ownsTable: false`: se borra la migración, se corrige el modelo y se vuelve a generar.
+Esperado en `Select-String`: `EnsureSchema` de `pipeline` y **ocho** `CreateTable(` (`pipelines`, `stages`, `deals`, `deal_stage_history`, `deal_quotations`, `reasons`, `triage_decisions`, `inbox_messages`) y **ninguna** línea con `audit` ni `outbox_messages` (son proyecciones excluidas). Además, en el `.cs` generado: `deals` con la columna `history_count`, `deal_stage_history` con `ordinal` y **sin** columna `sequence` ni identidad, y los índices `IX_deal_stage_history_deal` sobre `tenant_id, deal_id, occurred_at` y `IX_deal_stage_history_deal_ordinal` (`unique: true`) sobre `tenant_id, deal_id, ordinal`. Si aparecen `audit`/`outbox_messages`, falta un `ExcludeFromMigrations`/`ownsTable: false`: se borra la migración, se corrige el modelo y se vuelve a generar.
 
 - [ ] **Step 6: Correr y verificar que pasan, más las capas**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.IntegrationTests\Modules.Pipeline.IntegrationTests.csproj" --no-build --filter "FullyQualifiedName~PipelinePersistenceTests"
@@ -4572,7 +4794,7 @@ Esperado: 6 verdes en `PipelinePersistenceTests`; capas y composición verdes.
 - [ ] **Step 7: Commit**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B status --short
 git -C $B add src/Modules/Pipeline/Modules.Pipeline.Application/PipelinePorts.cs src/Modules/Pipeline/Modules.Pipeline.Infrastructure src/Api/Program.cs tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/PipelineApiHarness.cs tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/PipelinePersistenceTests.cs
@@ -4589,19 +4811,21 @@ El segundo `git status` tiene que mostrar staged sólo esos archivos (y ningún 
 
 **Files:**
 - Create: `src/Modules/Pipeline/Modules.Pipeline.Application/PipelineDirectories.cs`
-- Create: `src/Bootstrapper/PipelineConversationDirectory.cs`, `src/Bootstrapper/PipelineCustomerDirectory.cs`, `src/Bootstrapper/PipelineMemberNames.cs`
+- Create: `src/Bootstrapper/PipelineConversationDirectory.cs`, `src/Bootstrapper/PipelineCustomerDirectory.cs`
+- Modify: `src/Bootstrapper/MessagingMemberNames.cs` (implementa también `IPipelineMemberNames`; no hay `PipelineMemberNames.cs`)
 - Modify: `src/Bootstrapper/QepServiceCollectionExtensions.cs` (después de `services.AddScoped<IMessagingUploadStaging, MessagingUploadStaging>();`, `:687`)
 - Test: `tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/PipelineDirectoriesTests.cs`
 
 **Interfaces:**
-- Consumes: `MessagingDbContext.Conversations` (`Conversation.Id`, `TenantId`, `CustomerId`, `Status`, `LastInboundAt`, `LastMessageAt`, `LastActivityAt`), `ICustomerWhatsAppDirectory.FindRefsAsync`, `IMembershipRepository.ListByIdsAsync`, `IUserDirectory.GetEmailAsync`.
+- Consumes: `MessagingDbContext.Conversations` (`Conversation.Id`, `TenantId`, `CustomerId`, `Status`, `LastInboundAt`, `LastMessageAt`, `LastActivityAt`) y, por SQL crudo sobre la misma conexión, `messaging.conversations`, `pipeline.deals` y `pipeline.triage_decisions` (Task 6); `TriageDecision.NoInbound` (Task 4); `ICustomerWhatsAppDirectory.FindRefsAsync`; `MessagingMemberNames` (existente: `IMembershipRepository.ListByIdsAsync` + `IUserDirectory.GetEmailAsync`).
 - Produces (Application, `PipelineDirectories.cs`):
   - `public sealed record PipelineConversation(Guid Id, Guid? CustomerId, bool IsOpen, DateTimeOffset? LastInboundAt, DateTimeOffset? LastMessageAt)`.
+  - `public sealed record PipelineConversationPage(int Count, IReadOnlyList<PipelineConversation> Items)` (D37: `Count` es el total real; `Items`, a lo sumo el tope pedido).
   - `public sealed record PipelineCustomerActivity(Guid CustomerId, DateTimeOffset? LastMessageAt, IReadOnlyList<Guid> ConversationIds)`.
   - `public sealed record PipelineCustomerRef(Guid Id, string Name, bool IsComplete)`.
-  - `IPipelineConversationDirectory`: `ListOpenAsync(Guid tenantId, ct) → Task<IReadOnlyList<PipelineConversation>>` (abiertas **con** cliente, entrante más reciente primero, sin entrante al final), `FindActivityAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, ct) → Task<IReadOnlyDictionary<Guid, PipelineCustomerActivity>>` (todas las conversaciones del cliente, abiertas o no, la de actividad más reciente primero), `FindAsync(Guid tenantId, Guid conversationId, ct) → Task<PipelineConversation?>`.
+  - `IPipelineConversationDirectory`: `ListOpenAsync(Guid tenantId, int limit, ct) → Task<PipelineConversationPage>` (las pendientes de triage de §5.1 —abiertas, **con** cliente, sin negocio abierto del cliente y sin decisión contra su último entrante—, entrante más reciente primero, sin entrante al final; el tope y el `Count` real los aplica la consulta, D37 y P16), `FindActivityAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, ct) → Task<IReadOnlyDictionary<Guid, PipelineCustomerActivity>>` (todas las conversaciones del cliente, abiertas o no, la de actividad más reciente primero), `FindAsync(Guid tenantId, Guid conversationId, ct) → Task<PipelineConversation?>`.
   - `IPipelineCustomerDirectory.FindAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, ct) → Task<IReadOnlyDictionary<Guid, PipelineCustomerRef>>`.
-  - `IPipelineMemberNames.FindAsync(Guid tenantId, IReadOnlyCollection<Guid> memberIds, ct) → Task<IReadOnlyDictionary<Guid, string>>` (sólo membresías del tenant; nombre visible o correo).
+  - `IPipelineMemberNames.FindAsync(Guid tenantId, IReadOnlyCollection<Guid> memberIds, ct) → Task<IReadOnlyDictionary<Guid, string>>` (sólo membresías del tenant; nombre visible o correo). Lo implementa el `MessagingMemberNames` existente, que ya tiene ese método con esa firma: una sola copia de la regla «`DisplayName ?? correo`».
 
 - [ ] **Step 1: Escribir las pruebas que fallan**
 
@@ -4610,6 +4834,7 @@ El segundo `git status` tiene que mostrar staged sólo esos archivos (y ningún 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Pipeline.Application;
+using Modules.Pipeline.Domain;
 using static Modules.Pipeline.IntegrationTests.PipelineApiHarness;
 
 namespace Modules.Pipeline.IntegrationTests;
@@ -4618,6 +4843,8 @@ namespace Modules.Pipeline.IntegrationTests;
 /// Tenancy. Nada cruza tenants.</summary>
 public sealed class PipelineDirectoriesTests
 {
+    private const int NoCap = 200;
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact]
@@ -4638,17 +4865,59 @@ public sealed class PipelineDirectoriesTests
 
         using var scope = factory.Services.CreateScope();
         var directory = scope.ServiceProvider.GetRequiredService<IPipelineConversationDirectory>();
-        var open = await directory.ListOpenAsync(tenantId, Ct);
+        var open = await directory.ListOpenAsync(tenantId, NoCap, Ct);
         var activity = await directory.FindActivityAsync(tenantId, [customerId], Ct);
 
-        Assert.Equal([newer, older, silent], open.Select(conversation => conversation.Id));
-        Assert.All(open, conversation => Assert.True(conversation.IsOpen));
+        Assert.Equal(3, open.Count);
+        Assert.Equal([newer, older, silent], open.Items.Select(conversation => conversation.Id));
+        Assert.All(open.Items, conversation => Assert.True(conversation.IsOpen));
         var customer = activity[customerId];
         Assert.Equal(4, customer.ConversationIds.Count);
         Assert.DoesNotContain(foreign, customer.ConversationIds);
         Assert.Equal(now.AddMinutes(-1).ToUnixTimeSeconds(), customer.LastMessageAt!.Value.ToUnixTimeSeconds());
         Assert.False((await directory.FindAsync(tenantId, resolved, Ct))!.IsOpen);
         Assert.Null(await directory.FindAsync(tenantId, foreign, Ct));
+    }
+
+    // D37 y P16: la consulta deja afuera lo que no está pendiente (§5.1: cliente con negocio abierto, decisión contra el último
+    // entrante) ANTES del tope, y el Count es el total real. Una decisión vieja, anterior a un entrante nuevo, no la saca.
+    [Fact]
+    public async Task OpenConversationsAreThePendingOnesCappedWithTheRealCount()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        var (withDeal, _) = await SeedCustomerAsync(factory, tenantId, "Ana");
+        var (decided, _) = await SeedCustomerAsync(factory, tenantId, "Pedro");
+        var (wroteAgain, _) = await SeedCustomerAsync(factory, tenantId, "Laura");
+        var (quiet, _) = await SeedCustomerAsync(factory, tenantId, "Sofía");
+        await SeedConversationAsync(factory, connectionString, tenantId, withDeal, now, now);
+        var decidedConversation = await SeedConversationAsync(factory, connectionString, tenantId, decided, now.AddMinutes(-10), now.AddMinutes(-10));
+        var wroteAgainConversation = await SeedConversationAsync(factory, connectionString, tenantId, wroteAgain, now.AddMinutes(-1), now.AddMinutes(-1));
+        await SeedConversationAsync(factory, connectionString, tenantId, quiet, now.AddHours(-1), now.AddHours(-1));
+        using (var scope = factory.Services.CreateScope())
+        {
+            var pipeline = await scope.ServiceProvider.GetRequiredService<IPipelineProvisioner>().EnsureAsync(tenantId, Ct);
+            scope.ServiceProvider.GetRequiredService<IDealRepository>().Add(Deal.Create(tenantId, pipeline, withDeal, Guid.CreateVersion7(),
+                "Dotación", null, "COP", null, DealSource.Manual, null, DealActor.ForSystem, now));
+            var reasonId = Guid.CreateVersion7();
+            var decisions = scope.ServiceProvider.GetRequiredService<ITriageDecisionRepository>();
+            // Contra su último entrante (el mismo instante, que las dos columnas redondean igual a microsegundos): ya no está pendiente.
+            decisions.Add(TriageDecision.Dismissed(tenantId, decidedConversation, decided, reasonId,
+                now.AddMinutes(-10), DealActor.ForSystem, now));
+            // Contra un entrante anterior al último: sigue pendiente (D20).
+            decisions.Add(TriageDecision.Dismissed(tenantId, wroteAgainConversation, wroteAgain, reasonId,
+                now.AddDays(-1), DealActor.ForSystem, now));
+            await scope.ServiceProvider.GetRequiredService<IPipelineUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var reader = factory.Services.CreateScope();
+        var page = await reader.ServiceProvider.GetRequiredService<IPipelineConversationDirectory>().ListOpenAsync(tenantId, 1, Ct);
+
+        Assert.Equal(2, page.Count);
+        Assert.Equal(wroteAgainConversation, Assert.Single(page.Items).Id);
     }
 
     [Fact]
@@ -4691,7 +4960,7 @@ public sealed class PipelineDirectoriesTests
 - [ ] **Step 2: Correr y verificar que fallan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.IntegrationTests\Modules.Pipeline.IntegrationTests.csproj" --filter "FullyQualifiedName~PipelineDirectoriesTests"
 ```
 
@@ -4707,6 +4976,10 @@ namespace Modules.Pipeline.Application;
 /// <summary>Spec 2026-10-13 §5.3: una conversación de Messaging como la ve Pipeline.</summary>
 public sealed record PipelineConversation(Guid Id, Guid? CustomerId, bool IsOpen, DateTimeOffset? LastInboundAt, DateTimeOffset? LastMessageAt);
 
+/// <summary>D37: a lo sumo el tope pedido en <see cref="Items"/>, y en <see cref="Count"/> el total real, para que el contador de la
+/// bandeja diga la verdad aunque la lista se corte.</summary>
+public sealed record PipelineConversationPage(int Count, IReadOnlyList<PipelineConversation> Items);
+
 /// <summary>§5.2 y D21: el último mensaje de las conversaciones del cliente (entrante o saliente) y cuáles son.</summary>
 public sealed record PipelineCustomerActivity(Guid CustomerId, DateTimeOffset? LastMessageAt, IReadOnlyList<Guid> ConversationIds);
 
@@ -4719,9 +4992,10 @@ public sealed record PipelineCustomerRef(Guid Id, string Name, bool IsComplete);
 /// </summary>
 public interface IPipelineConversationDirectory
 {
-    /// <summary>§5.1 y D35: las abiertas <b>con</b> cliente, el entrante más reciente primero y las que no tienen entrante al
-    /// final (P13).</summary>
-    Task<IReadOnlyList<PipelineConversation>> ListOpenAsync(Guid tenantId, CancellationToken cancellationToken);
+    /// <summary>§5.1, D35 y D37: las pendientes de triage —abiertas, <b>con</b> cliente, sin negocio abierto del cliente y sin una
+    /// decisión tomada contra su último entrante—, el entrante más reciente primero y las que no tienen entrante al final (P13). A
+    /// lo sumo <paramref name="limit"/>, con el total real: el tope lo aplica la consulta, no la memoria (P16).</summary>
+    Task<PipelineConversationPage> ListOpenAsync(Guid tenantId, int limit, CancellationToken cancellationToken);
 
     /// <summary>Por cliente, todas sus conversaciones (abiertas o no), la de actividad más reciente primero, y su último mensaje.</summary>
     Task<IReadOnlyDictionary<Guid, PipelineCustomerActivity>> FindActivityAsync(
@@ -4752,6 +5026,7 @@ using Microsoft.EntityFrameworkCore;
 using Modules.Messaging.Domain;
 using Modules.Messaging.Infrastructure.Persistence;
 using Modules.Pipeline.Application;
+using Modules.Pipeline.Domain;
 
 namespace Bootstrapper;
 
@@ -4762,17 +5037,39 @@ namespace Bootstrapper;
 /// </summary>
 internal sealed class PipelineConversationDirectory(MessagingDbContext messaging) : IPipelineConversationDirectory
 {
-    public async Task<IReadOnlyList<PipelineConversation>> ListOpenAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        await messaging.Conversations.AsNoTracking()
-            .Where(conversation => conversation.TenantId == tenantId
-                && conversation.Status == ConversationStatus.Open
-                && conversation.CustomerId != null)
-            // P13: sin entrante al final. Postgres pone los NULL primero en un DESC.
-            .OrderByDescending(conversation => conversation.LastInboundAt != null)
-            .ThenByDescending(conversation => conversation.LastInboundAt)
-            .Select(conversation => new PipelineConversation(
-                conversation.Id, conversation.CustomerId, true, conversation.LastInboundAt, conversation.LastMessageAt))
-            .ToListAsync(cancellationToken);
+    /// <summary>
+    /// D37 y P16 del plan: el tope y el <c>Count</c> real salen de la consulta. Para eso la pendencia de §5.1 va en el
+    /// <c>WHERE</c>: es <see cref="TriageRules.IsPending"/> escrita en SQL, con dos <c>NOT EXISTS</c> sobre las tablas de Pipeline en
+    /// la misma base (Bootstrapper es la raíz de composición; ningún módulo se referencia). Si una de las dos cambia, cambia la
+    /// otra: <c>TriageRulesTests</c> fija la regla y <c>OpenConversationsAreThePendingOnesCappedWithTheRealCount</c> y
+    /// <c>TriageApiTests</c>, esta consulta. <c>count(*) OVER ()</c> se calcula antes del <c>LIMIT</c>: es el total.
+    /// </summary>
+    public async Task<PipelineConversationPage> ListOpenAsync(Guid tenantId, int limit, CancellationToken cancellationToken)
+    {
+        var noInbound = TriageDecision.NoInbound;
+        var open = ConversationStatus.Open.ToString();
+        var rows = await messaging.Database.SqlQuery<OpenConversationRow>($"""
+            SELECT c.id AS "Id", c.customer_id AS "CustomerId", c.last_inbound_at AS "LastInboundAt",
+                   c.last_message_at AS "LastMessageAt", count(*) OVER () AS "Total"
+            FROM messaging.conversations AS c
+            WHERE c.tenant_id = {tenantId}
+              AND c.status = {open}
+              AND c.customer_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM pipeline.deals AS d
+                  WHERE d.tenant_id = c.tenant_id AND d.customer_id = c.customer_id AND d.closed_at IS NULL)
+              AND NOT EXISTS (
+                  SELECT 1 FROM pipeline.triage_decisions AS t
+                  WHERE t.tenant_id = c.tenant_id AND t.conversation_id = c.id
+                    AND t.decided_against_inbound_at >= COALESCE(c.last_inbound_at, {noInbound}))
+            ORDER BY (c.last_inbound_at IS NOT NULL) DESC, c.last_inbound_at DESC, c.id
+            LIMIT {limit}
+            """).ToListAsync(cancellationToken);
+
+        return new PipelineConversationPage(
+            rows.Count == 0 ? 0 : (int)rows[0].Total,
+            [.. rows.Select(row => new PipelineConversation(row.Id, row.CustomerId, true, row.LastInboundAt, row.LastMessageAt))]);
+    }
 
     public async Task<IReadOnlyDictionary<Guid, PipelineCustomerActivity>> FindActivityAsync(
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
@@ -4809,6 +5106,20 @@ internal sealed class PipelineConversationDirectory(MessagingDbContext messaging
                 conversation.LastInboundAt,
                 conversation.LastMessageAt))
             .SingleOrDefaultAsync(cancellationToken);
+
+    // Clase con init y no un record: EF no ve a través del constructor de un record en SqlQuery (QuotationsReportSource).
+    private sealed class OpenConversationRow
+    {
+        public Guid Id { get; init; }
+
+        public Guid CustomerId { get; init; }
+
+        public DateTimeOffset? LastInboundAt { get; init; }
+
+        public DateTimeOffset? LastMessageAt { get; init; }
+
+        public long Total { get; init; }
+    }
 }
 ```
 
@@ -4833,76 +5144,57 @@ internal sealed class PipelineCustomerDirectory(ICustomerWhatsAppDirectory whats
 }
 ```
 
-`src/Bootstrapper/PipelineMemberNames.cs`:
+`src/Bootstrapper/MessagingMemberNames.cs`: **no** se crea un `PipelineMemberNames` (sería la tercera copia de
+«`DisplayName ?? correo`» en Bootstrapper, después de `IntegrationsConnectionAuthorNames`). El adaptador existente ya tiene
+`FindAsync` con la firma exacta de `IPipelineMemberNames`, así que implementa los dos puertos. Tres cambios, nada más:
+
+1. `using Modules.Pipeline.Application;` junto a los otros `using`.
+2. La declaración:
 
 ```csharp
-using Modules.Identity.Application;
-using Modules.Pipeline.Application;
-using Modules.Tenancy.Application;
-using Modules.Tenancy.Domain;
-
-namespace Bootstrapper;
-
-/// <summary>Spec 2026-10-13 §6: el dueño del negocio y el actor del historial por nombre. Copia de
-/// <see cref="MessagingMemberNames"/>: <c>Membership.DisplayName ?? correo</c>, sólo membresías del tenant.</summary>
-internal sealed class PipelineMemberNames(IMembershipRepository memberships, IUserDirectory users) : IPipelineMemberNames
-{
-    public async Task<IReadOnlyDictionary<Guid, string>> FindAsync(
-        Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken)
-    {
-        var names = new Dictionary<Guid, string>();
-        if (memberIds.Count == 0)
-        {
-            return names;
-        }
-
-        var scoped = await memberships.ListByIdsAsync(
-            new TenantId(tenantId), memberIds.Select(id => new MembershipId(id)).ToArray(), cancellationToken);
-        foreach (var membership in scoped)
-        {
-            var name = !string.IsNullOrWhiteSpace(membership.DisplayName)
-                ? membership.DisplayName
-                : await users.GetEmailAsync(membership.UserId, cancellationToken);
-            if (!string.IsNullOrWhiteSpace(name))
-            {
-                names[membership.Id.Value] = name;
-            }
-        }
-
-        return names;
-    }
-}
+internal sealed class MessagingMemberNames(IMembershipRepository memberships, IUserDirectory users)
+    : IMessagingMemberNames, IPipelineMemberNames
 ```
+
+3. Al final del `<summary>` de la clase: `Pipeline usa el mismo FindAsync por <c>IPipelineMemberNames</c> (spec 2026-10-13 §6: el dueño del negocio y el actor del historial), así la regla vive en un solo lugar.`
 
 `QepServiceCollectionExtensions.cs`, después de `services.AddScoped<IMessagingUploadStaging, MessagingUploadStaging>();`:
 
 ```csharp
         // Pipeline (spec 2026-10-13 D9): conversaciones por el DbContext de Messaging, clientes por Customers y nombres de
-        // miembros por Tenancy e Identity. El único punto donde Pipeline toca esos módulos.
+        // miembros con el mismo adaptador que Messaging (una sola copia de «DisplayName ?? correo»). El único punto donde Pipeline
+        // toca esos módulos.
         services.AddScoped<IPipelineConversationDirectory, PipelineConversationDirectory>();
         services.AddScoped<IPipelineCustomerDirectory, PipelineCustomerDirectory>();
-        services.AddScoped<IPipelineMemberNames, PipelineMemberNames>();
+        services.AddScoped<IPipelineMemberNames, MessagingMemberNames>();
 ```
 
 - [ ] **Step 4: Correr y verificar que pasan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.IntegrationTests\Modules.Pipeline.IntegrationTests.csproj" --no-build --filter "FullyQualifiedName~PipelineDirectoriesTests"
 dotnet test "$B\tests\ArchitectureTests\ArchitectureTests\ArchitectureTests.csproj" --no-build --filter "FullyQualifiedName~PipelineLayerTests|FullyQualifiedName~CompositionRootTests"
 ```
 
-Esperado: 3 verdes en `PipelineDirectoriesTests`; capas y composición verdes.
+Esperado: 4 verdes en `PipelineDirectoriesTests`; capas y composición verdes. Además, sin regresión en el adaptador que ahora se comparte:
+
+```powershell
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
+Get-ChildItem -Path "$B\tests" -Recurse -Filter *.cs | Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' } | Select-String -SimpleMatch "MessagingMemberNames" | Select-Object -ExpandProperty Path -Unique
+```
+
+Si aparece una clase de prueba, se corre sola en primer plano y tiene que seguir verde.
 
 - [ ] **Step 5: Commit**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B status --short
-git -C $B add src/Modules/Pipeline/Modules.Pipeline.Application/PipelineDirectories.cs src/Bootstrapper/PipelineConversationDirectory.cs src/Bootstrapper/PipelineCustomerDirectory.cs src/Bootstrapper/PipelineMemberNames.cs src/Bootstrapper/QepServiceCollectionExtensions.cs tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/PipelineDirectoriesTests.cs
+git -C $B add src/Modules/Pipeline/Modules.Pipeline.Application/PipelineDirectories.cs src/Bootstrapper/PipelineConversationDirectory.cs src/Bootstrapper/PipelineCustomerDirectory.cs src/Bootstrapper/MessagingMemberNames.cs src/Bootstrapper/QepServiceCollectionExtensions.cs tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/PipelineDirectoriesTests.cs
 git -C $B commit -m "feat(pipeline): puertos de lectura de conversaciones, clientes y miembros con adaptadores"
 git -C $B log -1 --format=%B
 ```
@@ -5137,7 +5429,7 @@ public sealed class SettingsApiTests
 - [ ] **Step 2: Correr y verificar que fallan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.IntegrationTests\Modules.Pipeline.IntegrationTests.csproj" --filter "FullyQualifiedName~SettingsApiTests"
 ```
 
@@ -5524,7 +5816,7 @@ public static class PipelineEndpoints
 - [ ] **Step 4: Correr y verificar que pasan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.IntegrationTests\Modules.Pipeline.IntegrationTests.csproj" --no-build --filter "FullyQualifiedName~SettingsApiTests"
@@ -5536,7 +5828,7 @@ Esperado: 7 verdes en `SettingsApiTests`; capas y composición verdes (los cuatr
 - [ ] **Step 5: Commit**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B status --short
 git -C $B add src/Modules/Pipeline/Modules.Pipeline.Application/PipelineSupport.cs src/Modules/Pipeline/Modules.Pipeline.Application/PipelineDtos.cs src/Modules/Pipeline/Modules.Pipeline.Application/Settings.cs src/Modules/Pipeline/Modules.Pipeline.Api/SettingsEndpoints.cs src/Modules/Pipeline/Modules.Pipeline.Api/PipelineEndpoints.cs src/Bootstrapper/QepServiceCollectionExtensions.cs tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/SettingsApiTests.cs
@@ -5549,12 +5841,13 @@ git -C $B log -1 --format=%B
 ### Task 9: Negocios — crear, leer, editar, mover, ganar, perder y reabrir
 
 **Files:**
+- Create: `src/Modules/Pipeline/Modules.Pipeline.Application/DealCardMapper.cs`
 - Create: `src/Modules/Pipeline/Modules.Pipeline.Application/DealDetailBuilder.cs`
 - Create: `src/Modules/Pipeline/Modules.Pipeline.Application/Deals.cs`
 - Modify: `src/Modules/Pipeline/Modules.Pipeline.Application/PipelineDtos.cs` (al final)
 - Create: `src/Modules/Pipeline/Modules.Pipeline.Api/DealEndpoints.cs`
 - Modify: `src/Modules/Pipeline/Modules.Pipeline.Api/PipelineEndpoints.cs` (`group.MapDealEndpoints();`)
-- Modify: `src/Modules/Pipeline/Modules.Pipeline.Infrastructure/PipelineInfrastructureExtensions.cs` (`PipelineCaller`, `DealDetailBuilder`, `DealCommandSteps`)
+- Modify: `src/Modules/Pipeline/Modules.Pipeline.Infrastructure/PipelineInfrastructureExtensions.cs` (`PipelineCaller`, `DealDetailBuilder`, `DealCommandSteps`, `DealCreator`)
 - Modify: `src/Bootstrapper/QepServiceCollectionExtensions.cs` (handlers, después de los de ajustes)
 - Test: `tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/DealApiTests.cs`
 
@@ -5562,8 +5855,10 @@ git -C $B log -1 --format=%B
 - Consumes: Tasks 4–8 (`Deal`, `SalesPipeline`, `StallRules`, puertos, directorios, `PipelineAuthorization`, `PipelineCaller`, `PipelineNotFound`, `PipelineVersions`), `ITenantDefaultCurrency`, `Currencies`.
 - Produces:
   - DTOs (contrato): `DealQuotationDto(Guid QuotationId, string QuotationNumber, decimal Total, string Currency, string Status, bool IsPrimary, Guid? OrderId, bool OrderCancelled)`, `StageHistoryDto(Guid? FromStageId, string? FromStageName, Guid ToStageId, string? ToStageName, DateTimeOffset OccurredAt, string ActorKind, Guid? ActorMemberId, string? ActorName, decimal? Amount, string Currency, int Probability)`, `DealDetailDto(Guid Id, string Title, Guid CustomerId, string CustomerName, bool CustomerIsComplete, Guid OwnerMemberId, string OwnerName, decimal? Amount, string Currency, bool AmountIsEditable, DateOnly? ExpectedCloseDate, Guid StageId, string StageName, string StageKind, int DaysInStage, bool IsStalled, string Source, Guid? OriginConversationId, Guid? LossReasonId, string? LossReasonName, string? LossNote, DateTimeOffset? ClosedAt, Guid? PrimaryQuotationId, IReadOnlyList<DealQuotationDto> Quotations, IReadOnlyList<DealQuotationDto> UnlinkedCustomerQuotations, IReadOnlyList<Guid> ConversationIds, IReadOnlyList<StageHistoryDto> History, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, long Version)`.
-  - `public sealed class DealDetailBuilder { const string DeletedMemberName = "Miembro eliminado"; const string UnknownCustomerName = "Cliente no disponible"; Task<DealDetailDto> BuildAsync(SalesPipeline pipeline, Deal deal, CancellationToken) }` (lo reusan las Tasks 10, 13 y 14).
-  - `public sealed class DealCommandSteps { Task AuthorizeAsync(Guid tenantId, CancellationToken); Task<DealCommandContext> LoadAsync(Guid tenantId, Guid dealId, long? version, CancellationToken); Task<DealDetailDto> CommitAsync(DealCommandContext context, string? auditAction, CancellationToken) }` y `public sealed record DealCommandContext(SalesPipeline Pipeline, Deal Deal, DealActor Actor, DateTimeOffset Now)` (los reusa la Task 10).
+  - `internal static class DealCardMapper { const string DeletedMemberName = "Miembro eliminado"; const string UnknownCustomerName = "Cliente no disponible"; DealCardFacts Describe(SalesPipeline pipeline, Guid stageId, DateTimeOffset stageEnteredAt, DateTimeOffset lastChangedAt, Guid ownerMemberId, IReadOnlyDictionary<Guid, string> memberNames, DateTimeOffset? lastMessageAt, DateTimeOffset now); string MemberName(IReadOnlyDictionary<Guid, string> memberNames, Guid memberId); string CustomerName(PipelineCustomerRef? customer) }` e `internal sealed record DealCardFacts(string StageName, StageKind StageKind, string OwnerName, int DaysInStage, bool IsStalled)`: el **único** lugar que resuelve etapa, dueño, días en la etapa y estancado de un negocio. Lo usan `DealDetailBuilder` (acá), `GetBoardHandler` (Task 12) y `GetCustomerDealsSummaryHandler` (Task 14); el triage (Task 13) usa `CustomerName`.
+  - `public sealed class DealDetailBuilder { Task<DealDetailDto> BuildAsync(SalesPipeline pipeline, Deal deal, CancellationToken) }` (lo reusan las Tasks 10 y 13, este último por `DealCreator`).
+  - `public sealed record DealDraft(Guid TenantId, Guid CustomerId, Guid OwnerMemberId, string? Title, decimal? Amount, string? Currency, DateOnly? ExpectedCloseDate, DealSource Source, Guid? OriginConversationId)` y `public sealed class DealCreator { Task<DealDetailDto> CreateAsync(DealDraft draft, DealActor actor, DateTimeOffset now, Action<Deal>? beforeSave, CancellationToken) }`: el **único** camino para crear un negocio desde la API (`CreateDealHandler`, acá, y `DecideTriageHandler`, Task 13). Provisiona el embudo, resuelve la moneda (nula = la del tenant), crea, agrega, audita `pipeline.deal.created`, deja que el llamador sume lo suyo a la misma unidad de trabajo (`beforeSave`), guarda y devuelve el detalle.
+  - `public sealed class DealCommandSteps { Task AuthorizeAsync(Guid tenantId, CancellationToken); Task<DealCommandContext> LoadAsync(Guid tenantId, Guid dealId, long? version, CancellationToken); void RecordAudit(DealCommandContext context, string action, Guid dealId); Task<DealDetailDto> CommitAsync(DealCommandContext context, string? auditAction, CancellationToken) }` y `public sealed record DealCommandContext(SalesPipeline Pipeline, Deal Deal, DealActor Actor, DateTimeOffset Now)` (los reusa la Task 10).
   - Mensajes: `GetDealQuery(Guid TenantId, Guid DealId)`, `CreateDealCommand(Guid TenantId, Guid? CustomerId, string? Title, decimal? Amount, string? Currency, DateOnly? ExpectedCloseDate, Guid? OwnerMemberId)`, `UpdateDealCommand(Guid TenantId, Guid DealId, string? Title, Guid? OwnerMemberId, decimal? Amount, string? Currency, DateOnly? ExpectedCloseDate, long? Version)`, `MoveDealCommand(Guid TenantId, Guid DealId, Guid? StageId, long? Version)`, `WinDealCommand(Guid TenantId, Guid DealId, long? Version)`, `LoseDealCommand(Guid TenantId, Guid DealId, Guid? LossReasonId, string? Note, long? Version)`, `ReopenDealCommand(Guid TenantId, Guid DealId, long? Version)`, todos `→ DealDetailDto`, con sus handlers y validadores.
   - Api: `CreateDealRequest(Guid? CustomerId, string? Title, decimal? Amount, string? Currency, DateOnly? ExpectedCloseDate, Guid? OwnerMemberId)`, `UpdateDealRequest(string? Title, Guid? OwnerMemberId, decimal? Amount, string? Currency, DateOnly? ExpectedCloseDate, long? Version)`, `MoveDealRequest(Guid? StageId, long? Version)`, `DealVersionRequest(long? Version)`, `LoseDealRequest(Guid? LossReasonId, string? Note, long? Version)`; `DealEndpoints.MapDealEndpoints(this RouteGroupBuilder)` (la Task 10 le agrega dos rutas).
 
@@ -5817,7 +6112,7 @@ public sealed class DealApiTests
 - [ ] **Step 2: Correr y verificar que fallan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.IntegrationTests\Modules.Pipeline.IntegrationTests.csproj" --filter "FullyQualifiedName~DealApiTests"
 ```
 
@@ -5876,6 +6171,56 @@ public sealed record DealDetailDto(
     long Version);
 ```
 
+`src/Modules/Pipeline/Modules.Pipeline.Application/DealCardMapper.cs`:
+
+```csharp
+using Modules.Pipeline.Domain;
+
+namespace Modules.Pipeline.Application;
+
+/// <summary>Lo que se dice igual de un negocio en el tablero, el detalle y la ficha del cliente.</summary>
+internal sealed record DealCardFacts(string StageName, StageKind StageKind, string OwnerName, int DaysInStage, bool IsStalled);
+
+/// <summary>
+/// Spec 2026-10-13 §5.2, D22 y §6: el único lugar que resuelve la tarjeta de un negocio —nombre y tipo de la etapa, nombre del
+/// dueño (o «Miembro eliminado»), días en la etapa y estancado—. Lo usan el detalle (<see cref="DealDetailBuilder"/>), el tablero
+/// (<c>GetBoardHandler</c>) y la ficha del cliente (<c>GetCustomerDealsSummaryHandler</c>): una regla que cambia, cambia para las
+/// tres pantallas a la vez. Recibe columnas sueltas y no un <see cref="Deal"/> porque el tablero lee filas de su consulta.
+/// </summary>
+internal static class DealCardMapper
+{
+    public const string DeletedMemberName = "Miembro eliminado";
+    public const string UnknownCustomerName = "Cliente no disponible";
+
+    /// <param name="lastMessageAt">El último mensaje de las conversaciones del cliente, entrante o saliente (§5.2), si hay.</param>
+    public static DealCardFacts Describe(
+        SalesPipeline pipeline, Guid stageId, DateTimeOffset stageEnteredAt, DateTimeOffset lastChangedAt, Guid ownerMemberId,
+        IReadOnlyDictionary<Guid, string> memberNames, DateTimeOffset? lastMessageAt, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(pipeline);
+        ArgumentNullException.ThrowIfNull(memberNames);
+        // Defensivo: la FK con RESTRICT no deja borrar la etapa de un negocio. Si faltara, sin nombre y nunca estancado.
+        var stage = pipeline.FindStage(stageId);
+        var lastActivity = StallRules.LastActivity(lastChangedAt, lastMessageAt);
+        return new DealCardFacts(
+            stage?.Name ?? string.Empty,
+            stage?.Kind ?? StageKind.Open,
+            MemberName(memberNames, ownerMemberId),
+            StallRules.DaysIn(stageEnteredAt, now),
+            stage is not null && StallRules.IsStalled(stage.Kind, stage.StallDays, lastActivity, now));
+    }
+
+    /// <summary>Una membresía que ya no está en el tenant no aparece en el diccionario: la pantalla nunca recibe <c>null</c>.</summary>
+    public static string MemberName(IReadOnlyDictionary<Guid, string> memberNames, Guid memberId)
+    {
+        ArgumentNullException.ThrowIfNull(memberNames);
+        return memberNames.GetValueOrDefault(memberId) ?? DeletedMemberName;
+    }
+
+    public static string CustomerName(PipelineCustomerRef? customer) => customer?.Name ?? UnknownCustomerName;
+}
+```
+
 `src/Modules/Pipeline/Modules.Pipeline.Application/DealDetailBuilder.cs`:
 
 ```csharp
@@ -5884,7 +6229,8 @@ using Modules.Pipeline.Domain;
 
 namespace Modules.Pipeline.Application;
 
-/// <summary>§6: arma <see cref="DealDetailDto"/> con una llamada a cada directorio. Público sólo para que Infrastructure lo
+/// <summary>§6: arma <see cref="DealDetailDto"/> con una llamada a cada directorio; la parte de tarjeta (etapa, dueño, días,
+/// estancado) sale de <see cref="DealCardMapper"/>, igual que en el tablero y la ficha. Público sólo para que Infrastructure lo
 /// registre; no es API para otros módulos.</summary>
 public sealed class DealDetailBuilder(
     IPipelineCustomerDirectory customers,
@@ -5895,9 +6241,6 @@ public sealed class DealDetailBuilder(
     IPipelineReasonRepository reasons,
     IClock clock)
 {
-    public const string DeletedMemberName = "Miembro eliminado";
-    public const string UnknownCustomerName = "Cliente no disponible";
-
     public async Task<DealDetailDto> BuildAsync(SalesPipeline pipeline, Deal deal, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
@@ -5918,27 +6261,26 @@ public sealed class DealDetailBuilder(
         var reasonName = deal.LossReasonId is { } reasonId
             ? (await reasons.FindNamesAsync(tenantId, [reasonId], cancellationToken)).GetValueOrDefault(reasonId)
             : null;
-        var stage = pipeline.FindStage(deal.StageId);
-        var now = clock.UtcNow;
-        var lastActivity = StallRules.LastActivity(deal.LastChangedAt, activity?.LastMessageAt);
+        var card = DealCardMapper.Describe(
+            pipeline, deal.StageId, deal.StageEnteredAt, deal.LastChangedAt, deal.OwnerMemberId, names, activity?.LastMessageAt, clock.UtcNow);
 
         return new DealDetailDto(
             deal.Id,
             deal.Title,
             deal.CustomerId,
-            customer?.Name ?? UnknownCustomerName,
+            DealCardMapper.CustomerName(customer),
             customer?.IsComplete ?? false,
             deal.OwnerMemberId,
-            names.GetValueOrDefault(deal.OwnerMemberId) ?? DeletedMemberName,
+            card.OwnerName,
             deal.Amount,
             deal.Currency,
             deal.PrimaryQuotationId is null,
             deal.ExpectedCloseDate,
             deal.StageId,
-            stage?.Name ?? string.Empty,
-            (stage?.Kind ?? StageKind.Open).ToString(),
-            StallRules.DaysIn(deal.StageEnteredAt, now),
-            stage is not null && StallRules.IsStalled(stage.Kind, stage.StallDays, lastActivity, now),
+            card.StageName,
+            card.StageKind.ToString(),
+            card.DaysInStage,
+            card.IsStalled,
             deal.Source.ToString(),
             deal.OriginConversationId,
             deal.LossReasonId,
@@ -5967,7 +6309,7 @@ public sealed class DealDetailBuilder(
             row.OccurredAt,
             row.ActorKind.ToString(),
             row.ActorMemberId,
-            row.ActorMemberId is { } member ? names.GetValueOrDefault(member) ?? DeletedMemberName : null,
+            row.ActorMemberId is { } member ? DealCardMapper.MemberName(names, member) : null,
             row.Amount,
             row.Currency,
             row.Probability);
@@ -6086,13 +6428,21 @@ public sealed class DealCommandSteps(
         return new DealCommandContext(pipeline, deal, DealActor.ForUser(memberId), clock.UtcNow);
     }
 
+    /// <summary>Una entrada de auditoría más, sobre este negocio u otro que la misma escritura tocó (enlazar a mano audita el
+    /// negocio que pierde la cotización, Task 10). Va en el SaveChanges de <see cref="CommitAsync"/>.</summary>
+    public void RecordAudit(DealCommandContext context, string action, Guid dealId)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        audit.Record(context.Deal.TenantId, executionContext.SubjectId, false, action, PipelineAuditActions.DealResource, dealId, context.Now);
+    }
+
     /// <summary>Sin <paramref name="auditAction"/> no hubo cambio (mover a la misma etapa): no se audita ni se guarda.</summary>
     public async Task<DealDetailDto> CommitAsync(DealCommandContext context, string? auditAction, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
         if (auditAction is not null)
         {
-            audit.Record(context.Deal.TenantId, executionContext.SubjectId, false, auditAction, PipelineAuditActions.DealResource, context.Deal.Id, context.Now);
+            RecordAudit(context, auditAction, context.Deal.Id);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
@@ -6113,20 +6463,58 @@ public sealed class GetDealHandler(
     }
 }
 
+/// <summary>Lo que hace falta para crear un negocio, venga de la API o del triage. <see cref="Currency"/> nula = la moneda por
+/// defecto del tenant (D34: el negocio puede nacer sin monto, pero siempre con moneda).</summary>
+public sealed record DealDraft(
+    Guid TenantId, Guid CustomerId, Guid OwnerMemberId, string? Title, decimal? Amount, string? Currency, DateOnly? ExpectedCloseDate,
+    DealSource Source, Guid? OriginConversationId);
+
+/// <summary>
+/// §4.2 y D29: el único camino para crear un negocio desde la API —<see cref="CreateDealHandler"/> y el <c>create</c> del
+/// triage—: embudo en el primer acceso, moneda, <see cref="Deal.Create"/>, auditoría <c>pipeline.deal.created</c>, un solo
+/// SaveChanges (con el historial, P4) y el detalle entero. <paramref name="beforeSave"/> deja al llamador sumar lo suyo a esa
+/// misma unidad de trabajo con el negocio ya creado: el triage agrega su decisión, así la carrera de D38 revierte las dos cosas
+/// juntas. Lo que cada llamador valida antes (cliente, dueño, conversación pendiente) queda en el llamador. Público sólo para que
+/// Infrastructure lo registre.
+/// </summary>
+public sealed class DealCreator(
+    IExecutionContext executionContext,
+    IPipelineProvisioner provisioner,
+    IDealRepository deals,
+    ITenantDefaultCurrency defaultCurrency,
+    IPipelineUnitOfWork unitOfWork,
+    IPipelineAuditRecorder audit,
+    DealDetailBuilder detail)
+{
+    public async Task<DealDetailDto> CreateAsync(
+        DealDraft draft, DealActor actor, DateTimeOffset now, Action<Deal>? beforeSave, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        var currency = draft.Currency is null
+            ? await defaultCurrency.GetAsync(draft.TenantId, cancellationToken)
+            : Currencies.Normalize(draft.Currency);
+        var pipeline = await provisioner.EnsureAsync(draft.TenantId, cancellationToken);
+
+        var deal = Deal.Create(draft.TenantId, pipeline, draft.CustomerId, draft.OwnerMemberId, draft.Title, draft.Amount, currency,
+            draft.ExpectedCloseDate, draft.Source, draft.OriginConversationId, actor, now);
+        deals.Add(deal);
+        audit.Record(draft.TenantId, executionContext.SubjectId, false, PipelineAuditActions.DealCreated, PipelineAuditActions.DealResource, deal.Id, now);
+        beforeSave?.Invoke(deal);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return await detail.BuildAsync(pipeline, deal, cancellationToken);
+    }
+}
+
 /// <summary>§4.2: un negocio manual (D34: puede nacer sin monto; la moneda por defecto es la del tenant). El dueño por defecto es
-/// quien llama; otro dueño tiene que ser miembro del tenant.</summary>
+/// quien llama; otro dueño tiene que ser miembro del tenant. Crear lo hace <see cref="DealCreator"/>.</summary>
 public sealed class CreateDealHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
-    IPipelineProvisioner provisioner,
-    IDealRepository deals,
     IPipelineCustomerDirectory customers,
     IPipelineMemberNames members,
-    ITenantDefaultCurrency defaultCurrency,
     PipelineCaller caller,
-    IPipelineUnitOfWork unitOfWork,
-    IPipelineAuditRecorder audit,
-    DealDetailBuilder detail,
+    DealCreator creator,
     IClock clock,
     IValidator<CreateDealCommand> validator)
     : ICommandHandler<CreateDealCommand, DealDetailDto>
@@ -6145,19 +6533,11 @@ public sealed class CreateDealHandler(
         var callerId = await caller.RequireAsync(command.TenantId, cancellationToken);
         var owner = command.OwnerMemberId ?? callerId;
         await DealOwners.EnsureMemberAsync(members, command.TenantId, owner, callerId, cancellationToken);
-        var currency = command.Currency is null
-            ? await defaultCurrency.GetAsync(command.TenantId, cancellationToken)
-            : Currencies.Normalize(command.Currency);
-        var pipeline = await provisioner.EnsureAsync(command.TenantId, cancellationToken);
-        var now = clock.UtcNow;
 
-        var deal = Deal.Create(command.TenantId, pipeline, customerId, owner, command.Title, command.Amount, currency,
-            command.ExpectedCloseDate, DealSource.Manual, null, DealActor.ForUser(callerId), now);
-        deals.Add(deal);
-        audit.Record(command.TenantId, executionContext.SubjectId, false, PipelineAuditActions.DealCreated, PipelineAuditActions.DealResource, deal.Id, now);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-
-        return await detail.BuildAsync(pipeline, deal, cancellationToken);
+        return await creator.CreateAsync(
+            new DealDraft(command.TenantId, customerId, owner, command.Title, command.Amount, command.Currency, command.ExpectedCloseDate,
+                DealSource.Manual, null),
+            DealActor.ForUser(callerId), clock.UtcNow, beforeSave: null, cancellationToken);
     }
 }
 
@@ -6356,10 +6736,12 @@ public sealed record LoseDealRequest(Guid? LossReasonId, string? Note, long? Ver
 `PipelineInfrastructureExtensions.cs`, antes del `return services;`:
 
 ```csharp
-        // La membresía de quien llama, una vez por request; el detalle del negocio y los pasos comunes de sus escrituras.
+        // La membresía de quien llama, una vez por request; el detalle del negocio, los pasos comunes de sus escrituras y el único
+        // camino para crear uno (API y triage).
         services.AddScoped<PipelineCaller>();
         services.AddScoped<DealDetailBuilder>();
         services.AddScoped<DealCommandSteps>();
+        services.AddScoped<DealCreator>();
 ```
 
 `QepServiceCollectionExtensions.cs`, después de los handlers de ajustes (los validadores ya entran con `AddValidatorsFromAssemblyContaining<ReplacePipelineStagesValidator>()`):
@@ -6378,7 +6760,7 @@ public sealed record LoseDealRequest(Guid? LossReasonId, string? Note, long? Ver
 - [ ] **Step 4: Correr y verificar que pasan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.IntegrationTests\Modules.Pipeline.IntegrationTests.csproj" --no-build --filter "FullyQualifiedName~DealApiTests"
@@ -6390,10 +6772,10 @@ Esperado: 9 verdes en `DealApiTests`; capas y composición verdes.
 - [ ] **Step 5: Commit**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B status --short
-git -C $B add src/Modules/Pipeline/Modules.Pipeline.Application/PipelineDtos.cs src/Modules/Pipeline/Modules.Pipeline.Application/DealDetailBuilder.cs src/Modules/Pipeline/Modules.Pipeline.Application/Deals.cs src/Modules/Pipeline/Modules.Pipeline.Api/DealEndpoints.cs src/Modules/Pipeline/Modules.Pipeline.Api/PipelineEndpoints.cs src/Modules/Pipeline/Modules.Pipeline.Infrastructure/PipelineInfrastructureExtensions.cs src/Bootstrapper/QepServiceCollectionExtensions.cs tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/DealApiTests.cs
+git -C $B add src/Modules/Pipeline/Modules.Pipeline.Application/PipelineDtos.cs src/Modules/Pipeline/Modules.Pipeline.Application/DealCardMapper.cs src/Modules/Pipeline/Modules.Pipeline.Application/DealDetailBuilder.cs src/Modules/Pipeline/Modules.Pipeline.Application/Deals.cs src/Modules/Pipeline/Modules.Pipeline.Api/DealEndpoints.cs src/Modules/Pipeline/Modules.Pipeline.Api/PipelineEndpoints.cs src/Modules/Pipeline/Modules.Pipeline.Infrastructure/PipelineInfrastructureExtensions.cs src/Bootstrapper/QepServiceCollectionExtensions.cs tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/DealApiTests.cs
 git -C $B commit -m "feat(pipeline): negocios con detalle completo, historial y auditoría"
 git -C $B log -1 --format=%B
 ```
@@ -6522,11 +6904,12 @@ internal sealed class InMemoryDeals : IDealRepository
     public Task<IReadOnlySet<Guid>> StagesWithDealsAsync(Guid tenantId, Guid pipelineId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlySet<Guid>>(Items.Select(deal => deal.StageId).ToHashSet());
 
+    // Por ordinal, como DealRepository (P4): el orden de la lista no es contrato.
     public Task<Guid?> FindLastOpenStageIdAsync(Guid tenantId, Guid dealId, CancellationToken cancellationToken) =>
-        Task.FromResult(History.LastOrDefault(row => row.DealId == dealId)?.FromStageId);
+        Task.FromResult(History.Where(row => row.DealId == dealId).MaxBy(row => row.Ordinal)?.FromStageId);
 
     public Task<IReadOnlyList<DealStageHistoryEntry>> ListHistoryAsync(Guid tenantId, Guid dealId, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<DealStageHistoryEntry>>([.. History.Where(row => row.DealId == dealId)]);
+        Task.FromResult<IReadOnlyList<DealStageHistoryEntry>>([.. History.Where(row => row.DealId == dealId).OrderBy(row => row.Ordinal)]);
 
     public void Add(Deal deal) => Items.Add(deal);
 }
@@ -6788,19 +7171,31 @@ public sealed class QuotationEventApplierTests
         Assert.NotNull(Assert.Single(bed.Quotations.Items).OrderCancelledAt);
     }
 
+    // §4.4: sólo reabre el pedido de la cotización que ganó (la principal). Otra cotización del MISMO negocio ganado, convertida y
+    // con su pedido anulado, deja el negocio en Ganado y sólo marca su foto. La precondición se afirma: sin ella la prueba no
+    // distinguiría un aplicador que mira la principal de uno que reabre cualquier negocio enlazado.
     [Fact]
     public async Task ACancelledOrderOfAQuotationThatDidNotWinReopensNothing()
     {
         var bed = new ApplierBed();
         var clientId = Guid.CreateVersion7();
-        var deal = bed.OpenDeal(clientId);
-        deal.Win(bed.Pipeline, DealActor.ForUser(bed.AdvisorId), ApplierBed.Now);
-        var quotationId = Guid.CreateVersion7();
-        await bed.Applier.ApplySentAsync(bed.Fact(clientId, quotationId), Later, Ct);
+        var winner = Guid.CreateVersion7();
+        var other = Guid.CreateVersion7();
+        var otherOrder = Guid.CreateVersion7();
+        await bed.Applier.ApplySentAsync(bed.Fact(clientId, winner), Later, Ct);
+        await bed.Applier.ApplySentAsync(bed.Fact(clientId, other), Later, Ct);
+        await bed.Applier.ApplyConvertedAsync(bed.Fact(clientId, winner, orderId: Guid.CreateVersion7()), Later.AddDays(1), Ct);
+        await bed.Applier.ApplyConvertedAsync(bed.Fact(clientId, other, orderId: otherOrder), Later.AddDays(1), Ct);
+        var deal = Assert.Single(bed.Deals.Items);
+        var otherSnapshot = Assert.Single(bed.Quotations.Items, quotation => quotation.QuotationId == other);
+        Assert.Equal(((Guid?)winner, (Guid?)deal.Id, bed.Pipeline.WonStage.Id), (deal.PrimaryQuotationId, otherSnapshot.DealId, deal.StageId));
+        var version = deal.Version;
 
-        await bed.Applier.ApplyOrderCancelledAsync(new OrderCancelledFact(bed.TenantId, Guid.CreateVersion7(), quotationId), Later.AddDays(1), Ct);
+        await bed.Applier.ApplyOrderCancelledAsync(new OrderCancelledFact(bed.TenantId, otherOrder, other), Later.AddDays(2), Ct);
 
-        Assert.True(deal.IsClosed);
+        Assert.Equal((bed.Pipeline.WonStage.Id, true, version), (deal.StageId, deal.IsClosed, deal.Version));
+        Assert.NotNull(otherSnapshot.OrderCancelledAt);
+        Assert.DoesNotContain(bed.Audit.Entries, entry => entry.Action == PipelineAuditActions.DealReopened);
     }
 
     // P12: sin la capacidad, procesado sin efecto.
@@ -6940,14 +7335,24 @@ public sealed class DealQuotationsApiTests
         Assert.Equal(((Guid?)null, (decimal?)1_000m, true), (firstAfter.PrimaryQuotationId, firstAfter.Amount, firstAfter.AmountIsEditable));
         Assert.Equal(((Guid?)secondQuotation, (decimal?)2_000m), (primary.PrimaryQuotationId, primary.Amount));
         Assert.Equal(2, primary.Quotations.Count);
+        // §6.3: el enlace manual audita como el aplicador. El negocio que perdió la cotización, una vez; el que la ganó, la
+        // principal dos veces (el primer link, que la hizo principal, y el primary explícito) y dos enlaces.
+        Assert.Equal(1L, await AuditCountAsync(connectionString, tenant.TenantId, PipelineAuditActions.QuotationUnlinked, first.Id));
+        Assert.Equal(2L, await AuditCountAsync(connectionString, tenant.TenantId, PipelineAuditActions.PrimaryQuotationSet, second.Id));
+        Assert.Equal(2L, await AuditCountAsync(connectionString, tenant.TenantId, PipelineAuditActions.QuotationLinked, second.Id));
     }
+
+    private static Task<long> AuditCountAsync(string connectionString, Guid tenantId, string action, Guid dealId) =>
+        CountAsync(connectionString,
+            "SELECT count(*) FROM audit.entries WHERE tenant_id = @t AND action = @a AND resource_id = @r",
+            ("t", tenantId), ("a", action), ("r", dealId.ToString()));
 }
 ```
 
 - [ ] **Step 2: Correr y verificar que fallan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.UnitTests\Modules.Pipeline.UnitTests.csproj" --filter "FullyQualifiedName~QuotationEventApplierTests"
 ```
 
@@ -7146,7 +7551,9 @@ public sealed class SetPrimaryQuotationValidator : AbstractValidator<SetPrimaryQ
 
 /// <summary>
 /// §4.4 y P11 del plan: enlazar a mano una cotización que llegó por evento. Tiene que ser del mismo cliente; si estaba en otro
-/// negocio se mueve, y ése pierde la principal (D27). Si el negocio no tenía principal, ésta pasa a serlo (D17).
+/// negocio se mueve, y ése pierde la principal (D27). Si el negocio no tenía principal, ésta pasa a serlo (D17). §6.3: se audita
+/// todo lo que pasó, como en el aplicador: <c>quotation_unlinked</c> en el negocio que la pierde, <c>primary_quotation_set</c> si
+/// pasó a ser la principal y <c>quotation_linked</c> en éste, en el mismo SaveChanges.
 /// </summary>
 public sealed class LinkDealQuotationHandler(
     DealCommandSteps steps, IDealQuotationRepository quotations, IDealRepository deals, IValidator<LinkDealQuotationCommand> validator)
@@ -7171,16 +7578,21 @@ public sealed class LinkDealQuotationHandler(
         }
 
         if (snapshot.DealId is { } previousId &&
-            await deals.FindAsync(command.TenantId, previousId, cancellationToken) is { } previous &&
-            previous.PrimaryQuotationId == snapshot.QuotationId)
+            await deals.FindAsync(command.TenantId, previousId, cancellationToken) is { } previous)
         {
-            previous.ClearPrimary(context.Now);
+            if (previous.PrimaryQuotationId == snapshot.QuotationId)
+            {
+                previous.ClearPrimary(context.Now);
+            }
+
+            steps.RecordAudit(context, PipelineAuditActions.QuotationUnlinked, previous.Id);
         }
 
         snapshot.LinkTo(deal.Id, context.Now);
         if (deal.PrimaryQuotationId is null)
         {
             deal.SetPrimaryQuotation(snapshot.QuotationId, snapshot.Total, snapshot.Currency, context.Now);
+            steps.RecordAudit(context, PipelineAuditActions.PrimaryQuotationSet, deal.Id);
         }
 
         return await steps.CommitAsync(context, PipelineAuditActions.QuotationLinked, cancellationToken);
@@ -7251,7 +7663,7 @@ y los dos métodos, después de `ReopenAsync`:
 - [ ] **Step 4: Correr y verificar que pasan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.UnitTests\Modules.Pipeline.UnitTests.csproj" --no-build --filter "FullyQualifiedName~QuotationEventApplierTests"
@@ -7264,7 +7676,7 @@ Esperado: 15 verdes en `QuotationEventApplierTests`, 3 en `DealQuotationsApiTest
 - [ ] **Step 5: Commit**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B status --short
 git -C $B add src/Modules/Pipeline/Modules.Pipeline.Application/QuotationEvents.cs src/Modules/Pipeline/Modules.Pipeline.Application/DealQuotations.cs src/Modules/Pipeline/Modules.Pipeline.Api/DealEndpoints.cs src/Modules/Pipeline/Modules.Pipeline.Infrastructure/PipelineInfrastructureExtensions.cs src/Bootstrapper/QepServiceCollectionExtensions.cs tests/Modules/Pipeline/Modules.Pipeline.UnitTests/PipelineFakes.cs tests/Modules/Pipeline/Modules.Pipeline.UnitTests/QuotationEventApplierTests.cs tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/DealQuotationsApiTests.cs
@@ -7545,7 +7957,7 @@ public sealed class QuotationEventsWorkerTests
 - [ ] **Step 2: Correr y verificar que fallan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.UnitTests\Modules.Pipeline.UnitTests.csproj" --filter "FullyQualifiedName~QuotationEventPayloadsTests"
 ```
 
@@ -7872,7 +8284,7 @@ internal sealed partial class QuotationEventsWorker(QuotationEventsProcessor pro
 - [ ] **Step 4: Correr y verificar que pasan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.UnitTests\Modules.Pipeline.UnitTests.csproj" --no-build --filter "FullyQualifiedName~QuotationEventPayloadsTests"
@@ -7885,7 +8297,7 @@ Esperado: 8 verdes en `QuotationEventPayloadsTests` (contando la teoría), 4 en 
 - [ ] **Step 5: Commit**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B status --short
 git -C $B add src/Modules/Pipeline/Modules.Pipeline.Infrastructure/Messaging src/Modules/Pipeline/Modules.Pipeline.Infrastructure/PipelineInfrastructureExtensions.cs tests/Modules/Pipeline/Modules.Pipeline.UnitTests/QuotationEventPayloadsTests.cs tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/PipelineApiHarness.cs tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/QuotationEventsWorkerTests.cs
@@ -7907,7 +8319,7 @@ git -C $B log -1 --format=%B
 - Test: `tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/BoardApiTests.cs`
 
 **Interfaces:**
-- Consumes: `IPipelineProvisioner`, `PipelineCaller`, directorios de la Task 7, `StallRules` (Task 4), `Currencies.OrderOf`, `CreateDealRequest`/`DealDetailDto` (Task 9), `QuotationEventApplier` (Task 10, para sembrar una principal en la prueba).
+- Consumes: `IPipelineProvisioner`, `PipelineCaller`, directorios de la Task 7, `DealCardMapper` (Task 9: etapa, dueño, días y estancado de cada tarjeta), `Currencies.OrderOf`, `CreateDealRequest`/`DealDetailDto` (Task 9), `QuotationEventApplier` (Task 10, para sembrar una principal en la prueba).
 - Produces:
   - `IPipelineBoardQueries { Task<IReadOnlyList<BoardAggregateRow>> AggregateAsync(Guid tenantId, Guid? ownerMemberId, DateTimeOffset closedSince, ct); Task<IReadOnlyList<BoardCardRow>> ListCardsAsync(Guid tenantId, Guid? ownerMemberId, DateTimeOffset closedSince, int perStage, ct) }`.
   - `public sealed record BoardAggregateRow(Guid StageId, string Currency, int Count, decimal? Amount)`, `public sealed record BoardCardRow(Guid Id, Guid StageId, string Title, Guid CustomerId, Guid OwnerMemberId, decimal? Amount, string Currency, DateTimeOffset StageEnteredAt, DateTimeOffset LastChangedAt, string? PrimaryQuotationNumber, long Version)`.
@@ -8003,6 +8415,24 @@ public sealed class BoardApiTests
             column.Totals);
     }
 
+    // D34: una columna con sólo negocios sin monto (lo normal después del triage) los cuenta y no trae totales, ni siquiera uno
+    // en cero por moneda.
+    [Fact]
+    public async Task AColumnWhoseDealsHaveNoAmountCountsThemAndHasNoTotals()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        await CreateAsync(setup, null);
+        await CreateAsync(setup, null, "USD");
+
+        var column = Column(await BoardAsync(setup), "Nuevo");
+
+        Assert.Equal((2, 2), (column.Count, column.Deals.Count));
+        Assert.Empty(column.Totals);
+    }
+
     // D23: el filtro por dueño es foco; "all" ve todo el tenant.
     [Fact]
     public async Task OwnerMeShowsMineAndAllShowsEveryone()
@@ -8064,8 +8494,8 @@ public sealed class BoardApiTests
         await ExecuteAsync(connectionString,
             """
             INSERT INTO pipeline.deals (id, tenant_id, pipeline_id, customer_id, owner_member_id, title, amount, currency, stage_id,
-                stage_entered_at, source, last_changed_at, created_at, updated_at, version)
-            SELECT gen_random_uuid(), @t, @p, @c, @o, 'Carga ' || n, 10, 'COP', @s, now() - make_interval(mins => n), 'Manual', now(), now(), now(), 1
+                stage_entered_at, source, last_changed_at, created_at, updated_at, version, history_count)
+            SELECT gen_random_uuid(), @t, @p, @c, @o, 'Carga ' || n, 10, 'COP', @s, now() - make_interval(mins => n), 'Manual', now(), now(), now(), 1, 0
             FROM generate_series(1, 205) AS n
             """,
             ("t", setup.Tenant.TenantId), ("p", stages.PipelineId), ("c", setup.CustomerId), ("o", setup.OwnerMemberId), ("s", stages.Stages[0].Id));
@@ -8087,9 +8517,12 @@ public sealed class BoardApiTests
         var setup = await SetupAsync(factory, connectionString);
         using var _ = setup.Client;
         var deal = await CreateAsync(setup, 100m);
+        // El instante lo calcula la prueba con el reloj de la app, no Postgres con now(): si el reloj del contenedor (Docker/WSL2)
+        // va adelantado, now() - 4 días queda a menos de 4 días del reloj de la API y DaysInStage da 3. La hora de más es margen.
+        var fourDaysAgo = DateTimeOffset.UtcNow.AddDays(-4).AddHours(-1);
         await ExecuteAsync(connectionString,
-            "UPDATE pipeline.deals SET stage_entered_at = now() - interval '4 days', last_changed_at = now() - interval '4 days' WHERE id = @id",
-            ("id", deal.Id));
+            "UPDATE pipeline.deals SET stage_entered_at = @at, last_changed_at = @at WHERE id = @id",
+            ("at", fourDaysAgo), ("id", deal.Id));
 
         var stalled = Assert.Single(Column(await BoardAsync(setup), "Nuevo").Deals);
         await SeedConversationAsync(factory, connectionString, setup.Tenant.TenantId, setup.CustomerId, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
@@ -8128,7 +8561,7 @@ public sealed class BoardApiTests
 - [ ] **Step 2: Correr y verificar que fallan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.IntegrationTests\Modules.Pipeline.IntegrationTests.csproj" --filter "FullyQualifiedName~BoardApiTests"
 ```
 
@@ -8154,7 +8587,8 @@ public static class BoardLimits
     public static readonly TimeSpan ClosedWindow = TimeSpan.FromDays(30);
 }
 
-/// <summary>Por etapa y moneda: cuántos negocios y la suma de sus montos (nula si ninguno tiene monto, D34).</summary>
+/// <summary>Por etapa y moneda: cuántos negocios (con monto o sin él) y la suma de los que tienen monto; nula si ninguno tiene
+/// (D34), y entonces esa moneda no aparece en los totales.</summary>
 public sealed record BoardAggregateRow(Guid StageId, string Currency, int Count, decimal? Amount);
 
 public sealed record BoardCardRow(
@@ -8248,11 +8682,11 @@ public sealed class GetBoardHandler(
                 .Select(card =>
                 {
                     var customer = customerRefs.GetValueOrDefault(card.CustomerId);
-                    var lastActivity = StallRules.LastActivity(card.LastChangedAt, activity.GetValueOrDefault(card.CustomerId)?.LastMessageAt);
+                    var facts = DealCardMapper.Describe(pipeline, card.StageId, card.StageEnteredAt, card.LastChangedAt, card.OwnerMemberId,
+                        names, activity.GetValueOrDefault(card.CustomerId)?.LastMessageAt, now);
                     return new DealCardDto(
-                        card.Id, card.Title, card.CustomerId, customer?.Name ?? DealDetailBuilder.UnknownCustomerName, customer?.IsComplete ?? false,
-                        card.Amount, card.Currency, card.OwnerMemberId, names.GetValueOrDefault(card.OwnerMemberId) ?? DealDetailBuilder.DeletedMemberName,
-                        StallRules.IsStalled(stage.Kind, stage.StallDays, lastActivity, now), StallRules.DaysIn(card.StageEnteredAt, now),
+                        card.Id, card.Title, card.CustomerId, DealCardMapper.CustomerName(customer), customer?.IsComplete ?? false,
+                        card.Amount, card.Currency, card.OwnerMemberId, facts.OwnerName, facts.IsStalled, facts.DaysInStage,
                         card.PrimaryQuotationNumber, card.Version);
                 })
                 .ToArray();
@@ -8288,11 +8722,20 @@ internal sealed class PipelineBoardQueries(PipelineDbContext dbContext) : IPipel
             deals = deals.Where(deal => deal.OwnerMemberId == owner);
         }
 
-        var rows = await deals
+        var counts = await deals
             .GroupBy(deal => new { deal.StageId, deal.Currency })
-            .Select(group => new { group.Key.StageId, group.Key.Currency, Count = group.Count(), Amount = group.Sum(deal => deal.Amount) })
+            .Select(group => new { group.Key.StageId, group.Key.Currency, Count = group.Count() })
             .ToListAsync(cancellationToken);
-        return [.. rows.Select(row => new BoardAggregateRow(row.StageId, row.Currency, row.Count, row.Amount))];
+        // D34: las sumas, sólo con los negocios que tienen monto, filtrados ANTES de agrupar. No sirve sumar el decimal? y esperar
+        // null: EF lo traduce como COALESCE(SUM(amount), 0), y una columna de sólo-sin-monto saldría con un total en cero.
+        var sums = await deals
+            .Where(deal => deal.Amount != null)
+            .GroupBy(deal => new { deal.StageId, deal.Currency })
+            .Select(group => new { group.Key.StageId, group.Key.Currency, Amount = group.Sum(deal => deal.Amount!.Value) })
+            .ToListAsync(cancellationToken);
+        var amounts = sums.ToDictionary(row => (row.StageId, row.Currency), row => row.Amount);
+        return [.. counts.Select(row => new BoardAggregateRow(
+            row.StageId, row.Currency, row.Count, amounts.TryGetValue((row.StageId, row.Currency), out var amount) ? amount : null))];
     }
 
     public async Task<IReadOnlyList<BoardCardRow>> ListCardsAsync(
@@ -8395,19 +8838,19 @@ internal static class BoardEndpoints
 - [ ] **Step 4: Correr y verificar que pasan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.IntegrationTests\Modules.Pipeline.IntegrationTests.csproj" --no-build --filter "FullyQualifiedName~BoardApiTests"
 dotnet test "$B\tests\ArchitectureTests\ArchitectureTests\ArchitectureTests.csproj" --no-build --filter "FullyQualifiedName~PipelineLayerTests|FullyQualifiedName~CompositionRootTests"
 ```
 
-Esperado: 7 verdes en `BoardApiTests`; capas y composición verdes.
+Esperado: 8 verdes en `BoardApiTests`; capas y composición verdes.
 
 - [ ] **Step 5: Commit**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B status --short
 git -C $B add src/Modules/Pipeline/Modules.Pipeline.Application/Board.cs src/Modules/Pipeline/Modules.Pipeline.Infrastructure/Persistence/PipelineBoardQueries.cs src/Modules/Pipeline/Modules.Pipeline.Infrastructure/PipelineInfrastructureExtensions.cs src/Modules/Pipeline/Modules.Pipeline.Api/BoardEndpoints.cs src/Modules/Pipeline/Modules.Pipeline.Api/PipelineEndpoints.cs src/Bootstrapper/QepServiceCollectionExtensions.cs tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/BoardApiTests.cs
@@ -8427,7 +8870,7 @@ git -C $B log -1 --format=%B
 - Test: `tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/TriageApiTests.cs`
 
 **Interfaces:**
-- Consumes: `IPipelineConversationDirectory`, `IPipelineCustomerDirectory` (Task 7), `IDealRepository.CustomersWithOpenDealsAsync`, `ITriageDecisionRepository`, `IPipelineReasonRepository.FindActiveAsync` (Task 6), `TriageRules`, `TriageDecision` (Task 4), `Deal.Create` (Task 5), `DealDetailBuilder` (Task 9), `ITenantDefaultCurrency`, `TenantModuleKeys.Messaging`.
+- Consumes: `IPipelineConversationDirectory.ListOpenAsync(tenantId, limit, ct) → PipelineConversationPage` (Task 7: ya trae sólo las pendientes, con el tope y el `Count` real) y `FindAsync`, `IPipelineCustomerDirectory` (Task 7), `IDealRepository.CustomersWithOpenDealsAsync`, `ITriageDecisionRepository`, `IPipelineReasonRepository.FindActiveAsync` (Task 6), `TriageRules`, `TriageDecision` (Task 4), `DealCreator`/`DealDraft` y `DealCardMapper.CustomerName`/`UnknownCustomerName` (Task 9), `TenantModuleKeys.Messaging`.
 - Produces:
   - `public static class TriageLimits { public const int MaxItems = 200; }`.
   - DTOs (contrato): `TriageItemDto(Guid ConversationId, Guid CustomerId, string CustomerName, bool CustomerIsComplete, DateTimeOffset? LastInboundAt)`, `TriageListDto(bool Enabled, int Count, IReadOnlyList<TriageItemDto> Items)`, `TriageResultDto(Guid ConversationId, string Decision, DealDetailDto? Deal)`.
@@ -8657,7 +9100,7 @@ public sealed class TriageApiTests
 - [ ] **Step 2: Correr y verificar que fallan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.IntegrationTests\Modules.Pipeline.IntegrationTests.csproj" --filter "FullyQualifiedName~TriageApiTests"
 ```
 
@@ -8729,9 +9172,7 @@ public sealed class ListTriageHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     IPipelineConversationDirectory conversations,
-    IPipelineCustomerDirectory customers,
-    IDealRepository deals,
-    ITriageDecisionRepository decisions)
+    IPipelineCustomerDirectory customers)
     : IQueryHandler<ListTriageQuery, TriageListDto>
 {
     public async Task<TriageListDto> HandleAsync(ListTriageQuery query, CancellationToken cancellationToken)
@@ -8742,22 +9183,16 @@ public sealed class ListTriageHandler(
             return new TriageListDto(false, 0, []);
         }
 
-        // Ya vienen abiertas, con cliente y en el orden del contrato (D35, D37, P13).
-        var open = await conversations.ListOpenAsync(query.TenantId, cancellationToken);
-        var withDeals = await deals.CustomersWithOpenDealsAsync(query.TenantId, [.. open.Select(item => item.CustomerId!.Value).Distinct()], cancellationToken);
-        var latest = await decisions.FindLatestAsync(query.TenantId, [.. open.Select(item => item.Id)], cancellationToken);
-        var pending = open
-            .Where(item => TriageRules.IsPending(
-                item.IsOpen, item.CustomerId, withDeals.Contains(item.CustomerId!.Value), item.LastInboundAt, latest.GetValueOrDefault(item.Id)?.DecidedAgainstInboundAt))
-            .ToArray();
-        var page = pending.Take(TriageLimits.MaxItems).ToArray();
-        var refs = await customers.FindAsync(query.TenantId, [.. page.Select(item => item.CustomerId!.Value).Distinct()], cancellationToken);
+        // D37 y P16: la consulta ya trae sólo las pendientes (§5.1, D35), en el orden del contrato (P13), con el tope y el Count
+        // real. Acá no se filtra ni se corta nada más.
+        var page = await conversations.ListOpenAsync(query.TenantId, TriageLimits.MaxItems, cancellationToken);
+        var refs = await customers.FindAsync(query.TenantId, [.. page.Items.Select(item => item.CustomerId!.Value).Distinct()], cancellationToken);
 
-        return new TriageListDto(true, pending.Length, [.. page.Select(item =>
+        return new TriageListDto(true, page.Count, [.. page.Items.Select(item =>
         {
             var customer = refs.GetValueOrDefault(item.CustomerId!.Value);
             return new TriageItemDto(
-                item.Id, item.CustomerId.Value, customer?.Name ?? DealDetailBuilder.UnknownCustomerName, customer?.IsComplete ?? false, item.LastInboundAt);
+                item.Id, item.CustomerId.Value, DealCardMapper.CustomerName(customer), customer?.IsComplete ?? false, item.LastInboundAt);
         })]);
     }
 }
@@ -8770,15 +9205,13 @@ public sealed class DecideTriageHandler(
     ITenantModules tenantModules,
     IPipelineConversationDirectory conversations,
     IPipelineCustomerDirectory customers,
-    IPipelineProvisioner provisioner,
     IDealRepository deals,
     ITriageDecisionRepository decisions,
     IPipelineReasonRepository reasons,
-    ITenantDefaultCurrency defaultCurrency,
     PipelineCaller caller,
     IPipelineUnitOfWork unitOfWork,
     IPipelineAuditRecorder audit,
-    DealDetailBuilder detail,
+    DealCreator creator,
     IClock clock,
     IValidator<DecideTriageCommand> validator)
     : ICommandHandler<DecideTriageCommand, TriageResultDto>
@@ -8820,28 +9253,30 @@ public sealed class DecideTriageHandler(
             return new TriageResultDto(conversation.Id, TriageDecisionKind.Dismissed.ToString(), null);
         }
 
-        var customerName = (await customers.FindAsync(command.TenantId, [customerId], cancellationToken)).GetValueOrDefault(customerId)?.Name;
-        var title = !string.IsNullOrWhiteSpace(command.Title) ? command.Title : customerName ?? DealDetailBuilder.UnknownCustomerName;
-        title = title.Trim();
+        var customer = (await customers.FindAsync(command.TenantId, [customerId], cancellationToken)).GetValueOrDefault(customerId);
+        var title = (!string.IsNullOrWhiteSpace(command.Title) ? command.Title : DealCardMapper.CustomerName(customer)).Trim();
         if (title.Length > Deal.TitleMaxLength)
         {
             title = title[..Deal.TitleMaxLength];
         }
 
-        var pipeline = await provisioner.EnsureAsync(command.TenantId, cancellationToken);
-        var currency = await defaultCurrency.GetAsync(command.TenantId, cancellationToken);
-        var deal = Deal.Create(command.TenantId, pipeline, customerId, actor.MemberId!.Value, title, null, currency, null,
-            DealSource.Conversation, conversation.Id, actor, now);
-        deals.Add(deal);
-        // D38: si otro asesor decidió contra el mismo entrante entre la comprobación de arriba y este SaveChanges, el índice único
-        // lo rechaza (pipeline.triage.already_decided) y este negocio no queda.
-        var creation = TriageDecision.Created(command.TenantId, conversation.Id, customerId, deal.Id, conversation.LastInboundAt, actor, now);
-        decisions.Add(creation);
-        audit.Record(command.TenantId, executionContext.SubjectId, false, PipelineAuditActions.DealCreated, PipelineAuditActions.DealResource, deal.Id, now);
-        audit.Record(command.TenantId, executionContext.SubjectId, false, PipelineAuditActions.TriageCreated, PipelineAuditActions.TriageResource, creation.Id, now);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        // D29: dueño = quien llama, origen = la conversación, sin monto y con la moneda del tenant. Crear lo hace DealCreator, el
+        // mismo camino que POST /deals; la decisión entra en su SaveChanges por beforeSave. D38: si otro asesor decidió contra el
+        // mismo entrante entre la comprobación de arriba y ese SaveChanges, el índice único lo rechaza
+        // (pipeline.triage.already_decided) y ni el negocio ni la decisión quedan.
+        var created = await creator.CreateAsync(
+            new DealDraft(command.TenantId, customerId, actor.MemberId!.Value, title, null, null, null, DealSource.Conversation, conversation.Id),
+            actor,
+            now,
+            deal =>
+            {
+                var creation = TriageDecision.Created(command.TenantId, conversation.Id, customerId, deal.Id, conversation.LastInboundAt, actor, now);
+                decisions.Add(creation);
+                audit.Record(command.TenantId, executionContext.SubjectId, false, PipelineAuditActions.TriageCreated, PipelineAuditActions.TriageResource, creation.Id, now);
+            },
+            cancellationToken);
 
-        return new TriageResultDto(conversation.Id, TriageDecisionKind.Created.ToString(), await detail.BuildAsync(pipeline, deal, cancellationToken));
+        return new TriageResultDto(conversation.Id, TriageDecisionKind.Created.ToString(), created);
     }
 }
 ```
@@ -8905,7 +9340,7 @@ public sealed record DecideTriageRequest(string? Action, string? Title, Guid? Di
 - [ ] **Step 4: Correr y verificar que pasan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.IntegrationTests\Modules.Pipeline.IntegrationTests.csproj" --no-build --filter "FullyQualifiedName~TriageApiTests"
@@ -8917,7 +9352,7 @@ Esperado: 7 verdes en `TriageApiTests`; capas y composición verdes.
 - [ ] **Step 5: Commit**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B status --short
 git -C $B add src/Modules/Pipeline/Modules.Pipeline.Application/Triage.cs src/Modules/Pipeline/Modules.Pipeline.Api/TriageEndpoints.cs src/Modules/Pipeline/Modules.Pipeline.Api/PipelineEndpoints.cs src/Bootstrapper/QepServiceCollectionExtensions.cs tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/TriageApiTests.cs
@@ -8937,7 +9372,7 @@ git -C $B log -1 --format=%B
 - Test: `tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/CustomerSummaryApiTests.cs`
 
 **Interfaces:**
-- Consumes: `IDealRepository.ListOpenByCustomerAsync`/`FindLastClosedByCustomerAsync`, `IDealQuotationRepository.FindAsync`, `IPipelineReasonRepository.FindNamesAsync` (Task 6), directorios (Task 7), `TriageState` (Task 13), `StallRules`, `DealDetailBuilder.DeletedMemberName` (Task 9), `PipelineNotFound`.
+- Consumes: `IDealRepository.ListOpenByCustomerAsync`/`FindLastClosedByCustomerAsync`, `IDealQuotationRepository.FindAsync`, `IPipelineReasonRepository.FindNamesAsync` (Task 6), directorios (Task 7), `TriageState` (Task 13), `DealCardMapper.Describe` (Task 9: etapa, dueño, días y estancado, igual que tablero y detalle), `PipelineNotFound`.
 - Produces:
   - DTOs (contrato, spec §6.4): `CustomerDealsSummaryDto(Guid CustomerId, IReadOnlyList<CustomerOpenDealDto> OpenDeals, CustomerClosedDealDto? LastClosedDeal, ConversationTriageStateDto? Triage)`, `CustomerOpenDealDto(Guid Id, string Title, Guid StageId, string StageName, decimal? Amount, string Currency, Guid OwnerMemberId, string OwnerName, bool IsStalled, int DaysInStage, string? PrimaryQuotationNumber, long Version)`, `CustomerClosedDealDto(Guid Id, string Title, string Outcome, DateTimeOffset ClosedAt, string? LossReasonName)`, `ConversationTriageStateDto(Guid ConversationId, string Status, IReadOnlyList<string> AvailableActions, TriageDecisionDto? LastDecision)`, `TriageDecisionDto(string Kind, DateTimeOffset DecidedAt, string? DismissReasonName)`.
   - `GetCustomerDealsSummaryQuery(Guid TenantId, Guid CustomerId, Guid? ConversationId) → CustomerDealsSummaryDto` y su handler.
@@ -9132,7 +9567,7 @@ public sealed class CustomerSummaryApiTests
 - [ ] **Step 2: Correr y verificar que fallan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.IntegrationTests\Modules.Pipeline.IntegrationTests.csproj" --filter "FullyQualifiedName~CustomerSummaryApiTests"
 ```
 
@@ -9213,16 +9648,15 @@ public sealed class GetCustomerDealsSummaryHandler(
         var openDeals = new List<CustomerOpenDealDto>();
         foreach (var deal in open)
         {
-            var stage = pipeline.FindStage(deal.StageId);
             var number = deal.PrimaryQuotationId is { } primaryId
                 ? (await quotations.FindAsync(query.TenantId, primaryId, cancellationToken))?.QuotationNumber
                 : null;
-            var lastActivity = StallRules.LastActivity(deal.LastChangedAt, activity?.LastMessageAt);
+            // Etapa, dueño, días y estancado: el mismo DealCardMapper del tablero y del detalle.
+            var card = DealCardMapper.Describe(
+                pipeline, deal.StageId, deal.StageEnteredAt, deal.LastChangedAt, deal.OwnerMemberId, names, activity?.LastMessageAt, now);
             openDeals.Add(new CustomerOpenDealDto(
-                deal.Id, deal.Title, deal.StageId, stage?.Name ?? string.Empty, deal.Amount, deal.Currency, deal.OwnerMemberId,
-                names.GetValueOrDefault(deal.OwnerMemberId) ?? DealDetailBuilder.DeletedMemberName,
-                stage is not null && StallRules.IsStalled(stage.Kind, stage.StallDays, lastActivity, now),
-                StallRules.DaysIn(deal.StageEnteredAt, now), number, deal.Version));
+                deal.Id, deal.Title, deal.StageId, card.StageName, deal.Amount, deal.Currency, deal.OwnerMemberId,
+                card.OwnerName, card.IsStalled, card.DaysInStage, number, deal.Version));
         }
 
         CustomerClosedDealDto? closedDto = null;
@@ -9315,7 +9749,7 @@ internal static class CustomerSummaryEndpoints
 - [ ] **Step 4: Correr y verificar que pasan**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 dotnet build "$B\Backend.slnx" --no-restore
 if ($LASTEXITCODE -ne 0) { throw "build falló" }
 dotnet test "$B\tests\Modules\Pipeline\Modules.Pipeline.IntegrationTests\Modules.Pipeline.IntegrationTests.csproj" --no-build --filter "FullyQualifiedName~CustomerSummaryApiTests"
@@ -9327,7 +9761,7 @@ Esperado: 6 verdes en `CustomerSummaryApiTests`; capas y composición verdes.
 - [ ] **Step 5: Commit**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B status --short
 git -C $B add src/Modules/Pipeline/Modules.Pipeline.Application/CustomerSummary.cs src/Modules/Pipeline/Modules.Pipeline.Api/CustomerSummaryEndpoints.cs src/Modules/Pipeline/Modules.Pipeline.Api/PipelineEndpoints.cs src/Bootstrapper/QepServiceCollectionExtensions.cs tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/CustomerSummaryApiTests.cs
@@ -9405,7 +9839,7 @@ rompe a Pipeline sin error de compilación. `QuotationEventsWorker` los consume 
 inbox propio (consumidor `pipeline.quotation-events`, reintentos a los 5 s, 30 s y cada 5 min). Un evento
 de un tenant sin `pipeline` se marca procesado sin efecto: prender el módulo después no rellena el pasado.
 
-**Despliegue.** Backend primero (migraciones `AddPipelineModuleKey` en Tenancy e `InitialPipeline`),
+**Despliegue.** Backend primero (migraciones `AddPipelineModuleKey` en Tenancy y `AddPipeline` en Pipeline),
 después el frontend del embudo —kanban, panel del chat con triage, ajustes y la sección de negocios en la
 ficha del cliente de la conversación—. Los permisos nuevos exigen reiniciar la API y recargar la sesión.
 Prender `pipeline` al tenant desde la consola de operador; para el triage también hace falta `messaging`.
@@ -9436,7 +9870,7 @@ Al final de la lista de gotchas, antes de `## Verificación`:
 Comprobar antes que no corre `Api.exe` (ver «Antes de empezar»).
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 $S = "$env:TEMP\embudo-baseline"
 $F = "$env:TEMP\embudo-final"
 if (Test-Path $F) { Remove-Item -Recurse -Force $F }
@@ -9467,16 +9901,17 @@ Se copian al handoff el resumen (`Fallas/Previas/Nuevas`) y la lista de nuevas (
 - [ ] **Step 5: Commit de la documentación**
 
 ```powershell
-$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend"
+$B = "C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\embudo-de-ventas"
 if ((git -C $B branch --show-current) -ne "feature/embudo-de-ventas") { throw "rama equivocada" }
 git -C $B status --short
 git -C $B add README.md CLAUDE.md
 git -C $B commit -m "docs(pipeline): contrato del embudo, eventos de cotización y gotchas del módulo"
 git -C $B log -1 --format=%B
-git -C $B log --oneline c74b955..HEAD
+git -C $B log --oneline 5ae2679..HEAD
+git -C $B log --format="%h %s" 5ae2679..HEAD -- src tests
 ```
 
-Esperado en el último comando: quince commits de este plan (Tasks 1–15), ninguno con `Co-Authored-By`.
+Esperado: en el primer `log`, los quince commits de este plan (Tasks 1–15) más, si se commiteó, la enmienda del plan (sólo `docs/`); en el segundo, catorce (Tasks 1–14: la 15 sólo toca `README.md` y `CLAUDE.md`). Ninguno con `Co-Authored-By`.
 
 ---
 
@@ -9490,20 +9925,23 @@ Esperado en el último comando: quince commits de este plan (Tasks 1–15), ning
 | D6, D7 (outbox + consumidor con reclamo) | Task 2 (productor), Task 11 (consumidor) |
 | D9, §5.3 (puertos de lectura) | Task 7 |
 | §4.2, D13–D16, D18, D19, D34 (negocio, transiciones, monto, historial) | Tasks 5, 6 y 9 |
-| §4.3 (historial append-only, actor) | Tasks 5 y 6 (P4) |
-| §4.4, D17, D25–D28 (reglas de cotización) | Task 10 (aplicador y enlace), Task 11 (worker) |
+| §4.3 (historial append-only, actor, índice `(tenant_id, deal_id, occurred_at)`) | Task 5 (ordinal del dominio, `EveryHistoryRowTakesTheNextOrdinalOfItsDeal`), Task 6 (P4: índice de §4.3 más el único del ordinal, `EveryStageChangeIsSavedWithItsHistoryRow`) |
+| §4.4, D17, D25–D28 (reglas de cotización) | Task 10 (aplicador y enlace; `ACancelledOrderOfAQuotationThatDidNotWinReopensNothing` con la no principal de un ganado), Task 11 (worker) |
 | §4.5 (tres eventos y su payload) | Task 2 y Task 11 (`QuotationEventPayloads`) |
-| §5.1, D20, D29, D30, D35, D37 (triage) | Tasks 4 (reglas) y 13 |
+| §5.1, D20, D29, D30, D35 (triage) | Tasks 4 (reglas), 7 (la consulta de pendientes) y 13 |
+| D37 (tope del triage en `ListOpenAsync`) | Task 7 (`ListOpenAsync` con `LIMIT` y `count(*) OVER ()`, `OpenConversationsAreThePendingOnesCappedWithTheRealCount`; P16), Task 13 (`TheQueueBringsAtMostTwoHundredWithTheRealCount`) |
 | D38 (carrera del triage) | Task 4 (`DecidedAgainstInboundAt` y la regla), Task 6 (índice único y traducción, `ASecondDecisionAgainstTheSameInboundIsAlreadyDecidedAndLeavesOneDeal`), Task 13 (`TwoConcurrentDecisionsLeaveOneDeal`) |
-| §5.2, D22 (estancado) | Task 4 (reglas), Tasks 9, 12 y 14 (al leer) |
+| §5.2, D22 (estancado) | Task 4 (reglas); al leer, un solo `DealCardMapper` (Task 9) para detalle, tablero (Task 12) y ficha (Task 14) |
 | §6, D23, D24, D33 (API, permisos, tablero) | Tasks 3, 8, 9, 10, 12 y 13 |
+| D34 (negocio sin monto: cuenta, no suma) | Task 5 (dominio), Task 12 (`TotalsAreGroupedByCurrencyAndANoAmountDealOnlyCounts`, `AColumnWhoseDealsHaveNoAmountCountsThemAndHasNoTotals`) |
 | §6.2 (errores) | `PipelineErrorCodes` (Task 3) y las pruebas de cada tarea |
-| §6.3 (auditoría) | Task 6 (recorder) y cada handler; el worker con `System` (Tasks 10 y 11) |
+| §6.3 (auditoría) | Task 6 (recorder) y cada handler, el enlace manual con `quotation_unlinked` y `primary_quotation_set` (Task 10, `LinkingMovesTheQuotationAndPrimaryChangesTheAmount`); el worker con `System` (Tasks 10 y 11) |
 | D31 (semillas) | Tasks 4 y 6 |
 | D32 (roles) | Task 3 |
 | §6.4, D36 (ficha del cliente) | Task 14 |
 | §7 (pruebas) | Todas; `PipelineLayerTests` en la Task 3 |
-| §8, §9 (fuera de alcance, despliegue) | Task 15 (README) |
+| §7, Quotations («si el `SaveChanges` falla, no hay evento») | Task 2: `ASendWhoseSaveFailsLeavesNoEventAndTheQuotationInDraft`, `AConversionWhoseSaveFailsLeavesNoEventAndNoOrder`, `ACancellationWhoseSaveFailsLeavesNoEventAndTheOrderUncancelled`, con `OutboxSaveFailureInterceptor` en el harness de Quotations |
+| §8, §9 (fuera de alcance, despliegue; migración `AddPipeline`) | Task 6 (nombre de la migración), Task 15 (README) |
 
 ## Lo que el spec dice y el plan ajusta
 
@@ -9511,3 +9949,5 @@ Esperado en el último comando: quince commits de este plan (Tasks 1–15), ning
 - **H10/D6 «reclamo + inbox como Storage»:** Storage no reclama (anti-join). El plan copia el consumidor de Identity (P2), que es el que reclama.
 - **Códigos y límites que el spec no fija:** P6 y P7.
 - **D12 «no se borra una etapa con negocios»:** además de la comprobación del handler, una FK `deals.stage_id → stages.id` con `RESTRICT` cierra la carrera entre la lectura y el commit; la unidad de trabajo la traduce a `pipeline.stage.has_deals` por nombre de restricción.
+- **§4.3 historial:** se respeta el índice `(tenant_id, deal_id, occurred_at)`; el orden lo da además una columna `ordinal` que asigna el dominio, con su índice único (P4).
+- **§5.3 `ListOpenAsync(Guid tenantId, CancellationToken) → IReadOnlyList<PipelineConversation>`** no tiene dónde llevar el `Count` real que D37 le pide. El plan lo cambia a `ListOpenAsync(Guid tenantId, int limit, CancellationToken) → PipelineConversationPage` y pone la pendencia de §5.1 en la consulta (P16).
