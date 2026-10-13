@@ -618,6 +618,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<GetMediaQuery, MediaStreamDto?>, GetMediaHandler>();
         // Messaging (spec 2026-10-10 §5.1, D-A1): el selector de transferir.
         services.AddScoped<IQueryHandler<ListAssigneesQuery, AssigneesDto>, ListAssigneesHandler>();
+        // Pipeline (spec 2026-10-13 §6): ajustes. Cada handler a mano: sin registro, 500 (CompositionRootTests).
+        services.AddValidatorsFromAssemblyContaining<ReplacePipelineStagesValidator>();
+        services.AddScoped<IQueryHandler<GetPipelineStagesQuery, PipelineStagesDto>, GetPipelineStagesHandler>();
+        services.AddScoped<ICommandHandler<ReplacePipelineStagesCommand, PipelineStagesDto>, ReplacePipelineStagesHandler>();
+        services.AddScoped<IQueryHandler<GetPipelineReasonsQuery, ReasonListDto>, GetPipelineReasonsHandler>();
+        services.AddScoped<ICommandHandler<ReplacePipelineReasonsCommand, ReasonListDto>, ReplacePipelineReasonsHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
