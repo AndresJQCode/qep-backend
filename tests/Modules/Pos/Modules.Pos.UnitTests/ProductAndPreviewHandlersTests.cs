@@ -116,6 +116,21 @@ public sealed class ProductAndPreviewHandlersTests
         Assert.Equal((2_380m, 3_420m, 18_000m, 21_420m), (shampoo.DiscountAmount, shampoo.TaxAmount, shampoo.Subtotal, shampoo.LineTotal));
     }
 
+    // Fix 2026-10-14: la vista previa cobra lo mismo que la venta y que la cotización en COP.
+    [Fact]
+    public async Task PreviewChargesTheDiscountedUnitPriceInWholePesos()
+    {
+        var bed = new PosTestBed();
+        var keratina = Guid.CreateVersion7();
+        bed.Products.Add("7703", "Kit keratina 120 ml", 35_000m, 19, id: keratina);
+
+        var preview = await Preview(bed, Discounter).HandleAsync(
+            new PreviewPosSaleCommand(TenantId, [new(keratina, 100m, 33.33m)]), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2_333_500m, preview.Total);
+        Assert.Equal(2_333_500m, preview.Lines[0].LineTotal);
+    }
+
     // Un producto borrado vuelve NotFound y fuera de los totales, no como 422 (spec, decisión 34).
     [Fact]
     public async Task PreviewKeepsUnsellableLinesOutOfTheTotals()

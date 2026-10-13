@@ -50,4 +50,40 @@ public sealed class VatIncludedLineTests
 
         Assert.Equal(21_420m, amounts.LineTotal);
     }
+
+    // Fix 2026-10-14: en COP el unitario descontado se cobra en pesos enteros, igual en la cotización
+    // y en POS. La facturación masiva le manda a Siigo round("Valor Unit" × 1,19) × cantidad, y sólo
+    // con el unitario entero eso da lo mismo que se cobró. 100 kits 7703 a 35.000 con 33,33%:
+    // 23.334,50 c/u se cobra 23.335, la línea 2.333.500 y el descuento lo que falta del bruto.
+    [Fact]
+    public void InPesosTheDiscountedUnitPriceIsChargedInWholePesos()
+    {
+        var amounts = VatIncludedLine.Compute(100m, 35_000m, 33.33m, 19, "COP");
+
+        Assert.Equal(2_333_500m, amounts.LineTotal);
+        Assert.Equal(1_166_500m, amounts.DiscountAmount);
+        Assert.Equal(372_575.63m, amounts.TaxAmount);
+        Assert.Equal(1_960_924.37m, amounts.Subtotal);
+    }
+
+    // Un precio de lista con centavos también se cobra entero, sin descuento negativo.
+    [Fact]
+    public void InPesosAListPriceWithCentsIsChargedWholeWithoutANegativeDiscount()
+    {
+        var amounts = VatIncludedLine.Compute(100m, 23_334.50m, 0m, 19, "COP");
+
+        Assert.Equal(2_333_500m, amounts.LineTotal);
+        Assert.Equal(0m, amounts.DiscountAmount);
+        Assert.Equal(23_335m, VatIncludedLine.ChargedListPrice(23_334.50m, "COP"));
+    }
+
+    // En otra moneda los centavos son plata: el resultado es el de siempre.
+    [Fact]
+    public void InAnotherCurrencyTheCentsStay()
+    {
+        Assert.Equal(
+            VatIncludedLine.Compute(100m, 24.63m, 5m, 19),
+            VatIncludedLine.Compute(100m, 24.63m, 5m, 19, "USD"));
+        Assert.Equal(24.63m, VatIncludedLine.ChargedListPrice(24.63m, "USD"));
+    }
 }

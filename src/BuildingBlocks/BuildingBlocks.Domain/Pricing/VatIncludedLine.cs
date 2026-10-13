@@ -35,6 +35,44 @@ public static class VatIncludedLine
         return new VatIncludedLineAmounts(discountAmount, taxAmount, lineTotal - taxAmount);
     }
 
+    /// <summary>
+    /// La línea en la moneda en que se cobra. En COP el unitario ya descontado se cobra en pesos
+    /// enteros (fix 2026-10-14), y el descuento es lo que falta para llegar al bruto: la facturación
+    /// masiva le manda a Siigo round("Valor Unit" × (1 + IVA)) × cantidad, y sólo con el unitario
+    /// entero eso da lo mismo que se cobró. 100 kits a 35.000 con 33,33% eran 23.334,50 c/u y
+    /// 2.333.450; Siigo facturaba 23.334 × 100. En otra moneda los centavos son plata y la
+    /// fórmula es la de siempre.
+    /// </summary>
+    public static VatIncludedLineAmounts Compute(
+        decimal quantity, decimal unitPrice, decimal discountPercentage, int taxPercentage, string currency)
+    {
+        if (currency != WholePesoCurrency)
+        {
+            return Compute(quantity, unitPrice, discountPercentage, taxPercentage);
+        }
+
+        var listPrice = ChargedListPrice(unitPrice, currency);
+        var chargedUnitPrice = RoundToPeso(listPrice * (1m - discountPercentage / 100m));
+        var charged = Compute(quantity, chargedUnitPrice, 0m, taxPercentage);
+        return charged with { DiscountAmount = Round(quantity * listPrice) - charged.LineTotal };
+    }
+
+    /// <summary>
+    /// El precio de lista con el que se cobra: en COP, en pesos enteros. Redondearlo también, y no
+    /// sólo el descontado, es lo que impide que el descuento quede negativo con un precio que
+    /// trae centavos.
+    /// </summary>
+    public static decimal ChargedListPrice(decimal unitPrice, string currency) =>
+        currency == WholePesoCurrency ? RoundToPeso(unitPrice) : unitPrice;
+
+    // Código ISO literal y no el catálogo de monedas de Tenancy: BuildingBlocks no lo referencia, y
+    // la regla es de la facturación masiva en pesos, no de los decimales con que se muestra cada
+    // moneda.
+    private const string WholePesoCurrency = "COP";
+
+    private static decimal RoundToPeso(decimal value) =>
+        Math.Round(value, 0, MidpointRounding.AwayFromZero);
+
     public static decimal Round(decimal value) =>
         Math.Round(value, 2, MidpointRounding.AwayFromZero);
 }
