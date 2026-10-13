@@ -95,6 +95,15 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .DisableAntiforgery();
 
+        // Messaging-media-reply R1: 200 (no crea nada en la base) con la URL firmada y las cabeceras que el front debe mandar.
+        group.MapPost("/conversations/{conversationId:guid}/messages/media/upload-session", CreateMediaUploadSessionAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Accepts<CreateMediaUploadSessionRequest>("application/json")
+            .Produces<MediaUploadSessionDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // Spec 2026-10-09 §8.4: sin If-Match; el acuse a Meta es best effort y la respuesta siempre 204.
         group.MapPost("/conversations/{conversationId:guid}/read", MarkReadAsync)
             .RequireAuthorization(MessagingPermissions.ConversationManage)
@@ -241,6 +250,11 @@ public static class MessagingEndpoints
         // Sin Location: no hay GET de un mensaje suelto, y apuntar a la colección del hilo confundiría.
         return Results.Created((string?)null, message);
     }
+
+    private static async Task<IResult> CreateMediaUploadSessionAsync(
+        Guid tenantId, Guid conversationId, CreateMediaUploadSessionRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new CreateMediaUploadSessionCommand(tenantId, conversationId, request.FileName, request.MimeType, request.SizeBytes), cancellationToken));
 
     private static async Task<IResult> ListConnectionsAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListMessagingConnectionsQuery(tenantId), cancellationToken));
@@ -389,6 +403,9 @@ public static class MessagingEndpoints
 
 /// <summary>§5.3: <c>clientId</c> lo genera la pantalla por intento de envío; un reintento con el mismo no duplica.</summary>
 public sealed record SendMessageRequest(Guid? ClientId, string? Text, Guid? ReplyTo = null);
+
+/// <summary>Messaging-media-reply R1: lo que el front declara antes de subir el adjunto directo al bucket.</summary>
+public sealed record CreateMediaUploadSessionRequest(string? FileName, string? MimeType, long SizeBytes);
 
 /// <summary>Spec 2026-10-10 §5.1.</summary>
 public sealed record TransferConversationRequest(Guid? MemberId);

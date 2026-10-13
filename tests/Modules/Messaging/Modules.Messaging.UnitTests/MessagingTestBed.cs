@@ -39,6 +39,27 @@ internal sealed class MessagingTestBed
 
     public InMemoryMediaStore Store { get; } = new();
 
+    public FakeUploadStaging Staging { get; } = new();
+
+    public CreateMediaUploadSessionHandler CreateMediaUploadSessionHandler(Guid? tenantId = null)
+    {
+        var membership = new FakeMembershipDirectory();
+        membership.Active[(SubjectId, TenantId)] = MemberId;
+        return new CreateMediaUploadSessionHandler(
+            Conversations,
+            Repository,
+            Messages,
+            Outbound,
+            Connections,
+            new FakeMemberNames(MemberId),
+            membership,
+            TenantModules,
+            new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
+            new FakeClock(Now),
+            Staging,
+            new CreateMediaUploadSessionValidator());
+    }
+
     public FakeMessageTemplates Templates { get; } = new();
 
     public FakeCustomerDirectory Customers { get; } = new();

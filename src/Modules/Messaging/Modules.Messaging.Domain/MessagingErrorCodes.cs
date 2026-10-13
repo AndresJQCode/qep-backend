@@ -22,6 +22,19 @@ public static class MessagingErrorCodes
     /// <summary>Spec 2026-10-11 §4.1: R2 no aceptó la nota de voz. No queda fila; reintentar es seguro.</summary>
     public const string MediaUploadFailed = "messaging.media.upload_failed";
 
+    /// <summary>Messaging-media-reply R15: el <c>uploadId</c> no resuelve a ningún objeto en la clave del miembro (ajeno,
+    /// vencido, ya consumido o nunca subido). Un id de otro tenant responde igual. 422.</summary>
+    public const string MediaUploadNotFound = "messaging.media.upload_not_found";
+
+    /// <summary>R10: el archivo pasa del tope de su tipo (25 MB una imagen, 100 MB un documento), declarado o medido en el bucket.</summary>
+    public const string MediaTooLarge = "messaging.media.too_large";
+
+    /// <summary>R9: el tipo no está permitido, la extensión no casa con el mime o la firma del contenido no casa con la extensión.</summary>
+    public const string MediaUnsupportedFormat = "messaging.media.unsupported_format";
+
+    /// <summary>R12: la firma dice jpeg o png pero la imagen no decodifica (o pasa de 40 megapíxeles).</summary>
+    public const string MediaInvalidImage = "messaging.media.invalid_image";
+
     /// <summary>Spec 2026-10-11 §5.2: la plantilla no está en el catálogo de la conexión, no está aprobada o v1 no sabe enviarla.</summary>
     public const string TemplateNotAvailable = "messaging.template.not_available";
 
