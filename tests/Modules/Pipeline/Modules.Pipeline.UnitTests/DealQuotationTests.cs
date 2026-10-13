@@ -1,0 +1,51 @@
+using Modules.Pipeline.Domain;
+
+namespace Modules.Pipeline.UnitTests;
+
+/// <summary>Spec 2026-10-13 §4.4: la foto que Pipeline guarda de cada cotización que le llegó por evento.</summary>
+public sealed class DealQuotationTests
+{
+    private static readonly DateTimeOffset Now = new(2026, 10, 13, 15, 0, 0, TimeSpan.Zero);
+
+    private static DealQuotation Sent() =>
+        DealQuotation.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), "COT-0001", Guid.CreateVersion7(), 1_000m, "COP", Now);
+
+    [Fact]
+    public void ANewSnapshotIsSentAndUnlinked()
+    {
+        var quotation = Sent();
+
+        Assert.Equal((DealQuotationStatus.Sent, (Guid?)null, "COT-0001", 1_000m), (quotation.Status, quotation.DealId, quotation.QuotationNumber, quotation.Total));
+    }
+
+    // Un sent que llega después del converted (reintento, D25) no la devuelve a Sent.
+    [Fact]
+    public void ConvertedIsStickyAndARefreshUpdatesTheFigures()
+    {
+        var quotation = Sent();
+        var orderId = Guid.CreateVersion7();
+        var customerId = Guid.CreateVersion7();
+
+        quotation.Refresh("COT-0001", customerId, 1_200m, "USD", converted: true, orderId, Now.AddHours(1));
+        quotation.Refresh("COT-0001", customerId, 1_300m, "USD", converted: false, null, Now.AddHours(2));
+
+        Assert.Equal((DealQuotationStatus.Converted, (Guid?)orderId, customerId), (quotation.Status, quotation.OrderId, quotation.CustomerId));
+        Assert.Equal((1_300m, "USD", Now.AddHours(2)), (quotation.Total, quotation.Currency, quotation.UpdatedAt));
+    }
+
+    [Fact]
+    public void LinkUnlinkAndCancelTheOrder()
+    {
+        var quotation = Sent();
+        var dealId = Guid.CreateVersion7();
+
+        quotation.LinkTo(dealId, Now);
+        Assert.Equal((Guid?)dealId, quotation.DealId);
+
+        quotation.Unlink(Now);
+        quotation.MarkOrderCancelled(Now.AddDays(1));
+
+        Assert.Null(quotation.DealId);
+        Assert.Equal((DateTimeOffset?)Now.AddDays(1), quotation.OrderCancelledAt);
+    }
+}
