@@ -26,6 +26,7 @@ using Modules.Messaging.Api;
 using Modules.Messaging.Application;
 using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
+using Modules.Pipeline.Api;
 using Modules.Platform.Api;
 using Modules.Platform.Infrastructure;
 using Modules.Pos.Api;
@@ -175,6 +176,7 @@ app.MapPosEndpoints();
 app.MapIntegrationsEndpoints();
 app.MapWhatsAppWebhook(RateLimiterPolicies.Webhook);
 app.MapMessagingEndpoints();
+app.MapPipelineEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al

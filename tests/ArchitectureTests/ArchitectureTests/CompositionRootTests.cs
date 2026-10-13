@@ -8,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using Modules.Authorization.Application;
 using Modules.Integrations.Application;
 using Modules.Messaging.Application;
+using Modules.Pipeline.Application;
 using Modules.Pos.Application;
 using Modules.Tenancy.Application;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
@@ -169,13 +170,13 @@ public sealed class CompositionRootTests
     /// entitlements, las 6 de POS, las tres <c>operator.*</c> y las dos <c>integrations.*</c> de los
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
-    /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12.</summary>
+    /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 y las tres <c>pipeline.*</c> del spec 2026-10-13.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheFiftyTwoConstants()
+    public void PermissionDiscoveryFindsTheFiftyFiveConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
-        // + el de respuestas rápidas (spec 2026-10-12 §3.5).
-        Assert.Equal(52, PermissionConstants().Length);
+        // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23).
+        Assert.Equal(55, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-11 §6.4 y decisión 16: de núcleo (el módulo lo revisa cada handler) y de fábrica sólo en <c>admin</c>:
@@ -259,6 +260,37 @@ public sealed class CompositionRootTests
         Assert.All(definitions, definition =>
         {
             Assert.Equal("Messaging", definition.Category);
+            Assert.Empty(definition.RequiredModules!);
+        });
+    }
+
+    /// <summary>Spec 2026-10-13 D32 y P1 del plan: de núcleo (cada handler revisa la capacidad pipeline); <c>admin</c> con los tres,
+    /// <c>advisor</c> sin los ajustes, <c>billing</c> y <c>cashier</c> sin ninguno.</summary>
+    [Fact]
+    public void ThePipelinePermissionsAreCoreAndGoToAdminAndAdvisor()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        string[] pipelinePermissions =
+            [PipelinePermissions.DealRead, PipelinePermissions.DealManage, PipelinePermissions.SettingsManage];
+
+        Assert.Equal(["pipeline.deal.read", "pipeline.deal.manage", "pipeline.settings.manage"], pipelinePermissions);
+        Assert.All(pipelinePermissions, permission => Assert.Contains(permission, catalog.PermissionsFor("admin")));
+        Assert.Contains(PipelinePermissions.DealRead, catalog.PermissionsFor("advisor"));
+        Assert.Contains(PipelinePermissions.DealManage, catalog.PermissionsFor("advisor"));
+        Assert.DoesNotContain(PipelinePermissions.SettingsManage, catalog.PermissionsFor("advisor"));
+        foreach (var role in new[] { "billing", "cashier" })
+        {
+            Assert.All(pipelinePermissions, permission => Assert.DoesNotContain(permission, catalog.PermissionsFor(role)));
+        }
+
+        var definitions = catalog.ListPermissions()
+            .Where(definition => pipelinePermissions.Contains(definition.Permission))
+            .ToArray();
+        Assert.Equal(3, definitions.Length);
+        Assert.All(definitions, definition =>
+        {
+            Assert.Equal("Pipeline", definition.Category);
             Assert.Empty(definition.RequiredModules!);
         });
     }

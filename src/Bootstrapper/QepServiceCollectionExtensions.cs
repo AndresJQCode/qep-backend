@@ -31,6 +31,8 @@ using Modules.Integrations.Infrastructure;
 using Modules.Messaging.Application;
 using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
+using Modules.Pipeline.Application;
+using Modules.Pipeline.Infrastructure;
 using Modules.Platform.Application;
 using Modules.Platform.Infrastructure;
 using Modules.Pos.Application;
@@ -652,6 +654,10 @@ public static class QepServiceCollectionExtensions
         // clientes y almacenamiento entran por adaptadores que se registran más abajo.
         services.AddMessagingInfrastructure(configuration);
 
+        // Pipeline (spec 2026-10-13): el embudo de ventas. Sólo ve Tenancy (y Audit en Infrastructure); conversaciones,
+        // clientes y nombres de miembros entran por adaptadores que se registran más abajo.
+        services.AddPipelineInfrastructure(configuration);
+
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
         // dos AddXInfrastructure porque el adaptador depende de servicios que ellos registran.
@@ -899,7 +905,11 @@ public static class QepServiceCollectionExtensions
                 MessagingPermissions.CampaignManage,
                 // Spec 2026-10-12 D-Q6: lo que el asesor manda en nombre de la empresa lo decide quien administra.
                 // El rol vive en código: sin migración.
-                MessagingPermissions.QuickReplyManage
+                MessagingPermissions.QuickReplyManage,
+                // Spec 2026-10-13 D32: el embudo de ventas completo. De núcleo; la capacidad pipeline la revisa cada handler.
+                PipelinePermissions.DealRead,
+                PipelinePermissions.DealManage,
+                PipelinePermissions.SettingsManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -949,7 +959,10 @@ public static class QepServiceCollectionExtensions
                 ReportingPermissions.QuotationRead,
                 // Spec 2026-10-09 (Mensajería), decisión 5: la asesora lee y responde la bandeja.
                 MessagingPermissions.ConversationRead,
-                MessagingPermissions.ConversationManage
+                MessagingPermissions.ConversationManage,
+                // Spec 2026-10-13 D32: la asesora trabaja sus negocios; los ajustes del embudo los decide quien administra.
+                PipelinePermissions.DealRead,
+                PipelinePermissions.DealManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "billing",
@@ -1383,6 +1396,29 @@ public static class QepServiceCollectionExtensions
             "Messaging",
             "medium",
             RequiredModules: []));
+        // Spec 2026-10-13 D23 y P1 del plan: categoría "Pipeline" y núcleo (RequiredModules vacío), para que el enmascarado por
+        // módulos no las toque y el 403 con la capacidad apagada salga con su código.
+        services.AddSingleton(new PermissionDefinition(
+            PipelinePermissions.DealRead,
+            "Ver el embudo de ventas",
+            "Permite ver el tablero, los negocios del tenant, el triage de conversaciones y los ajustes del embudo.",
+            "Pipeline",
+            "low",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            PipelinePermissions.DealManage,
+            "Gestionar negocios",
+            "Permite crear, editar, mover, ganar, perder y reabrir negocios, enlazar cotizaciones y decidir el triage.",
+            "Pipeline",
+            "medium",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            PipelinePermissions.SettingsManage,
+            "Configurar el embudo",
+            "Permite cambiar las etapas del embudo y los motivos de pérdida y de descarte.",
+            "Pipeline",
+            "medium",
+            RequiredModules: []));
     }
 
     private static void AddAuthentication(
@@ -1681,7 +1717,17 @@ public static class QepServiceCollectionExtensions
             // Sin esta política, RequireAuthorization(QuickReplyManage) no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
             .AddPolicy(
                 MessagingPermissions.QuickReplyManage,
-                policy => AddPermissionRequirement(policy, MessagingPermissions.QuickReplyManage));
+                policy => AddPermissionRequirement(policy, MessagingPermissions.QuickReplyManage))
+            // Spec 2026-10-13: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
+            .AddPolicy(
+                PipelinePermissions.DealRead,
+                policy => AddPermissionRequirement(policy, PipelinePermissions.DealRead))
+            .AddPolicy(
+                PipelinePermissions.DealManage,
+                policy => AddPermissionRequirement(policy, PipelinePermissions.DealManage))
+            .AddPolicy(
+                PipelinePermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, PipelinePermissions.SettingsManage));
     }
 
     private static void AddPermissionRequirement(
