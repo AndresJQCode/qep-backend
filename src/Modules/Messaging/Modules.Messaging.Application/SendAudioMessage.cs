@@ -140,7 +140,7 @@ public sealed class SendAudioMessageHandler(
 
     /// <summary>§6.3 paso 2: una subida fallida usa la tabla del envío. Un 4xx es un rechazo con su código (190/133010
     /// pasan la conexión a NeedsAttention); 5xx, timeout, red o un 2xx sin <c>id</c> no confirman nada.</summary>
-    private static SendResult FromUploadFailure(MessagingGraphFailure? failure) =>
+    internal static SendResult FromUploadFailure(MessagingGraphFailure? failure) =>
         failure is { HttpStatus: >= 400 and < 500 }
             ? new SendResult(SendOutcome.GraphError, null, failure.Code, null)
             : new SendResult(SendOutcome.Unconfirmed, null, null, null);

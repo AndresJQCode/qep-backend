@@ -43,5 +43,7 @@
   <ItemGroup>
     <PackageReference Include="FluentValidation.DependencyInjectionExtensions" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <!-- El compresor de imágenes del asesor (messaging-media-reply) decodifica acá, no en Storage. -->
+    <PackageReference Include="SixLabors.ImageSharp" />
   </ItemGroup>
 </Project>

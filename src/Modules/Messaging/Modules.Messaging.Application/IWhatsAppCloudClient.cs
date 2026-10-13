@@ -37,6 +37,23 @@ public interface IWhatsAppCloudClient
     Task<MessagingGraphResult<string>> UploadMediaAsync(
         MessagingSender sender, ReadOnlyMemory<byte> content, string mimeType, CancellationToken cancellationToken);
 
+    /// <summary>Messaging-media-reply: la misma subida, por stream y con el largo conocido de antes (un stream de R2 no lo dice y,
+    /// sin él, el multipart saldría en chunked). <paramref name="fileName"/> es el del multipart: genérico y ASCII; el que ve la
+    /// persona viaja en <see cref="SendDocumentAsync"/>. Va por su propio cliente, con 5 minutos.</summary>
+    Task<MessagingGraphResult<string>> UploadMediaAsync(
+        MessagingSender sender, Stream content, long contentLength, string mimeType, string fileName, CancellationToken cancellationToken);
+
+    /// <summary>Messaging-media-reply R4: <c>type: "image"</c> con el id de la subida; <paramref name="caption"/> y
+    /// <paramref name="contextWamid"/> sólo viajan si vienen. Mismo <see cref="SendResult"/> que el texto.</summary>
+    Task<SendResult> SendImageAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string? caption, string callbackData, string? contextWamid, CancellationToken cancellationToken);
+
+    /// <summary>Messaging-media-reply R4: <c>type: "document"</c>; <paramref name="fileName"/> es el nombre real que WhatsApp
+    /// muestra (<c>document.filename</c>).</summary>
+    Task<SendResult> SendDocumentAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string fileName, string? caption, string callbackData, string? contextWamid,
+        CancellationToken cancellationToken);
+
     /// <summary>Spec 2026-10-11 §6.4: <c>type: "audio"</c> con <c>voice: true</c>, para que llegue como nota de voz.
     /// Devuelve el mismo <see cref="SendResult"/> que el texto (D-V4: el nombre no se cambia en este trabajo).</summary>
     Task<SendResult> SendAudioAsync(

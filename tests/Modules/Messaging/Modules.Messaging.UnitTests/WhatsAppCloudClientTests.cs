@@ -92,6 +92,9 @@ public sealed class WhatsAppCloudClientTests
 
         public string? Body { get; private set; }
 
+        /// <summary>Lo que Content-Length diría en el cable; <c>null</c> = Transfer-Encoding: chunked.</summary>
+        public long? ContentLength { get; private set; }
+
         public List<CapturedPart> Parts { get; } = [];
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -99,6 +102,7 @@ public sealed class WhatsAppCloudClientTests
             Method = request.Method;
             Path = request.RequestUri?.AbsolutePath;
             MediaType = request.Content?.Headers.ContentType?.MediaType;
+            ContentLength = request.Content?.Headers.ContentLength;
             if (request.Content is MultipartFormDataContent multipart)
             {
                 foreach (var part in multipart)
@@ -224,6 +228,190 @@ public sealed class WhatsAppCloudClientTests
         var result = await ClientFor(handler).UploadMediaAsync(new MessagingSender("111", "token"), Audio, "audio/ogg", TestContext.Current.CancellationToken);
 
         Assert.Equal(new MessagingGraphFailure(0, null, "network"), result.Failure);
+    }
+
+    /// <summary>Como el cuerpo de R2: se lee una sola vez y no dice su largo.</summary>
+    private sealed class ForwardOnlyStream(byte[] bytes) : Stream
+    {
+        private readonly MemoryStream _inner = new(bytes);
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, count);
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private static readonly byte[] Photo = [0xFF, 0xD8, 0xFF, 0xE0, 9, 8, 7, 6];
+
+    // Un stream que no se puede medir fuerza chunked con StreamContent, y no está verificado que Graph lo acepte: el largo
+    // se conoce de antes (StatAsync o la imagen comprimida) y viaja en Content-Length.
+    [Fact]
+    public async Task AStreamUploadIsMultipartWithAKnownContentLengthEvenWhenTheStreamCannotSeek()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"id":"media.img"}""");
+        await using var content = new ForwardOnlyStream(Photo);
+
+        var result = await ClientFor(handler).UploadMediaAsync(
+            new MessagingSender("111", "token"), content, Photo.Length, "image/jpeg", "image.jpg", TestContext.Current.CancellationToken);
+
+        Assert.Equal(("media.img", (MessagingGraphFailure?)null), (result.Value, result.Failure));
+        Assert.Equal((HttpMethod.Post, "/v24.0/111/media", "multipart/form-data"), (handler.Method, handler.Path, handler.MediaType));
+        Assert.NotNull(handler.ContentLength);
+        Assert.True(handler.ContentLength > Photo.Length);
+        Assert.Equal(["messaging_product", "type", "file"], handler.Parts.Select(part => part.Name));
+        Assert.Equal("image/jpeg", Encoding.UTF8.GetString(handler.Parts[1].Bytes));
+        Assert.Equal(("image.jpg", "image/jpeg"), (handler.Parts[2].FileName, handler.Parts[2].ContentType));
+        Assert.Equal(Photo, handler.Parts[2].Bytes);
+    }
+
+    [Fact]
+    public async Task AStreamUploadOfADocumentCarriesTheGenericFileNameItIsGiven()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"id":"media.doc"}""");
+        await using var content = new ForwardOnlyStream(Audio);
+
+        await ClientFor(handler).UploadMediaAsync(
+            new MessagingSender("111", "token"), content, Audio.Length, "application/pdf", "document.pdf", TestContext.Current.CancellationToken);
+
+        Assert.Equal(("document.pdf", "application/pdf"), (handler.Parts[2].FileName, handler.Parts[2].ContentType));
+        Assert.Equal(Audio, handler.Parts[2].Bytes);
+    }
+
+    [Theory]
+    [InlineData(400, """{"error":{"code":100,"fbtrace_id":"t"}}""", 400, 100, "http_400")]
+    [InlineData(500, "{}", 500, null, "http_500")]
+    [InlineData(200, "{}", 200, null, "no_id")]
+    public async Task AStreamUploadThatMetaDoesNotConfirmIsAFailureWithItsStatusAndCode(int status, string body, int expectedStatus, int? expectedCode, string expectedReason)
+    {
+        using var handler = new ScriptedHandler((HttpStatusCode)status, body);
+        await using var content = new ForwardOnlyStream(Photo);
+
+        var result = await ClientFor(handler).UploadMediaAsync(
+            new MessagingSender("111", "token"), content, Photo.Length, "image/jpeg", "image.jpg", TestContext.Current.CancellationToken);
+
+        Assert.Null(result.Value);
+        Assert.Equal(new MessagingGraphFailure(expectedStatus, expectedCode, expectedReason), result.Failure);
+    }
+
+    [Fact]
+    public async Task AnUnreachableGraphDuringAStreamUploadIsAFailureWithoutStatus()
+    {
+        using var handler = new NetworkDownHandler();
+        await using var content = new ForwardOnlyStream(Photo);
+
+        var result = await ClientFor(handler).UploadMediaAsync(
+            new MessagingSender("111", "token"), content, Photo.Length, "image/jpeg", "image.jpg", TestContext.Current.CancellationToken);
+
+        Assert.Equal(new MessagingGraphFailure(0, null, "network"), result.Failure);
+    }
+
+    // Un documento de 100 MB por una red lenta no cabe en los 30 s de la nota de voz: tiene su propio cliente, con 5 minutos.
+    [Fact]
+    public async Task TheStreamUploadGoesThroughTheMediaClientAndTheVoiceUploadKeepsItsOwn()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"id":"media.1"}""");
+        var factory = new RecordingClientFactory(handler);
+        var client = new WhatsAppCloudClient(factory, Options.Create(new MessagingMetaOptions()), NullLogger<WhatsAppCloudClient>.Instance);
+        await using var content = new ForwardOnlyStream(Photo);
+
+        await client.UploadMediaAsync(new MessagingSender("111", "token"), content, Photo.Length, "image/jpeg", "image.jpg", TestContext.Current.CancellationToken);
+        await client.UploadMediaAsync(new MessagingSender("111", "token"), Audio, "audio/ogg", TestContext.Current.CancellationToken);
+
+        Assert.Equal(["messaging.meta-graph-media", "messaging.meta-graph-upload"], factory.Names);
+    }
+
+    [Fact]
+    public void TheRegisteredMediaClientWaitsFiveMinutes()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:QepDatabase"] = "Host=localhost;Database=unused" })
+            .Build();
+        using var provider = new ServiceCollection().AddLogging().AddMessagingInfrastructure(configuration).BuildServiceProvider();
+
+        using var media = provider.GetRequiredService<IHttpClientFactory>().CreateClient("messaging.meta-graph-media");
+
+        Assert.Equal((TimeSpan.FromMinutes(5), new Uri(WhatsAppCloudClient.BaseUrl)), (media.Timeout, media.BaseAddress));
+    }
+
+    [Fact]
+    public async Task AnImageGoesWithItsMediaIdCaptionAndQuotedContext()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"messages":[{"id":"wamid.img"}]}""");
+
+        var result = await ClientFor(handler).SendImageAsync(
+            new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.img", "Mira esto", "qep:x", "wamid.quoted", TestContext.Current.CancellationToken);
+
+        Assert.Equal((SendOutcome.Sent, "wamid.img"), (result.Outcome, result.Wamid));
+        Assert.Equal("/v24.0/111/messages", handler.Path);
+        Assert.Contains("\"type\":\"image\"", handler.Body, StringComparison.Ordinal);
+        Assert.Contains("\"image\":{\"id\":\"media.img\",\"caption\":\"Mira esto\"}", handler.Body, StringComparison.Ordinal);
+        Assert.Contains("\"recipient\":\"CO.1\"", handler.Body, StringComparison.Ordinal);
+        Assert.Contains("\"context\":{\"message_id\":\"wamid.quoted\"}", handler.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnImageWithoutCaptionOrQuoteCarriesNeitherKey()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"messages":[{"id":"wamid.img"}]}""");
+
+        await ClientFor(handler).SendImageAsync(
+            new MessagingSender("111", "token"), new SendToPhone("573001234567"), "media.img", null, "qep:x", null, TestContext.Current.CancellationToken);
+
+        Assert.Contains("\"image\":{\"id\":\"media.img\"}", handler.Body, StringComparison.Ordinal);
+        Assert.Contains("\"to\":\"573001234567\"", handler.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"caption\"", handler.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"context\"", handler.Body, StringComparison.Ordinal);
+    }
+
+    // El multipart lleva un nombre genérico; el que ve la persona en WhatsApp es el de document.filename.
+    [Fact]
+    public async Task ADocumentGoesWithItsRealFileNameCaptionAndQuotedContext()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"messages":[{"id":"wamid.doc"}]}""");
+
+        var result = await ClientFor(handler).SendDocumentAsync(
+            new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.doc", "Cotización mayo.xlsx", "Cotización", "qep:x", "wamid.quoted",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal((SendOutcome.Sent, "wamid.doc"), (result.Outcome, result.Wamid));
+        Assert.Contains("\"type\":\"document\"", handler.Body, StringComparison.Ordinal);
+        using var document = System.Text.Json.JsonDocument.Parse(handler.Body!);
+        var content = document.RootElement.GetProperty("document");
+        Assert.Equal(("media.doc", "Cotización mayo.xlsx", "Cotización"), (content.GetProperty("id").GetString(), content.GetProperty("filename").GetString(), content.GetProperty("caption").GetString()));
+        Assert.Equal("wamid.quoted", document.RootElement.GetProperty("context").GetProperty("message_id").GetString());
+    }
+
+    [Fact]
+    public async Task ARejectedDocumentKeepsTheGraphCodeLikeText()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.BadRequest, """{"error":{"code":131053,"error_user_title":"Media upload error"}}""");
+
+        var result = await ClientFor(handler).SendDocumentAsync(
+            new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.doc", "a.pdf", null, "qep:x", null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new SendResult(SendOutcome.GraphError, null, 131053, "Media upload error"), result);
+        Assert.DoesNotContain("\"caption\"", handler.Body, StringComparison.Ordinal);
     }
 
     [Fact]

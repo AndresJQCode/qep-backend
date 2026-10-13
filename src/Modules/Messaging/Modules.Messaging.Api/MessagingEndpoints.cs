@@ -95,6 +95,25 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .DisableAntiforgery();
 
+        // Messaging-media-reply R1: 200 (no crea nada en la base) con la URL firmada y las cabeceras que el front debe mandar.
+        group.MapPost("/conversations/{conversationId:guid}/messages/media/upload-session", CreateMediaUploadSessionAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Accepts<CreateMediaUploadSessionRequest>("application/json")
+            .Produces<MediaUploadSessionDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Messaging-media-reply R3: confirma el adjunto ya subido al staging. JSON, no multipart: los bytes no pasan por esta ruta.
+        // Un 524 de Cloudflare (límite de 100 s al origen) en este POST significa «sigue enviando»; ver SendMediaRequest.
+        group.MapPost("/conversations/{conversationId:guid}/messages/media", SendMediaMessageAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Accepts<SendMediaRequest>("application/json")
+            .Produces<MessageDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // Spec 2026-10-09 §8.4: sin If-Match; el acuse a Meta es best effort y la respuesta siempre 204.
         group.MapPost("/conversations/{conversationId:guid}/read", MarkReadAsync)
             .RequireAuthorization(MessagingPermissions.ConversationManage)
@@ -239,6 +258,20 @@ public static class MessagingEndpoints
     {
         var message = await dispatcher.SendAsync(new SendMessageCommand(tenantId, conversationId, request.ClientId, request.Text, request.ReplyTo), cancellationToken);
         // Sin Location: no hay GET de un mensaje suelto, y apuntar a la colección del hilo confundiría.
+        return Results.Created((string?)null, message);
+    }
+
+    private static async Task<IResult> CreateMediaUploadSessionAsync(
+        Guid tenantId, Guid conversationId, CreateMediaUploadSessionRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new CreateMediaUploadSessionCommand(tenantId, conversationId, request.FileName, request.MimeType, request.SizeBytes), cancellationToken));
+
+    private static async Task<IResult> SendMediaMessageAsync(
+        Guid tenantId, Guid conversationId, SendMediaRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var message = await dispatcher.SendAsync(
+            new SendMediaMessageCommand(tenantId, conversationId, request.ClientId, request.UploadId, request.FileName, request.Caption, request.ReplyTo), cancellationToken);
+        // Sin Location, igual que el texto.
         return Results.Created((string?)null, message);
     }
 
@@ -389,6 +422,17 @@ public static class MessagingEndpoints
 
 /// <summary>§5.3: <c>clientId</c> lo genera la pantalla por intento de envío; un reintento con el mismo no duplica.</summary>
 public sealed record SendMessageRequest(Guid? ClientId, string? Text, Guid? ReplyTo = null);
+
+/// <summary>Messaging-media-reply R3: confirma el adjunto que el front dejó en el staging. <c>FileName</c> es el que la persona vio
+/// al elegir el archivo (el handler reconstruye la clave con su extensión y el <c>uploadId</c>); <c>ClientId</c> lo genera la pantalla
+/// por intento de envío. Va en JSON y no en multipart porque los bytes ya están en el bucket.
+/// Para el front: este POST puede tardar (R2 a Meta dentro del request). Si Cloudflare responde 524 —corta a los 100 s— no es un
+/// error: el servidor sigue enviando. Reintenta con el mismo <c>clientId</c>; es idempotente y devuelve el mensaje ya guardado
+/// en vez de enviarlo dos veces.</summary>
+public sealed record SendMediaRequest(Guid? UploadId, Guid? ClientId, string? FileName, string? Caption = null, Guid? ReplyTo = null);
+
+/// <summary>Messaging-media-reply R1: lo que el front declara antes de subir el adjunto directo al bucket.</summary>
+public sealed record CreateMediaUploadSessionRequest(string? FileName, string? MimeType, long SizeBytes);
 
 /// <summary>Spec 2026-10-10 §5.1.</summary>
 public sealed record TransferConversationRequest(Guid? MemberId);

@@ -39,6 +39,62 @@ internal sealed class MessagingTestBed
 
     public InMemoryMediaStore Store { get; } = new();
 
+    public FakeUploadStaging Staging { get; }
+
+    public FakeImageCompressor Compressor { get; } = new();
+
+    public MessagingTestBed() => Staging = new FakeUploadStaging(Store);
+
+    /// <summary>Lo que "subió el front" al staging del miembro de la prueba: el objeto en el bucket bajo la clave que reconstruye el
+    /// handler. Devuelve la clave.</summary>
+    public string Stage(Guid conversationId, Guid uploadId, string fileName, byte[] bytes, Guid? memberId = null)
+    {
+        var key = MessagingMediaKeys.Staging(TenantId, conversationId, memberId ?? MemberId, uploadId, OutboundMediaPolicy.ExtensionOf(fileName));
+        Store.Objects[key] = (bytes, OutboundMediaPolicy.MimeTypeOf(OutboundMediaPolicy.FormatOf(OutboundMediaPolicy.ExtensionOf(fileName))!.Value));
+        return key;
+    }
+
+    public SendMediaMessageHandler SendMediaHandler(Guid? tenantId = null)
+    {
+        var membership = new FakeMembershipDirectory();
+        membership.Active[(SubjectId, TenantId)] = MemberId;
+        return new SendMediaMessageHandler(
+            Conversations,
+            Repository,
+            Messages,
+            Outbound,
+            Meta,
+            Store,
+            Staging,
+            Compressor,
+            Connections,
+            new FakeMemberNames(MemberId),
+            membership,
+            TenantModules,
+            new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
+            new FakeClock(Now),
+            new SendMediaMessageValidator());
+    }
+
+    public CreateMediaUploadSessionHandler CreateMediaUploadSessionHandler(Guid? tenantId = null)
+    {
+        var membership = new FakeMembershipDirectory();
+        membership.Active[(SubjectId, TenantId)] = MemberId;
+        return new CreateMediaUploadSessionHandler(
+            Conversations,
+            Repository,
+            Messages,
+            Outbound,
+            Connections,
+            new FakeMemberNames(MemberId),
+            membership,
+            TenantModules,
+            new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
+            new FakeClock(Now),
+            Staging,
+            new CreateMediaUploadSessionValidator());
+    }
+
     public FakeMessageTemplates Templates { get; } = new();
 
     public FakeCustomerDirectory Customers { get; } = new();
@@ -278,6 +334,12 @@ internal sealed record SentText(MessagingSender Sender, SendTarget Target, strin
 
 internal sealed record UploadedMedia(MessagingSender Sender, byte[] Content, string MimeType);
 
+internal sealed record StreamUploadedMedia(MessagingSender Sender, byte[] Content, long DeclaredLength, string MimeType, string FileName);
+
+internal sealed record SentImage(MessagingSender Sender, SendTarget Target, string MediaId, string? Caption, string CallbackData, string? ContextWamid);
+
+internal sealed record SentDocument(MessagingSender Sender, SendTarget Target, string MediaId, string FileName, string? Caption, string CallbackData, string? ContextWamid);
+
 internal sealed record SentTemplate(MessagingSender Sender, SendTarget Target, TemplateSend Template, string CallbackData);
 
 internal sealed record SentAudio(MessagingSender Sender, SendTarget Target, string MediaId, string CallbackData, string? ContextWamid);
@@ -321,6 +383,53 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
         }
 
         return Task.FromResult(NextUpload);
+    }
+
+    public List<StreamUploadedMedia> StreamUploads { get; } = [];
+
+    /// <summary>Corre cuando "Meta" recibe la subida por stream, antes de contestar: sirve para ver qué había pasado ya (p. ej. si
+    /// ya existía el reclamo).</summary>
+    public Action? DuringStreamUpload { get; set; }
+
+    /// <summary>Lee el stream completo, como Meta: lo que la prueba ve es lo que de verdad viajó.</summary>
+    public async Task<MessagingGraphResult<string>> UploadMediaAsync(
+        MessagingSender sender, Stream content, long contentLength, string mimeType, string fileName, CancellationToken cancellationToken)
+    {
+        using var buffer = new MemoryStream();
+        await content.CopyToAsync(buffer, cancellationToken);
+        StreamUploads.Add(new StreamUploadedMedia(sender, buffer.ToArray(), contentLength, mimeType, fileName));
+        DuringStreamUpload?.Invoke();
+        if (UploadException is { } exception)
+        {
+            throw exception;
+        }
+
+        return NextUpload;
+    }
+
+    public List<SentImage> ImageSends { get; } = [];
+
+    public List<SentDocument> DocumentSends { get; } = [];
+
+    /// <summary>Como <see cref="SendTextAsync"/>: devuelve <see cref="NextSend"/> y corre <see cref="DuringSend"/>.</summary>
+    public Task<SendResult> SendImageAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string? caption, string callbackData, string? contextWamid, CancellationToken cancellationToken)
+    {
+        ImageSends.Add(new SentImage(sender, target, mediaId, caption, callbackData, contextWamid));
+        DuringSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(NextSend);
+    }
+
+    /// <summary>Como <see cref="SendImageAsync"/>.</summary>
+    public Task<SendResult> SendDocumentAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string fileName, string? caption, string callbackData, string? contextWamid,
+        CancellationToken cancellationToken)
+    {
+        DocumentSends.Add(new SentDocument(sender, target, mediaId, fileName, caption, callbackData, contextWamid));
+        DuringSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(NextSend);
     }
 
     /// <summary>Como <see cref="SendTextAsync"/>: devuelve <see cref="NextSend"/> y corre <see cref="DuringSend"/>.</summary>
@@ -397,8 +506,13 @@ internal sealed class FakeOutboundMessages : IOutboundMessages
     /// <summary>Lo ya commiteado con ese clientId (§8.5 paso 2, sin candado).</summary>
     public ExistingOutbound? Committed { get; set; }
 
+    /// <summary>Lo que aparece en la segunda consulta (otro request con el mismo clientId terminó mientras éste leía R2).</summary>
+    public ExistingOutbound? CommittedOnSecondLookup { get; set; }
+
+    private int _lookups;
+
     public Task<ExistingOutbound?> FindByClientIdAsync(Guid conversationId, Guid clientId, CancellationToken cancellationToken) =>
-        Task.FromResult(Committed);
+        Task.FromResult(++_lookups > 1 && CommittedOnSecondLookup is not null ? CommittedOnSecondLookup : Committed);
 
     public List<FakeClaim> Claims { get; } = [];
 
@@ -521,7 +635,14 @@ internal sealed class InMemoryMediaStore : IMessagingMediaStore
         Objects[key] = (buffer.ToArray(), contentType);
     }
 
-    public Task<MediaStreamDto?> OpenReadAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public List<string> Opened { get; } = [];
+
+    public Task<MediaStreamDto?> OpenReadAsync(string key, CancellationToken cancellationToken)
+    {
+        Opened.Add(key);
+        return Task.FromResult(
+            Objects.TryGetValue(key, out var stored) ? new MediaStreamDto(new MemoryStream(stored.Bytes, writable: false), stored.ContentType, stored.Bytes.Length, null) : null);
+    }
 
     public Exception? DeleteFailure { get; set; }
 

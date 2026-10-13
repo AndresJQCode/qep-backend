@@ -130,15 +130,22 @@ internal sealed class OutboundGuards(
     public async Task<MessagingSender> ResolveSenderAsync(Guid tenantId, Guid connectionId, IOutboundClaim claim, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(claim);
-        var sender = await connections.ResolveSenderAsync(tenantId, connectionId, cancellationToken);
-        if (sender is null)
+        try
+        {
+            return await ResolveSenderAsync(tenantId, connectionId, cancellationToken);
+        }
+        catch (MessagingDomainException)
         {
             await claim.RollbackAsync(CancellationToken.None);
-            throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "The WhatsApp connection is paused, needs attention or was deleted.");
+            throw;
         }
-
-        return sender;
     }
+
+    /// <summary>La misma conexión <c>Active</c>, sin reclamo: el adjunto del asesor sube a Meta antes de reclamar la fila, así que
+    /// no hay nada que deshacer si la conexión no sirve.</summary>
+    public async Task<MessagingSender> ResolveSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        await connections.ResolveSenderAsync(tenantId, connectionId, cancellationToken)
+            ?? throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "The WhatsApp connection is paused, needs attention or was deleted.");
 
     /// <summary>
     /// §8.3, la tabla de respuestas. Vuelve sólo si quedó <c>Sent</c>; en cualquier otro caso cierra el reclamo y lanza.
@@ -205,10 +212,10 @@ internal sealed class OutboundGuards(
         // Spec 2026-10-11 §5.2: una plantilla guardada vuelve con su texto ya armado y su detalle (de ahí sale template).
         var isTemplate = existing.Kind == MessageKind.Template;
         return new MessageRow(
-            existing.Id, conversationId, MessageDirection.Outbound, existing.Kind, existing.Kind is MessageKind.Text or MessageKind.Template ? existing.Text : null, null,
+            existing.Id, conversationId, MessageDirection.Outbound, existing.Kind, existing.Kind is MessageKind.Text or MessageKind.Template ? existing.Text : null, existing.Caption,
             isTemplate ? existing.DetailsJson : null,
             existing.Status, null, existing.OccurredAt, existing.SentByMemberId, clientId,
-            existing.MediaMimeType is { } mimeType ? new MessageMediaRow(mimeType, null) : null, existing.ReplyToMessageId);
+            existing.MediaMimeType is { } mimeType ? new MessageMediaRow(mimeType, existing.MediaFileName) : null, existing.ReplyToMessageId);
     }
 
     // Si Integrations no logra pasar la conexión a NeedsAttention, la respuesta sigue siendo el 422 documentado;

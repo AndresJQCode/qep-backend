@@ -12,7 +12,9 @@
   </PropertyGroup>
 
   <!-- Avisos de SixLabors.ImageSharp 3.1.12 (la 4.x es la única corregida). Se silencian porque
-       ninguno es alcanzable desde Storage:
+       ninguno es alcanzable desde Storage ni desde Bootstrapper (el compresor de imágenes del
+       asesor, ImageSharpMessagingImageCompressor, decodifica con una Configuration propia que
+       sólo registra JPEG y PNG: sin TIFF, sin ICC Convert, sin ecualización):
        - GHSA-j3p4-wp97-rph4: TIFF con float + ecualización de histograma. No ecualizamos nunca.
        - GHSA-j9gm-c75j-xc9q y GHSA-jjfr-hcj7-qf5w: codificadores TIFF CCITT T4/T6. Sólo
          codificamos WebP.

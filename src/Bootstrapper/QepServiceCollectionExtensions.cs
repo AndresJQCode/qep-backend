@@ -579,6 +579,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<SendMessageCommand, MessageDto>, SendMessageHandler>();
         // Messaging (spec 2026-10-11 §6): la nota de voz, con las mismas guardas que el texto.
         services.AddScoped<ICommandHandler<SendAudioMessageCommand, MessageDto>, SendAudioMessageHandler>();
+        // Messaging-media-reply R1: la sesión de subida del adjunto del asesor (imagen o documento).
+        services.AddScoped<ICommandHandler<CreateMediaUploadSessionCommand, MediaUploadSessionDto>, CreateMediaUploadSessionHandler>();
+        // Messaging-media-reply R3: la confirmación del adjunto. El validador entra con AddValidatorsFromAssemblyContaining de arriba.
+        services.AddScoped<ICommandHandler<SendMediaMessageCommand, MessageDto>, SendMediaMessageHandler>();
         // Messaging (spec 2026-10-11 §5): plantillas. Conexiones y catálogo para leer; enviar una plantilla y abrir una conversación con ella.
         services.AddScoped<IQueryHandler<ListMessagingConnectionsQuery, IReadOnlyList<MessagingConnectionDto>>, ListMessagingConnectionsHandler>();
         services.AddScoped<IQueryHandler<ListTemplatesQuery, IReadOnlyList<MessageTemplateDto>>, ListTemplatesHandler>();
@@ -678,6 +682,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IMessagingAssignees, MessagingAssignees>();
         // Messaging (spec 2026-10-09 §6.4 y §8.6): la copia de los medios entrantes, en el bucket privado de Storage.
         services.AddScoped<IMessagingMediaStore, MessagingMediaStore>();
+        // Messaging-media-reply: el staging de los adjuntos del asesor (R1, R13) en el mismo bucket privado y el compresor de
+        // imágenes (R12); el compresor no guarda estado y es singleton.
+        services.AddScoped<IMessagingUploadStaging, MessagingUploadStaging>();
+        services.AddSingleton<IMessagingImageCompressor, ImageSharpMessagingImageCompressor>();
 
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
