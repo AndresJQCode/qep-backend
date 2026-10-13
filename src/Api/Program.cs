@@ -27,6 +27,7 @@ using Modules.Messaging.Application;
 using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
 using Modules.Pipeline.Api;
+using Modules.Pipeline.Infrastructure;
 using Modules.Platform.Api;
 using Modules.Platform.Infrastructure;
 using Modules.Pos.Api;
@@ -229,6 +230,11 @@ await app.Services.InitializeIntegrationsDatabaseAsync(
 // esquemas: Integrations y Customers entran por puertos. Las extensiones (pg_trgm, unaccent,
 // btree_gin) van en public, como las de Customers y Catalog.
 await app.Services.InitializeMessagingDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Pipeline (spec 2026-10-13): después de Audit (escribe en audit.entries) y de Tenancy (lee platform.outbox_messages). Sin FKs
+// a otros esquemas: clientes, conversaciones, membresías y cotizaciones son referencias blandas.
+await app.Services.InitializePipelineDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y
