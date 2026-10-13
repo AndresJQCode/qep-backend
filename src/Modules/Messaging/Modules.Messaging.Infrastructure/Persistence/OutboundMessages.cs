@@ -22,9 +22,9 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             var kind = MessageColumnCodes.ToCode(draft.Kind);
             var inserted = await dbContext.Database.SqlQuery<Guid>(
                 $"""
-                INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, client_id, sent_by_member_id, created_at,
+                INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, caption, client_id, sent_by_member_id, created_at,
                                                 reply_to_message_id, reply_to_wamid, details)
-                VALUES ({draft.MessageId}, {draft.ConversationId}, {draft.TenantId}, {draft.ConnectionId}, {draft.Now}, 2, {kind}, 1, {draft.Text}, {draft.ClientId}, {draft.SentByMemberId}, {draft.Now},
+                VALUES ({draft.MessageId}, {draft.ConversationId}, {draft.TenantId}, {draft.ConnectionId}, {draft.Now}, 2, {kind}, 1, {draft.Text}, {draft.Caption}, {draft.ClientId}, {draft.SentByMemberId}, {draft.Now},
                         {draft.ReplyToMessageId}, {draft.ReplyToWamid}, {draft.DetailsJson}::jsonb)
                 ON CONFLICT (conversation_id, client_id) WHERE client_id IS NOT NULL DO NOTHING
                 RETURNING id AS "Value"
@@ -38,7 +38,8 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             var rows = await dbContext.Database.SqlQuery<ExistingRow>(
                 $"""
                 SELECT m.id AS "Id", m.status AS "Status", m.occurred_at AS "OccurredAt", m.sent_by_member_id AS "SentByMemberId", coalesce(m.text, '') AS "Text",
-                       m.reply_to_message_id AS "ReplyToMessageId", m.kind AS "Kind", mm.mime_type AS "MediaMimeType", m.details::text AS "DetailsJson"
+                       m.reply_to_message_id AS "ReplyToMessageId", m.kind AS "Kind", mm.mime_type AS "MediaMimeType", m.details::text AS "DetailsJson",
+                       mm.file_name AS "MediaFileName", m.caption AS "Caption"
                 FROM messaging.messages m LEFT JOIN messaging.message_media mm ON mm.message_id = m.id
                 WHERE m.conversation_id = {draft.ConversationId} AND m.client_id = {draft.ClientId} FOR UPDATE OF m
                 """).ToListAsync(cancellationToken);
@@ -56,7 +57,8 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
         var rows = await dbContext.Database.SqlQuery<ExistingRow>(
             $"""
             SELECT m.id AS "Id", m.status AS "Status", m.occurred_at AS "OccurredAt", m.sent_by_member_id AS "SentByMemberId",
-                   coalesce(m.text, '') AS "Text", m.reply_to_message_id AS "ReplyToMessageId", m.kind AS "Kind", mm.mime_type AS "MediaMimeType", m.details::text AS "DetailsJson"
+                   coalesce(m.text, '') AS "Text", m.reply_to_message_id AS "ReplyToMessageId", m.kind AS "Kind", mm.mime_type AS "MediaMimeType", m.details::text AS "DetailsJson",
+                   mm.file_name AS "MediaFileName", m.caption AS "Caption"
             FROM messaging.messages m LEFT JOIN messaging.message_media mm ON mm.message_id = m.id
             WHERE m.conversation_id = {conversationId} AND m.client_id = {clientId}
             """).ToListAsync(cancellationToken);
@@ -65,7 +67,7 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
 
     private static ExistingOutbound ToExisting(ExistingRow row) =>
         new(row.Id, MessageColumnCodes.ToStatus(row.Status), row.OccurredAt, row.SentByMemberId, row.Text, row.ReplyToMessageId,
-            MessageColumnCodes.ToKind(row.Kind), row.MediaMimeType, row.DetailsJson);
+            MessageColumnCodes.ToKind(row.Kind), row.MediaMimeType, row.DetailsJson, row.MediaFileName, row.Caption);
 
     private sealed class ExistingRow
     {
@@ -86,6 +88,10 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
         public string? MediaMimeType { get; set; }
 
         public string? DetailsJson { get; set; }
+
+        public string? MediaFileName { get; set; }
+
+        public string? Caption { get; set; }
     }
 
     private sealed class Claim(MessagingDbContext dbContext, IDbContextTransaction transaction, OutboundDraft draft, ExistingOutbound? existing) : IOutboundClaim
@@ -100,11 +106,12 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
 
         public async Task CommitSentAsync(string wamid, DateTimeOffset occurredAt, string? metaMediaId, CancellationToken cancellationToken)
         {
-            var preview = PreviewOf(draft.Text);
+            // Una imagen o un documento no tienen texto: la foto de la conversación muestra su pie (como la ingesta, Text ?? Caption).
+            var preview = PreviewOf(draft.Text ?? draft.Caption);
             var kind = MessageColumnCodes.ToCode(draft.Kind);
             await dbContext.Database.ExecuteSqlAsync(
                 $"""
-                UPDATE messaging.messages SET status = 1, wamid = {wamid}, occurred_at = {occurredAt}, text = {draft.Text}, kind = {kind},
+                UPDATE messaging.messages SET status = 1, wamid = {wamid}, occurred_at = {occurredAt}, text = {draft.Text}, caption = {draft.Caption}, kind = {kind},
                     failure_code = NULL, failure_title = NULL, sent_by_member_id = {draft.SentByMemberId},
                     reply_to_message_id = {draft.ReplyToMessageId}, reply_to_wamid = {draft.ReplyToWamid}, details = {draft.DetailsJson}::jsonb
                 WHERE id = {MessageId}
@@ -136,7 +143,7 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             var kind = MessageColumnCodes.ToCode(draft.Kind);
             await dbContext.Database.ExecuteSqlAsync(
                 $"""
-                UPDATE messaging.messages SET status = 4, failure_code = {failureCode}, failure_title = {failureTitle}, occurred_at = {occurredAt}, text = {draft.Text}, kind = {kind},
+                UPDATE messaging.messages SET status = 4, failure_code = {failureCode}, failure_title = {failureTitle}, occurred_at = {occurredAt}, text = {draft.Text}, caption = {draft.Caption}, kind = {kind},
                     reply_to_message_id = {draft.ReplyToMessageId}, reply_to_wamid = {draft.ReplyToWamid}, details = {draft.DetailsJson}::jsonb
                 WHERE id = {MessageId}
                 """, cancellationToken);
@@ -166,9 +173,9 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             await dbContext.Database.ExecuteSqlAsync(
                 $"""
                 INSERT INTO messaging.message_media (message_id, mime_type, file_name, meta_media_id, sha256, size_bytes, storage_key, stored_at, attempts, next_attempt_at, last_error)
-                VALUES ({MessageId}, {media.MimeType}, NULL, {mediaId}, {media.Sha256Hex}, {media.SizeBytes}, {key}, {occurredAt}, 0, {occurredAt}, NULL)
+                VALUES ({MessageId}, {media.MimeType}, {media.FileName}, {mediaId}, {media.Sha256Hex}, {media.SizeBytes}, {key}, {occurredAt}, 0, {occurredAt}, NULL)
                 ON CONFLICT (message_id) DO UPDATE SET
-                    mime_type = EXCLUDED.mime_type, meta_media_id = EXCLUDED.meta_media_id, sha256 = EXCLUDED.sha256, size_bytes = EXCLUDED.size_bytes,
+                    mime_type = EXCLUDED.mime_type, file_name = EXCLUDED.file_name, meta_media_id = EXCLUDED.meta_media_id, sha256 = EXCLUDED.sha256, size_bytes = EXCLUDED.size_bytes,
                     storage_key = EXCLUDED.storage_key, stored_at = EXCLUDED.stored_at, attempts = 0, next_attempt_at = EXCLUDED.next_attempt_at, last_error = NULL
                 """, cancellationToken);
         }
