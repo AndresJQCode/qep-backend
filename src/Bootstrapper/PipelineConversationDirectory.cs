@@ -15,7 +15,7 @@ internal sealed class PipelineConversationDirectory(MessagingDbContext messaging
 {
     /// <summary>
     /// D37 y P16 del plan: el tope y el <c>Count</c> real salen de la consulta. Para eso la pendencia de §5.1 va en el
-    /// <c>WHERE</c>: es <see cref="PipelineRules.IsPending"/> escrita en SQL, con dos <c>NOT EXISTS</c> sobre las tablas de Pipeline en
+    /// <c>WHERE</c>: es <see cref="TriageRules.IsPending"/> escrita en SQL, con dos <c>NOT EXISTS</c> sobre las tablas de Pipeline en
     /// la misma base (Bootstrapper es la raíz de composición; ningún módulo se referencia). Si una de las dos cambia, cambia la
     /// otra: <c>PipelineRulesTests</c> fija la regla y <c>OpenConversationsAreThePendingOnesCappedWithTheRealCount</c> y
     /// <c>TriageApiTests</c>, esta consulta. <c>count(*) OVER ()</c> se calcula antes del <c>LIMIT</c>: es el total.
