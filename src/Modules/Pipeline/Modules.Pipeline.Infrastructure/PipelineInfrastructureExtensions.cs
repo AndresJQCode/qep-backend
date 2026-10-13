@@ -23,6 +23,8 @@ public static class PipelineInfrastructureExtensions
         services.AddScoped<IDealQuotationRepository, DealQuotationRepository>();
         services.AddScoped<IPipelineReasonRepository, PipelineReasonRepository>();
         services.AddScoped<ITriageDecisionRepository, TriageDecisionRepository>();
+        // D33 y P9: las consultas del tablero (agregados y tarjetas) se resuelven en la base.
+        services.AddScoped<IPipelineBoardQueries, PipelineBoardQueries>();
         // P4 del plan: la unidad de trabajo guarda el historial pendiente de cada negocio.
         services.AddScoped<IPipelineUnitOfWork, PipelineUnitOfWork>();
         // §6.3: auditoría atómica propia (nunca el IAuditRecorder de Tenancy).

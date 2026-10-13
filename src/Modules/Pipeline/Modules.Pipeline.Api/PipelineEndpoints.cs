@@ -13,6 +13,7 @@ public static class PipelineEndpoints
         var group = endpoints.MapGroup("/api/v1/tenants/{tenantId:guid}/pipeline").WithTags("Pipeline");
         group.MapSettingsEndpoints();
         group.MapDealEndpoints();
+        group.MapBoardEndpoints();
         return endpoints;
     }
 }
