@@ -1912,6 +1912,17 @@ nota de voz. R2 caído es 422 `messaging.media.upload_failed` sin fila. La fila 
 (con `meta_media_id = ''` si Meta nunca dio un id), así que la nota se escucha desde otro dispositivo y el reintento
 sobrescribe la misma clave.
 
+**Imágenes y documentos del asesor.** En dos pasos (spec `messaging-media-reply`, 2026-10-13). Primero
+`POST …/conversations/{id}/messages/media/upload-session` con `{ fileName, mimeType, sizeBytes }` devuelve 200 con
+`uploadId`, `uploadUrl`, `expiresAt` y los `headers` que el navegador manda en el `PUT` directo a R2 (bucket privado,
+`messaging/staging/{tenantId}/{conversationId}/{memberId}/{uploadId}{ext}`). Después `POST …/messages/media` con
+`{ uploadId, clientId, fileName, caption?, replyTo? }` confirma: revisa tamaño y firma binaria, comprime la imagen, la
+sube a Meta y envía; responde 201 cuando Meta contesta. Imagen jpeg/png hasta 25 MB, recomprimida siempre a JPEG q80 con
+el lado mayor en 1600 px y sin EXIF (el original se borra); documento pdf, doc, docx, xls o xlsx hasta 100 MB. `caption`
+opcional hasta 1024. Mismas reglas que el texto: ventana, asignado, autoasignación, cita e idempotencia por `clientId`; un
+`Failed` conserva el staging para el reintento. Errores 422: `messaging.media.upload_not_found`, `too_large`,
+`unsupported_format` e `invalid_image`.
+
 **Medios.** Los entrantes se copian a R2 (bucket privado, `messaging/{tenantId}/{messageId}`) con un
 worker que verifica el SHA-256 de Meta; `GET …/messaging/media/{messageId}` los sirve con la sesión,
 con `nosniff`, CSP `sandbox` y `attachment` para todo lo que no sea imagen, audio o video. Mientras no
@@ -2009,6 +2020,35 @@ Esperado: `200`. Sin el header: `401`. La entrega se procesa en los 3 s siguient
 4. Prender `messaging` al tenant (consola de operador o el SQL de respaldo de «Módulos por tenant»).
    Lo que hace el owner del lado de Meta está en
    `docs/superpowers/plans/2026-10-09-mensajeria-whatsapp-handoff-meta.md`.
+
+#### Pendientes del owner antes de producción: imágenes y documentos del asesor
+
+El código está en `develop` desde `a5a79c0` (2026-10-13). Antes de llevarlo a `main` y desplegarlo:
+
+1. **Regla de lifecycle para `messaging/staging/` en el bucket privado.** Un archivo que el navegador sube y nunca se
+   confirma —o un envío que quedó `Failed` y nadie reintentó— se queda ahí. No hay worker que lo limpie: lo limpia la
+   regla. El prefijo es obligatorio, igual que en `exports/`: sin él, la regla borra todo el bucket.
+
+   ```powershell
+   npx wrangler r2 bucket lifecycle add <bucket-privado> expire-messaging-staging "messaging/staging/" --expire-days 1
+   npx wrangler r2 bucket lifecycle list <bucket-privado>   # para verificarla
+   ```
+
+   Ojo con el prefijo: **no** uses `staging/` a secas. Esa clave es de Storage y los comprobantes de pago viven ahí
+   retenidos (ver «Comprobantes de pago v2»).
+2. **Verificar el CORS del bucket privado.** El `PUT` va al mismo bucket que la biblioteca de archivos, así que la regla
+   de [`ops/r2-cors.aws.json`](ops/r2-cors.aws.json) ya sirve si está aplicada: `PUT`, `Content-Type` **e**
+   `If-None-Match`, con el origen exacto del SPA de producción. Compruébalo con una subida real desde la pantalla, no
+   leyendo el archivo: un archivo versionado no configura nada.
+3. **Desplegar el backend antes que el frontend.** No hay migración. El SPA de producción no usa estas rutas hasta que
+   salga el slice del frontend, así que el backend puede ir solo.
+4. **Probar en local con Meta real antes de `main`.** Una imagen y un documento grande (cerca de 100 MB), con y sin
+   cita. El envío a Meta con `Content-Length` sólo está probado contra un doble.
+5. **Saber qué esperar de la confirmación.** Cloudflare corta a los 100 s con un **524** aunque el ingress espere 240
+   (`k8s/prod-ingress.yaml`). Con un documento grande la confirmación puede pasar ese tiempo: el servidor sigue y el
+   mensaje sale. El frontend lo trata como «sigue enviando» y reintenta con el mismo `clientId`, que no duplica.
+6. **Aceptar que los adjuntos no pasan por ClamAV.** A diferencia de la biblioteca de archivos, Messaging no escanea.
+   Se decidió así al aceptar `.doc` y `.xls`, que pueden traer macros.
 
 ## Verificación
 
