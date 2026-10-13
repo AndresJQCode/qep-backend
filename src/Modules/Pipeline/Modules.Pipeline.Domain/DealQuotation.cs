@@ -62,8 +62,14 @@ public sealed class DealQuotation
         if (converted)
         {
             Status = DealQuotationStatus.Converted;
-            OrderId = orderId;
-            OrderCancelledAt = null;
+
+            // Un converted repetido o desordenado (sin pedido, o del mismo pedido) no borra ni el pedido ni su anulación: sólo un
+            // pedido distinto es una conversión nueva y deja sin efecto la anulación anterior.
+            if (orderId is { } newOrderId && newOrderId != OrderId)
+            {
+                OrderId = newOrderId;
+                OrderCancelledAt = null;
+            }
         }
 
         UpdatedAt = now;

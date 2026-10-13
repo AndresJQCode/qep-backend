@@ -33,6 +33,37 @@ public sealed class DealQuotationTests
         Assert.Equal((1_300m, "USD", Now.AddHours(2)), (quotation.Total, quotation.Currency, quotation.UpdatedAt));
     }
 
+    // Entrega desordenada o reintento: el converted del MISMO pedido que ya se anuló no borra la anulación ni el pedido.
+    [Fact]
+    public void ARepeatedConvertedOfACancelledOrderKeepsTheCancellation()
+    {
+        var quotation = Sent();
+        var orderId = Guid.CreateVersion7();
+        var customerId = quotation.CustomerId;
+        quotation.Refresh("COT-0001", customerId, 1_000m, "COP", converted: true, orderId, Now);
+        quotation.MarkOrderCancelled(Now.AddDays(1));
+
+        quotation.Refresh("COT-0001", customerId, 1_000m, "COP", converted: true, orderId, Now.AddDays(2));
+        quotation.Refresh("COT-0001", customerId, 1_000m, "COP", converted: true, null, Now.AddDays(3));
+
+        Assert.Equal(((Guid?)orderId, (DateTimeOffset?)Now.AddDays(1)), (quotation.OrderId, quotation.OrderCancelledAt));
+    }
+
+    // Un pedido distinto sí es una conversión nueva: la anulación anterior ya no aplica.
+    [Fact]
+    public void AConvertedWithANewOrderClearsTheOldCancellation()
+    {
+        var quotation = Sent();
+        var customerId = quotation.CustomerId;
+        quotation.Refresh("COT-0001", customerId, 1_000m, "COP", converted: true, Guid.CreateVersion7(), Now);
+        quotation.MarkOrderCancelled(Now.AddDays(1));
+        var newOrder = Guid.CreateVersion7();
+
+        quotation.Refresh("COT-0001", customerId, 1_000m, "COP", converted: true, newOrder, Now.AddDays(2));
+
+        Assert.Equal(((Guid?)newOrder, (DateTimeOffset?)null), (quotation.OrderId, quotation.OrderCancelledAt));
+    }
+
     [Fact]
     public void LinkUnlinkAndCancelTheOrder()
     {

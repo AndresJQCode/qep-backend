@@ -32,6 +32,8 @@ internal static class DealEndpoints
         deals.MapPost("/{dealId:guid}/win", WinAsync).WithWriteContract<DealVersionRequest>();
         deals.MapPost("/{dealId:guid}/lose", LoseAsync).WithWriteContract<LoseDealRequest>();
         deals.MapPost("/{dealId:guid}/reopen", ReopenAsync).WithWriteContract<DealVersionRequest>();
+        deals.MapPost("/{dealId:guid}/quotations/{quotationId:guid}/link", LinkQuotationAsync).WithWriteContract<DealVersionRequest>();
+        deals.MapPost("/{dealId:guid}/quotations/{quotationId:guid}/primary", SetPrimaryQuotationAsync).WithWriteContract<DealVersionRequest>();
     }
 
     /// <summary>Lo común de toda escritura sobre un negocio existente.</summary>
@@ -75,6 +77,14 @@ internal static class DealEndpoints
     private static async Task<IResult> ReopenAsync(
         Guid tenantId, Guid dealId, DealVersionRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new ReopenDealCommand(tenantId, dealId, request.Version), cancellationToken));
+
+    private static async Task<IResult> LinkQuotationAsync(
+        Guid tenantId, Guid dealId, Guid quotationId, DealVersionRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new LinkDealQuotationCommand(tenantId, dealId, quotationId, request.Version), cancellationToken));
+
+    private static async Task<IResult> SetPrimaryQuotationAsync(
+        Guid tenantId, Guid dealId, Guid quotationId, DealVersionRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new SetPrimaryQuotationCommand(tenantId, dealId, quotationId, request.Version), cancellationToken));
 }
 
 /// <summary>Todo opcional: lo que falte sale 422 con su clave en <c>errors</c>, no 400 del binder.</summary>

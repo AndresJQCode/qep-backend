@@ -32,6 +32,8 @@ public static class PipelineInfrastructureExtensions
         services.AddScoped<DealDetailBuilder>();
         services.AddScoped<DealCommandSteps>();
         services.AddScoped<DealCreator>();
+        // Spec 2026-10-13 §4.4: las reglas de los eventos de Quotations; lo usa el worker (Task 11) en su scope por mensaje.
+        services.AddScoped<QuotationEventApplier>();
         return services;
     }
 }

@@ -632,6 +632,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<WinDealCommand, DealDetailDto>, WinDealHandler>();
         services.AddScoped<ICommandHandler<LoseDealCommand, DealDetailDto>, LoseDealHandler>();
         services.AddScoped<ICommandHandler<ReopenDealCommand, DealDetailDto>, ReopenDealHandler>();
+        services.AddScoped<ICommandHandler<LinkDealQuotationCommand, DealDetailDto>, LinkDealQuotationHandler>();
+        services.AddScoped<ICommandHandler<SetPrimaryQuotationCommand, DealDetailDto>, SetPrimaryQuotationHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
