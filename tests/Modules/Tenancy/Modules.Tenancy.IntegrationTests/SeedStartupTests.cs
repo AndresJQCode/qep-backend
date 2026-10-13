@@ -132,7 +132,7 @@ public sealed class SeedStartupTests
         Assert.Contains("admin", membership.Roles);
     }
 
-    // Spec 2026-10-07, «Semilla»: el tenant de la semilla nace con todos, pos y messaging incluidos.
+    // Spec 2026-10-07, «Semilla»: el tenant de la semilla nace con todos, pos, messaging y pipeline incluidos.
     [Fact]
     public async Task SeedEnablesEveryModule()
     {
@@ -141,7 +141,7 @@ public sealed class SeedStartupTests
         using var client = factory.CreateClient();
 
         Assert.Equal(
-            ["catalog", "companies", "customers", "messaging", "orders", "pos", "quotations", "reporting"],
+            ["catalog", "companies", "customers", "messaging", "orders", "pipeline", "pos", "quotations", "reporting"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -174,7 +174,7 @@ public sealed class SeedStartupTests
             Guid.CreateVersion7(), TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            ["catalog", "companies", "customers", "messaging", "orders", "quotations", "reporting"],
+            ["catalog", "companies", "customers", "messaging", "orders", "pipeline", "quotations", "reporting"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -236,7 +236,7 @@ public sealed class SeedStartupTests
         using var client = factory.CreateClient();
 
         Assert.Equal(
-            ["catalog", "companies", "customers", "messaging", "orders", "pos", "quotations", "reporting"],
+            ["catalog", "companies", "customers", "messaging", "orders", "pipeline", "pos", "quotations", "reporting"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed, OperatorTenantId));
     }
 
@@ -263,7 +263,7 @@ public sealed class SeedStartupTests
         Assert.Equal(ownerUserId, membership.UserId);
         Assert.NotEqual(operatorUserId, membership.UserId);
         Assert.Equal(
-            ["catalog", "companies", "customers", "messaging", "orders", "pos", "quotations", "reporting"],
+            ["catalog", "companies", "customers", "messaging", "orders", "pipeline", "pos", "quotations", "reporting"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -343,7 +343,7 @@ public sealed class SeedStartupTests
             membership => membership.TenantId == new TenantId(OperatorTenantId),
             TestContext.Current.CancellationToken));
         Assert.Equal(
-            ["catalog", "companies", "customers", "messaging", "orders", "pos", "quotations", "reporting"],
+            ["catalog", "companies", "customers", "messaging", "orders", "pipeline", "pos", "quotations", "reporting"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed, OperatorTenantId));
     }
 

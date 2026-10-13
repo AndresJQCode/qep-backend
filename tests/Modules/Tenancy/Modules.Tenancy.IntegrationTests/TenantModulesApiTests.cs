@@ -100,17 +100,17 @@ public sealed class TenantModulesApiTests
         var modules = await ModulesAsync(client, tenantId);
 
         Assert.Equal(tenantId, modules.TenantId);
-        // Spec 2026-10-09 §6.2: messaging va último y, como pos, no viene con el signup.
+        // Spec 2026-10-09 §6.2 y spec 2026-10-13 D3: messaging y pipeline van al final y, como pos, no vienen con el signup.
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline"],
             modules.Modules.Select(module => module.Key));
-        Assert.All(modules.Modules.Where(module => module.Key is not ("pos" or "messaging")), module =>
+        Assert.All(modules.Modules.Where(module => module.Key is not ("pos" or "messaging" or "pipeline")), module =>
         {
             Assert.True(module.Enabled);
             Assert.True(module.Contracted);
             Assert.Empty(module.MissingDependencies);
         });
-        Assert.All(modules.Modules.Where(module => module.Key is "pos" or "messaging"), module =>
+        Assert.All(modules.Modules.Where(module => module.Key is "pos" or "messaging" or "pipeline"), module =>
         {
             Assert.False(module.Enabled);
             Assert.False(module.Contracted);
@@ -148,7 +148,7 @@ public sealed class TenantModulesApiTests
 
         var modules = await ModulesAsync(client, tenantId);
 
-        Assert.Equal(8, modules.Modules.Count);
+        Assert.Equal(9, modules.Modules.Count);
         Assert.All(modules.Modules, module =>
         {
             Assert.True(module.Enabled);
@@ -181,7 +181,7 @@ public sealed class TenantModulesApiTests
 
         var response = TenantModulesResponse.From(tenantId, modules: null, isDevelopmentStub);
 
-        Assert.Equal(8, response.Modules.Count);
+        Assert.Equal(TenantModuleKeys.All.Count, response.Modules.Count);
         Assert.All(response.Modules, module =>
         {
             Assert.Equal(isDevelopmentStub, module.Enabled);

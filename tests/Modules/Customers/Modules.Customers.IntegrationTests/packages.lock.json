@@ -717,6 +717,8 @@
           "Modules.Messaging.Api": "[1.0.0, )",
           "Modules.Messaging.Infrastructure": "[1.0.0, )",
           "Modules.Notifications.Infrastructure": "[1.0.0, )",
+          "Modules.Pipeline.Api": "[1.0.0, )",
+          "Modules.Pipeline.Infrastructure": "[1.0.0, )",
           "Modules.Platform.Api": "[1.0.0, )",
           "Modules.Platform.Infrastructure": "[1.0.0, )",
           "Modules.Pos.Api": "[1.0.0, )",
@@ -754,6 +756,8 @@
           "Modules.Messaging.Application": "[1.0.0, )",
           "Modules.Messaging.Infrastructure": "[1.0.0, )",
           "Modules.Notifications.Infrastructure": "[1.0.0, )",
+          "Modules.Pipeline.Application": "[1.0.0, )",
+          "Modules.Pipeline.Infrastructure": "[1.0.0, )",
           "Modules.Platform.Application": "[1.0.0, )",
           "Modules.Platform.Infrastructure": "[1.0.0, )",
           "Modules.Pos.Application": "[1.0.0, )",
@@ -1105,6 +1109,42 @@
           "Modules.Identity.Application": "[1.0.0, )",
           "Modules.Notifications.Application": "[1.0.0, )",
           "Modules.Notifications.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "modules.pipeline.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Pipeline.Application": "[1.0.0, )",
+          "Modules.Pipeline.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.pipeline.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Pipeline.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.pipeline.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.pipeline.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.11, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Pipeline.Application": "[1.0.0, )",
+          "Modules.Pipeline.Domain": "[1.0.0, )",
           "Modules.Tenancy.Application": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }

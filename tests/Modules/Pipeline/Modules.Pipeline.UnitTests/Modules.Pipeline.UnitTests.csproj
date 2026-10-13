@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\Modules\Pipeline\Modules.Pipeline.Application\Modules.Pipeline.Application.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Pipeline\Modules.Pipeline.Domain\Modules.Pipeline.Domain.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Pipeline\Modules.Pipeline.Infrastructure\Modules.Pipeline.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

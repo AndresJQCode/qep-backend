@@ -962,3 +962,18 @@ internal sealed class FixedTenantModules(TenantModuleSet? set) : ITenantModules
         return Task.FromResult(set);
     }
 }
+
+/// <summary>Spec 2026-10-13 §4.5: anota qué eventos del ciclo pidió el handler, sin outbox.</summary>
+internal sealed class RecordingQuotationLifecycleEventPublisher : IQuotationLifecycleEventPublisher
+{
+    public List<(string Event, Guid QuotationId, decimal Total, string Currency)> Published { get; } = [];
+
+    public void PublishSent(Quotation quotation, DateTimeOffset occurredAt) =>
+        Published.Add(("sent", quotation.Id.Value, quotation.Total, quotation.Currency));
+
+    public void PublishConverted(Quotation quotation, Order order, DateTimeOffset occurredAt) =>
+        Published.Add(("converted", quotation.Id.Value, quotation.Total, quotation.Currency));
+
+    public void PublishOrderCancelled(Order order, DateTimeOffset occurredAt) =>
+        Published.Add(("cancelled", order.QuotationId.Value, 0m, string.Empty));
+}

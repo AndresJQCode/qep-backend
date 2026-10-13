@@ -1,5 +1,6 @@
 using Modules.Identity.Application;
 using Modules.Messaging.Application;
+using Modules.Pipeline.Application;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 
@@ -9,9 +10,11 @@ namespace Bootstrapper;
 /// <c>sentBy.displayName</c> (spec 2026-10-09 §8.7): copia de <see cref="IntegrationsConnectionAuthorNames"/>,
 /// <c>Membership.DisplayName ?? correo</c>. Sólo membresías del tenant; la que ya no está no aparece en el
 /// diccionario, y Messaging la muestra como «Miembro eliminado» (D-M20): la pantalla nunca recibe <c>null</c>.
+/// Pipeline usa el mismo FindAsync por <c>IPipelineMemberNames</c> (spec 2026-10-13 §6: el dueño del negocio y el actor del
+/// historial), así la regla vive en un solo lugar.
 /// </summary>
 internal sealed class MessagingMemberNames(IMembershipRepository memberships, IUserDirectory users)
-    : IMessagingMemberNames
+    : IMessagingMemberNames, IPipelineMemberNames
 {
     public async Task<IReadOnlyDictionary<Guid, string>> FindAsync(
         Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken)

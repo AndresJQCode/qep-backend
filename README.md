@@ -640,16 +640,16 @@ Los cuerpos van a archivo y se mandan con `-f`: PowerShell rompe las comillas al
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
 fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
-`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos` y `messaging`; `quotations` exige
+`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging` y `pipeline`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations` y `pos` exige `catalog` y
-`companies`. `messaging` (la bandeja de WhatsApp; último de la lista, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`companies`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas; último de la lista) exige `customers`, no viene con el signup y se prende igual. Sin `messaging`, su triage queda vacío; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
 Apagar un módulo descarta sus permisos en el request siguiente, por cookie y por el stub de
 desarrollo (este último sólo cuando el tenant existe en `tenancy.tenants`). No borra datos ni corta
 trabajos en vuelo. La SPA lo lee de `GET /api/v1/tenants/{tenantId}/modules` (autenticado, sin
-permiso), que siempre devuelve los ocho con `enabled`, `contracted` y `missingDependencies`, y se
+permiso), que siempre devuelve los nueve con `enabled`, `contracted` y `missingDependencies`, y se
 entera en hasta 5 minutos.
 
 Un tenant del signup nace con los seis sin `pos` mientras `Entitlements:GrantDefaultModulesOnSignup`
@@ -2049,6 +2049,59 @@ El código está en `develop` desde `a5a79c0` (2026-10-13). Antes de llevarlo a 
    mensaje sale. El frontend lo trata como «sigue enviando» y reintenta con el mismo `clientId`, que no duplica.
 6. **Aceptar que los adjuntos no pasan por ClamAV.** A diferencia de la biblioteca de archivos, Messaging no escanea.
    Se decidió así al aceptar `.doc` y `.xls`, que pueden traer macros.
+
+### Embudo de ventas (Pipeline)
+
+El embudo del asesor (spec 2026-10-13): negocios en un kanban por etapas, enlazados al chat y a la
+cotización, con historial de etapas desde el día 1 y señal de estancado. Módulo `pipeline` (depende de
+`customers`, se prende por tenant), permisos `pipeline.deal.read|manage` (`admin` y `advisor`) y
+`pipeline.settings.manage` (sólo `admin`), todos de núcleo: cada handler revisa la capacidad y responde 403
+`tenancy.module_not_enabled`. Esquema `pipeline` (`pipelines`, `stages`, `deals`, `deal_stage_history`,
+`deal_quotations`, `reasons`, `triage_decisions`, `inbox_messages`).
+
+**Primer acceso.** El embudo no existe hasta que alguien lo pide: el primer `GET` (o el primer evento de una
+cotización) lo crea con sus semillas —Nuevo 10 %/3 d, Calificado 25 %/5 d, Cotizado 50 %/7 d (etapa de
+cotización), Negociación 75 %/7 d, Ganado, Perdido— y los motivos de pérdida y de descarte. Tenancy no avisa
+cuando se prende un módulo, así que no hay otro lugar donde engancharse.
+
+**Rutas** bajo `/api/v1/tenants/{tenantId}/pipeline`:
+
+| Método | Ruta | Permiso |
+| --- | --- | --- |
+| `GET` | `/board?owner=me\|all` | `pipeline.deal.read` |
+| `GET` | `/deals/{dealId}` | `pipeline.deal.read` |
+| `POST` | `/deals` | `pipeline.deal.manage` |
+| `PATCH` | `/deals/{dealId}` | `pipeline.deal.manage` |
+| `POST` | `/deals/{dealId}/move\|win\|lose\|reopen` | `pipeline.deal.manage` |
+| `POST` | `/deals/{dealId}/quotations/{quotationId}/link\|primary` | `pipeline.deal.manage` |
+| `GET` | `/customers/{customerId}/summary?conversationId=` | `pipeline.deal.read` |
+| `GET` | `/triage` | `pipeline.deal.read` |
+| `POST` | `/triage/{conversationId}` (`create` \| `dismiss`) | `pipeline.deal.manage` |
+| `GET`/`PUT` | `/settings/stages`, `/settings/loss-reasons`, `/settings/dismiss-reasons` | `pipeline.deal.read` / `pipeline.settings.manage` |
+
+Toda escritura sobre un negocio lleva `version` (412 si cambió) y devuelve el negocio completo. Un negocio
+creado por la API sólo puede tener como responsable a una membresía activa (`pipeline.deal.owner_not_member`);
+el que crea un evento de cotización conserva al asesor de la cotización como responsable aunque ya esté
+inactivo. El historial de etapas se ordena por un ordinal por negocio que asigna el dominio, no por la hora.
+El tablero trae todas las columnas, sumas por moneda, como máximo 200 tarjetas por columna con el conteo real, y
+`Ganado`/`Perdido` sólo de los últimos 30 días. El triage trae como máximo 200 conversaciones con el conteo
+real. Cada decisión de triage guarda el último entrante contra el que se tomó: con el índice único
+`IX_triage_decisions_conversation_inbound`, si dos asesores deciden a la vez uno recibe
+`pipeline.triage.already_decided` y queda un solo negocio. Un mensaje nuevo del cliente permite decidir otra vez.
+
+**Eventos de Quotations.** Quotations escribe en `platform.outbox_messages`, en la misma transacción que el
+cambio, `quotations.quotation.sent.v1` (también al reenviar), `quotations.quotation.converted.v1` y
+`quotations.order.cancelled.v1`, con payload camelCase (`tenantId`, `quotationId`, `quotationNumber`,
+`clientId`, `advisorMemberId`, `total`, `currency`, `occurredAt`; converted suma `orderId` y `orderNumber`;
+cancelled lleva `tenantId`, `orderId`, `quotationId`, `occurredAt`). El payload es contrato: cambiarlo
+rompe a Pipeline sin error de compilación. `QuotationEventsWorker` los consume cada 3 s con reclamo e
+inbox propio (consumidor `pipeline.quotation-events`, reintentos a los 5 s, 30 s y cada 5 min). Un evento
+de un tenant sin `pipeline` se marca procesado sin efecto: prender el módulo después no rellena el pasado.
+
+**Despliegue.** Backend primero (migraciones `AddPipelineModuleKey` en Tenancy y `AddPipeline` en Pipeline),
+después el frontend del embudo —kanban, panel del chat con triage, ajustes y la sección de negocios en la
+ficha del cliente de la conversación—. Los permisos nuevos exigen reiniciar la API y recargar la sesión.
+Prender `pipeline` al tenant desde la consola de operador; para el triage también hace falta `messaging`.
 
 ## Verificación
 

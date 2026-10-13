@@ -239,7 +239,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   compensación.
 - **Una plantilla de WhatsApp rechazada con "An error occurred while sending the template for
   approval" no la rechazó Meta:** es Zenvia que no logró enviarla. El contenido, el tono y la
-  categoría nunca se revisaron, así que cambiarlos no sirve — mirá el `name` (sólo minúsculas,
+  categoría nunca se revisaron, así que cambiarlos no sirve — mira el `name` (sólo minúsculas,
   dígitos y guiones bajos), el `examples` (sin `$`, `#`, `%`) y el `Content-Type` del PDF de
   ejemplo. Costó cuatro intentos el 2026-09-04. El procedimiento entero está en
   [README § Plantilla de WhatsApp](README.md#plantilla-de-whatsapp-zenvia).
@@ -256,8 +256,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   reservada: antes de desplegar se comprueba que ningún tenant tenga un rol custom con esa clave
   (spec 2026-10-07, «Despliegue»).
 - **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
-  Los quince módulos construidos son Audit, Authorization, Catalog, Companies, Customers, Geography,
-  Identity, Integrations, Messaging, Notifications, Pos, Quotations, Reporting, Storage y Tenancy — cada
+  Los dieciséis módulos construidos son Audit, Authorization, Catalog, Companies, Customers, Geography,
+  Identity, Integrations, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Storage y Tenancy — cada
   uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/`. Messaging no referencia
   Integrations, Customers ni Storage: lo que necesita entra por `IMessagingConnectionDirectory`,
   `IMessagingCustomerDirectory` e `IMessagingMediaStore`, con adaptadores en Bootstrapper.
@@ -281,6 +281,26 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   como `IIdentityAuditRecorder`). Y un consumidor de una conexión nunca referencia
   `Modules.Integrations.Application`: declara su puerto y el adaptador va en Bootstrapper
   (`IntegrationsLayerTests`).
+- **El payload de los eventos de Quotations es contrato con Pipeline** (spec 2026-10-13 §4.5).
+  `QuotationLifecycleEventPublisher` escribe `quotations.quotation.sent.v1`, `…converted.v1` y
+  `quotations.order.cancelled.v1` con campos camelCase, y `QuotationEventPayloads` los lee por nombre: renombrar
+  un campo compila, pasa las pruebas de Quotations y deja los mensajes marcados como procesados sin efecto. Se
+  cambia en los dos lados, y en `QuotationEventPayloadsTests`. Pipeline lee las conversaciones de Messaging por
+  `MessagingDbContext` desde Bootstrapper (`PipelineConversationDirectory`), como Reporting lee Quotations: no
+  por un puerto de Messaging.
+- **El embudo de un tenant nace en su primer acceso, no al prender el módulo.** Tenancy no publica nada al
+  activar una capacidad; `PipelineProvisioner` crea el embudo con `INSERT … ON CONFLICT (tenant_id) DO NOTHING`.
+  Una consulta directa a `pipeline.stages` de un tenant que nunca abrió el tablero devuelve cero filas: no es
+  un error.
+- **Dueño de un negocio: la API exige membresía activa, el evento no.** Crear un negocio por la API con un
+  responsable que no es miembro activo da 422 `pipeline.deal.owner_not_member`; el negocio que crea un evento
+  de cotización conserva al asesor de la cotización aunque ya esté inactivo: la cotización existe y su
+  asesor es un hecho, no una elección del usuario. No unifiques las dos reglas.
+- **El orden del historial lo da el ordinal del dominio, no `occurred_at`.** `DealStageHistoryEntry.Ordinal` lo asigna
+  el agregado (único por `(tenant_id, deal_id)`); dos cambios en el mismo instante se ordenan por él. Y la carrera
+  del triage se cierra con el índice único `IX_triage_decisions_conversation_inbound`, que
+  `PipelineUnitOfWork` traduce a `pipeline.triage.already_decided` **por nombre de índice**: no la muevas a una
+  comprobación previa en el handler, que dejaría dos negocios.
 
 ## Verificación
 

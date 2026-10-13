@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -46,9 +46,9 @@ public sealed class TenantModuleKeysTests
         Assert.Empty(TenantModuleKeys.DependenciesOf(TenantModuleKeys.Catalog));
     }
 
-    // Spec 2026-10-09 §6.2: messaging es vendible y se prende por tenant, como pos.
+    // Spec 2026-10-09 §6.2 y spec 2026-10-13 D3: messaging y pipeline son vendibles y se prenden por tenant, como pos.
     [Fact]
-    public void DefaultForNewTenantsIsEverythingButPosAndMessaging()
+    public void DefaultForNewTenantsIsEverythingButPosMessagingAndPipeline()
     {
         Assert.Equal(
             ["catalog", "customers", "companies", "quotations", "orders", "reporting"],
@@ -58,6 +58,11 @@ public sealed class TenantModuleKeysTests
     [Fact]
     public void MessagingHasNoDependencies() =>
         Assert.Empty(TenantModuleKeys.DependenciesOf(TenantModuleKeys.Messaging));
+
+    // Spec 2026-10-13 D30: un negocio siempre tiene cliente. Messaging y Quotations lo enriquecen, pero no lo condicionan.
+    [Fact]
+    public void PipelineDependsOnlyOnCustomers() =>
+        Assert.Equal([TenantModuleKeys.Customers], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Pipeline));
 
     [Fact]
     public void ParseReturnsTheSameInstanceForEveryKey()

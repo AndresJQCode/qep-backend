@@ -46,10 +46,14 @@ public static class TenantModuleKeys
     /// dependencias y fuera de <see cref="DefaultForNewTenants"/>.</summary>
     public static readonly TenantModuleKey Messaging = TenantModuleKey.Define("messaging");
 
-    public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging];
+    /// <summary>Spec 2026-10-13, D3 y D30: el embudo de ventas. Último de la lista, depende sólo de
+    /// <see cref="Customers"/> y queda fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
+    public static readonly TenantModuleKey Pipeline = TenantModuleKey.Define("pipeline");
 
-    /// <summary>Los seis de hoy, sin <c>pos</c> ni <c>messaging</c>: el backfill y el signup con el interruptor prendido.</summary>
+    public static readonly IReadOnlyList<TenantModuleKey> All =
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline];
+
+    /// <summary>Los seis de hoy, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el backfill y el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =
         [Catalog, Customers, Companies, Quotations, Orders, Reporting];
 
@@ -59,6 +63,8 @@ public static class TenantModuleKeys
         [Quotations] = [Catalog, Customers, Companies],
         [Orders] = [Quotations],
         [Pos] = [Catalog, Companies],
+        // Spec 2026-10-13 D30: sin messaging el triage queda vacío; sin quotations no llegan eventos.
+        [Pipeline] = [Customers],
     };
 
     public static IReadOnlyList<TenantModuleKey> DependenciesOf(TenantModuleKey key) =>

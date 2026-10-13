@@ -66,6 +66,12 @@
     <Project Path="src/Modules/Notifications/Modules.Notifications.Domain/Modules.Notifications.Domain.csproj" />
     <Project Path="src/Modules/Notifications/Modules.Notifications.Infrastructure/Modules.Notifications.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Pipeline/">
+    <Project Path="src/Modules/Pipeline/Modules.Pipeline.Api/Modules.Pipeline.Api.csproj" />
+    <Project Path="src/Modules/Pipeline/Modules.Pipeline.Application/Modules.Pipeline.Application.csproj" />
+    <Project Path="src/Modules/Pipeline/Modules.Pipeline.Domain/Modules.Pipeline.Domain.csproj" />
+    <Project Path="src/Modules/Pipeline/Modules.Pipeline.Infrastructure/Modules.Pipeline.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Storage/">
     <Project Path="src/Modules/Storage/Modules.Storage.Api/Modules.Storage.Api.csproj" />
     <Project Path="src/Modules/Storage/Modules.Storage.Application/Modules.Storage.Application.csproj" />
@@ -152,6 +158,10 @@
   <Folder Name="/tests/Modules/Notifications/">
     <Project Path="tests/Modules/Notifications/Modules.Notifications.UnitTests/Modules.Notifications.UnitTests.csproj" />
     <Project Path="tests/Modules/Notifications/Modules.Notifications.IntegrationTests/Modules.Notifications.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Pipeline/">
+    <Project Path="tests/Modules/Pipeline/Modules.Pipeline.IntegrationTests/Modules.Pipeline.IntegrationTests.csproj" />
+    <Project Path="tests/Modules/Pipeline/Modules.Pipeline.UnitTests/Modules.Pipeline.UnitTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/Pos/">
     <Project Path="tests/Modules/Pos/Modules.Pos.IntegrationTests/Modules.Pos.IntegrationTests.csproj" />
