@@ -1213,6 +1213,28 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(ExportCell.OfNumber(row.Quotation.Total), Assert.Single(writer.Rows)[TotalFacturadoIndex]);
     }
 
+    // Hotfix 2026-10-14, el caso que lo destapó: 100 kits de keratina 7703 a 35.000 con IVA y la
+    // escala de 33,33%. El unitario de 23.334,50 se cobra 23.335, y la facturación masiva —que
+    // redondea "Valor Unit" × 1,19 a pesos y lo multiplica por la cantidad— llega al mismo "Total
+    // facturado" que consigna el cliente. Antes salían 19.608,82 y 2.333.450, y la masiva mandaba
+    // 23.334 × 100 = 2.333.400 a Siigo.
+    [Fact]
+    public async Task TheBulkInvoicingRuleOverValorUnitAddsUpToTotalFacturado()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001", items: [(ProductId, 100m, 35_000m, 33.33m, 19)]);
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var cells = Assert.Single(writer.Rows);
+        var valorUnit = cells[ValorUnitIndex].Number!.Value;
+        var totalFacturado = cells[TotalFacturadoIndex].Number!.Value;
+        Assert.Equal(19_609.24m, valorUnit);
+        Assert.Equal(2_333_500m, totalFacturado);
+        Assert.Equal(totalFacturado, (decimal)Math.Round((double)(valorUnit * 1.19m)) * 100m);
+    }
+
     // Visible por defecto (decisión del owner, 2026-10-05): también la gana un layout guardado que
     // no la nombra, al final, detrás de todo lo que el tenant ya tenía. Desde el ajuste 2026-10-06,
     // penúltima: "Retencion" va detrás.

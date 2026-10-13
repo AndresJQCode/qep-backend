@@ -540,7 +540,7 @@ public sealed class Quotation
 
         var item = QuotationItem.Create(
             itemId, Id, productId, quantity, unitPrice, discountPercentage, taxPercentage,
-            _items.Count + 1, occurredAt);
+            _items.Count + 1, Currency, occurredAt);
         _items.Add(item);
         Touch(updatedBy, occurredAt);
     }
@@ -557,7 +557,7 @@ public sealed class Quotation
     {
         EnsureEditable();
 
-        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, occurredAt);
+        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, occurredAt);
         Touch(updatedBy, occurredAt);
     }
 
@@ -583,7 +583,7 @@ public sealed class Quotation
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
-        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, occurredAt);
+        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, occurredAt);
         Touch(updatedBy, occurredAt);
     }
 
@@ -689,7 +689,7 @@ public sealed class Quotation
                     "Every line needs a price in the new currency before the quotation can change currency.");
             }
 
-            item.Reprice(pricing, occurredAt);
+            item.Reprice(pricing, currency, occurredAt);
         }
 
         Currency = currency;
@@ -1019,7 +1019,7 @@ public sealed class Quotation
         {
             if (discounts.TryGetValue(item.Id, out var discount))
             {
-                item.ApplyDiscount(discount.Percentage, discount.Origin, occurredAt);
+                item.ApplyDiscount(discount.Percentage, discount.Origin, Currency, occurredAt);
             }
         }
 

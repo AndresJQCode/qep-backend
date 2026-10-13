@@ -24,6 +24,7 @@ public sealed class QuotationItem
         decimal discountPercentage,
         int taxPercentage,
         int position,
+        string currency,
         DateTimeOffset occurredAt)
     {
         Id = id;
@@ -32,7 +33,7 @@ public sealed class QuotationItem
         Position = position;
         CreatedAt = occurredAt;
         UpdatedAt = occurredAt;
-        Apply(quantity, unitPrice, discountPercentage, taxPercentage, occurredAt);
+        Apply(quantity, unitPrice, discountPercentage, taxPercentage, currency, occurredAt);
     }
 
     public QuotationItemId Id { get; private set; }
@@ -154,8 +155,9 @@ public sealed class QuotationItem
         decimal discountPercentage,
         int taxPercentage,
         int position,
+        string currency,
         DateTimeOffset occurredAt) =>
-        new(id, quotationId, productId, quantity, unitPrice, discountPercentage, taxPercentage, position, occurredAt);
+        new(id, quotationId, productId, quantity, unitPrice, discountPercentage, taxPercentage, position, currency, occurredAt);
 
     /// <summary>
     /// Congela código y nombre si la línea todavía no los tiene. Nunca los pisa: lo que el cliente
@@ -174,8 +176,12 @@ public sealed class QuotationItem
     }
 
     internal void UpdateQuantity(
-        decimal quantity, decimal discountPercentage, int taxPercentage, DateTimeOffset occurredAt) =>
-        Apply(quantity, UnitPrice, discountPercentage, taxPercentage, occurredAt);
+        decimal quantity,
+        decimal discountPercentage,
+        int taxPercentage,
+        string currency,
+        DateTimeOffset occurredAt) =>
+        Apply(quantity, UnitPrice, discountPercentage, taxPercentage, currency, occurredAt);
 
     /// <summary>Cambia sólo el descuento y rehace los importes de la línea, conservando cantidad,
     /// precio y tasa. Lo usa el recálculo global de la cotización
@@ -183,22 +189,27 @@ public sealed class QuotationItem
     /// la compuerta de compra mínima mueven el descuento sin que la línea haya cambiado en nada
     /// más.</summary>
     internal void ApplyDiscount(
-        decimal discountPercentage, QuotationDiscountOrigin origin, DateTimeOffset occurredAt)
+        decimal discountPercentage,
+        QuotationDiscountOrigin origin,
+        string currency,
+        DateTimeOffset occurredAt)
     {
         DiscountOrigin = origin;
-        Apply(Quantity, UnitPrice, discountPercentage, TaxPercentage, occurredAt);
+        Apply(Quantity, UnitPrice, discountPercentage, TaxPercentage, currency, occurredAt);
     }
 
     /// <summary>Vuelve a nacer con el precio del producto en otra moneda, sin tocar la
     /// cantidad. El descuento y el impuesto también se rehacen: la escala de cantidad y la
     /// tasa se resuelven contra el catálogo junto con el precio, y conservar los viejos
     /// mezclaría dos monedas dentro de una misma línea.</summary>
-    internal void Reprice(QuotationItemPricing pricing, DateTimeOffset occurredAt) =>
+    internal void Reprice(
+        QuotationItemPricing pricing, string currency, DateTimeOffset occurredAt) =>
         Apply(
             Quantity,
             pricing.UnitPrice,
             pricing.DiscountPercentage,
             pricing.TaxPercentage,
+            currency,
             occurredAt);
 
     private void Apply(
@@ -206,6 +217,7 @@ public sealed class QuotationItem
         decimal unitPrice,
         decimal discountPercentage,
         int taxPercentage,
+        string currency,
         DateTimeOffset occurredAt)
     {
         if (quantity <= 0)
@@ -236,6 +248,20 @@ public sealed class QuotationItem
                 "The item tax percentage must be between 0 and 100.");
         }
 
+        // En COP el precio con IVA se cobra en pesos enteros, el de lista y el ya descontado
+        // (hotfix 2026-10-14). La facturacion masiva le manda a Siigo, por linea,
+        // round("Valor Unit" x (1 + IVA)) x cantidad, y el cliente consigna el "Total facturado":
+        // con un unitario de 23.334,85 QEP cobraba 2.333.485 por 100 unidades y Siigo facturaba
+        // 23.335 x 100 = 2.333.500. Con el unitario entero, quitarle el IVA a dos decimales y
+        // volver a sumarlo lo devuelve igual, y las dos cuentas dan lo mismo. El de lista se
+        // redondea tambien para que el descuento nunca quede negativo. En USD los centavos son
+        // plata y se quedan.
+        var wholePesos = currency == WholePesoCurrency;
+        if (wholePesos)
+        {
+            unitPrice = RoundToPeso(unitPrice);
+        }
+
         Quantity = quantity;
         UnitPrice = unitPrice;
         DiscountPercentage = discountPercentage;
@@ -244,12 +270,36 @@ public sealed class QuotationItem
         // La fórmula vive en BuildingBlocks (spec 2026-10-07): POS la comparte para cobrar al
         // centavo lo mismo que una cotización detal. Las validaciones y los códigos
         // quotation.item.* siguen aquí.
-        var amounts = VatIncludedLine.Compute(quantity, unitPrice, discountPercentage, taxPercentage);
-        DiscountAmount = amounts.DiscountAmount;
-        TaxAmount = amounts.TaxAmount;
-        Subtotal = amounts.Subtotal;
+        //
+        // En COP la línea se cobra al unitario descontado ya entero: la fórmula compartida recibe
+        // ese unitario sin descuento, y el descuento de la línea es lo que falta para llegar al
+        // bruto. Así VatIncludedLine no cambia y POS sigue cobrando como cobraba.
+        if (wholePesos)
+        {
+            var chargedUnitPrice = RoundToPeso(unitPrice * (1m - discountPercentage / 100m));
+            var charged = VatIncludedLine.Compute(quantity, chargedUnitPrice, 0m, taxPercentage);
+            DiscountAmount = Round(quantity * unitPrice) - charged.LineTotal;
+            TaxAmount = charged.TaxAmount;
+            Subtotal = charged.Subtotal;
+        }
+        else
+        {
+            var amounts = VatIncludedLine.Compute(quantity, unitPrice, discountPercentage, taxPercentage);
+            DiscountAmount = amounts.DiscountAmount;
+            TaxAmount = amounts.TaxAmount;
+            Subtotal = amounts.Subtotal;
+        }
+
         UpdatedAt = occurredAt;
     }
 
     private static decimal Round(decimal value) => VatIncludedLine.Round(value);
+
+    // Código ISO literal y no el catálogo de Tenancy (Currencies): el dominio no lo referencia, y
+    // la regla es de la facturación masiva en pesos, no de los decimales con que se muestra cada
+    // moneda.
+    private const string WholePesoCurrency = "COP";
+
+    private static decimal RoundToPeso(decimal value) =>
+        Math.Round(value, 0, MidpointRounding.AwayFromZero);
 }
