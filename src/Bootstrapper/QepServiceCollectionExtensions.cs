@@ -712,6 +712,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IPipelineConversationDirectory, PipelineConversationDirectory>();
         services.AddScoped<IPipelineCustomerDirectory, PipelineCustomerDirectory>();
         services.AddScoped<IPipelineMemberNames, MessagingMemberNames>();
+        // Quién puede ser dueño de un negocio: sólo membresías Active (los nombres de arriba son sólo para mostrar).
+        services.AddScoped<IPipelineActiveMembers, PipelineActiveMembers>();
 
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo

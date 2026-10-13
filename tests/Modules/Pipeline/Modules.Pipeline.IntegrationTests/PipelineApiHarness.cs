@@ -178,16 +178,18 @@ internal static class PipelineApiHarness
             ("userId", tenant.OwnerUserId));
 
     /// <summary>Una membresía más del tenant, escrita directo (sin invitación), como <c>MessagingApiHarness.SeedMemberAsync</c>.</summary>
-    public static async Task<(Guid MembershipId, Guid UserId)> SeedMemberAsync(string connectionString, Guid tenantId, string displayName, string role = "advisor")
+    public static async Task<(Guid MembershipId, Guid UserId)> SeedMemberAsync(
+        string connectionString, Guid tenantId, string? displayName, string role = "advisor", string state = "Active")
     {
         var membershipId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
         await ExecuteAsync(connectionString,
             """
             INSERT INTO tenancy.memberships (id, user_id, tenant_id, state, roles, origin, invited_at, accepted_at, expires_at, version, created_at, updated_at, display_name)
-            VALUES (@id, @userId, @tenantId, 'Active', ARRAY[@role]::text[], 'invitation', now(), now(), now() + interval '3 days', 1, now(), now(), @name)
+            VALUES (@id, @userId, @tenantId, @state, ARRAY[@role]::text[], 'invitation', now(), now(), now() + interval '3 days', 1, now(), now(), @name)
             """,
-            ("id", membershipId), ("userId", userId), ("tenantId", tenantId), ("role", role), ("name", displayName));
+            ("id", membershipId), ("userId", userId), ("tenantId", tenantId), ("role", role), ("state", state),
+            ("name", displayName ?? (object)DBNull.Value));
         return (membershipId, userId);
     }
 

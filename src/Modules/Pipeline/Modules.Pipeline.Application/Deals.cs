@@ -191,7 +191,7 @@ public sealed class CreateDealHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     IPipelineCustomerDirectory customers,
-    IPipelineMemberNames members,
+    IPipelineActiveMembers members,
     PipelineCaller caller,
     DealCreator creator,
     IClock clock,
@@ -222,11 +222,12 @@ public sealed class CreateDealHandler(
 
 internal static class DealOwners
 {
-    /// <summary>El dueño tiene que ser una membresía del tenant. Quien llama ya lo es (lo resolvió <c>PipelineCaller</c>).</summary>
+    /// <summary>El dueño tiene que ser una membresía <b>activa</b> del tenant: una invitada, suspendida, quitada o vencida no recibe
+    /// negocios. Quien llama ya lo es (lo resolvió <c>PipelineCaller</c> por su membresía activa).</summary>
     public static async Task EnsureMemberAsync(
-        IPipelineMemberNames members, Guid tenantId, Guid owner, Guid callerId, CancellationToken cancellationToken)
+        IPipelineActiveMembers members, Guid tenantId, Guid owner, Guid callerId, CancellationToken cancellationToken)
     {
-        if (owner != callerId && !(await members.FindAsync(tenantId, [owner], cancellationToken)).ContainsKey(owner))
+        if (owner != callerId && !(await members.FindActiveAsync(tenantId, [owner], cancellationToken)).Contains(owner))
         {
             throw new PipelineDomainException(PipelineErrorCodes.DealOwnerNotMember, "The owner is not a member of this tenant.");
         }
@@ -235,7 +236,7 @@ internal static class DealOwners
 
 /// <summary>P5 del plan: reemplaza los editables. Con principal (D18), monto y moneda no cambian (lo dice el dominio).</summary>
 public sealed class UpdateDealHandler(
-    DealCommandSteps steps, IPipelineMemberNames members, PipelineCaller caller, IValidator<UpdateDealCommand> validator)
+    DealCommandSteps steps, IPipelineActiveMembers members, PipelineCaller caller, IValidator<UpdateDealCommand> validator)
     : ICommandHandler<UpdateDealCommand, DealDetailDto>
 {
     public async Task<DealDetailDto> HandleAsync(UpdateDealCommand command, CancellationToken cancellationToken)

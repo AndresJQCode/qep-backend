@@ -219,6 +219,52 @@ public sealed class DealApiTests
         Assert.Equal(((decimal?)2_500m, "USD", (DateOnly?)new DateOnly(2026, 12, 15), 2L), (patched.Amount, patched.Currency, patched.ExpectedCloseDate, patched.Version));
     }
 
+    // Sólo una membresía Active puede ser dueña: una quitada, suspendida o por aceptar existe en el tenant pero no recibe trabajo.
+    [Theory]
+    [InlineData("Removed")]
+    [InlineData("Suspended")]
+    [InlineData("Invited")]
+    [InlineData("Expired")]
+    public async Task ANonActiveMembershipCannotOwnADealOnCreateNorOnPatch(string state)
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var deal = await CreateAsync(setup);
+        var (inactive, _) = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Marta Ruiz", state: state);
+
+        var create = await setup.Client.PostAsJsonAsync(
+            DealsUrl(setup.Tenant.TenantId), new CreateDealRequest(setup.CustomerId, "Dotación", null, null, null, inactive), Ct);
+        var patch = await setup.Client.PatchAsJsonAsync(
+            $"{DealsUrl(setup.Tenant.TenantId)}/{deal.Id}",
+            new UpdateDealRequest("Dotación", inactive, null, "COP", null, deal.Version), Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, create.StatusCode);
+        Assert.Equal(PipelineErrorCodes.DealOwnerNotMember, (await ProblemAsync(create)).Code);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, patch.StatusCode);
+        Assert.Equal(PipelineErrorCodes.DealOwnerNotMember, (await ProblemAsync(patch)).Code);
+    }
+
+    // Un miembro activo sin nombre ni correo no aparece en el diccionario de nombres, pero sí es miembro: puede ser dueño.
+    [Fact]
+    public async Task AnActiveMemberWithoutNameOrEmailCanOwnADeal()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (unnamed, _) = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, displayName: null);
+
+        var response = await setup.Client.PostAsJsonAsync(
+            DealsUrl(setup.Tenant.TenantId), new CreateDealRequest(setup.CustomerId, "Dotación", null, null, null, unnamed), Ct);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal(unnamed, (await response.Content.ReadFromJsonAsync<DealDetailDto>(Ct))!.OwnerMemberId);
+    }
+
     [Fact]
     public async Task WithoutManageTheWritesAre403AndWithoutTheCapabilityModuleNotEnabled()
     {

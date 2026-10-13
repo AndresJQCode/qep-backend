@@ -38,9 +38,19 @@ public interface IPipelineCustomerDirectory
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
 }
 
-/// <summary>Mismo criterio que <c>IMessagingMemberNames</c>: nombre visible de la membresía o su correo. Sólo las del tenant; la que
-/// no está no aparece, y quien llama decide qué mostrar.</summary>
+/// <summary>Mismo criterio que <c>IMessagingMemberNames</c>: nombre visible de la membresía o su correo, sólo para mostrar. Sólo las
+/// del tenant, en cualquier estado (quitadas y suspendidas incluidas); la que no tiene nombre ni correo, o no es del tenant, no
+/// aparece y quien llama decide qué mostrar. <b>No</b> sirve para saber si alguien es miembro: eso es
+/// <see cref="IPipelineActiveMembers"/>.</summary>
 public interface IPipelineMemberNames
 {
     Task<IReadOnlyDictionary<Guid, string>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken);
+}
+
+/// <summary>Quién puede ser dueño de un negocio (<c>pipeline.deal.owner_not_member</c>): las membresías del tenant en estado
+/// <c>Active</c>. Una invitada todavía no puede entrar y una suspendida, quitada o vencida no debe recibir trabajo. Adaptador en
+/// Bootstrapper sobre Tenancy; un id de otro tenant o inexistente no aparece.</summary>
+public interface IPipelineActiveMembers
+{
+    Task<IReadOnlySet<Guid>> FindActiveAsync(Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken);
 }
