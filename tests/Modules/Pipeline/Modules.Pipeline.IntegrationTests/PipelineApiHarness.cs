@@ -3,10 +3,12 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Modules.Customers.Application;
 using Modules.Messaging.Domain;
 using Modules.Messaging.Infrastructure.Persistence;
 using Modules.Pipeline.Application;
+using Modules.Pipeline.Infrastructure.Messaging;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -29,6 +31,9 @@ internal static class PipelineApiHarness
         [PipelinePermissions.DealRead, PipelinePermissions.DealManage, PipelinePermissions.SettingsManage];
 
     private const string TemplateDatabase = "qep_template_pipeline";
+
+    // CA1869: las opciones se reutilizan. camelCase, como el payload que escribe Quotations.
+    private static readonly JsonSerializerOptions OutboxJson = new(JsonSerializerDefaults.Web);
 
     private static readonly Lazy<Task<PostgreSqlContainer>> SharedServer = new(StartServerAsync);
 
@@ -128,6 +133,19 @@ internal static class PipelineApiHarness
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:CampaignPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:PurgeIntervalHours", "24");
+            builder.ConfigureServices(services =>
+            {
+                // El worker toma mensajes cada 3 s por su cuenta: en una prueba competiría con DrainQuotationEventsAsync y la
+                // volvería no determinista. Se saca el hosted service; el procesador (singleton) sigue registrado.
+                var workers = services
+                    .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                        && descriptor.ImplementationType == typeof(QuotationEventsWorker))
+                    .ToList();
+                foreach (var descriptor in workers)
+                {
+                    services.Remove(descriptor);
+                }
+            });
         }
     }
 
@@ -253,6 +271,27 @@ internal static class PipelineApiHarness
             ("id", id));
         return id;
     }
+
+    /// <summary>Un evento de Quotations en el outbox de plataforma, como lo escribe <c>QuotationLifecycleEventPublisher</c>
+    /// (payload camelCase, Global Constraints del plan).</summary>
+    public static async Task<Guid> InsertOutboxAsync(string connectionString, string eventName, object payload)
+    {
+        var id = Guid.CreateVersion7();
+        await ExecuteAsync(connectionString,
+            """
+            INSERT INTO platform.outbox_messages (id, event_name, payload, correlation_id, occurred_at, processed_at, attempts, last_error)
+            VALUES (@id, @name, CAST(@payload AS jsonb), @correlation, now(), NULL, 0, NULL)
+            """,
+            ("id", id),
+            ("name", eventName),
+            ("payload", JsonSerializer.Serialize(payload, OutboxJson)),
+            ("correlation", id.ToString()));
+        return id;
+    }
+
+    /// <summary>Una pasada del worker de eventos de Quotations: reclama y procesa lo pendiente.</summary>
+    public static Task DrainQuotationEventsAsync(WebApplicationFactory<Program> factory) =>
+        factory.Services.GetRequiredService<QuotationEventsProcessor>().ProcessBatchAsync(TestContext.Current.CancellationToken);
 
     /// <summary>El <c>code</c> y las claves de <c>errors</c> de un ProblemDetails.</summary>
     public static async Task<(string? Code, string[] ErrorKeys)> ProblemAsync(HttpResponseMessage response)

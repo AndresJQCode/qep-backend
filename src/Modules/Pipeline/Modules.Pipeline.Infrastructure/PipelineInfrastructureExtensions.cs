@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Pipeline.Application;
+using Modules.Pipeline.Infrastructure.Messaging;
 using Modules.Pipeline.Infrastructure.Persistence;
 
 namespace Modules.Pipeline.Infrastructure;
@@ -34,6 +35,9 @@ public static class PipelineInfrastructureExtensions
         services.AddScoped<DealCreator>();
         // Spec 2026-10-13 §4.4: las reglas de los eventos de Quotations; lo usa el worker (Task 11) en su scope por mensaje.
         services.AddScoped<QuotationEventApplier>();
+        // Spec 2026-10-13 D6: el consumidor de los eventos de Quotations, con reclamo e inbox propio.
+        services.AddSingleton<QuotationEventsProcessor>();
+        services.AddHostedService<QuotationEventsWorker>();
         return services;
     }
 }
