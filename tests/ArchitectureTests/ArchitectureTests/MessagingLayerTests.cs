@@ -70,6 +70,18 @@ public sealed class MessagingLayerTests
         }
     }
 
+    // Messaging-media-reply R20: la compresión de imágenes es un puerto (IMessagingImageCompressor) con su adaptador
+    // ImageSharp en Bootstrapper; ninguna capa de Messaging decodifica imágenes.
+    [Fact]
+    public void NoLayerReferencesImageSharp()
+    {
+        foreach (var assembly in new[] { Domain, Application, Infrastructure, Api })
+        {
+            Assert.DoesNotContain(ReferenceNamesOf(assembly), name =>
+                name is not null && name.StartsWith("SixLabors", StringComparison.Ordinal));
+        }
+    }
+
     private static string?[] ReferenceNamesOf(Assembly assembly) => assembly
         .GetReferencedAssemblies()
         .Select(name => name.Name)
