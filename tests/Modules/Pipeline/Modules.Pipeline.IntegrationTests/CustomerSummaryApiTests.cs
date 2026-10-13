@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Pipeline.Api;
 using Modules.Pipeline.Application;
 using Modules.Pipeline.Domain;
@@ -70,6 +71,72 @@ public sealed class CustomerSummaryApiTests
         Assert.NotNull(summary.LastClosedDeal);
         Assert.Equal((lost.Id, "Lost", "Precio"), (summary.LastClosedDeal.Id, summary.LastClosedDeal.Outcome, summary.LastClosedDeal.LossReasonName));
         Assert.Null(summary.Triage);
+    }
+
+    // Spec §7: el número de la principal viaja resuelto en la ficha (la pantalla no lee Quotations).
+    [Fact]
+    public async Task AnOpenDealShowsThePrimaryQuotationNumber()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var owner = await OwnerMembershipIdAsync(connectionString, setup.Tenant);
+        using (var scope = factory.Services.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<QuotationEventApplier>().ApplySentAsync(
+                new QuotationFact(setup.Tenant.TenantId, Guid.CreateVersion7(), "COT-0042", setup.CustomerId, owner, 750m, "COP", null),
+                DateTimeOffset.UtcNow, Ct);
+            await scope.ServiceProvider.GetRequiredService<IPipelineUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        var summary = await SummaryAsync(setup.Client, setup.Tenant.TenantId, setup.CustomerId);
+
+        var deal = Assert.Single(summary.OpenDeals);
+        Assert.Equal(("COT-0042", "Cotizado", (decimal?)750m), (deal.PrimaryQuotationNumber, deal.StageName, deal.Amount));
+    }
+
+    // Spec §7: el último cerrado como contexto puede ser un ganado, sin motivo de pérdida.
+    [Fact]
+    public async Task TheLastClosedDealCanBeWon()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var deal = await CreateAsync(setup, "Ganado antes");
+        (await setup.Client.PostAsJsonAsync($"{PipelineUrl(setup.Tenant.TenantId)}/deals/{deal.Id}/win", new DealVersionRequest(deal.Version), Ct))
+            .EnsureSuccessStatusCode();
+
+        var summary = await SummaryAsync(setup.Client, setup.Tenant.TenantId, setup.CustomerId);
+
+        Assert.Empty(summary.OpenDeals);
+        Assert.NotNull(summary.LastClosedDeal);
+        Assert.Equal((deal.Id, "Won", (string?)null), (summary.LastClosedDeal.Id, summary.LastClosedDeal.Outcome, summary.LastClosedDeal.LossReasonName));
+    }
+
+    // Spec §7 y D22: el estancado y los días en la etapa salen del mismo cálculo que el tablero.
+    [Fact]
+    public async Task AnOpenDealWithoutRecentActivityIsStalled()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var deal = await CreateAsync(setup, "Quieto");
+        // El instante lo calcula la prueba con el reloj de la app, no Postgres con now(); la hora de más es margen.
+        var tenDaysAgo = DateTimeOffset.UtcNow.AddDays(-10).AddHours(-1);
+        await ExecuteAsync(connectionString,
+            "UPDATE pipeline.deals SET stage_entered_at = @at, last_changed_at = @at WHERE id = @id",
+            ("at", tenDaysAgo), ("id", deal.Id));
+
+        var summary = await SummaryAsync(setup.Client, setup.Tenant.TenantId, setup.CustomerId);
+
+        var open = Assert.Single(summary.OpenDeals);
+        Assert.Equal((true, 10), (open.IsStalled, open.DaysInStage));
     }
 
     // §6.4: Pending ofrece create y dismiss (sólo con manage); después de descartar, Decided; con un negocio abierto, NotApplicable.
