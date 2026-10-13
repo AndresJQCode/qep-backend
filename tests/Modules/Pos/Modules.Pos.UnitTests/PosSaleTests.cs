@@ -20,6 +20,24 @@ public sealed class PosSaleTests
         Assert.Equal("USD", sale.Currency);
     }
 
+    // Fix 2026-10-14: POS cobra igual que la cotización en COP — el unitario descontado en pesos
+    // enteros. 100 kits 7703 a 35.000 con 33,33% son 2.333.500, no 2.333.450.
+    [Fact]
+    public void InPesosASaleChargesTheDiscountedUnitPriceInWholePesos()
+    {
+        var session = OpenSession();
+        var keratina = Guid.CreateVersion7();
+
+        var sale = Sale(
+            session,
+            [new(keratina, "7703", "Kit keratina 120 ml", 100m, 35_000m, 33.33m, 19)],
+            [Cash(2_333_500m)]);
+
+        Assert.Equal(2_333_500m, sale.Total);
+        Assert.Equal(1_166_500m, sale.DiscountAmount);
+        Assert.Equal(0m, sale.ChangeAmount);
+    }
+
     [Fact]
     public void CreateComputesTheWorkedExampleToTheCent()
     {
@@ -247,11 +265,13 @@ public sealed class PosSaleTests
         Assert.Equal("pos.sale.total_too_large", error.Code);
     }
 
+    // En USD: el tope lleva centavos, y en COP el precio se cobra en pesos enteros (fix
+    // 2026-10-14), así que 999.999.999.999,99 se cobraría 1.000.000.000.000 y lo pasaría.
     [Fact]
     public void ATotalExactlyAtTheMaximumIsAccepted()
     {
         var sale = Sale(
-            OpenSession(),
+            OpenSession(currency: "USD"),
             [new(Shampoo, "SH-400", "Shampoo 400 ml", 1m, PosLimits.MaxAmount, 0m, 0)],
             [Card(PosLimits.MaxAmount)]);
 

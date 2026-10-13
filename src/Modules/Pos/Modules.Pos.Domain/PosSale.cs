@@ -90,7 +90,7 @@ public sealed class PosSale
             throw new PosDomainException("pos.sale.too_many_lines", "A sale cannot have more than 200 lines.");
         }
 
-        var builtLines = lines.Select((line, index) => PosSaleLine.Create(id, index + 1, line)).ToList();
+        var builtLines = lines.Select((line, index) => PosSaleLine.Create(id, index + 1, line, session.Currency)).ToList();
 
         // Idéntico a Quotation.RecalculateTotals sin excedente ni retención.
         var subtotal = VatIncludedLine.Round(builtLines.Sum(line => line.Subtotal));

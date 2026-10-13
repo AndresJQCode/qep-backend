@@ -249,18 +249,8 @@ public sealed class QuotationItem
         }
 
         // En COP el precio con IVA se cobra en pesos enteros, el de lista y el ya descontado
-        // (hotfix 2026-10-14). La facturacion masiva le manda a Siigo, por linea,
-        // round("Valor Unit" x (1 + IVA)) x cantidad, y el cliente consigna el "Total facturado":
-        // con un unitario de 23.334,85 QEP cobraba 2.333.485 por 100 unidades y Siigo facturaba
-        // 23.335 x 100 = 2.333.500. Con el unitario entero, quitarle el IVA a dos decimales y
-        // volver a sumarlo lo devuelve igual, y las dos cuentas dan lo mismo. El de lista se
-        // redondea tambien para que el descuento nunca quede negativo. En USD los centavos son
-        // plata y se quedan.
-        var wholePesos = currency == WholePesoCurrency;
-        if (wholePesos)
-        {
-            unitPrice = RoundToPeso(unitPrice);
-        }
+        // (hotfix 2026-10-14): la regla y su motivo viven en VatIncludedLine, compartida con POS.
+        unitPrice = VatIncludedLine.ChargedListPrice(unitPrice, currency);
 
         Quantity = quantity;
         UnitPrice = unitPrice;
@@ -270,36 +260,13 @@ public sealed class QuotationItem
         // La fórmula vive en BuildingBlocks (spec 2026-10-07): POS la comparte para cobrar al
         // centavo lo mismo que una cotización detal. Las validaciones y los códigos
         // quotation.item.* siguen aquí.
-        //
-        // En COP la línea se cobra al unitario descontado ya entero: la fórmula compartida recibe
-        // ese unitario sin descuento, y el descuento de la línea es lo que falta para llegar al
-        // bruto. Así VatIncludedLine no cambia y POS sigue cobrando como cobraba.
-        if (wholePesos)
-        {
-            var chargedUnitPrice = RoundToPeso(unitPrice * (1m - discountPercentage / 100m));
-            var charged = VatIncludedLine.Compute(quantity, chargedUnitPrice, 0m, taxPercentage);
-            DiscountAmount = Round(quantity * unitPrice) - charged.LineTotal;
-            TaxAmount = charged.TaxAmount;
-            Subtotal = charged.Subtotal;
-        }
-        else
-        {
-            var amounts = VatIncludedLine.Compute(quantity, unitPrice, discountPercentage, taxPercentage);
-            DiscountAmount = amounts.DiscountAmount;
-            TaxAmount = amounts.TaxAmount;
-            Subtotal = amounts.Subtotal;
-        }
-
+        var amounts = VatIncludedLine.Compute(
+            quantity, unitPrice, discountPercentage, taxPercentage, currency);
+        DiscountAmount = amounts.DiscountAmount;
+        TaxAmount = amounts.TaxAmount;
+        Subtotal = amounts.Subtotal;
         UpdatedAt = occurredAt;
     }
 
     private static decimal Round(decimal value) => VatIncludedLine.Round(value);
-
-    // Código ISO literal y no el catálogo de Tenancy (Currencies): el dominio no lo referencia, y
-    // la regla es de la facturación masiva en pesos, no de los decimales con que se muestra cada
-    // moneda.
-    private const string WholePesoCurrency = "COP";
-
-    private static decimal RoundToPeso(decimal value) =>
-        Math.Round(value, 0, MidpointRounding.AwayFromZero);
 }
