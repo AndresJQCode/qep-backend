@@ -159,19 +159,26 @@ public sealed class QuotationEventApplierTests
         Assert.Equal(2, bed.Deals.History.Count);
     }
 
-    // Un sent que llega después del converted (reintento) no saca al negocio de Ganado ni devuelve la foto a Sent.
+    // Un sent que llega después del converted (reintento) no toca nada: Converted es terminal para sent. Ni la etapa, ni el monto
+    // del negocio ganado, ni el enlace, aunque el sent viejo traiga otro total u otro cliente.
     [Fact]
     public async Task ALateSentAfterTheConvertedChangesNothing()
     {
         var bed = new ApplierBed();
         var clientId = Guid.CreateVersion7();
+        var staleClientId = Guid.CreateVersion7();
         var quotationId = Guid.CreateVersion7();
         await bed.Applier.ApplyConvertedAsync(bed.Fact(clientId, quotationId, 1_000m, orderId: Guid.CreateVersion7()), Later, Ct);
+        var deal = Assert.Single(bed.Deals.Items);
+        var version = deal.Version;
 
-        await bed.Applier.ApplySentAsync(bed.Fact(clientId, quotationId, 1_000m), Later.AddMinutes(1), Ct);
+        Assert.True(await bed.Applier.ApplySentAsync(bed.Fact(staleClientId, quotationId, 7_777m), Later.AddMinutes(1), Ct));
 
-        Assert.Equal(bed.Pipeline.WonStage.Id, Assert.Single(bed.Deals.Items).StageId);
-        Assert.Equal(DealQuotationStatus.Converted, Assert.Single(bed.Quotations.Items).Status);
+        Assert.Single(bed.Deals.Items);
+        Assert.Equal((bed.Pipeline.WonStage.Id, (decimal?)1_000m, (Guid?)quotationId, version), (deal.StageId, deal.Amount, deal.PrimaryQuotationId, deal.Version));
+        var snapshot = Assert.Single(bed.Quotations.Items);
+        Assert.Equal((DealQuotationStatus.Converted, (Guid?)deal.Id, clientId), (snapshot.Status, snapshot.DealId, snapshot.CustomerId));
+        Assert.DoesNotContain(bed.Audit.Entries, entry => entry.Action == PipelineAuditActions.QuotationUnlinked);
     }
 
     [Fact]

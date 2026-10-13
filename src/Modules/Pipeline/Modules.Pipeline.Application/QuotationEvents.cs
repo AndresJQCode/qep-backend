@@ -15,7 +15,8 @@ public sealed record OrderCancelledFact(Guid TenantId, Guid OrderId, Guid Quotat
 /// Spec 2026-10-13 §4.4, D17, D18 y D25–D28: lo que cada evento de Quotations le hace al negocio, con actor <c>System</c>. No
 /// guarda: el worker guarda con la unidad de trabajo, en el mismo SaveChanges que el inbox. El resultado no depende del orden de
 /// llegada (converted aplica primero las reglas de enlace de sent, D25) y un evento repetido no duplica nada. Una principal
-/// anulada o vencida no dispara nada (D28): Quotations no emite evento por eso.
+/// anulada o vencida no dispara nada (D28): Quotations no emite evento por eso. Converted es terminal para sent: un sent que llega
+/// después de la conversión no toca la foto, el monto ni el enlace.
 /// </summary>
 public sealed class QuotationEventApplier(
     ITenantModules tenantModules,
@@ -82,6 +83,14 @@ public sealed class QuotationEventApplier(
 
         // Paso 1: la foto.
         var snapshot = await quotations.FindAsync(fact.TenantId, fact.QuotationId, cancellationToken);
+
+        // Converted es terminal para sent: un sent tardío (reintento) trae un total o un cliente viejos y no puede pisar el monto
+        // del negocio ganado ni desenlazar su principal.
+        if (!converted && snapshot?.Status == DealQuotationStatus.Converted)
+        {
+            return true;
+        }
+
         if (snapshot is null)
         {
             snapshot = DealQuotation.Create(fact.TenantId, fact.QuotationId, fact.QuotationNumber, fact.ClientId, fact.Total, fact.Currency, now);
