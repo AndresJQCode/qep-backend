@@ -39,7 +39,42 @@ internal sealed class MessagingTestBed
 
     public InMemoryMediaStore Store { get; } = new();
 
-    public FakeUploadStaging Staging { get; } = new();
+    public FakeUploadStaging Staging { get; }
+
+    public FakeImageCompressor Compressor { get; } = new();
+
+    public MessagingTestBed() => Staging = new FakeUploadStaging(Store);
+
+    /// <summary>Lo que "subió el front" al staging del miembro de la prueba: el objeto en el bucket bajo la clave que reconstruye el
+    /// handler. Devuelve la clave.</summary>
+    public string Stage(Guid conversationId, Guid uploadId, string fileName, byte[] bytes, Guid? memberId = null)
+    {
+        var key = MessagingMediaKeys.Staging(TenantId, conversationId, memberId ?? MemberId, uploadId, OutboundMediaPolicy.ExtensionOf(fileName));
+        Store.Objects[key] = (bytes, OutboundMediaPolicy.MimeTypeOf(OutboundMediaPolicy.FormatOf(OutboundMediaPolicy.ExtensionOf(fileName))!.Value));
+        return key;
+    }
+
+    public SendMediaMessageHandler SendMediaHandler(Guid? tenantId = null)
+    {
+        var membership = new FakeMembershipDirectory();
+        membership.Active[(SubjectId, TenantId)] = MemberId;
+        return new SendMediaMessageHandler(
+            Conversations,
+            Repository,
+            Messages,
+            Outbound,
+            Meta,
+            Store,
+            Staging,
+            Compressor,
+            Connections,
+            new FakeMemberNames(MemberId),
+            membership,
+            TenantModules,
+            new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
+            new FakeClock(Now),
+            new SendMediaMessageValidator());
+    }
 
     public CreateMediaUploadSessionHandler CreateMediaUploadSessionHandler(Guid? tenantId = null)
     {
@@ -471,8 +506,13 @@ internal sealed class FakeOutboundMessages : IOutboundMessages
     /// <summary>Lo ya commiteado con ese clientId (§8.5 paso 2, sin candado).</summary>
     public ExistingOutbound? Committed { get; set; }
 
+    /// <summary>Lo que aparece en la segunda consulta (otro request con el mismo clientId terminó mientras éste leía R2).</summary>
+    public ExistingOutbound? CommittedOnSecondLookup { get; set; }
+
+    private int _lookups;
+
     public Task<ExistingOutbound?> FindByClientIdAsync(Guid conversationId, Guid clientId, CancellationToken cancellationToken) =>
-        Task.FromResult(Committed);
+        Task.FromResult(++_lookups > 1 && CommittedOnSecondLookup is not null ? CommittedOnSecondLookup : Committed);
 
     public List<FakeClaim> Claims { get; } = [];
 
@@ -595,7 +635,14 @@ internal sealed class InMemoryMediaStore : IMessagingMediaStore
         Objects[key] = (buffer.ToArray(), contentType);
     }
 
-    public Task<MediaStreamDto?> OpenReadAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public List<string> Opened { get; } = [];
+
+    public Task<MediaStreamDto?> OpenReadAsync(string key, CancellationToken cancellationToken)
+    {
+        Opened.Add(key);
+        return Task.FromResult(
+            Objects.TryGetValue(key, out var stored) ? new MediaStreamDto(new MemoryStream(stored.Bytes, writable: false), stored.ContentType, stored.Bytes.Length, null) : null);
+    }
 
     public Exception? DeleteFailure { get; set; }
 
