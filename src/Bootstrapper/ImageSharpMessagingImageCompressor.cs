@@ -27,6 +27,19 @@ internal sealed class ImageSharpMessagingImageCompressor : IMessagingImageCompre
 
     public async Task<CompressedImage?> CompressAsync(Stream source, CancellationToken cancellationToken)
     {
+        // Identify consume lo que lee y un stream que no se recorre (el GET de R2 detrás del hash del handler) no se puede
+        // rebobinar para decodificar: se copia a un búfer propio. Son a lo sumo 25 MB, el tope de una imagen.
+        if (!source.CanSeek)
+        {
+            var buffer = new MemoryStream();
+            await using (buffer.ConfigureAwait(false))
+            {
+                await source.CopyToAsync(buffer, cancellationToken);
+                buffer.Position = 0;
+                return await CompressAsync(buffer, cancellationToken);
+            }
+        }
+
         try
         {
             // Los bytes los controla quien sube el archivo: se mide antes de decodificar.

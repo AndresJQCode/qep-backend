@@ -89,6 +89,29 @@ public sealed class ImageSharpMessagingImageCompressorTests
         Assert.Null(await _compressor.CompressAsync(source, TestContext.Current.CancellationToken));
     }
 
+    // El handler le pasa el staging que viene de R2 detrás de un stream que no se puede recorrer: Identify lo consume y sin
+    // un búfer propio la decodificación posterior lo encuentra vacío.
+    [Theory]
+    [InlineData("jpeg")]
+    [InlineData("png")]
+    public async Task AnUnseekableSourceIsCompressedToo(string format)
+    {
+        using var encoded = format == "jpeg"
+            ? Encode(new Image<Rgb24>(300, 200, new Rgb24(10, 120, 200)), new JpegEncoder())
+            : Encode(new Image<Rgb24>(300, 200, new Rgb24(10, 120, 200)), new PngEncoder());
+        await using var source = new UnseekableStream(encoded.ToArray());
+
+        var result = await _compressor.CompressAsync(source, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(result);
+        Assert.Equal((300, 200), (result.Width, result.Height));
+    }
+
+    private sealed class UnseekableStream(byte[] bytes) : MemoryStream(bytes)
+    {
+        public override bool CanSeek => false;
+    }
+
     private static MemoryStream Encode<TPixel>(Image<TPixel> image, SixLabors.ImageSharp.Formats.ImageEncoder encoder)
         where TPixel : unmanaged, IPixel<TPixel>
     {
