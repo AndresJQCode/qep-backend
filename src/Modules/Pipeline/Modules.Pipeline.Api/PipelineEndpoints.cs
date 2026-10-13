@@ -15,6 +15,7 @@ public static class PipelineEndpoints
         group.MapDealEndpoints();
         group.MapBoardEndpoints();
         group.MapTriageEndpoints();
+        group.MapCustomerSummaryEndpoints();
         return endpoints;
     }
 }

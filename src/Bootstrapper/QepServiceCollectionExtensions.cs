@@ -639,6 +639,8 @@ public static class QepServiceCollectionExtensions
         // Pipeline (spec 2026-10-13 §5.1): triage.
         services.AddScoped<IQueryHandler<ListTriageQuery, TriageListDto>, ListTriageHandler>();
         services.AddScoped<ICommandHandler<DecideTriageCommand, TriageResultDto>, DecideTriageHandler>();
+        // Pipeline (spec 2026-10-13 D36): el resumen de negocios de la ficha del cliente.
+        services.AddScoped<IQueryHandler<GetCustomerDealsSummaryQuery, CustomerDealsSummaryDto>, GetCustomerDealsSummaryHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
