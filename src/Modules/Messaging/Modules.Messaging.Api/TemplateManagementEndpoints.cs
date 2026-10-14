@@ -37,6 +37,13 @@ internal static class TemplateManagementEndpoints
             .Produces<ManagedTemplateDto>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Sin cuerpo: la definición de la plantilla de cotización vive en el backend (spec §4.5).
+        group.MapPost("/quotation", ProvisionQuotationAsync)
+            .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Produces<ManagedTemplateDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
     }
 
     private static async Task<IResult> GetAsync(Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -56,6 +63,12 @@ internal static class TemplateManagementEndpoints
                     request.Buttons?.Select(button => new TemplateButtonInput(button.Type, button.Text, button.Url, button.PhoneNumber)).ToArray(),
                     request.Examples),
                 cancellationToken));
+
+    // Location = la pantalla, como al crear una libre.
+    private static async Task<IResult> ProvisionQuotationAsync(Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Created(
+            $"/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management",
+            await dispatcher.SendAsync(new ProvisionQuotationTemplateCommand(tenantId, connectionId), cancellationToken));
 }
 
 /// <summary>Spec 2026-10-14 §4.7: el cuerpo de crear una plantilla libre. Todo opcional para que lo que falte salga 422 con su clave en

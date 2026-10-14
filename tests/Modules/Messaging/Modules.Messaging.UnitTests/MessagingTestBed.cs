@@ -454,6 +454,10 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
 
     public List<JsonObject> CreatedTemplates { get; } = [];
 
+    /// <summary>Respuestas de creación en orden, una por llamada; vacía, responde <see cref="NextCreatedTemplate"/>. Sirve para «la
+    /// primera falla, la segunda no».</summary>
+    public Queue<MessagingGraphResult<CreatedTemplate>> CreateResults { get; } = new();
+
     public MessagingGraphResult<DeletedTemplate> NextDelete { get; set; } = new(new DeletedTemplate(false), null);
 
     public List<(string MetaTemplateId, string Name)> Deleted { get; } = [];
@@ -465,7 +469,7 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
     public Task<MessagingGraphResult<CreatedTemplate>> CreateTemplateAsync(MessagingTemplateSource source, JsonObject payload, CancellationToken cancellationToken)
     {
         CreatedTemplates.Add(payload);
-        return Task.FromResult(NextCreatedTemplate);
+        return Task.FromResult(CreateResults.TryDequeue(out var next) ? next : NextCreatedTemplate);
     }
 
     public Task<MessagingGraphResult<DeletedTemplate>> DeleteTemplateAsync(MessagingTemplateSource source, string metaTemplateId, string name, CancellationToken cancellationToken)
