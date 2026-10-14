@@ -109,7 +109,7 @@ lo cierra **antes** de escribir el código que dependa de ello.
 | V-3 | Tope del texto: 1000 caracteres (tabla de Instagram) o 2000 (Send API de Messenger) | Prueba manual | Una constante |
 | V-4 | Si Meta descarga una **URL prefirmada de R2** (query string de SigV4) como adjunto. Al adjuntar el PDF de una cotización a un WhatsApp no pudo, y hubo que publicar una copia (`IQuotationPdfStorage.PublishAsync`) | Prueba manual con imagen y PDF | Copia pública con clave aleatoria y lifecycle, como las cotizaciones |
 | V-5 | Si `sender_action: mark_seen` (y `typing_on`) aplica a Instagram con Instagram Login | Prueba manual | Decisión 14: sin acuse |
-| V-6 | Si Meta exige `https` en el `redirect_uri` también para `localhost` | Dashboard | Túnel para probar en local (`ngrok` o similar) |
+| V-6 | ~~Si Meta exige `https` en el `redirect_uri` también para `localhost`~~ **Cerrada por el owner el 2026-10-14:** quedaron registradas en el dashboard `https://qep.qcode.co/settings/integrations/instagram/callback` y `http://localhost:3002/settings/integrations/instagram/callback`. El backend permite esos dos orígenes en `Meta:Instagram:AllowedRedirectOrigins` | — | — |
 | V-7 | Si `GET /<IGSID>?fields=name,username,profile_pic` responde con el token de Instagram User (hay reportes de `username` ausente según versión) | Prueba manual | `profile_name` se llena con lo que venga; `username` opcional |
 | V-8 | Si Meta acepta un **WAV** por URL como `audio` y lo reproduce como nota de voz en la app de Instagram, y si 16 kHz mono se oye bien | Prueba manual con una nota real transcodificada (§12 paso 0) | `ffmpeg` en la imagen y AAC/m4a (D-I10) |
 
