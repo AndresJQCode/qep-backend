@@ -67,7 +67,7 @@ internal static class IntegrationsApiHarness
     // prueba clona la plantilla (CREATE DATABASE … TEMPLATE, decenas de milisegundos) y el arranque
     // de su host sólo comprueba que no hay migraciones pendientes. El aislamiento es el mismo: una
     // base por prueba, que se borra al terminar.
-    private static readonly Lazy<Task<PostgreSqlContainer>> SharedServer = new(StartServerAsync);
+    private static readonly Lazy<Task<TestServer>> SharedServer = new(StartServerAsync);
 
     // Postgres rechaza dos CREATE DATABASE simultáneos desde la misma plantilla ("source database
     // is being accessed by other users"): los clones van de a uno.
@@ -91,18 +91,16 @@ internal static class IntegrationsApiHarness
         return new TestDatabase(server, name);
     }
 
-    private static async Task<PostgreSqlContainer> StartServerAsync()
+    private static async Task<TestServer> StartServerAsync()
     {
-        // Sin el token de una prueba: el servidor es de todas, y cancelar la primera no puede
-        // dejar a las demás sin base.
-        var server = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            // Clases en paralelo, cada una con su host y su pool: el límite por defecto (100) se agota (53300).
-            .WithCommand("-c", "max_connections=400")
-            .Build();
-        await server.StartAsync(CancellationToken.None);
+        // Sin Docker (QEP_TEST_POSTGRES con la cadena de admin de un servidor ya levantado) se usa ese servidor: la
+        // plantilla se recrea en cada corrida para que no herede migraciones viejas.
+        var server = await StartContainerOrExternalAsync();
+        if (server.Container is null)
+        {
+            await ExecuteAdminAsync(server, $"DROP DATABASE IF EXISTS \"{TemplateDatabase}\" WITH (FORCE)");
+        }
+
         await ExecuteAdminAsync(server, $"CREATE DATABASE \"{TemplateDatabase}\"");
 
         // El host migra al arrancar (los *DatabaseInitializer de cada módulo): arrancarlo una vez
@@ -119,20 +117,45 @@ internal static class IntegrationsApiHarness
         return server;
     }
 
-    private static string ConnectionStringFor(PostgreSqlContainer server, string database) =>
-        new NpgsqlConnectionStringBuilder(server.GetConnectionString()) { Database = database }.ConnectionString;
+    /// <summary>El servidor de las pruebas: el contenedor de Testcontainers o, con <c>QEP_TEST_POSTGRES</c> (la cadena
+    /// de conexión de administración de un PostgreSQL ya levantado, con permiso de crear bases), ese servidor, para
+    /// correr la suite donde no hay Docker. <see cref="Container"/> es <c>null</c> en el segundo caso.</summary>
+    internal sealed record TestServer(string AdminConnectionString, PostgreSqlContainer? Container);
 
-    private static async Task ExecuteAdminAsync(PostgreSqlContainer server, string sql)
+    private static async Task<TestServer> StartContainerOrExternalAsync()
+    {
+        if (Environment.GetEnvironmentVariable("QEP_TEST_POSTGRES") is { Length: > 0 } external)
+        {
+            return new TestServer(external, null);
+        }
+
+        // Sin el token de una prueba: el servidor es de todas, y cancelar la primera no puede
+        // dejar a las demás sin base.
+        var container = new PostgreSqlBuilder("postgres:18-alpine")
+            .WithDatabase("qep")
+            .WithUsername("qep")
+            .WithPassword("qep-integration")
+            // Clases en paralelo, cada una con su host y su pool: el límite por defecto (100) se agota (53300).
+            .WithCommand("-c", "max_connections=400")
+            .Build();
+        await container.StartAsync(CancellationToken.None);
+        return new TestServer(container.GetConnectionString(), container);
+    }
+
+    private static string ConnectionStringFor(TestServer server, string database) =>
+        new NpgsqlConnectionStringBuilder(server.AdminConnectionString) { Database = database }.ConnectionString;
+
+    private static async Task ExecuteAdminAsync(TestServer server, string sql)
     {
         // Contra la base "qep" del contenedor, nunca contra la plantilla ni contra la de una prueba.
-        await using var connection = new NpgsqlConnection(server.GetConnectionString());
+        await using var connection = new NpgsqlConnection(server.AdminConnectionString);
         await connection.OpenAsync(CancellationToken.None);
         await using var command = new NpgsqlCommand(sql, connection);
         await command.ExecuteNonQueryAsync(CancellationToken.None);
     }
 
     /// <summary>La base de una prueba. Expone lo mismo que las pruebas le pedían al contenedor.</summary>
-    public sealed class TestDatabase(PostgreSqlContainer server, string name) : IAsyncDisposable
+    public sealed class TestDatabase(TestServer server, string name) : IAsyncDisposable
     {
         public string GetConnectionString() => ConnectionStringFor(server, name);
 
