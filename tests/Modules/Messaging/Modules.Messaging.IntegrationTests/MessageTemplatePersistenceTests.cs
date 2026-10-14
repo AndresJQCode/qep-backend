@@ -125,6 +125,43 @@ public sealed class MessageTemplatePersistenceTests
         }));
     }
 
+    private static MessageTemplate Quotation(Guid tenantId, Guid connectionId, string metaId, string name) =>
+        MessageTemplate.Pending(tenantId, connectionId, metaId, name, "es", "UTILITY", "NAMED", "PENDING", "[]", MessageTemplateKind.Quotation, null, Now);
+
+    // Fix de la Task 8: dos primeros aprovisionamientos a la vez crean qep_cotizacion y qep_cotizacion_v2 en Meta y los dos insertan su
+    // Quotation. El índice único parcial UX_message_templates_quotation deja una sola por conexión y el que pierde es quotation_exists.
+    [Fact]
+    public async Task ASecondQuotationTemplateInTheSameConnectionIs422QuotationExistsByIndexName()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        await InScopeAsync(f.Factory, async (repository, unitOfWork) =>
+        {
+            repository.Add(Quotation(f.TenantId, f.ConnectionId, "1", "qep_cotizacion"));
+            return await unitOfWork.SaveChangesAsync(Ct);
+        });
+
+        var exception = await Assert.ThrowsAsync<MessagingDomainException>(() => InScopeAsync(f.Factory, async (repository, unitOfWork) =>
+        {
+            repository.Add(Quotation(f.TenantId, f.ConnectionId, "2", "qep_cotizacion_v2"));
+            return await unitOfWork.SaveChangesAsync(Ct);
+        }));
+
+        Assert.Equal(MessagingErrorCodes.TemplateQuotationExists, exception.Code);
+        // Otra conexión del mismo tenant tiene la suya, y las que no son Quotation no cuentan.
+        await InScopeAsync(f.Factory, async (repository, unitOfWork) =>
+        {
+            repository.Add(Quotation(f.TenantId, Guid.CreateVersion7(), "3", "qep_cotizacion"));
+            repository.Add(Mirrored(f, "4", "qep_cotizacion_v3"));
+            repository.Add(Mirrored(f, "5", "promo"));
+            return await unitOfWork.SaveChangesAsync(Ct);
+        });
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.message_templates WHERE kind = 'Quotation' AND tenant_id = @t AND connection_id = @c", ("t", f.TenantId), ("c", f.ConnectionId)));
+        Assert.Equal(4L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_templates WHERE tenant_id = @t", ("t", f.TenantId)));
+    }
+
     [Fact]
     public async Task TheSyncMarkerIsNullUntilMarkedAndThenUpserts()
     {

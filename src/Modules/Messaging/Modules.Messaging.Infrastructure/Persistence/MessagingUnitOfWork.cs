@@ -8,8 +8,8 @@ namespace Modules.Messaging.Infrastructure.Persistence;
 
 /// <summary>La versión vieja es <c>concurrency.conflict</c> (412 por If-Match en resolve/reopen, §8.5). Spec 2026-10-12 §3.4: el atajo
 /// repetido es <c>messaging.quick_reply.shortcut_taken</c> (422). Spec 2026-10-14 §4.1: nombre e idioma repetidos de una plantilla son
-/// <c>messaging.template.name_taken</c> (422) y un <c>meta_template_id</c> o un marcador de sincronización repetidos son
-/// <c>concurrency.conflict</c> (dos refrescos a la vez).</summary>
+/// <c>messaging.template.name_taken</c> (422), una segunda <c>Quotation</c> en la conexión es <c>messaging.template.quotation_exists</c>
+/// (422) y un <c>meta_template_id</c> o un marcador de sincronización repetidos son <c>concurrency.conflict</c> (dos refrescos a la vez).</summary>
 internal sealed class MessagingUnitOfWork(MessagingDbContext dbContext) : IMessagingUnitOfWork
 {
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
@@ -46,6 +46,16 @@ internal sealed class MessagingUnitOfWork(MessagingDbContext dbContext) : IMessa
         {
             throw new MessagingDomainException(
                 MessagingErrorCodes.TemplateNameTaken, "Another template of this connection already uses that name in that language.", exception);
+        }
+        // Fix de la Task 8: dos primeros aprovisionamientos de la plantilla de cotización a la vez. El que pierde es quotation_exists (422):
+        // la versión que alcanzó a crear en Meta queda allá y el siguiente refresco la trae como External.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateQuotationIndex, StringComparison.Ordinal))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateQuotationExists, "This connection already has its quotation template.", exception);
         }
         // Dos refrescos de la misma conexión a la vez: el segundo pierde y el cliente reintenta (412, como la versión vieja). Lo mismo con
         // el marcador de template_mirror_syncs: dos primeros llenados lo insertan los dos y el segundo choca con su PK.

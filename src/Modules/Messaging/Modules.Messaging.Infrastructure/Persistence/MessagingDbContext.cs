@@ -42,6 +42,11 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
 
     public const string MessageTemplateNameLanguageIndex = "UX_message_templates_name_language";
 
+    /// <summary>Fix de la Task 8 (spec 2026-10-14 §4.5): una sola <c>Quotation</c> por conexión. Parcial sobre <c>kind = 'Quotation'</c>,
+    /// que se guarda como texto (<c>CK_message_templates_kind</c>). Dos primeros aprovisionamientos a la vez chocan acá y la unidad de
+    /// trabajo lo traduce por nombre a <c>quotation_exists</c>.</summary>
+    public const string MessageTemplateQuotationIndex = "UX_message_templates_quotation";
+
     /// <summary>El PK de <c>template_mirror_syncs</c> (el nombre por defecto de EF, el de la migración <c>AddMessageTemplates</c>): dos
     /// primeros llenados de la misma conexión chocan acá y la unidad de trabajo lo traduce a <c>concurrency.conflict</c>.</summary>
     public const string TemplateMirrorSyncPrimaryKey = "PK_template_mirror_syncs";
@@ -345,6 +350,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.Property(value => value.SyncedAt).HasColumnName("synced_at");
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.MetaTemplateId }, MessageTemplateMetaIdIndex).IsUnique();
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Name, value.Language }, MessageTemplateNameLanguageIndex).IsUnique();
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateQuotationIndex).IsUnique().HasFilter("kind = 'Quotation'");
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Status }, "IX_message_templates_status");
     }
 

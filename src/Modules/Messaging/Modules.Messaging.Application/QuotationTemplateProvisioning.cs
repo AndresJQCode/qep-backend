@@ -174,6 +174,10 @@ public sealed record ProvisionQuotationTemplateCommand(Guid TenantId, Guid Conne
 /// <item>Quita la fila vieja e inserta la <c>PENDING</c> <c>Quotation</c> con el nombre usado, audita y guarda: una sola transacción, así
 /// que nunca quedan dos filas <c>Quotation</c>. Si Meta falla al subir o al crear no se escribe nada.</item>
 /// </list>
+/// Dos primeros aprovisionamientos a la vez calculan la misma versión; Meta crea una y al otro le dice «ya existe», así que salta a la
+/// siguiente y también la crea. El índice único parcial <c>UX_message_templates_quotation</c> deja guardar sólo una fila <c>Quotation</c>
+/// por conexión: el que pierde recibe <c>quotation_exists</c>, y la versión que alcanzó a crear queda en Meta y vuelve como
+/// <c>External</c> en el siguiente refresco. No hay comprobación previa en el handler: sólo el índice cierra la carrera.
 /// </summary>
 public sealed partial class ProvisionQuotationTemplateHandler(
     IMessageTemplateRepository repository,
