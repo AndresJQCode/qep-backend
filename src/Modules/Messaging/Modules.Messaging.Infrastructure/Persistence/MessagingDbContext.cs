@@ -37,6 +37,11 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-12 §3.4: <c>MessagingUnitOfWork</c> discrimina por este nombre para responder <c>shortcut_taken</c>.</summary>
     public const string QuickReplyShortcutIndex = "IX_quick_replies_tenant_shortcut";
 
+    /// <summary>Spec 2026-10-14 §4.1: los dos únicos del espejo. La unidad de trabajo los traduce por nombre.</summary>
+    public const string MessageTemplateMetaIdIndex = "UX_message_templates_meta_id";
+
+    public const string MessageTemplateNameLanguageIndex = "UX_message_templates_name_language";
+
     public DbSet<Conversation> Conversations => Set<Conversation>();
 
     internal DbSet<MessageRecord> Messages => Set<MessageRecord>();
@@ -53,6 +58,11 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-12 §3.1: el agregado de la respuesta rápida.</summary>
     public DbSet<QuickReply> QuickReplies => Set<QuickReply>();
 
+    /// <summary>Spec 2026-10-14 §4.1: el espejo de plantillas.</summary>
+    public DbSet<MessageTemplate> MessageTemplates => Set<MessageTemplate>();
+
+    internal DbSet<TemplateMirrorSyncRecord> TemplateMirrorSyncs => Set<TemplateMirrorSyncRecord>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -65,6 +75,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureCampaign(modelBuilder);
         ConfigureCampaignRecipient(modelBuilder);
         ConfigureQuickReply(modelBuilder);
+        ConfigureMessageTemplate(modelBuilder);
+        ConfigureTemplateMirrorSync(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
     }
 
@@ -302,6 +314,44 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         quickReply.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         quickReply.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
         quickReply.HasIndex(value => new { value.TenantId, value.Shortcut }, QuickReplyShortcutIndex).IsUnique();
+    }
+
+    /// <summary>Spec 2026-10-14 §4.1. Sin FK a la conexión: es de Integrations, otro schema (como el cubo de envío).</summary>
+    private static void ConfigureMessageTemplate(ModelBuilder modelBuilder)
+    {
+        var template = modelBuilder.Entity<MessageTemplate>();
+        template.ToTable("message_templates", Schema, table =>
+            table.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External')"));
+        template.HasKey(value => value.Id);
+        template.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        template.Property(value => value.TenantId).HasColumnName("tenant_id");
+        template.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        template.Property(value => value.MetaTemplateId).HasColumnName("meta_template_id").HasMaxLength(MessageTemplate.MetaTemplateIdMaxLength);
+        template.Property(value => value.Name).HasColumnName("name").HasMaxLength(MessageTemplateName.MaxLength);
+        template.Property(value => value.Language).HasColumnName("language").HasMaxLength(MessageTemplate.LanguageMaxLength);
+        template.Property(value => value.Category).HasColumnName("category").HasMaxLength(MessageTemplate.CategoryMaxLength);
+        template.Property(value => value.ParameterFormat).HasColumnName("parameter_format").HasMaxLength(MessageTemplate.ParameterFormatMaxLength);
+        template.Property(value => value.Status).HasColumnName("status").HasMaxLength(MessageTemplateStatuses.MaxLength);
+        template.Property(value => value.StatusReason).HasColumnName("status_reason").HasMaxLength(MessageTemplate.StatusReasonMaxLength);
+        template.Property(value => value.ComponentsJson).HasColumnName("components").HasColumnType("jsonb");
+        template.Property(value => value.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(16);
+        template.Property(value => value.CreatedByMemberId).HasColumnName("created_by_member_id");
+        template.Property(value => value.CreatedAt).HasColumnName("created_at");
+        template.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        template.Property(value => value.SyncedAt).HasColumnName("synced_at");
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.MetaTemplateId }, MessageTemplateMetaIdIndex).IsUnique();
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Name, value.Language }, MessageTemplateNameLanguageIndex).IsUnique();
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Status }, "IX_message_templates_status");
+    }
+
+    private static void ConfigureTemplateMirrorSync(ModelBuilder modelBuilder)
+    {
+        var sync = modelBuilder.Entity<TemplateMirrorSyncRecord>();
+        sync.ToTable("template_mirror_syncs", Schema);
+        sync.HasKey(value => new { value.TenantId, value.ConnectionId });
+        sync.Property(value => value.TenantId).HasColumnName("tenant_id");
+        sync.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        sync.Property(value => value.SyncedAt).HasColumnName("synced_at");
     }
 
     /// <summary>Decisión del owner 2026-10-12 (P3 y P5): el cubo de envío por conexión. Sin FK: la conexión es de Integrations, otro schema.</summary>
