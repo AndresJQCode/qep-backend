@@ -1,4 +1,7 @@
+using System.Text.RegularExpressions;
 using BuildingBlocks.Application;
+using FluentValidation;
+using FluentValidation.Results;
 using Modules.Messaging.Domain;
 using Modules.Tenancy.Application;
 
@@ -14,6 +17,12 @@ internal static class TemplateManagementSupport
 
     public static ResourceNotFoundException NotFound(Guid templateId) =>
         new(MessagingErrorCodes.TemplateNotFound, $"Template '{templateId}' was not found in this connection.");
+
+    /// <summary>Los nombres para mostrar de los miembros que aparecen como autores; vacío si no hay ninguno, sin ir a buscar. Lo comparten
+    /// la pantalla, la creación libre y el aprovisionamiento de la cotización.</summary>
+    public static async Task<IReadOnlyDictionary<Guid, string>> MemberNamesAsync(
+        IMessagingMemberNames memberNames, Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken) =>
+        memberIds.Count == 0 ? new Dictionary<Guid, string>() : await memberNames.FindAsync(tenantId, memberIds, cancellationToken);
 }
 
 /// <summary>§4.3: una fila del espejo al DTO de la pantalla, con el texto resuelto por <see cref="TemplateCatalog.FromStored"/>.</summary>
@@ -57,9 +66,7 @@ public sealed class TemplateManagementReader(IMessageTemplateRepository reposito
             ?? throw TemplateManagementSupport.ConnectionUnavailable();
         var templates = await repository.ListAsync(tenantId, connectionId, cancellationToken);
         var creators = templates.Where(template => template.CreatedByMemberId is not null).Select(template => template.CreatedByMemberId!.Value).Distinct().ToArray();
-        var names = creators.Length == 0
-            ? new Dictionary<Guid, string>()
-            : await memberNames.FindAsync(tenantId, creators, cancellationToken);
+        var names = await TemplateManagementSupport.MemberNamesAsync(memberNames, tenantId, creators, cancellationToken);
         var quotation = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.Quotation);
         return new TemplateManagementDto(
             connection,
@@ -124,5 +131,219 @@ public sealed class SyncTemplatesHandler(
             ?? throw TemplateManagementSupport.ConnectionUnavailable();
         await sync.RunAsync(command.TenantId, command.ConnectionId, source, cancellationToken);
         return await reader.ReadAsync(command.TenantId, command.ConnectionId, cancellationToken);
+    }
+}
+
+/// <summary>Los textos de <c>errors</c>, tuteando.</summary>
+public static class TemplateMessages
+{
+    public const string Name = "El nombre lleva letras minúsculas, números y guiones bajos, hasta 512 caracteres.";
+    public const string NameReserved = "El nombre no puede ser «qep_cotizacion» ni empezar por «qep_cotizacion_»: está reservado para la plantilla de cotización.";
+    public const string Language = "Elige un idioma con la forma «es» o «es_CO».";
+    public const string Category = "La categoría es MARKETING o UTILITY.";
+    public const string Header = "El encabezado lleva hasta 60 caracteres y no admite variables.";
+    public const string Footer = "El pie lleva hasta 60 caracteres.";
+    public const string Body = "Escribe un cuerpo de 1 a 1024 caracteres con algo más que variables.";
+    public const string BodyVariable = "Las variables van entre llaves dobles, en minúsculas, con números o guiones bajos y sin espacios: {{nombre}}.";
+    public const string Examples = "Escribe un ejemplo para cada variable del cuerpo, ni una más ni una menos.";
+    public const string Buttons = "Hasta diez botones; los de respuesta rápida van todos juntos, al principio o al final.";
+    public const string ButtonType = "El tipo de botón es QuickReply, Url o PhoneNumber.";
+    public const string ButtonText = "El texto del botón lleva de 1 a 25 caracteres.";
+    public const string ButtonUrl = "El botón de enlace necesita una URL https completa, sin variables, de hasta 2000 caracteres.";
+    public const string ButtonPhone = "El botón de llamada necesita un número de 7 a 20 dígitos, con «+» opcional.";
+}
+
+/// <summary>§4.7 <c>POST …/template-management/templates</c>. Todo opcional para que lo que falte salga 422 con su clave en <c>errors</c>.</summary>
+public sealed record CreateTemplateCommand(
+    Guid TenantId,
+    Guid ConnectionId,
+    string? Name,
+    string? Language,
+    string? Category,
+    string? Header,
+    string? Body,
+    string? Footer,
+    IReadOnlyList<TemplateButtonInput>? Buttons,
+    IReadOnlyDictionary<string, string?>? Examples) : ICommand<ManagedTemplateDto>;
+
+/// <summary>§4.8. Lo que Meta valida y nosotros no (proporción de variables frente a texto, variable al final) vuelve de Meta como
+/// <c>rejected_by_meta</c>: duplicarlo sería mantener dos copias de reglas que Meta cambia sin avisar.</summary>
+public sealed partial class CreateTemplateCommandValidator : AbstractValidator<CreateTemplateCommand>
+{
+    private static readonly string[] Categories = ["MARKETING", "UTILITY"];
+    private static readonly string[] ButtonTypes = ["QuickReply", "Url", "PhoneNumber"];
+
+    public CreateTemplateCommandValidator()
+    {
+        // Dos mensajes distintos: «reservado» no es lo mismo que «mal formado», y el primero explica por qué un nombre bien formado se rechaza.
+        RuleFor(command => command.Name)
+            .Must(name => MessageTemplateName.IsValid(name))
+            .OverridePropertyName("name").WithMessage(TemplateMessages.Name)
+            .Must(name => !MessageTemplateName.IsReserved(name))
+            .OverridePropertyName("name").WithMessage(TemplateMessages.NameReserved);
+        RuleFor(command => command.Language)
+            .Must(language => language is not null && LanguagePattern().IsMatch(language))
+            .OverridePropertyName("language").WithMessage(TemplateMessages.Language);
+        RuleFor(command => command.Category)
+            .Must(category => category is not null && Categories.Contains(category, StringComparer.Ordinal))
+            .OverridePropertyName("category").WithMessage(TemplateMessages.Category);
+        RuleFor(command => command.Header)
+            .Must(header => header is null || (header.Length <= 60 && !header.Contains("{{", StringComparison.Ordinal)))
+            .OverridePropertyName("header").WithMessage(TemplateMessages.Header);
+        RuleFor(command => command.Footer)
+            .Must(footer => footer is null || footer.Length <= 60)
+            .OverridePropertyName("footer").WithMessage(TemplateMessages.Footer);
+        // Custom con ValidationFailure a mano: los mensajes llevan {{nombre}} literal y WithMessage lo trataría como placeholder.
+        RuleFor(command => command.Body).Custom((body, context) =>
+        {
+            if (string.IsNullOrWhiteSpace(body) || body.Length > 1024)
+            {
+                context.AddFailure(new ValidationFailure("body", TemplateMessages.Body));
+                return;
+            }
+
+            if (LooseBrace().Matches(body).Any(match => !StrictVariable().IsMatch(match.Value)))
+            {
+                context.AddFailure(new ValidationFailure("body", TemplateMessages.BodyVariable));
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(StrictVariable().Replace(body, string.Empty)))
+            {
+                context.AddFailure(new ValidationFailure("body", TemplateMessages.Body));
+            }
+        });
+        RuleFor(command => command.Examples).Custom((given, context) =>
+        {
+            var command = context.InstanceToValidate;
+            if (string.IsNullOrWhiteSpace(command.Body) || command.Body.Length > 1024)
+            {
+                return; // ya marcado en body; sin cuerpo no hay contra qué comparar los ejemplos.
+            }
+
+            var variables = TemplateComponentsBuilder.VariablesOf(command.Body);
+            var examples = given ?? new Dictionary<string, string?>();
+            var keysMatch = examples.Keys.ToHashSet(StringComparer.Ordinal).SetEquals(variables);
+            if (!keysMatch || examples.Values.Any(string.IsNullOrWhiteSpace) || examples.Values.Any(value => value!.Length > 1024))
+            {
+                context.AddFailure(new ValidationFailure("examples", TemplateMessages.Examples));
+            }
+        });
+        RuleFor(command => command.Buttons).Custom((buttons, context) =>
+        {
+            var list = buttons ?? [];
+            if (list.Count > 10)
+            {
+                context.AddFailure(new ValidationFailure("buttons", TemplateMessages.Buttons));
+                return;
+            }
+
+            for (var index = 0; index < list.Count; index++)
+            {
+                var button = list[index];
+                if (button.Type is null || !ButtonTypes.Contains(button.Type, StringComparer.Ordinal))
+                {
+                    context.AddFailure(new ValidationFailure($"buttons[{index}].type", TemplateMessages.ButtonType));
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(button.Text) || button.Text.Length > 25)
+                {
+                    context.AddFailure(new ValidationFailure($"buttons[{index}].text", TemplateMessages.ButtonText));
+                }
+
+                if (button.Type == "Url" && !IsHttpsUrl(button.Url))
+                {
+                    context.AddFailure(new ValidationFailure($"buttons[{index}].url", TemplateMessages.ButtonUrl));
+                }
+
+                if (button.Type == "PhoneNumber" && (button.PhoneNumber is null || !PhonePattern().IsMatch(button.PhoneNumber)))
+                {
+                    context.AddFailure(new ValidationFailure($"buttons[{index}].phoneNumber", TemplateMessages.ButtonPhone));
+                }
+            }
+
+            // Meta exige las respuestas rápidas agrupadas: todas al principio o todas al final.
+            var quick = list.Select((button, index) => (button.Type, index)).Where(pair => pair.Type == "QuickReply").Select(pair => pair.index).ToArray();
+            if (quick.Length > 0 && quick.Length < list.Count)
+            {
+                var contiguous = quick[^1] - quick[0] + 1 == quick.Length;
+                var atEdge = quick[0] == 0 || quick[^1] == list.Count - 1;
+                if (!contiguous || !atEdge)
+                {
+                    context.AddFailure(new ValidationFailure("buttons", TemplateMessages.Buttons));
+                }
+            }
+        });
+    }
+
+    private static bool IsHttpsUrl(string? url) =>
+        url is { Length: <= 2000 } && !url.Contains("{{", StringComparison.Ordinal)
+        && Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
+
+    [GeneratedRegex(@"^[a-z]{2,3}(_[A-Z]{2})?\z", RegexOptions.CultureInvariant)]
+    private static partial Regex LanguagePattern();
+
+    [GeneratedRegex(@"^\+?[0-9]{7,20}\z", RegexOptions.CultureInvariant)]
+    private static partial Regex PhonePattern();
+
+    // Cualquier par de llaves dobles, con lo que sea adentro: lo que no cumpla la forma estricta se marca.
+    [GeneratedRegex(@"\{\{[^{}]*\}\}", RegexOptions.CultureInvariant)]
+    private static partial Regex LooseBrace();
+
+    [GeneratedRegex(@"\{\{[a-z0-9_]+\}\}", RegexOptions.CultureInvariant)]
+    private static partial Regex StrictVariable();
+}
+
+/// <summary>§4.3 «CreateTemplateCommand»: valida, comprueba el nombre en el espejo sin llamar a Meta, crea en Meta, inserta <c>PENDING</c>
+/// <c>Free</c>, audita y guarda. Si Meta falla no se escribe nada.</summary>
+public sealed class CreateTemplateHandler(
+    IMessageTemplateRepository repository,
+    IWhatsAppCloudClient meta,
+    IMessagingConnectionDirectory connections,
+    IMessagingMemberNames memberNames,
+    CallerMembership callerMembership,
+    IMessagingUnitOfWork unitOfWork,
+    IMessagingAuditRecorder audit,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext,
+    IClock clock,
+    IValidator<CreateTemplateCommand> validator)
+    : ICommandHandler<CreateTemplateCommand, ManagedTemplateDto>
+{
+    public async Task<ManagedTemplateDto> HandleAsync(CreateTemplateCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.TemplateManage, cancellationToken);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var source = await connections.ResolveTemplateSourceAsync(command.TenantId, command.ConnectionId, cancellationToken)
+            ?? throw TemplateManagementSupport.ConnectionUnavailable();
+        // El validador garantiza los no-nulos de abajo.
+        var draft = new TemplateDraft(
+            command.Name!, command.Language!, command.Category!, command.Header, command.Body!, command.Footer, command.Buttons ?? [],
+            command.Examples!.ToDictionary(pair => pair.Key, pair => pair.Value!, StringComparer.Ordinal));
+        if (await repository.FindByNameAsync(command.TenantId, command.ConnectionId, draft.Name, draft.Language, cancellationToken) is not null)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateNameTaken, "Another template of this connection already uses that name in that language.");
+        }
+
+        var created = await meta.CreateTemplateAsync(source, TemplateComponentsBuilder.CreatePayload(draft), cancellationToken);
+        if (!created.Succeeded || created.Value is null)
+        {
+            throw await TemplateGraphErrors.FailAsync(
+                connections, command.TenantId, command.ConnectionId, created.Failure ?? new MessagingGraphFailure(0, null, "unreachable"), cancellationToken);
+        }
+
+        var now = clock.UtcNow;
+        var memberId = await callerMembership.FindAsync(command.TenantId, cancellationToken);
+        var template = MessageTemplate.Pending(
+            command.TenantId, command.ConnectionId, created.Value.Id, draft.Name, draft.Language, created.Value.Category, TemplateComponentsBuilder.Named,
+            created.Value.Status, TemplateComponentsBuilder.Components(draft).ToJsonString(), MessageTemplateKind.Free, memberId, now);
+        repository.Add(template);
+        audit.RecordTemplate(command.TenantId, executionContext.SubjectId, MessagingAuditActions.TemplateCreated, template.Id, now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        var names = await TemplateManagementSupport.MemberNamesAsync(
+            memberNames, command.TenantId, memberId is { } member ? [member] : [], cancellationToken);
+        return ManagedTemplateMapping.ToDto(template, names);
     }
 }

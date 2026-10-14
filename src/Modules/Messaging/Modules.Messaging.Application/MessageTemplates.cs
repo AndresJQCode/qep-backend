@@ -336,7 +336,8 @@ public static partial class TemplateCatalog
     internal static string? Text(JsonElement element, string property) =>
         element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
-    // «{{first_name}}» o «{{1}}»; Meta no admite espacios en las claves, pero sí tolera los de alrededor.
+    // «{{first_name}}» o «{{1}}»; Meta no admite espacios en las claves, pero sí tolera los de alrededor. Compartido con
+    // TemplateComponentsBuilder.VariablesOf: una sola definición de qué es una variable.
     [GeneratedRegex(@"\{\{\s*([A-Za-z0-9_]+)\s*\}\}", RegexOptions.CultureInvariant)]
-    private static partial Regex Placeholder();
+    internal static partial Regex Placeholder();
 }
