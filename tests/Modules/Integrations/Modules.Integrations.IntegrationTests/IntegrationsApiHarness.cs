@@ -42,6 +42,13 @@ internal static class IntegrationsApiHarness
 
     public const string FromNumber = "573001234567";
 
+    /// <summary>Spec 2026-10-14 (V-1 cerrada): el caso de uso Instagram tiene su propio id y su propio secreto.</summary>
+    public const string InstagramAppId = "700800900";
+
+    public const string SentinelInstagramAppSecret = "ig-app-secret-SENTINEL-4d3c2b";
+
+    public const string InstagramRedirectUri = "https://qep.qcode.co/settings/integrations/instagram/callback";
+
     public const string ZenviaBaseUrl = "https://zenvia.test";
 
     /// <summary>La llave con la que el host cifra. Calculada, no escrita: un literal con forma de llave
@@ -59,6 +66,8 @@ internal static class IntegrationsApiHarness
     public static string ConnectionsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/integrations/connections";
 
     public static string ConnectionUrl(Guid tenantId, Guid connectionId) => $"{ConnectionsUrl(tenantId)}/{connectionId}";
+
+    public static string InstagramConnectUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/integrations/instagram/connect";
 
     private const string TemplateDatabase = "qep_template";
 
@@ -176,6 +185,10 @@ internal static class IntegrationsApiHarness
         /// prueba llega a graph.facebook.com.</summary>
         public FakeMetaGraphHandler MetaHandler { get; } = new();
 
+        /// <summary>Lo que sale hacia graph.instagram.com y api.instagram.com (conexión, probador y refresco de
+        /// instagram) lo ve este otro: ninguna prueba llega a Instagram.</summary>
+        public FakeMetaGraphHandler InstagramHandler { get; } = new();
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
@@ -211,12 +224,21 @@ internal static class IntegrationsApiHarness
             builder.UseSetting("Meta:App:GraphApiVersion", "v24.0");
             builder.UseSetting("Meta:App:AppSecret", SentinelMetaAppSecret);
             builder.UseSetting("Meta:App:WebhookVerifyToken", SentinelMetaVerifyToken);
+            // Spec 2026-10-14 §9: el caso de uso Instagram, fijado y nunca heredado; con las dos claves, instagram es
+            // visible. Las pruebas del caso contrario lo vacían con WithoutMetaInstagram.
+            builder.UseSetting("Meta:Instagram:AppId", InstagramAppId);
+            builder.UseSetting("Meta:Instagram:AppSecret", SentinelInstagramAppSecret);
+            builder.UseSetting("Meta:Instagram:GraphApiVersion", "v24.0");
+            builder.UseSetting("Meta:Instagram:AllowedRedirectOrigins:0", "https://qep.qcode.co");
+            builder.UseSetting("Meta:Instagram:AllowedRedirectOrigins:1", "http://localhost:3002");
             builder.ConfigureTestServices(services =>
             {
                 services.AddHttpClient(ZenviaConnectionTester.HttpClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => ZenviaHandler);
                 services.AddHttpClient(MetaGraphClient.HttpClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
+                services.AddHttpClient(InstagramGraphClient.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => InstagramHandler);
             });
         }
     }
@@ -472,6 +494,13 @@ internal static class IntegrationsApiHarness
     private static readonly string[] MetaAppRequiredKeys = ["AppId", "ConfigId", "AppSecret", "WebhookVerifyToken"];
 
     /// <summary>Vacía la sección Meta:App (D-M3): whatsapp-cloud desaparece del catálogo.</summary>
+    public static WebApplicationFactory<Program> WithoutMetaInstagram(this WebApplicationFactory<Program> factory) =>
+        factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("Meta:Instagram:AppId", string.Empty);
+            builder.UseSetting("Meta:Instagram:AppSecret", string.Empty);
+        });
+
     public static WebApplicationFactory<Program> WithoutMetaApp(this WebApplicationFactory<Program> factory) =>
         factory.WithWebHostBuilder(builder =>
         {

@@ -39,14 +39,21 @@ internal static class ProviderVisibility
         IIntegrationProviderCatalog catalog,
         ITenantModules tenantModules,
         IMetaAppSettings metaApp,
+        IInstagramAppSettings instagramApp,
         Guid tenantId,
         CancellationToken cancellationToken)
     {
         var modules = await tenantModules.FindAsync(tenantId, cancellationToken);
         return catalog.All
             .Where(provider => provider.IsVisibleFor(modules))
-            // D-M3: sin la app de Meta configurada (sólo fuera de Production) no hay cómo conectar.
-            .Where(provider => provider.Onboarding != ProviderOnboarding.MetaEmbeddedSignup || metaApp.IsConfigured)
+            // D-M3: sin la app de Meta configurada (sólo fuera de Production) no hay cómo conectar. Mismo criterio
+            // con el caso de uso Instagram (spec 2026-10-14 §6.1).
+            .Where(provider => provider.Onboarding switch
+            {
+                ProviderOnboarding.MetaEmbeddedSignup => metaApp.IsConfigured,
+                ProviderOnboarding.InstagramLogin => instagramApp.IsConfigured,
+                _ => true,
+            })
             .ToArray();
     }
 
@@ -87,7 +94,8 @@ internal static class ConnectionLoader
 
 internal static class ConnectionMapping
 {
-    public static ProviderResponse ToProvider(IntegrationProvider provider, int connectionCount, IMetaAppSettings metaApp) =>
+    public static ProviderResponse ToProvider(
+        IntegrationProvider provider, int connectionCount, IMetaAppSettings metaApp, IInstagramAppSettings instagramApp) =>
         new(
             provider.Key,
             provider.DisplayName,
@@ -97,9 +105,16 @@ internal static class ConnectionMapping
                 .ToArray(),
             provider.MaxConnections,
             connectionCount,
-            provider.Onboarding == ProviderOnboarding.MetaEmbeddedSignup
-                ? new ProviderOnboardingResponse(nameof(ProviderOnboarding.MetaEmbeddedSignup), metaApp.AppId, metaApp.ConfigId, metaApp.GraphApiVersion)
-                : new ProviderOnboardingResponse(nameof(ProviderOnboarding.Form), null, null, null));
+            provider.Onboarding switch
+            {
+                ProviderOnboarding.MetaEmbeddedSignup =>
+                    new ProviderOnboardingResponse(nameof(ProviderOnboarding.MetaEmbeddedSignup), metaApp.AppId, metaApp.ConfigId, metaApp.GraphApiVersion),
+                ProviderOnboarding.InstagramLogin =>
+                    new ProviderOnboardingResponse(
+                        nameof(ProviderOnboarding.InstagramLogin), instagramApp.AppId, null, instagramApp.GraphApiVersion,
+                        InstagramLogin.AuthorizeUrl, InstagramLogin.RequiredScopes),
+                _ => new ProviderOnboardingResponse(nameof(ProviderOnboarding.Form), null, null, null),
+            });
 
     public static async Task<ConnectionResponse> ToResponseAsync(
         IntegrationConnection connection,

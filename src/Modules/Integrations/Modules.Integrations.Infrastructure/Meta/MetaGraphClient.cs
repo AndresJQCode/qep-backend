@@ -56,8 +56,14 @@ internal sealed partial class MetaGraphClient(
     /// <summary>Ruta relativa a la versión: <c>Path("111?fields=…")</c> → <c>v24.0/111?fields=…</c>.</summary>
     public string Path(string relative) => $"{Version}/{relative.TrimStart('/')}";
 
-    public async Task<MetaGraphResponse> SendAsync(
-        string operation, HttpRequestMessage request, string? accessToken, CancellationToken cancellationToken)
+    public Task<MetaGraphResponse> SendAsync(
+        string operation, HttpRequestMessage request, string? accessToken, CancellationToken cancellationToken) =>
+        SendWithAsync(httpClientFactory.CreateClient(HttpClientName), operation, request, accessToken, logger, cancellationToken);
+
+    /// <summary>El envío y la lectura compartidos con <c>InstagramGraphClient</c> (spec 2026-10-14 §6.1): mismo
+    /// contrato de respuesta, mismos logs sin cuerpo ni token.</summary>
+    internal static async Task<MetaGraphResponse> SendWithAsync(
+        HttpClient client, string operation, HttpRequestMessage request, string? accessToken, ILogger logger, CancellationToken cancellationToken)
     {
         if (accessToken is not null)
         {
@@ -66,7 +72,7 @@ internal sealed partial class MetaGraphClient(
 
         try
         {
-            using var response = await httpClientFactory.CreateClient(HttpClientName).SendAsync(request, cancellationToken);
+            using var response = await client.SendAsync(request, cancellationToken);
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             var error = response.IsSuccessStatusCode ? null : MetaGraphError.TryParse(body);
             LogAnswered(logger, operation, (int)response.StatusCode, error?.Code, error?.Subcode, error?.FbTraceId);

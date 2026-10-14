@@ -568,6 +568,11 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<CompleteWhatsAppSignupCommand, ConnectionResponse>,
             CompleteWhatsAppSignupHandler>();
+        // Integrations (spec 2026-10-14 §8.1): conectar Instagram con el code de Business Login. El validador entra con
+        // AddValidatorsFromAssemblyContaining del módulo, más abajo.
+        services.AddScoped<
+            ICommandHandler<ConnectInstagramCommand, ConnectionResponse>,
+            ConnectInstagramHandler>();
         // Messaging (spec 2026-10-09): el webhook de Meta, anónimo y firmado.
         services.AddScoped<IQueryHandler<VerifyWebhookQuery, string?>, VerifyWebhookHandler>();
         services.AddScoped<ICommandHandler<ReceiveWebhookCommand, bool>, ReceiveWebhookHandler>();

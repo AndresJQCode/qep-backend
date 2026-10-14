@@ -19,11 +19,14 @@ public enum FieldKind
 }
 
 /// <summary>Spec 2026-10-09 §6.1: cómo se conecta un proveedor. <c>Form</c> es el formulario genérico;
-/// <c>MetaEmbeddedSignup</c> abre el popup de Meta y el backend llena los campos.</summary>
+/// <c>MetaEmbeddedSignup</c> abre el popup de Meta y el backend llena los campos; <c>InstagramLogin</c>
+/// (spec 2026-10-14, decisión 2) manda a la ventana de autorización de Instagram y vuelve con un <c>code</c>
+/// que el backend canjea. En los dos últimos el backend es dueño de todos los campos.</summary>
 public enum ProviderOnboarding
 {
     Form,
     MetaEmbeddedSignup,
+    InstagramLogin,
 }
 
 /// <summary>
@@ -191,6 +194,10 @@ public sealed class IntegrationProvider
     public int MaxConnections { get; }
 
     public ProviderOnboarding Onboarding { get; }
+
+    /// <summary>Spec 2026-10-14 §6.1: con Embedded Signup o Instagram Login los campos los escribe sólo el backend
+    /// (el signup, el probador o el worker de refresco); el formulario no crea ni edita más que el nombre.</summary>
+    public bool IsBackendOwned => Onboarding != ProviderOnboarding.Form;
 
     /// <summary>Los que dibuja el formulario (sin internos). Secretos incluidos: el formulario los pide como password.</summary>
     public IReadOnlyList<FieldDefinition> CatalogFields { get; }
