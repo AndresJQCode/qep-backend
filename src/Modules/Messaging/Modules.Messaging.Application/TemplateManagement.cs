@@ -318,10 +318,10 @@ public sealed class CreateTemplateHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var source = await connections.ResolveTemplateSourceAsync(command.TenantId, command.ConnectionId, cancellationToken)
             ?? throw TemplateManagementSupport.ConnectionUnavailable();
-        // El validador garantiza los no-nulos de abajo.
+        // El validador garantiza Name, Language, Category y Body; Examples puede ser null (cuerpo sin variables) y se trata como vacío.
         var draft = new TemplateDraft(
             command.Name!, command.Language!, command.Category!, command.Header, command.Body!, command.Footer, command.Buttons ?? [],
-            command.Examples!.ToDictionary(pair => pair.Key, pair => pair.Value!, StringComparer.Ordinal));
+            (command.Examples ?? new Dictionary<string, string?>()).ToDictionary(pair => pair.Key, pair => pair.Value!, StringComparer.Ordinal));
         if (await repository.FindByNameAsync(command.TenantId, command.ConnectionId, draft.Name, draft.Language, cancellationToken) is not null)
         {
             throw new MessagingDomainException(MessagingErrorCodes.TemplateNameTaken, "Another template of this connection already uses that name in that language.");

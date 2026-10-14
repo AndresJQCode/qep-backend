@@ -145,6 +145,20 @@ public sealed class TemplateManagementCreateApiTests
     }
 
     [Fact]
+    public async Task ABodyWithoutVariablesAndWithoutExamplesIsCreated()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+
+        // «examples» se omite: el DTO lo declara opcional y un cuerpo sin variables no lo necesita.
+        var response = await SendAsync(f.Admin, HttpMethod.Post, TemplatesUrl(f), new { name = "ya_abrimos", language = "es", category = "UTILITY", body = "Hola, ya abrimos." });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_templates WHERE kind = 'Free' AND status = 'PENDING' AND name = 'ya_abrimos'"));
+    }
+
+    [Fact]
     public async Task WithoutThePermissionIs403AndWritesNothing()
     {
         await using var database = await StartDatabaseAsync();
