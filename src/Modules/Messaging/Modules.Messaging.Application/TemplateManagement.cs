@@ -347,3 +347,46 @@ public sealed class CreateTemplateHandler(
         return ManagedTemplateMapping.ToDto(template, names);
     }
 }
+
+/// <summary>§4.7 <c>DELETE …/template-management/templates/{templateId}</c>. D-T11: en Meta sólo ese idioma; D-T12: no si una campaña
+/// programada o enviándose la usa; D-T13: la fila se elimina, también cuando Meta dice que ya no existe. La de cotización sí se puede
+/// borrar (§4.5): es la salida cuando algo quedó mal.</summary>
+public sealed record DeleteTemplateCommand(Guid TenantId, Guid ConnectionId, Guid TemplateId) : ICommand<bool>;
+
+public sealed class DeleteTemplateHandler(
+    IMessageTemplateRepository repository,
+    IWhatsAppCloudClient meta,
+    IMessagingConnectionDirectory connections,
+    IMessagingUnitOfWork unitOfWork,
+    IMessagingAuditRecorder audit,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext,
+    IClock clock)
+    : ICommandHandler<DeleteTemplateCommand, bool>
+{
+    public async Task<bool> HandleAsync(DeleteTemplateCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.TemplateManage, cancellationToken);
+        var source = await connections.ResolveTemplateSourceAsync(command.TenantId, command.ConnectionId, cancellationToken)
+            ?? throw TemplateManagementSupport.ConnectionUnavailable();
+        var template = await repository.FindAsync(command.TenantId, command.ConnectionId, command.TemplateId, cancellationToken)
+            ?? throw TemplateManagementSupport.NotFound(command.TemplateId);
+        if (await repository.IsReferencedByActiveCampaignAsync(command.TenantId, command.ConnectionId, template.Name, template.Language, cancellationToken))
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateInUseByCampaign, "A scheduled or sending campaign uses this template.");
+        }
+
+        var deleted = await meta.DeleteTemplateAsync(source, template.MetaTemplateId, template.Name, cancellationToken);
+        if (!deleted.Succeeded)
+        {
+            throw await TemplateGraphErrors.FailAsync(
+                connections, command.TenantId, command.ConnectionId, deleted.Failure ?? new MessagingGraphFailure(0, null, "unreachable"), cancellationToken);
+        }
+
+        repository.Remove(template);
+        audit.RecordTemplate(command.TenantId, executionContext.SubjectId, MessagingAuditActions.TemplateDeleted, template.Id, clock.UtcNow);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+}

@@ -44,6 +44,13 @@ internal static class TemplateManagementEndpoints
             .Produces<ManagedTemplateDto>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapDelete("/templates/{templateId:guid}", DeleteAsync)
+            .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
     }
 
     private static async Task<IResult> GetAsync(Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -69,6 +76,13 @@ internal static class TemplateManagementEndpoints
         Results.Created(
             $"/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management",
             await dispatcher.SendAsync(new ProvisionQuotationTemplateCommand(tenantId, connectionId), cancellationToken));
+
+    // Sin cuerpo en la respuesta: el frontend quita la fila de su lista y no necesita nada más.
+    private static async Task<IResult> DeleteAsync(Guid tenantId, Guid connectionId, Guid templateId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(new DeleteTemplateCommand(tenantId, connectionId, templateId), cancellationToken);
+        return Results.NoContent();
+    }
 }
 
 /// <summary>Spec 2026-10-14 §4.7: el cuerpo de crear una plantilla libre. Todo opcional para que lo que falte salga 422 con su clave en
