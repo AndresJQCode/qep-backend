@@ -9,6 +9,10 @@ namespace Modules.Integrations.Infrastructure.Meta;
 /// query del canje y nunca en un log: <see cref="MetaGraphClient"/> registra sólo status y códigos.</summary>
 internal sealed class MetaGraphSignupGateway(MetaGraphClient graph, IOptions<MetaAppOptions> options) : IWhatsAppSignupGateway
 {
+    /// <summary>Los campos del probador más <c>platform_type</c>, que el signup lee para no registrar de nuevo un número
+    /// que ya está en la Cloud API.</summary>
+    public const string PhoneNumberFields = WhatsAppCloudConnectionTester.Fields + ",platform_type";
+
     public async Task<GraphResult<string>> ExchangeCodeAsync(string code, CancellationToken cancellationToken)
     {
         var app = options.Value;
@@ -82,7 +86,7 @@ internal sealed class MetaGraphSignupGateway(MetaGraphClient graph, IOptions<Met
     public async Task<GraphResult<WabaPhoneNumber>> GetPhoneNumberAsync(string phoneNumberId, string accessToken, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(
-            HttpMethod.Get, graph.Path($"{Uri.EscapeDataString(phoneNumberId)}?fields={WhatsAppCloudConnectionTester.Fields}"));
+            HttpMethod.Get, graph.Path($"{Uri.EscapeDataString(phoneNumberId)}?fields={PhoneNumberFields}"));
         var response = await graph.SendAsync("phone-number", request, accessToken, cancellationToken);
         if (!response.IsSuccess)
         {
@@ -92,8 +96,10 @@ internal sealed class MetaGraphSignupGateway(MetaGraphClient graph, IOptions<Met
         try
         {
             using var document = JsonDocument.Parse(response.Body);
-            var number = ReadNumber(document.RootElement) ?? new WabaPhoneNumber(phoneNumberId, null, null, null);
-            return new GraphResult<WabaPhoneNumber>(number with { Id = phoneNumberId }, null);
+            var root = document.RootElement;
+            var number = ReadNumber(root) ?? new WabaPhoneNumber(phoneNumberId, null, null, null);
+            return new GraphResult<WabaPhoneNumber>(
+                number with { Id = phoneNumberId, Status = ReadString(root, "status"), PlatformType = ReadString(root, "platform_type") }, null);
         }
         catch (JsonException)
         {

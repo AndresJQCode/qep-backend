@@ -41,7 +41,8 @@ backend; sin estos pasos el flujo de conexión no abre y el webhook no recibe.
     escribe su PIN en el formulario del camino de número nuevo; si no, déjalo vacío y QEP genera uno. En
     los dos casos queda cifrado en la conexión. Un PIN equivocado vuelve marcado en el campo
     (`registration_failed` con `errors.pin`); diez registros en 72 h devuelven
-    `registration_limit` y hay que esperar.
+    `registration_limit` y hay que esperar. Si el número ya está `CONNECTED` en la Cloud API (por ejemplo, con
+    otra app tuya), QEP no lo vuelve a registrar: sólo suscribe la app, ignora el PIN y no lo guarda.
 11. **Orden del despliegue de la asignación y el BSUID** (spec 2026-10-10 §7, §13). Tres pasos, en este orden:
     1. **Backend**, con sus dos migraciones: `AddCustomerCompleteness` (Customers) y
        `AddBsuidAssignmentAndEvents` (Messaging).
@@ -70,6 +71,11 @@ backend; sin estos pasos el flujo de conexión no abre y el webhook no recibe.
 - **Plantillas rechazadas.** Precedente de Zenvia: un rechazo con «An error occurred while sending the
   template for approval» lo produce el agregador, no Meta. En esta versión no se envían plantillas (sólo texto
   dentro de la ventana de 24 h), pero si se agregan, aplica lo mismo.
+
+- **Número ya registrado.** El signup no llama `/register` si `GET /{phoneNumberId}` devuelve `status = CONNECTED` y
+  `platform_type = CLOUD_API`. La documentación de Meta sólo muestra `CLOUD_API` en un ejemplo y no lista los otros
+  valores: confirma con el primer número **nuevo** que conectes que antes del `/register` no aparece así (si apareciera,
+  QEP no lo registraría y el número no recibiría). La auditoría de la conexión lleva `register:skipped` cuando se saltó.
 
 ## Decisiones a ratificar (spec §13)
 

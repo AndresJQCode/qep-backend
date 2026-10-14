@@ -73,10 +73,14 @@ internal sealed class FakeWhatsAppSignupGateway : IWhatsAppSignupGateway
         return Task.FromResult(FailAt == "subscribe" ? new GraphResult<bool>(false, Failure) : new GraphResult<bool>(true, null));
     }
 
+    /// <summary>Hace fallar sólo la primera lectura del número: la que el signup hace antes de decidir si registra.</summary>
+    public bool FailFirstRead { get; set; }
+
     public Task<GraphResult<WabaPhoneNumber>> GetPhoneNumberAsync(string phoneNumberId, string accessToken, CancellationToken cancellationToken)
     {
         Calls.Add($"read:{phoneNumberId}");
-        return Task.FromResult(FailAt == "read" || !PhoneNumbers.TryGetValue(phoneNumberId, out var number)
+        var failThisRead = FailFirstRead && Calls.Count(call => call.StartsWith("read:", StringComparison.Ordinal)) == 1;
+        return Task.FromResult(FailAt == "read" || failThisRead || !PhoneNumbers.TryGetValue(phoneNumberId, out var number)
             ? new GraphResult<WabaPhoneNumber>(null, Failure)
             : new GraphResult<WabaPhoneNumber>(number, null));
     }

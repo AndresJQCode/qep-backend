@@ -10,7 +10,16 @@ public sealed record GraphResult<T>(T? Value, GraphFailure? Failure)
     public bool Succeeded => Failure is null;
 }
 
-public sealed record WabaPhoneNumber(string Id, string? DisplayPhoneNumber, string? VerifiedName, string? QualityRating);
+/// <param name="Status">El <c>status</c> de Graph (<c>CONNECTED</c>, <c>PENDING</c>…); sólo lo trae la lectura de un número.</param>
+/// <param name="PlatformType">El <c>platform_type</c> de Graph: <c>CLOUD_API</c> cuando el número ya está registrado en
+/// la Cloud API; sólo lo trae la lectura de un número.</param>
+public sealed record WabaPhoneNumber(
+    string Id,
+    string? DisplayPhoneNumber,
+    string? VerifiedName,
+    string? QualityRating,
+    string? Status = null,
+    string? PlatformType = null);
 
 /// <summary>
 /// Spec 2026-10-09 §8.1, pasos 4 a 8, contra Graph. El adaptador vive en Infrastructure sobre
@@ -30,6 +39,6 @@ public interface IWhatsAppSignupGateway
     /// <summary>POST /{wabaId}/subscribed_apps.</summary>
     Task<GraphResult<bool>> SubscribeAppAsync(string wabaId, string accessToken, CancellationToken cancellationToken);
 
-    /// <summary>GET /{phoneNumberId}?fields=display_phone_number,verified_name,quality_rating,status.</summary>
+    /// <summary>GET /{phoneNumberId}?fields=display_phone_number,verified_name,quality_rating,status,platform_type.</summary>
     Task<GraphResult<WabaPhoneNumber>> GetPhoneNumberAsync(string phoneNumberId, string accessToken, CancellationToken cancellationToken);
 }
