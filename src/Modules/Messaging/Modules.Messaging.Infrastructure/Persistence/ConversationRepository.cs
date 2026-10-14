@@ -37,6 +37,34 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
         return rows == 1;
     }
 
+    public async Task<UnreadFromOutcome> MarkUnreadFromAsync(Guid tenantId, Guid conversationId, Guid messageId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var anchored = await dbContext.Messages.AsNoTracking().AnyAsync(
+            message => message.TenantId == tenantId && message.ConversationId == conversationId && message.Id == messageId, cancellationToken);
+        if (!anchored)
+        {
+            return UnreadFromOutcome.MessageNotFound;
+        }
+
+        // Spec 2026-10-14 §7.1: «desde» es el orden del hilo (IX_messages_thread), y cuentan sólo los entrantes, como
+        // en la ingesta. GREATEST por lo mismo que en MarkUnreadAsync: pisar no leídos reales mentiría.
+        var inbound = MessageColumnCodes.ToCode(MessageDirection.Inbound);
+        var rows = await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE messaging.conversations AS conversation
+               SET unread_count = pending.count, updated_at = {now}, version = conversation.version + 1
+              FROM (SELECT count(*)::int AS count
+                      FROM messaging.messages AS message
+                      JOIN messaging.messages AS anchor ON anchor.id = {messageId}
+                     WHERE message.conversation_id = {conversationId}
+                       AND message.direction = {inbound}
+                       AND (message.occurred_at, message.id) >= (anchor.occurred_at, anchor.id)) AS pending
+             WHERE conversation.id = {conversationId} AND conversation.tenant_id = {tenantId}
+               AND pending.count > conversation.unread_count
+            """, cancellationToken);
+        return rows == 1 ? UnreadFromOutcome.Marked : UnreadFromOutcome.Unchanged;
+    }
+
     public Task<bool> ExistsAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
         dbContext.Conversations.AsNoTracking()
             .AnyAsync(conversation => conversation.TenantId == tenantId && conversation.Id == conversationId, cancellationToken);

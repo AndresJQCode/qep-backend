@@ -11,6 +11,10 @@ public sealed record MarkConversationReadCommand(Guid TenantId, Guid Conversatio
 /// estaba en 0; con no leídos reales no toca nada. Sin acuse a Meta: un read enviado no se retracta.</summary>
 public sealed record MarkConversationUnreadCommand(Guid TenantId, Guid ConversationId) : ICommand<bool>;
 
+/// <summary>Spec 2026-10-14 §7: «desde este mensaje». El contador pasa al mayor entre el actual y los entrantes
+/// desde ese mensaje: lo que tendría si acabaran de llegar. Sin modelo nuevo y sin acuse a Meta.</summary>
+public sealed record MarkUnreadFromMessageCommand(Guid TenantId, Guid ConversationId, Guid MessageId) : ICommand<bool>;
+
 public sealed record ResolveConversationCommand(Guid TenantId, Guid ConversationId, long ExpectedVersion) : ICommand<ConversationSummary>;
 
 public sealed record ReopenConversationCommand(Guid TenantId, Guid ConversationId, long ExpectedVersion) : ICommand<ConversationSummary>;
@@ -88,6 +92,30 @@ public sealed class MarkConversationUnreadHandler(
         return await repository.ExistsAsync(command.TenantId, command.ConversationId, cancellationToken)
             ? false
             : throw MessagingNotFound.Conversation(command.ConversationId);
+    }
+}
+
+/// <summary>Spec 2026-10-14 §7.3: mismo esquema que <see cref="MarkConversationUnreadHandler"/>; el 404 distingue el
+/// mensaje de la conversación porque el formulario del hilo tiene que saber cuál de los dos ya no está.</summary>
+public sealed class MarkUnreadFromMessageHandler(
+    IConversationRepository repository,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext,
+    IClock clock)
+    : ICommandHandler<MarkUnreadFromMessageCommand, bool>
+{
+    public async Task<bool> HandleAsync(MarkUnreadFromMessageCommand command, CancellationToken cancellationToken)
+    {
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.ConversationManage, cancellationToken);
+        var outcome = await repository.MarkUnreadFromAsync(command.TenantId, command.ConversationId, command.MessageId, clock.UtcNow, cancellationToken);
+        return outcome switch
+        {
+            UnreadFromOutcome.Marked => true,
+            UnreadFromOutcome.Unchanged => false,
+            _ => await repository.ExistsAsync(command.TenantId, command.ConversationId, cancellationToken)
+                ? throw MessagingNotFound.Message(command.MessageId)
+                : throw MessagingNotFound.Conversation(command.ConversationId),
+        };
     }
 }
 

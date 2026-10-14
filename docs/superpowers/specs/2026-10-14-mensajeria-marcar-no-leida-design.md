@@ -27,9 +27,8 @@ conversación con el indicador de pendiente para volver después.
 
 ### Fuera de alcance
 
-- **Marcar no leído un mensaje puntual.** El backend no guarda lectura por mensaje: sólo
-  `unread_count` por conversación. Marcar «desde este mensaje» exigiría un modelo
-  nuevo y no lo pidió nadie.
+- ~~Marcar no leído un mensaje puntual.~~ Entró el mismo día como «desde este mensaje», sin modelo
+  nuevo: ver §7.
 - **La acción en la fila de la lista.** La fila entera es un `Link`; un botón dentro de un enlace es
   HTML inválido y rompe el teclado. Se marca desde el hilo abierto. Si la pantalla lo necesita en la
   lista, es otro cambio de UI, no de contrato.
@@ -120,6 +119,68 @@ render mandaría el `/read`.
 - `$conversationId.test.tsx`: el menú marca, navega a `/messaging`, manda un solo `/unread`, ningún
   `/read`, y la fila se lee «Laura Pérez, 1 sin leer» antes del siguiente poll.
 - Sin `manage` no aparece «Más acciones».
+
+## 7. Desde un mensaje (agregado el 2026-10-14)
+
+Pedido del owner: marcar como no leído un mensaje puntual ya leído, visible sólo en QEP. En un chat
+«no leído» es una marca de agua, no una bandera por mensaje: lo pendiente es **ese mensaje y todo lo
+que llegó después**. Eso cabe en el contador que ya existe, porque es exactamente el número que
+tendría `unread_count` si esos entrantes acabaran de llegar (§7.5 del spec base). No hay columna ni
+tabla nueva.
+
+### 7.1 Semántica
+
+`unread_count = GREATEST(unread_count, entrantes desde el mensaje)`, donde «desde» es
+`(occurred_at, id) >= (target.occurred_at, target.id)`, el mismo orden del hilo
+(`IX_messages_thread`), y «entrantes» son los de `direction = Inbound`: los enviados y los eventos
+del sistema no cuentan, igual que no cuentan en la ingesta.
+
+| Antes | Entrantes desde el mensaje | Después | Respuesta |
+| ----- | -------------------------- | ------- | --------- |
+| `0` | `2` | `2`, `version + 1`, `updated_at = now` | 204 |
+| `3` | `2` | sin cambios | 204 |
+| cualquiera | mensaje de otra conversación o de otro tenant | sin cambios | 404 `messaging.message.not_found` |
+| cualquiera | conversación de otro tenant | sin cambios | 404 `messaging.conversation.not_found` |
+
+`GREATEST` por la misma razón que §2: con más no leídos reales que los que pide la marca, pisarlos
+mentiría. Abrir el hilo lo vuelve a 0 por el `/read` de siempre; un entrante posterior suma encima.
+
+### 7.2 Contrato
+
+`POST /api/v1/tenants/{tenantId}/messaging/conversations/{conversationId}/messages/{messageId}/unread`
+
+Permiso `messaging.conversation.manage`, sin `If-Match`, sin cuerpo, 403 con el módulo apagado:
+todo igual que §3.1. Cualquier mensaje de la conversación sirve de ancla; desde uno saliente sin
+entrantes después, el conteo es 0 y no cambia nada (204).
+
+### 7.3 Piezas
+
+| Capa | Qué |
+| ---- | --- |
+| Application | `MarkUnreadFromMessageCommand` y `MarkUnreadFromMessageHandler` en `ConversationLifecycle.cs`. |
+| Application | `IConversationRepository.MarkUnreadFromAsync(tenantId, conversationId, messageId, now, ct)` → `UnreadFromOutcome { Marked, Unchanged, MessageNotFound }`. |
+| Infrastructure | `ConversationRepository.MarkUnreadFromAsync`: `AnyAsync` del mensaje en la conversación y después **un** `UPDATE … FROM (SELECT count(*) …)` con `pending > unread_count` en el `WHERE`. El conteo corre dentro del `UPDATE`, así que una ingesta concurrente espera y suma después, como en §3.2. |
+| Api | `MapPost("/conversations/{conversationId:guid}/messages/{messageId:guid}/unread")` con `ConversationManage`. |
+| Bootstrapper | `AddScoped<ICommandHandler<MarkUnreadFromMessageCommand, bool>, MarkUnreadFromMessageHandler>()`. |
+
+### 7.4 Frontend
+
+- **Servicio:** `markConversationUnreadFrom(tenantId, conversationId, messageId)`.
+- **Hook:** `useConversationActions` expone `markUnreadFrom(messageId, pending)`: parche optimista con
+  `max(unreadCount, pending)` y la misma bandera de §4.1. `pending` lo calcula el contenedor con
+  `countUnreadFrom(messages, messageId)` sobre el hilo cargado: los mismos entrantes que contará el
+  backend, salvo los que el hilo todavía no trajo, que el siguiente poll corrige.
+- **Vista:** un botón «Marcar como no leído desde aquí» en cada burbuja **entrante**, al lado de
+  «Responder», sólo con `manage`. En las salientes no: la marca es sobre lo que dijo el cliente.
+- **Contenedor:** llama a `markUnreadFrom` y navega a `/messaging`, por §4.1.
+
+### 7.5 Pruebas
+
+- Backend (`ConversationLifecycleApiTests`): con tres entrantes leídos, marcar desde el segundo deja
+  `2`; repetir no cambia nada; marcar desde el tercero con `2` tampoco (`GREATEST`); marcar desde el
+  primero sube a `3`; 404 con un mensaje de otra conversación; 403 con sólo `read`.
+- Frontend: servicio; `countUnreadFrom`; ruta (botón en la burbuja entrante, navega, un
+  `…/messages/{id}/unread`, ningún `/read`, fila «Laura Pérez, 2 sin leer»); hook (bandera).
 
 ## 6. Despliegue
 

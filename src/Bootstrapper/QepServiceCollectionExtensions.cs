@@ -609,6 +609,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<MarkConversationReadCommand, bool>, MarkConversationReadHandler>();
         // Spec 2026-10-14: marcar no leída, espejo del read.
         services.AddScoped<ICommandHandler<MarkConversationUnreadCommand, bool>, MarkConversationUnreadHandler>();
+        services.AddScoped<ICommandHandler<MarkUnreadFromMessageCommand, bool>, MarkUnreadFromMessageHandler>();
         services.AddScoped<ICommandHandler<ResolveConversationCommand, ConversationSummary>, ResolveConversationHandler>();
         services.AddScoped<ICommandHandler<ReopenConversationCommand, ConversationSummary>, ReopenConversationHandler>();
         // Messaging (spec 2026-10-10 §8.4): tomar, transferir y liberar. Cada handler a mano: sin registro, 500.
