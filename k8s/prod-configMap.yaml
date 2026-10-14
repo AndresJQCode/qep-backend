@@ -15,6 +15,17 @@ metadata:
 # cualquiera que pueda leer ConfigMaps en el namespace.
 data:
   ASPNETCORE_ENVIRONMENT: "Production"
+  # Identidad del build que corre en el pod, para GET /api/v1/version y el service.version de las
+  # trazas (spec 2026-10-14). Las tres son variables predefinidas del pipeline: Build.BuildId es el
+  # tag de la imagen (azure-pipelines.yml), así que si lo que responde el endpoint no coincide con
+  # `kubectl get deploy -o jsonpath='{.spec.template.spec.containers[0].image}'` alguien aplicó
+  # manifiestos por fuera del pipeline. Un token que la plantilla no resuelva llega literal y el
+  # backend lo trata como ausente (DeploymentInfo.Normalize): el endpoint responde null, nunca el
+  # token. Si en el primer despliegue los tres vienen en null, el plan B es declararlas como
+  # variables propias en azure-pipelines.yml (spec, decisión pendiente 1).
+  Deployment__BuildId: "#{Build.BuildId}#"
+  Deployment__BuildNumber: "#{Build.BuildNumber}#"
+  Deployment__Commit: "#{Build.SourceVersion}#"
   # El publicador del outbox y los tres relays del inbox consultan cada 2-3s, y EF Core
   # registra cada comando en nivel Information, así que el nivel por defecto inunda el pod
   # de líneas "Executed DbCommand" incluso cuando no hay nada que procesar. Subir esta

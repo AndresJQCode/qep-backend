@@ -780,6 +780,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `/health/live`                                     | `GET`                                                                                       | anónimo                                                                                      |
 | `/health/ready`                                    | `GET`                                                                                       | anónimo                                                                                      |
+| `/api/v1/version`                                  | `GET`                                                                                       | anónimo, limitado por IP (`public`)                                                          |
 | `/api/v1/auth/registration-policy`                 | `GET`                                                                                       | anónimo                                                                                      |
 | `/api/v1/auth/register-tenant`                     | `POST`                                                                                      | token del proveedor OIDC                                                                     |
 | `/api/v1/auth/session`                             | `POST`                                                                                      | token del proveedor OIDC                                                                     |
@@ -827,6 +828,51 @@ del Service hasta que la base vuelva, sin reiniciarse.
 despliega**: `azure-pipelines.yml` no lo lista. Con `replicas: 1` bloquearía el drain del nodo.
 Al escalar a 2 réplicas se agrega `pdb` a la lista de manifests del pipeline, después de
 `deployment`, en el mismo cambio.
+
+### Versión desplegada
+
+```http
+GET /api/v1/version
+```
+
+Anónimo y limitado por IP con la política `public` del rate limiter, como el documento OpenAPI.
+Responde siempre `200 OK` con lo que el proceso sabe de sí mismo:
+
+```json
+{
+  "buildId": "4812",
+  "buildNumber": "20261014.3",
+  "commit": "e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3",
+  "environment": "Production",
+  "startedAt": "2026-10-14T13:05:41.1234567+00:00"
+}
+```
+
+`buildId` es el `Build.BuildId` de Azure DevOps, que es también el tag de la imagen desplegada
+(`azure-pipelines.yml`); `buildNumber` es el `Build.BuildNumber` (`yyyyMMdd.r`, trae la fecha);
+`commit` es el SHA completo. Los tres llegan al pod por `k8s/prod-configMap.yaml` como
+`Deployment__*`, con tokens que el pipeline reemplaza, y los tres vienen en `null` cuando el
+proceso no los recibió: en local, o si un token quedó sin resolver (el backend trata un valor que
+empieza por `#{` como ausente, `DeploymentInfo.Normalize`). `environment` es el nombre del
+`IHostEnvironment` y `startedAt` el arranque del proceso, que distingue "desplegué hace un minuto"
+de "este pod lleva tres días". El mismo `buildNumber` viaja como `service.version` en el recurso de
+OpenTelemetry.
+
+Para verificar un despliegue desde PowerShell:
+
+```powershell
+curl.exe -s https://qep-api.qcode.co/api/v1/version
+```
+
+Si `buildId` no coincide con el tag de la imagen del Deployment, alguien aplicó manifiestos por
+fuera del pipeline:
+
+```powershell
+kubectl -n prod-qep-backend get deploy qep-backend -o jsonpath='{.spec.template.spec.containers[0].image}'
+```
+
+`qep-frontend` dibuja esta respuesta junto a su propio commit en el menú de usuario y en el pie
+del login (spec `docs/superpowers/specs/2026-10-14-version-desplegada-design.md`).
 
 ### Configuración del tenant
 

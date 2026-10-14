@@ -1,4 +1,5 @@
 using Bootstrapper.Authentication;
+using Bootstrapper.Deployment;
 using Bootstrapper.Messaging;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Application;
@@ -823,7 +824,16 @@ public static class QepServiceCollectionExtensions
         services.AddHostedService<ExportLoadSeedWorker>();
 
         AddAuthorizationCapability(services, configuration);
-        services.AddQepObservability(configuration, environment);
+        // La identidad del build (spec 2026-10-14): llega por configuración, no compilada, y no es
+        // obligatoria. Se construye acá y no por el patrón de options porque OpenTelemetry necesita
+        // el valor al registrarse, no al resolverse — y porque con Get<T> una sección ausente es
+        // simplemente un objeto vacío, que es exactamente lo que corre en local.
+        var deployment = new DeploymentInfo(
+            configuration.GetSection(DeploymentOptions.SectionName).Get<DeploymentOptions>()
+                ?? new DeploymentOptions(),
+            environment);
+        services.AddSingleton(deployment);
+        services.AddQepObservability(configuration, environment, deployment.BuildNumber);
         AddAuthentication(services, configuration, environment);
         AddAuthorization(services);
         return services;

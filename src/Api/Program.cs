@@ -148,6 +148,8 @@ app.MapScalarApiReference("/scalar/v1")
 app.MapGet("/health/live", () => Results.Ok(new { status = "healthy" }))
     .AllowAnonymous();
 app.MapQepReadiness();
+// Junto a los health checks y no con los módulos: es infraestructura, como ellos. Ver VersionEndpoints.
+app.MapVersionEndpoint();
 app.MapAuthSessionEndpoints();
 app.MapAuthPreferenceEndpoints();
 app.MapRegistrationEndpoints();
