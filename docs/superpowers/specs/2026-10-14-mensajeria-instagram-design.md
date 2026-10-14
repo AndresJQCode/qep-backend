@@ -13,9 +13,6 @@ de Meta desde este entorno queda en §3 como **a verificar**, con el paso del pl
 `2026-10-10-mensajeria-asignacion-bsuid-design.md` (identidad por `user_id`, clientes incompletos,
 asignación), `2026-10-08-integraciones-design.md` (conexiones, secretos, rutas),
 `2026-10-11-contactos-plantillas-campanas-design.md` (plantillas, `POST /conversations`, campañas).
-**Corrige:** el análisis del 2026-10-14 que se escribió desde `main` creyendo que no existía
-bandeja de conversaciones; existía en `develop` desde `de85c57` (precedente del CLAUDE.md sobre
-leer el otro checkout sin mirar la rama).
 
 ## 1. Contexto y alcance
 
@@ -110,7 +107,7 @@ lo cierra **antes** de escribir el código que dependa de ello.
 | V-1 | Si la app de Meta que ya tiene WhatsApp puede sumar el producto *Instagram* con **Instagram Login**, y si el *Instagram App ID / App Secret* que aparecen ahí son **distintos** del `Meta:App:AppId/AppSecret` (la documentación los muestra como ids propios). Decide con qué secreto se firma `/api/webhooks/instagram` | Owner, en el dashboard (§12 paso 0) | Sección `Meta:Instagram:*` con sus propias claves; si son las mismas, se reusa `Meta:App` |
 | V-2 | Cómo se suscribe **cada cuenta** conectada al webhook con Instagram Login: `POST /<IG_ID>/subscribed_apps?subscribed_fields=messages,messaging_seen,messaging_postbacks,messaging_reactions` con el token de la cuenta, o basta con la suscripción del dashboard. Y si la persona tiene que activar «Permitir acceso a mensajes» en la configuración de su Instagram (*Message controls → Connected tools*) | Prueba manual con la primera cuenta real (§12 paso 0) | Un paso más en el handler de conexión y un texto en la pantalla de conexión que lo pida |
 | V-3 | Tope del texto: 1000 caracteres (tabla de Instagram) o 2000 (Send API de Messenger) | Prueba manual | Una constante |
-| V-4 | Si Meta descarga una **URL prefirmada de R2** (query string de SigV4) como adjunto. Con WhatsApp vía Zenvia no pudo (`IQuotationPdfStorage.PublishAsync`) | Prueba manual con imagen y PDF | Copia pública con clave aleatoria y lifecycle, como las cotizaciones |
+| V-4 | Si Meta descarga una **URL prefirmada de R2** (query string de SigV4) como adjunto. Al adjuntar el PDF de una cotización a un WhatsApp no pudo, y hubo que publicar una copia (`IQuotationPdfStorage.PublishAsync`) | Prueba manual con imagen y PDF | Copia pública con clave aleatoria y lifecycle, como las cotizaciones |
 | V-5 | Si `sender_action: mark_seen` (y `typing_on`) aplica a Instagram con Instagram Login | Prueba manual | Decisión 14: sin acuse |
 | V-6 | Si Meta exige `https` en el `redirect_uri` también para `localhost` | Dashboard | Túnel para probar en local (`ngrok` o similar) |
 | V-7 | Si `GET /<IGSID>?fields=name,username,profile_pic` responde con el token de Instagram User (hay reportes de `username` ausente según versión) | Prueba manual | `profile_name` se llena con lo que venga; `username` opcional |
@@ -501,8 +498,6 @@ Bootstrapper). `ConfigurationExampleTests` cubre las claves nuevas.
 - **Documentación contradictoria.** Las páginas de Instagram Login y las de Messenger Platform describen
   el mismo envío con diferencias (tope de texto, `sender_action`). El paso 0 es lo que decide, no la
   lectura.
-- **Zenvia.** No participa: la bandeja va directo contra Meta, como WhatsApp Cloud. La conexión
-  `zenvia` sigue siendo sólo para el envío de cotizaciones.
 
 ## 14. Entregables
 
@@ -516,7 +511,7 @@ Bootstrapper). `ConfigurationExampleTests` cubre las claves nuevas.
 
 | Fecha | Cambio |
 | --- | --- |
-| 2026-10-14 | Primera versión, reemplaza el análisis escrito desde `main` sin el módulo Messaging |
+| 2026-10-14 | Primera versión |
 
 ## Fuentes
 
