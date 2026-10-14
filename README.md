@@ -945,7 +945,9 @@ los cinco con columna propia, como número; vacía si el pedido no tiene comprob
 Después (2026-09-26) va `Tasa IVA` (`tax_rate`): la tasa de IVA de cada línea como fracción y
 como número —19 % sale `0.19`, 0 % sale `0`—, tomada de la foto que la línea guardó del producto
 al agregarse (`QuotationItem.TaxPercentage`), no de la tarifa de hoy. `IVA` (`tax`) sigue siendo el
-monto.
+monto. En una cotización en **USD** las dos salen en `0` (hotfix 2026-10-14): en dólares el IVA no se
+discrimina —el precio se cobra completo, como si lo trajera adentro— y `Valor Unit sin IVA` es el
+precio tal cual.
 
 Después (2026-09-26) va `NIT Empresa` (`company_tax_id`): el NIT de la empresa por la que se
 factura la cotización, la misma que nombra `EMPRESA`, tal como está hoy en Companies. Con la misma

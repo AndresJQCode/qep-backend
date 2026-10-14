@@ -139,7 +139,9 @@ public sealed class Quotation
     /// <summary>Tasa efectiva de la cotización: <c>TaxAmount / Subtotal × 100</c>, derivada de
     /// la suma del impuesto de cada línea (<see cref="RecalculateTotals"/>) — no es un valor que
     /// se pueda fijar desde fuera, cada producto trae su propia tasa
-    /// (<c>Catalog.TaxRate.Percentage</c>). 0 sin líneas o sin subtotal.</summary>
+    /// (<c>Catalog.TaxRate.Percentage</c>). 0 sin líneas o sin subtotal, y 0 en USD: en dólares
+    /// las líneas no discriminan el IVA (<see cref="QuotationItem.TaxAmount"/>), así que
+    /// <see cref="Total"/> es igual a <see cref="Subtotal"/>.</summary>
     public decimal TaxPercentage { get; private set; }
 
     public decimal TaxAmount { get; private set; }

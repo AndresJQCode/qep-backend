@@ -84,13 +84,15 @@ public sealed class QuotationItem
     /// <summary>Tasa de impuesto del producto (<c>Catalog.TaxRate.Percentage</c>), snapshot al
     /// momento de agregar/editar la línea — mismo criterio que <see cref="UnitPrice"/>: una
     /// cotización es un documento histórico, no sigue la tasa del producto si ésta cambia
-    /// después. 0 si el producto no tiene tasa de impuesto asignada.</summary>
+    /// después. 0 si el producto no tiene tasa de impuesto asignada, y **siempre 0 en USD**: en
+    /// dólares el IVA no se discrimina (ver <see cref="Apply"/>).</summary>
     public int TaxPercentage { get; private set; }
 
     /// <summary>El IVA **contenido** en lo cobrado por la línea, no uno agregado encima: el
     /// precio del producto ya lo trae. El impuesto de la cotización es la suma de este
     /// campo en todas sus líneas (<see cref="Quotation.RecalculateTotals"/>), no un porcentaje
-    /// único aplicado al subtotal completo.</summary>
+    /// único aplicado al subtotal completo. En USD es 0: el precio se cobra entero y el IVA no se
+    /// discrimina, así que <see cref="Subtotal"/> es lo cobrado completo.</summary>
     public decimal TaxAmount { get; private set; }
 
     /// <summary>
@@ -258,6 +260,17 @@ public sealed class QuotationItem
         if (wholePesos)
         {
             unitPrice = RoundToPeso(unitPrice);
+        }
+
+        // En USD el IVA no se discrimina (hotfix 2026-10-14). El precio se cobra completo, como
+        // si trajera el IVA adentro, pero la linea no lo separa: tasa 0, impuesto 0 y la base es
+        // lo cobrado entero. Se pisa la tasa y no solo el monto para que UnitPriceWithoutTax, el
+        // Excel de pedidos ("Tasa IVA", "Valor Unit sin IVA") y la pantalla cuenten la misma
+        // historia. La tasa del producto no se pierde: al volver a COP, Reprice la trae del
+        // catalogo junto con el precio en pesos.
+        if (!wholePesos)
+        {
+            taxPercentage = 0;
         }
 
         Quantity = quantity;
