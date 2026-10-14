@@ -14,8 +14,18 @@ public interface IConversationRepository
     /// si no tocó nada (ya estaba en 0, o no existe en el tenant).</summary>
     Task<ReadReceiptTarget?> MarkReadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-14 §3.2: el espejo de <see cref="MarkReadAsync"/>: <c>unread_count = 1</c>,
+    /// <c>updated_at</c> y <c>version + 1</c>, sólo si estaba en 0. Misma sentencia única y sin token: pisar un 3
+    /// con un 1 mentiría sobre cuántos entrantes hay. <c>true</c> si tocó la fila.</summary>
+    Task<bool> MarkUnreadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-14 §7.1: <c>unread_count = GREATEST(unread_count, entrantes desde el mensaje)</c>, con
+    /// «desde» en el orden del hilo (<c>occurred_at, id</c>) y sólo <c>Inbound</c>. Un UPDATE, sin token, como los
+    /// otros dos. El conteo se hace dentro del UPDATE: una ingesta concurrente espera y suma después.</summary>
+    Task<UnreadFromOutcome> MarkUnreadFromAsync(Guid tenantId, Guid conversationId, Guid messageId, DateTimeOffset now, CancellationToken cancellationToken);
+
     /// <summary>Para distinguir «ya estaba leída» (204) de «no existe en el tenant» (404) cuando
-    /// <see cref="MarkReadAsync"/> no tocó nada.</summary>
+    /// <see cref="MarkReadAsync"/> o <see cref="MarkUnreadAsync"/> no tocaron nada.</summary>
     Task<bool> ExistsAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-10 §8.5 y §3 (corrección 7): un UPDATE condicional (<c>assigned_member_id IS NULL</c>) en su
@@ -35,6 +45,19 @@ public enum AutoAssignOutcome
 
     /// <summary>Otra persona la tomó primero (§9.3).</summary>
     AssignedToOther,
+}
+
+/// <summary>Spec 2026-10-14 §7.1.</summary>
+public enum UnreadFromOutcome
+{
+    /// <summary>Subió el contador.</summary>
+    Marked,
+
+    /// <summary>Ya había tantos o más no leídos que los que pide la marca.</summary>
+    Unchanged,
+
+    /// <summary>El mensaje no es de esa conversación en ese tenant (o la conversación no existe).</summary>
+    MessageNotFound,
 }
 
 /// <summary>Lo que el read devuelve de la fila que marcó: lo justo para el acuse a Meta (§8.4).</summary>
