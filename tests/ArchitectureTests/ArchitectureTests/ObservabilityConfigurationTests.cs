@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
@@ -55,6 +56,43 @@ public sealed class ObservabilityConfigurationTests
 
         Assert.Equal(2, exporters.Count);
         Assert.All(exporters, options => Assert.Equal(new Uri(CollectorEndpoint), options.Endpoint));
+    }
+
+    // El build desplegado va al recurso como service.version (spec 2026-10-14, decisión 10): es lo
+    // que permite filtrar trazas por despliegue en Tempo y Grafana. Sin él sigue la versión del
+    // assembly, que con Deterministic y sin SourceLink es siempre la misma.
+    [Fact]
+    public void TheDeploymentBuildNumberBecomesTheServiceVersion()
+    {
+        Assert.Equal("20261014.3", ServiceVersionWith("20261014.3"));
+    }
+
+    [Fact]
+    public void WithoutADeploymentBuildTheAssemblyVersionRemains()
+    {
+        Assert.Equal(
+            typeof(QepObservability).Assembly.GetName().Version?.ToString(),
+            ServiceVersionWith(null));
+    }
+
+    private static object? ServiceVersionWith(string? serviceVersion)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["OTEL_EXPORTER_OTLP_ENDPOINT"] = CollectorEndpoint,
+            })
+            .Build();
+        var services = new ServiceCollection();
+        services.AddSingleton<IConfiguration>(configuration);
+        services.AddQepObservability(configuration, new ProductionEnvironment(), serviceVersion);
+        using var provider = services.BuildServiceProvider();
+
+        return provider.GetRequiredService<TracerProvider>()
+            .GetResource()
+            .Attributes
+            .Single(attribute => attribute.Key == "service.version")
+            .Value;
     }
 
     // Leer IOptionsMonitor<OtlpExporterOptions> no sirve: da verde aunque el override pise la
