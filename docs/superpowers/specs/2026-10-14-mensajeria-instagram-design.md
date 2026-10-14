@@ -6,9 +6,10 @@ token, probador, ruta por cuenta), Messaging (canal en la conversación, webhook
 parser e ingesta propios, cliente de Graph de Instagram, reglas de envío por canal), Customers
 (`instagram_user_id`, `instagram_username`), Api/Bootstrapper (webhook, adaptadores, políticas),
 Authorization (sin permisos nuevos).
-**Estado:** **análisis y plan**, sin código. Las decisiones de §2 son propuestas; las marcadas
-*a ratificar* las decide el owner antes de empezar. Lo que no se pudo verificar en la documentación
-de Meta desde este entorno queda en §3 como **a verificar**, con el paso del plan que lo cierra.
+**Estado:** **plan ratificado**, sin código. El owner ratificó en conversación el 2026-10-14 las
+decisiones de §2 (la 1 con la aclaración que lleva anotada) y pidió **notas de voz en v1**
+(decisión 16, antes fuera de alcance). Lo que no se pudo verificar en la documentación de Meta
+desde este entorno queda en §3 como **a verificar**, con el paso del plan que lo cierra.
 **Depende de:** `2026-10-09-mensajeria-whatsapp-design.md` (todo el módulo Messaging),
 `2026-10-10-mensajeria-asignacion-bsuid-design.md` (identidad por `user_id`, clientes incompletos,
 asignación), `2026-10-08-integraciones-design.md` (conexiones, secretos, rutas),
@@ -45,17 +46,15 @@ Messenger e Instagram»); este spec lo mete.
   `/messages/template` y las campañas siguen siendo sólo de WhatsApp.
 - La etiqueta `HUMAN_AGENT` (responder hasta 7 días después): exige un permiso aparte en App Review y
   reglas de uso que Meta audita. Queda como slice posterior (§13, D-I9).
-- Notas de voz: Instagram acepta `aac`, `m4a`, `wav` y `mp4`, y la nota de QEP es OGG/Opus
-  (spec 2026-10-11). Sin transcodificar no hay forma de mandarla. Slice posterior.
 - Comentarios en publicaciones, respuestas privadas a comentarios, menciones en historias como
   disparador, reacciones salientes, «escribiendo…», *ice breakers* y menú persistente.
 - Messenger (Facebook Page): misma plataforma, pero otro producto y otro login. No entra.
 
-## 2. Decisiones propuestas (a ratificar por el owner)
+## 2. Decisiones (ratificadas por el owner el 2026-10-14)
 
 | # | Decisión | Elegido | Por qué |
 | --- | --- | --- | --- |
-| 1 | **Qué API de Instagram** | **Instagram API with Instagram Login** (Business Login for Instagram): host `graph.instagram.com`, token de *Instagram User*, **sin Página de Facebook** | La otra variante (Facebook Login) exige que la cuenta esté vinculada a una Página y que quien conecta sea admin de esa Página: dos requisitos que muchos tenants no cumplen. Con Instagram Login el modelo es el de WhatsApp Cloud: una credencial por cuenta, cifrada en Integrations, y un webhook por app. Costo: el token vence a los 60 días y hay que refrescarlo (decisión 5); el login es por **redirect**, no por el popup del SDK (decisión 2) |
+| 1 | **Qué API de Instagram** | **Instagram API with Instagram Login** (Business Login for Instagram): host `graph.instagram.com`, token de *Instagram User*, **sin Página de Facebook**. **Aclaración (owner, 2026-10-14):** «Instagram Login» es el nombre que Meta le da al consentimiento con el que el **tenant conecta su cuenta de Instagram a QEP** (el equivalente del popup de Embedded Signup de WhatsApp). **No toca el inicio de sesión de QEP**, que sigue siendo con Google | La otra variante (Facebook Login) exige que la cuenta esté vinculada a una Página y que quien conecta sea admin de esa Página: dos requisitos que muchos tenants no cumplen. Con Instagram Login el modelo es el de WhatsApp Cloud: una credencial por cuenta, cifrada en Integrations, y un webhook por app. Costo: el token vence a los 60 días y hay que refrescarlo (decisión 5); el login es por **redirect**, no por el popup del SDK (decisión 2) |
 | 2 | Onboarding | Nuevo `ProviderOnboarding.InstagramLogin`: el frontend abre `https://www.instagram.com/oauth/authorize` en una ventana, Meta vuelve a una ruta del SPA con `code`, y el SPA manda `POST /integrations/instagram/connect` con el `code`. **El canje lo hace el backend**, nunca el navegador: lleva el app secret | Mismo reparto que Embedded Signup: el frontend sólo transporta el `code`; el `code` vale 1 hora y una sola vez |
 | 3 | Frontera entre módulos | **Integrations** es dueño del proveedor `instagram`, del canje, del refresco, del probador y de la ruta `(instagram, igUserId)`. **Messaging** es dueño del webhook, la ingesta, el envío y las reglas por canal | Decisión 1 del spec de WhatsApp, sin cambios |
 | 4 | Canal como dato de la conversación | Columna `channel` en `messaging.conversations` (`WhatsApp` \| `Instagram`, texto), que la conexión determina y la ingesta escribe. `user_id` guarda el IGSID en Instagram y el BSUID en WhatsApp; `wa_id` queda `NULL`; `username` y `profile_name` se llenan del perfil | La bandeja es una sola y la lista mezcla canales; la fila, el hilo y el compositor necesitan saber el canal **sin** mirar la conexión. Un módulo `InstagramMessaging` aparte duplicaría asignación, clientes, búsqueda y respuestas rápidas |
@@ -70,6 +69,7 @@ Messenger e Instagram»); este spec lo mete.
 | 13 | Texto | Tope de **1000 caracteres** en Instagram (4096 sigue en WhatsApp), validado por canal | Límite de Meta para Instagram (§3, con una duda sobre 1000 vs 2000: V-3) |
 | 14 | Marcar leído | `POST …/read` deja `unread_count` en 0 siempre; el acuse a Meta (`sender_action: mark_seen`) se manda sólo si V-5 lo confirma para Instagram; si no, no se manda y nada más cambia | Hoy el acuse es un *best effort* con 5 s de timeout; en Instagram puede no existir |
 | 15 | Pipeline | `channel` viaja en la lectura de conversaciones que Pipeline hace por `MessagingDbContext`; el triage no cambia | Un negocio nace igual de un DM que de un WhatsApp |
+| 16 | **Notas de voz (owner: en v1)** | La nota se graba como hoy (OGG/Opus, spec 2026-10-11). En una conversación de Instagram el backend la **transcodifica a WAV** (PCM 16 bits, mono, 16 kHz) con un decodificador de Opus administrado (`Concentus` + `Concentus.Oggfile`, sin `ffmpeg` en la imagen), la sube a R2 y se la da a Meta como `attachment { type: "audio", payload.url }` | Instagram no acepta Opus, pero sí `wav`. Un minuto de WAV a 16 kHz mono pesa ~1,9 MB: una nota de 5 minutos queda en ~9,6 MB, bajo los 25 MB de Meta. Decodificar Opus en .NET puro evita meter `ffmpeg` al `Dockerfile`; si V-8 muestra que Meta rechaza el WAV o que la calidad no sirve, se cae a `ffmpeg` → AAC/m4a (D-I10) |
 
 ## 3. Lo que se verificó en la guía oficial de Instagram (2026-10-14)
 
@@ -111,6 +111,7 @@ lo cierra **antes** de escribir el código que dependa de ello.
 | V-5 | Si `sender_action: mark_seen` (y `typing_on`) aplica a Instagram con Instagram Login | Prueba manual | Decisión 14: sin acuse |
 | V-6 | Si Meta exige `https` en el `redirect_uri` también para `localhost` | Dashboard | Túnel para probar en local (`ngrok` o similar) |
 | V-7 | Si `GET /<IGSID>?fields=name,username,profile_pic` responde con el token de Instagram User (hay reportes de `username` ausente según versión) | Prueba manual | `profile_name` se llena con lo que venga; `username` opcional |
+| V-8 | Si Meta acepta un **WAV** por URL como `audio` y lo reproduce como nota de voz en la app de Instagram, y si 16 kHz mono se oye bien | Prueba manual con una nota real transcodificada (§12 paso 0) | `ffmpeg` en la imagen y AAC/m4a (D-I10) |
 
 ## 4. Trazabilidad: historias → componentes
 
@@ -125,7 +126,8 @@ lo cierra **antes** de escribir el código que dependa de ello.
 | 7 | Como asesora, veo cuándo la persona vio mi mensaje | `messaging_seen` → `Read` sobre salientes anteriores o iguales a `read.mid` |
 | 8 | Como asesora, veo en el hilo lo que un compañero respondió desde la app de Instagram | Echo → `Outbound` sin `sentBy` |
 | 9 | Como asesora, la lista y el hilo me dicen por qué canal es cada conversación, y filtro por canal | `channel` en `ConversationSummary`, filtro `channel=` en la lista, frontend `conversation-list-item`, `thread-header` |
-| 10 | Como asesora, no me ofrecen iniciar conversación, plantillas ni notas de voz en Instagram | `GET /messaging/connections` con `channel`; `POST /conversations` → 422 `messaging.channel_unsupported` con una conexión de Instagram; compositor por canal |
+| 10 | Como asesora, no me ofrecen iniciar conversación ni plantillas en Instagram | `GET /messaging/connections` con `channel`; `POST /conversations` → 422 `messaging.channel_unsupported` con una conexión de Instagram; compositor por canal |
+| 13 | Como asesora, mando una nota de voz por Instagram igual que por WhatsApp | `SendAudioMessageHandler` por canal: `IOpusTranscoder` (Application) + `ConcentusOpusTranscoder` (Infrastructure), WAV a R2, URL prefirmada, `IInstagramClient.SendAttachmentAsync("audio", url)` |
 | 11 | Como asesora, un mensaje que la persona borró se ve como «Mensaje eliminado» | `is_deleted` → `details.deleted = true`; burbuja |
 | 12 | Como operador, asignación, resolver/reabrir, no leído, búsqueda, respuestas rápidas y Pipeline funcionan igual en Instagram | Sin cambios de código: la conversación es la misma entidad |
 
@@ -215,7 +217,10 @@ envío); la burbuja sí lo dibuja.
 **`POST …/messages/media/upload-session`** y **`POST …/messages/media`** en Instagram: sólo `.jpg`,
 `.jpeg`, `.png` y `.pdf`, 25 MB; lo demás 422 `messaging.media.unsupported_format` o `too_large`.
 
-**`POST …/messages/audio`** en Instagram → 422 `messaging.channel_unsupported`.
+**`POST …/messages/audio`** en Instagram: mismo contrato y mismas reglas que en WhatsApp (OGG con
+`OpusHead`, hasta 16 MB, `clientId`, `replyTo`). La diferencia es interna: el backend transcodifica a
+WAV antes de dárselo a Meta (decisión 16). Una nota que, ya en WAV, pase de 25 MB responde 422
+`messaging.media.too_large`.
 
 **`POST /conversations`**, **`POST …/messages/template`** y campañas con una conexión de Instagram →
 422 `messaging.channel_unsupported`. `GET …/connections/{id}/templates` → `[]`.
@@ -302,7 +307,12 @@ envío); la burbuja sí lo dibuja.
   El validador de texto lee el tope por canal (`SendMessageValidator` recibe el canal desde la guarda,
   o el handler valida el largo después de cargar la conversación: se decide en el plan, D-I3).
   En Instagram `SendMediaMessageHandler` **no sube** a Meta: firma la URL de R2 (decisión 12) y la
-  manda como `attachment.payload.url`. `SendAudioMessageHandler` responde `channel_unsupported`.
+  manda como `attachment.payload.url`. `SendAudioMessageHandler` en Instagram, dentro del mismo
+  reclamo: valida el OGG como hoy → `IOpusTranscoder.ToWavAsync` (Concentus, en memoria; tope 16 MB
+  de entrada) → R2 en `messaging/{tenantId}/{messageId}` con `audio/wav` → URL prefirmada →
+  `SendAttachmentAsync("audio", url)`. La fila `message_media` guarda `audio/wav`, que es lo que la
+  bandeja reproduce después. Un `Failed` conserva el WAV y el reintento con el mismo `clientId` no
+  vuelve a transcodificar.
 - **Estados.** `messaging_seen` marca `Read` todos los `Outbound` de la conversación con `occurred_at
   <=` el del `read.mid` (si el `mid` no está, todos los anteriores al `timestamp` del evento). Mismo
   `UPDATE` monótono que `StatusIngestion`.
@@ -342,7 +352,7 @@ importación no la lee (es un dato que sólo Meta da).
 | `features/messaging/types/messaging.ts` | `channel` en `ConversationSummary` y `MessagingConnection`; `MESSAGE_KINDS` + `'Share'`; `Message.deleted`; `CHANNEL_LABELS` |
 | `conversation-list-item.tsx`, `thread-header.tsx` | Ícono del canal junto al nombre; en Instagram, `@usuario` en vez de teléfono; `showConnection` cuando hay más de una conexión de **cualquier** canal |
 | `conversation-list.tsx` / `inbox-layout.tsx` | Filtro por canal (chips Todas · WhatsApp · Instagram) sobre `channel=` |
-| `message-composer.tsx` | Por canal: sin micrófono, sin plantillas, tope 1000 con contador, adjuntos sólo imagen y PDF; aviso de ventana cerrada propio («Solo puedes responder cuando la persona vuelva a escribir») |
+| `message-composer.tsx` | Por canal: sin plantillas, tope 1000 con contador, adjuntos sólo imagen y PDF; el micrófono y la grabación quedan **iguales** (la transcodificación es del backend); aviso de ventana cerrada propio («Solo puedes responder cuando la persona vuelva a escribir») |
 | `message-bubble.tsx` | `Share` con enlace a la publicación; «Mensaje eliminado»; `Read` como «Visto» en Instagram; sin `Delivered` |
 | `new-conversation-dialog.tsx`, campañas | Sólo conexiones `channel === 'WhatsApp'` |
 | `messaging.api.ts` | `channel` en `fetchConversations`; `messaging.channel_unsupported` en `describeMessagingFailure` |
@@ -446,12 +456,13 @@ el resto cae en el genérico «Instagram no pudo entregar el mensaje.».
 
 | Paso | Qué | Cierra |
 | --- | --- | --- |
-| 0 | **Prueba manual con Meta real, antes de cualquier código**: agregar el producto Instagram a la app en modo desarrollo, conectar la cuenta del owner con Business Login, recibir un DM en un webhook temporal (el `GET` de verificación ya existe), mandar texto, imagen por URL prefirmada y PDF, probar `mark_seen` y `GET /<IGSID>`. Documentar en el handoff lo que se vio | V-1 a V-7 |
+| 0 | **Prueba manual con Meta real, antes de cualquier código**: agregar el producto Instagram a la app en modo desarrollo, conectar la cuenta del owner con Business Login, recibir un DM en un webhook temporal (el `GET` de verificación ya existe), mandar texto, imagen por URL prefirmada, PDF y una nota de voz convertida a WAV, probar `mark_seen` y `GET /<IGSID>`. Documentar en el handoff lo que se vio | V-1 a V-8 |
 | 1 | Integrations: proveedor, onboarding, `ConnectInstagramHandler`, gateway, probador, ruta, migración. Pruebas: unitarias del handler con `FakeMetaGraphHandler` de Instagram, de integración del endpoint (`IntegrationsApiHarness`), fuga de secretos (`ConnectionSecretLeakTests` persigue el token) | Historias 1–2 |
 | 2 | Worker de refresco con reloj controlado; `NeedsAttention` al fallar | Historia 3 |
 | 3 | Messaging: `channel` en dominio, migración, DTOs, filtro; `channel_unsupported` en las guardas de plantillas, campañas, inicio y audio | Historias 9–10 |
 | 4 | Webhook de Instagram: endpoint, `provider` en entregas, parser (pruebas por tipo de adjunto, echo, `read`, `reaction`, `postback`, `is_deleted`, cuerpo malformado), ingesta con canal, cliente por `instagram_user_id`, perfil | Historias 4, 5, 8, 11 |
 | 5 | Envío: `IInstagramClient`, despacho por canal en texto y media, política de adjuntos por canal, `messaging_seen` → `Read` | Historias 6–7 |
+| 5b | Notas de voz: `IOpusTranscoder` con `Concentus` (paquete nuevo en `Directory.Packages.props` **con los lock files regenerados**, CLAUDE.md), pruebas RED con el `OggOpusFixture` existente (cabecera WAV, duración, mono 16 kHz, tope de 25 MB), `SendAudioMessageHandler` por canal | Historia 13, V-8 |
 | 6 | Customers: columnas, directorio, DTO, exportación | Historia 4 |
 | 7 | Frontend: integraciones (conectar + callback), bandeja por canal, compositor por canal, burbujas | Todas |
 | 8 | README § Mensajería gana «Instagram»; `docs/superpowers/plans/…-mensajeria-instagram-handoff-meta.md` con lo que hace el owner en Meta (App Review de los dos permisos, callback, campos suscritos) | — |
@@ -485,7 +496,7 @@ Bootstrapper). `ConfigurationExampleTests` cubre las claves nuevas.
 | D-I7 | `messaging_seen` marca `Read` por `occurred_at <=` el del `mid` | Un `UPDATE` sólo del `mid` |
 | D-I8 | Una cuenta de Instagram vive en un solo tenant (índice único de rutas) | Permitirlo rompería el enrutamiento |
 | D-I9 | Sin `HUMAN_AGENT` en v1 | Un slice: permiso en App Review, `messaging_type` + `tag` en el envío, ventana de 7 días en el DTO y copy del compositor |
-| D-I10 | Sin notas de voz en Instagram | Transcodificar OGG/Opus a `m4a` en el backend (otra dependencia) |
+| D-I10 | Notas de voz a **WAV** con un decodificador administrado, no a AAC con `ffmpeg` | Si Meta rechaza el WAV o pesa demasiado (V-8): `ffmpeg` en la imagen de Docker y `FFMpegCore` para producir `m4a`; el resto del flujo no cambia |
 
 ### Riesgos
 
