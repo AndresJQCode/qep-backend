@@ -117,7 +117,7 @@ public sealed class MirroredTemplateCatalog(IMessageTemplateRepository repositor
     public async Task<IReadOnlyList<MessageTemplateDto>> ListAsync(Guid tenantId, Guid connectionId, bool refresh, CancellationToken cancellationToken)
     {
         var source = await connections.ResolveTemplateSourceAsync(tenantId, connectionId, cancellationToken)
-            ?? throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "The WhatsApp connection is paused, needs attention or was deleted.");
+            ?? throw TemplateManagementSupport.ConnectionUnavailable();
         if (refresh)
         {
             await sync.RunAsync(tenantId, connectionId, source, cancellationToken);

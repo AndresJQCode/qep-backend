@@ -191,6 +191,7 @@ public static class MessagingEndpoints
         group.MapCampaignEndpoints();
         // Spec 2026-10-12 §3.6: respuestas rápidas.
         group.MapQuickReplyEndpoints();
+        group.MapTemplateManagementEndpoints();
 
         return endpoints;
     }

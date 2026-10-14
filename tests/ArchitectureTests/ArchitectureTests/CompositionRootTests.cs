@@ -170,13 +170,14 @@ public sealed class CompositionRootTests
     /// entitlements, las 6 de POS, las tres <c>operator.*</c> y las dos <c>integrations.*</c> de los
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
-    /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 y las tres <c>pipeline.*</c> del spec 2026-10-13.</summary>
+    /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 y <c>messaging.template.manage</c> del spec 2026-10-14.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheFiftyFiveConstants()
+    public void PermissionDiscoveryFindsTheFiftySixConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
-        // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23).
-        Assert.Equal(55, PermissionConstants().Length);
+        // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
+        // + el de plantillas (spec 2026-10-14 D-T5).
+        Assert.Equal(56, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-11 §6.4 y decisión 16: de núcleo (el módulo lo revisa cada handler) y de fábrica sólo en <c>admin</c>:
@@ -208,6 +209,23 @@ public sealed class CompositionRootTests
         Assert.DoesNotContain(MessagingPermissions.QuickReplyManage, catalog.PermissionsFor("advisor"));
         Assert.DoesNotContain(MessagingPermissions.QuickReplyManage, catalog.PermissionsFor("billing"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.QuickReplyManage);
+        Assert.Equal("Messaging", definition.Category);
+        Assert.Empty(definition.RequiredModules!);
+    }
+
+    /// <summary>Spec 2026-10-14 D-T5: de núcleo (el módulo lo revisa cada handler) y de fábrica sólo en <c>admin</c>: lo que la empresa
+    /// manda en su nombre y lo que Meta cobra lo decide quien administra.</summary>
+    [Fact]
+    public void OnlyTheAdminRoleCarriesTheTemplateManagePermissionAsCore()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+
+        Assert.Equal("messaging.template.manage", MessagingPermissions.TemplateManage);
+        Assert.Contains(MessagingPermissions.TemplateManage, catalog.PermissionsFor("admin"));
+        Assert.DoesNotContain(MessagingPermissions.TemplateManage, catalog.PermissionsFor("advisor"));
+        Assert.DoesNotContain(MessagingPermissions.TemplateManage, catalog.PermissionsFor("billing"));
+        var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.TemplateManage);
         Assert.Equal("Messaging", definition.Category);
         Assert.Empty(definition.RequiredModules!);
     }

@@ -21,6 +21,9 @@ internal sealed class MessagingUnitOfWork(MessagingDbContext dbContext) : IMessa
         // Antes que la rama de DbUpdateException: DbUpdateConcurrencyException hereda de ella (mismo orden que CatalogUnitOfWork).
         catch (DbUpdateConcurrencyException exception)
         {
+            // Los llenados implícitos del espejo atrapan cualquier RequestConcurrencyException: sin soltar lo pendiente del espejo, el
+            // siguiente SaveChanges del request lo reinsertaría.
+            DiscardMirrorChanges();
             throw new RequestConcurrencyException(
                 "concurrency.conflict", "The conversation changed while the operation was being committed.", exception);
         }

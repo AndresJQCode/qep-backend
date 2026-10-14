@@ -605,6 +605,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<CreateQuickReplyCommand, QuickReplyDto>, CreateQuickReplyHandler>();
         services.AddScoped<ICommandHandler<UpdateQuickReplyCommand, QuickReplyDto>, UpdateQuickReplyHandler>();
         services.AddScoped<ICommandHandler<DeleteQuickReplyCommand, bool>, DeleteQuickReplyHandler>();
+        // Messaging (spec 2026-10-14 §4.3): la pantalla de plantillas de una conexión y su refresco contra Meta.
+        services.AddScoped<IQueryHandler<GetTemplateManagementQuery, TemplateManagementDto>, GetTemplateManagementHandler>();
+        services.AddScoped<ICommandHandler<SyncTemplatesCommand, TemplateManagementDto>, SyncTemplatesHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
         services.AddScoped<ICommandHandler<MarkConversationReadCommand, bool>, MarkConversationReadHandler>();
         services.AddScoped<ICommandHandler<ResolveConversationCommand, ConversationSummary>, ResolveConversationHandler>();
@@ -939,6 +942,8 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-10-12 D-Q6: lo que el asesor manda en nombre de la empresa lo decide quien administra.
                 // El rol vive en código: sin migración.
                 MessagingPermissions.QuickReplyManage,
+                // Spec 2026-10-14 D-T5: las plantillas de WhatsApp se gestionan desde QEP; de fábrica sólo en admin.
+                MessagingPermissions.TemplateManage,
                 // Spec 2026-10-13 D32: el embudo de ventas completo. De núcleo; la capacidad pipeline la revisa cada handler.
                 PipelinePermissions.DealRead,
                 PipelinePermissions.DealManage,
@@ -1429,6 +1434,14 @@ public static class QepServiceCollectionExtensions
             "Messaging",
             "medium",
             RequiredModules: []));
+        // Spec 2026-10-14 §4.6: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.TemplateManage,
+            "Gestionar plantillas de WhatsApp",
+            "Permite crear, sincronizar y borrar las plantillas de WhatsApp de una conexión y aprovisionar la plantilla de cotización; cada plantilla pasa por la revisión de Meta.",
+            "Messaging",
+            "high",
+            RequiredModules: []));
         // Spec 2026-10-13 D23 y P1 del plan: categoría "Pipeline" y núcleo (RequiredModules vacío), para que el enmascarado por
         // módulos no las toque y el 403 con la capacidad apagada salga con su código.
         services.AddSingleton(new PermissionDefinition(
@@ -1751,6 +1764,10 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 MessagingPermissions.QuickReplyManage,
                 policy => AddPermissionRequirement(policy, MessagingPermissions.QuickReplyManage))
+            // Spec 2026-10-14: sin esta política, RequireAuthorization(TemplateManage) no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
+            .AddPolicy(
+                MessagingPermissions.TemplateManage,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.TemplateManage))
             // Spec 2026-10-13: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
             .AddPolicy(
                 PipelinePermissions.DealRead,
