@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using BuildingBlocks.Application;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
@@ -448,6 +449,37 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
     private int _templateListCalls;
 
     public int TemplateListCalls => _templateListCalls;
+
+    public MessagingGraphResult<CreatedTemplate> NextCreatedTemplate { get; set; } = new(new CreatedTemplate("meta-1", "PENDING", "MARKETING"), null);
+
+    public List<JsonObject> CreatedTemplates { get; } = [];
+
+    public MessagingGraphResult<DeletedTemplate> NextDelete { get; set; } = new(new DeletedTemplate(false), null);
+
+    public List<(string MetaTemplateId, string Name)> Deleted { get; } = [];
+
+    public MessagingGraphResult<string> NextHandle { get; set; } = new("4::handle", null);
+
+    public List<(string MimeType, string FileName, int Length)> ExampleUploads { get; } = [];
+
+    public Task<MessagingGraphResult<CreatedTemplate>> CreateTemplateAsync(MessagingTemplateSource source, JsonObject payload, CancellationToken cancellationToken)
+    {
+        CreatedTemplates.Add(payload);
+        return Task.FromResult(NextCreatedTemplate);
+    }
+
+    public Task<MessagingGraphResult<DeletedTemplate>> DeleteTemplateAsync(MessagingTemplateSource source, string metaTemplateId, string name, CancellationToken cancellationToken)
+    {
+        Deleted.Add((metaTemplateId, name));
+        return Task.FromResult(NextDelete);
+    }
+
+    public Task<MessagingGraphResult<string>> UploadTemplateExampleAsync(
+        MessagingTemplateSource source, ReadOnlyMemory<byte> content, string mimeType, string fileName, CancellationToken cancellationToken)
+    {
+        ExampleUploads.Add((mimeType, fileName, content.Length));
+        return Task.FromResult(NextHandle);
+    }
 
     /// <summary>Retiene la respuesta de la lista hasta que la prueba lo suelte: sirve para ver cuántas llamadas se juntan en vuelo.</summary>
     public Func<Task>? BeforeTemplateList { get; set; }

@@ -155,7 +155,7 @@ public sealed class WhatsAppCloudClientTemplatesTests
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Get, request.Method);
         Assert.Equal("/v24.0/222/message_templates", request.Uri.AbsolutePath);
-        Assert.Equal("fields=name,language,status,category,components,parameter_format&limit=100", Uri.UnescapeDataString(request.Uri.Query.TrimStart('?')));
+        Assert.Equal("fields=id,name,language,status,category,components,parameter_format,rejected_reason&limit=100", Uri.UnescapeDataString(request.Uri.Query.TrimStart('?')));
         Assert.Equal("Bearer tok", request.Authorization);
     }
 
