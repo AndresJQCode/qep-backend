@@ -79,4 +79,36 @@ public static class MessagingErrorCodes
 
     /// <summary>§3.3: la respuesta no existe en el tenant (404). Un id de otro tenant responde igual.</summary>
     public const string QuickReplyNotFound = "messaging.quick_reply.not_found";
+
+    /// <summary>Spec 2026-10-14 §4.8: el nombre no cumple <c>^[a-z0-9_]{1,512}$</c>. Última línea de defensa del dominio; el validador ya
+    /// lo marca en <c>name</c>.</summary>
+    public const string TemplateNameInvalid = "messaging.template.name_invalid";
+
+    /// <summary>§4.5: <c>qep_cotizacion</c> y <c>qep_cotizacion_*</c> son de la plantilla que aprovisiona QEP.</summary>
+    public const string TemplateNameReserved = "messaging.template.name_reserved";
+
+    /// <summary>§4.8: otra plantilla de la conexión ya se llama así en ese idioma (en el espejo o en Meta). Sin mapa <c>errors</c>, como
+    /// <c>quick_reply.shortcut_taken</c>.</summary>
+    public const string TemplateNameTaken = "messaging.template.name_taken";
+
+    /// <summary>§4.8: el WABA llegó al tope de plantillas que Meta le permite.</summary>
+    public const string TemplateLimitReached = "messaging.template.limit_reached";
+
+    /// <summary>§4.8: Meta no aceptó el contenido; el mensaje lleva el <c>error_user_msg</c> de Graph.</summary>
+    public const string TemplateRejectedByMeta = "messaging.template.rejected_by_meta";
+
+    /// <summary>§4.5: la Resumable Upload del PDF de ejemplo falló. No queda fila; reintentar es seguro.</summary>
+    public const string TemplateUploadFailed = "messaging.template.upload_failed";
+
+    /// <summary>§4.5: la conexión ya tiene su plantilla de cotización en <c>PENDING</c>, <c>APPROVED</c> o <c>IN_APPEAL</c>.</summary>
+    public const string TemplateQuotationExists = "messaging.template.quotation_exists";
+
+    /// <summary>§4.5: existe una <c>qep_cotizacion</c> creada fuera de QEP cuyo cuerpo no es el de la definición.</summary>
+    public const string TemplateQuotationConflict = "messaging.template.quotation_conflict";
+
+    /// <summary>§4.3: una campaña <c>Scheduled</c> o <c>Sending</c> de la conexión referencia nombre e idioma.</summary>
+    public const string TemplateInUseByCampaign = "messaging.template.in_use_by_campaign";
+
+    /// <summary>§4.8: el <c>templateId</c> no es de esa conexión (404; uuid local, no filtra nada).</summary>
+    public const string TemplateNotFound = "messaging.template.not_found";
 }
