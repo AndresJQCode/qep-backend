@@ -72,7 +72,7 @@ lo contrasta con la documentación vigente; lo que sólo se puede ver con tráfi
 | El `header_handle` devuelto no vence antes de la llamada de creación que sigue inmediatamente. | §4.5 | Se sube y se crea en el mismo handler; no se guarda el handle. |
 | `DELETE /{wabaId}/message_templates?hsm_id=&name=` borra sólo ese idioma; un nombre borrado queda bloqueado un tiempo antes de poder reutilizarse. | Borrar (§4.4) | El mensaje del 422 `name_taken` dice que el nombre puede estar en cuarentena; el plan fija el plazo que diga la documentación. |
 | El valor de `message_template_status_update` trae `event`, `message_template_id`, `message_template_name`, `message_template_language` y `reason`, y el `entry.id` es el WABA. | Webhook (§4.4) | El parser es tolerante: lo que falte deja la fila sin tocar y un log. |
-| Los `error_subcode` / `error_user_title` de Graph distinguen «nombre ya existe» y «tope de plantillas» del resto de los 400. | Traducción de errores (§4.8) | Caen en `rejected_by_meta` con el `error_user_msg` de Meta. La pantalla sigue siendo útil. |
+| `error_user_title` y `error_user_msg` de Graph distinguen «nombre ya existe» y «tope de plantillas» del resto de los 400. **`error_subcode` no sirve:** Meta lo declaró obsoleto y no lo devuelve desde la v16. | Traducción de errores (§4.8) | Caen en `rejected_by_meta` con el `error_user_msg` de Meta. La pantalla sigue siendo útil. |
 | `GET /{wabaId}/message_templates` acepta `id` y `rejected_reason` en `fields`. | Refrescar (§4.4) | Sin `rejected_reason` el espejo sólo sabría el motivo por el webhook. |
 
 ## 4. Backend
@@ -237,8 +237,10 @@ Todo en `Modules.Messaging.Infrastructure/Meta`, en `WhatsAppCloudClient`:
 - `MessagingMetaOptions` gana `AppId` (la sección `Meta:App` ya lo tiene; Integrations lo valida).
 
 **Traducción de errores de Graph** (§4.8) en una clase propia, `TemplateGraphErrors`, que discrimina por
-`error_subcode` y `error_user_title`, nunca sólo por `code = 100`: el mismo criterio que el nombre de
-índice en los `23505`. Un 401 o `code = 190` sigue el camino que ya tienen los envíos:
+`error_user_title` y `error_user_msg`, nunca sólo por `code = 100` (y no por `error_subcode`, que Meta ya no
+devuelve): el mismo criterio que el nombre de índice en los `23505`. Vive en Application, no en
+Infrastructure: traduce un `MessagingGraphFailure` ya parseado, sin EF ni HTTP, y el handler necesita
+reaccionar al token vencido (`ReportRejectedAsync`) en el mismo lugar. Un 401 o `code = 190` sigue el camino que ya tienen los envíos:
 `ReportRejectedAsync(token_expired)` y `messaging.connection_unavailable`.
 
 **Persistencia:** `MessageTemplateConfiguration` y `TemplateMirrorSyncConfiguration` en
@@ -367,22 +369,22 @@ copias de reglas que Meta cambia sin avisar.
 | Situación | Código | HTTP |
 | --- | --- | --- |
 | Validación del comando | `validation.failed` + `errors` | 422 |
-| Nombre reservado | `messaging.template.name_reserved` (`errors.name`) | 422 |
-| `(name, language)` ya existe, en el espejo o en Meta | `messaging.template.name_taken` (`errors.name`) | 422 |
+| Nombre reservado | `validation.failed` con `errors.name` desde el validador; `messaging.template.name_reserved` si llega al dominio | 422 |
+| `(name, language)` ya existe, en el espejo o en Meta | `messaging.template.name_taken` (sin mapa `errors`; el frontend lo pinta en `name`, como hace con `quick_reply.shortcut_taken`) | 422 |
 | Tope de plantillas del WABA | `messaging.template.limit_reached` | 422 |
 | Cualquier otro rechazo de Graph al crear | `messaging.template.rejected_by_meta`, con el `error_user_msg` de Meta en el detalle: «WhatsApp no aceptó la plantilla: …» | 422 |
-| Falló la subida del PDF de ejemplo | `messaging.template.upload_failed` | 502 |
+| Falló la subida del PDF de ejemplo | `messaging.template.upload_failed` | 422 (reintentar es seguro, como `media.upload_failed`) |
 | Ya hay plantilla de cotización viva | `messaging.template.quotation_exists` | 422 |
 | Existe `qep_cotizacion` externa con otro cuerpo | `messaging.template.quotation_conflict` | 422 |
 | Campaña `Scheduled` o `Sending` la usa | `messaging.template.in_use_by_campaign` | 422 |
 | `templateId` no es de esa conexión | `messaging.template.not_found` | 404 (uuid local; tenant y conexión ya se revalidaron, no filtra nada) |
 | Conexión ajena, inactiva o sin `wabaId` | `messaging.connection_unavailable` | 422, nunca 404 |
 | Token vencido o permiso faltante | `messaging.connection_unavailable` tras `ReportRejectedAsync(token_expired)` | 422 |
-| Meta no contesta o 5xx | `messaging.templates.unavailable` | 502 |
+| Meta no contesta o 5xx | `messaging.templates.unavailable` | 422 (el que ya existe; reintentar es seguro) |
 | Sin permiso o módulo apagado | `authorization.denied` / `tenancy.module_not_enabled` | 403 |
 
-Los códigos nuevos entran al mapa de `src/Api/ApiExceptionHandler.cs` donde corresponda (los
-`MessagingDomainException` ya son 422; `upload_failed` y `templates.unavailable` son 502).
+Ningún código nuevo toca `src/Api/ApiExceptionHandler.cs`: todos son `MessagingDomainException` (422) o
+`ResourceNotFoundException` (404), que el mapa central ya conoce.
 
 ### 4.9 Pruebas
 
@@ -401,7 +403,7 @@ TDD: RED antes que GREEN, con evidencia literal de ambos.
 - `WebhookPayloadParserTests`: `message_template_status_update` completo, sin `reason`, con `event`
   desconocido; otros campos de plantilla siguen en `UnknownChange`.
 - `TemplateGraphErrorsTests`: cada fila del mapa de §4.8 a partir de cuerpos de error de Graph; un 400
-  sin `subcode` conocido cae en `rejected_by_meta` con el `error_user_msg`.
+  sin `error_user_title` conocido cae en `rejected_by_meta` con el `error_user_msg`.
 - `ManagedTemplateMappingTests`: fila → DTO, con `createdBy` null en `External`.
 
 **Integración** (`Modules.Messaging.IntegrationTests`, con `FakeMetaGraphHandler` y `MessagingApiHarness`):
