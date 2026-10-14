@@ -86,13 +86,15 @@ public sealed class QuotationItem
     /// <summary>Tasa de impuesto del producto (<c>Catalog.TaxRate.Percentage</c>), snapshot al
     /// momento de agregar/editar la línea — mismo criterio que <see cref="UnitPrice"/>: una
     /// cotización es un documento histórico, no sigue la tasa del producto si ésta cambia
-    /// después. 0 si el producto no tiene tasa de impuesto asignada.</summary>
+    /// después. 0 si el producto no tiene tasa de impuesto asignada, y **siempre 0 en USD**: en
+    /// dólares el IVA no se discrimina (ver <see cref="Apply"/>).</summary>
     public int TaxPercentage { get; private set; }
 
     /// <summary>El IVA **contenido** en lo cobrado por la línea, no uno agregado encima: el
     /// precio del producto ya lo trae. El impuesto de la cotización es la suma de este
     /// campo en todas sus líneas (<see cref="Quotation.RecalculateTotals"/>), no un porcentaje
-    /// único aplicado al subtotal completo.</summary>
+    /// único aplicado al subtotal completo. En USD es 0: el precio se cobra entero y el IVA no se
+    /// discrimina, así que <see cref="Subtotal"/> es lo cobrado completo.</summary>
     public decimal TaxAmount { get; private set; }
 
     /// <summary>
@@ -252,6 +254,18 @@ public sealed class QuotationItem
         // (hotfix 2026-10-14): la regla y su motivo viven en VatIncludedLine, compartida con POS.
         unitPrice = VatIncludedLine.ChargedListPrice(unitPrice, currency);
 
+        // Fuera de COP el IVA no se discrimina (hotfix 2026-10-14; en main era solo USD, develop
+        // ya maneja cualquier moneda del catalogo). El precio se cobra completo, como si trajera
+        // el IVA adentro, pero la linea no lo separa: tasa 0, impuesto 0 y la base es lo cobrado
+        // entero. Se pisa la tasa y no solo el monto para que UnitPriceWithoutTax, el
+        // Excel de pedidos ("Tasa IVA", "Valor Unit sin IVA") y la pantalla cuenten la misma
+        // historia. La tasa del producto no se pierde: al volver a COP, Reprice la trae del
+        // catalogo junto con el precio en pesos.
+        if (!ItemizesTaxIn(currency))
+        {
+            taxPercentage = 0;
+        }
+
         Quantity = quantity;
         UnitPrice = unitPrice;
         DiscountPercentage = discountPercentage;
@@ -267,6 +281,13 @@ public sealed class QuotationItem
         Subtotal = amounts.Subtotal;
         UpdatedAt = occurredAt;
     }
+
+    /// <summary>Si en esa moneda el IVA se discrimina. Solo en COP, que es donde el IVA existe: en
+    /// USD y en cualquier otra moneda del catalogo el precio se cobra completo y la linea no separa
+    /// el impuesto (hotfix 2026-10-14). Misma regla que <c>itemizesTaxIn</c> en el frontend.</summary>
+    internal static bool ItemizesTaxIn(string currency) => currency == TaxItemizedCurrency;
+
+    private const string TaxItemizedCurrency = "COP";
 
     private static decimal Round(decimal value) => VatIncludedLine.Round(value);
 }
