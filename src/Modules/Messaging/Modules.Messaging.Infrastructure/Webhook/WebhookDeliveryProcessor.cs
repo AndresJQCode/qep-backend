@@ -30,6 +30,12 @@ internal sealed partial class WebhookDeliveryProcessor(
     [LoggerMessage(Level = LogLevel.Information, Message = "Webhook delivery {DeliveryId}: a status without a QEP callback matched no message and was discarded.")]
     private static partial void LogForeignStatus(ILogger logger, long deliveryId);
 
+    [LoggerMessage(Level = LogLevel.Information, Message = "Webhook delivery {DeliveryId}: template {MetaTemplateId} is now {Event} (reason {Reason}) in tenant {TenantId}, connection {ConnectionId}.")]
+    private static partial void LogTemplateStatus(ILogger logger, long deliveryId, string metaTemplateId, string @event, string? reason, Guid tenantId, Guid connectionId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Webhook delivery {DeliveryId}: no mirror row for meta_template_id {MetaTemplateId} in tenant {TenantId}, connection {ConnectionId}; the next refresh will bring it.")]
+    private static partial void LogTemplateWithoutRow(ILogger logger, long deliveryId, string metaTemplateId, Guid tenantId, Guid connectionId);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Webhook delivery {DeliveryId}: account_update {Event} (ban state {BanState}); disables connections: {Disables}.")]
     private static partial void LogAccountEvent(ILogger logger, long deliveryId, string @event, string? banState, bool disables);
 
@@ -62,6 +68,9 @@ internal sealed partial class WebhookDeliveryProcessor(
                     break;
                 case AccountUpdateChange account:
                     await ProcessAccountUpdateAsync(deliveryId, account, cancellationToken);
+                    break;
+                case TemplateStatusChange templateStatus:
+                    await ProcessTemplateStatusAsync(deliveryId, templateStatus, cancellationToken);
                     break;
                 case UnknownChange unknown:
                     LogIgnoredField(logger, deliveryId, unknown.Field);
@@ -281,6 +290,35 @@ internal sealed partial class WebhookDeliveryProcessor(
         {
             // ConnectionFailureCodes.AccountDisabled de Integrations, como literal: Messaging no lo referencia.
             await directory.ReportRejectedAsync(route.TenantId, route.ConnectionId, "account_disabled", cancellationToken);
+        }
+    }
+
+    /// <summary>Spec 2026-10-14 §4.3: por cada conexión de la WABA, la fila del espejo con ese <c>meta_template_id</c> toma el estado y el
+    /// motivo. Sin fila sólo hay log por conexión (el refresco la trae). Un <c>event</c> desconocido se guarda como texto. No se audita (D-T14).</summary>
+    private async Task ProcessTemplateStatusAsync(long deliveryId, TemplateStatusChange change, CancellationToken cancellationToken)
+    {
+        var updated = false;
+        var now = clock.UtcNow;
+        // Directo al directorio, sin la caché de WebhookRouting: la lista de conexiones tiene que ser la de ahora.
+        foreach (var route in await directory.FindByAccountAsync(change.WabaId, cancellationToken))
+        {
+            var template = await dbContext.MessageTemplates.SingleOrDefaultAsync(
+                row => row.TenantId == route.TenantId && row.ConnectionId == route.ConnectionId && row.MetaTemplateId == change.MetaTemplateId,
+                cancellationToken);
+            if (template is null)
+            {
+                LogTemplateWithoutRow(logger, deliveryId, change.MetaTemplateId, route.TenantId, route.ConnectionId);
+                continue;
+            }
+
+            template.ApplyStatus(change.Event, change.Reason, now);
+            updated = true;
+            LogTemplateStatus(logger, deliveryId, change.MetaTemplateId, change.Event, change.Reason, route.TenantId, route.ConnectionId);
+        }
+
+        if (updated)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
         }
     }
 }
