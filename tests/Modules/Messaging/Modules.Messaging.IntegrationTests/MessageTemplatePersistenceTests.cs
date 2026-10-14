@@ -149,6 +149,34 @@ public sealed class MessageTemplatePersistenceTests
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.template_mirror_syncs"));
     }
 
+    // Enmienda de la Task 5, punto 5: dos primeros llenados de la misma conexión leyeron «sin marcador» y los dos lo insertan. El que
+    // pierde el PK de template_mirror_syncs es concurrency.conflict (no un 500), y lo que su sincronización dejó pendiente se descarta:
+    // el catálogo sigue leyendo el espejo que llenó el otro y el handler que lo llamó guarda lo suyo sin volver a chocar.
+    [Fact]
+    public async Task TwoFirstSyncsOfTheSameConnectionAreAConcurrencyConflictAndTheLoserCanStillSave()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        using var loser = f.Factory.Services.CreateScope();
+        var repository = loser.ServiceProvider.GetRequiredService<IMessageTemplateRepository>();
+        var unitOfWork = loser.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>();
+        repository.Add(Mirrored(f, "2", "b"));
+        await repository.MarkSyncedAsync(f.TenantId, f.ConnectionId, Now, Ct);
+        await InScopeAsync(f.Factory, async (winner, winnerUnitOfWork) =>
+        {
+            winner.Add(Mirrored(f, "1", "a"));
+            await winner.MarkSyncedAsync(f.TenantId, f.ConnectionId, Now, Ct);
+            return await winnerUnitOfWork.SaveChangesAsync(Ct);
+        });
+
+        var exception = await Assert.ThrowsAsync<RequestConcurrencyException>(() => unitOfWork.SaveChangesAsync(Ct));
+
+        Assert.Equal("concurrency.conflict", exception.Code);
+        Assert.Equal(0, await unitOfWork.SaveChangesAsync(Ct));
+        Assert.Equal(["a"], (await repository.ListApprovedAsync(f.TenantId, f.ConnectionId, Ct)).Select(template => template.Name));
+    }
+
     [Fact]
     public async Task AScheduledOrSendingCampaignReferencesTheTemplateADraftOrFinishedOneDoesNot()
     {

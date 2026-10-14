@@ -42,6 +42,10 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
 
     public const string MessageTemplateNameLanguageIndex = "UX_message_templates_name_language";
 
+    /// <summary>El PK de <c>template_mirror_syncs</c> (el nombre por defecto de EF, el de la migración <c>AddMessageTemplates</c>): dos
+    /// primeros llenados de la misma conexión chocan acá y la unidad de trabajo lo traduce a <c>concurrency.conflict</c>.</summary>
+    public const string TemplateMirrorSyncPrimaryKey = "PK_template_mirror_syncs";
+
     public DbSet<Conversation> Conversations => Set<Conversation>();
 
     internal DbSet<MessageRecord> Messages => Set<MessageRecord>();

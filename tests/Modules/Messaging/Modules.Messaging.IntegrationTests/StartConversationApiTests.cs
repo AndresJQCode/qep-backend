@@ -16,7 +16,7 @@ public sealed class StartConversationApiTests
         QepApiFactory Factory, string ConnectionString, RegisteredTenant Tenant, Guid ConnectionId, Guid CustomerId, HttpClient Client, string Url);
 
     private const string Catalog = """
-        {"data":[{"name":"seguimiento","language":"es","status":"APPROVED","category":"MARKETING","parameter_format":"NAMED",
+        {"data":[{"id":"1","name":"seguimiento","language":"es","status":"APPROVED","category":"MARKETING","parameter_format":"NAMED",
                   "components":[{"type":"BODY","text":"Hola {{first_name}}, ¿sigues interesado?"}]}]}
         """;
 

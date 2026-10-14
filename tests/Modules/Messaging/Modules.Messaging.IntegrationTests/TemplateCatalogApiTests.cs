@@ -6,7 +6,8 @@ using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 namespace Modules.Messaging.IntegrationTests;
 
 /// <summary>Spec 2026-10-11 §5.2 por HTTP y contra la base: <c>GET /connections</c> (las activas del tenant, con la lectura de la
-/// bandeja) y <c>GET /connections/{id}/templates</c> (sólo las aprobadas, normalizadas, con caché de 5 minutos y <c>refresh</c>).</summary>
+/// bandeja) y <c>GET /connections/{id}/templates</c> (sólo las aprobadas, normalizadas, leídas del espejo local, que se llena con el
+/// primer <c>GET</c> y se sincroniza con <c>refresh</c>).</summary>
 public sealed class TemplateCatalogApiTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -99,11 +100,12 @@ public sealed class TemplateCatalogApiTests
         var request = Assert.Single(f.Factory.MetaHandler.Requests, seen => seen.Uri!.AbsolutePath.EndsWith("/222/message_templates", StringComparison.Ordinal));
         Assert.Equal("/v24.0/222/message_templates", request.Uri!.AbsolutePath);
         Assert.Equal($"Bearer {SentinelMetaAccessToken}", request.Authorization);
+        Assert.Contains("fields=id,name,language,status,category,components,parameter_format,rejected_reason", request.Uri.Query, StringComparison.Ordinal);
         Assert.Contains("limit=100", request.Uri.Query, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task TheSecondReadIsCachedAndRefreshAsksMetaAgain()
+    public async Task TheSecondReadComesFromTheMirrorAndRefreshAsksMetaAgain()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
@@ -120,10 +122,31 @@ public sealed class TemplateCatalogApiTests
         Assert.Equal(2, TemplateCalls(f.Factory.MetaHandler));
     }
 
+    // Spec 2026-10-14 D-T8: una vez lleno, el espejo es el catálogo; Meta caída ya no lo vacía ni le pega en cada lectura.
+    [Fact]
+    public async Task OnceMirroredMetaBeingDownDoesNotEmptyTheCatalog()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/222/message_templates", HttpStatusCode.OK, TemplatesPage);
+        var url = $"/api/v1/tenants/{f.Tenant.TenantId}/messaging/connections/{f.ConnectionId}/templates";
+        Assert.Equal(HttpStatusCode.OK, (await f.Client.GetAsync(url, Ct)).StatusCode);
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.Respond("/222/message_templates", HttpStatusCode.BadGateway, "{}");
+
+        var response = await f.Client.GetAsync(url, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(["promo", "seguimiento"], (await response.Content.ReadFromJsonAsync<JsonElement>(Ct)).EnumerateArray().Select(item => item.GetProperty("name").GetString()));
+        Assert.Equal(1, TemplateCalls(f.Factory.MetaHandler));
+        Assert.Equal(3L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_templates"));
+    }
+
     [Fact]
     public async Task ARefreshWithOnlyTheReadPermissionIs403AndNeverReachesMeta()
     {
-        // R8: refresh salta la caché y le pega a Meta; leer el catálogo cacheado sigue siendo de lectura.
+        // R8: refresh sincroniza el espejo contra Meta; leer el catálogo del espejo sigue siendo de lectura.
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;

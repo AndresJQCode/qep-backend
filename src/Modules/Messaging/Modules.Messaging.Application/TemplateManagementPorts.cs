@@ -5,8 +5,8 @@ namespace Modules.Messaging.Application;
 /// <summary>
 /// Spec 2026-10-14 §4.3: el espejo de plantillas de una conexión. Todo método recibe <c>tenantId</c> y <c>connectionId</c>: otro tenant
 /// responde igual que nada. El agregado se escribe con tracking y se guarda con <see cref="IMessagingUnitOfWork"/>, que traduce
-/// <c>UX_message_templates_name_language</c> a <c>messaging.template.name_taken</c> y <c>UX_message_templates_meta_id</c> a
-/// <c>concurrency.conflict</c> (dos refrescos a la vez).
+/// <c>UX_message_templates_name_language</c> a <c>messaging.template.name_taken</c>, y <c>UX_message_templates_meta_id</c> y
+/// <c>PK_template_mirror_syncs</c> a <c>concurrency.conflict</c> (dos refrescos o dos primeros llenados a la vez).
 /// </summary>
 public interface IMessageTemplateRepository
 {

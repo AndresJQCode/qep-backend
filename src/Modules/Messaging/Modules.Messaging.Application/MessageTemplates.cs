@@ -332,7 +332,8 @@ public static partial class TemplateCatalog
         return current is null || Array.IndexOf(ReasonPriority, candidate) < Array.IndexOf(ReasonPriority, current) ? candidate : current;
     }
 
-    private static string? Text(JsonElement element, string property) =>
+    /// <summary>La propiedad si es un string; si falta o es de otro tipo, <c>null</c>. La reusa <see cref="TemplateMirrorSync"/>.</summary>
+    internal static string? Text(JsonElement element, string property) =>
         element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
     // «{{first_name}}» o «{{1}}»; Meta no admite espacios en las claves, pero sí tolera los de alrededor.

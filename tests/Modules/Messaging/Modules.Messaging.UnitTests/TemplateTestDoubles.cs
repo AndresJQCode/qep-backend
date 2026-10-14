@@ -128,3 +128,53 @@ internal sealed class FakeConversationOpener(MessagingTestBed bed) : IConversati
         return Task.FromResult(new OpenedConversation(row.Id, true));
     }
 }
+
+/// <summary>Spec 2026-10-14 §4.3: el espejo en memoria. Filtra por tenant y conexión como el real; el orden es ordinal.</summary>
+internal sealed class FakeMessageTemplateRepository : IMessageTemplateRepository
+{
+    public List<MessageTemplate> Rows { get; } = [];
+
+    public HashSet<(string Name, string Language)> ActiveCampaignTemplates { get; } = [];
+
+    public Dictionary<(Guid TenantId, Guid ConnectionId), DateTimeOffset> Syncs { get; } = [];
+
+    private IEnumerable<MessageTemplate> Of(Guid tenantId, Guid connectionId) =>
+        Rows.Where(row => row.TenantId == tenantId && row.ConnectionId == connectionId);
+
+    public Task<MessageTemplate?> FindAsync(Guid tenantId, Guid connectionId, Guid templateId, CancellationToken cancellationToken) =>
+        Task.FromResult(Of(tenantId, connectionId).SingleOrDefault(row => row.Id == templateId));
+
+    public Task<MessageTemplate?> FindByMetaIdAsync(Guid tenantId, Guid connectionId, string metaTemplateId, CancellationToken cancellationToken) =>
+        Task.FromResult(Of(tenantId, connectionId).SingleOrDefault(row => row.MetaTemplateId == metaTemplateId));
+
+    public Task<MessageTemplate?> FindByNameAsync(Guid tenantId, Guid connectionId, string name, string language, CancellationToken cancellationToken) =>
+        Task.FromResult(Of(tenantId, connectionId).SingleOrDefault(row => row.Name == name && row.Language == language));
+
+    public Task<MessageTemplate?> FindQuotationAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(Of(tenantId, connectionId).FirstOrDefault(row => row.Kind == MessageTemplateKind.Quotation));
+
+    public Task<IReadOnlyList<MessageTemplate>> ListAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<MessageTemplate>>(Ordered(Of(tenantId, connectionId)));
+
+    public Task<IReadOnlyList<MessageTemplate>> ListApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<MessageTemplate>>(Ordered(Of(tenantId, connectionId).Where(row => row.IsApproved)));
+
+    public void Add(MessageTemplate messageTemplate) => Rows.Add(messageTemplate);
+
+    public void Remove(MessageTemplate messageTemplate) => Rows.Remove(messageTemplate);
+
+    public Task<bool> IsReferencedByActiveCampaignAsync(Guid tenantId, Guid connectionId, string name, string language, CancellationToken cancellationToken) =>
+        Task.FromResult(ActiveCampaignTemplates.Contains((name, language)));
+
+    public Task<DateTimeOffset?> LastSyncAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(Syncs.TryGetValue((tenantId, connectionId), out var at) ? at : (DateTimeOffset?)null);
+
+    public Task MarkSyncedAsync(Guid tenantId, Guid connectionId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        Syncs[(tenantId, connectionId)] = now;
+        return Task.CompletedTask;
+    }
+
+    private static MessageTemplate[] Ordered(IEnumerable<MessageTemplate> rows) =>
+        rows.OrderBy(row => row.Name, StringComparer.Ordinal).ThenBy(row => row.Language, StringComparer.Ordinal).ToArray();
+}
