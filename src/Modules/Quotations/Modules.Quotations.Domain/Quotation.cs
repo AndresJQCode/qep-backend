@@ -171,7 +171,7 @@ public sealed class Quotation
     public bool CustomerVatSurplus { get; private set; }
 
     /// <summary>Retención en la fuente: <c>round(Subtotal * 0.025)</c> cuando
-    /// <see cref="CustomerWithRetention"/>, si no 0. Informativo hacia <see cref="Total"/> (que
+    /// <see cref="AppliesRetention"/>, si no 0 (también 0 en USD). Informativo hacia <see cref="Total"/> (que
     /// sigue siendo lo facturado) pero resta hacia <see cref="NetTotal"/> — es lo que el cliente
     /// le retiene al vendedor, no algo que la cotización deje de facturar.</summary>
     public decimal RetentionAmount { get; private set; }
@@ -290,9 +290,13 @@ public sealed class Quotation
     /// <summary>Si la retención en la fuente se aplica a esta cotización. Con datos propios de
     /// facturación manda lo que se contestó ahí (<see cref="PartyWithRetention"/>, false mientras
     /// no se conteste); con los datos del cliente, manda <see cref="CustomerWithRetention"/>. En
-    /// ambos casos, no a consumidor final. Es lo que usa <see cref="RecalculateTotals"/>.</summary>
+    /// ambos casos, no a consumidor final, y nunca en USD: en dólares el IVA no se discrimina
+    /// (<see cref="QuotationItem.TaxAmount"/>), así que no hay base sin IVA sobre la cual retener
+    /// (owner, 2026-10-14). Es lo que usa <see cref="RecalculateTotals"/>.</summary>
     public bool AppliesRetention =>
-        (Billing is not null ? PartyWithRetention ?? false : CustomerWithRetention) && !BillsToFinalConsumer;
+        (Billing is not null ? PartyWithRetention ?? false : CustomerWithRetention)
+        && !BillsToFinalConsumer
+        && Currency == QuotationCurrency.Cop;
 
     /// <summary>Si el excedente de IVA exime a esta cotización, con el mismo criterio de fuente
     /// que <see cref="AppliesRetention"/> pero para <see cref="PartyVatSurplus"/> /

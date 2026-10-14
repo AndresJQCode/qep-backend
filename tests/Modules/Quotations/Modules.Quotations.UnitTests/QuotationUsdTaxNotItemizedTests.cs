@@ -97,6 +97,34 @@ public sealed class QuotationUsdTaxNotItemizedTests
         Assert.Equal(2_333_500m, quotation.Total);
     }
 
+    // Sin base sin IVA no hay sobre qué retener: en USD la retención en la fuente no se resta
+    // aunque el cliente la practique (owner, 2026-10-14).
+    [Fact]
+    public void InUsdTheRetentionIsNotSubtractedEvenForACustomerWithRetention()
+    {
+        var quotation = NewQuotation("USD", customerWithRetention: true);
+        AddItem(quotation, quantity: 100m, unitPrice: 24.63m, discountPercentage: 5m, taxPercentage: 19);
+
+        Assert.Equal(0m, quotation.RetentionAmount);
+        Assert.Equal(2_339.85m, quotation.NetTotal);
+        Assert.Equal(quotation.Total, quotation.NetTotal);
+    }
+
+    // Y al volver a COP la retención vuelve: 2,5% de la base sin IVA.
+    [Fact]
+    public void RepricingIntoCopSubtractsTheRetentionAgain()
+    {
+        var quotation = NewQuotation("USD", customerWithRetention: true);
+        var productId = Guid.CreateVersion7();
+        quotation.AddItem(QuotationItemId.New(), productId, 1m, 119m, 0m, 19, AdvisorId, Now);
+        Assert.Equal(0m, quotation.RetentionAmount);
+
+        Reprice(quotation, "COP", productId, new QuotationItemPricing(119_000m, 0m, 19));
+
+        Assert.Equal(2_500m, quotation.RetentionAmount);
+        Assert.Equal(116_500m, quotation.NetTotal);
+    }
+
     private static void Reprice(
         Quotation quotation, string currency, Guid productId, QuotationItemPricing pricing) =>
         quotation.UpdateDetails(
@@ -111,7 +139,7 @@ public sealed class QuotationUsdTaxNotItemizedTests
             AdvisorId,
             Now);
 
-    private static Quotation NewQuotation(string currency) =>
+    private static Quotation NewQuotation(string currency, bool customerWithRetention = false) =>
         Quotation.Create(
             QuotationId.New(),
             TenantId,
@@ -123,7 +151,7 @@ public sealed class QuotationUsdTaxNotItemizedTests
             notes: null,
             QuotationParties.Empty,
             BillingAccount(currency),
-            customerWithRetention: false,
+            customerWithRetention,
             customerVatSurplus: false,
             AdvisorId,
             Now);
