@@ -104,7 +104,7 @@ lo cierra **antes** de escribir el código que dependa de ello.
 
 | Id | Duda | Quién la cierra | Si sale distinto |
 | --- | --- | --- | --- |
-| V-1 | Si la app de Meta que ya tiene WhatsApp puede sumar el producto *Instagram* con **Instagram Login**, y si el *Instagram App ID / App Secret* que aparecen ahí son **distintos** del `Meta:App:AppId/AppSecret` (la documentación los muestra como ids propios). Decide con qué secreto se firma `/api/webhooks/instagram` | Owner, en el dashboard (§12 paso 0) | Sección `Meta:Instagram:*` con sus propias claves; si son las mismas, se reusa `Meta:App` |
+| V-1 | ~~Si la app de Meta que ya tiene WhatsApp puede sumar el producto *Instagram* con **Instagram Login**, y si el *Instagram App ID / App Secret* son distintos del `Meta:App:AppId/AppSecret`~~ **Cerrada por el owner el 2026-10-14:** el caso de uso Instagram se agregó a la misma app y tiene **su propio App ID y App Secret**, distintos de los de la app. Va la sección `Meta:Instagram:*`; la firma de `/api/webhooks/instagram` se comprueba con ese secreto en el paso 0 (si Meta firmara con el de la app, el verificador acepta cualquiera de los dos) | — | — |
 | V-2 | Cómo se suscribe **cada cuenta** conectada al webhook con Instagram Login: `POST /<IG_ID>/subscribed_apps?subscribed_fields=messages,messaging_seen,messaging_postbacks,messaging_reactions` con el token de la cuenta, o basta con la suscripción del dashboard. Y si la persona tiene que activar «Permitir acceso a mensajes» en la configuración de su Instagram (*Message controls → Connected tools*) | Prueba manual con la primera cuenta real (§12 paso 0) | Un paso más en el handler de conexión y un texto en la pantalla de conexión que lo pida |
 | V-3 | Tope del texto: 1000 caracteres (tabla de Instagram) o 2000 (Send API de Messenger) | Prueba manual | Una constante |
 | V-4 | Si Meta descarga una **URL prefirmada de R2** (query string de SigV4) como adjunto. Al adjuntar el PDF de una cotización a un WhatsApp no pudo, y hubo que publicar una copia (`IQuotationPdfStorage.PublishAsync`) | Prueba manual con imagen y PDF | Copia pública con clave aleatoria y lifecycle, como las cotizaciones |
@@ -259,8 +259,9 @@ WAV antes de dárselo a Meta (decisión 16). Una nota que, ya en WAV, pase de 25
   `tokenExpiresAt`; una falla `190` reporta `token_expired` por `IConnectionHealthReporter`. Mismo
   molde que `ConnectionSecretRekeyWorker`.
 - **Opciones.** Sección `Meta:Instagram` (`AppId`, `AppSecret`, `GraphApiVersion`) con validador
-  estricto en `Production`. Si V-1 dice que son las mismas claves de `Meta:App`, la sección sobra y se
-  reusa.
+  estricto en `Production`, aparte de `Meta:App`: el caso de uso Instagram tiene sus propias claves
+  (V-1, cerrada). `AppId` y `GraphApiVersion` en ConfigMap; `AppSecret` en `prod-secret.yaml` y en
+  user-secrets.
 - **`PUT`** de una conexión `instagram` sólo cambia `name` (como `whatsapp-cloud`, D-M4).
 
 ### 6.2 Messaging
@@ -419,8 +420,10 @@ cuenta cae en la misma conexión (misma ruta) y sus conversaciones siguen.
 | `Meta:App:WebhookVerifyToken` | ya existe; se reusa para el `GET` de verificación | sí |
 | `Integrations:Instagram:RefreshIntervalMinutes` | `appsettings.json` (1440) | no |
 
-Si V-1 concluye que el *Instagram App Secret* es el mismo `Meta:App:AppSecret`, las dos primeras
-claves desaparecen. `ConfigurationExampleTests` exige que `appsettings.example.json` las traiga.
+Las dos primeras son del caso de uso Instagram, no de la app (V-1, cerrada el 2026-10-14).
+`ConfigurationExampleTests` exige que `appsettings.example.json` las traiga. En el pipeline:
+`META_INSTAGRAM_APP_ID` (variable normal) y `META_INSTAGRAM_APP_SECRET` (variable secreta) del grupo
+`Backend-prod`.
 
 ## 10. Errores
 
