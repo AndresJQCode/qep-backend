@@ -121,6 +121,13 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // Spec 2026-10-14 §3.1: espejo de /read. Sin If-Match ni cuerpo; 204 siempre que exista en el tenant.
+        group.MapPost("/conversations/{conversationId:guid}/unread", MarkUnreadAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         // Spec 2026-10-09 §8.5: por el agregado con If-Match (428 sin él, 412 con versión vieja).
         group.MapPost("/conversations/{conversationId:guid}/resolve", ResolveAsync)
             .RequireAuthorization(MessagingPermissions.ConversationManage)
@@ -373,6 +380,12 @@ public static class MessagingEndpoints
     private static async Task<IResult> MarkReadAsync(Guid tenantId, Guid conversationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {
         await dispatcher.SendAsync(new MarkConversationReadCommand(tenantId, conversationId), cancellationToken);
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> MarkUnreadAsync(Guid tenantId, Guid conversationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(new MarkConversationUnreadCommand(tenantId, conversationId), cancellationToken);
         return Results.NoContent();
     }
 

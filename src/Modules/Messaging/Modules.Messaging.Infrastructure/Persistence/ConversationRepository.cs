@@ -24,6 +24,19 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
         return rows.Count == 1 ? new ReadReceiptTarget(rows[0].ConnectionId, rows[0].LastInboundWamid, rows[0].LastInboundAt) : null;
     }
 
+    public async Task<bool> MarkUnreadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        // Spec 2026-10-14 §3.2: una sentencia, como el read. El 1 es el mismo número que dejaría un entrante nuevo,
+        // así que la fila, el badge y counts.unread lo dibujan sin saber que fue una marca manual.
+        var rows = await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE messaging.conversations
+               SET unread_count = 1, updated_at = {now}, version = version + 1
+             WHERE id = {conversationId} AND tenant_id = {tenantId} AND unread_count = 0
+            """, cancellationToken);
+        return rows == 1;
+    }
+
     public Task<bool> ExistsAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
         dbContext.Conversations.AsNoTracking()
             .AnyAsync(conversation => conversation.TenantId == tenantId && conversation.Id == conversationId, cancellationToken);

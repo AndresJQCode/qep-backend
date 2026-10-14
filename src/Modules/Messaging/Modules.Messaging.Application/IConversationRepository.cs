@@ -14,8 +14,13 @@ public interface IConversationRepository
     /// si no tocó nada (ya estaba en 0, o no existe en el tenant).</summary>
     Task<ReadReceiptTarget?> MarkReadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-14 §3.2: el espejo de <see cref="MarkReadAsync"/>: <c>unread_count = 1</c>,
+    /// <c>updated_at</c> y <c>version + 1</c>, sólo si estaba en 0. Misma sentencia única y sin token: pisar un 3
+    /// con un 1 mentiría sobre cuántos entrantes hay. <c>true</c> si tocó la fila.</summary>
+    Task<bool> MarkUnreadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken);
+
     /// <summary>Para distinguir «ya estaba leída» (204) de «no existe en el tenant» (404) cuando
-    /// <see cref="MarkReadAsync"/> no tocó nada.</summary>
+    /// <see cref="MarkReadAsync"/> o <see cref="MarkUnreadAsync"/> no tocaron nada.</summary>
     Task<bool> ExistsAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-10 §8.5 y §3 (corrección 7): un UPDATE condicional (<c>assigned_member_id IS NULL</c>) en su

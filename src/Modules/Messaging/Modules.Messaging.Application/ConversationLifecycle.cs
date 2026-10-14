@@ -7,6 +7,10 @@ namespace Modules.Messaging.Application;
 
 public sealed record MarkConversationReadCommand(Guid TenantId, Guid ConversationId) : ICommand<bool>;
 
+/// <summary>Spec 2026-10-14 §2: «no leída» es un marcador, no un conteo. Sube <c>unread_count</c> a 1 sólo si
+/// estaba en 0; con no leídos reales no toca nada. Sin acuse a Meta: un read enviado no se retracta.</summary>
+public sealed record MarkConversationUnreadCommand(Guid TenantId, Guid ConversationId) : ICommand<bool>;
+
 public sealed record ResolveConversationCommand(Guid TenantId, Guid ConversationId, long ExpectedVersion) : ICommand<ConversationSummary>;
 
 public sealed record ReopenConversationCommand(Guid TenantId, Guid ConversationId, long ExpectedVersion) : ICommand<ConversationSummary>;
@@ -59,6 +63,31 @@ public sealed partial class MarkConversationReadHandler(
         }
 
         return true;
+    }
+}
+
+/// <summary>Spec 2026-10-14 §3: espejo de <see cref="MarkConversationReadHandler"/>. Un UPDATE atómico sin token
+/// de concurrencia —la ingesta sube <c>version</c> por SQL y un If-Match lo volvería 412—, sin auditoría ni evento:
+/// es estado de la bandeja, no una decisión sobre la conversación. Siempre 204 si existe en el tenant.</summary>
+public sealed class MarkConversationUnreadHandler(
+    IConversationRepository repository,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext,
+    IClock clock)
+    : ICommandHandler<MarkConversationUnreadCommand, bool>
+{
+    public async Task<bool> HandleAsync(MarkConversationUnreadCommand command, CancellationToken cancellationToken)
+    {
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.ConversationManage, cancellationToken);
+        if (await repository.MarkUnreadAsync(command.TenantId, command.ConversationId, clock.UtcNow, cancellationToken))
+        {
+            return true;
+        }
+
+        // Nada que marcar: ya tenía no leídos (204) o no es de este tenant (404). Igual que el read.
+        return await repository.ExistsAsync(command.TenantId, command.ConversationId, cancellationToken)
+            ? false
+            : throw MessagingNotFound.Conversation(command.ConversationId);
     }
 }
 

@@ -7,7 +7,8 @@ namespace Modules.Messaging.IntegrationTests;
 
 /// <summary>Spec 2026-10-09 §8.4 y §8.5: read deja unreadCount en 0 y manda el acuse a Meta (best effort,
 /// una sola vez, sólo con conexión Active); resolve/reopen con If-Match (428/412), sus 422, auditoría en
-/// la misma transacción; y la versión que sube la ingesta hace chocar un resolve viejo.</summary>
+/// la misma transacción; y la versión que sube la ingesta hace chocar un resolve viejo. Spec 2026-10-14: unread
+/// es el espejo del read, sube el contador a 1 sólo desde 0 y nunca habla con Meta.</summary>
 public sealed class ConversationLifecycleApiTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -89,6 +90,69 @@ public sealed class ConversationLifecycleApiTests
         f.Factory.MetaHandler.Requests.Clear();
         Assert.Equal(HttpStatusCode.NoContent, (await SendAsync(f.Client, HttpMethod.Post, $"{ConversationUrl(f.Tenant.TenantId, f.ConversationId)}/read")).StatusCode);
         Assert.Empty(f.Factory.MetaHandler.Requests);
+    }
+
+    // Spec 2026-10-14 §2 y §5: la marca sube a 1 una sola vez, sin acuse a Meta, y la lista la dibuja como un
+    // no leído cualquiera.
+    [Fact]
+    public async Task UnreadRaisesTheCounterToOneOnceAndNeverTalksToMeta()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, """{"success":true}""");
+        var url = ConversationUrl(f.Tenant.TenantId, f.ConversationId);
+        Assert.Equal(HttpStatusCode.NoContent, (await SendAsync(f.Client, HttpMethod.Post, $"{url}/read")).StatusCode);
+        f.Factory.MetaHandler.Requests.Clear();
+
+        var first = await SendAsync(f.Client, HttpMethod.Post, $"{url}/unread");
+        var second = await SendAsync(f.Client, HttpMethod.Post, $"{url}/unread");
+
+        Assert.Equal(HttpStatusCode.NoContent, first.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, second.StatusCode);
+        // version + 1 por el read, + 1 por la primera marca; la segunda encuentra el 1 y no toca nada.
+        Assert.Equal($"1|{f.Version + 2}", await ScalarAsync<string>(f.ConnectionString, "SELECT unread_count || '|' || version FROM messaging.conversations"));
+        Assert.Empty(f.Factory.MetaHandler.Requests);
+        var page = await f.Client.GetFromJsonAsync<JsonElement>(ConversationsUrl(f.Tenant.TenantId), Ct);
+        Assert.Equal(1, page.GetProperty("items")[0].GetProperty("unreadCount").GetInt32());
+        Assert.Equal(1, page.GetProperty("counts").GetProperty("unread").GetInt32());
+    }
+
+    // §2: con no leídos reales no hay nada que marcar; pisar un 3 con un 1 mentiría sobre cuántos entraron.
+    [Fact]
+    public async Task UnreadLeavesARealCounterAlone()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET unread_count = 3");
+
+        var response = await SendAsync(f.Client, HttpMethod.Post, $"{ConversationUrl(f.Tenant.TenantId, f.ConversationId)}/unread");
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal($"3|{f.Version}", await ScalarAsync<string>(f.ConnectionString, "SELECT unread_count || '|' || version FROM messaging.conversations"));
+    }
+
+    [Fact]
+    public async Task UnreadRejectsTheReadPermissionAloneOtherTenantsAndADisabledModule()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var readOnly = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ReadPermissions);
+        var other = await RegisterTenantAsync(f.Factory);
+        await EnableMessagingAsync(f.ConnectionString, other.TenantId);
+        using var otherClient = CreateClient(f.Factory, other.OwnerUserId, other.TenantId, ManagePermissions);
+        var url = ConversationUrl(f.Tenant.TenantId, f.ConversationId);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await SendAsync(readOnly, HttpMethod.Post, $"{url}/unread")).StatusCode);
+        // 404 y no 403: el id es de otro tenant, y la revalidación de tenant y permiso ya pasó para el propio.
+        Assert.Equal(HttpStatusCode.NotFound, (await SendAsync(otherClient, HttpMethod.Post, $"{ConversationUrl(other.TenantId, f.ConversationId)}/unread")).StatusCode);
+
+        await ExecuteAsync(f.ConnectionString, "UPDATE tenancy.tenant_modules SET status = 'inactive' WHERE tenant_id = @t AND module_key = 'messaging'", ("t", f.Tenant.TenantId));
+        Assert.Equal(HttpStatusCode.Forbidden, (await SendAsync(f.Client, HttpMethod.Post, $"{url}/unread")).StatusCode);
+        // La fixture entra con un no leído real: ninguno de los tres rechazos lo tocó.
+        Assert.Equal($"1|{f.Version}", await ScalarAsync<string>(f.ConnectionString, "SELECT unread_count || '|' || version FROM messaging.conversations"));
     }
 
     [Fact]

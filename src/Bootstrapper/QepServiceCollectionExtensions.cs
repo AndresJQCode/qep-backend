@@ -607,6 +607,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<DeleteQuickReplyCommand, bool>, DeleteQuickReplyHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
         services.AddScoped<ICommandHandler<MarkConversationReadCommand, bool>, MarkConversationReadHandler>();
+        // Spec 2026-10-14: marcar no leída, espejo del read.
+        services.AddScoped<ICommandHandler<MarkConversationUnreadCommand, bool>, MarkConversationUnreadHandler>();
         services.AddScoped<ICommandHandler<ResolveConversationCommand, ConversationSummary>, ResolveConversationHandler>();
         services.AddScoped<ICommandHandler<ReopenConversationCommand, ConversationSummary>, ReopenConversationHandler>();
         // Messaging (spec 2026-10-10 §8.4): tomar, transferir y liberar. Cada handler a mano: sin registro, 500.
