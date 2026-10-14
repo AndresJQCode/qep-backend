@@ -8,8 +8,10 @@ public static class ZenviaFieldKeys
     public const string FromNumber = "fromNumber";
 }
 
-/// <summary>Spec 2026-10-09 §6.1. Los dos primeros son de sólo lectura para la pantalla; los otros
-/// cuatro son internos (los escribe el handler de Embedded Signup o el probador).</summary>
+/// <summary>Spec 2026-10-09 §6.1. Los dos primeros son de sólo lectura para la pantalla; los demás son
+/// internos (los escribe el handler de Embedded Signup o el probador). <see cref="RegistrationPin"/> es el
+/// PIN de verificación en dos pasos con el que se registró el número: Meta exige el vigente en cada
+/// <c>/register</c>, así que sin guardarlo no hay re-registro posible.</summary>
 public static class WhatsAppCloudFieldKeys
 {
     public const string DisplayPhoneNumber = "displayPhoneNumber";
@@ -18,6 +20,7 @@ public static class WhatsAppCloudFieldKeys
     public const string WabaId = "wabaId";
     public const string QualityRating = "qualityRating";
     public const string AccessToken = "accessToken";
+    public const string RegistrationPin = "registrationPin";
 }
 
 /// <summary>
@@ -95,6 +98,10 @@ public static class IntegrationProviders
                 WhatsAppCloudFieldKeys.AccessToken, "Token de acceso", FieldKind.Secret,
                 required: false, maxLength: 2048, pattern: null,
                 invalidMessage: "El token que devolvió Meta no tiene una forma válida.", isInternal: true),
+            new FieldDefinition(
+                WhatsAppCloudFieldKeys.RegistrationPin, "PIN de verificación en dos pasos", FieldKind.Secret,
+                required: false, maxLength: 6, pattern: @"^[0-9]{6}\z",
+                invalidMessage: "El PIN tiene que ser de seis dígitos.", isInternal: true),
         ],
         maxConnections: 5,
         onboarding: ProviderOnboarding.MetaEmbeddedSignup);

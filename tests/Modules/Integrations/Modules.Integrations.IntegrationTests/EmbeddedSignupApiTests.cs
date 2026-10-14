@@ -36,6 +36,8 @@ public sealed class EmbeddedSignupApiTests
         Assert.Equal("GREEN", connection.Fields["qualityRating"]);
         Assert.True(connection.Secrets["accessToken"].Configured);
         Assert.True(connection.Secrets["accessToken"].Readable);
+        Assert.True(connection.Secrets["registrationPin"].Configured);
+        Assert.True(connection.Secrets["registrationPin"].Readable);
         Assert.DoesNotContain(SentinelMetaAccessToken, body, StringComparison.Ordinal);
         Assert.DoesNotContain(SentinelMetaCode, body, StringComparison.Ordinal);
         Assert.Equal(1L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM integrations.connection_routes WHERE external_id = '111' AND account_id = '222'"));
@@ -85,7 +87,8 @@ public sealed class EmbeddedSignupApiTests
 
     [Theory]
     [InlineData("/oauth/access_token", 400, 100, "integrations.whatsapp.code_exchange_failed")]
-    [InlineData("/111/register", 400, 133016, "integrations.whatsapp.registration_failed")]
+    [InlineData("/111/register", 400, 133016, "integrations.whatsapp.registration_limit")]
+    [InlineData("/111/register", 400, 133005, "integrations.whatsapp.registration_failed")]
     [InlineData("/222/subscribed_apps", 403, 10, "integrations.whatsapp.registration_failed")]
     public async Task AGraphFailureAnswers422WithItsCodeAndSavesNothing(string path, int status, int code, string expected)
     {
@@ -103,6 +106,29 @@ public sealed class EmbeddedSignupApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal(expected, (await ProblemAsync(response)).Code);
         Assert.Equal(0L, await CountConnectionsAsync(connectionString, tenant.TenantId));
+    }
+
+    // El PIN del formulario es el que viaja a /register, y un 133005 vuelve como error del campo `pin`.
+    [Fact]
+    public async Task TheFormPinIsSentToMetaAndAMismatchMarksThePinField()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        factory.MetaHandler.Respond("/111/register", HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(133005));
+        ScriptHappySignup(factory.MetaHandler);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var response = await SendAsync(client, HttpMethod.Post, EmbeddedSignupUrl(tenant.TenantId), SignupBody(pin: "482913"));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await ProblemAsync(response);
+        Assert.Equal("integrations.whatsapp.registration_failed", problem.Code);
+        Assert.Equal(["pin"], problem.ErrorKeys);
+        var register = Assert.Single(factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/111/register", StringComparison.Ordinal));
+        Assert.Contains("\"pin\":\"482913\"", register.Body, StringComparison.Ordinal);
     }
 
     [Fact]

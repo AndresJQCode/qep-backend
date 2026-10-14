@@ -22,6 +22,9 @@ public static class IntegrationsErrorCodes
     // Spec 2026-10-09 §10.1, los tres de Embedded Signup.
     public const string WhatsAppCodeExchangeFailed = "integrations.whatsapp.code_exchange_failed";
     public const string WhatsAppRegistrationFailed = "integrations.whatsapp.registration_failed";
+    /// <summary>Graph 133016: diez registros del mismo número en 72 h. Reintentar lo empeora, por eso no es
+    /// <see cref="WhatsAppRegistrationFailed"/>.</summary>
+    public const string WhatsAppRegistrationLimit = "integrations.whatsapp.registration_limit";
     public const string WhatsAppNumberAlreadyConnected = "integrations.whatsapp.number_already_connected";
 }
 

@@ -383,8 +383,8 @@ internal static class IntegrationsApiHarness
 
     public static string EmbeddedSignupUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup";
 
-    public static object SignupBody(string name = "Ventas", string @event = "FINISH", string? phoneNumberId = "111", string wabaId = "222") =>
-        new { name, path = @event == "FINISH" ? "new_number" : "existing_business_app", @event, code = SentinelMetaCode, wabaId, phoneNumberId, businessId = "333" };
+    public static object SignupBody(string name = "Ventas", string @event = "FINISH", string? phoneNumberId = "111", string wabaId = "222", string? pin = null) =>
+        new { name, path = @event == "FINISH" ? "new_number" : "existing_business_app", @event, code = SentinelMetaCode, wabaId, phoneNumberId, businessId = "333", pin };
 
     /// <summary>Graph feliz para FINISH: canje, register, subscribed_apps y lectura del número.</summary>
     public static void ScriptHappySignup(FakeMetaGraphHandler meta, string phoneNumberId = "111", string wabaId = "222")

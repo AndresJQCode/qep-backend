@@ -37,9 +37,11 @@ backend; sin estos pasos el flujo de conexión no abre y el webhook no recibe.
    posterior). Y si la cuenta de WhatsApp Business tiene varios números sin conectar, el flujo de coexistencia
    no puede saber cuál se eligió y responde `integrations.whatsapp.registration_failed`: se conecta un número
    por vez, o se usa el camino de número nuevo.
-10. **PIN de dos pasos:** el registro fija un PIN aleatorio que no se guarda. Si el número ya tenía
-    verificación en dos pasos con otro PIN, `/register` falla (`registration_failed`): quita ese PIN en
-    WhatsApp Manager y reintenta.
+10. **PIN de dos pasos** (actualizado el 2026-10-14): si el número ya tiene verificación en dos pasos,
+    escribe su PIN en el formulario del camino de número nuevo; si no, déjalo vacío y QEP genera uno. En
+    los dos casos queda cifrado en la conexión. Un PIN equivocado vuelve marcado en el campo
+    (`registration_failed` con `errors.pin`); diez registros en 72 h devuelven
+    `registration_limit` y hay que esperar.
 11. **Orden del despliegue de la asignación y el BSUID** (spec 2026-10-10 §7, §13). Tres pasos, en este orden:
     1. **Backend**, con sus dos migraciones: `AddCustomerCompleteness` (Customers) y
        `AddBsuidAssignmentAndEvents` (Messaging).

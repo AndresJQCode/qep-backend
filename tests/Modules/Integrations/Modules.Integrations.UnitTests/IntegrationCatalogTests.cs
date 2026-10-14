@@ -28,12 +28,15 @@ public sealed class IntegrationCatalogTests
         Assert.Equal(5, provider.MaxConnections);
         Assert.Equal(ProviderOnboarding.MetaEmbeddedSignup, provider.Onboarding);
         Assert.Equal(
-            ["displayPhoneNumber", "verifiedName", "phoneNumberId", "wabaId", "qualityRating", "accessToken"],
+            ["displayPhoneNumber", "verifiedName", "phoneNumberId", "wabaId", "qualityRating", "accessToken", "registrationPin"],
             provider.Fields.Select(field => field.Key));
         Assert.Equal(["displayPhoneNumber", "verifiedName"], provider.CatalogFields.Select(field => field.Key));
         Assert.True(provider.FindField("accessToken")!.Internal);
         Assert.True(provider.FindField("accessToken")!.IsSecret);
         Assert.Equal(2048, provider.FindField("accessToken")!.MaxLength);
+        Assert.True(provider.FindField("registrationPin")!.Internal);
+        Assert.True(provider.FindField("registrationPin")!.IsSecret);
+        Assert.Equal(@"^[0-9]{6}\z", provider.FindField("registrationPin")!.Pattern!.ToString());
         Assert.Null(provider.FindField("displayPhoneNumber")!.Pattern);
         Assert.Equal([IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud], IntegrationProviders.All);
         Assert.Equal(ProviderOnboarding.Form, IntegrationProviders.Zenvia.Onboarding);

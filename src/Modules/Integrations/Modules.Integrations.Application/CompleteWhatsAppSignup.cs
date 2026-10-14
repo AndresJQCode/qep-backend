@@ -9,7 +9,9 @@ using Modules.Tenancy.Application;
 namespace Modules.Integrations.Application;
 
 /// <summary>El cuerpo de <c>POST /integrations/whatsapp/embedded-signup</c> (spec 2026-10-09 §5.2).
-/// <see cref="ToString"/> no imprime el <c>code</c>.</summary>
+/// <see cref="ToString"/> no imprime el <c>code</c> ni el <c>Pin</c>.</summary>
+/// <param name="Pin">El PIN de verificación en dos pasos que ya tiene el número, si lo tiene: Meta exige el
+/// vigente en <c>/register</c>. <c>null</c> deja que el handler genere uno. Se ignora en coexistencia.</param>
 public sealed record CompleteWhatsAppSignupCommand(
     Guid TenantId,
     string? Name,
@@ -18,7 +20,8 @@ public sealed record CompleteWhatsAppSignupCommand(
     string? Code,
     string? WabaId,
     string? PhoneNumberId,
-    string? BusinessId) : ICommand<ConnectionResponse>
+    string? BusinessId,
+    string? Pin = null) : ICommand<ConnectionResponse>
 {
     public const string EventFinish = "FINISH";
     public const string EventCoexistence = "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING";
@@ -39,8 +42,13 @@ public sealed partial class CompleteWhatsAppSignupValidator : AbstractValidator<
 {
     public const string DigitsMessage = "Meta devolvió un identificador que no es numérico; vuelve a abrir el flujo.";
 
+    public const string PinMessage = "Escribe los seis dígitos del PIN, o déjalo vacío si el número no tiene verificación en dos pasos.";
+
     [GeneratedRegex(@"^[0-9]{1,32}\z", RegexOptions.CultureInvariant)]
     private static partial Regex Digits();
+
+    [GeneratedRegex(@"^[0-9]{6}\z", RegexOptions.CultureInvariant)]
+    private static partial Regex SixDigits();
 
     public CompleteWhatsAppSignupValidator()
     {
@@ -70,6 +78,11 @@ public sealed partial class CompleteWhatsAppSignupValidator : AbstractValidator<
             .Must(value => value is null || Digits().IsMatch(value))
             .OverridePropertyName("businessId")
             .WithMessage(DigitsMessage);
+        // `""` no es «sin PIN»: el formulario manda null cuando el campo queda vacío.
+        RuleFor(command => command.Pin)
+            .Must(value => value is null || SixDigits().IsMatch(value))
+            .OverridePropertyName("pin")
+            .WithMessage(PinMessage);
     }
 }
 
@@ -98,6 +111,14 @@ public sealed class CompleteWhatsAppSignupHandler(
 {
     public const string AmbiguousNumbersDetail =
         "La cuenta tiene varios números sin conectar; deja uno solo o conéctalo desde el número nuevo.";
+
+    public const string PinMismatchMessage = "El PIN no coincide con el que tiene el número. Revísalo en WhatsApp Manager.";
+
+    /// <summary>Graph: «Two step verification PIN mismatch».</summary>
+    private const int GraphPinMismatch = 133005;
+
+    /// <summary>Graph: «Registration/Deregistration failed because of too many attempts» (10 en 72 h).</summary>
+    private const int GraphRegistrationLimit = 133016;
 
     public async Task<ConnectionResponse> HandleAsync(CompleteWhatsAppSignupCommand command, CancellationToken cancellationToken)
     {
@@ -143,6 +164,7 @@ public sealed class CompleteWhatsAppSignupHandler(
         }
 
         string phoneNumberId;
+        var secrets = new Dictionary<string, string>(StringComparer.Ordinal) { [WhatsAppCloudFieldKeys.AccessToken] = token };
         if (command.IsCoexistence)
         {
             // Paso 6: el número ya está registrado en la app del teléfono; no se llama /register.
@@ -150,10 +172,17 @@ public sealed class CompleteWhatsAppSignupHandler(
         }
         else
         {
-            // Paso 5: PIN aleatorio que no se guarda (§8.1).
+            // Paso 5 (§8.1). El PIN es el del negocio si el número ya tiene verificación en dos pasos; si no,
+            // uno aleatorio que la crea. Se guarda cifrado porque Meta exige el vigente en cada /register.
             phoneNumberId = command.PhoneNumberId!;
-            var pin = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6", CultureInfo.InvariantCulture);
-            EnsureSucceeded(await gateway.RegisterNumberAsync(phoneNumberId, token, pin, cancellationToken), "register");
+            var pin = command.Pin ?? RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6", CultureInfo.InvariantCulture);
+            var registered = await gateway.RegisterNumberAsync(phoneNumberId, token, pin, cancellationToken);
+            if (!registered.Succeeded)
+            {
+                throw RegisterFailed(registered.Failure);
+            }
+
+            secrets[WhatsAppCloudFieldKeys.RegistrationPin] = pin;
         }
 
         // Paso 7 y 8.
@@ -175,9 +204,7 @@ public sealed class CompleteWhatsAppSignupHandler(
         Put(fields, WhatsAppCloudFieldKeys.VerifiedName, read.Value.VerifiedName);
         Put(fields, WhatsAppCloudFieldKeys.QualityRating, read.Value.QualityRating);
         var connection = IntegrationConnection.Create(
-            provider, command.TenantId, command.Name!, fields,
-            new Dictionary<string, string>(StringComparer.Ordinal) { [WhatsAppCloudFieldKeys.AccessToken] = token },
-            protector.Protect, author, now);
+            provider, command.TenantId, command.Name!, fields, secrets, protector.Protect, author, now);
         repository.Add(connection);
         routes.Add(IntegrationConnectionRoute.Create(provider.Key, phoneNumberId, command.WabaId, command.TenantId, connection.Id));
         // changedFields por clave, más path y event como metadatos (§6.1); nunca un valor.
@@ -229,6 +256,22 @@ public sealed class CompleteWhatsAppSignupHandler(
 
     private static IntegrationsDomainException RegistrationFailed(string step) =>
         new(IntegrationsErrorCodes.WhatsAppRegistrationFailed, $"Meta rejected the '{step}' step of the WhatsApp registration.");
+
+    /// <summary>Los dos códigos de Graph que la persona puede resolver reciben su propia respuesta: el PIN
+    /// como error del campo, que el formulario marca; el límite con código propio, para que no invite a
+    /// reintentar. El resto es <see cref="RegistrationFailed"/> como cualquier paso.</summary>
+    private static IntegrationsDomainException RegisterFailed(GraphFailure? failure) =>
+        failure?.Code switch
+        {
+            GraphPinMismatch => new IntegrationsDomainException(
+                IntegrationsErrorCodes.WhatsAppRegistrationFailed,
+                "Meta rejected the 'register' step: the two-step verification PIN does not match.",
+                new Dictionary<string, string[]>(StringComparer.Ordinal) { ["pin"] = [PinMismatchMessage] }),
+            GraphRegistrationLimit => new IntegrationsDomainException(
+                IntegrationsErrorCodes.WhatsAppRegistrationLimit,
+                "Meta rejected the 'register' step: too many registrations of this number in 72 hours."),
+            _ => RegistrationFailed("register"),
+        };
 
     private static IntegrationsDomainException NumberAlreadyConnected() =>
         new(IntegrationsErrorCodes.WhatsAppNumberAlreadyConnected, "That WhatsApp number is already connected.");

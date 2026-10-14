@@ -29,12 +29,14 @@ internal sealed partial class IntegrationsTestBed
 }
 
 /// <summary>Graph de mentira para el signup: responde por paso y anota el orden. <see cref="FailAt"/> hace
-/// fallar un paso con un error 400 código 100.</summary>
+/// fallar un paso con un error 400 y el código de <see cref="FailureCode"/> (100 si no se fija).</summary>
 internal sealed class FakeWhatsAppSignupGateway : IWhatsAppSignupGateway
 {
     public List<string> Calls { get; } = [];
 
     public string? FailAt { get; set; }
+
+    public int FailureCode { get; set; } = 100;
 
     public string? LastPin { get; private set; }
 
@@ -42,7 +44,7 @@ internal sealed class FakeWhatsAppSignupGateway : IWhatsAppSignupGateway
 
     public Dictionary<string, IReadOnlyList<WabaPhoneNumber>> WabaNumbers { get; } = new(StringComparer.Ordinal);
 
-    private static GraphFailure Failure => new(400, 100, null, "http_400");
+    private GraphFailure Failure => new(400, FailureCode, null, "http_400");
 
     public Task<GraphResult<string>> ExchangeCodeAsync(string code, CancellationToken cancellationToken)
     {

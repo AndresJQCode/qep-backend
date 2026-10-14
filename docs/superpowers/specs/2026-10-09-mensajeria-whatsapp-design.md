@@ -185,16 +185,21 @@ cuanto la ventana de Meta cierra; el `code` vence en 30 segundos.
   "code": "AQB…",
   "wabaId": "222",
   "phoneNumberId": "111" | null,
-  "businessId": "333" | null }
+  "businessId": "333" | null,
+  "pin": "482913" | null }
 ```
 
 - `event` es lo que Meta reportó: `FINISH` es un número registrado en la Cloud API;
   `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` es coexistencia (el número sigue en la app del
   teléfono) y llega **sin** `phoneNumberId`. `path` es lo que la persona eligió en pantalla, para
   auditoría.
+- `pin` (2026-10-14): el PIN de verificación en dos pasos que **ya tiene** el número, seis dígitos, o
+  `null` para que el backend genere uno. Meta exige el PIN vigente en `/register`, así que sin este
+  campo un número con verificación en dos pasos no se podía conectar nunca. Se ignora en coexistencia.
 - Respuesta: **201 `ConnectionResponse`** con la conexión `Active` y los campos llenos.
 - 422: `integrations.whatsapp.code_exchange_failed`, `integrations.whatsapp.number_already_connected`,
-  `integrations.whatsapp.registration_failed`, `integrations.connection.limit_reached`,
+  `integrations.whatsapp.registration_failed` (con `errors.pin` si Meta rechazó el PIN),
+  `integrations.whatsapp.registration_limit`, `integrations.connection.limit_reached`,
   `integrations.connection.name_taken`, `validation.failed`.
 
 **Webhook de Meta** — fuera de `/api/v1/tenants/*`, sin sesión:
@@ -1009,11 +1014,17 @@ una semana. Si el índice de `wamid` pesa demasiado, la salida es guardar un has
 4. **Canje:** `GET /{v}/oauth/access_token?client_id&client_secret&code`. Error o sin token →
    `integrations.whatsapp.code_exchange_failed`.
 5. Si `event = FINISH`: `POST /{phoneNumberId}/register` con `{ messaging_product: "whatsapp",
-   pin }`, con un **PIN aleatorio de 6 dígitos** (`RandomNumberGenerator`) que **no se guarda**.
-   Guardarlo agregaría una clave a `secrets` y rompería el contrato de `ConnectionResponse`; si un
-   día hace falta volver a registrar, ese registro fija un PIN nuevo. Error →
-   `integrations.whatsapp.registration_failed` (incluido el `133016` de 10 registros en 72 h, y el
-   caso de un número que ya tenía verificación en dos pasos con otro PIN: ver §13).
+   pin }`. El PIN es el que mandó el formulario o, si llegó `null`, uno **aleatorio de 6 dígitos**
+   (`RandomNumberGenerator`). En los dos casos se **guarda cifrado** en el secreto interno
+   `registrationPin` de la conexión. (Corregido el 2026-10-14: la versión original no lo guardaba y
+   suponía que un re-registro «fija un PIN nuevo». Es falso: mientras la verificación en dos pasos
+   esté activa, Meta exige el PIN vigente, así que un número con PIN propio no se podía conectar y
+   uno registrado por QEP no se podía volver a registrar.) Errores por código de Graph:
+   - `133005` (el PIN no coincide) → `integrations.whatsapp.registration_failed` con
+     `errors: { pin: [...] }`, que el formulario marca en el campo.
+   - `133016` (10 registros en 72 h) → `integrations.whatsapp.registration_limit`: reintentar lo
+     empeora, así que tiene código propio.
+   - Cualquier otro → `integrations.whatsapp.registration_failed`.
 6. Si es coexistencia: `GET /{wabaId}/phone_numbers` para resolver el número. Con uno solo, ése.
    Con varios, el que no tenga ruta en QEP; si queda más de uno **no se elige ninguno** →
    `registration_failed` con `detail` «La cuenta tiene varios números sin conectar; deja uno solo
@@ -1280,7 +1291,8 @@ base. En local van por user-secrets y se verifican **contando**, nunca listando
 | --- | --- | --- |
 | `validation.failed` con `errors` | 422 | FluentValidation (§6.4, §8.1); campos internos o de sólo lectura en `POST`/`PUT` de conexiones; `q` de la búsqueda fuera de 2–100 o búsqueda que excede los 2 s (`errors["q"]`) |
 | `integrations.whatsapp.code_exchange_failed` | 422 | Meta no canjeó el `code` (vencido, usado, app mal configurada) o falta `Meta:App` |
-| `integrations.whatsapp.registration_failed` | 422 | `/register`, `phone_numbers` o `subscribed_apps` fallaron; número ambiguo en coexistencia |
+| `integrations.whatsapp.registration_failed` | 422 | `/register`, `phone_numbers` o `subscribed_apps` fallaron; número ambiguo en coexistencia. Con `errors.pin` cuando Graph responde `133005` |
+| `integrations.whatsapp.registration_limit` | 422 | Graph `133016` en `/register`: 10 registros del número en 72 h |
 | `integrations.whatsapp.number_already_connected` | 422 | ruta existente, o `IX_connection_routes_provider_external` al guardar |
 | `integrations.connection.limit_reached` | 422 | 5 por tenant para `whatsapp-cloud` |
 | `integrations.connection.name_taken` | 422 | índice único de nombre |
@@ -1444,9 +1456,10 @@ el 2026-10-09 y quedan **a ratificar** en su lectura:
 
 ### Riesgos
 
-- **PIN aleatorio y verificación en dos pasos previa.** Si el número ya tenía verificación en dos
-  pasos con otro PIN, `/register` falla (§3) → `registration_failed`. La persona tiene que quitar
-  ese PIN en WhatsApp Manager y reintentar; el mensaje de error del frontend debería decirlo.
+- **Verificación en dos pasos previa** (resuelto el 2026-10-14). Si el número ya tiene PIN,
+  `/register` sólo pasa con ese PIN: el formulario lo pide en el camino de número nuevo y un
+  `133005` vuelve como `errors.pin`. Pasó de verdad: un número registrado desde otra app con un
+  PIN fijo no se podía conectar con el PIN aleatorio de la versión original.
 - **Caché de rutas de 60 s:** pausar o borrar tarda hasta un minuto en reflejarse en la ingesta.
 - **Duplicado por timeout en el envío** (§8.3): sólo si la persona reintenta antes del acuse.
 - **Polling:** con muchas personas con la bandeja abierta, la lista es la consulta más frecuente.

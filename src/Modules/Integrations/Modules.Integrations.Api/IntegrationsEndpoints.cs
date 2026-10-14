@@ -121,7 +121,8 @@ public static class IntegrationsEndpoints
     {
         var connection = await dispatcher.SendAsync(
             new CompleteWhatsAppSignupCommand(
-                tenantId, request.Name, request.Path, request.Event, request.Code, request.WabaId, request.PhoneNumberId, request.BusinessId),
+                tenantId, request.Name, request.Path, request.Event, request.Code, request.WabaId, request.PhoneNumberId, request.BusinessId,
+                request.Pin),
             cancellationToken);
         return Results.Created($"/api/v1/tenants/{tenantId}/integrations/connections/{connection.Id}", connection);
     }
@@ -217,9 +218,10 @@ public sealed record UpdateConnectionRequest(
 }
 
 /// <summary>El cuerpo de <c>POST /integrations/whatsapp/embedded-signup</c> (spec 2026-10-09 §5.2).
-/// <see cref="ToString"/> no imprime el <c>code</c>: vence en 30 s, pero se canjea por el token.</summary>
+/// <see cref="ToString"/> no imprime el <c>code</c> —vence en 30 s, pero se canjea por el token— ni el
+/// <c>pin</c>, que es un secreto del número.</summary>
 public sealed record EmbeddedSignupRequest(
-    string? Name, string? Path, string? Event, string? Code, string? WabaId, string? PhoneNumberId, string? BusinessId)
+    string? Name, string? Path, string? Event, string? Code, string? WabaId, string? PhoneNumberId, string? BusinessId, string? Pin = null)
 {
     public override string ToString() =>
         $"EmbeddedSignupRequest {{ Name = {Name}, Path = {Path}, Event = {Event}, WabaId = {WabaId}, "
