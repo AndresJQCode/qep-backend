@@ -138,6 +138,36 @@ public static partial class TemplateCatalog
     }
 
     /// <summary>
+    /// Spec 2026-10-14 D-T8: una fila del espejo, normalizada igual que un elemento del listado de Meta. Se arma el objeto que Meta
+    /// devolvería (nombre, idioma, categoría, formato y <c>components</c>) y se pasa por el mismo <see cref="Parse"/>: una sola copia de
+    /// las reglas. Unos <c>components</c> ilegibles cuentan como vacíos.
+    /// </summary>
+    public static MessageTemplateDto FromStored(string name, string language, string category, string parameterFormat, string componentsJson)
+    {
+        ArgumentNullException.ThrowIfNull(componentsJson);
+        var raw = new JsonObject
+        {
+            ["name"] = name,
+            ["language"] = language,
+            ["category"] = category,
+            ["parameter_format"] = parameterFormat,
+        };
+        JsonNode? components = null;
+        try
+        {
+            components = componentsJson.Length == 0 ? null : JsonNode.Parse(componentsJson);
+        }
+        catch (JsonException)
+        {
+            // Ilegible = vacío.
+        }
+
+        raw["components"] = components is JsonArray array ? array : new JsonArray();
+        using var document = JsonDocument.Parse(raw.ToJsonString());
+        return Parse(document.RootElement, name, language);
+    }
+
+    /// <summary>
     /// Spec 2026-10-11 §5.2: la plantilla del catálogo por nombre e idioma. Si no está o v1 no sabe enviarla,
     /// <c>messaging.template.not_available</c>; si las claves no son <b>exactamente</b> las de la plantilla (ni una más, ni una
     /// menos, ni otra capitalización), <c>messaging.template.parameters_mismatch</c>. Ambas son 422. Las reutiliza la validación
