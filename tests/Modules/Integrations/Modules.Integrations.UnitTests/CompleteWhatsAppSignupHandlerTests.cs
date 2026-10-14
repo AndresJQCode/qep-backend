@@ -7,7 +7,8 @@ namespace Modules.Integrations.UnitTests;
 
 /// <summary>Spec 2026-10-09 §8.1: el orden de los chequeos, el camino FINISH, la coexistencia con uno y
 /// con varios números, y cada error de Graph con su código. El PIN llega del formulario o se genera, y en
-/// los dos casos queda cifrado en la conexión: sin él no hay re-registro posible.</summary>
+/// los dos casos queda cifrado en la conexión: sin él no hay re-registro posible. Un número que ya está CONNECTED en
+/// la Cloud API no se registra de nuevo, y entonces no hay PIN que guardar.</summary>
 public sealed class CompleteWhatsAppSignupHandlerTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -32,7 +33,7 @@ public sealed class CompleteWhatsAppSignupHandlerTests
         Assert.Equal("111", response.Fields["phoneNumberId"]);
         Assert.Equal("222", response.Fields["wabaId"]);
         Assert.True(response.Secrets["accessToken"].Configured);
-        Assert.Equal(["exchange", "register:111", "subscribe:222", "read:111"], bed.Gateway.Calls);
+        Assert.Equal(["exchange", "read:111", "register:111", "subscribe:222", "read:111"], bed.Gateway.Calls);
         Assert.Matches("^[0-9]{6}$", bed.Gateway.LastPin!);
         Assert.True(response.Secrets["registrationPin"].Configured);
         var route = Assert.Single(bed.Routes.Added);
@@ -58,6 +59,55 @@ public sealed class CompleteWhatsAppSignupHandlerTests
         Assert.True(response.Secrets["registrationPin"].Configured);
         Assert.True(bed.Protector.TryUnprotect(response.Id, "registrationPin", bed.Repository.Connections.Single().Secrets.Single(secret => secret.FieldKey == "registrationPin").Protected, out var stored));
         Assert.Equal("482913", stored);
+    }
+
+    // Un número que ya recibe por la Cloud API (con otra app, o con esta en un signup anterior) no se vuelve a registrar:
+    // el /register cuenta para el límite de 10 en 72 h y cambia el registro del número mientras está atendiendo.
+    [Fact]
+    public async Task ANumberAlreadyConnectedOnTheCloudApiIsNotRegisteredAgain()
+    {
+        var bed = new IntegrationsTestBed();
+        bed.Gateway.PhoneNumbers["111"] = new WabaPhoneNumber("111", "+57 1", "Origen", "GREEN", "CONNECTED", "CLOUD_API");
+
+        var response = await bed.SignupHandler().HandleAsync(Finish(bed.TenantId, pin: "482913"), Ct);
+
+        Assert.Equal("Active", response.Status);
+        Assert.Equal(["exchange", "read:111", "subscribe:222", "read:111"], bed.Gateway.Calls);
+        Assert.Null(bed.Gateway.LastPin);
+        // Sin register el PIN no se comprobó contra Meta: guardarlo sería guardar un dato que nadie verificó.
+        Assert.False(response.Secrets["registrationPin"].Configured);
+        Assert.Single(bed.Routes.Added);
+        Assert.Contains("register:skipped", Assert.Single(bed.Audit.Entries).ChangedFields);
+    }
+
+    [Theory]
+    [InlineData("PENDING", "CLOUD_API")]
+    [InlineData("CONNECTED", null)]
+    [InlineData("CONNECTED", "ON_PREMISE")]
+    [InlineData(null, null)]
+    public async Task ANumberNotConnectedOnTheCloudApiIsRegistered(string? status, string? platformType)
+    {
+        var bed = new IntegrationsTestBed();
+        bed.Gateway.PhoneNumbers["111"] = new WabaPhoneNumber("111", null, null, null, status, platformType);
+
+        var response = await bed.SignupHandler().HandleAsync(Finish(bed.TenantId), Ct);
+
+        Assert.Contains("register:111", bed.Gateway.Calls);
+        Assert.True(response.Secrets["registrationPin"].Configured);
+        Assert.DoesNotContain("register:skipped", Assert.Single(bed.Audit.Entries).ChangedFields);
+    }
+
+    // Si la lectura previa falla, se registra como antes: no saber el estado no es razón para no registrar.
+    [Fact]
+    public async Task AFailedReadBeforeRegisteringFallsBackToRegistering()
+    {
+        var bed = new IntegrationsTestBed();
+        bed.Gateway.PhoneNumbers["111"] = new WabaPhoneNumber("111", null, null, null, "CONNECTED", "CLOUD_API");
+        bed.Gateway.FailFirstRead = true;
+
+        await bed.SignupHandler().HandleAsync(Finish(bed.TenantId), Ct);
+
+        Assert.Equal(["exchange", "read:111", "register:111", "subscribe:222", "read:111"], bed.Gateway.Calls);
     }
 
     [Fact]

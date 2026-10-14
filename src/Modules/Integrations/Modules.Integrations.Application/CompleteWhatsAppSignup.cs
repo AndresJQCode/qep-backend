@@ -120,6 +120,13 @@ public sealed class CompleteWhatsAppSignupHandler(
     /// <summary>Graph: «Registration/Deregistration failed because of too many attempts» (10 en 72 h).</summary>
     private const int GraphRegistrationLimit = 133016;
 
+    /// <summary>Metadato de la auditoría cuando el número ya estaba en la Cloud API y no se llamó <c>/register</c>.</summary>
+    public const string RegisterSkippedAuditField = "register:skipped";
+
+    private const string GraphStatusConnected = "CONNECTED";
+
+    private const string GraphPlatformCloudApi = "CLOUD_API";
+
     public async Task<ConnectionResponse> HandleAsync(CompleteWhatsAppSignupCommand command, CancellationToken cancellationToken)
     {
         IntegrationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, IntegrationsPermissions.ConnectionManage);
@@ -164,11 +171,21 @@ public sealed class CompleteWhatsAppSignupHandler(
         }
 
         string phoneNumberId;
+        var registerSkipped = false;
         var secrets = new Dictionary<string, string>(StringComparer.Ordinal) { [WhatsAppCloudFieldKeys.AccessToken] = token };
         if (command.IsCoexistence)
         {
             // Paso 6: el número ya está registrado en la app del teléfono; no se llama /register.
             phoneNumberId = await ResolveCoexistenceNumberAsync(provider, command.WabaId!, token, cancellationToken);
+        }
+        else if (await IsConnectedOnCloudApiAsync(command.PhoneNumberId!, token, cancellationToken))
+        {
+            // El número ya recibe por la Cloud API (con otra app, o con esta en un signup anterior). Registrarlo de nuevo
+            // gasta uno de los 10 /register de 72 h y cambia el registro mientras atiende: el 2026-10-14 el primer mensaje
+            // que llegó después de un re-registro vino como 131060, sin contenido. Basta suscribir la app. El PIN no se
+            // guarda: sin /register nadie lo comprobó.
+            phoneNumberId = command.PhoneNumberId!;
+            registerSkipped = true;
         }
         else
         {
@@ -208,11 +225,22 @@ public sealed class CompleteWhatsAppSignupHandler(
         repository.Add(connection);
         routes.Add(IntegrationConnectionRoute.Create(provider.Key, phoneNumberId, command.WabaId, command.TenantId, connection.Id));
         // changedFields por clave, más path y event como metadatos (§6.1); nunca un valor.
-        string[] audited = [.. ConnectionAudit.KeysOf(connection), $"path:{command.Path}", $"event:{command.Event}"];
+        string[] audited = registerSkipped
+            ? [.. ConnectionAudit.KeysOf(connection), $"path:{command.Path}", $"event:{command.Event}", RegisterSkippedAuditField]
+            : [.. ConnectionAudit.KeysOf(connection), $"path:{command.Path}", $"event:{command.Event}"];
         ConnectionAudit.ByMember(auditRecorder, executionContext, connection, ConnectionAuditActions.Created, audited, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, cancellationToken);
+    }
+
+    /// <summary>Lo que Graph dice de un número que ya está en la Cloud API: <c>status = CONNECTED</c> y
+    /// <c>platform_type = CLOUD_API</c>. Si la lectura falla o falta cualquiera de los dos, se registra como siempre: no
+    /// saber el estado no es razón para dejar un número sin registrar.</summary>
+    private async Task<bool> IsConnectedOnCloudApiAsync(string phoneNumberId, string token, CancellationToken cancellationToken)
+    {
+        var read = await gateway.GetPhoneNumberAsync(phoneNumberId, token, cancellationToken);
+        return read is { Succeeded: true, Value: { Status: GraphStatusConnected, PlatformType: GraphPlatformCloudApi } };
     }
 
     private async Task<string> ResolveCoexistenceNumberAsync(IntegrationProvider provider, string wabaId, string token, CancellationToken cancellationToken)

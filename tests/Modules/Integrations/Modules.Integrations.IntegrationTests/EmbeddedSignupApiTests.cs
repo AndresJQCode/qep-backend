@@ -131,6 +131,34 @@ public sealed class EmbeddedSignupApiTests
         Assert.Contains("\"pin\":\"482913\"", register.Body, StringComparison.Ordinal);
     }
 
+    // Un número que ya está CONNECTED en la Cloud API (con otra app) sólo se suscribe: un /register de más gasta el límite
+    // de 72 h y cambia el registro del número mientras está atendiendo.
+    [Fact]
+    public async Task ANumberAlreadyOnTheCloudApiIsNotRegisteredAgain()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        factory.MetaHandler.Respond(
+            "/111\\?fields=",
+            HttpStatusCode.OK,
+            """{"display_phone_number":"+57 300 123 4567","verified_name":"Origen Botánico","quality_rating":"GREEN","status":"CONNECTED","platform_type":"CLOUD_API","id":"111"}""");
+        ScriptHappySignup(factory.MetaHandler);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var response = await SendAsync(client, HttpMethod.Post, EmbeddedSignupUrl(tenant.TenantId), SignupBody(pin: "482913"));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var connection = await response.Content.ReadFromJsonAsync<ConnectionResponse>(Ct);
+        Assert.False(connection!.Secrets["registrationPin"].Configured);
+        Assert.DoesNotContain(factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/register", StringComparison.Ordinal));
+        Assert.Contains(factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/222/subscribed_apps", StringComparison.Ordinal));
+        Assert.Contains(factory.MetaHandler.Requests, request => request.Uri!.Query.Contains("platform_type", StringComparison.Ordinal));
+        Assert.Equal(1L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM integrations.connection_routes WHERE external_id = '111' AND account_id = '222'"));
+    }
+
     [Fact]
     public async Task CoexistenceDoesNotRegisterAndUsesTheOnlyNumber()
     {

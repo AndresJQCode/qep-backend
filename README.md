@@ -1795,9 +1795,12 @@ Desde el spec 2026-10-09 el catálogo tiene dos proveedores: **Zenvia (WhatsApp)
 (Meta)** (`whatsapp-cloud`, visible con `messaging` activo, tope de 5). El segundo no se conecta por
 formulario sino por **Embedded Signup**: el frontend abre el popup de Meta con `Meta:App:AppId` y
 `Meta:App:ConfigId`, y al cerrar manda `POST …/integrations/whatsapp/embedded-signup` con el `code`
-(vence a los 30 s). El backend canjea el `code` por un token de sistema, registra el número con el PIN
-de verificación en dos pasos que mandó el formulario —o uno aleatorio de seis dígitos si no mandó—, lo
-guarda cifrado en el secreto interno `registrationPin`, suscribe la app a la WABA y lee el número verificado;
+(vence a los 30 s). El backend canjea el `code` por un token de sistema, lee el número y, si **no** está
+ya `CONNECTED` con `platform_type = CLOUD_API`, lo registra con el PIN de verificación en dos pasos que
+mandó el formulario —o uno aleatorio de seis dígitos si no mandó— y lo guarda cifrado en el secreto interno
+`registrationPin`. Un número que ya está en la Cloud API (con otra app) no se vuelve a registrar: el
+`/register` gasta el límite de 10 en 72 h y cambia el registro mientras el número atiende; el PIN no se
+guarda porque nadie lo comprobó, y la auditoría lleva `register:skipped`. Después suscribe la app a la WABA y lee el número verificado;
 todo queda en una conexión `Active` con su fila en `integrations.connection_routes`, que es lo que
 impide que un número quede conectado en dos tenants y lo que el webhook usa para enrutar. El probador
 de `whatsapp-cloud` hace `GET /{phoneNumberId}` y refresca número, nombre y calidad; `190` deja
