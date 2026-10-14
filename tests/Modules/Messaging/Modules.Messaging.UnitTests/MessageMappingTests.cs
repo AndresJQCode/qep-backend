@@ -65,4 +65,28 @@ public sealed class MessageMappingTests
     [Fact]
     public void AReplyToAMessageQepDoesNotHaveIsNull() =>
         Assert.Null(MessageMapping.ToDto(Row(MessageDirection.Inbound, MessageKind.Text, "sí", replyTo: Guid.CreateVersion7()), TenantId, Names, NoTargets).ReplyTo);
+
+    // Los details de un Unsupported son los que escribe la ingesta: el type de Meta y sus errors tal cual.
+    private static string UnsupportedDetails(int code) =>
+        $$$"""{"type":"unsupported","errors":[{"code":{{{code}}},"title":"x","message":"x","error_data":{"details":"x"}}]}""";
+
+    [Theory]
+    [InlineData(131060, "WhatsApp no entregó el contenido de este mensaje. Pídele a la persona que lo envíe de nuevo.")]
+    [InlineData(131051, "WhatsApp no admite este tipo de mensaje. Pídele a la persona que lo envíe como texto, imagen o documento.")]
+    public void AnUnsupportedMessageWithAKnownMetaCodeCarriesItsReason(int code, string expected) =>
+        Assert.Equal(expected, MessageMapping.ToDto(Row(MessageDirection.Inbound, MessageKind.Unsupported, details: UnsupportedDetails(code)), TenantId, Names, NoTargets).UnsupportedReason);
+
+    // Sin motivo conocido la burbuja dibuja la etiqueta del kind, que ya existe en el frontend.
+    [Theory]
+    [InlineData("""{"type":"unsupported","errors":[{"code":999999}]}""")]
+    [InlineData("""{"type":"order","errors":null}""")]
+    [InlineData("""{"type":"unsupported","errors":[{"code":"131060"}]}""")]
+    [InlineData("no es json")]
+    [InlineData(null)]
+    public void AnUnsupportedMessageWithoutAKnownCodeHasNoReason(string? details) =>
+        Assert.Null(MessageMapping.ToDto(Row(MessageDirection.Inbound, MessageKind.Unsupported, details: details), TenantId, Names, NoTargets).UnsupportedReason);
+
+    [Fact]
+    public void OnlyAnUnsupportedMessageHasAReason() =>
+        Assert.Null(MessageMapping.ToDto(Row(MessageDirection.Inbound, MessageKind.Location, details: UnsupportedDetails(131060)), TenantId, Names, NoTargets).UnsupportedReason);
 }

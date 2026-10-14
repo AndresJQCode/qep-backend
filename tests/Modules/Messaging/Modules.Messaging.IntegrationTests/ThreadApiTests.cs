@@ -52,6 +52,35 @@ public sealed class ThreadApiTests
         Assert.False(oldest.GetProperty("hasMore").GetBoolean());
     }
 
+    // Un 131060 llega como Unsupported y sin contenido: la burbuja tiene que decir que la persona sí escribió y que hay que
+    // pedirle que reenvíe, no «Mensaje no compatible».
+    [Fact]
+    public async Task AnUnavailableMessageCarriesItsReasonAndATextOneDoesNot()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", "111", "222");
+        using var anonymous = factory.CreateClient();
+        await PostWebhookAsync(anonymous, MetaPayloads.InboundUnavailable("111", "573001234567", "w1", 1760000001));
+        await PostWebhookAsync(anonymous, MetaPayloads.InboundText("111", "573001234567", "w2", 1760000002, "hola"));
+        await DrainDeliveriesAsync(factory);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ReadPermissions);
+        var conversationId = (await client.GetFromJsonAsync<JsonElement>(ConversationsUrl(tenant.TenantId), Ct)).GetProperty("items")[0].GetProperty("id").GetGuid();
+
+        var page = await client.GetFromJsonAsync<JsonElement>(MessagesUrl(tenant.TenantId, conversationId), Ct);
+        var items = page.GetProperty("items").EnumerateArray().Where(item => item.GetProperty("kind").GetString() != "Event").ToArray();
+
+        Assert.Equal(["Unsupported", "Text"], items.Select(item => item.GetProperty("kind").GetString()));
+        Assert.Equal(
+            "WhatsApp no entregó el contenido de este mensaje. Pídele a la persona que lo envíe de nuevo.",
+            items[0].GetProperty("unsupportedReason").GetString());
+        Assert.Equal(JsonValueKind.Null, items[0].GetProperty("text").ValueKind);
+        Assert.Equal(JsonValueKind.Null, items[1].GetProperty("unsupportedReason").ValueKind);
+    }
+
     [Fact]
     public async Task MediaLocationAndFailedMessagesHaveTheirShape()
     {

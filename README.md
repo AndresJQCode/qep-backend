@@ -1902,6 +1902,12 @@ más pasa en el request. Un worker reclama cada entrega con un lease (8 intentos
 de coexistencia (`history`, `smb_app_state_sync`, `smb_message_echoes`): lo que se responde desde la app
 del teléfono no aparece en QEP todavía.
 
+**Entrantes que Meta no entrega.** Un mensaje `type: "unsupported"` se guarda como `Unsupported` con el `type` y los
+`errors` de Meta en `details`. Al leer, `unsupportedReason` lo traduce a español como `failureReason`
+(`UnsupportedMessageReasons`): `131060` (la persona escribió pero el contenido no llegó; Meta no lo reenvía) y
+`131051` (tipo que la Cloud API no entrega); cualquier otro código viaja `null`. La lista de conversaciones no lo
+trae. Handoff al frontend: `docs/superpowers/plans/2026-10-14-mensaje-no-disponible-frontend.md`.
+
 **Envío.** `POST …/conversations/{id}/messages` con `{ clientId, text }` es idempotente por
 `(conversación, clientId)`: repetir devuelve el mismo mensaje; un `Failed` se reenvía. Cada envío lleva
 `biz_opaque_callback_data = "qep:{messageId}"`, que es como se correlaciona un acuse que llegue antes de

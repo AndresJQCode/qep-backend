@@ -63,6 +63,10 @@ public sealed record ReplyToDto(Guid Id, string Direction, string Kind, string? 
 /// <summary>§5.1 y §6.1.5: <c>actor</c> es null cuando lo hizo el sistema.</summary>
 public sealed record MessageEventDto(string Type, MemberRefDto? Actor, MemberRefDto? Target, MemberRefDto? Previous);
 
+/// <param name="UnsupportedReason">Sólo en un <c>Unsupported</c> cuyo error de Meta tiene texto (<c>131060</c>, <c>131051</c>);
+/// si no, <c>null</c> y la burbuja dibuja la etiqueta del kind. BFF: viaja en español, como <c>failureReason</c>, porque
+/// «Mensaje no compatible» no le dice al asesor que el cliente sí escribió y que hay que pedirle que reenvíe; el
+/// frontend no tendría con qué saberlo sin conocer los códigos de Meta.</param>
 public sealed record MessageDto(
     Guid Id,
     string Direction,
@@ -77,7 +81,8 @@ public sealed record MessageDto(
     Guid? ClientId,
     ReplyToDto? ReplyTo,
     MessageEventDto? Event,
-    MessageTemplateRefDto? Template = null);
+    MessageTemplateRefDto? Template = null,
+    string? UnsupportedReason = null);
 
 /// <summary>Spec 2026-10-11 §5.2: con qué plantilla salió un mensaje <c>Template</c>. El texto ya trae las variables
 /// sustituidas; esto sólo deja a la burbuja rotularlo («Plantilla · nombre»).</summary>

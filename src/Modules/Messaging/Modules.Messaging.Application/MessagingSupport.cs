@@ -146,7 +146,8 @@ internal static class MessageMapping
                     Member(conversationEvent.Actor, memberNames),
                     Member(conversationEvent.Target, memberNames),
                     Member(conversationEvent.Previous, memberNames)),
-            row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null);
+            row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
+            row.Kind == MessageKind.Unsupported ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson)) : null);
     }
 
     /// <summary>§5.1: el <c>preview</c> es el texto o la leyenda del citado, recortado a <see cref="ReplyPreviewMaxLength"/>.</summary>
@@ -197,6 +198,42 @@ internal static class MessageMapping
 
     private static MemberRefDto? Member(Guid? memberId, IReadOnlyDictionary<Guid, string> memberNames) =>
         memberId is { } id ? new MemberRefDto(id, memberNames.GetValueOrDefault(id) ?? DeletedMemberName) : null;
+
+    /// <summary><c>details</c> de un <c>Unsupported</c> es <c>{ type, errors }</c> con los <c>errors</c> de Meta tal cual
+    /// (<c>WebhookPayloadParser</c>). El primer <c>code</c> numérico, o <c>null</c> si no hay o el JSON no tiene esa forma.</summary>
+    private static int? FirstMetaErrorCode(string? detailsJson)
+    {
+        if (detailsJson is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(detailsJson);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("errors", out var errors) || errors.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            foreach (var error in errors.EnumerateArray())
+            {
+                if (error.ValueKind == JsonValueKind.Object
+                    && error.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.Number && code.TryGetInt32(out var value))
+                {
+                    return value;
+                }
+            }
+
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     /// <summary><c>details</c> de un <c>location</c> es el objeto de Meta tal cual (§8.7). Si no trae
     /// coordenadas numéricas, el mensaje sale sin <c>location</c> en vez de romper la página.</summary>

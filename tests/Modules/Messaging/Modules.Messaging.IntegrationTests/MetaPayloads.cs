@@ -86,6 +86,33 @@ internal static class MetaPayloads
             profileName,
             new { from = waId, id = wamid, timestamp = Seconds(timestamp), type = "text", text = new { body = text } });
 
+    /// <summary>Un entrante que Meta no entregó (<c>131060</c>), con la forma literal del que llegó el 2026-10-14.</summary>
+    public static string InboundUnavailable(string phoneNumberId, string waId, string wamid, long timestamp) =>
+        Messages(
+            phoneNumberId,
+            "15550000000",
+            UserIdFor(waId),
+            waId,
+            "Laura",
+            new
+            {
+                id = wamid,
+                from = waId,
+                type = "unsupported",
+                errors = new[]
+                {
+                    new
+                    {
+                        code = 131060,
+                        title = "This message is unavailable.",
+                        message = "This message is unavailable.",
+                        error_data = new { details = "This message is currently unavailable." },
+                    },
+                },
+                timestamp = Seconds(timestamp),
+                unsupported = new { type = "unknown", raw_type = "unknown" },
+            });
+
     public static string InboundMedia(
         string phoneNumberId,
         string waId,
