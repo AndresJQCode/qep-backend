@@ -53,4 +53,9 @@ public interface IPipelineMemberNames
 public interface IPipelineActiveMembers
 {
     Task<IReadOnlySet<Guid>> FindActiveAsync(Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken);
+
+    /// <summary>D21 del spec del frontend: todas las membresías <c>Active</c> del tenant, para el selector de dueño. Es la misma
+    /// regla que <see cref="FindActiveAsync"/> aplica a unos ids. Sólo ids y sin orden: el nombre lo da
+    /// <see cref="IPipelineMemberNames"/> y el orden lo decide quien llama.</summary>
+    Task<IReadOnlyList<Guid>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken);
 }

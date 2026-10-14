@@ -2075,6 +2075,7 @@ cuando se prende un módulo, así que no hay otro lugar donde engancharse.
 | `PATCH` | `/deals/{dealId}` | `pipeline.deal.manage` |
 | `POST` | `/deals/{dealId}/move\|win\|lose\|reopen` | `pipeline.deal.manage` |
 | `POST` | `/deals/{dealId}/quotations/{quotationId}/link\|primary` | `pipeline.deal.manage` |
+| `GET` | `/owners` | `pipeline.deal.manage` |
 | `GET` | `/customers/{customerId}/summary?conversationId=` | `pipeline.deal.read` |
 | `GET` | `/triage` | `pipeline.deal.read` |
 | `POST` | `/triage/{conversationId}` (`create` \| `dismiss`) | `pipeline.deal.manage` |
@@ -2084,6 +2085,11 @@ Toda escritura sobre un negocio lleva `version` (412 si cambió) y devuelve el n
 creado por la API sólo puede tener como responsable a una membresía activa (`pipeline.deal.owner_not_member`);
 el que crea un evento de cotización conserva al asesor de la cotización como responsable aunque ya esté
 inactivo. El historial de etapas se ordena por un ordinal por negocio que asigna el dominio, no por la hora.
+`GET /owners` devuelve las membresías `Active` del tenant que pueden ser dueñas de un negocio, ordenadas por nombre
+(`[{ memberId, name }]`, con el correo cuando no hay nombre): el formulario sólo dibuja la lista y la regla de «dueño
+válido» sigue en el backend. Un miembro activo sin nombre ni correo se lista como «Miembro sin nombre» en vez de
+omitirlo, y si ninguna membresía califica la respuesta es `[]` con 200. Exige `pipeline.deal.manage`; con cualquier
+403 el frontend oculta el selector.
 El tablero trae todas las columnas, sumas por moneda, como máximo 200 tarjetas por columna con el conteo real, y
 `Ganado`/`Perdido` sólo de los últimos 30 días. El triage trae como máximo 200 conversaciones con el conteo
 real. Cada decisión de triage guarda el último entrante contra el que se tomó: con el índice único

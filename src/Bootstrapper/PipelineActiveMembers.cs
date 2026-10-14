@@ -24,4 +24,12 @@ internal sealed class PipelineActiveMembers(IMembershipRepository memberships) :
             .Select(membership => membership.Id.Value)
             .ToHashSet();
     }
+
+    /// <summary>D21 del spec del frontend: <c>ListByTenantAsync</c> trae el tenant en cualquier estado, y el estado se filtra acá,
+    /// igual que en <see cref="FindActiveAsync"/>.</summary>
+    public async Task<IReadOnlyList<Guid>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var all = await memberships.ListByTenantAsync(new TenantId(tenantId), cancellationToken);
+        return [.. all.Where(membership => membership.State == MembershipState.Active).Select(membership => membership.Id.Value)];
+    }
 }

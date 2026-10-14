@@ -120,4 +120,30 @@ public sealed class PipelineDirectoriesTests
         Assert.Equal("Laura Gómez", Assert.Single(names).Value);
         Assert.Equal(memberId, names.Keys.Single());
     }
+
+    // D21 del spec del frontend: la lista de dueños posibles es la misma regla que valida al dueño (membresía Active del tenant).
+    [Fact]
+    public async Task ListActiveReturnsOnlyTheTenantsActiveMemberships()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        var other = await RegisterTenantAsync(factory);
+        var owner = await OwnerMembershipIdAsync(connectionString, tenant);
+        var (advisor, _) = await SeedMemberAsync(connectionString, tenant.TenantId, "Laura Gómez");
+        foreach (var state in new[] { "Suspended", "Removed", "Invited", "Expired" })
+        {
+            await SeedMemberAsync(connectionString, tenant.TenantId, $"Inactiva {state}", state: state);
+        }
+
+        await SeedMemberAsync(connectionString, other.TenantId, "Intrusa Activa");
+
+        using var scope = factory.Services.CreateScope();
+        var members = scope.ServiceProvider.GetRequiredService<IPipelineActiveMembers>();
+        var active = await members.ListActiveAsync(tenant.TenantId, Ct);
+
+        Assert.Equal(new[] { owner, advisor }.Order(), active.Order());
+        Assert.Empty(await members.ListActiveAsync(Guid.CreateVersion7(), Ct));
+    }
 }
