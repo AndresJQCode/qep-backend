@@ -15,8 +15,9 @@ internal static class InboundIngestion
     /// entre el SELECT y el UPDATE. Se reintenta una vez: la segunda vuelta encuentra la nueva por BSUID.</summary>
     private const string ConnectionUserIndex = "IX_conversations_connection_user";
 
-    /// <returns>El id del mensaje insertado, o <c>null</c> si Meta lo reenvió (ya estaba).</returns>
-    public static async Task<Guid?> IngestAsync(
+    /// <returns>El mensaje insertado con su conversación y su asignado (spec 2026-10-14: a quién le suena), o <c>null</c> si
+    /// Meta lo reenvió (ya estaba).</returns>
+    public static async Task<IngestedInbound?> IngestAsync(
         MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now, CancellationToken cancellationToken)
     {
         try
@@ -29,7 +30,7 @@ internal static class InboundIngestion
         }
     }
 
-    private static async Task<Guid?> IngestOnceAsync(
+    private static async Task<IngestedInbound?> IngestOnceAsync(
         MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
@@ -87,7 +88,7 @@ internal static class InboundIngestion
                 version            = version + 1
             FROM old
             WHERE id = {conversationId}
-            RETURNING old.old_status AS "OldStatus", old.old_customer_id AS "OldCustomerId"
+            RETURNING old.old_status AS "OldStatus", old.old_customer_id AS "OldCustomerId", assigned_member_id AS "AssignedMemberId"
             """).ToListAsync(cancellationToken)).Single();
 
         if (message.Media is { } media)
@@ -135,7 +136,7 @@ internal static class InboundIngestion
         }
 
         await transaction.CommitAsync(cancellationToken);
-        return messageId;
+        return new IngestedInbound(messageId, conversationId, before.AssignedMemberId);
     }
 
     /// <summary>Spec 2026-10-10 §8.1, sentencia 1: por BSUID; si no, adopción de la fila vieja por teléfono; si no, crear
@@ -195,5 +196,8 @@ internal static class InboundIngestion
         return source is null ? null : source.Length <= PreviewMaxLength ? source : source[..PreviewMaxLength];
     }
 
-    private sealed record PreviousState(string OldStatus, Guid? OldCustomerId);
+    private sealed record PreviousState(string OldStatus, Guid? OldCustomerId, Guid? AssignedMemberId);
 }
+
+/// <summary>Lo que la ingesta dejó commiteado, para el aviso en tiempo real (spec 2026-10-14).</summary>
+internal sealed record IngestedInbound(Guid MessageId, Guid ConversationId, Guid? AssignedMemberId);

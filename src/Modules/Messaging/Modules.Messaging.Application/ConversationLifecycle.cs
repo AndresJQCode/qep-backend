@@ -29,6 +29,7 @@ public sealed partial class MarkConversationReadHandler(
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IClock clock,
+    IMessagingNotifier notifier,
     ILogger<MarkConversationReadHandler> logger)
     : ICommandHandler<MarkConversationReadCommand, bool>
 {
@@ -48,6 +49,8 @@ public sealed partial class MarkConversationReadHandler(
                 : throw MessagingNotFound.Conversation(command.ConversationId);
         }
 
+        // Spec 2026-10-14: el contador bajó a 0 en la base; la lista de las otras pestañas lo relee.
+        await notifier.ConversationChangedAsync(command.TenantId, command.ConversationId, cancellationToken);
         if (target.LastInboundWamid is not { } wamid || !Conversation.CanAcknowledgeReading(wamid, target.LastInboundAt, now))
         {
             return true;
@@ -77,7 +80,8 @@ public sealed class MarkConversationUnreadHandler(
     IConversationRepository repository,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    IMessagingNotifier notifier)
     : ICommandHandler<MarkConversationUnreadCommand, bool>
 {
     public async Task<bool> HandleAsync(MarkConversationUnreadCommand command, CancellationToken cancellationToken)
@@ -85,6 +89,7 @@ public sealed class MarkConversationUnreadHandler(
         await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.ConversationManage, cancellationToken);
         if (await repository.MarkUnreadAsync(command.TenantId, command.ConversationId, clock.UtcNow, cancellationToken))
         {
+            await notifier.ConversationChangedAsync(command.TenantId, command.ConversationId, cancellationToken);
             return true;
         }
 
@@ -101,13 +106,19 @@ public sealed class MarkUnreadFromMessageHandler(
     IConversationRepository repository,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    IMessagingNotifier notifier)
     : ICommandHandler<MarkUnreadFromMessageCommand, bool>
 {
     public async Task<bool> HandleAsync(MarkUnreadFromMessageCommand command, CancellationToken cancellationToken)
     {
         await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.ConversationManage, cancellationToken);
         var outcome = await repository.MarkUnreadFromAsync(command.TenantId, command.ConversationId, command.MessageId, clock.UtcNow, cancellationToken);
+        if (outcome == UnreadFromOutcome.Marked)
+        {
+            await notifier.ConversationChangedAsync(command.TenantId, command.ConversationId, cancellationToken);
+        }
+
         return outcome switch
         {
             UnreadFromOutcome.Marked => true,
@@ -130,7 +141,8 @@ public sealed class ResolveConversationHandler(
     CallerMembership caller,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    IMessagingNotifier notifier)
     : ICommandHandler<ResolveConversationCommand, ConversationSummary>
 {
     public async Task<ConversationSummary> HandleAsync(ResolveConversationCommand command, CancellationToken cancellationToken)
@@ -147,6 +159,7 @@ public sealed class ResolveConversationHandler(
         events.Record(command.TenantId, conversation.ConnectionId, conversation.Id, new ConversationEvent(ConversationEventType.Resolved, Actor: actor), now);
         audit.Record(command.TenantId, executionContext.SubjectId, MessagingAuditActions.Resolved, conversation.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await notifier.ConversationChangedAsync(command.TenantId, conversation.Id, cancellationToken);
         return (await summaries.BuildAsync(command.TenantId, [(await queries.FindAsync(command.TenantId, conversation.Id, cancellationToken))!], cancellationToken))[0];
     }
 }
@@ -161,7 +174,8 @@ public sealed class ReopenConversationHandler(
     CallerMembership caller,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    IMessagingNotifier notifier)
     : ICommandHandler<ReopenConversationCommand, ConversationSummary>
 {
     public async Task<ConversationSummary> HandleAsync(ReopenConversationCommand command, CancellationToken cancellationToken)
@@ -178,6 +192,7 @@ public sealed class ReopenConversationHandler(
         events.Record(command.TenantId, conversation.ConnectionId, conversation.Id, new ConversationEvent(ConversationEventType.Reopened, Actor: actor), now);
         audit.Record(command.TenantId, executionContext.SubjectId, MessagingAuditActions.Reopened, conversation.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await notifier.ConversationChangedAsync(command.TenantId, conversation.Id, cancellationToken);
         return (await summaries.BuildAsync(command.TenantId, [(await queries.FindAsync(command.TenantId, conversation.Id, cancellationToken))!], cancellationToken))[0];
     }
 }

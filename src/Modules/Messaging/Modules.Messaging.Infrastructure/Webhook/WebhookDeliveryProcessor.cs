@@ -22,8 +22,12 @@ internal sealed partial class WebhookDeliveryProcessor(
     IMessagingAssignees assignees,
     IClock clock,
     MarketingOptOutButtons optOutButtons,
+    IMessagingNotifier notifier,
     ILogger<WebhookDeliveryProcessor> logger)
 {
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Webhook delivery {DeliveryId}: the realtime notification for conversation {ConversationId} failed; the delivery is processed anyway.")]
+    private static partial void LogNotifyFailed(ILogger logger, long deliveryId, Guid conversationId, Exception exception);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Webhook delivery {DeliveryId}: a status with a QEP callback has no message row yet (attempt {Attempt}); it is retried.")]
     private static partial void LogStatusPending(ILogger logger, long deliveryId, int attempt);
 
@@ -116,7 +120,14 @@ internal sealed partial class WebhookDeliveryProcessor(
             foreach (var message in change.Messages)
             {
                 var context = await PrepareAsync(route.TenantId, route.ConnectionId, message, cancellationToken);
-                await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, cancellationToken);
+                var ingested = await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, cancellationToken);
+                if (ingested is not null)
+                {
+                    // Spec 2026-10-14: ya commiteado; un reenvío de Meta (null) no avisa nada.
+                    await NotifyAsync(deliveryId, ingested.ConversationId,
+                        () => notifier.InboundMessageAsync(route.TenantId, ingested.ConversationId, ingested.MessageId, ingested.AssignedMemberId, cancellationToken));
+                }
+
                 await MarkOptOutIfButtonAsync(deliveryId, route, message, cancellationToken);
             }
         }
@@ -239,7 +250,8 @@ internal sealed partial class WebhookDeliveryProcessor(
         var outcome = DeliveryOutcome.Processed;
         foreach (var status in change.Statuses)
         {
-            var result = await StatusIngestion.ApplyAsync(dbContext, route.ConnectionId, status, cancellationToken);
+            var applied = await StatusIngestion.ApplyAsync(dbContext, route.ConnectionId, status, cancellationToken);
+            var result = applied.Outcome;
             if (result == StatusOutcome.NotFound && status.CallbackMessageId is not null)
             {
                 LogStatusPending(logger, deliveryId, attempts);
@@ -254,9 +266,29 @@ internal sealed partial class WebhookDeliveryProcessor(
                 // Spec 2026-10-11 decisión 10: la persona apagó el marketing. Idempotente; si falla, la entrega se reintenta.
                 await customers.MarkMarketingOptOutAsync(route.TenantId, customerId, cancellationToken);
             }
+
+            // Spec 2026-10-14: el acuse cambió la foto del hilo (entregado, leído, fallido); quien lo mira lo relee.
+            foreach (var conversationId in applied.ConversationIds)
+            {
+                await NotifyAsync(deliveryId, conversationId, () => notifier.ConversationChangedAsync(route.TenantId, conversationId, cancellationToken));
+            }
         }
 
         return outcome;
+    }
+
+    /// <summary>Un fallo del aviso no reintenta la entrega ni deshace nada: lo que se iba a avisar ya quedó commiteado, y el
+    /// polling relajado del frontend lo recoge igual.</summary>
+    private async Task NotifyAsync(long deliveryId, Guid conversationId, Func<Task> notify)
+    {
+        try
+        {
+            await notify();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogNotifyFailed(logger, deliveryId, conversationId, exception);
+        }
     }
 
     /// <summary>§8.2, D-M16: cuenta deshabilitada, borrada, app desinstalada u offboarded → account_disabled

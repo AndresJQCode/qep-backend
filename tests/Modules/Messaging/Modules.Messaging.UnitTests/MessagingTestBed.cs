@@ -43,6 +43,9 @@ internal sealed class MessagingTestBed
 
     public FakeImageCompressor Compressor { get; } = new();
 
+    /// <summary>Spec 2026-10-14: lo que los handlers avisaron por el canal en tiempo real, en orden.</summary>
+    public FakeMessagingNotifier Notifier { get; } = new();
+
     public MessagingTestBed() => Staging = new FakeUploadStaging(Store);
 
     /// <summary>Lo que "subió el front" al staging del miembro de la prueba: el objeto en el bucket bajo la clave que reconstruye el
@@ -73,6 +76,7 @@ internal sealed class MessagingTestBed
             TenantModules,
             new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
             new FakeClock(Now),
+            Notifier,
             new SendMediaMessageValidator());
     }
 
@@ -91,6 +95,7 @@ internal sealed class MessagingTestBed
             TenantModules,
             new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
             new FakeClock(Now),
+            Notifier,
             Staging,
             new CreateMediaUploadSessionValidator());
     }
@@ -131,6 +136,7 @@ internal sealed class MessagingTestBed
             TenantModules,
             new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
             new FakeClock(Now),
+            Notifier,
             new SendMessageValidator());
     }
 
@@ -152,6 +158,7 @@ internal sealed class MessagingTestBed
             TenantModules,
             new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
             new FakeClock(Now),
+            Notifier,
             new SendTemplateMessageValidator());
     }
 
@@ -177,6 +184,7 @@ internal sealed class MessagingTestBed
             TenantModules,
             context,
             new FakeClock(Now),
+            Notifier,
             new StartConversationValidator());
     }
 
@@ -203,6 +211,7 @@ internal sealed class MessagingTestBed
             TenantModules,
             new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
             new FakeClock(Now),
+            Notifier,
             new SendAudioMessageValidator());
     }
 }
@@ -534,6 +543,8 @@ internal sealed class FakeClaim(OutboundDraft draft, ExistingOutbound? existing)
 
     public Guid MessageId => existing?.Id ?? Draft.MessageId;
 
+    public Guid ConversationId => Draft.ConversationId;
+
     public ExistingOutbound? Existing => existing;
 
     /// <summary>Lo que recibió el commit como id del medio en Meta (spec 2026-10-11 §6.5).</summary>
@@ -663,6 +674,31 @@ internal sealed class InMemoryMediaStore : IMessagingMediaStore
         }
 
         Objects.Remove(key);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>Spec 2026-10-14: acumula lo avisado, como lo vería el listener; <see cref="Fail"/> simula un pg_notify caído.</summary>
+internal sealed class FakeMessagingNotifier : IMessagingNotifier
+{
+    public List<MessagingEvent> Events { get; } = [];
+
+    public Exception? Fail { get; set; }
+
+    public Task ConversationChangedAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
+        Record(new MessagingEvent(MessagingEventKinds.ConversationChanged, tenantId, conversationId, null, null));
+
+    public Task InboundMessageAsync(Guid tenantId, Guid conversationId, Guid messageId, Guid? assignedMemberId, CancellationToken cancellationToken) =>
+        Record(new MessagingEvent(MessagingEventKinds.InboundMessage, tenantId, conversationId, messageId, assignedMemberId));
+
+    private Task Record(MessagingEvent @event)
+    {
+        if (Fail is not null)
+        {
+            throw Fail;
+        }
+
+        Events.Add(@event);
         return Task.CompletedTask;
     }
 }

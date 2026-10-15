@@ -31,7 +31,8 @@ public sealed class ConversationAssignmentSteps(
     CallerMembership caller,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    IMessagingNotifier notifier)
 {
     public async Task<(Conversation Conversation, Guid Member)> LoadAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
     {
@@ -53,6 +54,8 @@ public sealed class ConversationAssignmentSteps(
             events.Record(tenantId, conversation.ConnectionId, conversation.Id, change, now);
             audit.Record(tenantId, executionContext.SubjectId, auditAction, conversation.Id, now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
+            // Spec 2026-10-14: después del commit, para que las otras pestañas y el otro asesor relean la asignación.
+            await notifier.ConversationChangedAsync(tenantId, conversation.Id, cancellationToken);
         }
 
         return (await summaries.BuildAsync(tenantId, [(await queries.FindAsync(tenantId, conversation.Id, cancellationToken))!], cancellationToken))[0];

@@ -46,13 +46,14 @@ public sealed class CreateMediaUploadSessionHandler(
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IClock clock,
+    IMessagingNotifier notifier,
     IMessagingUploadStaging staging,
     IValidator<CreateMediaUploadSessionCommand> validator)
     : ICommandHandler<CreateMediaUploadSessionCommand, MediaUploadSessionDto>
 {
     // CS9124: las dependencias de la guarda no se usan en los métodos.
     private readonly OutboundGuards _guards = new(
-        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock);
+        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier);
 
     public async Task<MediaUploadSessionDto> HandleAsync(CreateMediaUploadSessionCommand command, CancellationToken cancellationToken)
     {

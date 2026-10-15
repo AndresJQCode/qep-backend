@@ -56,6 +56,7 @@ public sealed class SendMediaMessageHandler(
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IClock clock,
+    IMessagingNotifier notifier,
     IValidator<SendMediaMessageCommand> validator)
     : ICommandHandler<SendMediaMessageCommand, MessageDto>
 {
@@ -66,7 +67,7 @@ public sealed class SendMediaMessageHandler(
 
     // CS9124: los parámetros que van a la guarda no se usan en los métodos; el reloj y el reclamo se piden a ella.
     private readonly OutboundGuards _guards = new(
-        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock);
+        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier);
 
     /// <summary>Lo que quedó de la preparación: el medio ya subido (o la falla de la subida) y los bytes finales si es una imagen.</summary>
     private sealed record Prepared(

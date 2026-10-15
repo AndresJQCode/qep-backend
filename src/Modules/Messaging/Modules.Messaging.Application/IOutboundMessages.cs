@@ -41,6 +41,9 @@ public interface IOutboundClaim : IAsyncDisposable
     /// <summary>El id de la fila: el del borrador si se insertó, el de la existente si no.</summary>
     Guid MessageId { get; }
 
+    /// <summary>La conversación del borrador: la que el aviso en tiempo real nombra al consolidar (spec 2026-10-14).</summary>
+    Guid ConversationId { get; }
+
     ExistingOutbound? Existing { get; }
 
     /// <summary><paramref name="metaMediaId"/>: el id del medio en Meta, si el borrador trae medio (spec 2026-10-11 §6.5).</summary>
