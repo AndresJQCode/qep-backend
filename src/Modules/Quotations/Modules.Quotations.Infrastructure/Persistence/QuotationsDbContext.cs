@@ -525,10 +525,17 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .UsePropertyAccessMode(PropertyAccessMode.Field);
 
         order.HasIndex(value => value.TenantId).HasDatabaseName("IX_orders_tenant");
-        // 1:1 con la cotizacion de origen (modelo-datos-cotizaciones.md §2.4).
+        // Único parcial (spec 2026-10-15 §9): una cotización tiene a lo sumo un pedido; los
+        // pedidos sin cotización no compiten entre sí.
         order.HasIndex(value => value.QuotationId)
             .IsUnique()
+            .HasFilter("quotation_id IS NOT NULL")
             .HasDatabaseName("IX_orders_quotation");
+        // Los filtros de la lista y del Excel (cliente, CUC → ids de cliente, asesor) y el de
+        // origen aplican sobre el pedido, ya no sobre la cotización.
+        order.HasIndex(value => new { value.TenantId, value.ClientId }).HasDatabaseName("IX_orders_tenant_client");
+        order.HasIndex(value => new { value.TenantId, value.AdvisorId }).HasDatabaseName("IX_orders_tenant_advisor");
+        order.HasIndex(value => new { value.TenantId, value.Source }).HasDatabaseName("IX_orders_tenant_source");
         // La unicidad que promete el numero de pedido. Nombrado a proposito, misma leccion de
         // SDD-CT-06 que IX_quotations_tenant_number.
         order.HasIndex(value => new { value.TenantId, value.OrderNumber })
