@@ -26,14 +26,16 @@ internal sealed class DevelopmentAuthenticationHandler(
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         var subjectId = Request.Headers["X-Subject-Id"].ToString();
-        var tenantId = Request.Headers["X-Tenant-Id"].ToString();
-        if (!Guid.TryParse(subjectId, out _) || !Guid.TryParse(tenantId, out var parsedTenantId))
+        // El tenant por header o, sólo bajo /api/v1/hubs/, por el query `tenantId` (spec 2026-10-14): el
+        // mismo criterio que el camino real (TenantRequestResolver), para que el hub se pruebe con el stub.
+        if (!Guid.TryParse(subjectId, out _) || !TenantRequestResolver.TryResolve(Request, out var parsedTenantId))
         {
             // Sin tenant no hay consulta de módulos: el request ni siquiera autentica.
             return AuthenticateResult.Fail(
                 "Development requests require valid X-Subject-Id and X-Tenant-Id headers.");
         }
 
+        var tenantId = parsedTenantId.ToString();
         List<Claim> claims = [new(QepClaimTypes.SubjectId, subjectId)];
 
         // Spec 2026-10-08 §4: con fila y no Active, ni claim de tenant ni permisos — el mismo efecto que
