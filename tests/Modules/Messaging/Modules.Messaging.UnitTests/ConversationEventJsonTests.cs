@@ -37,4 +37,28 @@ public sealed class ConversationEventJsonTests
     [Fact]
     public void ABadIdIsDroppedNotFatal() =>
         Assert.Equal(new ConversationEvent(ConversationEventType.Released), ConversationEventJson.Parse("""{"type":"Released","actor":"nope"}"""));
+
+    private static readonly Guid Reason = Guid.Parse("01900000-0000-7000-8000-0000000000a3");
+
+    // Spec 2026-10-15 §3.2: el motivo viaja como reasonId, y sólo cuando lo hay.
+    [Fact]
+    public void TheReasonIsWrittenAsReasonId() =>
+        Assert.Equal(
+            $$"""{"type":"Resolved","actor":"{{Actor}}","reasonId":"{{Reason}}"}""",
+            ConversationEventJson.Serialize(new ConversationEvent(ConversationEventType.Resolved, Actor: Actor, ReasonId: Reason)));
+
+    [Fact]
+    public void TheReasonRoundTrips()
+    {
+        var value = new ConversationEvent(ConversationEventType.Resolved, Actor: Actor, ReasonId: Reason);
+
+        Assert.Equal(value, ConversationEventJson.Parse(ConversationEventJson.Serialize(value)));
+    }
+
+    // Los eventos escritos antes de esta spec no tienen la clave: se leen sin motivo.
+    [Fact]
+    public void AnOldResolvedEventReadsWithoutAReason() =>
+        Assert.Equal(
+            new ConversationEvent(ConversationEventType.Resolved, Actor: Actor),
+            ConversationEventJson.Parse($$"""{"type":"Resolved","actor":"{{Actor}}"}"""));
 }

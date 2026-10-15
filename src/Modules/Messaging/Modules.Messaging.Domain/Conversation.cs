@@ -79,6 +79,11 @@ public sealed partial class Conversation
 
     public ConversationStatus Status { get; private set; }
 
+    /// <summary>Spec 2026-10-15 D-R2 y D-R7: el motivo de la resolución vigente, sólo para que el resumen lo dibuje. El de cada
+    /// resolución vive en su evento <c>Resolved</c>. <c>null</c> si está abierta o se resolvió sin motivo; la ingesta lo limpia por SQL
+    /// al reabrir (§3.6).</summary>
+    public Guid? ResolutionReasonId { get; private set; }
+
     public int UnreadCount { get; private set; }
 
     public DateTimeOffset? LastInboundAt { get; private set; }
@@ -192,7 +197,7 @@ public sealed partial class Conversation
         return source;
     }
 
-    public void Resolve(DateTimeOffset now)
+    public void Resolve(DateTimeOffset now, Guid? reasonId = null)
     {
         if (Status == ConversationStatus.Resolved)
         {
@@ -200,6 +205,7 @@ public sealed partial class Conversation
         }
 
         Status = ConversationStatus.Resolved;
+        ResolutionReasonId = reasonId;
         Touch(now);
     }
 
@@ -211,6 +217,7 @@ public sealed partial class Conversation
         }
 
         Status = ConversationStatus.Open;
+        ResolutionReasonId = null;
         Touch(now);
     }
 

@@ -21,6 +21,7 @@ public static class ConversationEventJson
             WriteId(writer, "previous", value.Previous);
             WriteId(writer, "customerId", value.CustomerId);
             WriteId(writer, "linkedConversationId", value.LinkedConversationId);
+            WriteId(writer, "reasonId", value.ReasonId);
             writer.WriteEndObject();
         }
 
@@ -48,7 +49,8 @@ public static class ConversationEventJson
             }
 
             return new ConversationEvent(
-                parsed, ReadId(root, "actor"), ReadId(root, "target"), ReadId(root, "previous"), ReadId(root, "customerId"), ReadId(root, "linkedConversationId"));
+                parsed, ReadId(root, "actor"), ReadId(root, "target"), ReadId(root, "previous"), ReadId(root, "customerId"),
+                ReadId(root, "linkedConversationId"), ReadId(root, "reasonId"));
         }
         catch (JsonException)
         {

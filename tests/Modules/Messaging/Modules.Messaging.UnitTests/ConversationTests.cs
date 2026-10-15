@@ -178,6 +178,35 @@ public sealed class ConversationTests
         Assert.Null(conversation.AssignedAt);
         Assert.Equal(ConversationStatus.Resolved, conversation.Status);
     }
+
+    // Spec 2026-10-15 D-R2: la conversación guarda el motivo vigente y reabrir lo limpia.
+    [Fact]
+    public void ResolveKeepsTheReasonAndReopenClearsIt()
+    {
+        var conversation = Open();
+        var reasonId = Guid.CreateVersion7();
+
+        conversation.Resolve(Now.AddMinutes(1), reasonId);
+        Assert.Equal(reasonId, conversation.ResolutionReasonId);
+
+        conversation.Reopen(Now.AddMinutes(2));
+        Assert.Null(conversation.ResolutionReasonId);
+
+        conversation.Resolve(Now.AddMinutes(3));
+        Assert.Null(conversation.ResolutionReasonId);
+    }
+
+    [Fact]
+    public void AResolveThatFailsDoesNotTouchTheReason()
+    {
+        var conversation = Open();
+        var first = Guid.CreateVersion7();
+        conversation.Resolve(Now.AddMinutes(1), first);
+
+        Assert.Throws<MessagingDomainException>(() => conversation.Resolve(Now.AddMinutes(2), Guid.CreateVersion7()));
+
+        Assert.Equal(first, conversation.ResolutionReasonId);
+    }
 }
 
 /// <summary>Spec 2026-10-14 decisión 4: el canal es un dato de la conversación y decide la forma de <c>user_id</c>.</summary>
