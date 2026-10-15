@@ -2125,7 +2125,10 @@ avisa, no transporta: la autorización sigue en los `GET`.
 | Fallos | Un aviso que falla no reintenta la entrega ni deshace el envío: se registra y el polling relajado del frontend (60/30 s) lo recoge. |
 
 Lo que se publica: asignar, transferir, liberar, resolver, reabrir, leído, no leído, saliente consolidado
-(`Sent` o `Failed`), acuse aplicado y entrante insertado. Un reenvío de Meta no avisa.
+(`Sent` o `Failed`), acuse aplicado y entrante insertado. Un reenvío de Meta no avisa. Instagram va por el mismo
+camino: un DM es un entrante y suena igual; un `is_echo` (el negocio respondió desde la app) mueve la foto de la
+lista sin ser un entrante, así que sólo avisa `conversationChanged`; el visto (`read`) y el borrado (`is_deleted`)
+avisan `conversationChanged` como un acuse de WhatsApp.
 
 **Runtime ≥ 10.0.13.** CVE-2026-70159 (DoS en SignalR, `SignalR.Common` ≤ 10.0.12) afecta al servidor, que
 sale del runtime de `mcr.microsoft.com/dotnet/aspnet:10.0` del `Dockerfile`, no de NuGet. Antes de desplegar,
@@ -2208,6 +2211,69 @@ conexión, status, `code` de Graph y motivo, nunca el token).
    *Actualizar* (`GET /templates?refresh=true`) o con el `POST …/sync` del admin. El webhook
    `message_template_status_update` sólo cambia el estado de las que el espejo ya tiene; una plantilla que no tiene
    fila deja un log y la trae el siguiente refresco.
+
+### Mensajería (Instagram)
+
+Instagram es el **segundo canal de la misma bandeja** (spec `2026-10-14-mensajeria-instagram-design.md`): los DM que
+una persona le escribe a la cuenta profesional del tenant llegan por un webhook propio, se leen en
+`/messaging/conversations` con `channel: "Instagram"` y se responden desde ahí dentro de la ventana de 24 horas.
+Mismo módulo `messaging`, mismos permisos, mismo esquema. Lo que cambia por canal está en la conexión (proveedor
+`instagram` de Integrations, onboarding `InstagramLogin`) y en lo que la API de Instagram no tiene: plantillas,
+campañas y conversación nueva responden 422 `messaging.channel_unsupported`; `GET …/connections/{id}/templates`
+de una conexión de Instagram devuelve `[]`.
+
+**Conectar (Integrations).** `GET /integrations/catalog` trae el proveedor con `onboarding.kind = "InstagramLogin"`,
+el `appId` del caso de uso Instagram (distinto del de la app, `Meta:Instagram:AppId`), el `authorizeUrl` y los dos
+`scopes` (`instagram_business_basic`, `instagram_business_manage_messages`). El SPA abre la ventana de Meta y manda el
+`code` a `POST /integrations/instagram/connect { name, code, redirectUri }`; el backend canjea el `code` por el token
+corto, lo cambia por el largo (60 días), lee `/me` (tiene que ser cuenta `BUSINESS` o `MEDIA_CREATOR`), suscribe la
+cuenta al webhook (`POST /{igUserId}/subscribed_apps`) y guarda la conexión `Active` con `igUserId`, `username`,
+`accountName` y `tokenExpiresAt`, más la ruta `(instagram, igUserId)` que usa el webhook. El `redirectUri` tiene que
+ser de un origen de `Meta:Instagram:AllowedRedirectOrigins`. Un worker diario (`Integrations:Instagram`) refresca el
+token cuando le quedan menos de 15 días; un `190` lo pasa a `NeedsAttention` (`token_expired`).
+
+**Webhook.** `GET /api/webhooks/instagram` responde el `hub.challenge` con el mismo `Meta:App:WebhookVerifyToken`.
+`POST` valida `X-Hub-Signature-256` con `Meta:Instagram:AppSecret` (y acepta también `Meta:App:AppSecret`, por si Meta
+firmara con ése) y guarda la entrega en `webhook_deliveries` con `provider = 'instagram'`. El mismo worker la procesa
+con el parser de Instagram (`object: "instagram"`, `entry[].id` = cuenta, `entry[].messaging[]`, `timestamp` en
+**milisegundos**): la ruta es la cuenta profesional; `Paused` o módulo apagado descartan los mensajes y aplican igual
+el visto y el borrado. Campos que hay que suscribir en el dashboard: `messages`, `messaging_seen`,
+`messaging_postbacks`, `messaging_reactions`.
+
+**Qué entra y cómo.** Un `message` crea la conversación por `(connection_id, user_id = IGSID)` con `channel =
+'Instagram'`, `wa_id` siempre `null`; si es nueva, pide el perfil (`GET /{igsid}?fields=name,username,profile_pic`,
+best effort) y asegura el cliente por `instagram_user_id` (incompleto, con `instagram_username`, sin teléfono). Los
+adjuntos `image|video|audio|file` guardan `message_media.source_url` (la URL pública con vencimiento de Meta) y el
+worker de medios los baja de ahí (sin token, hasta 25 MB, sin hash de referencia) a la misma clave de R2. Una
+publicación o reel compartido (`share`, `ig_post`, `ig_reel`…) es el `kind` **`Share`** (14) con la URL en `text`.
+Una reacción es `Reaction` con `wamid = "reaction:{mid}:{ts}"` y la cita al mensaje reaccionado; `unreact` se
+ignora. Un `postback` es `Interactive`. Un `is_echo` (lo que el negocio respondió desde la app de Instagram, o desde
+QEP: el `mid` lo deduplica) entra como saliente `Sent` sin autor, mueve la foto de la lista y no toca el contador.
+`read` (`messaging_seen`) marca `Read` todos nuestros mensajes de esa conversación hasta ese `mid`. `is_deleted` deja
+`details.deleted = true` y el mensaje viaja con `"deleted": true` (el texto se conserva).
+
+**Responder.** `POST …/messages`: `text` hasta **1000** caracteres (422 en `text` si pasa); va a
+`POST graph.instagram.com/{v}/{igUserId}/messages` con `recipient.id = IGSID` y el token de la cuenta; `replyTo` se
+guarda pero no viaja (Instagram no cita). Imagen (jpeg/png) y **sólo PDF**, hasta 25 MB: la sesión de subida es la
+misma, y la confirmación, en vez de subir a Meta, deja el objeto en R2 y le da a Meta una URL prefirmada de 10
+minutos en `attachment.payload.url` (`caption` se guarda y se muestra en QEP; no viaja). Nota de voz: mismo contrato
+que WhatsApp, y el backend la **transcodifica a WAV** (PCM 16 bits, mono, 16 kHz, con Concentus, sin ffmpeg) antes de
+guardarla y enviarla como `audio`; un WAV de más de 25 MB es `media_too_large`. Un `400` con `code 10` (subcódigo
+`2534022`) es la ventana cerrada: `messaging.window_closed` y la fila `Failed` con `failure_code = 10`. Marcar leída
+manda `sender_action: mark_seen` a la persona, best effort.
+
+**Configuración.** `Meta:Instagram:AppId`, `Meta:Instagram:AppSecret` (secreto), `Meta:Instagram:GraphApiVersion`
+y `Meta:Instagram:AllowedRedirectOrigins` (producción: `https://qep.qcode.co`; local: `http://localhost:3002`).
+Pipeline: `META_INSTAGRAM_APP_ID` (normal) y `META_INSTAGRAM_APP_SECRET` (secreta) en `Backend-prod`. En
+`Production`, `MetaInstagramOptionsValidator` exige las tres primeras.
+
+#### Despliegue
+
+1. Variables `META_INSTAGRAM_APP_ID` y `META_INSTAGRAM_APP_SECRET` en `Backend-prod`.
+2. Backend primero (migraciones `AddInstagramProvider`, `AddInstagramChannel` y `AddCustomerInstagram`), después el
+   webhook en Meta (hace el `GET` al guardarlo), después el frontend. Lo que hace el owner del lado de Meta y lo que
+   queda por verificar con la primera cuenta real (V-2 a V-5, V-7 y V-8) está en
+   `docs/superpowers/plans/2026-10-14-mensajeria-instagram-handoff-meta.md`.
 
 ### Embudo de ventas (Pipeline)
 

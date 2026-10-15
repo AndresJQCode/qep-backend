@@ -30,6 +30,24 @@ internal sealed class WebhookRouting(IMessagingConnectionDirectory directory, IT
         return route;
     }
 
+    /// <summary>Spec 2026-10-14 §8.2: la cuenta profesional de Instagram (<c>entry[].id</c>), con la misma regla de caché.</summary>
+    public async Task<MessagingRoute?> FindInstagramRouteAsync(string igUserId, CancellationToken cancellationToken)
+    {
+        var key = $"messaging:route:instagram:{igUserId}";
+        if (cache.TryGetValue(key, out MessagingRoute? cached) && cached is not null)
+        {
+            return cached;
+        }
+
+        var route = await directory.FindInstagramRouteAsync(igUserId, cancellationToken);
+        if (route is not null)
+        {
+            cache.Set(key, route, Ttl);
+        }
+
+        return route;
+    }
+
     public Task<bool> IsModuleEnabledAsync(Guid tenantId, CancellationToken cancellationToken) =>
         cache.GetOrCreateAsync($"messaging:module:{tenantId}", async entry =>
         {

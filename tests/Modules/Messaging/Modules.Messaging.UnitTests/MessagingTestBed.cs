@@ -30,6 +30,10 @@ internal sealed class MessagingTestBed
 
     public FakeWhatsAppClient Meta { get; } = new();
 
+    public FakeInstagramClient Instagram { get; } = new();
+
+    public FakeOpusTranscoder Transcoder { get; } = new();
+
     public FakeOutboundMessages Outbound { get; } = new();
 
     public FakeTenantModules TenantModules { get; } = new();
@@ -68,6 +72,7 @@ internal sealed class MessagingTestBed
             Messages,
             Outbound,
             Meta,
+            Instagram,
             Store,
             Staging,
             Compressor,
@@ -110,13 +115,14 @@ internal sealed class MessagingTestBed
     private FakeConversationOpener? _opener;
 
     public ConversationRow OpenConversation(
-        int? lastInboundHoursAgo, bool resolved = false, Guid? assignedTo = null, Guid? customerId = null, string? userId = null, string? waId = "573001234567")
+        int? lastInboundHoursAgo, bool resolved = false, Guid? assignedTo = null, Guid? customerId = null, string? userId = null, string? waId = "573001234567",
+        ConversationChannel channel = ConversationChannel.WhatsApp)
     {
         var row = new ConversationRow(
             Guid.CreateVersion7(), TenantId, ConnectionId, UserId: userId, WaId: waId, Username: null, "Laura",
             CustomerId: customerId, AssignedMemberId: assignedTo, resolved ? ConversationStatus.Resolved : ConversationStatus.Open, 0,
             lastInboundHoursAgo is { } hours ? Now.AddHours(-hours) : null,
-            null, null, null, null, null, null, Now, 1);
+            null, null, null, null, null, null, Now, 1, channel);
         Conversations.Rows.Add(row);
         return row;
     }
@@ -131,6 +137,7 @@ internal sealed class MessagingTestBed
             Messages,
             Outbound,
             Meta,
+            Instagram,
             Connections,
             new FakeMemberNames(MemberId),
             membership,
@@ -190,7 +197,7 @@ internal sealed class MessagingTestBed
     }
 
     public ListTemplatesHandler ListTemplatesHandler(params string[] permissions) =>
-        new(Templates, TenantModules, new FakeExecutionContext(TenantId, SubjectId, permissions));
+        new(Templates, Connections, TenantModules, new FakeExecutionContext(TenantId, SubjectId, permissions));
 
     public ListMessagingConnectionsHandler ListConnectionsHandler(params string[] permissions) =>
         new(Connections, TenantModules, new FakeExecutionContext(TenantId, SubjectId, permissions));
@@ -205,6 +212,8 @@ internal sealed class MessagingTestBed
             Messages,
             Outbound,
             Meta,
+            Instagram,
+            Transcoder,
             Store,
             Connections,
             new FakeMemberNames(MemberId),
@@ -323,6 +332,21 @@ internal sealed class FakeConnectionDirectory : IMessagingConnectionDirectory
 
     public Task<IReadOnlyList<MessagingConnectionDto>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<MessagingConnectionDto>>(Active.ToList());
+
+    /// <summary>Spec 2026-10-14 §6.2: la conexión de Instagram Active; <c>null</c> = pausada o borrada.</summary>
+    public InstagramSender? InstagramSender { get; set; } = new("17841400000000001", "ig-token");
+
+    /// <summary>El canal por conexión (spec 2026-10-14 §5.2); sin entrada, WhatsApp.</summary>
+    public Dictionary<Guid, ConversationChannel> Channels { get; } = [];
+
+    public Task<MessagingRoute?> FindInstagramRouteAsync(string igUserId, CancellationToken cancellationToken) =>
+        Task.FromResult<MessagingRoute?>(null);
+
+    public Task<InstagramSender?> ResolveInstagramSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(InstagramSender);
+
+    public Task<ConversationChannel?> FindChannelAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult<ConversationChannel?>(Channels.TryGetValue(connectionId, out var channel) ? channel : ConversationChannel.WhatsApp);
 
     /// <summary>Simula que Integrations no pudo guardar el cambio de estado.</summary>
     public Exception? ReportFailure { get; set; }
@@ -670,6 +694,22 @@ internal sealed class InMemoryMediaStore : IMessagingMediaStore
 {
     public Dictionary<string, (byte[] Bytes, string ContentType)> Objects { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>Spec 2026-10-14 decisión 12: las URL firmadas que se pidieron, por clave.</summary>
+    public List<(string Key, TimeSpan Lifetime)> DownloadUrls { get; } = [];
+
+    public Exception? DownloadUrlFailure { get; set; }
+
+    public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken)
+    {
+        if (DownloadUrlFailure is { } failure)
+        {
+            throw failure;
+        }
+
+        DownloadUrls.Add((key, lifetime));
+        return Task.FromResult(new Uri($"https://r2.test/{key}?signed=1", UriKind.Absolute));
+    }
+
     public List<string> Deleted { get; } = [];
 
     public Exception? UploadFailure { get; set; }
@@ -736,5 +776,76 @@ internal sealed class FakeMessagingNotifier : IMessagingNotifier
 
         Events.Add(@event);
         return Task.CompletedTask;
+    }
+}
+
+internal sealed record InstagramSentText(InstagramSender Sender, string RecipientId, string Text);
+
+internal sealed record InstagramSentAttachment(InstagramSender Sender, string RecipientId, string Type, Uri Url);
+
+/// <summary>Spec 2026-10-14 §6.2: el cliente de la Messaging API de Instagram en memoria; responde <see cref="NextSend"/>.</summary>
+internal sealed class FakeInstagramClient : IInstagramClient
+{
+    public SendResult NextSend { get; set; } = new(SendOutcome.Sent, "mid.default", null, null);
+
+    public List<InstagramSentText> SentTexts { get; } = [];
+
+    public List<InstagramSentAttachment> SentAttachments { get; } = [];
+
+    public List<(InstagramSender Sender, string RecipientId)> Seen { get; } = [];
+
+    public bool SeenSucceeds { get; set; } = true;
+
+    public InstagramProfile? Profile { get; set; } = new("Laura Pérez", "laura.perez", null);
+
+    public Dictionary<Uri, (byte[] Bytes, string ContentType)> Downloads { get; } = [];
+
+    public Task<SendResult> SendTextAsync(InstagramSender sender, string recipientId, string text, CancellationToken cancellationToken)
+    {
+        SentTexts.Add(new InstagramSentText(sender, recipientId, text));
+        return Task.FromResult(NextSend);
+    }
+
+    public Task<SendResult> SendAttachmentAsync(InstagramSender sender, string recipientId, string attachmentType, Uri url, CancellationToken cancellationToken)
+    {
+        SentAttachments.Add(new InstagramSentAttachment(sender, recipientId, attachmentType, url));
+        return Task.FromResult(NextSend);
+    }
+
+    public Task<bool> MarkSeenAsync(InstagramSender sender, string recipientId, CancellationToken cancellationToken)
+    {
+        Seen.Add((sender, recipientId));
+        return Task.FromResult(SeenSucceeds);
+    }
+
+    public Task<MessagingGraphResult<InstagramProfile>> GetProfileAsync(InstagramSender sender, string igsid, CancellationToken cancellationToken) =>
+        Task.FromResult(Profile is { } profile
+            ? new MessagingGraphResult<InstagramProfile>(profile, null)
+            : new MessagingGraphResult<InstagramProfile>(null, new MessagingGraphFailure(400, 100, "http_400")));
+
+    public Task<InstagramDownload?> OpenAsync(Uri url, CancellationToken cancellationToken) =>
+        Task.FromResult(Downloads.TryGetValue(url, out var stored)
+            ? new InstagramDownload(new MemoryStream(stored.Bytes, writable: false), stored.ContentType, stored.Bytes.Length)
+            : null);
+}
+
+/// <summary>Spec 2026-10-14 decisión 16: «transcodifica» anteponiendo una marca, para que la prueba vea qué bytes viajaron.</summary>
+internal sealed class FakeOpusTranscoder : IOpusTranscoder
+{
+    public static readonly byte[] WavMarker = "RIFF-fake"u8.ToArray();
+
+    public InvalidDataException? Failure { get; set; }
+
+    public List<byte[]> Inputs { get; } = [];
+
+    public byte[] ToWav(byte[] oggOpus)
+    {
+        Inputs.Add(oggOpus);
+        if (Failure is { } failure)
+        {
+            throw failure;
+        }
+
+        return [.. WavMarker, .. oggOpus];
     }
 }

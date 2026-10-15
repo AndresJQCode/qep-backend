@@ -33,6 +33,8 @@ public sealed class MediaTransferTests
         public Task<MediaStreamDto?> OpenReadAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task DeleteAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     /// <summary>Un cuerpo que nunca termina: cada lectura espera hasta que la cancelen.</summary>
@@ -60,7 +62,7 @@ public sealed class MediaTransferTests
     private MediaTransfer Transfer(TimeSpan? copyTimeout = null)
     {
         _bed.Connections.Sender = new MessagingSender("111", Token);
-        return new MediaTransfer(_bed.Connections, _bed.Meta, _store, new FakeClock(_bed.Now))
+        return new MediaTransfer(_bed.Connections, _bed.Meta, _bed.Instagram, _store, new FakeClock(_bed.Now))
         {
             CopyTimeout = copyTimeout ?? MediaTransfer.DefaultCopyTimeout,
         };

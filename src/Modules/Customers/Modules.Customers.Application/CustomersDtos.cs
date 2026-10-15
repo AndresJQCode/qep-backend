@@ -73,7 +73,9 @@ public sealed record CustomerDto(
     /// <summary>Spec 2026-10-11 §4.2: las etiquetas del cliente, por nombre. Viaja siempre, vacía si no tiene.</summary>
     IReadOnlyCollection<TagDto> Tags,
     /// <summary>Spec 2026-10-11 decisión 10. Viaja siempre; con <c>optedOut = false</c> sus otros campos son null.</summary>
-    MarketingConsentDto MarketingConsent);
+    MarketingConsentDto MarketingConsent,
+    /// <summary>Spec 2026-10-14 decisión 10: el <c>@usuario</c> de Instagram de un cliente que escribió por ese canal; null si no.</summary>
+    string? InstagramUsername = null);
 
 public sealed record CustomerResponse(
     Guid Id,

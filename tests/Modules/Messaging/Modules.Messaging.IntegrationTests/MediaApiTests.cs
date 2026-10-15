@@ -38,6 +38,10 @@ public sealed class MediaApiTests
             Objects.Remove(key);
             return Task.CompletedTask;
         }
+
+        /// <summary>Spec 2026-10-14 decisión 12: la URL que Meta bajaría; en pruebas apunta al handler falso de Graph.</summary>
+        public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken) =>
+            Task.FromResult(new Uri($"https://r2.test/{key}?signed=1", UriKind.Absolute));
     }
 
     private sealed record Fixture(QepApiFactory Factory, WebApplicationFactory<Program> Host, FakeMediaStore Store, string ConnectionString, RegisteredTenant Tenant, Guid MessageId, HttpClient Client);

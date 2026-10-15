@@ -96,7 +96,8 @@ public sealed class ConversationSummaryBuilder(
             LastMessageFrom(row),
             row.LastInboundAt?.Add(Conversation.WindowLength),
             row.UpdatedAt,
-            row.Version);
+            row.Version,
+            row.Channel.ToString());
     }
 
     /// <summary>La foto del último mensaje sólo si están sus cinco campos: una fila a medio escribir
@@ -147,7 +148,29 @@ internal static class MessageMapping
                     Member(conversationEvent.Target, memberNames),
                     Member(conversationEvent.Previous, memberNames)),
             row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
-            row.Kind == MessageKind.Unsupported ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson)) : null);
+            row.Kind == MessageKind.Unsupported ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson)) : null,
+            row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson));
+    }
+
+    /// <summary>Spec 2026-10-14 §6.2: <c>details.deleted = true</c> lo escribe la ingesta de Instagram con <c>is_deleted</c>.</summary>
+    public static bool IsDeleted(string? detailsJson)
+    {
+        if (string.IsNullOrEmpty(detailsJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(detailsJson);
+            return document.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                && document.RootElement.TryGetProperty("deleted", out var deleted)
+                && deleted.ValueKind == System.Text.Json.JsonValueKind.True;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
     }
 
     /// <summary>§5.1: el <c>preview</c> es el texto o la leyenda del citado, recortado a <see cref="ReplyPreviewMaxLength"/>.</summary>

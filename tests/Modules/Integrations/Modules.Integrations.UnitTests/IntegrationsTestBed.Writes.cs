@@ -26,6 +26,99 @@ internal sealed partial class IntegrationsTestBed
     public CompleteWhatsAppSignupHandler SignupHandler(IExecutionContext? context = null) =>
         new(Catalog, Repository, Routes, UnitOfWork, Audit, Protector, Gateway, MetaApp, Modules, Memberships, AuthorNames,
             context ?? Context(), Clock, new CompleteWhatsAppSignupValidator());
+
+    public FakeInstagramAppSettings InstagramApp { get; } = new();
+
+    public ConnectInstagramHandler InstagramHandler(IExecutionContext? context = null) =>
+        new(Catalog, Repository, Routes, UnitOfWork, Audit, Protector, Gateway.Instagram, InstagramApp, Modules, Memberships, AuthorNames,
+            context ?? Context(), Clock, new ConnectInstagramValidator());
+}
+
+/// <summary>El caso de uso Instagram (spec 2026-10-14): configurado por defecto, con el origen de producción y el de local
+/// permitidos.</summary>
+internal sealed class FakeInstagramAppSettings : IInstagramAppSettings
+{
+    public bool Configured { get; set; } = true;
+
+    public List<string> AllowedOrigins { get; } = ["https://qep.qcode.co", "http://localhost:3002"];
+
+    public bool IsConfigured => Configured;
+
+    public string? AppId => Configured ? "700800900" : null;
+
+    public string GraphApiVersion => "v24.0";
+
+    public bool IsAllowedRedirect(Uri redirectUri) =>
+        AllowedOrigins.Contains(redirectUri.GetLeftPart(UriPartial.Authority), StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>Business Login de mentira: responde por paso y anota el orden. <see cref="FailAt"/> hace fallar un paso con un
+/// 400 y el código de <see cref="FailureCode"/>.</summary>
+internal sealed class FakeInstagramLoginGateway : IInstagramLoginGateway
+{
+    public const string IgUserId = "17841400000000001";
+    public const string ShortLivedToken = "ig-short-token-SENTINEL-unit";
+    public const string LongLivedToken = "ig-long-token-SENTINEL-unit";
+    public const string RefreshedToken = "ig-refreshed-token-SENTINEL-unit";
+    public const long ExpiresInSeconds = 5_184_000;
+
+    public List<string> Calls { get; } = [];
+
+    public string? FailAt { get; set; }
+
+    public int FailureCode { get; set; } = 100;
+
+    public int FailureStatus { get; set; } = 400;
+
+    public string? LastRedirectUri { get; private set; }
+
+    public string? LastRefreshedToken { get; private set; }
+
+    public List<string> Permissions { get; set; } = [InstagramLogin.ScopeBasic, InstagramLogin.ScopeManageMessages];
+
+    public string? AccountType { get; set; } = "BUSINESS";
+
+    private GraphFailure Failure => new(FailureStatus, FailureCode, null, $"http_{FailureStatus}");
+
+    public Task<GraphResult<InstagramShortLivedToken>> ExchangeCodeAsync(string code, string redirectUri, CancellationToken cancellationToken)
+    {
+        Calls.Add("exchange");
+        LastRedirectUri = redirectUri;
+        return Task.FromResult(FailAt == "exchange"
+            ? new GraphResult<InstagramShortLivedToken>(null, Failure)
+            : new GraphResult<InstagramShortLivedToken>(new InstagramShortLivedToken(ShortLivedToken, IgUserId, Permissions), null));
+    }
+
+    public Task<GraphResult<InstagramLongLivedToken>> ExchangeLongLivedAsync(string shortLivedToken, CancellationToken cancellationToken)
+    {
+        Calls.Add("long-lived");
+        return Task.FromResult(FailAt == "long-lived"
+            ? new GraphResult<InstagramLongLivedToken>(null, Failure)
+            : new GraphResult<InstagramLongLivedToken>(new InstagramLongLivedToken(LongLivedToken, TimeSpan.FromSeconds(ExpiresInSeconds)), null));
+    }
+
+    public Task<GraphResult<InstagramLongLivedToken>> RefreshAsync(string longLivedToken, CancellationToken cancellationToken)
+    {
+        Calls.Add("refresh");
+        LastRefreshedToken = longLivedToken;
+        return Task.FromResult(FailAt == "refresh"
+            ? new GraphResult<InstagramLongLivedToken>(null, Failure)
+            : new GraphResult<InstagramLongLivedToken>(new InstagramLongLivedToken(RefreshedToken, TimeSpan.FromSeconds(ExpiresInSeconds)), null));
+    }
+
+    public Task<GraphResult<InstagramAccount>> GetMeAsync(string accessToken, CancellationToken cancellationToken)
+    {
+        Calls.Add("me");
+        return Task.FromResult(FailAt == "me"
+            ? new GraphResult<InstagramAccount>(null, Failure)
+            : new GraphResult<InstagramAccount>(new InstagramAccount(IgUserId, "origenbotanico", "Origen Botánico", AccountType), null));
+    }
+
+    public Task<GraphResult<bool>> SubscribeAsync(string igUserId, string accessToken, CancellationToken cancellationToken)
+    {
+        Calls.Add($"subscribe:{igUserId}");
+        return Task.FromResult(FailAt == "subscribe" ? new GraphResult<bool>(false, Failure) : new GraphResult<bool>(true, null));
+    }
 }
 
 /// <summary>Graph de mentira para el signup: responde por paso y anota el orden. <see cref="FailAt"/> hace
@@ -33,6 +126,9 @@ internal sealed partial class IntegrationsTestBed
 internal sealed class FakeWhatsAppSignupGateway : IWhatsAppSignupGateway
 {
     public List<string> Calls { get; } = [];
+
+    /// <summary>El de Instagram, colgado acá para que el test bed exponga una sola puerta a Meta.</summary>
+    public FakeInstagramLoginGateway Instagram { get; } = new();
 
     public string? FailAt { get; set; }
 

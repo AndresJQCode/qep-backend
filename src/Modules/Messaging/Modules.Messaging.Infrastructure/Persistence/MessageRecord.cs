@@ -46,6 +46,9 @@ internal sealed class MessageMediaRecord
     public int Attempts { get; set; }
     public DateTimeOffset NextAttemptAt { get; set; }
     public string? LastError { get; set; }
+
+    /// <summary>Spec 2026-10-14 §6.2: la URL del adjunto de Instagram; <c>null</c> en WhatsApp.</summary>
+    public string? SourceUrl { get; set; }
 }
 
 internal sealed class WebhookDeliveryRecord
@@ -58,4 +61,7 @@ internal sealed class WebhookDeliveryRecord
     public int Attempts { get; set; }
     public DateTimeOffset? ProcessedAt { get; set; }
     public string? LastError { get; set; }
+
+    /// <summary>Spec 2026-10-14 §6.2: <c>whatsapp</c> o <c>instagram</c>.</summary>
+    public string Provider { get; set; } = "whatsapp";
 }

@@ -286,6 +286,22 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   como `IIdentityAuditRecorder`). Y un consumidor de una conexión nunca referencia
   `Modules.Integrations.Application`: declara su puerto y el adaptador va en Bootstrapper
   (`IntegrationsLayerTests`).
+- **Instagram es un canal de la misma bandeja de Messaging, no un módulo** (spec 2026-10-14). La conversación lleva
+  `channel` (`WhatsApp` | `Instagram`) y en Instagram `user_id` es el IGSID numérico y `wa_id` es siempre `null`: todo
+  código nuevo que empareje por teléfono tiene que tratar ese `null`. Las plantillas, las campañas y `POST /conversations`
+  responden `messaging.channel_unsupported`; el catálogo de plantillas de una conexión de Instagram devuelve `[]`, no 422.
+- **El webhook de Instagram (`/api/webhooks/instagram`) se firma con `Meta:Instagram:AppSecret`, no con `Meta:App:AppSecret`**
+  (V-1): son dos secretos distintos aunque vivan en la misma app de Meta. El verificador acepta cualquiera de los dos para
+  Instagram, así que una firma inválida en producción casi siempre es que falta `META_INSTAGRAM_APP_SECRET` en el pipeline.
+  El `timestamp` de Instagram viene en **milisegundos**; el de WhatsApp, en segundos. Y los echo (lo que el negocio responde
+  desde la app) llegan dentro de `messages` con `is_echo`, no en un campo aparte: la ingesta los deduplica por `mid` con lo
+  que QEP ya mandó.
+- **Un adjunto de Instagram no tiene `meta_media_id`: tiene `message_media.source_url`**, una URL pública con vencimiento
+  que el worker de medios baja sin token. `MediaTransfer` decide el camino por `SourceUrl`; `InsertMediaAsync` acepta
+  `meta_media_id = ''` si hay URL. Hacia afuera no hay subida a Meta: al adjunto saliente se le da una URL prefirmada de R2
+  de 10 minutos (`IMessagingMediaStore.CreateDownloadUrlAsync`), y la nota de voz se transcodifica a WAV con Concentus
+  (`ConcentusOpusTranscoder`) porque Instagram no acepta Opus. V-4 y V-8 (que Meta descargue la URL firmada y acepte el
+  WAV) siguen **sin verificar contra Meta real**: el handoff dice qué mirar.
 - **El payload de los eventos de Quotations es contrato con Pipeline** (spec 2026-10-13 §4.5).
   `QuotationLifecycleEventPublisher` escribe `quotations.quotation.sent.v1`, `…converted.v1` y
   `quotations.order.cancelled.v1` con campos camelCase, y `QuotationEventPayloads` los lee por nombre: renombrar

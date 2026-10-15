@@ -69,6 +69,15 @@ public sealed class WebhookRoutingTests
 
         public Task ReportRejectedAsync(Guid tenantId, Guid connectionId, string failureCode, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<MessagingRoute?> FindInstagramRouteAsync(string igUserId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<InstagramSender?> ResolveInstagramSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<Modules.Messaging.Domain.ConversationChannel?> FindChannelAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class NoTenantModules : ITenantModules

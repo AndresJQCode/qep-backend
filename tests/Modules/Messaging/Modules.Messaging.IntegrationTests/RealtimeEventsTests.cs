@@ -109,6 +109,65 @@ public sealed class RealtimeEventsTests
         await Task.Delay(500, Ct);
         Assert.Empty(f.Sink.Events);
     }
+
+    /// <summary>Spec 2026-10-14 (Instagram) sobre el tiempo real: la bandeja es una sola, así que un DM suena igual que un
+    /// mensaje de WhatsApp, y un echo de la app —que mueve la foto de la lista sin ser un entrante— avisa que la conversación
+    /// cambió, no que llegó algo. Un reenvío del mismo <c>mid</c> no avisa nada.</summary>
+    [Fact]
+    public async Task AnInstagramDmRingsAndAnEchoFromTheAppOnlyChangesTheConversation()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var sink = new RecordingEventSink();
+        using var factory = new QepApiFactory(connectionString);
+        using var host = factory.WithEventSink(sink);
+        var tenant = await RegisterTenantAsync(host);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        var connectionId = await SeedInstagramConnectionAsync(host, tenant.TenantId, "Instagram Ventas", InstagramPayloads.DefaultAccountId);
+        factory.MetaHandler.Respond($@"^/v24\.0/{InstagramPayloads.DefaultUserId}\?", HttpStatusCode.OK, """{"name":"Laura Pérez","username":"laura.perez","id":"1234567890123456"}""");
+        await WaitUntilListeningAsync(host, sink);
+        using var anonymous = host.CreateClient();
+
+        // 1. Un DM en una conversación nueva, sin asignado: inboundMessage a todo el tenant, con el id del mensaje.
+        Assert.Equal(HttpStatusCode.OK, (await PostInstagramWebhookAsync(anonymous, InstagramPayloads.Text("m1", 1760000000, "hola"))).StatusCode);
+        await DrainDeliveriesAsync(host);
+        var inbound = await sink.WaitForAsync(e => e.Kind == MessagingEventKinds.InboundMessage);
+        Assert.Equal((tenant.TenantId, (Guid?)null), (inbound.TenantId, inbound.AssignedMemberId));
+        Assert.NotNull(inbound.MessageId);
+
+        // 2. Un echo desde la app de Instagram: conversationChanged de esa misma conversación, y ningún inboundMessage.
+        sink.Clear();
+        Assert.Equal(HttpStatusCode.OK, (await PostInstagramWebhookAsync(anonymous, InstagramPayloads.Echo("m_app", 1760000200, "Respondido desde el celular"))).StatusCode);
+        await DrainDeliveriesAsync(host);
+        var changed = await sink.WaitForAsync(e => e.Kind == MessagingEventKinds.ConversationChanged);
+        Assert.Equal(inbound.ConversationId, changed.ConversationId);
+        Assert.DoesNotContain(sink.Events, e => e.Kind == MessagingEventKinds.InboundMessage);
+
+        // 3. Meta reenvía el mismo echo: ya estaba, no avisa nada.
+        sink.Clear();
+        Assert.Equal(HttpStatusCode.OK, (await PostInstagramWebhookAsync(anonymous, InstagramPayloads.Echo("m_app", 1760000200, "Respondido desde el celular"))).StatusCode);
+        await DrainDeliveriesAsync(host);
+        await Task.Delay(500, Ct);
+        Assert.Empty(sink.Events);
+
+        // 4. El visto marca leído un saliente nuestro: conversationChanged, como un acuse de WhatsApp. Uno que no cambia nada, no avisa.
+        await SeedOutboundAsync(connectionString, inbound.ConversationId, tenant.TenantId, connectionId, "m_out", occurredAtUnix: 1760000300);
+        Assert.Equal(HttpStatusCode.OK, (await PostInstagramWebhookAsync(anonymous, InstagramPayloads.Seen("m_out", 1760000310))).StatusCode);
+        await DrainDeliveriesAsync(host);
+        var seen = await sink.WaitForAsync(e => e.Kind == MessagingEventKinds.ConversationChanged);
+        Assert.Equal(inbound.ConversationId, seen.ConversationId);
+        sink.Clear();
+        Assert.Equal(HttpStatusCode.OK, (await PostInstagramWebhookAsync(anonymous, InstagramPayloads.Seen("m_out", 1760000310))).StatusCode);
+        await DrainDeliveriesAsync(host);
+        await Task.Delay(500, Ct);
+        Assert.Empty(sink.Events);
+
+        // 5. La persona borró su mensaje: la burbuja cambia, conversationChanged.
+        Assert.Equal(HttpStatusCode.OK, (await PostInstagramWebhookAsync(anonymous, InstagramPayloads.Deleted("m1", 1760000400))).StatusCode);
+        await DrainDeliveriesAsync(host);
+        var deleted = await sink.WaitForAsync(e => e.Kind == MessagingEventKinds.ConversationChanged);
+        Assert.Equal(inbound.ConversationId, deleted.ConversationId);
+    }
 }
 
 internal static class ListenerReadiness

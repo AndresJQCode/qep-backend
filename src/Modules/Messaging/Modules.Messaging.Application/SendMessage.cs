@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using FluentValidation.Results;
 using Modules.Messaging.Domain;
 using Modules.Tenancy.Application;
 
@@ -14,6 +15,10 @@ public sealed record SendMessageCommand(Guid TenantId, Guid ConversationId, Guid
 public sealed class SendMessageValidator : AbstractValidator<SendMessageCommand>
 {
     public const int TextMaxLength = 4096;
+
+    /// <summary>Spec 2026-10-14 §3: el tope de un texto en la Messaging API de Instagram. Lo aplica el handler, que es quien
+    /// conoce el canal de la conversación; el validador sólo sabe el de WhatsApp.</summary>
+    public const int InstagramTextMaxLength = 1000;
 
     public SendMessageValidator()
     {
@@ -42,6 +47,7 @@ public sealed class SendMessageHandler(
     IMessageQueries messages,
     IOutboundMessages outbound,
     IWhatsAppCloudClient meta,
+    IInstagramClient instagram,
     IMessagingConnectionDirectory connections,
     IMessagingMemberNames memberNames,
     IMembershipDirectory membershipDirectory,
@@ -75,8 +81,14 @@ public sealed class SendMessageHandler(
             return await _guards.ToDtoAsync(command.TenantId, OutboundGuards.ExistingRow(conversation.Id, sent, command.ClientId), cancellationToken);
         }
 
-        var permit = await _guards.AdmitAsync(command.TenantId, target, command.ReplyTo, cancellationToken);
         var text = command.Text!.Trim();
+        // Spec 2026-10-14 §5.2: el tope de Instagram es menor; se decide acá, con el canal a la vista, y antes de la autoasignación.
+        if (conversation.Channel == ConversationChannel.Instagram && text.Length > SendMessageValidator.InstagramTextMaxLength)
+        {
+            throw new ValidationException([new ValidationFailure("text", "Escribe un mensaje de hasta 1000 caracteres: es el máximo de Instagram.")]);
+        }
+
+        var permit = await _guards.AdmitAsync(command.TenantId, target, command.ReplyTo, cancellationToken);
         var draft = new OutboundDraft(Guid.CreateVersion7(), conversation.Id, command.TenantId, conversation.ConnectionId, command.ClientId!.Value, text, target.Member, permit.Now,
             permit.Quoted?.Id, permit.Quoted?.Wamid);
         await using var claim = await _guards.ClaimAsync(draft, cancellationToken);
@@ -90,9 +102,19 @@ public sealed class SendMessageHandler(
             return await _guards.ToDtoAsync(command.TenantId, OutboundGuards.ExistingRow(conversation.Id, inFlight, command.ClientId), cancellationToken);
         }
 
-        var sender = await _guards.ResolveSenderAsync(command.TenantId, conversation.ConnectionId, claim, cancellationToken);
-        var result = await meta.SendTextAsync(
-            sender, SendTarget.For(conversation.UserId, conversation.WaId), text, CallbackPrefix + claim.MessageId.ToString("D"), permit.Quoted?.Wamid, CancellationToken.None);
+        SendResult result;
+        if (conversation.Channel == ConversationChannel.Instagram)
+        {
+            // Spec 2026-10-14 §6.2: a Instagram no viaja la cita (la API no la tiene); el replyTo queda guardado igual.
+            var igSender = await _guards.ResolveInstagramSenderAsync(command.TenantId, conversation.ConnectionId, claim, cancellationToken);
+            result = await instagram.SendTextAsync(igSender, conversation.UserId!, text, CancellationToken.None);
+        }
+        else
+        {
+            var sender = await _guards.ResolveSenderAsync(command.TenantId, conversation.ConnectionId, claim, cancellationToken);
+            result = await meta.SendTextAsync(
+                sender, SendTarget.For(conversation.UserId, conversation.WaId), text, CallbackPrefix + claim.MessageId.ToString("D"), permit.Quoted?.Wamid, CancellationToken.None);
+        }
         // §8.3: occurred_at del saliente = hora del servidor al recibir la respuesta de Meta.
         var answeredAt = _guards.UtcNow;
         await _guards.SettleAsync(command.TenantId, conversation.ConnectionId, claim, result, answeredAt, metaMediaId: null, afterRollback: null);

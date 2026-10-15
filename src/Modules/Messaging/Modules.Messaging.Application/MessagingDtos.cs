@@ -1,3 +1,5 @@
+using Modules.Messaging.Domain;
+
 namespace Modules.Messaging.Application;
 
 // BFF (CLAUDE.md): copia literal del contrato del frontend (spec 2026-10-09 §5.3). Enums por nombre
@@ -31,7 +33,10 @@ public sealed record ConversationSummary(
     LastMessageDto? LastMessage,
     DateTimeOffset? CustomerWindowExpiresAt,
     DateTimeOffset UpdatedAt,
-    long Version);
+    long Version,
+    /// <summary>Spec 2026-10-14 §5.2 (BFF): viaja aunque se deduzca de <c>connectionId</c>, porque la fila dibuja el ícono del canal
+    /// y el compositor decide qué ofrecer, y ninguno de los dos tiene la conexión a mano.</summary>
+    string Channel = nameof(ConversationChannel.WhatsApp));
 
 /// <summary><c>Open</c> = conversaciones abiertas del tenant; <c>Unread</c> = la suma de
 /// <c>unread_count</c> del tenant (§5.4: la pantalla lo dibuja como «N sin leer»). Ninguno respeta la
@@ -82,7 +87,10 @@ public sealed record MessageDto(
     ReplyToDto? ReplyTo,
     MessageEventDto? Event,
     MessageTemplateRefDto? Template = null,
-    string? UnsupportedReason = null);
+    string? UnsupportedReason = null,
+    /// <summary>Spec 2026-10-14 §5.2: la persona borró el mensaje en Instagram (<c>is_deleted</c>). El texto se conserva; la burbuja
+    /// lo tacha.</summary>
+    bool Deleted = false);
 
 /// <summary>Spec 2026-10-11 §5.2: con qué plantilla salió un mensaje <c>Template</c>. El texto ya trae las variables
 /// sustituidas; esto sólo deja a la burbuja rotularlo («Plantilla · nombre»).</summary>

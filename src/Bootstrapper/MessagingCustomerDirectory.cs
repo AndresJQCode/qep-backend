@@ -7,7 +7,11 @@ namespace Bootstrapper;
 
 /// <summary>§6.5: el wa_id de Meta son los dígitos del E.164; se traduce en las dos direcciones acá.</summary>
 internal sealed partial class MessagingCustomerDirectory(
-    ICustomerPhoneDirectory phones, ICustomerWhatsAppDirectory whatsApp, ICustomerTagLookup tagLookup, ILogger<MessagingCustomerDirectory> logger) : IMessagingCustomerDirectory
+    ICustomerPhoneDirectory phones,
+    ICustomerWhatsAppDirectory whatsApp,
+    ICustomerInstagramDirectory instagram,
+    ICustomerTagLookup tagLookup,
+    ILogger<MessagingCustomerDirectory> logger) : IMessagingCustomerDirectory
 {
     /// <summary>El tope de <c>FindPhonesByNameAsync</c> (spec §6.5); el puerto de Customers no tiene default.</summary>
     public const int NameCap = 200;
@@ -32,6 +36,13 @@ internal sealed partial class MessagingCustomerDirectory(
     public async Task<MessagingEnsuredCustomer> EnsureAsync(Guid tenantId, MessagingContact contact, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(contact);
+        if (contact.Channel == Modules.Messaging.Domain.ConversationChannel.Instagram)
+        {
+            // Spec 2026-10-14 decisión 10: por IGSID, sin teléfono.
+            var fromInstagram = await instagram.EnsureAsync(tenantId, new InstagramContact(contact.UserId, contact.Username, contact.ProfileName), cancellationToken);
+            return new MessagingEnsuredCustomer(fromInstagram.CustomerId, fromInstagram.Outcome == EnsureOutcome.Created);
+        }
+
         var ensured = await whatsApp.EnsureAsync(
             tenantId,
             new WhatsAppContact(contact.UserId, contact.WaId is null ? null : "+" + contact.WaId, contact.ProfileName, contact.Username),

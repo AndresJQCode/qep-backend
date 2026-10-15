@@ -80,6 +80,13 @@ public sealed class StartConversationHandler(
         var connectionId = command.ConnectionId!.Value;
         var member = await _template.Guards.AuthorizeAsync(tenantId, cancellationToken);
 
+        // Spec 2026-10-14 §3: en Instagram no se inicia una conversación (sólo se responde). Antes del cliente y de la conexión Active:
+        // un cliente que sólo tiene Instagram no es «inalcanzable», y una conexión pausada de Instagram tampoco es «no disponible».
+        if (await connections.FindChannelAsync(tenantId, connectionId, cancellationToken) == ConversationChannel.Instagram)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.ChannelUnsupported, "A conversation cannot be started on Instagram.");
+        }
+
         // 404 si no existe en este tenant o está inactivo (no se le escribe a un cliente dado de baja); 422 si no hay a dónde.
         var contact = await customers.FindContactAsync(tenantId, command.CustomerId!.Value, cancellationToken);
         if (contact is not { IsActive: true })

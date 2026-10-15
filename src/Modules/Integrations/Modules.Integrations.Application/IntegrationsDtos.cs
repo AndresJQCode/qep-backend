@@ -19,15 +19,19 @@ public sealed record ProviderResponse(
     int ConnectionCount,
     ProviderOnboardingResponse Onboarding);
 
-/// <summary>BFF: la tarjeta del catálogo decide si abre un formulario o el popup de Meta sin conocer el
-/// proveedor. <c>appId</c> y <c>configId</c> son públicos (viajan en la URL del popup); el secreto nunca
-/// sale. Con <c>Kind = "Form"</c> los otros tres van ausentes, para que la forma sea exactamente
-/// <c>{ "kind": "Form" }</c>.</summary>
+/// <summary>BFF: la tarjeta del catálogo decide si abre un formulario, el popup de Meta o la ventana de
+/// Instagram sin conocer el proveedor. <c>appId</c> y <c>configId</c> son públicos (viajan en la URL del
+/// popup); el secreto nunca sale. Con <c>Kind = "Form"</c> lo demás va ausente, para que la forma sea
+/// exactamente <c>{ "kind": "Form" }</c>. Con <c>InstagramLogin</c> (spec 2026-10-14 §5.1) viajan
+/// <c>appId</c> (el del caso de uso Instagram, no el de la app), <c>authorizeUrl</c> y <c>scopes</c>: el SPA arma
+/// la URL de autorización con ellos y su propio <c>redirect_uri</c>.</summary>
 public sealed record ProviderOnboardingResponse(
     string Kind,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? AppId,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? ConfigId,
-    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? GraphApiVersion);
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? GraphApiVersion,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? AuthorizeUrl = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Scopes = null);
 
 /// <summary>Sin el patrón: el formulario no valida con regex del backend; el 422 marca el campo. Sin los
 /// campos internos (spec 2026-10-09 §6.1): los llena el backend —Embedded Signup o el probador— y el

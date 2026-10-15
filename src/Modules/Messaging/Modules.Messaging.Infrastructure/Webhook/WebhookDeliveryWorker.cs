@@ -133,10 +133,11 @@ internal sealed partial class WebhookDeliveryWorker(
                 continue; // Otra réplica lo tiene, o ya terminó desde que se armó el lote.
             }
 
-            var (attempts, payload, receivedAt) = claimed.Value;
+            var (attempts, payload, receivedAt, provider) = claimed.Value;
             try
             {
-                var outcome = await services.GetRequiredService<WebhookDeliveryProcessor>().ProcessAsync(id, payload, attempts, cancellationToken);
+                var outcome = await services.GetRequiredService<WebhookDeliveryProcessor>()
+                    .ProcessAsync(id, WebhookDeliveries.ParseProvider(provider), payload, attempts, cancellationToken);
                 if (outcome == DeliveryOutcome.Processed)
                 {
                     await MarkProcessedAsync(dbContext, id, clock.UtcNow, null, cancellationToken);
@@ -167,7 +168,8 @@ internal sealed partial class WebhookDeliveryWorker(
     }
 
     /// <summary>P9: la regla de IdentityInboxClaims sobre webhook_deliveries, con leases por intento.</summary>
-    private static async Task<(int Attempts, string Payload, DateTimeOffset ReceivedAt)?> TryClaimAsync(MessagingDbContext dbContext, long id, DateTimeOffset now, CancellationToken cancellationToken)
+    private static async Task<(int Attempts, string Payload, DateTimeOffset ReceivedAt, string Provider)?> TryClaimAsync(
+        MessagingDbContext dbContext, long id, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var leases = LeaseArray;
         var rows = await dbContext.Database.SqlQuery<ClaimRow>(
@@ -176,9 +178,9 @@ internal sealed partial class WebhookDeliveryWorker(
                SET claimed_until = {now} + ({leases})[LEAST(attempts + 1, cardinality({leases}))],
                    attempts = attempts + 1
              WHERE id = {id} AND processed_at IS NULL AND (claimed_until IS NULL OR claimed_until < {now})
-            RETURNING attempts AS "Attempts", payload::text AS "Payload", received_at AS "ReceivedAt"
+            RETURNING attempts AS "Attempts", payload::text AS "Payload", received_at AS "ReceivedAt", provider AS "Provider"
             """).ToListAsync(cancellationToken);
-        return rows.Count == 1 ? (rows[0].Attempts, rows[0].Payload, rows[0].ReceivedAt) : null;
+        return rows.Count == 1 ? (rows[0].Attempts, rows[0].Payload, rows[0].ReceivedAt, rows[0].Provider) : null;
     }
 
     private static Task<int> MarkProcessedAsync(MessagingDbContext dbContext, long id, DateTimeOffset now, string? lastError, CancellationToken cancellationToken) =>
@@ -187,5 +189,5 @@ internal sealed partial class WebhookDeliveryWorker(
 
     private static string Truncate(string value, int max) => value.Length <= max ? value : value[..max];
 
-    private sealed record ClaimRow(int Attempts, string Payload, DateTimeOffset ReceivedAt);
+    private sealed record ClaimRow(int Attempts, string Payload, DateTimeOffset ReceivedAt, string Provider);
 }

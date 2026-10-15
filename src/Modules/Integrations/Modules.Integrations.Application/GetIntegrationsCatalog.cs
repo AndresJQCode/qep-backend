@@ -11,6 +11,7 @@ public sealed class GetIntegrationsCatalogHandler(
     IIntegrationConnectionRepository repository,
     ITenantModules tenantModules,
     IMetaAppSettings metaApp,
+    IInstagramAppSettings instagramApp,
     IExecutionContext executionContext)
     : IQueryHandler<GetIntegrationsCatalogQuery, IntegrationsCatalogResponse>
 {
@@ -19,14 +20,15 @@ public sealed class GetIntegrationsCatalogHandler(
     {
         IntegrationsAuthorization.EnsureAuthorized(executionContext, query.TenantId, IntegrationsPermissions.ConnectionRead);
 
-        var visible = await ProviderVisibility.VisibleAsync(catalog, tenantModules, metaApp, query.TenantId, cancellationToken);
+        var visible = await ProviderVisibility.VisibleAsync(catalog, tenantModules, metaApp, instagramApp, query.TenantId, cancellationToken);
         var connections = await repository.ListAsync(query.TenantId, cancellationToken);
 
         return new IntegrationsCatalogResponse(visible
             .Select(provider => ConnectionMapping.ToProvider(
                 provider,
                 connections.Count(connection => string.Equals(connection.ProviderKey, provider.Key, StringComparison.Ordinal)),
-                metaApp))
+                metaApp,
+                instagramApp))
             .ToArray());
     }
 }

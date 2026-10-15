@@ -84,8 +84,15 @@ public sealed class MessagingCustomerDirectoryAudienceTests
             Task.FromResult<IReadOnlyList<CustomerTagRef>>(Tags.Where(tag => tagIds.Contains(tag.Id)).ToList());
     }
 
+    /// <summary>Spec 2026-10-14 decisión 10: la rama de Instagram no entra en estas pruebas.</summary>
+    private sealed class FakeInstagram : ICustomerInstagramDirectory
+    {
+        public Task<EnsuredCustomer> EnsureAsync(Guid tenantId, InstagramContact contact, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
     private static MessagingCustomerDirectory AdapterOver(FakeWhatsApp whatsApp, FakeTagLookup? tags = null) =>
-        new(new FakePhones(), whatsApp, tags ?? new FakeTagLookup(), NullLogger<MessagingCustomerDirectory>.Instance);
+        new(new FakePhones(), whatsApp, new FakeInstagram(), tags ?? new FakeTagLookup(), NullLogger<MessagingCustomerDirectory>.Instance);
 
     [Fact]
     public async Task FindTagsMapsToTheMessagingRecordAndSkipsWhatDoesNotExist()

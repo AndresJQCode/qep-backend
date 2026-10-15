@@ -96,7 +96,24 @@ public static class IntegrationsEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
+        // Spec 2026-10-14 §5.1: lo manda el SPA al volver de la ventana de Instagram con el code; vale 1 hora y una vez.
+        group.MapPost("/instagram/connect", ConnectInstagramAsync)
+            .RequireAuthorization(IntegrationsPermissions.ConnectionManage)
+            .Accepts<InstagramConnectRequest>("application/json")
+            .Produces<ConnectionResponse>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
         return endpoints;
+    }
+
+    private static async Task<IResult> ConnectInstagramAsync(
+        Guid tenantId, InstagramConnectRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var connection = await dispatcher.SendAsync(
+            new ConnectInstagramCommand(tenantId, request.Name, request.Code, request.RedirectUri), cancellationToken);
+        return Results.Created($"/api/v1/tenants/{tenantId}/integrations/connections/{connection.Id}", connection);
     }
 
     private static async Task<IResult> GetCatalogAsync(
@@ -226,4 +243,10 @@ public sealed record EmbeddedSignupRequest(
     public override string ToString() =>
         $"EmbeddedSignupRequest {{ Name = {Name}, Path = {Path}, Event = {Event}, WabaId = {WabaId}, "
         + $"PhoneNumberId = {PhoneNumberId}, BusinessId = {BusinessId} }}";
+}
+
+/// <summary>Spec 2026-10-14 §5.1. <see cref="ToString"/> no imprime el <c>code</c>.</summary>
+public sealed record InstagramConnectRequest(string? Name, string? Code, string? RedirectUri)
+{
+    public override string ToString() => $"InstagramConnectRequest {{ Name = {Name}, RedirectUri = {RedirectUri} }}";
 }

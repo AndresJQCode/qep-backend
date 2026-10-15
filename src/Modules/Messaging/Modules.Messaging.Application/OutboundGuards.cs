@@ -148,6 +148,26 @@ internal sealed class OutboundGuards(
         await connections.ResolveSenderAsync(tenantId, connectionId, cancellationToken)
             ?? throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "The WhatsApp connection is paused, needs attention or was deleted.");
 
+    /// <summary>Spec 2026-10-14 §6.2: la conexión de Instagram <c>Active</c>, ya con el reclamo tomado. Mismo contrato que
+    /// <see cref="ResolveSenderAsync(Guid, Guid, IOutboundClaim, CancellationToken)"/>.</summary>
+    public async Task<InstagramSender> ResolveInstagramSenderAsync(Guid tenantId, Guid connectionId, IOutboundClaim claim, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(claim);
+        try
+        {
+            return await ResolveInstagramSenderAsync(tenantId, connectionId, cancellationToken);
+        }
+        catch (MessagingDomainException)
+        {
+            await claim.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+    }
+
+    public async Task<InstagramSender> ResolveInstagramSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        await connections.ResolveInstagramSenderAsync(tenantId, connectionId, cancellationToken)
+            ?? throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "The Instagram connection is paused, needs attention or was deleted.");
+
     /// <summary>
     /// §8.3, la tabla de respuestas. Vuelve sólo si quedó <c>Sent</c>; en cualquier otro caso cierra el reclamo y lanza.
     /// Todo cierre va con <c>CancellationToken.None</c>: si Meta ya aceptó, un rollback por cancelación borraría la fila
@@ -181,6 +201,12 @@ internal sealed class OutboundGuards(
                 await claim.CommitFailedAsync(131047, result.Title, answeredAt, metaMediaId, CancellationToken.None);
                 await NotifyConsolidatedAsync(tenantId, claim.ConversationId);
                 throw new MessagingDomainException(MessagingErrorCodes.WindowClosed, "Meta closed the 24-hour window.");
+
+            case SendOutcome.GraphError when result.Code is MetaErrorCodes.InstagramOutsideWindow:
+                // Spec 2026-10-14 §6.2: en Instagram «fuera de la ventana» viaja con el código genérico de permiso (10) y el
+                // subcódigo 2534022; el cliente ya lo distinguió por subcódigo. La fila queda Failed con el 10, que la tabla traduce.
+                await claim.CommitFailedAsync(result.Code.Value, result.Title, answeredAt, metaMediaId, CancellationToken.None);
+                throw new MessagingDomainException(MessagingErrorCodes.WindowClosed, "Instagram closed the 24-hour window.");
 
             case SendOutcome.GraphError:
                 await claim.CommitFailedAsync(result.Code ?? SendMessageHandler.UnknownGraphErrorCode, result.Title, answeredAt, metaMediaId, CancellationToken.None);

@@ -110,9 +110,9 @@ internal static class ConnectionInputRules
         {
             if (provider.FindField(key) is { } known && known.IsSecret == secret)
             {
-                // Spec 2026-10-09 §6.1: un campo interno, o cualquier campo de un proveedor con Embedded
-                // Signup, lo escribe sólo el backend. Un valor vacío cuenta como "no vino".
-                if ((known.Internal || provider.Onboarding == ProviderOnboarding.MetaEmbeddedSignup)
+                // Spec 2026-10-09 §6.1 y 2026-10-14: un campo interno, o cualquier campo de un proveedor con
+                // Embedded Signup o Instagram Login, lo escribe sólo el backend. Un valor vacío cuenta como "no vino".
+                if ((known.Internal || provider.IsBackendOwned)
                     && !string.IsNullOrWhiteSpace(values[key]))
                 {
                     yield return new ValidationFailure($"{prefix}.{key}", ReadOnlyFieldMessage);

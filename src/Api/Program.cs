@@ -181,6 +181,8 @@ app.MapPlatformEndpoints();
 app.MapPosEndpoints();
 app.MapIntegrationsEndpoints();
 app.MapWhatsAppWebhook(RateLimiterPolicies.Webhook);
+// Spec 2026-10-14 §6.2: el webhook de Instagram, con el mismo limitador y la misma exención de CSRF (prefijo /api/webhooks/).
+app.MapInstagramWebhook(RateLimiterPolicies.Webhook);
 app.MapMessagingEndpoints();
 app.MapMessagingHub();
 app.MapPipelineEndpoints();

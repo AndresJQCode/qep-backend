@@ -6,6 +6,8 @@
   <ItemGroup>
     <PackageVersion Include="AWSSDK.S3" Version="4.0.100.2" />
     <PackageVersion Include="ClosedXML" Version="0.105.1" />
+    <PackageVersion Include="Concentus" Version="2.2.2" />
+    <PackageVersion Include="Concentus.Oggfile" Version="1.0.7" />
     <PackageVersion Include="coverlet.collector" Version="8.0.1" />
     <!-- Referencia directa de Quotations.Infrastructure para escribir el Excel en streaming
          (spec 2026-09-12, D8). Misma versión que ya resolvía transitiva por ClosedXML: con el

@@ -5,7 +5,8 @@ using Modules.Messaging.Infrastructure.Persistence;
 
 namespace Modules.Messaging.Infrastructure.Media;
 
-internal sealed record PendingMedia(Guid MessageId, Guid TenantId, Guid ConnectionId, string MetaMediaId, DateTimeOffset OccurredAt, int Attempts);
+/// <param name="SourceUrl">Spec 2026-10-14 §6.2: el adjunto de Instagram se baja de esta URL, sin token; <c>null</c> en WhatsApp.</param>
+internal sealed record PendingMedia(Guid MessageId, Guid TenantId, Guid ConnectionId, string MetaMediaId, DateTimeOffset OccurredAt, int Attempts, string? SourceUrl = null);
 
 /// <summary>§8.6, «Copia»: corre la transferencia (<see cref="MediaTransfer"/>) y deja el resultado en la
 /// fila. Un fallo deja last_error y el reintento ya quedó programado por el reclamo; rendirse corre

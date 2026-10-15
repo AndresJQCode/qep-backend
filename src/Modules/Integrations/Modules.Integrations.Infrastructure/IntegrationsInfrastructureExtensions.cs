@@ -69,6 +69,16 @@ public static class IntegrationsInfrastructureExtensions
         services.AddSingleton<IProviderConnectionTester, WhatsAppCloudConnectionTester>();
         // Spec 2026-10-09 §8.1: canje, registro, suscripción y lectura del número, sobre el mismo cliente.
         services.AddScoped<IWhatsAppSignupGateway, MetaGraphSignupGateway>();
+        // Spec 2026-10-14 §6.1: el cliente de Graph de Instagram (graph.instagram.com), mismo patrón; el canje del code,
+        // el token largo, /me y la suscripción sobre él; el probador y el worker diario de refresco del token.
+        services.AddHttpClient(InstagramGraphClient.HttpClientName, InstagramGraphClient.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => InstagramGraphClient.CreatePrimaryHandler())
+            .RemoveAllLoggers();
+        services.AddSingleton<InstagramGraphClient>();
+        services.AddSingleton<IProviderConnectionTester, InstagramConnectionTester>();
+        services.AddScoped<IInstagramLoginGateway, InstagramLoginGateway>();
+        services.AddOptions<InstagramRefreshOptions>().Bind(configuration.GetSection(InstagramRefreshOptions.SectionName));
+        services.AddHostedService<InstagramTokenRefreshWorker>();
         services.AddSingleton<IConnectionTester, ConnectionTesterRegistry>();
 
         // Spec 2026-10-09 §9 (decisión 2): la app de Meta de toda la plataforma. En Production
@@ -78,6 +88,14 @@ public static class IntegrationsInfrastructureExtensions
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<MetaAppOptions>, MetaAppOptionsValidator>();
         services.AddSingleton<IMetaAppSettings, MetaAppSettings>();
+
+        // Spec 2026-10-14 §9 (V-1 cerrada): el caso de uso Instagram tiene sus propias claves. En Production
+        // ValidateOnStart exige AppId, AppSecret y un origen de retorno; fuera, el proveedor sale del catálogo.
+        services.AddOptions<MetaInstagramOptions>()
+            .Bind(configuration.GetSection(MetaInstagramOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<MetaInstagramOptions>, MetaInstagramOptionsValidator>();
+        services.AddSingleton<IInstagramAppSettings, InstagramAppSettings>();
 
         return services;
     }
