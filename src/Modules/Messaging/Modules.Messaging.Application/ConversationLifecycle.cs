@@ -163,8 +163,8 @@ public sealed class MarkUnreadFromMessageHandler(
 
 /// <summary>§8.5: por el agregado con If-Match (428 lo pone el endpoint; 412 lo pone el unit of work). Spec 2026-10-15 §3.3: el
 /// motivo nuevo se agrega al mismo DbContext, así que entra en el mismo SaveChanges que la resolución, el evento y la auditoría: un
-/// resolver que falla no deja motivos huérfanos. El orden importa: la versión y <c>Resolve</c> (already_resolved) van antes de contar el
-/// tope, que sólo se cuenta si de verdad se crea.</summary>
+/// resolver que falla no deja motivos huérfanos. El orden importa: la versión y <c>EnsureCanResolve</c> (already_resolved) van antes de buscar el
+/// motivo y de contar el tope, que sólo se cuenta si de verdad se crea.</summary>
 public sealed class ResolveConversationHandler(
     IConversationRepository repository,
     IConversationQueries queries,
@@ -188,6 +188,7 @@ public sealed class ResolveConversationHandler(
         var conversation = await repository.FindAsync(command.TenantId, command.ConversationId, cancellationToken)
             ?? throw MessagingNotFound.Conversation(command.ConversationId);
         ConversationConcurrency.EnsureVersion(conversation, command.ExpectedVersion);
+        conversation.EnsureCanResolve();
 
         var now = clock.UtcNow;
         var reason = await ResolutionReasonChoice.ChooseAsync(reasons, command.TenantId, command.ReasonId, command.ReasonName, cancellationToken);

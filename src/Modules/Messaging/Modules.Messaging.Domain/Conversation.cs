@@ -197,12 +197,19 @@ public sealed partial class Conversation
         return source;
     }
 
-    public void Resolve(DateTimeOffset now, Guid? reasonId = null)
+    /// <summary>Spec 2026-10-15 §3.3: la regla de «ya está resuelta» se puede preguntar sin resolver, para que el handler la
+    /// compruebe antes de buscar o crear el motivo. No toca el estado ni la versión.</summary>
+    public void EnsureCanResolve()
     {
         if (Status == ConversationStatus.Resolved)
         {
             throw new MessagingDomainException(MessagingErrorCodes.AlreadyResolved, "The conversation is already resolved.");
         }
+    }
+
+    public void Resolve(DateTimeOffset now, Guid? reasonId = null)
+    {
+        EnsureCanResolve();
 
         Status = ConversationStatus.Resolved;
         ResolutionReasonId = reasonId;

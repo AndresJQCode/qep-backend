@@ -29,6 +29,20 @@ public sealed class ConversationTests
     }
 
     [Fact]
+    public void EnsureCanResolveRejectsAResolvedConversationAndTouchesNothingOnAnOpenOne()
+    {
+        var conversation = Open();
+        var version = conversation.Version;
+
+        conversation.EnsureCanResolve();
+        Assert.Equal(version, conversation.Version);
+
+        conversation.Resolve(Now.AddMinutes(1));
+        var error = Assert.Throws<MessagingDomainException>(conversation.EnsureCanResolve);
+        Assert.Equal(MessagingErrorCodes.AlreadyResolved, error.Code);
+    }
+
+    [Fact]
     public void ResolveAndReopenBumpTheVersionAndRejectANoOp()
     {
         var conversation = Open();

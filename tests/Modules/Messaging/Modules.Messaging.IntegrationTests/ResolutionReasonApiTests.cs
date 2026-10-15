@@ -205,6 +205,21 @@ public sealed class ResolutionReasonApiTests
         Assert.Equal(0L, await ReasonCountAsync(f));
     }
 
+    // Spec 2026-10-15 §3.3: already_resolved se decide antes de mirar el motivo.
+    [Fact]
+    public async Task AnAlreadyResolvedConversationSaysSoBeforeLookingAtTheReason()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        var version = await ResolveOkAsync(f, f.Version);
+        var again = await ResolveAsync(f, version, new { reasonId = Guid.CreateVersion7() });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, again.StatusCode);
+        Assert.Equal("messaging.conversation.already_resolved", (await ProblemAsync(again)).Code);
+    }
+
     private static async Task<JsonElement> SummaryAsync(Fixture f) =>
         await f.Client.GetFromJsonAsync<JsonElement>(f.Url, Ct);
 
@@ -429,6 +444,7 @@ public sealed class ResolutionReasonApiTests
 
         var withoutPermission = await SendAsync(f.Client, HttpMethod.Delete, url);
         var otherTenant = await SendAsync(otherManager, HttpMethod.Delete, url);
+        var renameWithoutPermission = await SendAsync(f.Client, HttpMethod.Patch, url, new { name = "Otro" }, ifMatch: "\"1\"");
         // Igual que UnreadRejectsTheReadPermissionAloneOtherTenantsAndADisabledModule.
         await ExecuteAsync(f.ConnectionString, "UPDATE tenancy.tenant_modules SET status = 'inactive' WHERE tenant_id = @t AND module_key = 'messaging'", ("t", f.Tenant.TenantId));
         using var manager = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, CatalogPermissions);
@@ -436,6 +452,7 @@ public sealed class ResolutionReasonApiTests
 
         Assert.Equal(HttpStatusCode.Forbidden, withoutPermission.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, otherTenant.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, renameWithoutPermission.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, moduleOff.StatusCode);
         Assert.Equal("tenancy.module_not_enabled", (await ProblemAsync(moduleOff)).Code);
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.resolution_reasons WHERE deleted_at IS NOT NULL"));
