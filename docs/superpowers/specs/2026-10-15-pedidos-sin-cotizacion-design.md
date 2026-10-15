@@ -5,8 +5,8 @@
 Pipeline (consumidor de los eventos de pedido, foto `deal_orders`), Reporting (reporte de pedidos leyendo
 del pedido), Bootstrapper (`OrdersReportSource`, adaptadores). **Frontend:** `qep-frontend`,
 `features/orders`, `features/quotes`, `features/reports`, guía `docs/integracion-cotizaciones-y-pedidos.md`.
-**Estado:** alcance, enfoque y las tres secciones del diseño aprobados por el owner en conversación el
-2026-10-15. Pendiente de su lectura final y del plan de implementación.
+**Estado:** aprobado por el owner el 2026-10-15 tras leerlo. Pendiente de implementar; plan en
+`docs/superpowers/plans/2026-10-15-pedidos-sin-cotizacion-backend.md`.
 **Lo necesita:** `2026-10-15-integracion-shopify-pedidos-design.md` (§11.1), que asume este modelo. Va
 **antes** que el spec de flete y que Shopify.
 **Ramas:** `feature/pedidos-sin-cotizacion` desde `develop` en `qep-backend`; la homónima desde `develop` en
