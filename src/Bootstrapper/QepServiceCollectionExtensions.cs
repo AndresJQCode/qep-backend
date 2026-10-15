@@ -494,6 +494,15 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<PreviewOrderEditsQuery, OrderDetailDto>,
             PreviewOrderEditsHandler>();
+        // Pedido manual y su cálculo previo (spec 2026-10-15 §5.2); el armador lo comparten con el
+        // servicio de pedidos externos.
+        services.AddScoped<OrderDraftBuilder>();
+        services.AddScoped<
+            ICommandHandler<CreateOrderCommand, OrderDetailDto>,
+            CreateOrderHandler>();
+        services.AddScoped<
+            IQueryHandler<PreviewOrderQuery, OrderDetailDto>,
+            PreviewOrderHandler>();
         // La homologación de columnas del Excel de pedidos (spec 2026-09-24). A mano, como el
         // resto: un handler que falte compila, mapea su endpoint y falla recién en runtime con 500.
         services.AddScoped<

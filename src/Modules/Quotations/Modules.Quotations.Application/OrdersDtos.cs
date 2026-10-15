@@ -71,6 +71,24 @@ public sealed record OrderPaymentProofRequest(Guid FileId, decimal Amount, DateO
 public sealed record OrderPaymentProofUpdateRequest(
     Guid ProofId, decimal Amount, Guid? NewFileId = null, DateOnly? PaidOn = null);
 
+/// <summary>
+/// El cuerpo de un pedido manual (spec 2026-10-15 §5.2) y de su cálculo previo: el mismo que la
+/// pantalla arma para una cotización, más el estado de pago y los comprobantes, porque un pedido nace
+/// vendido. <c>Items</c> lleva producto y cantidad: el precio, el descuento por escala y la tasa los
+/// resuelve el backend, igual que al convertir.
+/// </summary>
+public sealed record CreateOrderRequest(
+    Guid ClientId,
+    string? PaymentMethod,
+    string? Notes,
+    bool IsRetail,
+    int? GlobalScaleFloor,
+    QuotationPartiesRequest? Parties,
+    QuotationBillingAccountRequest BillingAccount,
+    IReadOnlyList<OrderEditItemRequest> Items,
+    string PaymentStatus,
+    IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs);
+
 public sealed record ConvertQuotationToOrderRequest(
     string PaymentStatus,
     string? Notes,

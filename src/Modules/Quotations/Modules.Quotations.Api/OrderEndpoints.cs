@@ -25,6 +25,21 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-10-15 §5.2: un pedido a mano, sin cotización, y su cálculo previo con el mismo cuerpo.
+        collection.MapPost("/", CreateOrderAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Accepts<CreateOrderRequest>("application/json")
+            .Produces<OrderDetailResponse>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        collection.MapPost("/preview", PreviewOrderAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Accepts<CreateOrderRequest>("application/json")
+            .Produces<OrderDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         collection.MapGet("/{orderId:guid}", GetOrderByIdAsync)
             .RequireAuthorization(OrdersPermissions.OrderRead)
             .Produces<OrderDetailResponse>()
@@ -269,6 +284,45 @@ public static class OrderEndpoints
             cancellationToken);
         return Results.Ok(OrderResponses.ToResponse(order));
     }
+
+    private static async Task<IResult> CreateOrderAsync(
+        Guid tenantId,
+        CreateOrderRequest request,
+        IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var detail = await dispatcher.SendAsync(
+            new CreateOrderCommand(
+                tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
+                request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
+                request.PaymentStatus, request.PaymentProofs),
+            cancellationToken);
+        return Results.Created(
+            $"/api/v1/tenants/{tenantId}/orders/{detail.Order.Id}",
+            await composer.ComposeAsync(tenantId, detail, cancellationToken));
+    }
+
+    private static async Task<IResult> PreviewOrderAsync(
+        Guid tenantId,
+        CreateOrderRequest request,
+        IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var detail = await dispatcher.QueryAsync(
+            new PreviewOrderQuery(
+                tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
+                request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
+                request.PaymentStatus, request.PaymentProofs),
+            cancellationToken);
+        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
+    }
+
+    private static OrderItemAddition[] ToAdditions(IReadOnlyList<OrderEditItemRequest>? items) =>
+        (items ?? [])
+            .Select(item => new OrderItemAddition(item.ProductId, item.Quantity))
+            .ToArray();
 
     private static async Task<IResult> AddOrderItemsAsync(
         Guid tenantId,
