@@ -83,6 +83,19 @@ public static class MessagingErrorCodes
     /// <summary>§3.3: la respuesta no existe en el tenant (404). Un id de otro tenant responde igual.</summary>
     public const string QuickReplyNotFound = "messaging.quick_reply.not_found";
 
+    /// <summary>Spec 2026-10-15 §3.10: el motivo de resolución no está vigente en el tenant (archivado, de otro tenant o inexistente).</summary>
+    public const string ResolutionReasonNotFound = "messaging.resolution_reason.not_found";
+
+    /// <summary>Spec 2026-10-15 §3.10 y D-R11: otro motivo vigente del tenant ya usa ese nombre (409).</summary>
+    public const string ResolutionReasonNameTaken = "messaging.resolution_reason.name_taken";
+
+    public const string ResolutionReasonNameRequired = "messaging.resolution_reason.name_required";
+
+    public const string ResolutionReasonNameTooLong = "messaging.resolution_reason.name_too_long";
+
+    /// <summary>Spec 2026-10-15 D-R9: el motivo 101 vigente del tenant.</summary>
+    public const string ResolutionReasonLimitReached = "messaging.resolution_reason.limit_reached";
+
     /// <summary>Spec 2026-10-14 §4.8: el nombre no cumple <c>^[a-z0-9_]{1,512}$</c>. Última línea de defensa del dominio; el validador ya
     /// lo marca en <c>name</c>.</summary>
     public const string TemplateNameInvalid = "messaging.template.name_invalid";
