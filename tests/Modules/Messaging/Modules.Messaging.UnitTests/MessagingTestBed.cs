@@ -188,7 +188,7 @@ internal sealed class MessagingTestBed
             Templates,
             Customers,
             Opener,
-            new ConversationSummaryBuilder(Connections, Customers, memberNames, new CallerMembership(membership, context)),
+            new ConversationSummaryBuilder(Connections, Customers, memberNames, new FakeResolutionReasonNames(), new CallerMembership(membership, context)),
             TenantModules,
             context,
             new FakeClock(Now),
@@ -848,4 +848,11 @@ internal sealed class FakeOpusTranscoder : IOpusTranscoder
 
         return [.. WavMarker, .. oggOpus];
     }
+}
+
+/// <summary>Spec 2026-10-15 §3.5: sin motivos; las pruebas unitarias no resuelven nombres de motivo.</summary>
+internal sealed class FakeResolutionReasonNames : IResolutionReasonNames
+{
+    public Task<IReadOnlyDictionary<Guid, string>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> reasonIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
 }

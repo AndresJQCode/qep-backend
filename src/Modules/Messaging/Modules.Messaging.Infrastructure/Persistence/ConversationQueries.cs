@@ -13,7 +13,7 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
         conversation.Id, conversation.TenantId, conversation.ConnectionId, conversation.UserId, conversation.WaId, conversation.Username,
         conversation.ProfileName, conversation.CustomerId, conversation.AssignedMemberId, conversation.Status,
         conversation.UnreadCount, conversation.LastInboundAt, conversation.LastMessageId, conversation.LastMessageDirection, conversation.LastMessageKind,
-        conversation.LastMessagePreview, conversation.LastMessageStatus, conversation.LastMessageAt, conversation.UpdatedAt, conversation.Version, conversation.Channel);
+        conversation.LastMessagePreview, conversation.LastMessageStatus, conversation.LastMessageAt, conversation.UpdatedAt, conversation.Version, conversation.Channel, conversation.ResolutionReasonId);
 
     public async Task<(IReadOnlyList<ConversationRow> Items, int Total)> ListAsync(
         Guid tenantId, ConversationListFilter filter, int page, int pageSize, CancellationToken cancellationToken)

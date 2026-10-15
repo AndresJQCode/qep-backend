@@ -36,7 +36,11 @@ public sealed record ConversationSummary(
     long Version,
     /// <summary>Spec 2026-10-14 §5.2 (BFF): viaja aunque se deduzca de <c>connectionId</c>, porque la fila dibuja el ícono del canal
     /// y el compositor decide qué ofrecer, y ninguno de los dos tiene la conexión a mano.</summary>
-    string Channel = nameof(ConversationChannel.WhatsApp));
+    string Channel = nameof(ConversationChannel.WhatsApp),
+    /// <summary>Spec 2026-10-15 D-R7 (BFF): el motivo de la resolución vigente, sólo con <c>status = Resolved</c>. Viaja en el resumen
+    /// aunque esté en el historial porque el encabezado del hilo dibuja «Resuelta · Venta cerrada» y la fila de resueltas puede mostrarlo
+    /// sin pedir los mensajes. <c>null</c> si está abierta o se resolvió sin motivo.</summary>
+    ResolutionReasonRefDto? ResolutionReason = null);
 
 /// <summary><c>Open</c> = conversaciones abiertas del tenant; <c>Unread</c> = la suma de
 /// <c>unread_count</c> del tenant (§5.4: la pantalla lo dibuja como «N sin leer»). Ninguno respeta la
@@ -61,12 +65,15 @@ public sealed record MemberRefDto(Guid MemberId, string DisplayName);
 /// si mostrar el compositor o «La tiene X — Tomar».</summary>
 public sealed record AssignedToDto(Guid MemberId, string DisplayName, bool IsMe);
 
+/// <summary>Spec 2026-10-15 §3.5: un motivo de resolución con su nombre ya resuelto, incluido el de uno archivado (D-R5).</summary>
+public sealed record ResolutionReasonRefDto(Guid Id, string Name);
+
 /// <summary>Spec 2026-10-10 §5.1: lo que la burbuja dibuja del citado. Sin nombre de quien lo envió: la pantalla dice
 /// «Cliente» o «Equipo» por <c>direction</c> (P21).</summary>
 public sealed record ReplyToDto(Guid Id, string Direction, string Kind, string? Preview);
 
 /// <summary>§5.1 y §6.1.5: <c>actor</c> es null cuando lo hizo el sistema.</summary>
-public sealed record MessageEventDto(string Type, MemberRefDto? Actor, MemberRefDto? Target, MemberRefDto? Previous);
+public sealed record MessageEventDto(string Type, MemberRefDto? Actor, MemberRefDto? Target, MemberRefDto? Previous, ResolutionReasonRefDto? Reason = null);
 
 /// <param name="UnsupportedReason">Sólo en un <c>Unsupported</c> cuyo error de Meta tiene texto (<c>131060</c>, <c>131051</c>);
 /// si no, <c>null</c> y la burbuja dibuja la etiqueta del kind. BFF: viaja en español, como <c>failureReason</c>, porque

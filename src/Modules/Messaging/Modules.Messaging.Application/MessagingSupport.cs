@@ -37,6 +37,7 @@ public sealed class ConversationSummaryBuilder(
     IMessagingConnectionDirectory connections,
     IMessagingCustomerDirectory customers,
     IMessagingMemberNames memberNames,
+    IResolutionReasonNames reasonNames,
     CallerMembership caller)
 {
     public const string DeletedConnectionName = "Conexión eliminada";
@@ -62,7 +63,11 @@ public sealed class ConversationSummaryBuilder(
             ? new Dictionary<Guid, string>()
             : await memberNames.FindAsync(tenantId, assignees, cancellationToken);
         var me = assignees.Length == 0 ? null : await caller.FindAsync(tenantId, cancellationToken);
-        return rows.Select(row => ToSummary(row, names, byId, byPhone, assigneeNames, me)).ToArray();
+        // Spec 2026-10-15 D-R7: sólo las resueltas muestran su motivo; una consulta para toda la página, como los asignados.
+        var reasonIds = rows.Where(row => row.Status == ConversationStatus.Resolved && row.ResolutionReasonId is not null)
+            .Select(row => row.ResolutionReasonId!.Value).Distinct().ToArray();
+        var reasons = reasonIds.Length == 0 ? null : await reasonNames.FindAsync(tenantId, reasonIds, cancellationToken);
+        return rows.Select(row => ToSummary(row, names, byId, byPhone, assigneeNames, me, reasons)).ToArray();
     }
 
     public static ConversationSummary ToSummary(
@@ -71,7 +76,8 @@ public sealed class ConversationSummaryBuilder(
         IReadOnlyDictionary<Guid, CustomerRefDto> customersById,
         IReadOnlyDictionary<string, CustomerRefDto> customersByWaId,
         IReadOnlyDictionary<Guid, string> memberNames,
-        Guid? callerMemberId)
+        Guid? callerMemberId,
+        IReadOnlyDictionary<Guid, string>? reasonNames = null)
     {
         ArgumentNullException.ThrowIfNull(row);
         ArgumentNullException.ThrowIfNull(connectionNames);
@@ -97,7 +103,10 @@ public sealed class ConversationSummaryBuilder(
             row.LastInboundAt?.Add(Conversation.WindowLength),
             row.UpdatedAt,
             row.Version,
-            row.Channel.ToString());
+            row.Channel.ToString(),
+            row.Status == ConversationStatus.Resolved && row.ResolutionReasonId is { } reasonId && reasonNames?.GetValueOrDefault(reasonId) is { } reasonName
+                ? new ResolutionReasonRefDto(reasonId, reasonName)
+                : null);
     }
 
     /// <summary>La foto del último mensaje sólo si están sus cinco campos: una fila a medio escribir
@@ -121,7 +130,8 @@ internal static class MessageMapping
     public const int ReplyPreviewMaxLength = 200;
 
     public static MessageDto ToDto(
-        MessageRow row, Guid tenantId, IReadOnlyDictionary<Guid, string> memberNames, IReadOnlyDictionary<Guid, ReplyTargetRow> replyTargets)
+        MessageRow row, Guid tenantId, IReadOnlyDictionary<Guid, string> memberNames, IReadOnlyDictionary<Guid, ReplyTargetRow> replyTargets,
+        IReadOnlyDictionary<Guid, string>? reasonNames = null)
     {
         ArgumentNullException.ThrowIfNull(row);
         ArgumentNullException.ThrowIfNull(memberNames);
@@ -146,7 +156,10 @@ internal static class MessageMapping
                     conversationEvent.Type.ToString(),
                     Member(conversationEvent.Actor, memberNames),
                     Member(conversationEvent.Target, memberNames),
-                    Member(conversationEvent.Previous, memberNames)),
+                    Member(conversationEvent.Previous, memberNames),
+                    conversationEvent.ReasonId is { } reasonId && reasonNames?.GetValueOrDefault(reasonId) is { } reasonName
+                        ? new ResolutionReasonRefDto(reasonId, reasonName)
+                        : null),
             row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
             row.Kind == MessageKind.Unsupported ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson)) : null,
             row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson));
@@ -183,6 +196,17 @@ internal static class MessageMapping
             target.Direction.ToString(),
             target.Kind.ToString(),
             source is null ? null : source.Length <= ReplyPreviewMaxLength ? source : source[..ReplyPreviewMaxLength]);
+    }
+
+    /// <summary>Spec 2026-10-15 §3.5: los motivos de los eventos <c>Resolved</c> de la página, para una sola consulta de nombres.</summary>
+    public static IReadOnlyCollection<Guid> ReasonIdsOf(IEnumerable<MessageRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        return rows.Where(row => row.Kind == MessageKind.Event)
+            .Select(row => ConversationEventJson.Parse(row.DetailsJson)?.ReasonId)
+            .OfType<Guid>()
+            .Distinct()
+            .ToArray();
     }
 
     /// <summary>Los ids de membresía que una página necesita con nombre: <c>sentBy</c> y los de cada evento.</summary>

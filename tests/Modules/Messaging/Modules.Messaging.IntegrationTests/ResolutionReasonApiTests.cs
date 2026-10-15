@@ -203,4 +203,91 @@ public sealed class ResolutionReasonApiTests
         Assert.Equal("messaging.conversation.already_resolved", (await ProblemAsync(already)).Code);
         Assert.Equal(0L, await ReasonCountAsync(f));
     }
+
+    private static async Task<JsonElement> SummaryAsync(Fixture f) =>
+        await f.Client.GetFromJsonAsync<JsonElement>(f.Url, Ct);
+
+    private static async Task<JsonElement[]> ResolvedEventsAsync(Fixture f) =>
+        (await f.Client.GetFromJsonAsync<JsonElement>(MessagesUrl(f.Tenant.TenantId, f.ConversationId), Ct))
+            .GetProperty("items").EnumerateArray()
+            .Where(item => item.TryGetProperty("event", out var e) && e.ValueKind == JsonValueKind.Object && e.GetProperty("type").GetString() == "Resolved")
+            .ToArray();
+
+    // D-R7 y §3.5: el resumen trae el motivo mientras está resuelta; el evento del hilo lo trae siempre.
+    [Fact]
+    public async Task TheSummaryAndTheThreadEventCarryTheReason()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        var response = await ResolveAsync(f, f.Version, new { reasonName = "Venta cerrada" });
+        var resolvedSummary = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        var detail = await SummaryAsync(f);
+        var listed = (await f.Client.GetFromJsonAsync<JsonElement>($"{ConversationsUrl(f.Tenant.TenantId)}?status=Resolved", Ct)).GetProperty("items")[0];
+        var resolvedEvent = Assert.Single(await ResolvedEventsAsync(f));
+
+        foreach (var summary in new[] { resolvedSummary, detail, listed })
+        {
+            Assert.Equal("Venta cerrada", summary.GetProperty("resolutionReason").GetProperty("name").GetString());
+        }
+
+        Assert.Equal("Venta cerrada", resolvedEvent.GetProperty("event").GetProperty("reason").GetProperty("name").GetString());
+        Assert.Equal(
+            resolvedSummary.GetProperty("resolutionReason").GetProperty("id").GetGuid(),
+            resolvedEvent.GetProperty("event").GetProperty("reason").GetProperty("id").GetGuid());
+    }
+
+    [Fact]
+    public async Task WithoutAReasonBothAreNull()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        var summary = await (await ResolveAsync(f, f.Version)).Content.ReadFromJsonAsync<JsonElement>(Ct);
+
+        Assert.Equal(JsonValueKind.Null, summary.GetProperty("resolutionReason").ValueKind);
+        Assert.Equal(JsonValueKind.Null, Assert.Single(await ResolvedEventsAsync(f)).GetProperty("event").GetProperty("reason").ValueKind);
+    }
+
+    // §3.6 y D-R2: reabrir —por API o por un entrante de la ingesta— limpia el motivo vigente; el evento viejo conserva el suyo.
+    [Fact]
+    public async Task ReopeningByApiOrByAnInboundClearsTheCurrentReasonButNotTheOldEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var version = await ResolveOkAsync(f, f.Version, new { reasonName = "Spam" });
+
+        await ReopenOkAsync(f, version);
+        var afterApi = await SummaryAsync(f);
+        await ResolveOkAsync(f, afterApi.GetProperty("version").GetInt64(), new { reasonName = "Venta cerrada" });
+        using var anonymous = f.Factory.CreateClient();
+        await PostWebhookAsync(anonymous, MetaPayloads.InboundText("111", "573001234567", "wamid.2", DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "otra cosa"));
+        await DrainDeliveriesAsync(f.Factory);
+        var afterInbound = await SummaryAsync(f);
+
+        Assert.Equal(JsonValueKind.Null, afterApi.GetProperty("resolutionReason").ValueKind);
+        Assert.Equal("Open", afterInbound.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, afterInbound.GetProperty("resolutionReason").ValueKind);
+        Assert.Equal(0L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.conversations WHERE id = @id AND resolution_reason_id IS NOT NULL", ("id", f.ConversationId)));
+        Assert.Equal(["Spam", "Venta cerrada"],
+            (await ResolvedEventsAsync(f)).Select(item => item.GetProperty("event").GetProperty("reason").GetProperty("name").GetString()));
+    }
+
+    // D-R5: un motivo archivado sigue nombrado en el historial y en el resumen de la conversación que lo usa.
+    [Fact]
+    public async Task AnArchivedReasonIsStillNamedWhereItWasUsed()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ResolveOkAsync(f, f.Version, new { reasonName = "Spam" });
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.resolution_reasons SET deleted_at = now()");
+
+        Assert.Equal("Spam", (await SummaryAsync(f)).GetProperty("resolutionReason").GetProperty("name").GetString());
+        Assert.Equal("Spam", Assert.Single(await ResolvedEventsAsync(f)).GetProperty("event").GetProperty("reason").GetProperty("name").GetString());
+    }
 }

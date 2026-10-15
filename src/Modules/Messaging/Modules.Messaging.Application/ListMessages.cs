@@ -26,6 +26,7 @@ public sealed class ListMessagesHandler(
     IConversationQueries conversations,
     IMessageQueries messages,
     IMessagingMemberNames memberNames,
+    IResolutionReasonNames reasonNames,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IValidator<ListMessagesQuery> validator)
@@ -54,6 +55,7 @@ public sealed class ListMessagesHandler(
         var page = rows.Take(limit).Reverse().ToArray();
         var names = await memberNames.FindAsync(query.TenantId, MessageMapping.MemberIdsOf(page), cancellationToken);
         var targets = await messages.FindReplyTargetsAsync(query.TenantId, MessageMapping.ReplyTargetIdsOf(page), cancellationToken);
-        return new MessagePageDto(page.Select(row => MessageMapping.ToDto(row, query.TenantId, names, targets)).ToArray(), hasMore);
+        var reasons = await reasonNames.FindAsync(query.TenantId, MessageMapping.ReasonIdsOf(page), cancellationToken);
+        return new MessagePageDto(page.Select(row => MessageMapping.ToDto(row, query.TenantId, names, targets, reasons)).ToArray(), hasMore);
     }
 }

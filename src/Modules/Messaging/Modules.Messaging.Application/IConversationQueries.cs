@@ -24,7 +24,8 @@ public sealed record ConversationRow(
     DateTimeOffset? LastMessageAt,
     DateTimeOffset UpdatedAt,
     long Version,
-    ConversationChannel Channel = ConversationChannel.WhatsApp);
+    ConversationChannel Channel = ConversationChannel.WhatsApp,
+    Guid? ResolutionReasonId = null);
 
 /// <summary>Spec 2026-10-10 §5.1: <c>assigned=all|me|none</c>.</summary>
 public enum AssignedFilter
