@@ -669,6 +669,9 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
 {
     public IReadOnlyCollection<Guid>? LastClientIds { get; private set; }
 
+    /// <summary>El rango, ya en instantes, con que se pidió la última página del listado.</summary>
+    public (DateTimeOffset? From, DateTimeOffset? Before) LastSearchRange { get; private set; }
+
     public int AnyCalls { get; private set; }
 
     public int ExportCalls { get; private set; }
@@ -714,6 +717,7 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         CancellationToken cancellationToken)
     {
         LastClientIds = clientIds;
+        LastSearchRange = (convertedFrom, convertedBefore);
         return Task.FromResult<(IReadOnlyList<OrderWithQuotation>, int)>((rows, rows.Length));
     }
 

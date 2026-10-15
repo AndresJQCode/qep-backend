@@ -170,6 +170,35 @@ public sealed class ExportOrdersHandlerTests
         Assert.Equal(1, unitOfWork.Saves);
     }
 
+    // El export cubre el mismo rango que se ve en pantalla: el de la zona de quien lo pide, guardada
+    // con los filtros para que el procesador corte igual.
+    [Fact]
+    public async Task ExportCutsAndStoresTheTimeZoneOfWhoeverAsks()
+    {
+        var queue = new InMemoryExportJobQueue();
+        var repository = new StubOrderListRepository(NewRow());
+        var handler = NewHandler(repository, queue);
+
+        await handler.HandleAsync(NewCommand() with { TimeZone = "Europe/Madrid" }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero), repository.LastExportSearch!.ConvertedFrom);
+        Assert.Equal(new DateTimeOffset(2026, 9, 12, 22, 0, 0, TimeSpan.Zero), repository.LastExportSearch.ConvertedBefore);
+        Assert.Equal("Europe/Madrid", JsonSerializer.Deserialize<OrdersExportFilters>(Assert.Single(queue.Jobs).Filters)!.TimeZone);
+    }
+
+    [Fact]
+    public async Task ExportRejectsATimeZoneThatIsNotIana()
+    {
+        var queue = new InMemoryExportJobQueue();
+        var handler = NewHandler(new StubOrderListRepository(NewRow()), queue);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            handler.HandleAsync(NewCommand() with { TimeZone = "Marte/Olympus" }, TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.time_zone_invalid", error.Code);
+        Assert.Empty(queue.Jobs);
+    }
+
     private static ExportOrdersCommand NewCommand() => NewCommand(From, To);
 
     private static ExportOrdersCommand NewCommand(

@@ -182,12 +182,13 @@ public static class OrderEndpoints
         string? clientCuc = null,
         string? orderNumber = null,
         int page = 1,
-        int pageSize = QuotationPaging.DefaultPageSize)
+        int pageSize = QuotationPaging.DefaultPageSize,
+        string? timeZone = null)
     {
         var result = await dispatcher.QueryAsync(
             new ListOrdersQuery(
                 tenantId, clientId, advisorId, status, paymentStatus, convertedFrom, convertedTo,
-                clientCuc, orderNumber, page, pageSize),
+                clientCuc, orderNumber, page, pageSize, timeZone),
             cancellationToken);
 
         return Results.Ok(new OrdersPageResponse(
@@ -208,12 +209,13 @@ public static class OrderEndpoints
         DateOnly? convertedFrom = null,
         DateOnly? convertedTo = null,
         string? clientCuc = null,
-        string? orderNumber = null)
+        string? orderNumber = null,
+        string? timeZone = null)
     {
         var accepted = await dispatcher.SendAsync(
             new ExportOrdersCommand(
                 tenantId, clientId, advisorId, status, paymentStatus, convertedFrom, convertedTo,
-                clientCuc, orderNumber),
+                clientCuc, orderNumber, timeZone),
             cancellationToken);
 
         return Results.Accepted(value: new ExportJobAcceptedResponse(accepted.JobId, accepted.RequestedAt));

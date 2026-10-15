@@ -90,9 +90,12 @@ public sealed class OrdersExportProcessor(
         var advisorId = filters.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, job.TenantId, filters.ClientCuc, cancellationToken);
-        // Un calendario por job (spec 2026-09-17): corta el rango guardado en el día del tenant.
+        // Un calendario por job (spec 2026-09-17). El rango se corta en la zona de quien lo pidió, la
+        // misma con que vio la tabla; las fechas del archivo siguen en el día del tenant, porque las
+        // importa su ERP.
         var calendar = await tenantClock.GetAsync(job.TenantId, cancellationToken);
-        var converted = TenantDayRange.Of(calendar, filters.ConvertedFrom, filters.ConvertedTo);
+        var converted = TenantDayRange.Of(
+            OrderListing.CalendarFor(calendar, filters.TimeZone), filters.ConvertedFrom, filters.ConvertedTo);
         var generatedAt = calendar.UtcNow;
 
         // El layout del tenant, una vez por job (spec 2026-09-24): encabezados, orden y ocultas del

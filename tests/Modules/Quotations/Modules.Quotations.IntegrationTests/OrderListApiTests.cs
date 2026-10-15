@@ -260,6 +260,39 @@ public sealed class OrderListApiTests
         Assert.Equal(0, nextDay.Total);
     }
 
+    // Pedido del owner, 2026-10-15: convertido a la 01:00 del 15 en Madrid (23:00 UTC del 14, todavía
+    // el 14 en Bogotá). Quien filtra el 15 desde Madrid lo ve; sin zona, el día sigue siendo el del tenant.
+    [Fact]
+    public async Task ListFiltersTheConversionRangeByTheDayOfWhoeverFilters()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(
+            database.GetConnectionString(), utcNow: new DateTimeOffset(2026, 10, 14, 23, 0, 0, TimeSpan.Zero));
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        await ConvertToOrderAsync(client, tenantId, quotation.Id);
+
+        var inMadrid = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?convertedFrom=2026-10-15&convertedTo=2026-10-15&timeZone=Europe%2FMadrid",
+            TestContext.Current.CancellationToken);
+        var inTheTenantsDay = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?convertedFrom=2026-10-15&convertedTo=2026-10-15",
+            TestContext.Current.CancellationToken);
+        var notAZone = await client.GetAsync(
+            $"{OrdersUrl(tenantId)}?convertedFrom=2026-10-15&convertedTo=2026-10-15&timeZone=Marte",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(inMadrid);
+        Assert.Equal(quotation.Id, Assert.Single(inMadrid.Items).QuotationId);
+        Assert.NotNull(inTheTenantsDay);
+        Assert.Empty(inTheTenantsDay.Items);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, notAZone.StatusCode);
+        Assert.Contains("order.time_zone_invalid", await notAZone.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
+    }
+
     /// <summary>Convierte sin comprobantes: el pago queda pendiente, que es el unico caso en el
     /// que la conversion no los exige. Estas pruebas miran el listado, no el asistente.</summary>
     private static async Task<OrderResponse> ConvertToOrderAsync(

@@ -164,6 +164,55 @@ public sealed class ListOrdersHandlerTests
         Assert.Equal("order.order.payment_status_invalid", error.Code);
     }
 
+    // Un pedido creado a la 01:00 del 15 en Madrid (23:00 UTC del 14) es del 15 para quien filtra
+    // desde Madrid: el día se corta en la zona que manda el navegador, no en la del tenant.
+    [Fact]
+    public async Task ListCutsTheDayInTheTimeZoneOfWhoeverFilters()
+    {
+        var repository = new StubOrderListRepository(NewRow("PED-2026-0001", ClientId));
+        var handler = NewHandler(NewCustomerLookup(), repository);
+        var day = new DateOnly(2026, 10, 15);
+
+        await handler.HandleAsync(
+            NewQuery() with { ConvertedFrom = day, ConvertedTo = day, TimeZone = "Europe/Madrid" },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            (new DateTimeOffset(2026, 10, 14, 22, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 10, 15, 22, 0, 0, TimeSpan.Zero)),
+            repository.LastSearchRange);
+    }
+
+    [Fact]
+    public async Task ListWithoutATimeZoneStillCutsTheDayOfTheTenant()
+    {
+        var repository = new StubOrderListRepository(NewRow("PED-2026-0001", ClientId));
+        var handler = NewHandler(NewCustomerLookup(), repository);
+        var day = new DateOnly(2026, 10, 15);
+
+        await handler.HandleAsync(
+            NewQuery() with { ConvertedFrom = day, ConvertedTo = day },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            (new DateTimeOffset(2026, 10, 15, 5, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 10, 16, 5, 0, 0, TimeSpan.Zero)),
+            repository.LastSearchRange);
+    }
+
+    [Theory]
+    [InlineData("Marte/Olympus")]
+    [InlineData("SA Pacific Standard Time")]
+    public async Task ListRejectsATimeZoneThatIsNotIana(string timeZone)
+    {
+        var handler = NewHandler(NewCustomerLookup(), NewRow("PED-2026-0001", ClientId));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            handler.HandleAsync(
+                NewQuery() with { ConvertedFrom = new DateOnly(2026, 10, 15), TimeZone = timeZone },
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.time_zone_invalid", error.Code);
+    }
+
     private static ListOrdersQuery NewQuery() =>
         new(TenantId, null, null, null, null, null, null, null, null, Page: 1, PageSize: 10);
 

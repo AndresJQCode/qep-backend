@@ -1,4 +1,5 @@
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -9,6 +10,37 @@ namespace Modules.Quotations.Application;
 /// </summary>
 internal static class OrderListing
 {
+    /// <summary>
+    /// El calendario con que se cortan los días del filtro: el de la zona de quien filtra, que el
+    /// navegador manda como ID IANA, o el del tenant si no la manda. Un pedido creado a la 01:00 del
+    /// 15 en Madrid es del 15 para quien filtra desde Madrid, aunque en Colombia todavía fuera el 14
+    /// (pedido del owner, 2026-10-15). Sólo IANA, por lo mismo que <c>Tenant.ValidateTimeZone</c>: es
+    /// lo que el navegador conoce, y un ID de Windows no lo manda ningún cliente nuestro.
+    /// </summary>
+    public static TenantCalendar CalendarFor(TenantCalendar tenantCalendar, string? timeZone)
+    {
+        if (string.IsNullOrWhiteSpace(timeZone))
+        {
+            return tenantCalendar;
+        }
+
+        try
+        {
+            var zone = TimeZoneInfo.FindSystemTimeZoneById(timeZone.Trim());
+            if (zone.HasIanaId)
+            {
+                return new TenantCalendar(tenantCalendar.UtcNow, zone);
+            }
+        }
+        catch (TimeZoneNotFoundException)
+        {
+        }
+
+        throw new QuotationsDomainException(
+            "order.time_zone_invalid",
+            "timeZone must be a valid IANA time zone.");
+    }
+
     // Texto libre por query string: un valor que no es del enum es un 422 con código de dominio,
     // no un filtro que en silencio no devuelve nada ni un 500 de un cast.
     public static OrderStatus? ParseStatus(string? status)
