@@ -19,7 +19,9 @@ public sealed record ExportOrdersCommand(
     DateOnly? ConvertedFrom,
     DateOnly? ConvertedTo,
     string? ClientCuc,
-    string? OrderNumber) : ICommand<ExportJobAccepted>;
+    string? OrderNumber,
+    /// <summary>La zona IANA de quien pide el archivo, igual que en <see cref="ListOrdersQuery"/>.</summary>
+    string? TimeZone = null) : ICommand<ExportJobAccepted>;
 
 /// <summary>Los filtros tal como quedan en <c>export_jobs.filters</c>.</summary>
 public sealed record OrdersExportFilters(
@@ -30,7 +32,9 @@ public sealed record OrdersExportFilters(
     DateOnly ConvertedFrom,
     DateOnly ConvertedTo,
     string? ClientCuc,
-    string? OrderNumber);
+    string? OrderNumber,
+    /// <summary>Nula en los jobs encolados antes de que existiera: cortan en el día del tenant.</summary>
+    string? TimeZone = null);
 
 /// <summary>El mismo rango que <see cref="ExportQuotationsValidator"/>, sobre la fecha del pedido
 /// (D3). Validador para que el 422 lleve el mapa <c>errors</c>.</summary>
@@ -82,8 +86,9 @@ public sealed class ExportOrdersHandler(
             customerLookup, command.TenantId, command.ClientCuc, cancellationToken);
 
         // 3: al menos un pedido.
-        // El rango se corta en el día del tenant (spec 2026-09-17, punto 3).
-        var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
+        // El rango se corta en el día de quien pide, o en el del tenant (spec 2026-09-17, punto 3).
+        var calendar = OrderListing.CalendarFor(
+            await tenantClock.GetAsync(command.TenantId, cancellationToken), command.TimeZone);
         var converted = TenantDayRange.Of(calendar, command.ConvertedFrom, command.ConvertedTo);
         var anyRow = await repository.AnyForExportAsync(
             command.TenantId,
@@ -127,7 +132,8 @@ public sealed class ExportOrdersHandler(
                 command.ConvertedFrom!.Value,
                 command.ConvertedTo!.Value,
                 command.ClientCuc,
-                command.OrderNumber)),
+                command.OrderNumber,
+                command.TimeZone)),
             calendar.UtcNow);
         queue.Add(job);
         await unitOfWork.SaveChangesAsync(cancellationToken);

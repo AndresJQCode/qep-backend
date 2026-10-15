@@ -27,7 +27,10 @@ public sealed record ListOrdersQuery(
     string? ClientCuc,
     string? OrderNumber,
     int Page,
-    int PageSize) : IQuery<OrderPage>;
+    int PageSize,
+    /// <summary>La zona IANA de quien filtra (<see cref="OrderListing.CalendarFor"/>). Sin ella, los
+    /// días son los del tenant.</summary>
+    string? TimeZone = null) : IQuery<OrderPage>;
 
 /// <summary>
 /// Fila del listado. El pedido es 1:1 con su cotización y no repite cliente, asesora, moneda ni
@@ -92,9 +95,14 @@ public sealed class ListOrdersHandler(
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, query.TenantId, query.ClientCuc, cancellationToken);
 
-        // El rango se corta en el día del tenant (spec 2026-09-17, punto 3).
-        var converted = await TenantDayRange.ResolveAsync(
-            tenantClock, query.TenantId, query.ConvertedFrom, query.ConvertedTo, cancellationToken);
+        // El rango se corta en el día de quien filtra, o en el del tenant si no manda su zona (spec
+        // 2026-09-17, punto 3). Sin fechas no se consulta el huso.
+        var converted = query.ConvertedFrom is null && query.ConvertedTo is null
+            ? new TenantInstantRange(null, null)
+            : TenantDayRange.Of(
+                OrderListing.CalendarFor(await tenantClock.GetAsync(query.TenantId, cancellationToken), query.TimeZone),
+                query.ConvertedFrom,
+                query.ConvertedTo);
 
         var (rows, total) = await repository.SearchAsync(
             query.TenantId,

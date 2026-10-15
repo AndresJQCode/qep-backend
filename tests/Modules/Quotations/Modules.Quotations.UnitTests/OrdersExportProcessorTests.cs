@@ -941,6 +941,31 @@ public sealed class OrdersExportProcessorTests
     }
 
     [Fact]
+    public async Task CutsTheRangeInTheStoredTimeZone()
+    {
+        var repository = new StubOrderListRepository(NewRow("PED-2026-0001"));
+        var job = NewJob(new OrdersExportFilters(null, null, null, null, From, To, null, null, TimeZone: "Europe/Madrid"));
+
+        await NewProcessor(repository).ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero), repository.LastExportSearch!.ConvertedFrom);
+        Assert.Equal(new DateTimeOffset(2026, 9, 12, 22, 0, 0, TimeSpan.Zero), repository.LastExportSearch.ConvertedBefore);
+    }
+
+    // Un job encolado antes de este cambio no trae zona: corta en el día del tenant, como siempre.
+    [Fact]
+    public async Task AJobWithoutATimeZoneCutsTheDayOfTheTenant()
+    {
+        var repository = new StubOrderListRepository(NewRow("PED-2026-0001"));
+        var job = NewJob(new OrdersExportFilters(null, null, null, null, From, To, null, null));
+
+        await NewProcessor(repository).ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.Equal(FromUtc, repository.LastExportSearch!.ConvertedFrom);
+        Assert.Equal(BeforeUtc, repository.LastExportSearch.ConvertedBefore);
+    }
+
+    [Fact]
     public async Task NoOrdersWhenItRunsIsDefinitive()
     {
         await Assert.ThrowsAsync<ExportJobDefinitiveException>(() =>
