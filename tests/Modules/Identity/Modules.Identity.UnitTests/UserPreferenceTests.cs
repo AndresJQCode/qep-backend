@@ -30,6 +30,7 @@ public sealed class UserPreferenceTests
             Guid.NewGuid(),
             "  Botanical ",
             "dark",
+            messageSound: true,
             UpdatedAt);
 
         Assert.Equal("botanical", preference.ColorScheme);
@@ -45,7 +46,7 @@ public sealed class UserPreferenceTests
         // CA-ACC-03-07. `mode` sí es un conjunto cerrado: son dos valores y el spec los fija.
         // "system" está fuera a propósito — es SDD-OD-20, todavía abierta.
         var exception = Assert.Throws<IdentityDomainException>(() =>
-            UserPreference.Create(UserId.New(), Guid.NewGuid(), "botanical", mode, UpdatedAt));
+            UserPreference.Create(UserId.New(), Guid.NewGuid(), "botanical", mode, messageSound: true, UpdatedAt));
 
         Assert.Equal("identity.preference.mode.invalid", exception.Code);
     }
@@ -61,7 +62,7 @@ public sealed class UserPreferenceTests
     {
         // CA-ACC-03-08: se valida la FORMA, no la pertenencia a un catálogo.
         var exception = Assert.Throws<IdentityDomainException>(() =>
-            UserPreference.Create(UserId.New(), Guid.NewGuid(), colorScheme, "light", UpdatedAt));
+            UserPreference.Create(UserId.New(), Guid.NewGuid(), colorScheme, "light", messageSound: true, UpdatedAt));
 
         Assert.Equal("identity.preference.scheme.invalid", exception.Code);
     }
@@ -78,6 +79,7 @@ public sealed class UserPreferenceTests
             Guid.NewGuid(),
             "midnight-2",
             "dark",
+            messageSound: true,
             UpdatedAt);
 
         Assert.Equal("midnight-2", preference.ColorScheme);
@@ -88,7 +90,7 @@ public sealed class UserPreferenceTests
     {
         var preference = UserPreference.CreateDefault(UserId.New(), Guid.NewGuid(), UpdatedAt);
 
-        preference.Change("ocean", "dark", UpdatedAt.AddHours(1));
+        preference.Change("ocean", "dark", messageSound: true, UpdatedAt.AddHours(1));
 
         Assert.Equal("ocean", preference.ColorScheme);
         Assert.Equal(ThemeMode.Dark, preference.Mode);
@@ -101,12 +103,44 @@ public sealed class UserPreferenceTests
         var preference = UserPreference.CreateDefault(UserId.New(), Guid.NewGuid(), UpdatedAt);
 
         Assert.Throws<IdentityDomainException>(() =>
-            preference.Change("ocean", "system", UpdatedAt.AddHours(1)));
+            preference.Change("ocean", "system", messageSound: true, UpdatedAt.AddHours(1)));
 
         // Una preferencia rechazada no puede quedar a medias: ni el esquema ni la marca de
         // tiempo se mueven si el modo no valida.
         Assert.Equal("botanical", preference.ColorScheme);
         Assert.Equal(ThemeMode.Light, preference.Mode);
         Assert.Equal(UpdatedAt, preference.UpdatedAt);
+    }
+
+    // Spec 2026-10-14 (Mensajería en tiempo real), decisión 7: el sonido de mensaje nuevo es una preferencia de la
+    // persona en el tenant, al lado del tema, y quien nunca eligió lo tiene encendido.
+    [Fact]
+    public void CreateDefaultTurnsTheMessageSoundOn()
+    {
+        var preference = UserPreference.CreateDefault(UserId.New(), Guid.NewGuid(), UpdatedAt);
+
+        Assert.True(preference.MessageSound);
+    }
+
+    [Fact]
+    public void CreateAndChangeCarryTheMessageSound()
+    {
+        var preference = UserPreference.Create(UserId.New(), Guid.NewGuid(), "botanical", "light", messageSound: false, UpdatedAt);
+        Assert.False(preference.MessageSound);
+
+        preference.Change("botanical", "light", messageSound: true, UpdatedAt.AddHours(1));
+
+        Assert.True(preference.MessageSound);
+        Assert.Equal(UpdatedAt.AddHours(1), preference.UpdatedAt);
+    }
+
+    [Fact]
+    public void AChangeWithAnInvalidModeLeavesTheMessageSoundUntouchedToo()
+    {
+        var preference = UserPreference.CreateDefault(UserId.New(), Guid.NewGuid(), UpdatedAt);
+
+        Assert.Throws<IdentityDomainException>(() => preference.Change("ocean", "system", messageSound: false, UpdatedAt.AddHours(1)));
+
+        Assert.True(preference.MessageSound);
     }
 }

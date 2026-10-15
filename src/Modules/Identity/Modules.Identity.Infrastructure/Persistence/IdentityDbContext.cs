@@ -86,6 +86,11 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             .HasColumnName("mode")
             .HasConversion<string>()
             .HasMaxLength(10);
+        // Spec 2026-10-14, decisión 7. Default en la columna: las filas anteriores a la migración quedan
+        // con el sonido encendido sin reescribirlas, que es lo mismo que ve quien nunca eligió.
+        preference.Property(value => value.MessageSound)
+            .HasColumnName("message_sound")
+            .HasDefaultValue(true);
         preference.Property(value => value.UpdatedAt).HasColumnName("updated_at");
 
         preference.HasOne<User>()

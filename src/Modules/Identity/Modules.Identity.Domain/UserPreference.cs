@@ -39,12 +39,14 @@ public sealed class UserPreference
         Guid tenantId,
         string colorScheme,
         ThemeMode mode,
+        bool messageSound,
         DateTimeOffset updatedAt)
     {
         UserId = userId;
         TenantId = tenantId;
         ColorScheme = colorScheme;
         Mode = mode;
+        MessageSound = messageSound;
         UpdatedAt = updatedAt;
     }
 
@@ -56,6 +58,13 @@ public sealed class UserPreference
 
     public ThemeMode Mode { get; private set; }
 
+    /// <summary>
+    /// Spec 2026-10-14 (Mensajería en tiempo real), decisión 7: si a esta persona le suena un mensaje nuevo en este
+    /// tenant. Encendido para quien nunca eligió: el sonido es el comportamiento que el producto promete, y apagarlo es
+    /// la decisión consciente.
+    /// </summary>
+    public bool MessageSound { get; private set; } = true;
+
     public DateTimeOffset UpdatedAt { get; private set; }
 
     /// <summary>
@@ -66,32 +75,35 @@ public sealed class UserPreference
         UserId userId,
         Guid tenantId,
         DateTimeOffset updatedAt) =>
-        new(userId, tenantId, DefaultColorScheme, ThemeMode.Light, updatedAt);
+        new(userId, tenantId, DefaultColorScheme, ThemeMode.Light, messageSound: true, updatedAt);
 
     public static UserPreference Create(
         UserId userId,
         Guid tenantId,
         string colorScheme,
         string mode,
+        bool messageSound,
         DateTimeOffset updatedAt) =>
         new(
             userId,
             tenantId,
             NormalizeColorScheme(colorScheme),
             ParseMode(mode),
+            messageSound,
             updatedAt);
 
     /// <summary>
-    /// Reemplaza los dos ejes de una vez. Valida antes de tocar nada: una preferencia
+    /// Reemplaza los tres ejes de una vez. Valida antes de tocar nada: una preferencia
     /// rechazada no puede quedar a medias, con el esquema nuevo y el modo viejo.
     /// </summary>
-    public void Change(string colorScheme, string mode, DateTimeOffset updatedAt)
+    public void Change(string colorScheme, string mode, bool messageSound, DateTimeOffset updatedAt)
     {
         var normalizedScheme = NormalizeColorScheme(colorScheme);
         var parsedMode = ParseMode(mode);
 
         ColorScheme = normalizedScheme;
         Mode = parsedMode;
+        MessageSound = messageSound;
         UpdatedAt = updatedAt;
     }
 
