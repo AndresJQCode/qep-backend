@@ -123,6 +123,10 @@ public static class ExportLoadSeeder
         var seededItems = await ExecuteAsync(connection, transaction, ItemsSql, cancellationToken);
         var seededOrders = await ExecuteAsync(connection, transaction, OrdersSql, cancellationToken,
             ("tenant", TenantId), ("advisor", advisorId), ("now", now));
+        await ExecuteAsync(connection, transaction, OrderItemsSql, cancellationToken,
+            ("tenant", TenantId));
+        await ExecuteAsync(connection, transaction, OrderPartiesSql, cancellationToken,
+            ("tenant", TenantId));
         await ExecuteAsync(connection, transaction, QuotationCountersSql, cancellationToken,
             ("tenant", TenantId));
         await ExecuteAsync(connection, transaction, OrderCountersSql, cancellationToken,
@@ -361,15 +365,29 @@ public static class ExportLoadSeeder
         """;
 
     // Convertida un día después del envío, dentro de la vigencia. PED-{año UTC de la conversión}-{n}.
-    // PaymentPending porque cualquier otro estado de pago exige comprobantes en Storage.
+    // PaymentPending porque cualquier otro estado de pago exige comprobantes en Storage. Desde el spec
+    // 2026-10-15 el pedido lleva sus propios cliente, asesor, cuenta de cobro e importes: se copian de su
+    // cotización, como lo hace la migración AddOrderOwnData con los pedidos que ya existían.
     private const string OrdersSql = """
         INSERT INTO quotations.orders (
             id, tenant_id, order_number, quotation_id, status, payment_status, notes, converted_at, converted_by,
-            approved_at, approved_by, ritual_collection_sync_id, created_at, updated_at, version)
+            approved_at, approved_by, ritual_collection_sync_id, created_at, updated_at, version,
+            source, external_reference, client_id, advisor_id, currency,
+            billing_company_id, billing_bank_name, billing_account_number, billing_account_currency,
+            payment_method, is_retail, global_scale_floor, billing_uses_business_name, is_store_pickup,
+            bills_to_final_consumer, party_with_retention, party_vat_surplus, customer_with_retention,
+            customer_vat_surplus, subtotal, tax_percentage, tax_amount, discount_amount, total,
+            retention_amount, net_total)
         SELECT gen_random_uuid(), @tenant,
                'PED-' || numbered.year || '-' || lpad(numbered.sequence::text, greatest(4, length(numbered.sequence::text)), '0'),
                numbered.quotation_id, 'Pending', 'PaymentPending', NULL, numbered.converted_at, @advisor,
-               NULL, NULL, NULL, numbered.converted_at, numbered.converted_at, 1
+               NULL, NULL, NULL, numbered.converted_at, numbered.converted_at, 1,
+               'Quotation', NULL, q.client_id, q.advisor_id, q.currency,
+               q.billing_company_id, q.billing_bank_name, q.billing_account_number, q.billing_account_currency,
+               q.payment_method, q.is_retail, q.global_scale_floor, q.billing_uses_business_name, q.is_store_pickup,
+               q.bills_to_final_consumer, q.party_with_retention, q.party_vat_surplus, q.customer_with_retention,
+               q.customer_vat_surplus, q.subtotal, q.tax_percentage, q.tax_amount, q.discount_amount, q.total,
+               q.retention_amount, q.net_total
         FROM (
             SELECT converted.quotation_id,
                    converted.converted_at,
@@ -383,6 +401,30 @@ public static class ExportLoadSeeder
                 WHERE converted
             ) AS converted
         ) AS numbered
+        JOIN quotations.quotations AS q ON q.id = numbered.quotation_id
+        """;
+
+    // Las líneas y las partes del pedido son copia de las de su cotización (mismo SQL que AddOrderOwnData).
+    private const string OrderItemsSql = """
+        INSERT INTO quotations.order_items (
+            id, order_id, product_id, product_code, product_name, quantity, unit_price, discount_origin,
+            discount_percentage, discount_amount, subtotal, tax_percentage, tax_amount, position, created_at, updated_at)
+        SELECT gen_random_uuid(), o.id, i.product_id, i.product_code, i.product_name, i.quantity, i.unit_price,
+               i.discount_origin, i.discount_percentage, i.discount_amount, i.subtotal, i.tax_percentage, i.tax_amount,
+               i.position, i.created_at, i.updated_at
+        FROM quotations.orders AS o
+        JOIN quotations.quotation_items AS i ON i.quotation_id = o.quotation_id
+        WHERE o.tenant_id = @tenant
+        """;
+
+    private const string OrderPartiesSql = """
+        INSERT INTO quotations.order_parties (
+            id, order_id, role, name, identification_number, phone, email, address, department_id, city_id)
+        SELECT gen_random_uuid(), o.id, p.role, p.name, p.identification_number, p.phone, p.email, p.address,
+               p.department_id, p.city_id
+        FROM quotations.orders AS o
+        JOIN quotations.quotation_parties AS p ON p.quotation_id = o.quotation_id
+        WHERE o.tenant_id = @tenant
         """;
 
     private const string QuotationCountersSql = """
