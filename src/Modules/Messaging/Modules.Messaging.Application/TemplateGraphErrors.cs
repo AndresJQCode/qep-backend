@@ -38,7 +38,7 @@ public static class TemplateGraphErrors
 
         var title = failure.UserTitle ?? string.Empty;
         var message = failure.UserMessage ?? string.Empty;
-        if (Mentions(title, "already exist") || Mentions(message, "already exist"))
+        if (Mentions(title, "already exist") || Mentions(message, "already exist") || InDeletionQuarantine(title) || InDeletionQuarantine(message))
         {
             return new MessagingDomainException(MessagingErrorCodes.TemplateNameTaken, "Meta already has a template with that name in that language.");
         }
@@ -66,6 +66,13 @@ public static class TemplateGraphErrors
 
         return Translate(failure);
     }
+
+    /// <summary>Revisión final F3: Meta bloquea un tiempo el nombre (o ese idioma) de una plantilla borrada. El texto exacto del error no está
+    /// confirmado (handoff de Meta, «a confirmar»), así que la regla es explícita: «being deleted», o «deleted» junto a «language» o
+    /// «template». Tratarlo como <c>name_taken</c> es lo que hace que el aprovisionamiento salte a la versión siguiente en vez de recalcular
+    /// la misma después de que el admin borró la <c>Quotation</c> desde la pantalla.</summary>
+    private static bool InDeletionQuarantine(string text) =>
+        Mentions(text, "being deleted") || (Mentions(text, "deleted") && (Mentions(text, "language") || Mentions(text, "template")));
 
     private static bool Mentions(string text, string fragment) => text.Contains(fragment, StringComparison.OrdinalIgnoreCase);
 }

@@ -26,6 +26,30 @@ public sealed class TemplateGraphErrorsTests
         Assert.Equal(expected, exception.Code);
     }
 
+    /// <summary>Revisión final F3: Meta bloquea un tiempo el nombre (o el idioma) de una plantilla borrada. El texto exacto del error no está
+    /// confirmado, así que la regla es explícita: <c>error_user_title</c> o <c>error_user_msg</c> que digan «being deleted», o «deleted»
+    /// junto a «language» o «template», son <c>name_taken</c> y el aprovisionamiento salta a la versión siguiente.</summary>
+    [Theory]
+    [InlineData("Message template language is being deleted",
+        "New es content can't be added while the existing es content is being deleted. Try again in 4 weeks or create a new message template.")]
+    [InlineData("Invalid parameter", "A template with this name was deleted recently. Use a different name.")]
+    [InlineData("Language Deleted", "The es language of qep_cotizacion was deleted and can't be used yet.")]
+    [InlineData(null, "This template is being deleted.")]
+    public void ANameOrLanguageInDeletionQuarantineIsNameTaken(string? title, string message)
+    {
+        var exception = TemplateGraphErrors.Translate(new MessagingGraphFailure(400, 100, "http_400", title, message));
+        Assert.Equal(MessagingErrorCodes.TemplateNameTaken, exception.Code);
+    }
+
+    [Theory]
+    [InlineData("Invalid Media", "The example file was deleted from the upload session.")]
+    [InlineData("Invalid Format", "The body ends with a variable.")]
+    public void DeletedWithoutTemplateOrLanguageIsStillARejection(string title, string message)
+    {
+        var exception = TemplateGraphErrors.Translate(new MessagingGraphFailure(400, 100, "http_400", title, message));
+        Assert.Equal(MessagingErrorCodes.TemplateRejectedByMeta, exception.Code);
+    }
+
     // §4.8 «token vencido o permiso faltante»: los códigos de permiso de Graph son el 10 y el rango 200–299.
     [Theory]
     [InlineData(401, null, true)]

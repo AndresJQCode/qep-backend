@@ -24,6 +24,10 @@ public sealed class QuotationTemplateProvisioningApiTests
     private const string NameTakenError =
         """{"error":{"message":"(#100) Invalid parameter","type":"OAuthException","code":100,"error_user_title":"Message Template Name Already Exists","error_user_msg":"x","fbtrace_id":"t"}}""";
 
+    // Revisión final F3: un cuerpo plausible de la cuarentena del nombre; el real está «a confirmar» en el handoff de Meta.
+    private const string QuarantineError =
+        """{"error":{"message":"(#100) Invalid parameter","type":"OAuthException","code":100,"error_user_title":"Message template language is being deleted","error_user_msg":"New es content can't be added while the existing es content is being deleted. Try again in 4 weeks or create a new message template.","fbtrace_id":"t"}}""";
+
     private static string ExternalQuotation(string body = QuotationBody, string headerFormat = "DOCUMENT") =>
         $$$"""
         {"data":[{"id":"42","name":"qep_cotizacion","language":"es","status":"APPROVED","category":"UTILITY","parameter_format":"NAMED",
@@ -191,6 +195,32 @@ public sealed class QuotationTemplateProvisioningApiTests
         Assert.Single(calls, call => call.Uri!.AbsolutePath == "/v24.0/100200300/uploads");
         Assert.Single(calls, call => call.Uri!.AbsolutePath == "/v24.0/upload:MTph");
         Assert.Equal("PENDING|771|qep_cotizacion_v2", await QuotationRowAsync(f));
+    }
+
+    /// <summary>Revisión final F3: el admin borra la <c>Quotation</c> desde la pantalla (§4.5 lo permite), la fila desaparece y el siguiente
+    /// aprovisionamiento vuelve a calcular la versión 1. Meta tiene ese nombre en cuarentena: su error se reconoce como <c>name_taken</c> y se
+    /// crea la versión siguiente en vez de quedar en <c>rejected_by_meta</c> para siempre.</summary>
+    [Fact]
+    public async Task AfterDeletingTheQuotationFromTheScreenTheQuarantinedNameMovesToTheNextVersion()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, create: attempt => attempt == 2
+            ? FakeMetaGraphHandler.Json(HttpStatusCode.BadRequest, QuarantineError)
+            : null);
+        using var host = f.Factory;
+        var first = await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f));
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        var firstId = (await first.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("id").GetGuid();
+        var deleted = await SendAsync(f.Admin, HttpMethod.Delete, $"{TemplateManagementUrl(f.Tenant.TenantId, f.ConnectionId)}/templates/{firstId}");
+        Assert.True(deleted.IsSuccessStatusCode, await deleted.Content.ReadAsStringAsync(Ct));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_templates WHERE tenant_id = @t", ("t", f.Tenant.TenantId)));
+
+        var response = await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal("qep_cotizacion_v2", (await response.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("name").GetString());
+        Assert.Equal(["qep_cotizacion", "qep_cotizacion", "qep_cotizacion_v2"], MetaCalls(f).Where(IsCreate).Select(CreatedName));
+        Assert.Equal("PENDING|772|qep_cotizacion_v2", await QuotationRowAsync(f));
     }
 
     [Fact]
