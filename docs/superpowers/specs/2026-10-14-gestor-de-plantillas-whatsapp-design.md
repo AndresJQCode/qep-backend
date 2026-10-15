@@ -71,9 +71,9 @@ lo contrasta con la documentación vigente; lo que sólo se puede ver con tráfi
 | Supuesto | Dónde se usa | Si resulta distinto |
 | --- | --- | --- |
 | `POST /{wabaId}/message_templates` acepta `parameter_format: NAMED` con `body_text_named_params` en el `example` del `BODY`. | Crear libres (§4.4) | Se cambia el constructor de componentes; el contrato HTTP no cambia. |
-| La Resumable Upload (`POST /{appId}/uploads` y `POST /{uploadId}` con `file_offset: 0`) funciona con el **token de negocio de la conexión**, no sólo con un token de usuario. | Aprovisionar la de cotización (§4.5) | Sale `messaging.template.upload_failed` en el primer intento real. Alternativa: token de la app (`appId|appSecret`), que exige que Messaging conozca el `AppSecret`, cosa que ya hace para la firma del webhook. |
+| La Resumable Upload (`POST /{appId}/uploads` y `POST /{uploadId}` con `file_offset: 0`) funciona con el **token de negocio de la conexión**, no sólo con un token de usuario. | Aprovisionar la de cotización (§4.5) | Sale `messaging.template.upload_failed` en el primer intento real. Alternativa: token de la app (`appId|appSecret`), que exige que Messaging conozca el `AppSecret`, cosa que ya hace para la firma del webhook. *(Corregido al implementar, 2026-10-15: ninguna falla de la subida —ni un 401, ni un `code` 190 o de permiso— reporta la conexión; `/{AppId}/uploads` es de la app, no de la WABA, y pausar la conexión tumbaría la bandeja y las campañas. Es `upload_failed` con un warning.)* |
 | El `header_handle` devuelto no vence antes de la llamada de creación que sigue inmediatamente. | §4.5 | Se sube y se crea en el mismo handler; no se guarda el handle. |
-| `DELETE /{wabaId}/message_templates?hsm_id=&name=` borra sólo ese idioma; un nombre borrado queda bloqueado un tiempo antes de poder reutilizarse. | Borrar (§4.4), reintentar la de cotización (§4.5) | *(Corregido al implementar, 2026-10-15.)* La cuarentena se resuelve con el nombre versionado: el reintento de la de cotización no recrea `qep_cotizacion`, crea `qep_cotizacion_v2`, `_v3`… y salta de versión si Meta dice que el nombre ya existe (§4.5). En una libre, el 422 `name_taken` no distingue cuarentena de nombre en uso; el cuerpo exacto que Meta devuelve para un nombre en cuarentena queda a confirmar en producción (handoff). |
+| `DELETE /{wabaId}/message_templates?hsm_id=&name=` borra sólo ese idioma; un nombre borrado queda bloqueado un tiempo antes de poder reutilizarse. | Borrar (§4.4), reintentar la de cotización (§4.5) | *(Corregido al implementar, 2026-10-15.)* La cuarentena se resuelve con el nombre versionado: el reintento de la de cotización no recrea `qep_cotizacion`, crea `qep_cotizacion_v2`, `_v3`… y salta de versión si Meta dice que el nombre ya existe (§4.5). En una libre, el 422 `name_taken` no distingue cuarentena de nombre en uso; el cuerpo exacto que Meta devuelve para un nombre en cuarentena queda a confirmar en producción (handoff). *(Corregido al implementar, 2026-10-15: `TemplateGraphErrors` también trata como `name_taken` un error que diga «being deleted», o «deleted» junto a «language» o «template». Sin eso, borrar la `Quotation` desde la pantalla y aprovisionar otra vez recalcula `qep_cotizacion` y queda en `rejected_by_meta` para siempre; la recuperación depende de reconocer ese cuerpo.)* |
 | El valor de `message_template_status_update` trae `event`, `message_template_id`, `message_template_name`, `message_template_language` y `reason`, y el `entry.id` es el WABA. | Webhook (§4.4) | El parser es tolerante: lo que falte deja la fila sin tocar y un log. |
 | `error_user_title` y `error_user_msg` de Graph distinguen «nombre ya existe» y «tope de plantillas» del resto de los 400. **`error_subcode` no sirve:** Meta lo declaró obsoleto y no lo devuelve desde la v16. | Traducción de errores (§4.8) | Caen en `rejected_by_meta` con el `error_user_msg` de Meta. La pantalla sigue siendo útil. |
 | `GET /{wabaId}/message_templates` acepta `id` y `rejected_reason` en `fields`. | Refrescar (§4.4) | Sin `rejected_reason` el espejo sólo sabría el motivo por el webhook. |
@@ -164,7 +164,9 @@ inserta la fila `Pending` con el `id` que Meta devolvió y la categoría que Met
 **`DeleteTemplateCommand`**: busca la fila por `templateId` en esa conexión (`not_found`); pregunta a
 `IMessageTemplateRepository.IsReferencedByActiveCampaignAsync(tenant, connection, name, language)`
 (`in_use_by_campaign`); llama `DeleteTemplateAsync(source, metaTemplateId, name)`; con éxito **o con
-«no existe»** de Meta, elimina la fila, audita `messaging.template.deleted` y guarda.
+«no existe»** de Meta, elimina la fila, audita `messaging.template.deleted` y guarda. Un rechazo de Meta es
+`rejected_by_meta` con su propio texto, «WhatsApp no pudo borrar la plantilla: …», y nunca `name_taken` ni
+`limit_reached`, que son de la creación (`TemplateGraphOperation.Delete`). *(Corregido al implementar, 2026-10-15.)*
 
 **`SyncTemplatesCommand`** y el refresco implícito usan el mismo servicio de Application,
 `TemplateMirrorSync.RunAsync(tenant, connection)`: lista todo en Meta (`ListTemplatesAsync`, con `id` y
@@ -175,6 +177,12 @@ transacción por conexión. Las filas `Quotation` conservan su `kind` al sincron
 conexión y son `messaging.connection_unavailable`; **cualquier otra** falla es `messaging.templates.unavailable`:
 un 400 del listado no es un nombre repetido ni un rechazo, así que el listado no pasa por la traducción de
 crear y borrar. *(Corregido al implementar, 2026-10-15.)*
+
+Dos resguardos del borrado *(corregido al implementar, 2026-10-15)*: si el listado volvió incompleto
+(`TemplateListing.Complete = false`: el tope de 10 páginas o un `paging.next` que no se sigue), hace upsert de lo
+que vino pero **no elimina** nada —tampoco la `Quotation`— y deja un warning. Y toma `listedAt = clock.UtcNow`
+**antes** de llamar a Meta: una fila con `CreatedAt` o `UpdatedAt` posterior (creada desde QEP o actualizada por el
+webhook mientras listaba) no se elimina ni se actualiza con `SyncFrom`.
 
 **Catálogo de envío.** `IMessageTemplates.ListAsync(tenant, connection, refresh)` conserva su firma y su
 contrato (`messaging.connection_unavailable`, `messaging.templates.unavailable`). Su implementación nueva,
@@ -215,7 +223,8 @@ conexión nunca sincronizada y Meta caído, cada destinatario de una campaña es
   IsApprovedAsync`. Con el reintento versionado el nombre vigente es el de la fila, no una constante, y el
   sender lo necesita.)*
 - `IWhatsAppCloudClient` gana `CreateTemplateAsync`, `DeleteTemplateAsync` y `UploadTemplateExampleAsync`
-  (§4.4). `ListTemplatesAsync` no cambia de firma; cambia los `fields`.
+  (§4.4). `ListTemplatesAsync` cambia los `fields` y devuelve `TemplateListing(Templates, Complete)` en vez de la
+  lista sola, para que la sincronización sepa si puede borrar. *(Corregido al implementar, 2026-10-15.)*
 
 **Webhook.** `WebhookPayloadParser` gana `TemplateStatusChange(WabaId, MetaTemplateId, Name, Language,
 Event, Reason)` para `field = "message_template_status_update"`. `WebhookDeliveryProcessor` lo procesa como
@@ -224,7 +233,12 @@ da las conexiones de esa cuenta; por cada una, busca la fila por `meta_template_
 `ApplyStatus(event, reason, now)`. Sin fila: log a nivel information con tenant,
 conexión y `meta_template_id`, y nada más —el refresco la va a traer. Un `event` que no está en
 `MessageTemplateStatuses` se guarda igual, como texto: la pantalla lo muestra crudo antes de que
-inventemos qué significa.
+inventemos qué significa. Dos eventos que Meta documenta no son estados y pasan por
+`MessageTemplateStatuses.FromWebhookEvent`: `REINSTATED` («ya no está marcada ni deshabilitada») deja la fila en
+`APPROVED`, y `FLAGGED` («en riesgo de deshabilitarse», pero sigue enviable) no cambia ni el estado ni el motivo:
+sólo un log a nivel information con tenant, conexión y `meta_template_id`. Guardarlos tal cual sacaría una
+plantilla enviable del catálogo. El refresco no pasa por ahí: trae el `status` real. *(Corregido al implementar,
+2026-10-15.)*
 
 **DTOs** (BFF; el motivo de cada forma, en el DTO):
 
@@ -270,8 +284,12 @@ Todo en `Modules.Messaging.Infrastructure/Meta`, en `WhatsAppCloudClient`:
   práctica trae la firma: `upload:…?sig=…`. El id se valida contra esa forma y va sin escapar; la `?sig=` viaja
   como query del segundo request, no escapada dentro de la ruta.
   `POST {ver}/{uploadId}` con header `file_offset: 0`, `Authorization: OAuth {token}` y el cuerpo binario
-  devuelve `{ h }`. Timeout de 30 s; el PDF pesa unos KB. Un token rechazado sigue el camino de §4.8; cualquier
-  otro fallo → `upload_failed`. *(Corregido al implementar, 2026-10-15.)*
+  devuelve `{ h }`. Timeout de 30 s; el PDF pesa unos KB. **Cualquier** fallo —también un 401, un `code` 190 o
+  uno de permiso— es `upload_failed` con un warning (tenant, conexión, status, `code` y motivo, nunca el token), sin
+  reportar la conexión: es un endpoint de la app, no de la WABA. *(Corregido al implementar, 2026-10-15.)*
+- **`ListTemplatesAsync`** dice si el listado quedó completo (`TemplateListing.Complete`): `false` cuando corta en
+  `MaxTemplatePages` o ante un `paging.next` que no sigue (https y el host de Graph). *(Corregido al implementar,
+  2026-10-15.)*
 - `MessagingMetaOptions` gana `AppId` (la sección `Meta:App` ya lo tiene; Integrations lo valida).
 
 **Traducción de errores de Graph** (§4.8) en una clase propia, `TemplateGraphErrors`, que discrimina por
@@ -342,9 +360,11 @@ borrada. Decisión del owner: el reintento crea la versión siguiente, y crea an
 4. El nombre a crear es la versión siguiente a la mayor `VersionOf(name)` entre **todas** las filas del espejo
    de esa conexión en `es` (cualquier `kind`); sin ninguna, la 1 (`qep_cotizacion`). Un reintento tras
    `qep_cotizacion` crea `qep_cotizacion_v2`.
-5. Sube el PDF de ejemplo (`UploadTemplateExampleAsync`) → `handle`.
+5. Sube el PDF de ejemplo (`UploadTemplateExampleAsync`) → `handle`. Toda falla es `upload_failed`, sin reportar
+   la conexión *(corregido al implementar, 2026-10-15)*.
 6. `CreateTemplateAsync` con los componentes de la definición, el nombre y el `handle`. Si Meta responde que el
-   nombre ya existe (`name_taken`; por ejemplo, uno en cuarentena que el espejo ya no conoce), prueba la versión
+   nombre ya existe (`name_taken`; por ejemplo, uno en cuarentena que el espejo ya no conoce, también el que
+   dice «being deleted» *(corregido al implementar, 2026-10-15)*), prueba la versión
    siguiente **con el mismo handle**, hasta 5 creaciones en total; agotadas, sube el `name_taken`. Cualquier
    otra falla sube como en §4.8.
 7. Con la nueva creada, y sólo si había una anterior, la borra en Meta (`DeleteTemplateAsync(source,
@@ -454,13 +474,14 @@ copias de reglas que Meta cambia sin avisar.
 | `(name, language)` ya existe, en el espejo o en Meta | `messaging.template.name_taken` (sin mapa `errors`; el frontend lo pinta en `name`, como hace con `quick_reply.shortcut_taken`) | 422 |
 | Tope de plantillas del WABA | `messaging.template.limit_reached` | 422 |
 | Cualquier otro rechazo de Graph al crear | `messaging.template.rejected_by_meta`, con el `error_user_msg` de Meta en el detalle: «WhatsApp no aceptó la plantilla: …» | 422 |
-| Falló la subida del PDF de ejemplo | `messaging.template.upload_failed` | 422 (reintentar es seguro, como `media.upload_failed`) |
+| Un rechazo de Graph al borrar *(corregido al implementar, 2026-10-15)* | `messaging.template.rejected_by_meta`, con «WhatsApp no pudo borrar la plantilla: …» | 422 |
+| Falló la subida del PDF de ejemplo, por cualquier motivo, también 401, 403, `code` 190 o de permiso *(corregido al implementar, 2026-10-15)* | `messaging.template.upload_failed`, sin reportar la conexión | 422 (reintentar es seguro, como `media.upload_failed`) |
 | Ya hay plantilla de cotización viva, u otro aprovisionamiento simultáneo de la misma conexión ganó (`UX_message_templates_quotation`) | `messaging.template.quotation_exists` | 422 |
 | Existe `qep_cotizacion` externa con otro cuerpo | `messaging.template.quotation_conflict` | 422 |
 | Campaña `Scheduled` o `Sending` la usa | `messaging.template.in_use_by_campaign` | 422 |
 | `templateId` no es de esa conexión | `messaging.template.not_found` | 404 (uuid local; tenant y conexión ya se revalidaron, no filtra nada) |
 | Conexión ajena, inactiva o sin `wabaId` | `messaging.connection_unavailable` | 422, nunca 404 |
-| Token vencido o permiso faltante: HTTP 401 o 403, o `code` 190 (token), 10 o 200–299 (permisos de Graph) *(corregido al implementar, 2026-10-15)* | `messaging.connection_unavailable` tras `ReportRejectedAsync(token_expired)` | 422 |
+| Token vencido o permiso faltante al listar, crear o borrar en la WABA (no en la subida): HTTP 401 o 403, o `code` 190 (token), 10 o 200–299 (permisos de Graph) *(corregido al implementar, 2026-10-15)* | `messaging.connection_unavailable` tras `ReportRejectedAsync(token_expired)` | 422 |
 | Meta no contesta o 5xx; o el listado del refresco falla por cualquier otra cosa | `messaging.templates.unavailable` | 422 (el que ya existe; reintentar es seguro) |
 | Dos refrescos explícitos de la misma conexión a la vez *(agregado al implementar, 2026-10-15)* | `concurrency.conflict` (el llenado implícito lo atrapa, §4.3) | 412 |
 | Sin permiso o módulo apagado | `authorization.denied` / `tenancy.module_not_enabled` | 403 |
@@ -566,8 +587,8 @@ destinatario de una campaña sobre una conexión nunca sincronizada espera su pr
 - Un admin puede borrar la plantilla de cotización y dejar su conexión sin poder enviar cotizaciones por
   Meta; la pantalla avisa y el aprovisionamiento la vuelve a crear.
 - Versiones huérfanas en el WABA *(agregado al implementar, 2026-10-15)*: el perdedor de dos aprovisionamientos
-  simultáneos, o un reintento cuyo borrado de la versión vieja Meta rechaza, dejan una versión en Meta sin fila
-  `Quotation`. El siguiente refresco la trae como `External` y el admin la borra desde la pantalla.
+  simultáneos, o un reintento cuyo borrado de la versión vieja falla por cualquier motivo (por el token queda
+  huérfana la nueva; por otra cosa, la vieja), dejan una versión en Meta sin fila `Quotation`. El siguiente refresco la trae como `External` y el admin la borra desde la pantalla.
 
 ## 8. Fuera de alcance
 

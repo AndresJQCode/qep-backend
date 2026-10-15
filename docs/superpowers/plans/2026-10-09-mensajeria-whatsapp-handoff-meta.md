@@ -83,21 +83,27 @@ backend; sin estos pasos el flujo de conexión no abre y el webhook no recibe.
 
 - **Token de la Resumable Upload.** El aprovisionamiento de la plantilla de cotización sube el PDF de ejemplo a
   `/{AppId}/uploads` con el **token de negocio de la conexión**. La documentación lo ejemplifica con un token de
-  usuario. Si el primer aprovisionamiento real responde `messaging.template.upload_failed`, mira el log de
-  `template-upload-start` (status y `code`) antes de cambiar nada; la alternativa es un token de la app.
+  usuario. Si el primer aprovisionamiento real responde `messaging.template.upload_failed`, mira el warning
+  «Meta did not accept the example PDF of the quotation template…» (status HTTP, `code` de Graph y motivo) y el log de
+  `template-upload-start` antes de cambiar nada; la alternativa es un token de la app. Una falla de la subida nunca
+  pausa la conexión, ni siquiera con 401 o `code` 190: es un endpoint de la app, no de la WABA.
 - **Formato del id de la subida.** QEP acepta `upload:…` con o sin firma (`upload:…?sig=…`), que es la forma que se
   vio en la práctica, y manda la `?sig=` como query del segundo request (`template-upload-data`). Un id con otra forma
   corta la subida con `upload_failed` aunque `template-upload-start` haya respondido 200 (falla interna
   `invalid_upload_id`). Confirma en el primer aprovisionamiento real que el segundo request responde con
   `{ "h": … }`.
-- **Cuerpo exacto del error de nombre en cuarentena.** Meta bloquea un tiempo el nombre de una plantilla borrada. QEP
-  trata como «el nombre ya existe» (`name_taken`) un 400 cuyo `error_user_title` o `error_user_msg` diga
-  «already exist» —el que usan las pruebas es `{"error":{"message":"(#100) Invalid parameter","code":100,
-  "error_user_title":"Message Template Name Already Exists",…}}`— y con eso el reintento de la plantilla de cotización
-  salta a la versión siguiente. **No se ha visto el cuerpo real de un nombre en cuarentena.** La primera vez que
-  aparezca (un reintento, o una libre recreada con el nombre de una borrada), anota el cuerpo completo: si no dice
-  «already exist», cae en `rejected_by_meta` con el `error_user_msg` de Meta, el reintento no salta de versión y
-  hay que ajustar `TemplateGraphErrors`.
+- **Cuerpo exacto del error de nombre en cuarentena (a confirmar).** Meta bloquea un tiempo el nombre de una plantilla
+  borrada. QEP trata como «el nombre ya existe» (`name_taken`) un 400 cuyo `error_user_title` o `error_user_msg` diga
+  «already exist», «being deleted», o «deleted» junto a «language» o «template» —las pruebas usan
+  `"error_user_title":"Message Template Name Already Exists"` y `"error_user_title":"Message template language is
+  being deleted"`, con `"error_user_msg":"New es content can't be added while the existing es content is being
+  deleted. Try again in 4 weeks or create a new message template."`— y con eso el aprovisionamiento de la plantilla
+  de cotización salta a la versión siguiente. Importa sobre todo cuando el admin borró la `Quotation` desde la
+  pantalla: la fila ya no está y el siguiente aprovisionamiento recalcula `qep_cotizacion`. **No se ha visto el
+  cuerpo real de un nombre en cuarentena.** La primera vez que aparezca (un reintento, un aprovisionamiento después
+  de borrar, o una libre recreada con el nombre de una borrada), anota el cuerpo completo: si no coincide con esa
+  regla, cae en `rejected_by_meta` con el `error_user_msg` de Meta, cada intento recalcula la misma versión y hay
+  que ajustar `TemplateGraphErrors`.
 - **Textos de `error_user_title`.** Igual para el tope de plantillas («limit»). Si un rechazo real llega con otro
   título, cae en `rejected_by_meta`; anota el título para ajustar `TemplateGraphErrors`.
 - **`rejected_reason` en `fields`.** El refresco pide `id,name,language,status,category,components,parameter_format,

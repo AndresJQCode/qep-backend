@@ -2078,7 +2078,12 @@ bajo `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-m
 **El espejo.** Vive en `messaging.message_templates` y lo alimentan la creación, el webhook
 `message_template_status_update` (lo procesa `WebhookDeliveryProcessor`, sin auditoría) y el refresco. El catálogo de
 envío (`GET /connections/{id}/templates`) lee del espejo las `APPROVED`; ya no hay caché de cinco minutos. Los
-estados y motivos viajan con el nombre que Meta les da; el diccionario en español lo tiene el frontend.
+estados y motivos viajan con el nombre que Meta les da; el diccionario en español lo tiene el frontend. Dos eventos
+del webhook no son estados: `REINSTATED` deja la fila en `APPROVED`, y `FLAGGED` (feedback negativo, pero la
+plantilla sigue enviable) no toca la fila y sólo deja un log (`MessageTemplateStatuses.FromWebhookEvent`); un evento
+desconocido se guarda crudo. El refresco no borra nada si el listado de Meta volvió incompleto (más de 10 páginas o un
+`paging.next` que no se sigue: queda un warning), y no borra ni pisa una fila creada o actualizada después de empezar
+a listar.
 
 **La plantilla de cotización.** Se llama `qep_cotizacion` y su nombre va por versiones: un reintento sobre una
 rechazada (o pausada, o deshabilitada) no recrea el mismo nombre —Meta lo bloquea un tiempo después de borrarlo—, sino
@@ -2086,12 +2091,18 @@ que crea `qep_cotizacion_v2`, `_v3`… **antes** de borrar la vieja, y si Meta d
 versión siguiente con el mismo PDF, hasta cinco creaciones. El prefijo `qep_cotizacion_` está reservado: ninguna libre
 lo puede usar. Hay a lo sumo una fila `Quotation` por conexión (`UX_message_templates_quotation`); el nombre vigente es
 el de esa fila, no una constante. El PDF de ejemplo lo genera el backend (`QuotationTemplateDefinition.ExamplePdf()`).
+Si el admin borra la `Quotation` desde la pantalla, la fila desaparece y el siguiente aprovisionamiento vuelve a
+calcular `qep_cotizacion`, que Meta tiene en cuarentena: **la recuperación depende de reconocer ese error** como
+`name_taken`. `TemplateGraphErrors` lo hace cuando `error_user_title` o `error_user_msg` dicen «already exist»,
+«being deleted», o «deleted» junto a «language» o «template»; el cuerpo real está a confirmar (handoff de Meta). Si
+no lo reconoce, sale `rejected_by_meta` y cada intento recalcula la versión 1.
 
 **Versiones huérfanas.** Tres casos dejan una plantilla en Meta sin su fila, y el siguiente refresco la trae como
 `External` para que el admin la borre desde la pantalla: el que pierde dos aprovisionamientos simultáneos (recibe
-`quotation_exists`), un reintento cuyo borrado de la versión vieja Meta rechaza por el token, y un espejo atrasado,
-en el que una `qep_cotizacion` creada a mano y todavía no sincronizada hace que el reintento cree `_v2` en vez de
-adoptarla. `POST /sync` antes de aprovisionar evita el último.
+`quotation_exists`), un reintento cuyo borrado de la versión vieja falla por **cualquier** motivo (por el token no
+se escribe nada y queda huérfana la nueva; por otra cosa la fila vieja se quita igual y queda huérfana la vieja, con
+un warning), y un espejo atrasado, en el que una `qep_cotizacion` creada a mano y todavía no sincronizada hace que el
+reintento cree `_v2` en vez de adoptarla. `POST /sync` antes de aprovisionar evita el último.
 
 **La señal para Quotations.** `IQuotationTemplateReadiness.FindApprovedAsync(tenantId, connectionId)` devuelve el
 nombre y el idioma de la `Quotation` en `APPROVED` de esa conexión, o `null`. Es lo que el consumidor Quotations
@@ -2100,7 +2111,10 @@ nombre y el idioma de la `Quotation` en `APPROVED` de esa conexión, o `null`. E
 **La Resumable Upload** del PDF usa `Meta:App:AppId` (ya en el ConfigMap) y el token de la conexión. Meta devuelve el
 id con firma (`upload:…?sig=…`) y la firma viaja como query del segundo request. **A confirmar en producción:** que ese
 token sirva para `/{AppId}/uploads`; si no, el aprovisionamiento falla con `messaging.template.upload_failed` y hay
-que pasar a un token de la app (handoff de Meta, «Notas a confirmar en producción»).
+que pasar a un token de la app (handoff de Meta, «Notas a confirmar en producción»). Ninguna falla de la subida —ni
+un 401, ni un `code` 190 o de permiso— reporta la conexión: `/{AppId}/uploads` es un endpoint de la app, no de la
+WABA, así que la bandeja y las campañas siguen andando. Toda falla es `upload_failed` con un warning (tenant,
+conexión, status, `code` de Graph y motivo, nunca el token).
 
 **Despliegue.**
 
@@ -2116,6 +2130,10 @@ que pasar a un token de la app (handoff de Meta, «Notas a confirmar en producci
    la vez no fallan: el que pierde lee lo que llenó el otro (un `POST /sync` explícito que pierde sí da 412). El
    catálogo viejo hacía *single-flight* y recordaba 30 s una falla de Meta, y eso ya no existe: con Meta caído, cada
    destinatario de una campaña sobre una conexión nunca sincronizada espera su propio timeout una vez.
+5. Avisar que las plantillas creadas en la consola de Meta **ya no aparecen solas a los 5 minutos**: entran con
+   *Actualizar* (`GET /templates?refresh=true`) o con el `POST …/sync` del admin. El webhook
+   `message_template_status_update` sólo cambia el estado de las que el espejo ya tiene; una plantilla que no tiene
+   fila deja un log y la trae el siguiente refresco.
 
 ### Embudo de ventas (Pipeline)
 
