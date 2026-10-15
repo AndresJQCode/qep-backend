@@ -81,6 +81,44 @@ public sealed class TemplateGraphErrorsTests
         Assert.Equal("WhatsApp no aceptó la plantilla: http_400", exception.Message);
     }
 
+    /// <summary>Revisión final F6: un borrado que Meta rechaza no es «WhatsApp no aceptó la plantilla». Mismo código
+    /// (<c>rejected_by_meta</c>), su propio texto; y nada de <c>name_taken</c> ni <c>limit_reached</c>, que son de la creación.</summary>
+    [Theory]
+    [InlineData("Invalid parameter", "The template is locked by an active review.", "WhatsApp no pudo borrar la plantilla: The template is locked by an active review.")]
+    [InlineData("Template is being deleted", null, "WhatsApp no pudo borrar la plantilla: Template is being deleted")]
+    [InlineData("Template Limit Exceeded", "x", "WhatsApp no pudo borrar la plantilla: x")]
+    [InlineData(null, null, "WhatsApp no pudo borrar la plantilla: http_400")]
+    public void ADeletionRejectionHasItsOwnText(string? title, string? message, string expected)
+    {
+        var exception = TemplateGraphErrors.Translate(new MessagingGraphFailure(400, 100, "http_400", title, message), TemplateGraphOperation.Delete);
+        Assert.Equal((MessagingErrorCodes.TemplateRejectedByMeta, expected), (exception.Code, exception.Message));
+    }
+
+    [Theory]
+    [InlineData(0, null, MessagingErrorCodes.TemplatesUnavailable)]
+    [InlineData(503, null, MessagingErrorCodes.TemplatesUnavailable)]
+    [InlineData(401, 190, MessagingErrorCodes.ConnectionUnavailable)]
+    [InlineData(400, 200, MessagingErrorCodes.ConnectionUnavailable)]
+    public void ADeletionKeepsTheUnavailableAndCredentialCodes(int status, int? code, string expected) =>
+        Assert.Equal(expected, TemplateGraphErrors.Translate(new MessagingGraphFailure(status, code, $"http_{status}"), TemplateGraphOperation.Delete).Code);
+
+    [Fact]
+    public async Task ADeletionFailureReportsTheTokenAndUsesTheDeletionText()
+    {
+        var connections = new FakeConnectionDirectory();
+
+        var rejected = await TemplateGraphErrors.FailAsync(
+            connections, Guid.CreateVersion7(), Guid.CreateVersion7(), new MessagingGraphFailure(400, 100, "http_400", "Invalid parameter", "Locked."),
+            TemplateGraphOperation.Delete, TestContext.Current.CancellationToken);
+        var token = await TemplateGraphErrors.FailAsync(
+            connections, Guid.CreateVersion7(), Guid.CreateVersion7(), new MessagingGraphFailure(401, 190, "http_401"), TemplateGraphOperation.Delete,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("WhatsApp no pudo borrar la plantilla: Locked.", rejected.Message);
+        Assert.Equal(MessagingErrorCodes.ConnectionUnavailable, token.Code);
+        Assert.Single(connections.Reported);
+    }
+
     [Fact]
     public async Task ATokenRejectionReportsTheConnectionBeforeTranslating()
     {

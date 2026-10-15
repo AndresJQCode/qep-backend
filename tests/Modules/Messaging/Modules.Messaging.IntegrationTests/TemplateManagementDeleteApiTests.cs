@@ -23,7 +23,7 @@ public sealed class TemplateManagementDeleteApiTests
         ]}
         """;
 
-    private static async Task<Fixture> ArrangeAsync(TestDatabase database, bool metaSaysGone = false)
+    private static async Task<Fixture> ArrangeAsync(TestDatabase database, bool metaSaysGone = false, Func<HttpResponseMessage>? deleteAnswer = null)
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString);
@@ -32,6 +32,7 @@ public sealed class TemplateManagementDeleteApiTests
         var connectionId = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", "111", "222");
         factory.MetaHandler.RespondWith("/222/message_templates", request => request.Method switch
         {
+            var method when method == HttpMethod.Delete && deleteAnswer is not null => deleteAnswer(),
             var method when method == HttpMethod.Delete => metaSaysGone
                 ? FakeMetaGraphHandler.Json(HttpStatusCode.BadRequest, """{"error":{"message":"x","type":"OAuthException","code":100,"error_user_title":"Invalid Template","error_user_msg":"Message template does not exist in the given language.","fbtrace_id":"t"}}""")
                 : FakeMetaGraphHandler.Json(HttpStatusCode.OK, """{"success":true}"""),
@@ -79,6 +80,27 @@ public sealed class TemplateManagementDeleteApiTests
 
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_templates WHERE name = 'aviso' AND tenant_id = @t", ("t", f.Tenant.TenantId)));
+    }
+
+    /// <summary>Revisión final F6: un borrado que Meta rechaza es <c>rejected_by_meta</c> con el texto de un borrado, no el de la creación; la
+    /// fila queda y no se audita.</summary>
+    [Fact]
+    public async Task AMetaRejectionOfTheDeletionIs422WithTheDeletionTextAndKeepsTheRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, deleteAnswer: () => FakeMetaGraphHandler.Json(HttpStatusCode.BadRequest,
+            """{"error":{"message":"(#100) Invalid parameter","type":"OAuthException","code":100,"error_user_title":"Invalid parameter","error_user_msg":"The template is locked by an active review.","fbtrace_id":"t"}}"""));
+        using var host = f.Factory;
+        var ids = await IdsByNameAsync(f);
+
+        var response = await SendAsync(f.Admin, HttpMethod.Delete, TemplateUrl(f, ids["promo"]));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("messaging.template.rejected_by_meta", (await ProblemAsync(response)).Code);
+        var body = await response.Content.ReadAsStringAsync(Ct);
+        Assert.Contains("WhatsApp no pudo borrar la plantilla: The template is locked by an active review.", body, StringComparison.Ordinal);
+        Assert.Equal(2L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_templates WHERE tenant_id = @t", ("t", f.Tenant.TenantId)));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM audit.entries WHERE action = 'messaging.template.deleted'"));
     }
 
     [Fact]

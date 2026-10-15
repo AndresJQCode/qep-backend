@@ -381,7 +381,8 @@ public sealed class DeleteTemplateHandler(
         if (!deleted.Succeeded)
         {
             throw await TemplateGraphErrors.FailAsync(
-                connections, command.TenantId, command.ConnectionId, deleted.Failure ?? new MessagingGraphFailure(0, null, "unreachable"), cancellationToken);
+                connections, command.TenantId, command.ConnectionId, deleted.Failure ?? new MessagingGraphFailure(0, null, "unreachable"),
+                TemplateGraphOperation.Delete, cancellationToken);
         }
 
         repository.Remove(template);
