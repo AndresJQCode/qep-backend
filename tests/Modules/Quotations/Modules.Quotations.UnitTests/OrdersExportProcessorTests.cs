@@ -465,15 +465,30 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(string.Empty, Assert.Single(writer.Rows)[6].Text);
     }
 
+    // "Observaciones" es Order.Notes: la que se escribe al convertir o al editar el pedido, y la que
+    // la pantalla del pedido rotula igual. Hasta el hotfix 2026-10-15 salía Quotation.Notes, y un
+    // pedido con observaciones pero sin nota en la cotización (POB145) exportaba la celda vacía.
     [Fact]
-    public async Task ObservacionesIsTheQuotationsNotes()
+    public async Task ObservacionesIsTheOrdersNotes()
     {
         var writer = new RecordingExportWorkbookWriter();
 
-        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", notes: "Frágil")), writer)
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", orderNotes: "Frágil")), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal("Frágil", Assert.Single(writer.Rows)[16].Text);
+    }
+
+    [Fact]
+    public async Task ObservacionesIgnoresTheQuotationsNotes()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", quotationNotes: "Nota de la cotización")), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(string.Empty, Assert.Single(writer.Rows)[16].Text);
     }
 
     [Fact]
@@ -1866,17 +1881,18 @@ public sealed class OrdersExportProcessorTests
         QuotationParties? parties = null,
         QuotationBillingAccount? billingAccount = null,
         IReadOnlyList<(Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage)>? items = null,
-        string? notes = null,
+        string? quotationNotes = null,
         IReadOnlyList<(decimal Amount, string? PublicKey)>? proofs = null,
         bool customerWithRetention = false,
         // La fecha de pago de cada comprobante, por índice contra `proofs`; null o ausente deja el
         // comprobante sin fecha, como uno anterior al campo (2026-10-08).
-        IReadOnlyList<DateOnly?>? paidOn = null)
+        IReadOnlyList<DateOnly?>? paidOn = null,
+        string? orderNotes = null)
     {
         var occurredAt = at ?? Now;
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 10, 30),
-            paymentMethod, notes, parties ?? QuotationParties.Empty, billingAccount,
+            paymentMethod, quotationNotes, parties ?? QuotationParties.Empty, billingAccount,
             "COP",
             customerWithRetention, customerVatSurplus: false, AdvisorId, occurredAt);
 
@@ -1893,7 +1909,7 @@ public sealed class OrdersExportProcessorTests
             .ToArray();
         var order = Order.Create(
             OrderId.New(), TenantId, orderNumber, quotation.Id, OrderPaymentStatus.PaymentPending,
-            notes: null, AdvisorId, proofInputs, occurredAt);
+            orderNotes, AdvisorId, proofInputs, occurredAt);
         return new OrderWithQuotation(order, quotation);
     }
 

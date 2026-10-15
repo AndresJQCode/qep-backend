@@ -303,7 +303,10 @@ public sealed class OrdersExportProcessor(
         var documentoIdentidad = BilledIdentificationFor(quotation, billingParty, customer);
         var fechaPedido = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-        var observaciones = quotation.Notes ?? string.Empty;
+        // "Observaciones" (hotfix 2026-10-15): las del pedido —las que se escriben al convertir o al
+        // editarlo, y las que la pantalla del pedido rotula igual—, no la nota de la cotización. Con
+        // Quotation.Notes, un pedido con observaciones y sin nota en la cotización salía vacío.
+        var observaciones = order.Notes ?? string.Empty;
         var codAsesor = AdvisorCodeCell(quotation, context.Advisors);
         // "Transportadora" (spec 2026-10-05): sólo depende de la recogida. Las demás columnas de
         // entrega no cambian con ella (decisión del owner): sin parte de envío caen al cliente.
