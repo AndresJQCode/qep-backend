@@ -281,6 +281,10 @@ internal sealed class RecordingQuotationAuditPublisher : IQuotationAuditPublishe
     public void Publish(
         Guid tenantId, Guid actorId, string action, string resourceId,
         string outcome, DateTimeOffset occurredAt) => Actions.Add(action);
+
+    public void PublishByIntegration(
+        Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+        Actions.Add(action);
 }
 
 internal sealed class NoOpQuotationAuditPublisher : IQuotationAuditPublisher
@@ -288,6 +292,11 @@ internal sealed class NoOpQuotationAuditPublisher : IQuotationAuditPublisher
     public void Publish(
         Guid tenantId, Guid actorId, string action, string resourceId,
         string outcome, DateTimeOffset occurredAt)
+    {
+    }
+
+    public void PublishByIntegration(
+        Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt)
     {
     }
 }

@@ -88,6 +88,10 @@ internal sealed class RecordingExportAuditPublisher : IQuotationAuditPublisher
         Guid tenantId, Guid actorId, string action, string resourceId,
         string outcome, DateTimeOffset occurredAt) =>
         Entries.Add(new RecordedAuditEntry(tenantId, actorId, action, resourceId, outcome));
+
+    public void PublishByIntegration(
+        Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+        Entries.Add(new RecordedAuditEntry(tenantId, Guid.Empty, action, resourceId, outcome));
 }
 
 internal sealed class StubExportJobProcessor(

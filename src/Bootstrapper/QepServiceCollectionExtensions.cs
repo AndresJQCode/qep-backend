@@ -503,6 +503,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<PreviewOrderQuery, OrderDetailDto>,
             PreviewOrderHandler>();
+        // Pedidos desde integraciones (spec 2026-10-15 §5.4): el puerto que el adaptador de Shopify
+        // consume; ningún consumidor referencia Modules.Quotations.Application.
+        services.AddScoped<IExternalOrderWriter, ExternalOrderService>();
         // La homologación de columnas del Excel de pedidos (spec 2026-09-24). A mano, como el
         // resto: un handler que falte compila, mapea su endpoint y falla recién en runtime con 500.
         services.AddScoped<

@@ -120,6 +120,20 @@ public sealed class OrderTests
         Assert.Equal((OrderSource.Shopify, "#1001"), (order.Source, order.ExternalReference));
     }
 
+    // Spec de Shopify (vía spec 2026-10-15 §5.4): el pedido externo entra con el estado de pago que avisa la
+    // plataforma y sin comprobantes, porque el pago vive allá. La regla del comprobante es de los pedidos
+    // que se cobran desde QEP (cotización y manual).
+    [Fact]
+    public void CreateExternalAcceptsAPaidStatusWithoutProofs()
+    {
+        var order = Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, Account, [Line()],
+            OrderPaymentStatus.FullPaymentReceived, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001");
+
+        Assert.Equal(OrderPaymentStatus.FullPaymentReceived, order.PaymentStatus);
+        Assert.Empty(order.PaymentProofs);
+    }
+
     [Fact]
     public void CreateExternalRejectsTheQuotationSource()
     {
@@ -202,6 +216,43 @@ public sealed class OrderTests
         Assert.Equal("A-001", order.Items.Single(item => item.ProductId == frozen).ProductCode);
         Assert.Equal("B-002", order.Items.Single(item => item.ProductId == added).ProductCode);
         // No es una edición: la versión ya la subió la línea que se agregó.
+        Assert.Equal(version, order.Version);
+    }
+
+    // Spec de Shopify §6.3 (vía spec 2026-10-15 §5.4): el estado de pago que avisa la plataforma manda
+    // sólo mientras el pedido no tenga comprobantes propios.
+    [Fact]
+    public void SyncExternalPaymentStatusChangesAnOrderWithoutProofs()
+    {
+        var order = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending, proofs: []);
+        var version = order.Version;
+
+        order.SyncExternalPaymentStatus(OrderPaymentStatus.FullPaymentReceived, Now.AddHours(1));
+
+        Assert.Equal(OrderPaymentStatus.FullPaymentReceived, order.PaymentStatus);
+        Assert.Equal(version + 1, order.Version);
+    }
+
+    [Fact]
+    public void SyncExternalPaymentStatusIsRejectedWhenTheOrderHasProofs()
+    {
+        var order = NewOrder();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.SyncExternalPaymentStatus(OrderPaymentStatus.PaymentPending, Now.AddHours(1)));
+
+        Assert.Equal("order.order.payment_has_proofs", error.Code);
+        Assert.Equal(OrderPaymentStatus.FullPaymentReceived, order.PaymentStatus);
+    }
+
+    [Fact]
+    public void SyncExternalPaymentStatusWithTheSameStatusIsNotAnEdit()
+    {
+        var order = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending, proofs: []);
+        var version = order.Version;
+
+        order.SyncExternalPaymentStatus(OrderPaymentStatus.PaymentPending, Now.AddHours(1));
+
         Assert.Equal(version, order.Version);
     }
 

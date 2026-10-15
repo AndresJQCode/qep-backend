@@ -686,6 +686,28 @@ public sealed class Order
         Version++;
     }
 
+    /// <summary>Spec de Shopify §6.3 (vía spec 2026-10-15 §5.4): el estado de pago que avisa la plataforma,
+    /// sólo si el pedido no tiene comprobantes propios; con comprobantes, el estado lo gobiernan ellos.</summary>
+    public void SyncExternalPaymentStatus(OrderPaymentStatus status, DateTimeOffset occurredAt)
+    {
+        EnsurePending("The payment status can only be synced on a pending order.");
+        if (_paymentProofs.Count > 0)
+        {
+            throw new QuotationsDomainException(
+                "order.order.payment_has_proofs",
+                "The payment status is governed by the attached proofs.");
+        }
+
+        if (PaymentStatus == status)
+        {
+            return;
+        }
+
+        PaymentStatus = status;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
     public void RemovePaymentProof(OrderPaymentProofId proofId, DateTimeOffset occurredAt)
     {
         if (Status != OrderStatus.Pending)
@@ -771,11 +793,12 @@ public sealed class Order
     }
 
     // US-14: "se requiere al menos un comprobante, salvo que el estado del pago sea
-    // 'Payment pending'".
+    // 'Payment pending'". Sólo para los pedidos que se cobran desde QEP: uno de origen externo entra
+    // con el estado de pago que avisa la plataforma y el pago vive allá (spec de Shopify §6.3).
     private void AddProofs(
         IReadOnlyCollection<OrderPaymentProofInput> proofs, MemberId uploadedBy, DateTimeOffset occurredAt)
     {
-        if (proofs.Count == 0 && PaymentStatus != OrderPaymentStatus.PaymentPending)
+        if (proofs.Count == 0 && PaymentStatus != OrderPaymentStatus.PaymentPending && !IsExternal)
         {
             throw new QuotationsDomainException(
                 "order.order.payment_proof_required",
@@ -789,6 +812,8 @@ public sealed class Order
                 occurredAt, proof.PaidOn));
         }
     }
+
+    private bool IsExternal => Source is not OrderSource.Quotation and not OrderSource.Manual;
 
     private void EnsurePending(string message)
     {
