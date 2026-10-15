@@ -129,7 +129,7 @@ public sealed class MessagingPersistenceTests
 
         var inboundFailed = await Assert.ThrowsAsync<PostgresException>(() => InsertMessageAsync(connectionString, conversationId, tenantId, connectionId, direction: 1, kind: 1, status: 4));
         Assert.Equal("CK_messages_inbound_not_failed", inboundFailed.ConstraintName);
-        var unknownKind = await Assert.ThrowsAsync<PostgresException>(() => InsertMessageAsync(connectionString, conversationId, tenantId, connectionId, direction: 1, kind: 14, status: 2));
+        var unknownKind = await Assert.ThrowsAsync<PostgresException>(() => InsertMessageAsync(connectionString, conversationId, tenantId, connectionId, direction: 1, kind: 15, status: 2));
         Assert.Equal("CK_messages_kind", unknownKind.ConstraintName);
     }
 
