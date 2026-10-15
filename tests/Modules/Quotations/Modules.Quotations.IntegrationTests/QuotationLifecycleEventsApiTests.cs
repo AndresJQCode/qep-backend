@@ -31,6 +31,32 @@ public sealed class QuotationLifecycleEventsApiTests
         return order;
     }
 
+    // Spec 2026-10-15 §7: convertir publica el converted de siempre y, además, el order.created del
+    // pedido, con el pedido como correlación y la cotización de origen en el payload.
+    [Fact]
+    public async Task ConvertingPublishesConvertedAndOrderCreatedWithTheOrderAsCorrelation()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+
+        var order = await ConvertAsync(client, factory, tenantId, quotation);
+
+        var messages = await OutboxMessagesAsync(factory, tenantId);
+        var created = Assert.Single(messages, message => message.EventName == "quotations.order.created.v1");
+        Assert.Equal(order.Id.ToString(), created.CorrelationId);
+        using var payload = JsonDocument.Parse(created.PayloadJson);
+        Assert.Equal("Quotation", payload.RootElement.GetProperty("source").GetString());
+        Assert.Equal(quotation.Id, payload.RootElement.GetProperty("quotationId").GetGuid());
+        Assert.Equal(order.OrderNumber, payload.RootElement.GetProperty("orderNumber").GetString());
+        Assert.Equal(clientId, payload.RootElement.GetProperty("clientId").GetGuid());
+        Assert.Single(messages, message => message.EventName == Converted);
+    }
+
     [Fact]
     public async Task SendingWritesTheSentEventWithTheContractPayload()
     {

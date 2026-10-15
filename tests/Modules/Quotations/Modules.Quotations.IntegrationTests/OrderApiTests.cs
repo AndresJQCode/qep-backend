@@ -30,6 +30,39 @@ public sealed class OrderApiTests
     private static string OrderItemsUrl(Guid tenantId, Guid orderId) =>
         $"{OrderByIdUrl(tenantId, orderId)}/items";
 
+    // Spec 2026-10-15 §4.4: convertir copia la cotización al pedido y la deja congelada.
+    [Fact]
+    public async Task ConvertingCopiesTheQuotationAndFreezesIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", "Pago verificado", []),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var order = await ReadOrderAsync(response);
+        Assert.Equal((quotation.Id, "Quotation", quotation.Total, quotation.NetTotal),
+            (order.QuotationId, order.Source, order.Total, order.NetTotal));
+        Assert.Equal(clientId, order.ClientId);
+        Assert.Equal("Pago verificado", order.Notes);
+
+        // La cotización queda congelada: editar una línea responde 422 not_editable.
+        var itemId = Assert.Single(quotation.Items).Id;
+        var edit = await client.PutAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items/{itemId}",
+            new UpdateQuotationItemRequest(5m),
+            TestContext.Current.CancellationToken);
+        await AssertDomainRejectionAsync(edit, "quotation.quotation.not_editable");
+    }
+
     private static string OrderCancelUrl(Guid tenantId, Guid orderId) =>
         $"{OrderByIdUrl(tenantId, orderId)}/cancel";
 

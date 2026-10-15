@@ -23,9 +23,7 @@ public sealed class ConvertQuotationToOrderValidator : AbstractValidator<Convert
             .Must(status => ValidPaymentStatuses.Contains(status, StringComparer.OrdinalIgnoreCase))
             .WithMessage(
                 $"PaymentStatus must be one of: {string.Join(", ", ValidPaymentStatuses)}.");
-        RuleFor(command => command.Notes)
-            .MaximumLength(Order.NotesMaxLength)
-            .When(command => command.Notes is not null);
+        // Las notas del pedido no tienen tope (plan 2026-10-15, P2): heredan las de la cotización.
         RuleForEach(command => command.PaymentProofs).SetValidator(new OrderPaymentProofRequestValidator());
 
         // Revisión final (I2): un archivo, un adjunto (D16). Dos veces el mismo archivo tendría dos copias
@@ -145,11 +143,12 @@ public sealed class ConvertQuotationToOrderHandler(
             // auditoría (quotation.quotation.approved) no cambian de nombre: son contrato, no el
             // nombre del estado.
             quotation.ConvertToOrder(convertedBy, now, products);
-            order = Order.Create(
+            // Spec 2026-10-15 §4.4: el pedido nace como copia independiente de la cotización.
+            order = Order.FromQuotation(
                 OrderId.New(),
                 command.TenantId,
                 orderNumber,
-                quotation.Id,
+                quotation,
                 paymentStatus,
                 command.Notes,
                 convertedBy,
@@ -157,6 +156,13 @@ public sealed class ConvertQuotationToOrderHandler(
                 now);
 
             orderRepository.Add(order);
+            orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                OrderHistoryEntryId.New(),
+                order.Id,
+                OrderHistoryEventType.Created,
+                convertedBy,
+                OrderChangeSummary.CreatedFromQuotation(quotation.QuotationNumber),
+                now));
             quotationRepository.AddHistoryEntry(QuotationHistoryEntry.Create(
                 QuotationHistoryEntryId.New(),
                 quotation.Id,
@@ -181,6 +187,7 @@ public sealed class ConvertQuotationToOrderHandler(
 
             // Spec 2026-10-13 §4.5 y D25: dentro de la transacción del contador, con la cotización ya Converted y el pedido creado.
             lifecycleEvents.PublishConverted(quotation, order, now);
+            lifecycleEvents.PublishOrderCreated(order, now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }

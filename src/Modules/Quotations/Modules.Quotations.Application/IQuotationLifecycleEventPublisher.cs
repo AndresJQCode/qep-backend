@@ -3,20 +3,19 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.Application;
 
 /// <summary>
-/// Spec 2026-10-13 §4.5: los tres hechos del ciclo de una cotización que otro módulo necesita —hoy Pipeline, que mueve el
-/// negocio con ellos—. Se escriben en el outbox de la misma unidad de trabajo que el cambio: si guardar falla, el evento tampoco
-/// existe. Mismo mecanismo que <see cref="IOrderPaymentProofEventPublisher"/>. Los nombres son hechos de Quotations, no órdenes
-/// a Pipeline: mañana los puede consumir otro módulo.
+/// Los eventos del ciclo de una cotización y de un pedido, al outbox y en la misma transacción que
+/// el cambio (spec 2026-10-13 §4.5 y spec 2026-10-15 §7). El payload es contrato con Pipeline: se
+/// lee por nombre y se cambia en los dos lados.
 /// </summary>
 public interface IQuotationLifecycleEventPublisher
 {
-    /// <summary><c>quotations.quotation.sent.v1</c>. También en un reenvío: el consumidor es idempotente.</summary>
     void PublishSent(Quotation quotation, DateTimeOffset occurredAt);
 
-    /// <summary><c>quotations.quotation.converted.v1</c>. Lleva todo lo de <c>sent</c> para que el consumidor enlace una
-    /// cotización convertida que nunca se envió (spec 2026-10-13, D25).</summary>
     void PublishConverted(Quotation quotation, Order order, DateTimeOffset occurredAt);
 
-    /// <summary><c>quotations.order.cancelled.v1</c>.</summary>
+    /// <summary>Spec 2026-10-15 §7: todo pedido nuevo, venga de una cotización, de la pantalla o de una
+    /// integración. Lleva <c>source</c> y <c>quotationId</c> (nulo sin cotización).</summary>
+    void PublishOrderCreated(Order order, DateTimeOffset occurredAt);
+
     void PublishOrderCancelled(Order order, DateTimeOffset occurredAt);
 }

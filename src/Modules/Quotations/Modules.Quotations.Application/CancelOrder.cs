@@ -49,6 +49,13 @@ public sealed class CancelOrderHandler(
 
         var now = clock.UtcNow;
         order.Cancel(cancelledBy, command.Reason, now);
+        repository.AddHistoryEntry(OrderHistoryEntry.Create(
+            OrderHistoryEntryId.New(),
+            order.Id,
+            OrderHistoryEventType.Cancelled,
+            cancelledBy,
+            OrderChangeSummary.Cancelled(order.CancellationReason!),
+            now));
 
         auditPublisher.Publish(
             command.TenantId,

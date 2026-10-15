@@ -44,6 +44,9 @@ public sealed class RevertOrderInvoicingHandler(
 
         var now = clock.UtcNow;
         order.RevertInvoicing(revertedBy, now);
+        repository.AddHistoryEntry(OrderHistoryEntry.Create(
+            OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.InvoicingReverted, revertedBy,
+            OrderChangeSummary.InvoicingReverted(), now));
 
         auditPublisher.Publish(
             command.TenantId,
