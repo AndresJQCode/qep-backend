@@ -58,7 +58,8 @@ internal static class QuotationMinimumPurchase
             minimumTotal is null ? null : met ? 0m : minimumTotal.Value - total);
     }
 
-    private static bool IsMet(decimal units, decimal total, string currency, QuotationSettings settings) =>
+    // Interno y no privado: OrderPricingRecalculation aplica el mismo mínimo al pedido.
+    internal static bool IsMet(decimal units, decimal total, string currency, QuotationSettings settings) =>
         units >= settings.MinimumUnits
         || (settings.MinimumTotalFor(currency) is { } minimum && total >= minimum);
 }

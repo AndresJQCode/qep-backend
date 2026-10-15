@@ -6,9 +6,9 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 /// <summary>
-/// Guarda de una vez todo lo que «Editar pedido» cambió en su borrador —productos, comprobantes y
-/// notas— (spec 2026-09-17, decisiones 1 y 2). <paramref name="ExpectedVersion"/> es el
-/// <c>If-Match</c>: el <c>Order.Version</c> que la pantalla cargó (decisión 6).
+/// El guardado atómico de «Editar» pedido (spec 2026-09-17): líneas, comprobantes, notas, detal y
+/// piso de escala en una sola escritura con <c>If-Match</c>. Desde el spec 2026-10-15 §4.5 todo cae
+/// sobre el pedido: la cotización de origen no se toca.
 /// </summary>
 public sealed record SaveOrderEditsCommand(
     Guid TenantId,
@@ -28,16 +28,9 @@ public sealed class SaveOrderEditsValidator : OrderEditsValidator<SaveOrderEdits
     }
 }
 
-/// <summary>
-/// Pasos 1 a 9 del spec 2026-09-17: todo sobre los agregados rastreados y un único
-/// <c>SaveChangesAsync</c>, así que una falla en cualquier paso no deja nada a medio guardar.
-/// Los endpoints hermanos (<c>/orders/{orderId}/items</c>, <c>/orders/{orderId}/proofs</c>,
-/// <c>/quotations/{id}/items/{itemId}</c>) no se tocan
-/// (decisión 8).
-/// </summary>
 public sealed class SaveOrderEditsHandler(
-    IQuotationRepository quotationRepository,
     IOrderRepository orderRepository,
+    IQuotationRepository quotationRepository,
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationProductPricingLookup pricingLookup,
@@ -61,16 +54,9 @@ public sealed class SaveOrderEditsHandler(
             executionContext, command.TenantId, OrdersPermissions.OrderManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
-        // Se entra por el id del pedido —la pantalla viene del listado de pedidos— y recién desde
-        // él se llega a su cotización, igual que GetOrderByIdHandler. Que falte la cotización sería
-        // un pedido huérfano, imposible por la FK: se trata como el mismo "no encontrado".
         var order = await orderRepository.FindByIdAsync(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(command.OrderId);
-        var quotation = await quotationRepository.FindAsync(
-            command.TenantId, order.QuotationId, cancellationToken)
-            ?? throw OrderNotFound.ById(command.OrderId);
-
         if (order.Status != OrderStatus.Pending)
         {
             throw new QuotationsDomainException(
@@ -78,8 +64,8 @@ public sealed class SaveOrderEditsHandler(
                 "An order can only be edited while it is pending.");
         }
 
-        // Decisión 6: con guardado de estado completo, «el último que guarda gana» pisaría en
-        // silencio lo que otra persona cambió después de que esta pantalla cargó.
+        // El If-Match se comprueba contra lo cargado, antes de tocar nada: un 412 no deja ni la
+        // copia pública de un comprobante publicada.
         if (order.Version != command.ExpectedVersion)
         {
             throw new RequestConcurrencyException(
@@ -87,14 +73,13 @@ public sealed class SaveOrderEditsHandler(
                 "The order changed after it was loaded.");
         }
 
-        // Mismo motivo que UpdateQuotationItemHandler: retención/excedente al día antes de recalcular.
-        var customer = await customerLookup.FindAsync(command.TenantId, quotation.ClientId, cancellationToken);
+        // Deja la retención/excedente de IVA al día con el cliente maestro antes de recalcular.
+        var customer = await customerLookup.FindAsync(command.TenantId, order.ClientId, cancellationToken);
         if (customer is not null)
         {
-            quotation.RefreshCustomerTaxProfile(customer.WithRetention, customer.VatSurplus);
+            order.RefreshCustomerTaxProfile(customer.WithRetention, customer.VatSurplus);
         }
 
-        // Los archivos se validan contra Storage antes de tocar nada, igual que AddOrderPaymentProofsHandler.
         foreach (var addition in command.Proofs.Add)
         {
             await OrderPaymentProofResolver.ResolveAsync(
@@ -115,14 +100,13 @@ public sealed class SaveOrderEditsHandler(
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
         var now = clock.UtcNow;
-
         var removedProofIds = command.Proofs.RemoveIds.Select(id => new OrderPaymentProofId(id)).ToArray();
         var replacedProofIds = command.Proofs.Update
             .Where(update => update.NewFileId is not null)
             .Select(update => new OrderPaymentProofId(update.ProofId))
             .ToHashSet();
-        // D19 (spec 2026-09-16): archivo y clave de lo que se quita o reemplaza, leídos ANTES de
-        // mutar, porque RemovePaymentProof y UpdateFile los pierden.
+        // Lo que se retira o reemplaza puede dejar de estar publicado, salvo que otro comprobante
+        // del pedido siga usando el mismo archivo; se decide al final, con la lista ya editada.
         var releaseCandidates = order.PaymentProofs
             .Where(proof => removedProofIds.Contains(proof.Id) || replacedProofIds.Contains(proof.Id))
             .Select(proof => new DetachedPaymentProof(proof.FileId, proof.PublicStorageKey))
@@ -132,7 +116,7 @@ public sealed class SaveOrderEditsHandler(
         try
         {
             var itemEdits = await OrderItemEdits.ApplyAsync(
-                quotation, command.Items, pricingLookup, command.TenantId, updatedBy, now, command.IsRetail, cancellationToken);
+                order, command.Items, pricingLookup, command.TenantId, updatedBy, now, command.IsRetail, cancellationToken);
 
             foreach (var proofId in removedProofIds)
             {
@@ -155,7 +139,6 @@ public sealed class SaveOrderEditsHandler(
             }
 
             order.CorrectPaymentProofs(corrections, now);
-
             var attachedInputs = await copies.PublishAsync(
                 command.TenantId,
                 command.Proofs.Add
@@ -165,57 +148,38 @@ public sealed class SaveOrderEditsHandler(
             order.AttachPaymentProofs(attachedInputs, updatedBy, now);
 
             var notesChanged = order.UpdateNotes(command.Notes, now);
-
-            // El detal antes que el piso, mismo orden que Quotation.UpdateDetails: así apagarlo y
-            // elegir un piso en el mismo guardado funciona, y prenderlo con un piso no nulo llega
-            // a SetGlobalScaleFloorAfterConversion con el detal ya prendido y se rechaza con
-            // quotation.retail.floor_not_allowed. Sólo si cambió, por el mismo motivo que el piso.
-            var retailChanged = quotation.IsRetail != command.IsRetail;
+            var retailChanged = order.IsRetail != command.IsRetail;
             if (retailChanged)
             {
-                quotation.SetIsRetailAfterConversion(command.IsRetail, updatedBy, now);
+                order.SetIsRetail(command.IsRetail, updatedBy, now);
             }
 
-            // El cuerpo manda el piso entero en cada guardado; sólo se toca si cambió, porque el
-            // mutador sube la versión de la cotización. Se compara después del detal: prenderlo
-            // ya dejó el piso en null, y ese null no es un segundo cambio que contar — la fila de
-            // RetailChanged ya dice que el detal se lleva el piso.
-            var floorChanged = quotation.GlobalScaleFloor != command.GlobalScaleFloor;
+            var floorChanged = order.GlobalScaleFloor != command.GlobalScaleFloor;
             if (floorChanged)
             {
-                quotation.SetGlobalScaleFloorAfterConversion(command.GlobalScaleFloor, updatedBy, now);
+                order.SetGlobalScaleFloor(command.GlobalScaleFloor, updatedBy, now);
             }
-            var proofsChanged = removedProofIds.Length > 0 || corrections.Count > 0 || attachedInputs.Length > 0;
 
-            // Paso 9: sin cambio real no hay historial, auditoría, recálculo ni escritura, y la
-            // versión queda igual (RecalculatePaymentStatus siempre la sube). Un cambio que es
-            // sólo de piso global es real: sin contarlo, se descartaría en silencio.
+            var proofsChanged = removedProofIds.Length > 0 || corrections.Count > 0 || attachedInputs.Length > 0;
             if (itemEdits.Count == 0 && !proofsChanged && !notesChanged && !floorChanged && !retailChanged)
             {
-                return new OrderDetailDto(order.ToDto(), quotation.ToDto());
+                // Nada cambió: ni versión nueva ni historial. El cliente recibe lo que ya tenía.
+                return await OrderDetails.LoadAsync(
+                    orderRepository, quotationRepository, command.TenantId, order, cancellationToken);
             }
 
-            await RecordItemEditsAsync(command.TenantId, quotation, order, itemEdits, updatedBy, now, cancellationToken);
-
-            // Mismo motivo que AddOrderItemsHandler: una línea sumada al pedido se congela al
-            // agregarla, porque ningún envío posterior lo va a hacer. Sólo si hubo altas.
+            await RecordItemEditsAsync(command.TenantId, order, itemEdits, updatedBy, now, cancellationToken);
             if (itemEdits.Any(edit => edit.Kind == OrderItemEditKind.Added))
             {
-                quotation.CaptureProductSnapshotsAfterConversion(
-                    await QuotationItemProductLabel.ResolveMissingAsync(
-                        productLookup, command.TenantId, quotation, cancellationToken));
+                order.CaptureProductSnapshots(
+                    await OrderItemProductLabel.ResolveMissingAsync(productLookup, command.TenantId, order, cancellationToken));
             }
 
-            // Misma fila y misma auditoría que el piso, con su propio texto y su propia acción.
             if (retailChanged)
             {
-                quotationRepository.AddHistoryEntry(QuotationHistoryEntry.Create(
-                    QuotationHistoryEntryId.New(),
-                    quotation.Id,
-                    QuotationHistoryEventType.Edited,
-                    updatedBy,
-                    QuotationChangeSummary.RetailChanged(command.IsRetail),
-                    now));
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PricingChanged, updatedBy,
+                    OrderChangeSummary.RetailChanged(command.IsRetail), now));
                 auditPublisher.Publish(
                     command.TenantId, executionContext.SubjectId, "quotation.order.retail_changed",
                     order.Id.ToString(), "success", now);
@@ -223,16 +187,19 @@ public sealed class SaveOrderEditsHandler(
 
             if (floorChanged)
             {
-                quotationRepository.AddHistoryEntry(QuotationHistoryEntry.Create(
-                    QuotationHistoryEntryId.New(),
-                    quotation.Id,
-                    QuotationHistoryEventType.Edited,
-                    updatedBy,
-                    QuotationChangeSummary.GlobalScaleFloorChanged(command.GlobalScaleFloor),
-                    now));
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PricingChanged, updatedBy,
+                    OrderChangeSummary.GlobalScaleFloorChanged(command.GlobalScaleFloor), now));
                 auditPublisher.Publish(
                     command.TenantId, executionContext.SubjectId, "quotation.order.global_scale_changed",
                     order.Id.ToString(), "success", now);
+            }
+
+            if (notesChanged)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.NotesChanged, updatedBy,
+                    OrderChangeSummary.NotesChanged(), now));
             }
 
             for (var index = 0; index < removedProofIds.Length; index++)
@@ -247,6 +214,14 @@ public sealed class SaveOrderEditsHandler(
                 auditPublisher.Publish(
                     command.TenantId, executionContext.SubjectId, "quotation.order.payment_proofs_added",
                     order.Id.ToString(), "success", now);
+            }
+
+            if (proofsChanged)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PaymentProofsChanged, updatedBy,
+                    OrderChangeSummary.PaymentProofsChanged(attachedInputs.Length, corrections.Count, removedProofIds.Length),
+                    now));
             }
 
             var attached = PaymentProofCopies.AttachedFrom(attachedInputs)
@@ -265,14 +240,11 @@ public sealed class SaveOrderEditsHandler(
                 paymentProofEvents.PublishDetached(command.TenantId, order.Id, detached, now);
             }
 
-            // Antes del estado de pago: las altas, bajas y cambios de cantidad de esta tanda
-            // mueven el descuento de toda la cotización, y con él su total.
-            await QuotationPricingRecalculation.ApplyAsync(
-                pricingLookup, settingsStore, command.TenantId, quotation, now, cancellationToken);
-
-            // Pasos 7 y 8: el estado de pago lo deriva el servidor una sola vez (decisión 5), y todo
-            // se escribe junto.
-            order.RecalculatePaymentStatus(quotation.NetTotal, now);
+            // Antes de mirar el total: las líneas que cambiaron mueven el tramo de las que agrupan
+            // con ellas, y el detal o el piso cambian todos los descuentos.
+            await OrderPricingRecalculation.ApplyAsync(
+                pricingLookup, settingsStore, command.TenantId, order, now, cancellationToken);
+            order.RecalculatePaymentStatus(now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
         catch
@@ -281,20 +253,20 @@ public sealed class SaveOrderEditsHandler(
             throw;
         }
 
-        return new OrderDetailDto(order.ToDto(), quotation.ToDto());
+        return await OrderDetails.LoadAsync(
+            orderRepository, quotationRepository, command.TenantId, order, cancellationToken);
     }
 
-    // Historial Edited y auditoría quotation.order.item_* por cada cambio, como los endpoints de hoy.
-    // El nombre de una baja se busca en una sola ida al catálogo, igual que BatchUpdateQuotationItemsHandler.
     private async Task RecordItemEditsAsync(
         Guid tenantId,
-        Quotation quotation,
         Order order,
         IReadOnlyList<OrderItemEdit> edits,
         MemberId updatedBy,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
+        // El nombre de un producto que se quitó se resuelve contra el catálogo: la línea ya no está
+        // para decirlo.
         var removedProductIds = edits
             .Where(edit => edit.Kind == OrderItemEditKind.Removed)
             .Select(edit => edit.ProductId)
@@ -309,12 +281,12 @@ public sealed class SaveOrderEditsHandler(
             string action;
             if (edit.Kind == OrderItemEditKind.Added)
             {
-                summary = QuotationChangeSummary.ItemAdded(edit.ProductName!, edit.Quantity!.Value);
+                summary = OrderChangeSummary.ItemAdded(edit.ProductName!, edit.Quantity!.Value);
                 action = "quotation.order.item_added";
             }
             else if (edit.Kind == OrderItemEditKind.QuantityChanged)
             {
-                summary = QuotationChangeSummary.ItemQuantityChanged(
+                summary = OrderChangeSummary.ItemQuantityChanged(
                     edit.ProductName!, edit.PreviousQuantity!.Value, edit.Quantity!.Value);
                 action = "quotation.order.item_updated";
             }
@@ -323,14 +295,12 @@ public sealed class SaveOrderEditsHandler(
                 var productName = removedProducts.TryGetValue(edit.ProductId, out var product)
                     ? product.Name
                     : "un producto";
-                summary = QuotationChangeSummary.ItemRemoved(productName);
+                summary = OrderChangeSummary.ItemRemoved(productName);
                 action = "quotation.order.item_removed";
             }
 
-            quotationRepository.AddHistoryEntry(QuotationHistoryEntry.Create(
-                QuotationHistoryEntryId.New(), quotation.Id, QuotationHistoryEventType.Edited,
-                updatedBy, summary, now));
-            // Como en las demás acciones quotation.order.*, la entidad auditada es el pedido.
+            orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.ItemsChanged, updatedBy, summary, now));
             auditPublisher.Publish(
                 tenantId, executionContext.SubjectId, action, order.Id.ToString(), "success", now);
         }

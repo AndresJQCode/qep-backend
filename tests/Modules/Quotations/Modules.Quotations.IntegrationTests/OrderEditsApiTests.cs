@@ -24,6 +24,35 @@ public sealed class OrderEditsApiTests
     private static string OrderByIdUrl(Guid tenantId, Guid orderId) =>
         $"/api/v1/tenants/{tenantId}/orders/{orderId}";
 
+    // Spec 2026-10-15 §4.5: editar el pedido pendiente edita el pedido; la cotización de origen
+    // queda congelada como el documento que el cliente vio.
+    [Fact]
+    public async Task SavingEditsChangesTheOrderAndLeavesTheQuotationUntouched()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (quotation, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest([new OrderEditItemRequest(productId, 7m)], null, "Nota del pedido", null, false));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        Assert.Equal(7m, Assert.Single(detail.Items).Quantity);
+        Assert.Equal("Nota del pedido", detail.Order.Notes);
+        Assert.Contains(detail.History, entry => entry.EventType == "ItemsChanged");
+        Assert.Equal((quotation.Id, quotation.QuotationNumber), (detail.SourceQuotation!.Id, detail.SourceQuotation.QuotationNumber));
+
+        var frozen = await client.GetFromJsonAsync<QuotationResponse>(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
+        Assert.Equal(1m, Assert.Single(frozen!.Items).Quantity);
+        Assert.Equal("Converted", frozen.Status);
+    }
+
     // Decisión 4: el cálculo previo muta el agregado en memoria, así que la lectura no puede dejar
     // nada en el change tracker que un SaveChangesAsync del mismo scope llegue a persistir.
     [Fact]
