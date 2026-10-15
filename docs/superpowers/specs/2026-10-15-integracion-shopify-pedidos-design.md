@@ -23,8 +23,9 @@ Excel de pedidos que importa su ERP. El owner quiere que el pedido de Shopify **
 los pedidos que nacen de una cotización, se apruebe, facture o anule desde la misma pantalla y se exporte
 con las mismas columnas.
 
-El módulo lo activa el usuario de plataforma, tenant por tenant, desde la consola de operador. Un tenant con
-el módulo activo puede conectar **N tiendas**, cada una una sola vez, y la conexión se puede iniciar desde
+Todo tenant **nuevo** nace con el módulo activo (entra a los módulos por defecto del signup); a los tenants
+que ya existen se lo activa el usuario de plataforma desde la consola de operador. Un tenant con el módulo
+activo puede conectar **N tiendas**, cada una una sola vez, y la conexión se puede iniciar desde
 dos lugares: desde QEP (Ajustes → Integraciones → «Nueva integración de Shopify») o desde Shopify
 (instalar la app). En los dos casos corre el OAuth de Shopify y termina en QEP, donde la tienda se vincula a
 una cuenta existente o a una cuenta nueva. Al vincular, QEP registra los webhooks de la tienda. Los
@@ -36,7 +37,8 @@ en la vista de pedidos. Lo que no puede entrar queda en una bandeja con el motiv
 
 - Proveedor `shopify` en Integrations con onboarding por OAuth desde QEP y desde Shopify (§4).
 - Enlace tienda ↔ tenant, con registro de tenant nuevo cuando la persona no tiene cuenta (§4.3).
-- Módulo `shopify` por tenant, activado por el operador (§4.4).
+- Módulo `shopify` por tenant: por defecto en los tenants nuevos, activado por el operador en los existentes
+  (§4.4).
 - Registro de webhooks por tienda al enlazar; webhook firmado, espejo de pedidos, conciliación periódica y
   sincronización manual (§5).
 - Traducción a `Quotation` + `Order` con cliente completo o incompleto, SKU = código de producto, asesor y
@@ -91,7 +93,7 @@ Lo que el diseño asume, con el lugar donde se confirmó. Ante discrepancia mand
 | 8 | ¿Cómo conecta el tenant su tienda? | **App pública de QCode con OAuth.** Revisión del owner: el flujo se puede iniciar **desde QEP** (menú Integraciones) **o desde Shopify** (instalar la app); en los dos casos termina en QEP vinculando una cuenta existente o creando una nueva. |
 | 9 | ¿Qué pedidos entran y qué se sincroniza después? | **Entran al crearse, con su estado de pago**; el pago se actualiza cuando Shopify avisa; la cancelación se refleja. |
 | 10 | ¿Dónde se ven los pedidos en espera? | **Bandeja propia en Pedidos, con reintento automático** y botón «Reintentar». Permiso `quotations.order.manage`. |
-| 11 | ¿Módulo vendible? | **Módulo `shopify` propio**, fuera de los seis por defecto. Revisión del owner: lo **activa el usuario de plataforma a mano** por tenant desde la consola de operador; no se activa solo al instalar. |
+| 11 | ¿Módulo vendible? | **Módulo `shopify` propio.** Primera revisión del owner: lo activa el usuario de plataforma a mano por tenant; no se activa solo al instalar. **Segunda revisión:** entra a los **módulos por defecto del signup**, así que todo tenant nuevo nace con él activo; a los existentes se lo prende el operador desde la consola. |
 | 12 | Enfoque de implementación | **A: módulo nuevo `Shopify`**; Integrations guarda la conexión y hace el OAuth; Quotations gana lo mínimo para aceptar un pedido externo. |
 | 13 | ¿Cuántas tiendas por tenant? | **N**, cada tienda una sola vez por tenant (y por plataforma: una tienda no puede estar en dos tenants). |
 | 14 | ¿Quién crea los webhooks? | **QEP, al vincular la tienda**, por la Admin API. |
@@ -197,8 +199,9 @@ Común:
   inmediato. Si no, `GET /installs/{installId}` (sólo autenticación) devuelve la tienda y los tenants activos
   del usuario con `canLink` (tiene `integrations.connection.manage`) y `moduleEnabled` (tiene `shopify`
   activo); la pantalla explica cada caso. Sin tenants, enlace a `/register` con `returnTo`; el registro es el
-  de hoy (H17). Con el módulo apagado: «Pide a QCode que active la integración con Shopify en *Tenant*; la
-  instalación queda guardada hasta el *fecha*».
+  de hoy (H17) y el tenant nuevo ya trae `shopify` (§4.4), así que el enlace sigue de inmediato. Con el
+  módulo apagado (sólo pasa en un tenant anterior a este spec, o si el operador lo apagó): «Pide a QCode que
+  active la integración con Shopify en *Tenant*; la instalación queda guardada hasta el *fecha*».
 - **6. Enlace.** `LinkShopifyStoreHandler` (`POST /tenants/{tenantId}/integrations/shopify/link`), permiso
   `integrations.connection.manage`, módulo `shopify` activo (403 si no), en una transacción de Integrations:
   - encuentra la instalación vigente con token o `install_expired`; si la fila tiene `initiated_tenant_id`,
@@ -217,11 +220,18 @@ Común:
 
 ### 4.4 Módulo `shopify` en Tenancy
 
-- `TenantModuleKeys.Shopify = Define("shopify")`, último de `All`, fuera de `DefaultForNewTenants`, con
-  dependencia declarada de `orders`. Migración del `CHECK`.
-- Lo activa el usuario de plataforma desde la consola de operador con el flujo que ya existe (H16): `POST
-  /operator/tenants/{id}/modules/changes`. No hay código nuevo en Tenancy más allá de la clave; el frontend
-  del operador muestra la tarjeta del módulo como las de `pos`, `messaging` y `pipeline`.
+- `TenantModuleKeys.Shopify = Define("shopify")`, último de `All`, **dentro de `DefaultForNewTenants`**
+  (pasan de seis a siete), con dependencia declarada de `orders`. Migración del `CHECK`.
+- Un tenant del signup nace con él activo mientras `Entitlements:GrantDefaultModulesOnSignup` esté en `true`
+  (el default), por `TenantModuleDefaults` sin código nuevo. Así, quien llega desde la instalación en Shopify y
+  registra una cuenta nueva (§4.3 paso 5) enlaza la tienda sin esperar a nadie. La semilla ya concede todos.
+- Los tenants **que ya existen** no reciben el módulo por backfill: se lo prende el usuario de plataforma
+  desde la consola de operador con el flujo que ya existe (H16, `POST /operator/tenants/{id}/modules/changes`);
+  el frontend del operador muestra la tarjeta como las de `pos`, `messaging` y `pipeline`.
+- Documentación que queda vieja y se corrige en el mismo cambio: README («nace con los seis sin `pos`») y el
+  gotcha de CLAUDE.md («`GrantDefaultModulesOnSignup` concede seis módulos sin `pos`»): pasan a siete, y
+  `TenantModuleKeysTests.DefaultForNewTenantsIsEverythingButPosMessagingAndPipeline` se renombra con la lista
+  real.
 - Con el módulo apagado: el proveedor desaparece del catálogo del tenant y sus conexiones se ocultan (regla
   de Integrations), los workers saltan la tienda, el webhook sigue guardando el espejo sin importar nada, y
   `/shopify/*` responde 403. Reactivarlo retoma todo, incluidos los `Waiting` acumulados.
@@ -575,7 +585,8 @@ Integrations:
 - Campo interno `webhookSubscriptionIds` en la conexión (`fields`), separado por coma.
 - Migración del `CHECK` de `provider_key` con `shopify`.
 
-Tenancy: migración del `CHECK` de `tenant_modules.module_key` con `shopify`.
+Tenancy: migración del `CHECK` de `tenant_modules.module_key` con `shopify`. **Sin backfill** a los tenants
+existentes (D-S20).
 
 Quotations: `quotations.quotations.origin` (`text`, default `Manual`, `CHECK`), `quotations.orders.source`
 (`text`, default `Quotation`, `CHECK`), `quotations.orders.external_reference` (`varchar(64)`, null); índice
@@ -658,6 +669,10 @@ faltantes), `installs/{id}` (404 ajeno, `canLink` y `moduleEnabled`), enlace (cr
 **webhooks** con gateway falso; registro rechazado → `NeedsAttention`; reenlace del mismo tenant; otro
 tenant → `shop_already_linked`; `install_tenant_mismatch`; tope 20), probador que repone webhooks.
 
+**Tenancy:** `TenantModuleKeysTests` y `TenantModuleDefaultsTests` con los siete por defecto;
+`TenantRegistrationServiceTests` verifica que el tenant nuevo recibe `shopify`; `ChangeTenantModulesHandlerTests`
+sigue cubriendo el prendido manual.
+
 **Quotations y Customers:** barrer las pruebas que arman cuerpos a mano por los campos nuevos antes de
 correr nada; `ListOrders` por `source`; `ListQuotations` excluye `Shopify` por defecto; Reporting excluye en
 cotizaciones y no en pedidos; `ICustomerProvisioning` y `CreateIncompleteFromExternalSale`.
@@ -683,8 +698,10 @@ cotización `Shopify` en lectura.
 - Otras plataformas (WooCommerce, VTEX, Mercado Libre).
 - Comprobantes de pago para pedidos de la tienda: el pago lo registra Shopify.
 - Clientes de Shopify sin pedido (sincronizar la libreta).
-- Activación automática del módulo al instalar: el owner la descartó por ahora; si se quiere después, es un
-  servicio de Tenancy que reutilice `ChangeTenantModulesHandler` y una llamada en el enlace.
+- Activación automática del módulo **al enlazar** una tienda a un tenant existente que no lo tiene: el owner
+  la descartó; el operador lo prende. Si se quiere después, es un servicio de Tenancy que reutilice
+  `ChangeTenantModulesHandler` y una llamada en el enlace.
+- Backfill del módulo a los tenants existentes.
 
 ## 15. Decisiones tomadas sin el owner (a ratificar)
 
@@ -709,6 +726,7 @@ cotización `Shopify` en lectura.
 | D-S17 | La `WebhookCallbackUrl` es configuración global, no se deduce del request | Deducirla |
 | D-S18 | Con documento pero sin clasificación en la tienda o sin ciudad, el comprador nace **incompleto** y el documento queda en el aviso; no se inventa clasificación | Clasificación obligatoria al configurar |
 | D-S19 | `webhookSubscriptionIds` va como campo interno de la conexión, no en `shopify.stores`: lo escribe y lo repone Integrations (enlace y probador) | Moverlo |
+| D-S20 | `shopify` entra a `DefaultForNewTenants` **sin backfill** a los tenants existentes: el operador decide tenant por tenant, como se hizo con `pos`, `messaging` y `pipeline` | Una migración de datos que inserte la fila en cada tenant activo |
 
 ## 16. Verificaciones pendientes contra Shopify (handoff)
 
@@ -725,7 +743,7 @@ cotización `Shopify` en lectura.
 ## 17. Entregables
 
 1. Spec de flete en cotizaciones (sesión aparte) y su implementación en `develop`.
-2. Backend: Tenancy (clave), Integrations (proveedor, inicios A y B, canje, enlace con registro de webhooks,
+2. Backend: Tenancy (clave y módulo por defecto; README y CLAUDE.md actualizados), Integrations (proveedor, inicios A y B, canje, enlace con registro de webhooks,
    probador), Quotations (origen, servicio externo, `allowIncomplete`, `SyncExternalPaymentStatus`, filtros),
    Customers (`ICustomerProvisioning`, `CreateIncompleteFromExternalSale`, `FindByEmailAsync`), Reporting
    (filtro), módulo Shopify (webhook, workers, espejo, importador, sincronización manual, API), Bootstrapper
@@ -743,4 +761,8 @@ cotización `Shopify` en lectura.
   inicios del OAuth (desde QEP y desde Shopify); N tiendas por tenant; QEP registra los webhooks al enlazar;
   sincronización manual además del cron; el comprador sin documento nace **incompleto y el pedido entra
   igual**. Se agregan las decisiones 13–15, la excepción `allowIncomplete`, los avisos del espejo, D-S16 a
-  D-S19 y V-7. Pendiente la lectura del owner, el spec de flete y el plan de implementación.
+  D-S19 y V-7.
+- 2026-10-15 (misma sesión): el owner precisa que la excepción del cliente incompleto vale sólo si el pedido
+  no viene de una cotización manual (§6.2.3), y que el módulo `shopify` **entra a los módulos por defecto
+  del signup** (decisión 11, segunda revisión; §4.4, D-S20): los tenants nuevos nacen con él, los existentes
+  los prende el operador. Pendiente la lectura del owner, el spec de flete y el plan de implementación.
