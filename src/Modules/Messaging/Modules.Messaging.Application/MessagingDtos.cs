@@ -13,7 +13,12 @@ public sealed record ContactDto(string? UserId, string? WaId, string? Username, 
 
 /// <summary>Spec 2026-10-10 §5.1 (D-A8): <c>isComplete</c> viaja para que el encabezado del hilo ofrezca «Completar
 /// ficha» sin otra llamada.</summary>
-public sealed record CustomerRefDto(Guid Id, string Name, bool IsComplete);
+public sealed record CustomerRefDto(Guid Id, string Name, bool IsComplete)
+{
+    /// <summary>Spec qep-frontend 2026-10-15 (BFF): los chips de la fila de la bandeja. Siempre viaja, vacía si no tiene: la
+    /// pantalla no sabe qué etiquetas tiene cada cliente sin otra llamada por fila.</summary>
+    public IReadOnlyList<MessagingTagRef> Tags { get; init; } = [];
+}
 
 public sealed record LastMessageDto(string Direction, string Kind, string? Preview, string Status, DateTimeOffset At);
 

@@ -6,7 +6,8 @@ using Modules.Tenancy.Application;
 namespace Modules.Messaging.Application;
 
 public sealed record ListConversationsQuery(
-    Guid TenantId, string? Status, string? Search, int? Page, int? PageSize, string? Assigned = null, string? Channel = null)
+    Guid TenantId, string? Status, string? Search, int? Page, int? PageSize, string? Assigned = null, string? Channel = null,
+    Guid? TagId = null, bool? Unread = null, string? Sort = null)
     : IQuery<ConversationPageDto>;
 
 /// <summary>Spec §6.4: status ∈ Open|Resolved (default Open), search ≤ 100, page ≥ 1, pageSize 1–50 (default 30);
@@ -30,6 +31,10 @@ public sealed class ListConversationsValidator : AbstractValidator<ListConversat
         RuleFor(query => query.Channel)
             .Must(value => value is null or nameof(ConversationChannel.WhatsApp) or nameof(ConversationChannel.Instagram))
             .OverridePropertyName("channel").WithMessage("channel must be WhatsApp or Instagram.");
+        // Spec qep-frontend 2026-10-15: ausente = newest. El guid de tagId lo valida el binding; uno ajeno da lista vacía.
+        RuleFor(query => query.Sort)
+            .Must(value => value is null or "newest" or "oldest")
+            .OverridePropertyName("sort").WithMessage("sort must be newest or oldest.");
     }
 }
 
@@ -68,7 +73,11 @@ public sealed class ListConversationsHandler(
             nameof(ConversationChannel.Instagram) => ConversationChannel.Instagram,
             _ => null,
         };
-        var filter = new ConversationListFilter(status, assigned, me, search, customerWaIds, customerIds, channel);
+        // Spec qep-frontend 2026-10-15: la etiqueta se resuelve en Customers y filtra por customer_id, como la búsqueda por nombre.
+        var tagCustomerIds = query.TagId is { } tagId ? await customers.FindIdsByTagAsync(query.TenantId, tagId, cancellationToken) : null;
+        var sort = query.Sort is "oldest" ? ConversationSort.Oldest : ConversationSort.Newest;
+        var filter = new ConversationListFilter(
+            status, assigned, me, search, customerWaIds, customerIds, channel, tagCustomerIds, query.Unread is true, sort);
 
         var (rows, total) = await queries.ListAsync(query.TenantId, filter, page, pageSize, cancellationToken);
         var counts = await queries.CountsAsync(query.TenantId, me, cancellationToken);
