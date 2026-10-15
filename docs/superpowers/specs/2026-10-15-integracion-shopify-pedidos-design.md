@@ -628,6 +628,13 @@ Se escriben en sesiones aparte, desde `develop`, y se implementan **antes** que 
 
 ### 11.1 Pedidos sin cotización (decisión 16)
 
+**Spec escrito:** `2026-10-15-pedidos-sin-cotizacion-design.md` (mismo día, pendiente de lectura del owner).
+Resuelve lo de abajo: `Order` con datos propios dentro de `Modules.Quotations`, tres fábricas
+(`FromQuotation`, `CreateManual`, `CreateExternal`), copia independiente al convertir, pedido manual,
+`Source`/`ExternalReference`, eventos `quotations.order.created.v1` y `order.cancelled.v1` con `source`, foto
+`pipeline.deal_orders`, y migración de los pedidos existentes. Con eso, D-S21 de este spec queda resuelta: un
+pedido de Shopify **sí** toca el embudo, por `order.created` sin cotización.
+
 Hoy un `Order` es un apéndice de su `Quotation` (H1-H5): no tiene cliente, líneas, partes ni totales, y la
 lista, el detalle, el Excel, los reportes de pedidos, la edición de líneas de un pedido pendiente y Pipeline
 los leen de la cotización. El owner quiere que **pueda existir un pedido sin cotización** y que el pedido
