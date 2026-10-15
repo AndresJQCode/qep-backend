@@ -1,10 +1,10 @@
 using BuildingBlocks.Application;
 using BuildingBlocks.Domain;
-using Microsoft.Extensions.DependencyInjection;
-using Modules.Platform.Application;
 using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Platform.Application;
 
 namespace Api;
 

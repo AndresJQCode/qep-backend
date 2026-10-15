@@ -1,4 +1,4 @@
-﻿using Modules.Quotations.Application;
+using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;

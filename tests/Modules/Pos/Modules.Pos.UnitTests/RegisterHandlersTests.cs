@@ -2,8 +2,8 @@ using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Pos.Application;
 using Modules.Pos.Domain;
-using TenantDomainException = Modules.Tenancy.Domain.TenantDomainException;
 using static Modules.Pos.UnitTests.PosFixtures;
+using TenantDomainException = Modules.Tenancy.Domain.TenantDomainException;
 
 namespace Modules.Pos.UnitTests;
 
