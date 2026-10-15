@@ -215,7 +215,7 @@ public sealed class GlobalScaleDiscountApiTests
 
         Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
         var calculated = await ReadDetailAsync(preview);
-        Assert.Equal(20, calculated.Quotation.GlobalScaleFloor);
+        Assert.Equal(20, calculated.Order.GlobalScaleFloor);
 
         var stored = await GetQuotationAsync(client, tenantId, quotation.Id);
         Assert.Null(stored.GlobalScaleFloor);
@@ -235,12 +235,13 @@ public sealed class GlobalScaleDiscountApiTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var saved = await ReadDetailAsync(response);
-        Assert.Equal(20, saved.Quotation.GlobalScaleFloor);
+        Assert.Equal(20, saved.Order.GlobalScaleFloor);
         // El corte "sin cambio real" del guardado del pedido miraba lineas, comprobantes y notas:
         // si no contara el piso, este guardado se habria descartado sin subir la version.
         Assert.True(saved.Order.Version > order.Version);
+        // Spec 2026-10-15 §4.5: el piso se guarda en el pedido; la cotización queda congelada.
         var stored = await GetQuotationAsync(client, tenantId, quotation.Id);
-        Assert.Equal(20, stored.GlobalScaleFloor);
+        Assert.Null(stored.GlobalScaleFloor);
     }
 
     [Fact]

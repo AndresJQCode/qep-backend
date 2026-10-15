@@ -453,7 +453,7 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<ExportQuotationPdfCommand, QuotationPdfExportDto>,
             ExportQuotationPdfHandler>();
         services.AddScoped<
-            IQueryHandler<GetOrderQuery, OrderDto>,
+            IQueryHandler<GetOrderQuery, OrderDetailDto>,
             GetOrderHandler>();
         services.AddScoped<
             IQueryHandler<ListOrdersQuery, OrderPage>,
@@ -483,7 +483,7 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<AddOrderPaymentProofsCommand, OrderDto>,
             AddOrderPaymentProofsHandler>();
         services.AddScoped<
-            ICommandHandler<AddOrderItemsCommand, OrderItemsAddedResult>,
+            ICommandHandler<AddOrderItemsCommand, OrderDetailDto>,
             AddOrderItemsHandler>();
         services.AddScoped<
             ICommandHandler<RemoveOrderPaymentProofCommand, OrderDto>,

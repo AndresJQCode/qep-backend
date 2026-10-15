@@ -181,6 +181,30 @@ public sealed class OrderTests
         Assert.Equal("order.order.not_pending", error.Code);
     }
 
+    // Portado de QuotationProductSnapshotTests (spec 2026-10-15 §4.5): una línea que se suma al pedido
+    // no tiene un envío que la congele; se congela al capturar, y las que ya tenían foto no se tocan.
+    [Fact]
+    public void CaptureProductSnapshotsFreezesOnlyTheLinesWithoutOne()
+    {
+        var frozen = Guid.CreateVersion7();
+        var added = Guid.CreateVersion7();
+        var order = NewOrder(
+            lines: [new OrderLineInput(frozen, 1m, 1_000m, 0m, 19, new QuotationProductSnapshot("A-001", "Tornillo"))]);
+        order.AddItem(OrderItemId.New(), added, 1m, 1_000m, 0m, 19, ConvertedBy, Now.AddHours(1));
+        var version = order.Version;
+
+        order.CaptureProductSnapshots(new Dictionary<Guid, QuotationProductSnapshot>
+        {
+            [frozen] = new("A-999", "Otro"),
+            [added] = new("B-002", "Tuerca"),
+        });
+
+        Assert.Equal("A-001", order.Items.Single(item => item.ProductId == frozen).ProductCode);
+        Assert.Equal("B-002", order.Items.Single(item => item.ProductId == added).ProductCode);
+        // No es una edición: la versión ya la subió la línea que se agregó.
+        Assert.Equal(version, order.Version);
+    }
+
     [Fact]
     public void FromQuotationCopiesHeaderPartiesAndLinesAndMatchesItsTotals()
     {

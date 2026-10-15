@@ -154,8 +154,8 @@ public sealed class OrderEditsApiTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var saved = await ReadDetailAsync(response);
-        Assert.Equal(replacementId, Assert.Single(saved.Quotation.Items).ProductId);
-        Assert.Equal(50_000m, saved.Quotation.Total);
+        Assert.Equal(replacementId, Assert.Single(saved.Items).ProductId);
+        Assert.Equal(50_000m, saved.Order.Total);
         Assert.Equal("Entregar el lunes", saved.Order.Notes);
         Assert.Equal(20_000m, Assert.Single(saved.Order.PaymentProofs).Amount);
         Assert.Equal("PartialPaymentReceived", saved.Order.PaymentStatus);
@@ -163,7 +163,7 @@ public sealed class OrderEditsApiTests
         Assert.Equal($"\"{saved.Order.Version}\"", response.Headers.ETag?.Tag);
 
         var fetched = await GetDetailAsync(client, tenantId, order.Id);
-        Assert.Equal(replacementId, Assert.Single(fetched.Quotation.Items).ProductId);
+        Assert.Equal(replacementId, Assert.Single(fetched.Items).ProductId);
         Assert.Equal(saved.Order.Version, fetched.Order.Version);
         Assert.Equal("PartialPaymentReceived", fetched.Order.PaymentStatus);
 
@@ -369,7 +369,7 @@ public sealed class OrderEditsApiTests
         Assert.Equal("order.payment_proof.file_not_found", (await ReadProblemAsync(unknownFile)).Code);
 
         var fetched = await GetDetailAsync(client, tenantId, order.Id);
-        Assert.Equal(1m, Assert.Single(fetched.Quotation.Items).Quantity);
+        Assert.Equal(1m, Assert.Single(fetched.Items).Quantity);
         Assert.Null(fetched.Order.Notes);
         Assert.Empty(fetched.Order.PaymentProofs);
         Assert.Equal(order.Version, fetched.Order.Version);
@@ -508,16 +508,16 @@ public sealed class OrderEditsApiTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var preview = await ReadDetailAsync(response);
-        Assert.Equal(3m, Assert.Single(preview.Quotation.Items).Quantity);
-        Assert.Equal(300_000m, preview.Quotation.Total);
+        Assert.Equal(3m, Assert.Single(preview.Items).Quantity);
+        Assert.Equal(300_000m, preview.Order.Total);
         Assert.Equal("FullPaymentReceived", preview.Order.PaymentStatus);
         Assert.Equal("Borrador", preview.Order.Notes);
         Assert.Single(preview.Order.PaymentProofs);
         Assert.Equal(order.Version, preview.Order.Version);
 
         var fetched = await GetDetailAsync(client, tenantId, order.Id);
-        Assert.Equal(1m, Assert.Single(fetched.Quotation.Items).Quantity);
-        Assert.Equal(quotation.Total, fetched.Quotation.Total);
+        Assert.Equal(1m, Assert.Single(fetched.Items).Quantity);
+        Assert.Equal(quotation.Total, fetched.Order.Total);
         Assert.Equal("PaymentPending", fetched.Order.PaymentStatus);
         Assert.Null(fetched.Order.Notes);
         Assert.Empty(fetched.Order.PaymentProofs);

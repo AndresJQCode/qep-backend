@@ -143,15 +143,6 @@ public sealed class QuotationRetailTests
         Assert.Equal("quotation.quotation.not_editable", error.Code);
     }
 
-    [Fact]
-    public void AConvertedQuotationAcceptsTheAfterConversionRetailSetter()
-    {
-        var quotation = ConvertedQuotation();
-
-        quotation.SetIsRetailAfterConversion(true, AdvisorId, Now.AddHours(3));
-
-        Assert.True(quotation.IsRetail);
-    }
     // Desde el 2026-09-23 el detal no tiene endpoint propio: viaja en el cuerpo del guardado, al
     // lado del piso global, y UpdateDetails lo aplica. Mismo contrato que el piso en 400773f.
     private static void SaveHeader(Quotation quotation, bool isRetail, int? globalScaleFloor) =>

@@ -106,6 +106,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<Guid>("AdvisorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("advisor_id");
+
                     b.Property<DateTimeOffset?>("ApprovedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("approved_at");
@@ -113,6 +117,14 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("ApprovedBy")
                         .HasColumnType("uuid")
                         .HasColumnName("approved_by");
+
+                    b.Property<bool>("BillingUsesBusinessName")
+                        .HasColumnType("boolean")
+                        .HasColumnName("billing_uses_business_name");
+
+                    b.Property<bool>("BillsToFinalConsumer")
+                        .HasColumnType("boolean")
+                        .HasColumnName("bills_to_final_consumer");
 
                     b.Property<string>("CancellationReason")
                         .HasMaxLength(500)
@@ -127,6 +139,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("cancelled_by");
 
+                    b.Property<Guid>("ClientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_id");
+
                     b.Property<DateTimeOffset>("ConvertedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("converted_at");
@@ -139,6 +155,34 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<bool>("CustomerVatSurplus")
+                        .HasColumnType("boolean")
+                        .HasColumnName("customer_vat_surplus");
+
+                    b.Property<bool>("CustomerWithRetention")
+                        .HasColumnType("boolean")
+                        .HasColumnName("customer_with_retention");
+
+                    b.Property<decimal>("DiscountAmount")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("discount_amount");
+
+                    b.Property<string>("ExternalReference")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("external_reference");
+
+                    b.Property<int?>("GlobalScaleFloor")
+                        .HasColumnType("integer")
+                        .HasColumnName("global_scale_floor");
+
                     b.Property<DateTimeOffset?>("InvoicedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("invoiced_at");
@@ -147,9 +191,21 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("invoiced_by");
 
+                    b.Property<bool>("IsRetail")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_retail");
+
+                    b.Property<bool>("IsStorePickup")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_store_pickup");
+
+                    b.Property<decimal>("NetTotal")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("net_total");
+
                     b.Property<string>("Notes")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)")
+                        .HasColumnType("text")
                         .HasColumnName("notes");
 
                     b.Property<string>("OrderNumber")
@@ -158,20 +214,44 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(20)")
                         .HasColumnName("order_number");
 
+                    b.Property<bool?>("PartyVatSurplus")
+                        .HasColumnType("boolean")
+                        .HasColumnName("party_vat_surplus");
+
+                    b.Property<bool?>("PartyWithRetention")
+                        .HasColumnType("boolean")
+                        .HasColumnName("party_with_retention");
+
+                    b.Property<string>("PaymentMethod")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("payment_method");
+
                     b.Property<string>("PaymentStatus")
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)")
                         .HasColumnName("payment_status");
 
-                    b.Property<Guid>("QuotationId")
+                    b.Property<Guid?>("QuotationId")
                         .HasColumnType("uuid")
                         .HasColumnName("quotation_id");
+
+                    b.Property<decimal>("RetentionAmount")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("retention_amount");
 
                     b.Property<string>("RitualCollectionSyncId")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
                         .HasColumnName("ritual_collection_sync_id");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("source");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -179,9 +259,29 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(20)")
                         .HasColumnName("status");
 
+                    b.Property<decimal>("Subtotal")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("subtotal");
+
+                    b.Property<decimal>("TaxAmount")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("tax_amount");
+
+                    b.Property<decimal>("TaxPercentage")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("tax_percentage");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
+
+                    b.Property<decimal>("Total")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("total");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -196,19 +296,215 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("QuotationId")
                         .IsUnique()
-                        .HasDatabaseName("IX_orders_quotation");
+                        .HasDatabaseName("IX_orders_quotation")
+                        .HasFilter("quotation_id IS NOT NULL");
 
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_orders_tenant");
+
+                    b.HasIndex("TenantId", "AdvisorId")
+                        .HasDatabaseName("IX_orders_tenant_advisor");
+
+                    b.HasIndex("TenantId", "ClientId")
+                        .HasDatabaseName("IX_orders_tenant_client");
 
                     b.HasIndex("TenantId", "OrderNumber")
                         .IsUnique()
                         .HasDatabaseName("IX_orders_tenant_number");
 
+                    b.HasIndex("TenantId", "Source")
+                        .HasDatabaseName("IX_orders_tenant_source");
+
                     b.HasIndex("TenantId", "ConvertedAt", "OrderNumber")
                         .HasDatabaseName("IX_orders_tenant_converted_at_number");
 
-                    b.ToTable("orders", "quotations");
+                    b.ToTable("orders", "quotations", t =>
+                        {
+                            t.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.OrderHistoryEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Details")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("details");
+
+                    b.Property<DateTimeOffset>("EventAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("event_at");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("event_type");
+
+                    b.Property<Guid?>("MemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("member_id");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId", "EventAt")
+                        .HasDatabaseName("IX_order_history_order_event_at");
+
+                    b.ToTable("order_history", "quotations");
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.OrderItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<decimal>("DiscountAmount")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("discount_amount");
+
+                    b.Property<string>("DiscountOrigin")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("discount_origin");
+
+                    b.Property<decimal>("DiscountPercentage")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("discount_percentage");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.Property<string>("ProductCode")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("product_code");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<string>("ProductName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("product_name");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("numeric(10,2)")
+                        .HasColumnName("quantity");
+
+                    b.Property<decimal>("Subtotal")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("subtotal");
+
+                    b.Property<decimal>("TaxAmount")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("tax_amount");
+
+                    b.Property<int>("TaxPercentage")
+                        .HasColumnType("integer")
+                        .HasColumnName("tax_percentage");
+
+                    b.Property<decimal>("UnitPrice")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("unit_price");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId")
+                        .HasDatabaseName("IX_order_items_order");
+
+                    b.ToTable("order_items", "quotations");
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.OrderParty", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Address")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("address");
+
+                    b.Property<Guid?>("CityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("city_id");
+
+                    b.Property<Guid?>("DepartmentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("department_id");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)")
+                        .HasColumnName("email");
+
+                    b.Property<string>("IdentificationNumber")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("identification_number");
+
+                    b.Property<string>("Name")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<string>("Phone")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("phone");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("role");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId", "Role")
+                        .IsUnique()
+                        .HasDatabaseName("IX_order_parties_order_role");
+
+                    b.ToTable("order_parties", "quotations");
                 });
 
             modelBuilder.Entity("Modules.Quotations.Domain.OrderPaymentProof", b =>
@@ -863,7 +1159,71 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.HasOne("Modules.Quotations.Domain.Quotation", null)
                         .WithMany()
                         .HasForeignKey("QuotationId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.OwnsOne("Modules.Quotations.Domain.QuotationBillingAccount", "BillingAccount", b1 =>
+                        {
+                            b1.Property<Guid>("OrderId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<string>("AccountNumber")
+                                .IsRequired()
+                                .HasMaxLength(32)
+                                .HasColumnType("character varying(32)")
+                                .HasColumnName("billing_account_number");
+
+                            b1.Property<string>("BankName")
+                                .IsRequired()
+                                .HasMaxLength(120)
+                                .HasColumnType("character varying(120)")
+                                .HasColumnName("billing_bank_name");
+
+                            b1.Property<Guid>("CompanyId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("billing_company_id");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("billing_account_currency");
+
+                            b1.HasKey("OrderId");
+
+                            b1.ToTable("orders", "quotations");
+
+                            b1.WithOwner()
+                                .HasForeignKey("OrderId");
+                        });
+
+                    b.Navigation("BillingAccount")
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.OrderHistoryEntry", b =>
+                {
+                    b.HasOne("Modules.Quotations.Domain.Order", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.OrderItem", b =>
+                {
+                    b.HasOne("Modules.Quotations.Domain.Order", null)
+                        .WithMany("Items")
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.OrderParty", b =>
+                {
+                    b.HasOne("Modules.Quotations.Domain.Order", null)
+                        .WithMany("Parties")
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
@@ -1004,6 +1364,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Modules.Quotations.Domain.Order", b =>
                 {
+                    b.Navigation("Items");
+
+                    b.Navigation("Parties");
+
                     b.Navigation("PaymentProofs");
                 });
 

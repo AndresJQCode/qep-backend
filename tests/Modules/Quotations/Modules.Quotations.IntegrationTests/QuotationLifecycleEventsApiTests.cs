@@ -46,15 +46,14 @@ public sealed class QuotationLifecycleEventsApiTests
 
         var order = await ConvertAsync(client, factory, tenantId, quotation);
 
-        var messages = await OutboxMessagesAsync(factory, tenantId);
-        var created = Assert.Single(messages, message => message.EventName == "quotations.order.created.v1");
+        var created = Assert.Single(await OutboxMessagesAsync(factory, "quotations.order.created.v1"));
         Assert.Equal(order.Id.ToString(), created.CorrelationId);
         using var payload = JsonDocument.Parse(created.PayloadJson);
         Assert.Equal("Quotation", payload.RootElement.GetProperty("source").GetString());
         Assert.Equal(quotation.Id, payload.RootElement.GetProperty("quotationId").GetGuid());
         Assert.Equal(order.OrderNumber, payload.RootElement.GetProperty("orderNumber").GetString());
         Assert.Equal(clientId, payload.RootElement.GetProperty("clientId").GetGuid());
-        Assert.Single(messages, message => message.EventName == Converted);
+        Assert.Single(await OutboxMessagesAsync(factory, Converted));
     }
 
     [Fact]

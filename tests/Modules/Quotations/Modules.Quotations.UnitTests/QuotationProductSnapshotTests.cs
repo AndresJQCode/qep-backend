@@ -135,27 +135,6 @@ public sealed class QuotationProductSnapshotTests
         Assert.Equal("A-001", Assert.Single(quotation.Items).ProductCode);
     }
 
-    // Una línea que se suma al pedido ya convertido no tiene un envío posterior que la congele:
-    // se congela al agregarla, y las que ya estaban no se tocan.
-    [Fact]
-    public void LinesAddedAfterConversionAreCapturedWithoutTouchingTheOthers()
-    {
-        var quotation = NewQuotationWith(ProductA);
-        quotation.ConvertToOrder(AdvisorId, Now, Catalog((ProductA, "A-001", "Tornillo")));
-        quotation.AddItemAfterConversion(
-            QuotationItemId.New(), ProductB, 1m, 1_000m, 0m, 19, AdvisorId, Now.AddHours(1));
-        var version = quotation.Version;
-
-        quotation.CaptureProductSnapshotsAfterConversion(Catalog(
-            (ProductA, "A-999", "Otro"),
-            (ProductB, "B-002", "Tuerca")));
-
-        Assert.Equal("A-001", quotation.Items.Single(item => item.ProductId == ProductA).ProductCode);
-        Assert.Equal("B-002", quotation.Items.Single(item => item.ProductId == ProductB).ProductCode);
-        // No es una edición: la versión ya la subió la línea que se agregó.
-        Assert.Equal(version, quotation.Version);
-    }
-
     private static Quotation NewQuotationWith(params Guid[] productIds)
     {
         var quotation = Quotation.Create(

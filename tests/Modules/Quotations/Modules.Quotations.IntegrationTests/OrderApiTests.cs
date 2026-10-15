@@ -143,8 +143,7 @@ public sealed class OrderApiTests
         var proofJson = Assert.Single(json.RootElement.GetProperty("paymentProofs").EnumerateArray());
         Assert.Equal("2026-10-06", proofJson.GetProperty("paidOn").GetString());
 
-        var fetched = await client.GetFromJsonAsync<OrderResponse>(
-            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        var fetched = await GetOrderByQuotationAsync(client, tenantId, quotation.Id);
         Assert.NotNull(fetched);
         Assert.Equal(new DateOnly(2026, 10, 6), Assert.Single(fetched.PaymentProofs).PaidOn);
     }
@@ -333,7 +332,8 @@ public sealed class OrderApiTests
             new SendQuotationRequest(pdfFileId),
             TestContext.Current.CancellationToken);
 
-        await AssertUnprocessableAsync(edited, "order.order.not_pending");
+        // Spec 2026-10-15 §4.5: la cotización convertida está congelada, con o sin pedido aprobado.
+        await AssertUnprocessableAsync(edited, "quotation.quotation.not_editable");
         await AssertUnprocessableAsync(voided, "quotation.quotation.not_editable");
         await AssertUnprocessableAsync(resent, "quotation.quotation.not_draft");
 
@@ -543,16 +543,21 @@ public sealed class OrderApiTests
             """
             INSERT INTO quotations.orders (
                 id, tenant_id, order_number, quotation_id, status, payment_status, notes, converted_at,
-                converted_by, approved_at, approved_by, ritual_collection_sync_id, created_at, updated_at, version)
+                converted_by, approved_at, approved_by, ritual_collection_sync_id, created_at, updated_at, version,
+                client_id, advisor_id, currency, billing_company_id, billing_bank_name, billing_account_number,
+                billing_account_currency)
             VALUES (
                 @id, @tenantId, 'LEGADO-0001', @quotationId, 'Pending', 'PaymentPending', NULL, now(),
-                @convertedBy, NULL, NULL, NULL, now(), now(), 1)
+                @convertedBy, NULL, NULL, NULL, now(), now(), 1,
+                @clientId, @convertedBy, 'COP', @companyId, 'Bancolombia', '7542', 'COP')
             """,
             connection);
         command.Parameters.AddWithValue("id", Guid.CreateVersion7());
         command.Parameters.AddWithValue("tenantId", tenantId);
         command.Parameters.AddWithValue("quotationId", quotationId);
         command.Parameters.AddWithValue("convertedBy", Guid.CreateVersion7());
+        command.Parameters.AddWithValue("clientId", Guid.CreateVersion7());
+        command.Parameters.AddWithValue("companyId", Guid.CreateVersion7());
         Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
     }
 
@@ -683,11 +688,13 @@ public sealed class OrderApiTests
             OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var fetched = await response.Content.ReadFromJsonAsync<OrderResponse>(
+        // Spec 2026-10-15 §6.2: por la cotización también responde el detalle compuesto del pedido.
+        var fetched = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(fetched);
-        Assert.Equal(created.Id, fetched.Id);
-        Assert.Equal(created.OrderNumber, fetched.OrderNumber);
+        Assert.Equal(created.Id, fetched.Order.Id);
+        Assert.Equal(created.OrderNumber, fetched.Order.OrderNumber);
+        Assert.Equal(quotation.Id, fetched.SourceQuotation?.Id);
     }
 
     [Fact]
@@ -915,8 +922,7 @@ public sealed class OrderApiTests
 
         // `GET /orders/{id}` responde el detalle compuesto (`{ order, quotation }`), no un
         // OrderResponse: se lee por la cotización, como el resto de este archivo.
-        var fetched = await client.GetFromJsonAsync<OrderResponse>(
-            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        var fetched = await GetOrderByQuotationAsync(client, tenantId, quotation.Id);
         Assert.NotNull(fetched);
         Assert.Equal(new DateOnly(2026, 10, 7), Assert.Single(fetched.PaymentProofs).PaidOn);
     }
@@ -1011,9 +1017,9 @@ public sealed class OrderApiTests
         var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(detail);
-        Assert.Equal(2, detail.Quotation.Items.Count);
-        Assert.True(detail.Quotation.Total > quotation.Total);
-        Assert.Contains(detail.Quotation.Items, item => item.ProductId == secondProductId);
+        Assert.Equal(2, detail.Items.Count);
+        Assert.True(detail.Order.Total > quotation.Total);
+        Assert.Contains(detail.Items, item => item.ProductId == secondProductId);
         Assert.Equal("PaymentPending", detail.Order.PaymentStatus);
 
         var auditMessages = await OutboxMessagesAsync(factory, "platform.audit.recorded.v1");
@@ -1120,7 +1126,7 @@ public sealed class OrderApiTests
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-        Assert.Contains("quotation.item.duplicate_product", body, StringComparison.Ordinal);
+        Assert.Contains("order.item.duplicate_product", body, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1352,8 +1358,7 @@ public sealed class OrderApiTests
         Assert.Equal(converted.Id, order.Id);
         Assert.NotNull(order.CancelledBy);
 
-        var fetched = await client.GetFromJsonAsync<OrderResponse>(
-            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        var fetched = await GetOrderByQuotationAsync(client, tenantId, quotation.Id);
         Assert.NotNull(fetched);
         Assert.Equal("Cancelled", fetched.Status);
         Assert.Equal(order.CancelledAt, fetched.CancelledAt);
@@ -1427,8 +1432,7 @@ public sealed class OrderApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        var order = await client.GetFromJsonAsync<OrderResponse>(
-            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        var order = await GetOrderByQuotationAsync(client, tenantId, quotation.Id);
         Assert.NotNull(order);
         Assert.Equal("Pending", order.Status);
     }
@@ -1483,8 +1487,7 @@ public sealed class OrderApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        var order = await client.GetFromJsonAsync<OrderResponse>(
-            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        var order = await GetOrderByQuotationAsync(client, tenantId, quotation.Id);
         Assert.NotNull(order);
         Assert.Equal("Pending", order.Status);
     }
@@ -1543,8 +1546,7 @@ public sealed class OrderApiTests
         await AssertDomainRejectionAsync(blankReason, "order.order.cancellation_reason_required");
         await AssertDomainRejectionAsync(tooLong, "order.order.cancellation_reason_too_long");
         await AssertDomainRejectionAsync(twice, "order.order.already_cancelled");
-        var order = await client.GetFromJsonAsync<OrderResponse>(
-            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        var order = await GetOrderByQuotationAsync(client, tenantId, quotation.Id);
         Assert.NotNull(order);
         Assert.Equal("Primera vez", order.CancellationReason);
     }
@@ -1584,8 +1586,7 @@ public sealed class OrderApiTests
         Assert.Equal(approved.ApprovedBy, order.ApprovedBy);
         Assert.Equal(approved.Version + 1, order.Version);
 
-        var fetched = await client.GetFromJsonAsync<OrderResponse>(
-            OrderUrl(tenantId, order.QuotationId), TestContext.Current.CancellationToken);
+        var fetched = await GetOrderByQuotationAsync(client, tenantId, order.QuotationId!.Value);
         Assert.NotNull(fetched);
         Assert.Equal("Invoiced", fetched.Status);
         Assert.Equal(order.InvoicedAt, fetched.InvoicedAt);
@@ -1674,8 +1675,7 @@ public sealed class OrderApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, revert.StatusCode);
-        var order = await client.GetFromJsonAsync<OrderResponse>(
-            OrderUrl(tenantId, approved.QuotationId), TestContext.Current.CancellationToken);
+        var order = await GetOrderByQuotationAsync(client, tenantId, approved.QuotationId!.Value);
         Assert.NotNull(order);
         Assert.Equal("Invoiced", order.Status);
     }
@@ -1765,11 +1765,20 @@ public sealed class OrderApiTests
         await AssertDomainRejectionAsync(cancelInvoicedWithBlankReason, "order.order.already_invoiced");
         await AssertDomainRejectionAsync(approveInvoiced, "order.order.not_pending");
         await AssertDomainRejectionAsync(addItemsToInvoiced, "order.order.not_pending");
-        var order = await client.GetFromJsonAsync<OrderResponse>(
-            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        var order = await GetOrderByQuotationAsync(client, tenantId, quotation.Id);
         Assert.NotNull(order);
         Assert.Equal("Invoiced", order.Status);
         Assert.Null(order.CancellationReason);
+    }
+
+    // El pedido de una cotización: la ruta responde el detalle compuesto (spec 2026-10-15 §6.2), y lo
+    // que estas pruebas miran es el pedido que viene adentro.
+    private static async Task<OrderResponse> GetOrderByQuotationAsync(HttpClient client, Guid tenantId, Guid quotationId)
+    {
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            OrderUrl(tenantId, quotationId), TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        return detail.Order;
     }
 
     private static async Task AssertDomainRejectionAsync(HttpResponseMessage response, string code)

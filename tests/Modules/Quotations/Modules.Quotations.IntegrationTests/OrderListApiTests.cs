@@ -237,14 +237,14 @@ public sealed class OrderListApiTests
         Assert.Equal(order.Id, detail.Order.Id);
         Assert.Equal(order.OrderNumber, detail.Order.OrderNumber);
         Assert.Equal("Pending", detail.Order.Status);
-        // La cotizacion llega compuesta, igual que en su propio detalle: cliente resuelto y
-        // lineas con el nombre del producto, que es lo que la pantalla pinta.
-        Assert.Equal(quotation.Id, detail.Quotation.Id);
-        Assert.NotNull(detail.Quotation.Client);
-        Assert.Equal("Verde Esencial S.A.S.", detail.Quotation.Client.Name);
-        var item = Assert.Single(detail.Quotation.Items);
+        // El detalle llega compuesto (spec 2026-10-15 §6.2): cliente resuelto, líneas con el nombre
+        // del producto y la cotización de origen sólo como referencia.
+        Assert.Equal(quotation.Id, detail.SourceQuotation?.Id);
+        Assert.NotNull(detail.Client);
+        Assert.Equal("Verde Esencial S.A.S.", detail.Client.Name);
+        var item = Assert.Single(detail.Items);
         Assert.False(string.IsNullOrWhiteSpace(item.ProductName));
-        Assert.Equal(quotation.Total, detail.Quotation.Total);
+        Assert.Equal(quotation.Total, detail.Order.Total);
     }
 
     [Fact]

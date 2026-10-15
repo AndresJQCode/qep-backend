@@ -485,6 +485,15 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
                 .Select(quotation => quotation.Id.Value)
                 .ToHashSet());
 
+    public Task<IReadOnlyDictionary<QuotationId, string>> FindNumbersAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<QuotationId, string>>(
+            quotations
+                .Where(quotation => quotationIds.Contains(quotation.Id))
+                .ToDictionary(quotation => quotation.Id, quotation => quotation.QuotationNumber));
+
     public void Add(Quotation quotation)
     {
     }
@@ -989,6 +998,42 @@ internal sealed class FixedTenantModules(TenantModuleSet? set) : ITenantModules
     }
 }
 
+/// <summary>Pedidos para los handlers (spec 2026-10-15): un pedido manual, sin cotización, con una
+/// línea de 119.000 con el IVA adentro. Es lo que necesita casi toda prueba de un caso de uso de
+/// pedidos; la que mira la relación con la cotización usa <see cref="Order.FromQuotation"/>.</summary>
+internal static class OrderBuilders
+{
+    public static readonly QuotationBillingAccount BillingAccount = new()
+    {
+        CompanyId = Guid.CreateVersion7(),
+        BankName = "Bancolombia",
+        AccountNumber = "7542",
+        Currency = "COP",
+    };
+
+    public static Order Pending(
+        Guid tenantId,
+        MemberId advisorId,
+        DateTimeOffset now,
+        Guid? clientId = null,
+        OrderPaymentStatus paymentStatus = OrderPaymentStatus.PaymentPending,
+        IReadOnlyCollection<OrderPaymentProofInput>? proofs = null,
+        string orderNumber = "PED-2026-0001") =>
+        Order.CreateManual(
+            OrderId.New(),
+            tenantId,
+            orderNumber,
+            new OrderHeader(clientId ?? Guid.CreateVersion7(), advisorId, "COP", null, IsRetail: false, null, false, false),
+            QuotationParties.Empty,
+            BillingAccount,
+            [new OrderLineInput(Guid.CreateVersion7(), 1m, 119_000m, 0m, 19)],
+            paymentStatus,
+            notes: null,
+            advisorId,
+            proofs ?? [],
+            now);
+}
+
 /// <summary>Spec 2026-10-13 §4.5: anota qué eventos del ciclo pidió el handler, sin outbox.</summary>
 internal sealed class RecordingQuotationLifecycleEventPublisher : IQuotationLifecycleEventPublisher
 {
@@ -1000,6 +1045,10 @@ internal sealed class RecordingQuotationLifecycleEventPublisher : IQuotationLife
     public void PublishConverted(Quotation quotation, Order order, DateTimeOffset occurredAt) =>
         Published.Add(("converted", quotation.Id.Value, quotation.Total, quotation.Currency));
 
+    public void PublishOrderCreated(Order order, DateTimeOffset occurredAt) =>
+        Published.Add(("order.created", order.Id.Value, order.Total, order.Currency));
+
+    // El pedido puede no tener cotización (spec 2026-10-15): la clave es el pedido.
     public void PublishOrderCancelled(Order order, DateTimeOffset occurredAt) =>
-        Published.Add(("cancelled", order.QuotationId.Value, 0m, string.Empty));
+        Published.Add(("cancelled", order.Id.Value, 0m, string.Empty));
 }

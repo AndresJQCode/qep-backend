@@ -261,23 +261,23 @@ public sealed class OrderExportApiTests
         }
 
         var expected = (await ReadPendingBatchAsync(factory, tenantId, after: null, limit: 100))
-            .Select(row => row.Order.Id)
+            .Select(row => row.Id)
             .ToArray();
         Assert.Equal(3, expected.Length);
 
         var first = await ReadPendingBatchAsync(factory, tenantId, after: null, limit: 1);
         await CreateOrderAsync(client, factory, tenantId);
         var second = await ReadPendingBatchAsync(factory, tenantId, CursorOf(first), limit: 1);
-        await SetOrderStatusAsync(factory, second.Single().Order.Id, OrderStatus.Approved);
+        await SetOrderStatusAsync(factory, second.Single().Id, OrderStatus.Approved);
         var third = await ReadPendingBatchAsync(factory, tenantId, CursorOf(second), limit: 1);
         var fourth = await ReadPendingBatchAsync(factory, tenantId, CursorOf(third), limit: 1);
 
-        Assert.Equal(expected, first.Concat(second).Concat(third).Select(row => row.Order.Id));
+        Assert.Equal(expected, first.Concat(second).Concat(third).Select(row => row.Id));
         Assert.Empty(fourth);
     }
 
     // El repositorio real, contra Postgres. `Pending` es el filtro que el pedido aprobado abandona.
-    private static async Task<IReadOnlyList<OrderWithQuotation>> ReadPendingBatchAsync(
+    private static async Task<IReadOnlyList<Order>> ReadPendingBatchAsync(
         QepApiFactory factory, Guid tenantId, OrderExportCursor? after, int limit)
     {
         // El repositorio recibe instantes desde la spec 2026-09-17 (punto 3): la ventana es amplia a
@@ -294,13 +294,14 @@ public sealed class OrderExportApiTests
             now.AddDays(-7),
             now.AddDays(2),
             orderNumber: null,
+            source: null,
             after,
             limit,
             TestContext.Current.CancellationToken);
     }
 
-    private static OrderExportCursor CursorOf(IReadOnlyList<OrderWithQuotation> batch) =>
-        new(batch[^1].Order.ConvertedAt, batch[^1].Order.OrderNumber);
+    private static OrderExportCursor CursorOf(IReadOnlyList<Order> batch) =>
+        new(batch[^1].ConvertedAt, batch[^1].OrderNumber);
 
     // Directo en la base: lo que se prueba es la lectura, no la aprobación.
     private static async Task SetOrderStatusAsync(QepApiFactory factory, OrderId orderId, OrderStatus status)
@@ -333,7 +334,7 @@ public sealed class OrderExportApiTests
 
         await TieConversionInstantAsync(factory, tenantId, DateTimeOffset.UtcNow.AddHours(-1));
         var expected = (await ReadPendingBatchAsync(factory, tenantId, after: null, limit: 100))
-            .Select(row => row.Order.OrderNumber)
+            .Select(row => row.OrderNumber)
             .OrderDescending(StringComparer.Ordinal)
             .ToArray();
         Assert.Equal(3, expected.Length);
@@ -349,7 +350,7 @@ public sealed class OrderExportApiTests
                 break;
             }
 
-            read.Add(rows.Single().Order.OrderNumber);
+            read.Add(rows.Single().OrderNumber);
             after = CursorOf(rows);
         }
 
@@ -549,8 +550,8 @@ public sealed class OrderExportApiTests
         Assert.Equal(headers.Count - 2, column);
         var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
             $"{OrdersUrl(tenantId)}/{order.Id}", TestContext.Current.CancellationToken);
-        Assert.True(detail!.Quotation.Total > 0m);
-        Assert.Equal(detail.Quotation.Total, decimal.Parse(sheet.Rows[1][column], CultureInfo.InvariantCulture));
+        Assert.True(detail!.Order.Total > 0m);
+        Assert.Equal(detail.Order.Total, decimal.Parse(sheet.Rows[1][column], CultureInfo.InvariantCulture));
         Assert.True(sheet.NumericCells[1][column]);
     }
 
@@ -573,8 +574,8 @@ public sealed class OrderExportApiTests
         Assert.Equal(headers.Count - 1, column);
         var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
             $"{OrdersUrl(tenantId)}/{order.Id}", TestContext.Current.CancellationToken);
-        Assert.True(detail!.Quotation.RetentionAmount > 0m);
-        Assert.Equal(detail.Quotation.RetentionAmount, decimal.Parse(sheet.Rows[1][column], CultureInfo.InvariantCulture));
+        Assert.True(detail!.Order.RetentionAmount > 0m);
+        Assert.Equal(detail.Order.RetentionAmount, decimal.Parse(sheet.Rows[1][column], CultureInfo.InvariantCulture));
         Assert.True(sheet.NumericCells[1][column]);
     }
 
@@ -665,7 +666,7 @@ public sealed class OrderExportApiTests
             $"{OrdersUrl(tenantId)}/{order.Id}", TestContext.Current.CancellationToken);
         // Ajuste 2026-10-03: "Valor Unit" es el precio por unidad con el descuento aplicado y sin
         // IVA —la base sin IVA de la línea entre la cantidad—, no el precio de catálogo con IVA.
-        var line = Assert.Single(detail!.Quotation.Items);
+        var line = Assert.Single(detail!.Items);
         Assert.Equal("Valor Unit", sheet.Rows[0][20]);
         Assert.Equal(
             Math.Round(line.Subtotal / line.Quantity, 2, MidpointRounding.AwayFromZero),
@@ -675,7 +676,7 @@ public sealed class OrderExportApiTests
         Assert.Equal("Nit", sheet.Rows[0][46]);
         // El NIT guardado ("901.463.203-2") sale como lo lee el ERP: sin puntos ni dígito de
         // verificación, y número (2026-09-28).
-        var erpTaxId = detail.Quotation.BillingAccount!.CompanyTaxId!.Split('-')[0].Replace(".", string.Empty);
+        var erpTaxId = detail.BillingAccount!.CompanyTaxId!.Split('-')[0].Replace(".", string.Empty);
         Assert.Equal(erpTaxId, row[46]);
         Assert.True(sheet.NumericCells[1][46]);
         // Ajuste 2026-09-26: "IVA" es la tasa de la línea como fracción, y número —un Excel en

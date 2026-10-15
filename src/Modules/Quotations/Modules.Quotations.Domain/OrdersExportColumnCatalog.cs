@@ -40,6 +40,9 @@ public static class OrdersExportColumnCatalog
         new("document", "Documento", 16),
         new("order_number", "Pedido", 18),
         new("address", "Direccion", 40),
+        // Observaciones: `Order.Notes`. Al convertir, el pedido hereda las notas de la cotización (spec
+        // 2026-10-15 §6.4), así que un pedido convertido exporta lo mismo que antes; si alguien edita las
+        // notas del pedido después, sale lo editado.
         new("notes", "Observaciones", 40),
         new("phone", "Telefono", 16),
         new("email", "Email", 30),
