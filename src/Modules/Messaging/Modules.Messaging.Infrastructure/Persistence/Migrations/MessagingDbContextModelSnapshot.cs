@@ -296,6 +296,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(256)")
                         .HasColumnName("profile_name");
 
+                    b.Property<Guid?>("ResolutionReasonId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resolution_reason_id");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -337,6 +341,8 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnName("wa_id");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ResolutionReasonId");
 
                     b.HasIndex(new[] { "ConnectionId", "UserId" }, "IX_conversations_connection_user")
                         .IsUnique()
@@ -544,6 +550,44 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("quick_replies", "messaging");
+                });
+
+            modelBuilder.Entity("Modules.Messaging.Domain.ResolutionReason", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("resolution_reasons", "messaging");
                 });
 
             modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.CampaignRecipientRecord", b =>
@@ -949,6 +993,15 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasFilter("processed_at IS NULL");
 
                     b.ToTable("webhook_deliveries", "messaging");
+                });
+
+            modelBuilder.Entity("Modules.Messaging.Domain.Conversation", b =>
+                {
+                    b.HasOne("Modules.Messaging.Domain.ResolutionReason", null)
+                        .WithMany()
+                        .HasForeignKey("ResolutionReasonId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_conversations_resolution_reasons");
                 });
 
             modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.CampaignRecipientRecord", b =>

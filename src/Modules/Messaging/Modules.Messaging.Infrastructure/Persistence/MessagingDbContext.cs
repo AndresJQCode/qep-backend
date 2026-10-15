@@ -41,6 +41,10 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-12 §3.4: <c>MessagingUnitOfWork</c> discrimina por este nombre para responder <c>shortcut_taken</c>.</summary>
     public const string QuickReplyShortcutIndex = "IX_quick_replies_tenant_shortcut";
 
+    /// <summary>Spec 2026-10-15 §3.1: único por <c>(tenant_id, lower(name)) WHERE deleted_at IS NULL</c>. Va en la migración con SQL —EF
+    /// no modela índices por expresión— y <c>MessagingUnitOfWork</c> lo traduce por este nombre a 409 <c>name_taken</c>.</summary>
+    public const string ResolutionReasonNameIndex = "IX_resolution_reasons_tenant_name";
+
     /// <summary>Spec 2026-10-14 §4.1: los dos únicos del espejo. La unidad de trabajo los traduce por nombre.</summary>
     public const string MessageTemplateMetaIdIndex = "UX_message_templates_meta_id";
 
@@ -71,6 +75,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-12 §3.1: el agregado de la respuesta rápida.</summary>
     public DbSet<QuickReply> QuickReplies => Set<QuickReply>();
 
+    /// <summary>Spec 2026-10-15 §3.1: el catálogo de motivos de resolución.</summary>
+    public DbSet<ResolutionReason> ResolutionReasons => Set<ResolutionReason>();
+
     /// <summary>Spec 2026-10-14 §4.1: el espejo de plantillas.</summary>
     public DbSet<MessageTemplate> MessageTemplates => Set<MessageTemplate>();
 
@@ -88,6 +95,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureCampaign(modelBuilder);
         ConfigureCampaignRecipient(modelBuilder);
         ConfigureQuickReply(modelBuilder);
+        ConfigureResolutionReason(modelBuilder);
         ConfigureMessageTemplate(modelBuilder);
         ConfigureTemplateMirrorSync(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
@@ -137,6 +145,10 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.Property(value => value.CreatedAt).HasColumnName("created_at");
         conversation.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         conversation.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
+        // Spec 2026-10-15 §3.1: el motivo vigente. RESTRICT porque una fila de motivo nunca se borra (D-R5: archivar es deleted_at).
+        conversation.Property(value => value.ResolutionReasonId).HasColumnName("resolution_reason_id");
+        conversation.HasOne<ResolutionReason>().WithMany().HasForeignKey(value => value.ResolutionReasonId)
+            .HasConstraintName("FK_conversations_resolution_reasons").OnDelete(DeleteBehavior.Restrict);
         conversation.Ignore(value => value.CustomerWindowExpiresAt);
 
         // Todos con el overload con nombre: sin nombre en HasIndex, EF funde los que tienen las mismas columnas
@@ -337,6 +349,22 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         quickReply.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         quickReply.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
         quickReply.HasIndex(value => new { value.TenantId, value.Shortcut }, QuickReplyShortcutIndex).IsUnique();
+    }
+
+    /// <summary>Spec 2026-10-15 §3.1. El único por nombre (<see cref="ResolutionReasonNameIndex"/>) va por SQL en la migración.</summary>
+    private static void ConfigureResolutionReason(ModelBuilder modelBuilder)
+    {
+        var reason = modelBuilder.Entity<ResolutionReason>();
+        reason.ToTable("resolution_reasons", Schema);
+        reason.HasKey(value => value.Id);
+        reason.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        reason.Property(value => value.TenantId).HasColumnName("tenant_id");
+        reason.Property(value => value.Name).HasColumnName("name").HasMaxLength(ResolutionReason.NameMaxLength);
+        reason.Property(value => value.CreatedAt).HasColumnName("created_at");
+        reason.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        reason.Property(value => value.DeletedAt).HasColumnName("deleted_at");
+        reason.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
+        reason.Ignore(value => value.IsArchived);
     }
 
     /// <summary>Spec 2026-10-14 §4.1. Sin FK a la conexión: es de Integrations, otro schema (como el cubo de envío).</summary>

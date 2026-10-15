@@ -89,6 +89,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<CampaignMapper>();
         // Spec 2026-10-12 §3.1: las respuestas rápidas, con tracking; el atajo repetido lo traduce MessagingUnitOfWork.
         services.AddScoped<IQuickReplyRepository, QuickReplyRepository>();
+        services.AddScoped<IResolutionReasonRepository, ResolutionReasonRepository>();
+        services.AddScoped<IResolutionReasonNames, ResolutionReasonRepository>();
         // Spec 2026-10-14 §4.3: el espejo de plantillas.
         services.AddScoped<IMessageTemplateRepository, MessageTemplateRepository>();
         // Spec 2026-10-14 §5: la señal que el consumidor Quotations leerá por un adaptador en Bootstrapper.

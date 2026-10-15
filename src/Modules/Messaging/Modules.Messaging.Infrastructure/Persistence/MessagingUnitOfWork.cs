@@ -9,7 +9,8 @@ namespace Modules.Messaging.Infrastructure.Persistence;
 /// <summary>La versión vieja es <c>concurrency.conflict</c> (412 por If-Match en resolve/reopen, §8.5). Spec 2026-10-12 §3.4: el atajo
 /// repetido es <c>messaging.quick_reply.shortcut_taken</c> (422). Spec 2026-10-14 §4.1: nombre e idioma repetidos de una plantilla son
 /// <c>messaging.template.name_taken</c> (422), una segunda <c>Quotation</c> en la conexión es <c>messaging.template.quotation_exists</c>
-/// (422) y un <c>meta_template_id</c> o un marcador de sincronización repetidos son <c>concurrency.conflict</c> (dos refrescos a la vez).</summary>
+/// (422) y un <c>meta_template_id</c> o un marcador de sincronización repetidos son <c>concurrency.conflict</c> (dos refrescos a la vez).
+/// Spec 2026-10-15: el nombre repetido de un motivo de resolución es <c>messaging.resolution_reason.name_taken</c> (409).</summary>
 internal sealed class MessagingUnitOfWork(MessagingDbContext dbContext) : IMessagingUnitOfWork
 {
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
@@ -37,6 +38,16 @@ internal sealed class MessagingUnitOfWork(MessagingDbContext dbContext) : IMessa
         {
             throw new MessagingDomainException(
                 MessagingErrorCodes.QuickReplyShortcutTaken, "Another quick reply in this tenant already uses that shortcut.", exception);
+        }
+        // Spec 2026-10-15 §3.3 y D-R11: 409 y no 422, como customers.tag.name_taken. Es un choque con lo que ya existe —el resolver
+        // reintenta y lo reutiliza; el renombrar elige otro nombre—, por eso ResourceConflictException y no un error de dominio.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.ResolutionReasonNameIndex, StringComparison.Ordinal))
+        {
+            throw new ResourceConflictException(
+                MessagingErrorCodes.ResolutionReasonNameTaken, "Another active resolution reason in this tenant already uses that name.", exception);
         }
         // Spec 2026-10-14 §4.1: nombre e idioma repetidos en la misma conexión son name_taken (422, sin mapa errors, como shortcut_taken).
         catch (DbUpdateException exception)
