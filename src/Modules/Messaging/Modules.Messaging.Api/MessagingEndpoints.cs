@@ -141,6 +141,7 @@ public static class MessagingEndpoints
             .Produces<ConversationSummary>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
@@ -404,8 +405,11 @@ public static class MessagingEndpoints
         return Results.NoContent();
     }
 
-    private static async Task<IResult> ResolveAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.SendAsync(new ResolveConversationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
+    // Spec 2026-10-15 §3.3: el cuerpo es opcional (nullable): sin cuerpo, el frontend de antes sigue funcionando igual.
+    private static async Task<IResult> ResolveAsync(
+        Guid tenantId, Guid conversationId, ResolveConversationRequest? request, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new ResolveConversationCommand(tenantId, conversationId, RequireVersion(httpContext), request?.ReasonId, request?.ReasonName), cancellationToken));
 
     private static async Task<IResult> ReopenAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new ReopenConversationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
@@ -464,6 +468,11 @@ public sealed record CreateMediaUploadSessionRequest(string? FileName, string? M
 
 /// <summary>Spec 2026-10-10 §5.1.</summary>
 public sealed record TransferConversationRequest(Guid? MemberId);
+
+/// <summary>Spec 2026-10-15 §3.3: todo opcional. <c>reasonId</c> elige un motivo vigente; <c>reasonName</c> busca o crea por nombre (D-R4).
+/// BFF: el selector manda el texto tal cual lo escribió la persona y el servidor decide si ya existía, así la pantalla no tiene que crear
+/// primero ni conocer el catálogo exacto.</summary>
+public sealed record ResolveConversationRequest(Guid? ReasonId, string? ReasonName);
 
 /// <summary>Spec 2026-10-11 §5.2: <c>parameters</c> es un objeto <c>{ clave: valor }</c> con exactamente las claves de la plantilla.</summary>
 public sealed record SendTemplateRequest(Guid? ClientId, string? Name, string? Language, Dictionary<string, string?>? Parameters);

@@ -89,6 +89,10 @@ internal sealed class RecordingAudit : IMessagingAuditRecorder
     public void RecordQuickReply(Guid tenantId, Guid actorId, string action, Guid quickReplyId, DateTimeOffset occurredAt) =>
         throw new NotSupportedException();
 
+    public void RecordResolutionReason(Guid tenantId, Guid actorId, string action, Guid reasonId, DateTimeOffset occurredAt)
+    {
+    }
+
     public void RecordTemplate(
         Guid tenantId, Guid actorId, string action, Guid templateId, DateTimeOffset occurredAt, IReadOnlyCollection<string>? changedFields = null) =>
         Templates.Add(new TemplateAuditCall(tenantId, actorId, action, templateId, changedFields));

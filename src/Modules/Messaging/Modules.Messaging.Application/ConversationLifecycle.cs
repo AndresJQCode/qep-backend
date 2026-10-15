@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using FluentValidation;
 using Microsoft.Extensions.Logging;
 using Modules.Messaging.Domain;
 using Modules.Tenancy.Application;
@@ -15,7 +16,24 @@ public sealed record MarkConversationUnreadCommand(Guid TenantId, Guid Conversat
 /// desde ese mensaje: lo que tendría si acabaran de llegar. Sin modelo nuevo y sin acuse a Meta.</summary>
 public sealed record MarkUnreadFromMessageCommand(Guid TenantId, Guid ConversationId, Guid MessageId) : ICommand<bool>;
 
-public sealed record ResolveConversationCommand(Guid TenantId, Guid ConversationId, long ExpectedVersion) : ICommand<ConversationSummary>;
+/// <summary>Spec 2026-10-15 §3.3: el motivo es opcional. <see cref="ReasonId"/> elige uno vigente; <see cref="ReasonName"/> busca o crea
+/// por nombre (D-R4). Los dos a la vez es 422; los dos ausentes, o el nombre en blanco, es resolver sin motivo como antes.</summary>
+public sealed record ResolveConversationCommand(Guid TenantId, Guid ConversationId, long ExpectedVersion, Guid? ReasonId = null, string? ReasonName = null)
+    : ICommand<ConversationSummary>;
+
+/// <summary>Spec 2026-10-15 §3.3: el validador da el campo (<c>errors.reasonName</c>) que el dominio no puede dar.</summary>
+public sealed class ResolveConversationValidator : AbstractValidator<ResolveConversationCommand>
+{
+    public ResolveConversationValidator()
+    {
+        RuleFor(command => command.ReasonName)
+            .Must(name => ResolutionReason.TrimName(name).Length <= ResolutionReason.NameMaxLength)
+            .OverridePropertyName("reasonName").WithMessage(ResolutionReasonMessages.NameTooLong);
+        RuleFor(command => command)
+            .Must(command => command.ReasonId is null || string.IsNullOrWhiteSpace(command.ReasonName))
+            .OverridePropertyName("reasonName").WithMessage(ResolutionReasonMessages.Both);
+    }
+}
 
 public sealed record ReopenConversationCommand(Guid TenantId, Guid ConversationId, long ExpectedVersion) : ICommand<ConversationSummary>;
 
@@ -143,10 +161,14 @@ public sealed class MarkUnreadFromMessageHandler(
     }
 }
 
-/// <summary>§8.5: por el agregado con If-Match (428 lo pone el endpoint; 412 lo pone el unit of work).</summary>
+/// <summary>§8.5: por el agregado con If-Match (428 lo pone el endpoint; 412 lo pone el unit of work). Spec 2026-10-15 §3.3: el
+/// motivo nuevo se agrega al mismo DbContext, así que entra en el mismo SaveChanges que la resolución, el evento y la auditoría: un
+/// resolver que falla no deja motivos huérfanos. El orden importa: la versión y <c>Resolve</c> (already_resolved) van antes de contar el
+/// tope, que sólo se cuenta si de verdad se crea.</summary>
 public sealed class ResolveConversationHandler(
     IConversationRepository repository,
     IConversationQueries queries,
+    IResolutionReasonRepository reasons,
     IMessagingUnitOfWork unitOfWork,
     IMessagingAuditRecorder audit,
     IConversationEvents events,
@@ -155,22 +177,36 @@ public sealed class ResolveConversationHandler(
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IClock clock,
-    IMessagingNotifier notifier)
+    IMessagingNotifier notifier,
+    IValidator<ResolveConversationCommand> validator)
     : ICommandHandler<ResolveConversationCommand, ConversationSummary>
 {
     public async Task<ConversationSummary> HandleAsync(ResolveConversationCommand command, CancellationToken cancellationToken)
     {
         await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.ConversationManage, cancellationToken);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
         var conversation = await repository.FindAsync(command.TenantId, command.ConversationId, cancellationToken)
             ?? throw MessagingNotFound.Conversation(command.ConversationId);
         ConversationConcurrency.EnsureVersion(conversation, command.ExpectedVersion);
 
         var now = clock.UtcNow;
-        conversation.Resolve(now);
+        var reason = await ResolutionReasonChoice.ChooseAsync(reasons, command.TenantId, command.ReasonId, command.ReasonName, cancellationToken);
+        conversation.Resolve(now, reason?.Id);
+        if (reason is { IsNew: true })
+        {
+            ResolutionReason.EnsureTenantCapacity(await reasons.CountActiveAsync(command.TenantId, cancellationToken));
+            reasons.Add(ResolutionReason.Create(reason.Id, command.TenantId, reason.Name, now));
+            audit.RecordResolutionReason(command.TenantId, executionContext.SubjectId, MessagingAuditActions.ResolutionReasonCreated, reason.Id, now);
+        }
+
         // Spec 2026-10-10 §6.1.5 (P9): el evento lleva quién; sin membresía activa, actor null (sin 403 nuevo).
         var actor = await caller.FindAsync(command.TenantId, cancellationToken);
-        events.Record(command.TenantId, conversation.ConnectionId, conversation.Id, new ConversationEvent(ConversationEventType.Resolved, Actor: actor), now);
+        events.Record(
+            command.TenantId, conversation.ConnectionId, conversation.Id,
+            new ConversationEvent(ConversationEventType.Resolved, Actor: actor, ReasonId: reason?.Id), now);
         audit.Record(command.TenantId, executionContext.SubjectId, MessagingAuditActions.Resolved, conversation.Id, now);
+        // D-R11: dos asesores creando el mismo nombre nuevo a la vez → el segundo recibe 409 name_taken de la unidad de trabajo, y la
+        // transacción entera se revierte (el If-Match sigue vigente). El cliente reintenta una vez y el segundo intento lo reutiliza.
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await notifier.ConversationChangedAsync(command.TenantId, conversation.Id, cancellationToken);
         return (await summaries.BuildAsync(command.TenantId, [(await queries.FindAsync(command.TenantId, conversation.Id, cancellationToken))!], cancellationToken))[0];

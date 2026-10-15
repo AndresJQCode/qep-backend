@@ -13,6 +13,10 @@ public interface IMessagingAuditRecorder
     /// <summary>Spec 2026-10-12 §3.3: crear, editar y borrar una respuesta rápida, en la misma transacción que el cambio.</summary>
     void RecordQuickReply(Guid tenantId, Guid actorId, string action, Guid quickReplyId, DateTimeOffset occurredAt);
 
+    /// <summary>Spec 2026-10-15 §3.8: crear (sólo cuando el resolver lo crea), renombrar y archivar un motivo de resolución, en la misma
+    /// transacción que el cambio.</summary>
+    void RecordResolutionReason(Guid tenantId, Guid actorId, string action, Guid reasonId, DateTimeOffset occurredAt);
+
     /// <summary>Spec 2026-10-14 §4.6: crear, aprovisionar y borrar una plantilla, en la misma transacción que el espejo. Los cambios de
     /// estado que trae el webhook no se auditan (D-T14). <paramref name="changedFields"/> va a <c>changed_fields</c>: la adopción de una
     /// plantilla externa como de cotización manda <c>["kind"]</c>; <c>null</c> es <c>[]</c>, como el resto del módulo.</summary>
@@ -44,6 +48,10 @@ public static class MessagingAuditActions
     public const string QuickReplyCreated = "messaging.quick_reply.created";
     public const string QuickReplyUpdated = "messaging.quick_reply.updated";
     public const string QuickReplyDeleted = "messaging.quick_reply.deleted";
+    public const string ResolutionReasonResourceType = "resolution_reason";
+    public const string ResolutionReasonCreated = "messaging.resolution_reason.created";
+    public const string ResolutionReasonRenamed = "messaging.resolution_reason.renamed";
+    public const string ResolutionReasonArchived = "messaging.resolution_reason.archived";
 
     public const string TemplateResourceType = "message_template";
     public const string TemplateCreated = "messaging.template.created";

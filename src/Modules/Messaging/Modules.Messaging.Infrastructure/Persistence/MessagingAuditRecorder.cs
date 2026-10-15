@@ -56,6 +56,20 @@ internal sealed class MessagingAuditRecorder(MessagingDbContext dbContext) : IMe
             Source,
             occurredAt));
 
+    // Spec 2026-10-15 §3.8: siempre una persona (quien resuelve o quien gestiona en Settings). changed_fields vacío, como el resto.
+    public void RecordResolutionReason(Guid tenantId, Guid actorId, string action, Guid reasonId, DateTimeOffset occurredAt) =>
+        dbContext.AuditEntries.Add(AuditEntry.Create(
+            tenantId,
+            actorId,
+            AuditActorType.Human,
+            action,
+            MessagingAuditActions.ResolutionReasonResourceType,
+            reasonId.ToString(),
+            Outcome,
+            NoChangedFields,
+            Source,
+            occurredAt));
+
     // Spec 2026-10-14 §4.6: siempre una persona (el admin en la pantalla de plantillas). changed_fields vacío salvo que quien llama
     // diga qué cambió (la adopción manda ["kind"]).
     public void RecordTemplate(
