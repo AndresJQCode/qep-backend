@@ -13,13 +13,6 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
-    <!-- CVE-2026-70159 (DoS en el servidor de SignalR, SignalR.Common <= 10.0.12). Acá el paquete es el CLIENTE de las
-         pruebas del hub, en el mismo parche 10.0.11 que el resto de la línea; subirlo a 10.0.13 arrastra Microsoft.Extensions.*
-         y obliga a mover los 74 lock files. El servidor no sale de NuGet sino del runtime del Dockerfile (aspnet:10.0), que
-         es donde hay que exigir >= 10.0.13 (README § Tiempo real). -->
-    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-334f-vvp4-7g6p" />
-  </ItemGroup>
-  <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Api\Api.csproj" />
   </ItemGroup>
 </Project>

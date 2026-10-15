@@ -53,6 +53,32 @@ internal sealed class CustomerTagRepository(CustomersDbContext dbContext) : ICus
                 .Where(tag => tag.TenantId == tenantId && tagIds.Contains(tag.Id))
                 .ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<CustomerId>> ListCustomerIdsAsync(Guid tenantId, TagId tagId, int cap, CancellationToken cancellationToken) =>
+        await dbContext.CustomerTagAssignments
+            .AsNoTracking()
+            .Where(assignment => assignment.TenantId == tenantId && assignment.TagId == tagId)
+            .OrderBy(assignment => assignment.CustomerId)
+            .Select(assignment => assignment.CustomerId)
+            .Take(cap)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<(CustomerId Customer, Tag Tag)>> ListForCustomersAsync(
+        Guid tenantId, IReadOnlyCollection<CustomerId> customerIds, CancellationToken cancellationToken)
+    {
+        if (customerIds.Count == 0)
+        {
+            return [];
+        }
+
+        var rows = await dbContext.CustomerTagAssignments
+            .AsNoTracking()
+            .Where(assignment => assignment.TenantId == tenantId && customerIds.Contains(assignment.CustomerId))
+            .Join(dbContext.Tags.Where(tag => tag.TenantId == tenantId), assignment => assignment.TagId, tag => tag.Id,
+                (assignment, tag) => new { assignment.CustomerId, Tag = tag })
+            .ToListAsync(cancellationToken);
+        return [.. rows.Select(row => (row.CustomerId, row.Tag))];
+    }
+
     public Task<int> CountAsync(Guid tenantId, CancellationToken cancellationToken) =>
         dbContext.Tags.CountAsync(tag => tag.TenantId == tenantId, cancellationToken);
 

@@ -39,6 +39,14 @@ public interface ICustomerTagRepository
 
     Task<int> CountCustomersAsync(Guid tenantId, TagId tagId, CancellationToken cancellationToken);
 
+    /// <summary>Spec qep-frontend 2026-10-15 (filtros de la bandeja): los clientes con esa etiqueta, hasta <paramref name="cap"/>. La de
+    /// otro tenant no devuelve nada, igual que una inexistente.</summary>
+    Task<IReadOnlyList<CustomerId>> ListCustomerIdsAsync(Guid tenantId, TagId tagId, int cap, CancellationToken cancellationToken);
+
+    /// <summary>Las etiquetas de varios clientes en una consulta (los chips de una página de la bandeja). Sólo los que tienen alguna.</summary>
+    Task<IReadOnlyList<(CustomerId Customer, Tag Tag)>> ListForCustomersAsync(
+        Guid tenantId, IReadOnlyCollection<CustomerId> customerIds, CancellationToken cancellationToken);
+
     /// <summary>Con tracking: <c>SetCustomerTagsHandler</c> las quita o conserva.</summary>
     Task<IReadOnlyList<CustomerTagAssignment>> ListAssignmentsAsync(Guid tenantId, CustomerId customerId, CancellationToken cancellationToken);
 
@@ -107,6 +115,13 @@ public sealed record CustomerTagRef(Guid Id, string Name, string Color);
 public interface ICustomerTagLookup
 {
     Task<IReadOnlyList<CustomerTagRef>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, CancellationToken cancellationToken);
+
+    /// <summary>Spec qep-frontend 2026-10-15: los clientes con la etiqueta, para el filtro de la bandeja (con tope).</summary>
+    Task<IReadOnlyList<Guid>> FindCustomerIdsAsync(Guid tenantId, Guid tagId, int cap, CancellationToken cancellationToken);
+
+    /// <summary>Las etiquetas de cada cliente, por nombre; el que no tiene ninguna no aparece.</summary>
+    Task<IReadOnlyDictionary<Guid, IReadOnlyList<CustomerTagRef>>> FindForCustomersAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
 }
 
 public sealed class CustomerTagLookup(ICustomerTagRepository tags) : ICustomerTagLookup
@@ -121,5 +136,27 @@ public sealed class CustomerTagLookup(ICustomerTagRepository tags) : ICustomerTa
 
         var found = await tags.ListByIdsAsync(tenantId, [.. tagIds.Select(id => new TagId(id))], cancellationToken);
         return [.. found.Select(tag => new CustomerTagRef(tag.Id.Value, tag.Name, tag.Color.ToWireValue()))];
+    }
+
+    public async Task<IReadOnlyList<Guid>> FindCustomerIdsAsync(Guid tenantId, Guid tagId, int cap, CancellationToken cancellationToken) =>
+        [.. (await tags.ListCustomerIdsAsync(tenantId, new TagId(tagId), cap, cancellationToken)).Select(id => id.Value)];
+
+    public async Task<IReadOnlyDictionary<Guid, IReadOnlyList<CustomerTagRef>>> FindForCustomersAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(customerIds);
+        if (customerIds.Count == 0)
+        {
+            return new Dictionary<Guid, IReadOnlyList<CustomerTagRef>>();
+        }
+
+        var rows = await tags.ListForCustomersAsync(tenantId, [.. customerIds.Select(id => new CustomerId(id))], cancellationToken);
+        return rows
+            .GroupBy(row => row.Customer.Value)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<CustomerTagRef>)[.. group
+                    .OrderBy(row => row.Tag.Name, StringComparer.OrdinalIgnoreCase).ThenBy(row => row.Tag.Id.Value)
+                    .Select(row => new CustomerTagRef(row.Tag.Id.Value, row.Tag.Name, row.Tag.Color.ToWireValue()))]);
     }
 }

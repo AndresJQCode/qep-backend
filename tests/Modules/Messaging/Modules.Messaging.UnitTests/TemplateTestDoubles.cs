@@ -100,6 +100,19 @@ internal sealed class FakeCustomerDirectory : IMessagingCustomerDirectory
 
     public Task<IReadOnlyList<MessagingTagRef>> FindTagsAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<MessagingTagRef>>(Tags.Where(tag => tagIds.Contains(tag.Id)).ToList());
+
+    /// <summary>Spec qep-frontend 2026-10-15: clientes por etiqueta y etiquetas por cliente, para el filtro y los chips de la bandeja.</summary>
+    public Dictionary<Guid, List<Guid>> CustomersByTag { get; } = [];
+
+    public Dictionary<Guid, IReadOnlyList<MessagingTagRef>> TagsByCustomer { get; } = [];
+
+    public Task<IReadOnlyList<Guid>> FindIdsByTagAsync(Guid tenantId, Guid tagId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Guid>>(CustomersByTag.TryGetValue(tagId, out var ids) ? ids : []);
+
+    public Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessagingTagRef>>> FindTagsByCustomerAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<MessagingTagRef>>>(
+            TagsByCustomer.Where(pair => customerIds.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value));
 }
 
 internal sealed record OpenCall(Guid ConnectionId, MessagingCustomerContact Contact, Guid? AssignedMemberId, Guid? ActorUserId);

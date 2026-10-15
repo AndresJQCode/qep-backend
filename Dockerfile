@@ -7,7 +7,7 @@
 # Se fija la imagen en vez de aflojar global.json a propósito: global.json existe para que
 # todos compilen con el mismo SDK. Al subir de banda se cambian los dos, juntos — más el
 # requisito del README y el SDK instalado en la máquina del developer.
-FROM mcr.microsoft.com/dotnet/sdk:10.0.400 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.402 AS build
 WORKDIR /src
 
 # .editorconfig is build input: it marks EF migrations as generated code, so the
@@ -18,7 +18,9 @@ COPY src/ src/
 RUN dotnet restore src/Api/Api.csproj --locked-mode
 RUN dotnet publish src/Api/Api.csproj -c Release --no-restore -o /app/publish
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+# Clavado al parche y no al flotante `10.0`: CVE-2026-70159 (DoS en SignalR) se corrige en 10.0.13, y un
+# flotante en caché del nodo o del runner puede seguir sirviendo uno anterior sin que nadie lo note.
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.13 AS runtime
 WORKDIR /app
 
 # Kubernetes deployment/service target containerPort 8080 (k8s/prod-deployment.yaml).

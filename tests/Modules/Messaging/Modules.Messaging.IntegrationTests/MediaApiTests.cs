@@ -122,6 +122,25 @@ public sealed class MediaApiTests
         Assert.Equal("sandbox; default-src 'none'", served.Headers.GetValues("Content-Security-Policy").Single());
     }
 
+    // Bug 4 de PENDIENTES (2026-10-15): el medio lo pide un <audio>/<img>/<video>, sin X-Tenant-Id. El tenant
+    // sale del path de esta ruta; antes, sin él, la sesión no tenía permisos y la respuesta era 403.
+    [Fact]
+    public async Task ATagWithoutTheTenantHeaderStillGetsTheMedia()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, "audio/ogg");
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        await DrainMediaAsync(f.Host);
+        using var tag = CreateClient(f.Host, f.Tenant.OwnerUserId, f.Tenant.TenantId, ReadPermissions);
+        tag.DefaultRequestHeaders.Remove("X-Tenant-Id");
+
+        var served = await tag.GetAsync(MediaUrl(f.Tenant.TenantId, f.MessageId), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, served.StatusCode);
+        Assert.Equal("audio/ogg", served.Content.Headers.ContentType?.MediaType);
+    }
+
     // Review Focus 5.
     [Theory]
     [InlineData("text/html", "page.html")]

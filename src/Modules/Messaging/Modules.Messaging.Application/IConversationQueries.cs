@@ -44,7 +44,17 @@ public sealed record ConversationListFilter(
     string? Search,
     IReadOnlyCollection<string> CustomerWaIds,
     IReadOnlyCollection<Guid> CustomerIds,
-    ConversationChannel? Channel = null);
+    ConversationChannel? Channel = null,
+    IReadOnlyCollection<Guid>? TagCustomerIds = null,
+    bool UnreadOnly = false,
+    ConversationSort Sort = ConversationSort.Newest);
+
+/// <summary>Spec qep-frontend 2026-10-15: más recientes primero (el de siempre) o más antiguas primero, por <c>last_activity_at</c>.</summary>
+public enum ConversationSort
+{
+    Newest,
+    Oldest,
+}
 
 /// <summary>Spec 2026-10-09 §7.6: las lecturas de la bandeja. Todo método recibe <c>tenantId</c>.</summary>
 public interface IConversationQueries

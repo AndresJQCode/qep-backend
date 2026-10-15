@@ -26,6 +26,18 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
             query = query.Where(conversation => conversation.Channel == channel);
         }
 
+        // Spec qep-frontend 2026-10-15: una conversación sin cliente no tiene etiquetas y no pasa el filtro.
+        if (filter.TagCustomerIds is { } tagged)
+        {
+            var taggedIds = tagged.ToArray();
+            query = query.Where(conversation => conversation.CustomerId != null && taggedIds.Contains(conversation.CustomerId.Value));
+        }
+
+        if (filter.UnreadOnly)
+        {
+            query = query.Where(conversation => conversation.UnreadCount > 0);
+        }
+
         query = filter.Assigned switch
         {
             // P15: sin membresía activa, «mías» no encuentra nada.
@@ -51,8 +63,11 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
         }
 
         var total = await query.CountAsync(cancellationToken);
-        var items = await query
-            .OrderByDescending(conversation => conversation.LastActivityAt).ThenByDescending(conversation => conversation.Id)
+        // El mismo índice (IX_conversations_tenant_status_activity) sirve a los dos órdenes, leído al revés.
+        var ordered = filter.Sort == ConversationSort.Oldest
+            ? query.OrderBy(conversation => conversation.LastActivityAt).ThenBy(conversation => conversation.Id)
+            : query.OrderByDescending(conversation => conversation.LastActivityAt).ThenByDescending(conversation => conversation.Id);
+        var items = await ordered
             .Skip((page - 1) * pageSize).Take(pageSize)
             .Select(Projection)
             .ToListAsync(cancellationToken);
