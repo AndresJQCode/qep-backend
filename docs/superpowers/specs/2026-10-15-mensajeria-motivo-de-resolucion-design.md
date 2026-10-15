@@ -111,8 +111,8 @@ El motivo nuevo es una entidad agregada al `DbContext` (`repository.Add`), no SQ
 misma transacción que la resolución y la auditoría.
 
 La violación de `IX_resolution_reasons_tenant_name` la traduce `MessagingUnitOfWork` **por nombre de
-índice** a `MessagingDomainException(messaging.resolution_reason.name_taken)` → 409, junto a las que ya
-traduce.
+índice** a `ResourceConflictException(messaging.resolution_reason.name_taken)` → 409 (como
+`customers.tag.name_taken`; una `MessagingDomainException` saldría 422), junto a las que ya traduce.
 
 Responde 200 con el `ConversationSummary`, que ya trae `resolutionReason` (D-R7).
 
@@ -137,7 +137,7 @@ No hay `POST`: el catálogo se alimenta desde el resolver (decisión del owner, 
 - `ConversationSummary` suma `ResolutionReasonRefDto? ResolutionReason = null` al final, con valor por
   defecto como `Channel`. Lleva la nota BFF de D-R7 en el XML doc.
 - Los nombres se resuelven **incluidos los archivados** (D-R5) con una sola consulta por página:
-  `IResolutionReasonRepository.ListNamesAsync(tenantId, ids)`. La usan `ListMessages` y
+  el puerto aparte `IResolutionReasonNames.FindAsync(tenantId, ids)` (lo implementa `ResolutionReasonRepository`). La usan `ListMessages` y
   `ConversationSummaryBuilder`, igual que los nombres de miembros.
 - Un `reasonId` que no aparece (no debería pasar, porque la FK y el archivado lo impiden) se lee como
   `null`, no como error.
@@ -257,6 +257,8 @@ Corre las pruebas acotadas a Messaging y ArchitectureTests, no la suite completa
   sin motivo, que es lo que eran.
 - El permiso entra en roles de fábrica que viven en código: sin migración de datos. Los roles custom no lo
   reciben solos.
+- Tras desplegar, reinicia la API y que admins y asesores recarguen su sesión para recibir
+  `messaging.resolution_reason.manage`; sin eso, `PATCH`/`DELETE` del catálogo dan 403 (como todo permiso nuevo).
 - Backend antes que frontend: el cuerpo opcional es compatible con el frontend actual.
 
 ## 7. Fuera de alcance

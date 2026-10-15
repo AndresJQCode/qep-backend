@@ -1999,6 +1999,16 @@ El cuerpo va de 1 a 4096 caracteres y sólo admite `{nombre}`, `{asesor}` y `{em
 entera por atajo y `variables.asesor` / `variables.empresa` ya resueltos para quien llama; `{nombre}` lo resuelve el
 frontend con la conversación. `PUT` y `DELETE` exigen la versión (412 si cambió).
 
+**Motivos de resolución.** `POST …/resolve` acepta un cuerpo opcional `{ reasonId }` o `{ reasonName }`; sin cuerpo resuelve sin
+motivo, como antes. `reasonName` busca un motivo vigente sin distinguir mayúsculas (recortado) y, si no existe, lo crea en la misma
+transacción: el nombre va de 1 a 60 caracteres y cada tenant tiene hasta 100 vigentes. Si dos asesores crean a la vez el mismo nombre
+nuevo, el segundo recibe 409 `messaging.resolution_reason.name_taken`: el cliente reintenta una vez el mismo request y el reintento
+reutiliza el motivo. Borrar archiva (`deleted_at`): el motivo sale del catálogo, pero el historial y el resumen lo siguen nombrando;
+renombrar cambia el nombre también en el historial pasado. Administrar el catálogo (`PATCH` / `DELETE`) pide
+`messaging.resolution_reason.manage` (de fábrica en `admin` y `advisor`); después de desplegar hay que reiniciar la API y recargar la
+sesión, como con todo permiso nuevo. Spec:
+[`2026-10-15-mensajeria-motivo-de-resolucion-design.md`](docs/superpowers/specs/2026-10-15-mensajeria-motivo-de-resolucion-design.md).
+
 **Búsqueda.** `GET …/messaging/messages/search?q=` busca por palabra en texto y leyendas con la
 configuración `messaging.es_unaccent` (español sin acentos ni flexiones, prefijo con 3+ letras) y el
 índice GIN `IX_messages_tenant_search`; el servidor arma la `tsquery` (nunca la persona) y corta a los
