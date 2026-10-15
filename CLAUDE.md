@@ -275,6 +275,11 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `Authentication__UseDevelopmentStub=false`. Y su limitador `webhook` no es el `Public`: es concurrencia
   global con cola, porque un 429 hace que Meta reintente hasta 7 días. El resto está en
   [README § Mensajería](README.md#mensajería-whatsapp-cloud).
+- **Un fixture de `message_templates` sin `id` deja el catálogo vacío** (spec 2026-10-14). El catálogo de envío lee
+  del espejo `messaging.message_templates`, que indexa por `meta_template_id`, y el refresco salta los elementos sin
+  `id`: el síntoma es `messaging.template.not_available` en una prueba que antes pasaba, no un error del espejo. Y el
+  webhook `message_template_status_update` hay que suscribirlo en la app de Meta: sin él los estados sólo cambian
+  con el refresco.
 - **Integrations no usa el `IAuditRecorder` ni el `IOutboxWriter` compartidos:** los dos están
   ligados a `TenancyDbContext`, y una segunda ligadura le robaría en silencio la auditoría o el outbox a
   Tenancy. Un módulo nuevo con auditoría atómica declara su propio puerto (`IIntegrationsAuditRecorder`,

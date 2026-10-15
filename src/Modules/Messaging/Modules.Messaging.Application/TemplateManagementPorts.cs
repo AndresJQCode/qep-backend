@@ -42,9 +42,14 @@ public interface IMessageTemplateRepository
     Task MarkSyncedAsync(Guid tenantId, Guid connectionId, DateTimeOffset now, CancellationToken cancellationToken);
 }
 
-/// <summary>Spec 2026-10-14 §4.3 y §5: la señal para el consumidor Quotations. <c>true</c> sólo con una fila <c>Quotation</c> en
-/// <c>APPROVED</c> para esa conexión del tenant. El adaptador hacia Quotations va en Bootstrapper cuando ese spec llegue.</summary>
+/// <summary>Spec 2026-10-14 §4.3 y §5: la señal para el consumidor Quotations. Devuelve la fila <c>Quotation</c> en <c>APPROVED</c> de esa
+/// conexión del tenant, o <c>null</c>. Devuelve nombre e idioma y no un <c>bool</c> porque el reintento versiona el nombre
+/// (<c>qep_cotizacion</c>, <c>qep_cotizacion_v2</c>…; enmienda del owner, 2026-10-15): el sender de Meta manda el nombre de la fila, no
+/// una constante. El adaptador hacia Quotations va en Bootstrapper cuando ese spec llegue.</summary>
 public interface IQuotationTemplateReadiness
 {
-    Task<bool> IsApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+    Task<ApprovedQuotationTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }
+
+/// <summary>Lo que el sender de Meta necesita para mandar la cotización: el nombre vigente de la plantilla y su idioma.</summary>
+public sealed record ApprovedQuotationTemplate(string Name, string Language);

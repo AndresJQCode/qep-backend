@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Messaging.Application;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
 namespace Modules.Messaging.IntegrationTests;
@@ -9,7 +11,7 @@ namespace Modules.Messaging.IntegrationTests;
 /// con el handle, deja fila PENDING Quotation con auditoría; repetir es quotation_exists; una REJECTED se recrea como la versión siguiente y
 /// la vieja se borra en Meta después de crear; un reintento que Meta rechaza no borra nada; name_taken salta de versión; una externa igual se
 /// adopta sin tocar Meta; una externa distinta es quotation_conflict; la subida fallida es upload_failed sin fila; el nombre reservado no se
-/// puede usar en una libre.</summary>
+/// puede usar en una libre. Y la señal de §5: devuelve el nombre y el idioma de la Quotation sólo cuando está APPROVED.</summary>
 public sealed class QuotationTemplateProvisioningApiTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -281,5 +283,39 @@ public sealed class QuotationTemplateProvisioningApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var (code, keys) = await ProblemAsync(response);
         Assert.Equal(("validation.failed", "name"), (code, Assert.Single(keys)));
+    }
+
+    [Fact]
+    public async Task TheReadinessPortReturnsTheApprovedQuotationTemplateOfThatConnectionOnly()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+
+        async Task<ApprovedQuotationTemplate?> ApprovedAsync(Guid connectionId)
+        {
+            using var scope = f.Factory.Services.CreateScope();
+            return await scope.ServiceProvider.GetRequiredService<IQuotationTemplateReadiness>()
+                .FindApprovedAsync(f.Tenant.TenantId, connectionId, Ct);
+        }
+
+        Task ApproveAsync() =>
+            ExecuteAsync(f.ConnectionString, "UPDATE messaging.message_templates SET status = 'APPROVED' WHERE kind = 'Quotation' AND tenant_id = @t", ("t", f.Tenant.TenantId));
+
+        Assert.Null(await ApprovedAsync(f.ConnectionId));
+        Assert.Equal(HttpStatusCode.Created, (await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f))).StatusCode);
+        Assert.Null(await ApprovedAsync(f.ConnectionId));
+        await ApproveAsync();
+        Assert.Equal(new ApprovedQuotationTemplate("qep_cotizacion", "es"), await ApprovedAsync(f.ConnectionId));
+        // Otra conexión del mismo tenant no está lista.
+        Assert.Null(await ApprovedAsync(Guid.CreateVersion7()));
+
+        // El nombre sale de la fila, no de una constante: tras el reintento versionado, la aprobada es qep_cotizacion_v2.
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.message_templates SET status = 'REJECTED', status_reason = 'INVALID_FORMAT' WHERE tenant_id = @t", ("t", f.Tenant.TenantId));
+        Assert.Null(await ApprovedAsync(f.ConnectionId));
+        Assert.Equal(HttpStatusCode.Created, (await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f))).StatusCode);
+        Assert.Null(await ApprovedAsync(f.ConnectionId));
+        await ApproveAsync();
+        Assert.Equal(new ApprovedQuotationTemplate("qep_cotizacion_v2", "es"), await ApprovedAsync(f.ConnectionId));
     }
 }

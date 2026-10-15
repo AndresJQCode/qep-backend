@@ -76,6 +76,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IQuickReplyRepository, QuickReplyRepository>();
         // Spec 2026-10-14 §4.3: el espejo de plantillas.
         services.AddScoped<IMessageTemplateRepository, MessageTemplateRepository>();
+        // Spec 2026-10-14 §5: la señal que el consumidor Quotations leerá por un adaptador en Bootstrapper.
+        services.AddScoped<IQuotationTemplateReadiness, QuotationTemplateReadiness>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();

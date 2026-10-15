@@ -5,7 +5,10 @@
 llamadas nuevas a Graph). Authorization y Bootstrapper (catálogo de permisos, rol de sistema y política).
 **Frontend:** `qep-frontend`, slice aparte (§7).
 **Estado:** alcance, enfoque (espejo local con webhook) y las nueve secciones del diseño aprobados por el
-owner en conversación el 2026-10-14.
+owner en conversación el 2026-10-14. **Corregido al implementar (2026-10-15)** para que diga lo que hace el
+código (CLAUDE.md: gana el código): el reintento versionado de la plantilla de cotización y la firma de la señal
+(decisiones del owner del 2026-10-15), el PDF generado, el índice único parcial y la carrera de los primeros
+llenados. Cada cambio lleva la marca «corregido al implementar» o «agregado al implementar».
 **Es un delta sobre** `2026-10-11-contactos-plantillas-campanas-design.md` (§5, el catálogo de plantillas)
 y `2026-10-09-mensajeria-whatsapp-design.md` (el webhook, §8.2). Lo que este documento no toca sigue como
 está ahí.
@@ -32,8 +35,8 @@ debería tener que entrar a Meta para que su tenant pueda enviar cotizaciones.
   texto, cuerpo con variables con nombre, pie y botones; las manda a aprobar, ve su estado y las borra.
 - **La plantilla de cotización aprovisionada por QEP**: nombre reservado, cuerpo fijo que el backend
   conoce, encabezado de documento con un PDF de ejemplo. La crea un botón, una por conexión.
-- La **señal** «esta conexión tiene su plantilla de cotización aprobada», como puerto de Messaging para
-  que el consumidor Quotations la lea.
+- La **señal** «esta conexión tiene su plantilla de cotización aprobada, y se llama así», como puerto de
+  Messaging para que el consumidor Quotations la lea (§4.3).
 - El catálogo de envío (bandeja y campañas) pasa a leer del espejo.
 
 **Fuera** (§8): editar plantillas, encabezado multimedia en las libres, `AUTHENTICATION`, carrusel,
@@ -70,7 +73,7 @@ lo contrasta con la documentación vigente; lo que sólo se puede ver con tráfi
 | `POST /{wabaId}/message_templates` acepta `parameter_format: NAMED` con `body_text_named_params` en el `example` del `BODY`. | Crear libres (§4.4) | Se cambia el constructor de componentes; el contrato HTTP no cambia. |
 | La Resumable Upload (`POST /{appId}/uploads` y `POST /{uploadId}` con `file_offset: 0`) funciona con el **token de negocio de la conexión**, no sólo con un token de usuario. | Aprovisionar la de cotización (§4.5) | Sale `messaging.template.upload_failed` en el primer intento real. Alternativa: token de la app (`appId|appSecret`), que exige que Messaging conozca el `AppSecret`, cosa que ya hace para la firma del webhook. |
 | El `header_handle` devuelto no vence antes de la llamada de creación que sigue inmediatamente. | §4.5 | Se sube y se crea en el mismo handler; no se guarda el handle. |
-| `DELETE /{wabaId}/message_templates?hsm_id=&name=` borra sólo ese idioma; un nombre borrado queda bloqueado un tiempo antes de poder reutilizarse. | Borrar (§4.4) | El mensaje del 422 `name_taken` dice que el nombre puede estar en cuarentena; el plan fija el plazo que diga la documentación. |
+| `DELETE /{wabaId}/message_templates?hsm_id=&name=` borra sólo ese idioma; un nombre borrado queda bloqueado un tiempo antes de poder reutilizarse. | Borrar (§4.4), reintentar la de cotización (§4.5) | *(Corregido al implementar, 2026-10-15.)* La cuarentena se resuelve con el nombre versionado: el reintento de la de cotización no recrea `qep_cotizacion`, crea `qep_cotizacion_v2`, `_v3`… y salta de versión si Meta dice que el nombre ya existe (§4.5). En una libre, el 422 `name_taken` no distingue cuarentena de nombre en uso; el cuerpo exacto que Meta devuelve para un nombre en cuarentena queda a confirmar en producción (handoff). |
 | El valor de `message_template_status_update` trae `event`, `message_template_id`, `message_template_name`, `message_template_language` y `reason`, y el `entry.id` es el WABA. | Webhook (§4.4) | El parser es tolerante: lo que falte deja la fila sin tocar y un log. |
 | `error_user_title` y `error_user_msg` de Graph distinguen «nombre ya existe» y «tope de plantillas» del resto de los 400. **`error_subcode` no sirve:** Meta lo declaró obsoleto y no lo devuelve desde la v16. | Traducción de errores (§4.8) | Caen en `rejected_by_meta` con el `error_user_msg` de Meta. La pantalla sigue siendo útil. |
 | `GET /{wabaId}/message_templates` acepta `id` y `rejected_reason` en `fields`. | Refrescar (§4.4) | Sin `rejected_reason` el espejo sólo sabría el motivo por el webhook. |
@@ -79,7 +82,8 @@ lo contrasta con la documentación vigente; lo que sólo se puede ver con tráfi
 
 ### 4.1 Modelo
 
-Dos tablas nuevas en el schema `messaging`, migración `AddMessageTemplates`.
+Dos tablas nuevas en el schema `messaging`, migración `AddMessageTemplates`, y un índice en una segunda migración,
+`AddQuotationTemplateIndex` (agregado al implementar, 2026-10-15).
 
 **`messaging.message_templates`** — el espejo:
 
@@ -101,7 +105,10 @@ Dos tablas nuevas en el schema `messaging`, migración `AddMessageTemplates`.
 
 Índices: `UX_message_templates_meta_id` único en `(tenant_id, connection_id, meta_template_id)`;
 `UX_message_templates_name_language` único en `(tenant_id, connection_id, name, language)`;
-`IX_message_templates_status` en `(tenant_id, connection_id, status)`.
+`IX_message_templates_status` en `(tenant_id, connection_id, status)`; y `UX_message_templates_quotation`, único
+**parcial** en `(tenant_id, connection_id) WHERE kind = 'Quotation'`: a lo sumo una plantilla de cotización por
+conexión. *(Agregado al implementar, 2026-10-15: dos primeros aprovisionamientos a la vez dejaban dos filas
+`Quotation`; §4.5.)*
 
 **`messaging.template_mirror_syncs`** — cuándo se sincronizó cada conexión:
 
@@ -118,8 +125,8 @@ pantalla el «última sincronización».
 
 - `MessageTemplate`: entidad con las columnas de arriba. Fábricas `Pending(...)` (creada desde QEP, en
   `PENDING`, con `kind` `Free` o `Quotation`) y `Mirrored(...)` (traída por el refresco, `kind = External`).
-  Métodos: `ApplyStatus(status, reason, now)`, `SyncFrom(status, reason, category, components, now)`,
-  `AdoptAsQuotation(now)` (sólo desde `External`), `IsApproved`.
+  Métodos: `ApplyStatus(status, reason, now)`, `SyncFrom(status, reason, category, parameterFormat, components,
+  now)`, `AdoptAsQuotation(now)` (sólo desde `External`), `IsApproved`, `IsLive`.
 - `MessageTemplateKind` (`Free`, `Quotation`, `External`) y `MessageTemplateStatuses` (constantes de
   texto; `IsLive(status)` = `PENDING`, `APPROVED` o `IN_APPEAL`, lo que cuenta como «ya existe» para la de
   cotización).
@@ -128,7 +135,9 @@ pantalla el «última sincronización».
   adopción (§4.5).
 - Códigos nuevos en `MessagingErrorCodes`, todos `messaging.template.*`: `name_reserved`,
   `name_taken`, `limit_reached`, `rejected_by_meta`, `upload_failed`, `quotation_exists`,
-  `quotation_conflict`, `in_use_by_campaign`, `not_found`.
+  `quotation_conflict`, `in_use_by_campaign`, `not_found` y `name_invalid` *(agregado al implementar,
+  2026-10-15: el dominio rechaza un nombre fuera de `^[a-z0-9_]{1,512}$`; es la última línea de defensa, el
+  validador ya lo marca en `name`)*.
 
 ### 4.3 Aplicación
 
@@ -161,7 +170,11 @@ inserta la fila `Pending` con el `id` que Meta devolvió y la categoría que Met
 `TemplateMirrorSync.RunAsync(tenant, connection)`: lista todo en Meta (`ListTemplatesAsync`, con `id` y
 `rejected_reason`), hace upsert por `meta_template_id` (`SyncFrom` en las conocidas, `Mirrored` en las
 nuevas), elimina las filas que Meta ya no lista, escribe `template_mirror_syncs` y guarda. Es una sola
-transacción por conexión. Las filas `Quotation` conservan su `kind` al sincronizar.
+transacción por conexión. Las filas `Quotation` conservan su `kind` al sincronizar. Un elemento del listado sin
+`id`, nombre o idioma se salta. Si el listado falla, el token vencido o un permiso faltante (§4.8) reportan la
+conexión y son `messaging.connection_unavailable`; **cualquier otra** falla es `messaging.templates.unavailable`:
+un 400 del listado no es un nombre repetido ni un rechazo, así que el listado no pasa por la traducción de
+crear y borrar. *(Corregido al implementar, 2026-10-15.)*
 
 **Catálogo de envío.** `IMessageTemplates.ListAsync(tenant, connection, refresh)` conserva su firma y su
 contrato (`messaging.connection_unavailable`, `messaging.templates.unavailable`). Su implementación nueva,
@@ -173,6 +186,19 @@ R8 es el primer llenado: un `GET` con `ConversationRead` sobre una conexión nun
 Meta una vez. Ocurre una sola vez por conexión y la alternativa, un catálogo vacío hasta que un admin
 entre a la pantalla, dejaría la bandeja sin plantillas tras el despliegue.
 
+**Dos primeros llenados a la vez** *(agregado al implementar, 2026-10-15)*: dos destinatarios de una campaña o
+dos asesores abriendo la bandeja tras el despliegue sincronizan la misma conexión nunca sincronizada. Los dos
+insertan el marcador y las mismas filas; el segundo choca con `PK_template_mirror_syncs` o con
+`UX_message_templates_meta_id`, y `MessagingUnitOfWork` lo traduce por nombre a `concurrency.conflict` (412)
+después de soltar del contexto las filas del espejo que quedaron pendientes (`DiscardMirrorChanges`; sin eso, el
+siguiente `SaveChanges` del mismo request, el de la campaña, las reinsertaría). El llenado implícito —el catálogo
+sin `refresh` y el `GET` de la pantalla— atrapa ese 412 y lee el espejo que llenó el otro; `refresh=true` y el
+`POST …/sync` explícito lo dejan subir. El marcador se escribe con EF y no con un upsert en SQL crudo porque
+tiene que confirmarse en la misma transacción que las filas.
+
+El catálogo viejo hacía *single-flight* y recordaba 30 s una falla de Meta; eso desapareció con el caché. Con una
+conexión nunca sincronizada y Meta caído, cada destinatario de una campaña espera su propio timeout una vez.
+
 **Puertos nuevos:**
 
 - `IMessageTemplateRepository`: `FindAsync(tenant, connection, id)`, `FindByMetaIdAsync(tenant,
@@ -180,16 +206,22 @@ entre a la pantalla, dejaría la bandeja sin plantillas tras el despliegue.
   `ListAsync(tenant, connection)`, `ListApprovedAsync(tenant, connection)`,
   `FindQuotationAsync(tenant, connection)`, `Add`, `Remove`, `IsReferencedByActiveCampaignAsync(...)`,
   `MarkSyncedAsync(tenant, connection, now)`, `LastSyncAsync(tenant, connection)`.
-- `IQuotationTemplateReadiness`: `Task<bool> IsApprovedAsync(Guid tenantId, Guid connectionId, ct)`.
-  Es la señal para el consumidor Quotations (§5). La implementa Infrastructure sobre la misma tabla; el
-  adaptador hacia Quotations va en Bootstrapper cuando ese spec llegue.
+- `IQuotationTemplateReadiness`: `Task<ApprovedQuotationTemplate?> FindApprovedAsync(Guid tenantId, Guid
+  connectionId, ct)`, con `ApprovedQuotationTemplate(string Name, string Language)` en Application. Devuelve el
+  nombre y el idioma de la fila `Quotation` en `APPROVED` de esa conexión, o `null`. Es la señal para el
+  consumidor Quotations (§5). La implementa Infrastructure (`QuotationTemplateReadiness`, scoped, una lectura
+  sin caché que va por `UX_message_templates_quotation`); el adaptador hacia Quotations va en Bootstrapper
+  cuando ese spec llegue. *(Corregido al implementar, 2026-10-15, decisión del owner: era `Task<bool>
+  IsApprovedAsync`. Con el reintento versionado el nombre vigente es el de la fila, no una constante, y el
+  sender lo necesita.)*
 - `IWhatsAppCloudClient` gana `CreateTemplateAsync`, `DeleteTemplateAsync` y `UploadTemplateExampleAsync`
   (§4.4). `ListTemplatesAsync` no cambia de firma; cambia los `fields`.
 
 **Webhook.** `WebhookPayloadParser` gana `TemplateStatusChange(WabaId, MetaTemplateId, Name, Language,
-Event, Reason)` para `field = "message_template_status_update"`. `WebhookHandlers` lo procesa como
-`account_update`: `FindByAccountAsync(wabaId)` da las conexiones de esa cuenta; por cada una,
-`FindByMetaIdAsync` y `ApplyStatus(event, reason, now)`. Sin fila: log a nivel information con tenant,
+Event, Reason)` para `field = "message_template_status_update"`. `WebhookDeliveryProcessor` lo procesa como
+`account_update` *(corregido al implementar, 2026-10-15: no es `WebhookHandlers`)*: `FindByAccountAsync(wabaId)`
+da las conexiones de esa cuenta; por cada una, busca la fila por `meta_template_id` en `MessagingDbContext` y
+`ApplyStatus(event, reason, now)`. Sin fila: log a nivel information con tenant,
 conexión y `meta_template_id`, y nada más —el refresco la va a traer. Un `event` que no está en
 `MessageTemplateStatuses` se guarda igual, como texto: la pantalla lo muestra crudo antes de que
 inventemos qué significa.
@@ -224,32 +256,45 @@ Todo en `Modules.Messaging.Infrastructure/Meta`, en `WhatsAppCloudClient`:
 
 - **`ListTemplatesAsync`**: `TemplateFields` pasa a
   `id,name,language,status,category,components,parameter_format,rejected_reason`.
-- **`CreateTemplateAsync(source, TemplateCreateRequest)`**: `POST {ver}/{wabaId}/message_templates` con
-  `name`, `language`, `category`, `parameter_format` y `components`. Devuelve
-  `MessagingGraphResult<CreatedTemplate(Id, Status, Category)>`.
+- **`CreateTemplateAsync(source, JsonObject payload)`**: `POST {ver}/{wabaId}/message_templates` con
+  `name`, `language`, `category`, `parameter_format` y `components`. El payload lo arma Application
+  (`TemplateComponentsBuilder.CreatePayload`, `QuotationTemplateDefinition.Payload`). Devuelve
+  `MessagingGraphResult<CreatedTemplate(Id, Status, Category)>`. *(Corregido al implementar, 2026-10-15: no hay
+  `TemplateCreateRequest`.)*
 - **`DeleteTemplateAsync(source, metaTemplateId, name)`**: `DELETE
   {ver}/{wabaId}/message_templates?hsm_id={id}&name={name}`. Un 400 cuyo error diga que la plantilla no
   existe se devuelve como éxito con `AlreadyGone = true`.
-- **`UploadTemplateExampleAsync(source, appId, bytes, contentType, fileName)`**: dos requests.
-  `POST {ver}/{appId}/uploads?file_length=&file_type=&file_name=` devuelve `{ id: "upload:…" }`;
+- **`UploadTemplateExampleAsync(source, bytes, mimeType, fileName)`**: el `appId` no entra por parámetro, sale de
+  `MessagingMetaOptions` (sin él, la falla `no_app_id`). Dos requests.
+  `POST {ver}/{appId}/uploads?file_length=&file_type=&file_name=` devuelve `{ id: "upload:…" }`, que en la
+  práctica trae la firma: `upload:…?sig=…`. El id se valida contra esa forma y va sin escapar; la `?sig=` viaja
+  como query del segundo request, no escapada dentro de la ruta.
   `POST {ver}/{uploadId}` con header `file_offset: 0`, `Authorization: OAuth {token}` y el cuerpo binario
-  devuelve `{ h }`. Timeout de 30 s; el PDF pesa unos KB. Cualquier fallo → `upload_failed`.
+  devuelve `{ h }`. Timeout de 30 s; el PDF pesa unos KB. Un token rechazado sigue el camino de §4.8; cualquier
+  otro fallo → `upload_failed`. *(Corregido al implementar, 2026-10-15.)*
 - `MessagingMetaOptions` gana `AppId` (la sección `Meta:App` ya lo tiene; Integrations lo valida).
 
 **Traducción de errores de Graph** (§4.8) en una clase propia, `TemplateGraphErrors`, que discrimina por
 `error_user_title` y `error_user_msg`, nunca sólo por `code = 100` (y no por `error_subcode`, que Meta ya no
 devuelve): el mismo criterio que el nombre de índice en los `23505`. Vive en Application, no en
 Infrastructure: traduce un `MessagingGraphFailure` ya parseado, sin EF ni HTTP, y el handler necesita
-reaccionar al token vencido (`ReportRejectedAsync`) en el mismo lugar. Un 401 o `code = 190` sigue el camino que ya tienen los envíos:
-`ReportRejectedAsync(token_expired)` y `messaging.connection_unavailable`.
+reaccionar al token vencido (`ReportRejectedAsync`) en el mismo lugar. El token vencido o un permiso faltante
+(HTTP 401 o 403, `code` 190, 10 o 200–299; §4.8) sigue el camino que ya tienen los envíos:
+`ReportRejectedAsync(token_expired)` y `messaging.connection_unavailable`. *(Corregido al implementar,
+2026-10-15: decía sólo 401 o `code = 190`.)*
 
-**Persistencia:** `MessageTemplateConfiguration` y `TemplateMirrorSyncConfiguration` en
-`Persistence/Configurations`, `MessageTemplateRepository` con las consultas de §4.3.
+**Persistencia:** no hay carpeta `Persistence/Configurations`: el mapeo de las dos tablas va en
+`MessagingDbContext` (`ConfigureMessageTemplate` y `ConfigureTemplateMirrorSync`), como el resto del módulo
+*(corregido al implementar, 2026-10-15)*. `MessageTemplateRepository` con las consultas de §4.3.
+`MessagingUnitOfWork` traduce por **nombre de índice**: `UX_message_templates_name_language` →
+`name_taken`; `UX_message_templates_quotation` → `quotation_exists`; `UX_message_templates_meta_id` y
+`PK_template_mirror_syncs` → `concurrency.conflict` (412), soltando antes las filas pendientes del espejo
+(§4.3).
 `IsReferencedByActiveCampaignAsync` es un `EXISTS` sobre `messaging.campaigns` por `connection_id`,
 `template_name`, `template_language` y `status IN ('Scheduled','Sending')`. `MessageTemplateCatalog` (el del
 `IMemoryCache`) se elimina junto con su registro.
 
-**Webhook:** el parser y el handler de §4.3. El handoff de Meta
+**Webhook:** el parser y `WebhookDeliveryProcessor` (§4.3). El handoff de Meta
 (`docs/superpowers/plans/2026-10-09-mensajeria-whatsapp-handoff-meta.md`, paso 5) gana el campo
 `message_template_status_update` en la suscripción de la app.
 
@@ -259,36 +304,71 @@ reaccionar al token vencido (`ReportRejectedAsync`) en el mismo lugar. Un 401 o 
 el texto, las variables y sus ejemplos:
 
 - `Name = "qep_cotizacion"`, `Language = "es"`, `Category = "UTILITY"`, `ParameterFormat = NAMED`.
+- Versiones *(agregado al implementar, 2026-10-15, decisión del owner)*: `Name` es la versión 1.
+  `NameFor(version)` da `qep_cotizacion` para la 1 y `qep_cotizacion_v{n}` desde la 2; `VersionOf(name)` es su
+  inverso y devuelve `null` para cualquier otro nombre (también `_v1`, `_v0` o `_v02`, que `NameFor` nunca
+  produce). Todas caen dentro del prefijo reservado. `Draft(name)` y `Payload(handle, name)` reciben el nombre.
 - `HEADER`: `format: DOCUMENT`, `example.header_handle: [handle]`.
 - `BODY`: `¡Hola, {{fullname}}! Adjuntamos la cotización *{{order_number}}* por *{{total}}*, vigente hasta
   el *{{valid_until}}*.`, con `body_text_named_params`: `fullname → Juan Perez`, `order_number →
   COT-000123`, `total → 2.450.000 COP`, `valid_until → 30 de septiembre de 2026`.
 - `FOOTER`: `Este mensaje fue generado automáticamente.`
 - `Matches(components)`: compara cuerpo, pie, formato del encabezado y nombres de variables de unos
-  `components` de Meta con la definición. Lo usa la adopción.
-- El PDF de ejemplo es un recurso embebido en `Modules.Messaging.Infrastructure`
-  (`Meta/Resources/qep-cotizacion-ejemplo.pdf`), mínimo y válido; la definición no lo conoce, lo pasa
-  el handler.
+  `components` de Meta con la definición. No mira el nombre. Lo usa la adopción.
+- El PDF de ejemplo **se genera en Application**: `QuotationTemplateDefinition.ExamplePdf()` sobre `MinimalPdf`,
+  un PDF 1.4 de una página con una línea y su tabla `xref`. No es un recurso embebido. *(Corregido al
+  implementar, 2026-10-15, decisión del owner.)*
 
 Es el mismo texto que hoy tiene la plantilla de Zenvia (README § Plantilla de WhatsApp), para que el
-cliente final no note el cambio de canal. Cambiar el texto algún día es una definición nueva con otro
-nombre (`qep_cotizacion_v2`), aprobada antes de que el envío la use, y el sender de Quotations apunta al
-nombre nuevo en el **mismo commit** que cambia las variables.
+cliente final no note el cambio de canal. Las versiones las usa el reintento; un cambio de texto algún día
+es otra definición que también crea la versión siguiente, aprobada antes de que el envío la use. El sender
+de Quotations lee el nombre vigente de la fila `Quotation` (`FindApprovedAsync`, §4.3), no de una constante, y
+cambia en el **mismo commit** que las variables.
 
-**`ProvisionQuotationTemplateCommand`**, en orden:
+**`ProvisionQuotationTemplateCommand`**, en orden. *(Corregido al implementar, 2026-10-15: el reintento
+recreaba `qep_cotizacion` borrando antes la rechazada, pero Meta bloquea un tiempo el nombre de una plantilla
+borrada. Decisión del owner: el reintento crea la versión siguiente, y crea antes de borrar.)*
 
 1. Autoriza, guard de módulo, resuelve la conexión.
-2. `FindQuotationAsync`:
-   - hay fila `Quotation` con estado `IsLive` → 422 `quotation_exists`;
-   - hay fila `Quotation` en `REJECTED`, `PAUSED`, `DISABLED` o `LIMIT_EXCEEDED` → la borra en Meta
-     (`DeleteTemplateAsync`, idempotente) y en el espejo, y sigue. Es el «reintentar».
-3. `FindByNameAsync("qep_cotizacion", "es")`: si existe y es `External`, la **adopta**: si
-   `Matches(components)`, `AdoptAsQuotation`, audita `messaging.template.quotation_provisioned` con
-   `adopted = true`, guarda y responde 201 sin tocar Meta; si no coincide, 422 `quotation_conflict` con el
-   nombre en el mensaje, para que el admin la borre desde la pantalla.
-4. Sube el PDF de ejemplo (`UploadTemplateExampleAsync`) → `handle`.
-5. `CreateTemplateAsync` con los componentes de la definición y el `handle`.
-6. Inserta la fila `Pending` con `kind = Quotation`, audita `quotation_provisioned`, guarda. 201.
+2. `FindQuotationAsync`: si la fila `Quotation` está viva (`IsLive`: `PENDING`, `APPROVED` o `IN_APPEAL`) →
+   422 `quotation_exists`. Si está en cualquier otro estado (`REJECTED`, `PAUSED`, `DISABLED`,
+   `LIMIT_EXCEEDED`…), es el «reintentar» y se sigue con ella como la anterior.
+3. Sin fila `Quotation`, `FindByNameAsync("qep_cotizacion", "es")`: si existe, la **adopta** (sólo el nombre
+   base): si `Matches(components)`, `AdoptAsQuotation`, audita `messaging.template.quotation_provisioned` con
+   `changed_fields = ["kind"]`, guarda y responde 201 sin tocar Meta; si no coincide, 422 `quotation_conflict`
+   con el nombre en el mensaje, para que el admin la borre desde la pantalla. `AuditEntry` no tiene columna de
+   metadatos: `changed_fields = ["kind"]` es la marca «adoptada» que antes se llamaba `adopted = true`, y es lo
+   que distingue en la auditoría una adoptada de una creada.
+4. El nombre a crear es la versión siguiente a la mayor `VersionOf(name)` entre **todas** las filas del espejo
+   de esa conexión en `es` (cualquier `kind`); sin ninguna, la 1 (`qep_cotizacion`). Un reintento tras
+   `qep_cotizacion` crea `qep_cotizacion_v2`.
+5. Sube el PDF de ejemplo (`UploadTemplateExampleAsync`) → `handle`.
+6. `CreateTemplateAsync` con los componentes de la definición, el nombre y el `handle`. Si Meta responde que el
+   nombre ya existe (`name_taken`; por ejemplo, uno en cuarentena que el espejo ya no conoce), prueba la versión
+   siguiente **con el mismo handle**, hasta 5 creaciones en total; agotadas, sube el `name_taken`. Cualquier
+   otra falla sube como en §4.8.
+7. Con la nueva creada, y sólo si había una anterior, la borra en Meta (`DeleteTemplateAsync(source,
+   metaTemplateId, name)`, idempotente). Si el borrado falla por el token, 422 `connection_unavailable` y no se
+   escribe nada: la nueva ya quedó en Meta sin fila y el siguiente refresco la trae como `External`. Si falla por
+   otra cosa, queda un warning con tenant, conexión y `meta_template_id` (nunca el token) y se sigue: la fila
+   vieja se quita igual y el siguiente refresco la traerá como `External` si Meta todavía la tiene.
+8. Quita la fila anterior, inserta la `Pending` con `kind = Quotation` y el nombre usado, audita
+   `quotation_provisioned` (sin `changed_fields`) y guarda, en una sola transacción. 201.
+
+Crear antes de borrar hace que un fallo al subir o al crear deje la anterior intacta en Meta y en el espejo,
+sin ningún `DELETE`, y que el siguiente intento calcule la misma versión.
+
+**Dos primeros aprovisionamientos a la vez** *(agregado al implementar, 2026-10-15)*: calculan la misma
+versión; Meta crea una y al otro le dice «ya existe», así que salta a la siguiente y también la crea. El índice
+`UX_message_templates_quotation` (§4.1) deja guardar una sola fila `Quotation` por conexión y
+`MessagingUnitOfWork` lo traduce por nombre a `quotation_exists`. La versión que alcanzó a crear el que pierde
+queda en Meta y vuelve como `External` en el siguiente refresco. No hay comprobación previa en el handler: sólo
+el índice cierra la carrera, como el triage de Pipeline.
+
+**Espejo atrasado** *(agregado al implementar, 2026-10-15)*: si alguien creó a mano en Meta una
+`qep_cotizacion` viva que el espejo todavía no conoce, el paso 3 no la ve, Meta responde `name_taken` en el
+paso 6 y el aprovisionamiento crea `qep_cotizacion_v2` en vez de adoptarla. La de mano vuelve como `External`
+con el siguiente refresco. Sincronizar antes de aprovisionar lo evita.
 
 El nombre `qep_cotizacion` y el prefijo `qep_cotizacion_` quedan reservados para `CreateTemplateCommand`
 (`name_reserved`). Borrar la `Quotation` desde la pantalla **sí** se permite —es la salida cuando algo
@@ -317,7 +397,7 @@ cambia de forma**; sólo cambia de dónde lee (D-T8).
 | --- | --- | --- |
 | `GET /connections/{connectionId}/template-management` | `template.manage` | 200 `TemplateManagementDto` |
 | `POST /connections/{connectionId}/template-management/templates` | `template.manage` | 201 `ManagedTemplateDto`, `Location` del `GET` de la pantalla |
-| `POST /connections/{connectionId}/template-management/quotation` | `template.manage` | 201 `ManagedTemplateDto` |
+| `POST /connections/{connectionId}/template-management/quotation` | `template.manage` | 201 `ManagedTemplateDto`, `Location` del `GET` de la pantalla |
 | `DELETE /connections/{connectionId}/template-management/templates/{templateId}` | `template.manage` | 204 |
 | `POST /connections/{connectionId}/template-management/sync` | `template.manage` | 200 `TemplateManagementDto` |
 
@@ -370,17 +450,19 @@ copias de reglas que Meta cambia sin avisar.
 | --- | --- | --- |
 | Validación del comando | `validation.failed` + `errors` | 422 |
 | Nombre reservado | `validation.failed` con `errors.name` desde el validador; `messaging.template.name_reserved` si llega al dominio | 422 |
+| Nombre fuera de `^[a-z0-9_]{1,512}$` que llega al dominio *(agregado al implementar, 2026-10-15)* | `messaging.template.name_invalid` (el validador ya lo marca en `name`) | 422 |
 | `(name, language)` ya existe, en el espejo o en Meta | `messaging.template.name_taken` (sin mapa `errors`; el frontend lo pinta en `name`, como hace con `quick_reply.shortcut_taken`) | 422 |
 | Tope de plantillas del WABA | `messaging.template.limit_reached` | 422 |
 | Cualquier otro rechazo de Graph al crear | `messaging.template.rejected_by_meta`, con el `error_user_msg` de Meta en el detalle: «WhatsApp no aceptó la plantilla: …» | 422 |
 | Falló la subida del PDF de ejemplo | `messaging.template.upload_failed` | 422 (reintentar es seguro, como `media.upload_failed`) |
-| Ya hay plantilla de cotización viva | `messaging.template.quotation_exists` | 422 |
+| Ya hay plantilla de cotización viva, u otro aprovisionamiento simultáneo de la misma conexión ganó (`UX_message_templates_quotation`) | `messaging.template.quotation_exists` | 422 |
 | Existe `qep_cotizacion` externa con otro cuerpo | `messaging.template.quotation_conflict` | 422 |
 | Campaña `Scheduled` o `Sending` la usa | `messaging.template.in_use_by_campaign` | 422 |
 | `templateId` no es de esa conexión | `messaging.template.not_found` | 404 (uuid local; tenant y conexión ya se revalidaron, no filtra nada) |
 | Conexión ajena, inactiva o sin `wabaId` | `messaging.connection_unavailable` | 422, nunca 404 |
-| Token vencido o permiso faltante | `messaging.connection_unavailable` tras `ReportRejectedAsync(token_expired)` | 422 |
-| Meta no contesta o 5xx | `messaging.templates.unavailable` | 422 (el que ya existe; reintentar es seguro) |
+| Token vencido o permiso faltante: HTTP 401 o 403, o `code` 190 (token), 10 o 200–299 (permisos de Graph) *(corregido al implementar, 2026-10-15)* | `messaging.connection_unavailable` tras `ReportRejectedAsync(token_expired)` | 422 |
+| Meta no contesta o 5xx; o el listado del refresco falla por cualquier otra cosa | `messaging.templates.unavailable` | 422 (el que ya existe; reintentar es seguro) |
+| Dos refrescos explícitos de la misma conexión a la vez *(agregado al implementar, 2026-10-15)* | `concurrency.conflict` (el llenado implícito lo atrapa, §4.3) | 412 |
 | Sin permiso o módulo apagado | `authorization.denied` / `tenancy.module_not_enabled` | 403 |
 
 Ningún código nuevo toca `src/Api/ApiExceptionHandler.cs`: todos son `MessagingDomainException` (422) o
@@ -412,8 +494,11 @@ TDD: RED antes que GREEN, con evidencia literal de ambos.
   `template.created`; repetir el nombre da `name_taken` sin segunda llamada a Meta; sin
   `X-Permissions: messaging.template.manage` → 403 por el permiso.
 - Aprovisionar: dos requests de subida y uno de creación, en ese orden, con el `header_handle` del fake;
-  fila `PENDING` `Quotation`; repetir → `quotation_exists`; con la anterior en `REJECTED` → borra y crea;
-  con una `External` igual → adopta sin llamar a Meta; con una `External` distinta → `quotation_conflict`.
+  fila `PENDING` `Quotation`; repetir → `quotation_exists`; con la anterior en `REJECTED` → crea
+  `qep_cotizacion_v2` y **después** borra la vieja; un reintento que Meta rechaza no borra nada y deja la
+  `REJECTED`; `name_taken` salta a la versión siguiente con una sola subida; con una `External` igual → adopta
+  sin llamar a Meta; con una `External` distinta → `quotation_conflict`. *(Corregido al implementar,
+  2026-10-15.)*
 - Webhook `APPROVED`: la fila cambia y el `GET /templates` de envío empieza a devolverla; `REJECTED`
   conserva `reason`; un `message_template_id` desconocido no escribe nada; la entrega queda procesada.
 - Borrar: `DELETE` a Meta con `hsm_id` y `name`; fila eliminada; auditoría; Meta «no existe» → 204 igual;
@@ -422,7 +507,10 @@ TDD: RED antes que GREEN, con evidencia literal de ambos.
   Meta ya no lista, conserva `kind = Quotation`, escribe `template_mirror_syncs`.
 - Catálogo de envío: sin fila de sincronización, el primer `GET /templates` sincroniza; con ella, no
   llama a Meta; `refresh=true` sí.
-- `IQuotationTemplateReadiness` responde `true` sólo con `Quotation` en `APPROVED`.
+- `IQuotationTemplateReadiness.FindApprovedAsync` devuelve nombre e idioma sólo con la `Quotation` en
+  `APPROVED` de esa conexión (`null` antes de aprovisionar, en `PENDING`, en `REJECTED` y para otra conexión), y
+  devuelve `qep_cotizacion_v2` cuando la aprobada es la del reintento. *(Corregido al implementar,
+  2026-10-15.)*
 
 **Regresión**: `CampaignApiTests`, `CampaignDispatchTests` y las de envío de plantilla pasan hoy por el
 caché de 5 minutos y el fake de `message_templates`; se barren a mano para que sigan en verde leyendo del
@@ -434,9 +522,10 @@ referenciar Integrations ni Quotations.
 ## 5. Lo que este spec le deja al consumidor Quotations
 
 El consumidor Quotations es un spec aparte. Este documento le entrega el puerto
-`IQuotationTemplateReadiness` (§4.3) y `QuotationTemplateDefinition.Name` como el nombre de plantilla
-que el sender de Meta tendrá que usar. Y registra, para no perderlas, las reglas que el owner fijó el
-2026-10-14 en esta conversación:
+`IQuotationTemplateReadiness` (§4.3): `FindApprovedAsync` dice si se puede enviar por Meta y, cuando sí, con
+qué nombre e idioma. El sender de Meta usa **ese** nombre, no `QuotationTemplateDefinition.Name`: tras un
+reintento la vigente es `qep_cotizacion_v2` o una posterior. *(Corregido al implementar, 2026-10-15.)* Y
+registra, para no perderlas, las reglas que el owner fijó el 2026-10-14 en esta conversación:
 
 - **Canal por conexión del tenant.** Sólo Zenvia configurado → envía por Zenvia. Sólo `whatsapp-cloud`
   activa → envía por Meta. **Las dos** → envía por Meta.
@@ -454,8 +543,9 @@ que el sender de Meta tendrá que usar. Y registra, para no perderlas, las regla
 
 ## 6. Entregas y despliegue
 
-1. Backend, `feature/gestor-de-plantillas` desde `develop` `56aeb105`, en un worktree. Migración
-   `AddMessageTemplates`. Reinicio de la API y recarga de sesión por el permiso nuevo.
+1. Backend, `feature/gestor-de-plantillas` desde `develop` `56aeb105`, en un worktree. Migraciones
+   `AddMessageTemplates` y `AddQuotationTemplateIndex`. Reinicio de la API y recarga de sesión por el permiso
+   nuevo.
 2. Handoff de Meta: suscribir `message_template_status_update` en la app (paso 5 del handoff). Hasta que
    esté, los estados sólo cambian con el refresco.
 3. Frontend, slice aparte: la pantalla de plantillas de la conexión (`template-management`), el
@@ -464,7 +554,8 @@ que el sender de Meta tendrá que usar. Y registra, para no perderlas, las regla
 
 Hasta que el frontend tenga la pantalla, el espejo de cada conexión se llena solo con el primer
 `GET /templates` de la bandeja o de las campañas (§4.3), así que el catálogo de envío no se queda vacío
-al desplegar.
+al desplegar. Ese primer llenado es uno por conexión y ya no tiene *single-flight*: con Meta caído, cada
+destinatario de una campaña sobre una conexión nunca sincronizada espera su propio timeout una vez.
 
 ## 7. Riesgos
 
@@ -474,6 +565,9 @@ al desplegar.
   refresco implícito del primer `GET` lo corrigen. No hay job periódico (D-T4).
 - Un admin puede borrar la plantilla de cotización y dejar su conexión sin poder enviar cotizaciones por
   Meta; la pantalla avisa y el aprovisionamiento la vuelve a crear.
+- Versiones huérfanas en el WABA *(agregado al implementar, 2026-10-15)*: el perdedor de dos aprovisionamientos
+  simultáneos, o un reintento cuyo borrado de la versión vieja Meta rechaza, dejan una versión en Meta sin fila
+  `Quotation`. El siguiente refresco la trae como `External` y el admin la borra desde la pantalla.
 
 ## 8. Fuera de alcance
 
