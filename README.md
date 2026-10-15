@@ -2109,6 +2109,32 @@ El código está en `develop` desde `a5a79c0` (2026-10-13). Antes de llevarlo a 
 6. **Aceptar que los adjuntos no pasan por ClamAV.** A diferencia de la biblioteca de archivos, Messaging no escanea.
    Se decidió así al aceptar `.doc` y `.xls`, que pueden traer macros.
 
+#### Tiempo real (SignalR)
+
+Spec `qep-frontend/docs/superpowers/specs/2026-10-14-mensajeria-tiempo-real-design.md`. La bandeja deja de
+depender sólo del polling: un hub avisa **qué cambió, por ids**, y la SPA invalida y relee por HTTP. El canal
+avisa, no transporta: la autorización sigue en los `GET`.
+
+| Qué | Valor |
+| --- | --- |
+| Hub | `/api/v1/hubs/messaging`, política `messaging.conversation.read`; al conectar revalida módulo `messaging` y membresía activa (`MessagingHub`). |
+| Tenant | `X-Tenant-Id` o, **sólo bajo `/api/v1/hubs/`**, el query `tenantId`: el handshake WebSocket del navegador no lleva headers (`TenantRequestResolver`). |
+| Eventos | `conversationChanged { conversationId }` y `inboundMessage { conversationId, messageId }` al grupo del tenant; `notify { conversationId, reason }` al miembro asignado, o al tenant si nadie la tiene. |
+| Fanout | `pg_notify('messaging_events', …)` después del commit (`PgMessagingNotifier`); cada pod tiene un `MessagingEventsListener` en `LISTEN` que reparte a sus conexiones. Con dos réplicas no hace falta sticky session ni Redis. |
+| Fallos | Un aviso que falla no reintenta la entrega ni deshace el envío: se registra y el polling relajado del frontend (60/30 s) lo recoge. |
+
+Lo que se publica: asignar, transferir, liberar, resolver, reabrir, leído, no leído, saliente consolidado
+(`Sent` o `Failed`), acuse aplicado y entrante insertado. Un reenvío de Meta no avisa.
+
+**Runtime ≥ 10.0.13.** CVE-2026-70159 (DoS en SignalR, `SignalR.Common` ≤ 10.0.12) afecta al servidor, que
+sale del runtime de `mcr.microsoft.com/dotnet/aspnet:10.0` del `Dockerfile`, no de NuGet. Antes de desplegar,
+confirma que la imagen trae el parche. El paquete `Microsoft.AspNetCore.SignalR.Client` de las pruebas queda en
+10.0.11 con el aviso suprimido sólo en ese proyecto.
+
+La preferencia de sonido viaja en `GET/PUT /api/v1/auth/preferences` como `messageSound` (default `true`). El
+`PUT` acepta cada campo por separado y conserva el que no viene; un cuerpo vacío es 422
+`identity.preference.empty`.
+
 ### Embudo de ventas (Pipeline)
 
 El embudo del asesor (spec 2026-10-13): negocios en un kanban por etapas, enlazados al chat y a la
