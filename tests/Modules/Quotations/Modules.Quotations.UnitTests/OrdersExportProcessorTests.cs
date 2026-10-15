@@ -466,8 +466,8 @@ public sealed class OrdersExportProcessorTests
     }
 
     // "Observaciones" es Order.Notes: la que se escribe al convertir o al editar el pedido, y la que
-    // la pantalla del pedido rotula igual. Hasta el hotfix 2026-10-15 salía Quotation.Notes, y un
-    // pedido con observaciones pero sin nota en la cotización (POB145) exportaba la celda vacía.
+    // la pantalla del pedido rotula igual. Hasta el hotfix 2026-10-15 salía sólo Quotation.Notes, y
+    // un pedido con observaciones pero sin nota en la cotización (POB145) exportaba la celda vacía.
     [Fact]
     public async Task ObservacionesIsTheOrdersNotes()
     {
@@ -479,13 +479,40 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal("Frágil", Assert.Single(writer.Rows)[16].Text);
     }
 
+    // Sin observaciones del pedido, la nota de la cotización: los pedidos convertidos antes de que
+    // la conversión la copiara (hotfix 2026-10-15) nacieron sin ella.
     [Fact]
-    public async Task ObservacionesIgnoresTheQuotationsNotes()
+    public async Task ObservacionesFallsBackToTheQuotationsNotes()
     {
         var writer = new RecordingExportWorkbookWriter();
 
         await NewProcessor(
                 new StubOrderListRepository(NewRow("PED-2026-0001", quotationNotes: "Nota de la cotización")), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Nota de la cotización", Assert.Single(writer.Rows)[16].Text);
+    }
+
+    [Fact]
+    public async Task ObservacionesPrefersTheOrdersNotesOverTheQuotations()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow(
+                    "PED-2026-0001", orderNotes: "Frágil", quotationNotes: "Nota de la cotización")),
+                writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Frágil", Assert.Single(writer.Rows)[16].Text);
+    }
+
+    [Fact]
+    public async Task ObservacionesIsEmptyWithoutNotesAnywhere()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal(string.Empty, Assert.Single(writer.Rows)[16].Text);

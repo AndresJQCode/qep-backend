@@ -758,6 +758,49 @@ public sealed class OrderApiTests
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
+    // Hotfix 2026-10-15: convertir sin observaciones propias copia la nota de la cotización al
+    // pedido. Por el endpoint y no sólo en el dominio: lo que importa es que el handler le pase
+    // la nota de la cotización a Order.Create, y eso sólo se ve guardando de verdad.
+    [Fact]
+    public async Task ConvertCopiesTheQuotationsNotesWhenNoneWereWritten()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenantId, clientId, productId, notes: "Entregar en portería");
+
+        var order = await ReadOrderAsync(await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("Entregar en portería", order.Notes);
+    }
+
+    [Fact]
+    public async Task ConvertKeepsTheNotesWrittenWhenConverting()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenantId, clientId, productId, notes: "Entregar en portería");
+
+        var order = await ReadOrderAsync(await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", "Pago por transferencia", []),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("Pago por transferencia", order.Notes);
+    }
+
     // A pedido (2026-09): "Aprobar pedido" se bloquea mientras el pago no esta completo, y esta
     // ruta es la forma de destrabarlo sin recrear el pedido -- cargar lo que falto al convertir.
     [Fact]
