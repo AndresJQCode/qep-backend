@@ -1156,30 +1156,22 @@ public sealed class Quotation
         Version++;
     }
 
+    // La aritmética vive en DocumentTotals (spec 2026-10-15 §4.3): el pedido suma con la misma
+    // regla, y un cambio de redondeo cambia los dos documentos a la vez.
     private void RecalculateTotals()
     {
-        Subtotal = Round(_items.Sum(item => item.Subtotal));
-        DiscountAmount = Round(_items.Sum(item => item.DiscountAmount));
-
-        // Un cliente con excedente de IVA no paga IVA en la cotización, cualquiera sea la tasa
-        // de cada línea — el impuesto de cada QuotationItem queda intacto (sigue reflejando la
-        // tasa real del producto), pero el encabezado lo ignora entero. Salvo que la factura
-        // salga a consumidor final: ahí el excedente no aplica (AppliesVatSurplus).
-        var rawTaxAmount = Round(_items.Sum(item => item.TaxAmount));
-        TaxAmount = AppliesVatSurplus ? 0m : rawTaxAmount;
-        TaxPercentage = Subtotal > 0 ? Round(TaxAmount / Subtotal * 100m) : 0m;
-
-        Total = Subtotal + TaxAmount;
-
-        // Retención en la fuente: 2.5% de lo facturado sin IVA. Resta del neto a cobrar, no de
-        // Total — Total sigue siendo lo facturado, RetentionAmount es lo que el cliente le
-        // retiene al vendedor y no paga en efectivo.
-        RetentionAmount = AppliesRetention ? Round(Subtotal * 0.025m) : 0m;
-        NetTotal = Total - RetentionAmount;
+        var totals = DocumentTotals.Compute(
+            _items.Select(item => new LineAmountsView(item.Subtotal, item.DiscountAmount, item.TaxAmount)),
+            AppliesVatSurplus,
+            AppliesRetention);
+        Subtotal = totals.Subtotal;
+        DiscountAmount = totals.DiscountAmount;
+        TaxAmount = totals.TaxAmount;
+        TaxPercentage = totals.TaxPercentage;
+        Total = totals.Total;
+        RetentionAmount = totals.RetentionAmount;
+        NetTotal = totals.NetTotal;
     }
-
-    private static decimal Round(decimal value) =>
-        Math.Round(value, 2, MidpointRounding.AwayFromZero);
 
     private static string NormalizeQuotationNumber(string quotationNumber)
     {
