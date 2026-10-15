@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Modules.Messaging.Application;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
 namespace Modules.Messaging.IntegrationTests;
@@ -289,5 +290,154 @@ public sealed class ResolutionReasonApiTests
 
         Assert.Equal("Spam", (await SummaryAsync(f)).GetProperty("resolutionReason").GetProperty("name").GetString());
         Assert.Equal("Spam", Assert.Single(await ResolvedEventsAsync(f)).GetProperty("event").GetProperty("reason").GetProperty("name").GetString());
+    }
+
+    private static readonly string[] CatalogPermissions =
+        [MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage, MessagingPermissions.ResolutionReasonManage];
+
+    private static string ReasonsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/messaging/resolution-reasons";
+
+    private static async Task<Guid> SeedReasonAsync(Fixture f, string name, bool archived = false)
+    {
+        var id = Guid.CreateVersion7();
+        await ExecuteAsync(f.ConnectionString,
+            "INSERT INTO messaging.resolution_reasons (id, tenant_id, name, created_at, updated_at, deleted_at, version) VALUES (@id, @t, @n, now(), now(), CASE WHEN @a THEN now() END, 1)",
+            ("id", id), ("t", f.Tenant.TenantId), ("n", name), ("a", archived));
+        return id;
+    }
+
+    [Fact]
+    public async Task TheListHasOnlyActiveReasonsByName()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await SeedReasonAsync(f, "Venta cerrada");
+        await SeedReasonAsync(f, "atención");
+        await SeedReasonAsync(f, "Archivado", archived: true);
+        using var reader = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ReadPermissions);
+
+        var list = await reader.GetFromJsonAsync<JsonElement>(ReasonsUrl(f.Tenant.TenantId), Ct);
+
+        Assert.Equal(["atención", "Venta cerrada"], list.EnumerateArray().Select(item => item.GetProperty("name").GetString()));
+        Assert.Equal(1, list[0].GetProperty("version").GetInt64());
+    }
+
+    [Fact]
+    public async Task RenameNeedsIfMatchChecksTheVersionAndRejectsAnotherActiveName()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var manager = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, CatalogPermissions);
+        var typo = await SeedReasonAsync(f, "Venta cerada");
+        await SeedReasonAsync(f, "Spam");
+        var url = $"{ReasonsUrl(f.Tenant.TenantId)}/{typo}";
+
+        var without = await SendAsync(manager, HttpMethod.Patch, url, new { name = "Venta cerrada" });
+        var stale = await SendAsync(manager, HttpMethod.Patch, url, new { name = "Venta cerrada" }, ifMatch: "\"9\"");
+        var taken = await SendAsync(manager, HttpMethod.Patch, url, new { name = "SPAM" }, ifMatch: "\"1\"");
+        var blank = await SendAsync(manager, HttpMethod.Patch, url, new { name = "  " }, ifMatch: "\"1\"");
+        var renamed = await SendAsync(manager, HttpMethod.Patch, url, new { name = " Venta cerrada " }, ifMatch: "\"1\"");
+        var body = await renamed.Content.ReadFromJsonAsync<JsonElement>(Ct);
+
+        Assert.Equal(HttpStatusCode.PreconditionRequired, without.StatusCode);
+        Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, taken.StatusCode);
+        Assert.Equal("messaging.resolution_reason.name_taken", (await ProblemAsync(taken)).Code);
+        var (blankCode, blankKeys) = await ProblemAsync(blank);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, blank.StatusCode);
+        Assert.Equal("validation.failed", blankCode);
+        Assert.Equal(["name"], blankKeys);
+        Assert.Equal(HttpStatusCode.OK, renamed.StatusCode);
+        Assert.Equal("Venta cerrada", body.GetProperty("name").GetString());
+        Assert.Equal(2, body.GetProperty("version").GetInt64());
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM audit.entries WHERE action = 'messaging.resolution_reason.renamed' AND resource_id = @id", ("id", typo.ToString())));
+    }
+
+    // Review Focus 2 y 3: renombrar a su propio nombre con otro caso, o al de un archivado, no choca con el índice parcial.
+    [Fact]
+    public async Task RenamingToItsOwnNameInAnotherCaseOrToAnArchivedNameIsAllowed()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var manager = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, CatalogPermissions);
+        var reason = await SeedReasonAsync(f, "venta cerrada");
+        await SeedReasonAsync(f, "Spam", archived: true);
+        var url = $"{ReasonsUrl(f.Tenant.TenantId)}/{reason}";
+
+        var ownName = await SendAsync(manager, HttpMethod.Patch, url, new { name = "Venta cerrada" }, ifMatch: "\"1\"");
+        var archivedName = await SendAsync(manager, HttpMethod.Patch, url, new { name = "Spam" }, ifMatch: "\"2\"");
+
+        Assert.Equal(HttpStatusCode.OK, ownName.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, archivedName.StatusCode);
+    }
+
+    // D-R6: renombrar cambia el nombre también en el historial pasado.
+    [Fact]
+    public async Task ARenameShowsInPastResolutions()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var manager = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, CatalogPermissions);
+        await ResolveOkAsync(f, f.Version, new { reasonName = "Venta cerada" });
+        var id = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.resolution_reasons");
+
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(manager, HttpMethod.Patch, $"{ReasonsUrl(f.Tenant.TenantId)}/{id}", new { name = "Venta cerrada" }, ifMatch: "\"1\"")).StatusCode);
+
+        Assert.Equal("Venta cerrada", Assert.Single(await ResolvedEventsAsync(f)).GetProperty("event").GetProperty("reason").GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task DeleteArchivesOnceThenIsNotFound()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var manager = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, CatalogPermissions);
+        var spam = await SeedReasonAsync(f, "Spam");
+        var url = $"{ReasonsUrl(f.Tenant.TenantId)}/{spam}";
+
+        var first = await SendAsync(manager, HttpMethod.Delete, url);
+        var second = await SendAsync(manager, HttpMethod.Delete, url);
+        var renameArchived = await SendAsync(manager, HttpMethod.Patch, url, new { name = "Otro" }, ifMatch: "\"2\"");
+
+        Assert.Equal(HttpStatusCode.NoContent, first.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, second.StatusCode);
+        Assert.Equal("messaging.resolution_reason.not_found", (await ProblemAsync(second)).Code);
+        Assert.Equal(HttpStatusCode.NotFound, renameArchived.StatusCode);
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.resolution_reasons WHERE deleted_at IS NOT NULL"));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM audit.entries WHERE action = 'messaging.resolution_reason.archived' AND resource_id = @id", ("id", spam.ToString())));
+    }
+
+    // §3.7: sin el permiso, 403. Otro tenant, 403 (la política y el handler revalidan). Módulo apagado, 403.
+    [Fact]
+    public async Task ManagingNeedsThePermissionTheTenantAndTheModule()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var spam = await SeedReasonAsync(f, "Spam");
+        var url = $"{ReasonsUrl(f.Tenant.TenantId)}/{spam}";
+        var other = await RegisterTenantAsync(f.Factory);
+        await EnableMessagingAsync(f.ConnectionString, other.TenantId);
+        using var otherManager = CreateClient(f.Factory, other.OwnerUserId, other.TenantId, CatalogPermissions);
+
+        var withoutPermission = await SendAsync(f.Client, HttpMethod.Delete, url);
+        var otherTenant = await SendAsync(otherManager, HttpMethod.Delete, url);
+        // Igual que UnreadRejectsTheReadPermissionAloneOtherTenantsAndADisabledModule.
+        await ExecuteAsync(f.ConnectionString, "UPDATE tenancy.tenant_modules SET status = 'inactive' WHERE tenant_id = @t AND module_key = 'messaging'", ("t", f.Tenant.TenantId));
+        using var manager = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, CatalogPermissions);
+        var moduleOff = await SendAsync(manager, HttpMethod.Delete, url);
+
+        Assert.Equal(HttpStatusCode.Forbidden, withoutPermission.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, otherTenant.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, moduleOff.StatusCode);
+        Assert.Equal("tenancy.module_not_enabled", (await ProblemAsync(moduleOff)).Code);
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.resolution_reasons WHERE deleted_at IS NOT NULL"));
     }
 }

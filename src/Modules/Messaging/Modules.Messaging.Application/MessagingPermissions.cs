@@ -24,4 +24,9 @@ public static class MessagingPermissions
     /// catálogo de envío no lo pide (basta <see cref="ConversationRead"/>). De núcleo y de fábrica sólo en <c>admin</c>: lo que la empresa
     /// manda en su nombre y lo que Meta cobra lo decide quien administra, como <see cref="CampaignManage"/>.</summary>
     public const string TemplateManage = "messaging.template.manage";
+
+    /// <summary>Spec 2026-10-15 D-R8: renombrar y archivar los motivos de resolución del tenant. Crearlos en línea al resolver no lo pide
+    /// (basta <see cref="ConversationManage"/>), y leerlos tampoco (<see cref="ConversationRead"/>). De núcleo y de fábrica en <c>admin</c>
+    /// y <c>advisor</c> (decisión del owner).</summary>
+    public const string ResolutionReasonManage = "messaging.resolution_reason.manage";
 }

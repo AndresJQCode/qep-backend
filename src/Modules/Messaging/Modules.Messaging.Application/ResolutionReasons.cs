@@ -1,5 +1,7 @@
+using FluentValidation;
 using BuildingBlocks.Application;
 using Modules.Messaging.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Messaging.Application;
 
@@ -46,5 +48,95 @@ internal static class ResolutionReasonChoice
 
         var byName = await reasons.FindActiveByNameAsync(tenantId, trimmed, cancellationToken);
         return byName is null ? new ChosenReason(Guid.CreateVersion7(), trimmed, IsNew: true) : new ChosenReason(byName.Id, byName.Name, IsNew: false);
+    }
+}
+
+/// <summary>Spec 2026-10-15 §3.4: un motivo del catálogo. La versión viaja para el <c>If-Match</c> del renombrar.</summary>
+public sealed record ResolutionReasonDto(Guid Id, string Name, long Version);
+
+public sealed record ListResolutionReasonsQuery(Guid TenantId) : IQuery<IReadOnlyList<ResolutionReasonDto>>;
+
+public sealed record RenameResolutionReasonCommand(Guid TenantId, Guid ReasonId, string? Name, long ExpectedVersion) : ICommand<ResolutionReasonDto>;
+
+public sealed record ArchiveResolutionReasonCommand(Guid TenantId, Guid ReasonId) : ICommand<bool>;
+
+/// <summary>Texto libre: el validador da <c>errors.name</c>, que el dominio (<c>name_required</c>, <c>name_too_long</c>) no puede dar.</summary>
+public sealed class RenameResolutionReasonValidator : AbstractValidator<RenameResolutionReasonCommand>
+{
+    public RenameResolutionReasonValidator() =>
+        RuleFor(command => command.Name)
+            .Must(name => ResolutionReason.IsValidName(ResolutionReason.TrimName(name)))
+            .OverridePropertyName("name").WithMessage(ResolutionReasonMessages.Name);
+}
+
+/// <summary>§3.4 <c>GET /resolution-reasons</c>: todo asesor de la caja. D-R10: completa, sin paginar, por nombre.</summary>
+public sealed class ListResolutionReasonsHandler(
+    IResolutionReasonRepository reasons, ITenantModules tenantModules, IExecutionContext executionContext)
+    : IQueryHandler<ListResolutionReasonsQuery, IReadOnlyList<ResolutionReasonDto>>
+{
+    public async Task<IReadOnlyList<ResolutionReasonDto>> HandleAsync(ListResolutionReasonsQuery query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, MessagingPermissions.ConversationRead, cancellationToken);
+        return (await reasons.ListActiveAsync(query.TenantId, cancellationToken))
+            .Select(reason => new ResolutionReasonDto(reason.Id, reason.Name, reason.Version)).ToArray();
+    }
+}
+
+/// <summary>§3.4 <c>PATCH /resolution-reasons/{id}</c> con <c>If-Match</c>: archivado o ajeno es 404; versión vieja, 412; nombre de otro
+/// vigente, 409 (la unidad de trabajo, por nombre de índice). D-R6: el historial pasado muestra el nombre nuevo.</summary>
+public sealed class RenameResolutionReasonHandler(
+    IResolutionReasonRepository reasons,
+    IMessagingUnitOfWork unitOfWork,
+    IMessagingAuditRecorder audit,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext,
+    IClock clock,
+    IValidator<RenameResolutionReasonCommand> validator)
+    : ICommandHandler<RenameResolutionReasonCommand, ResolutionReasonDto>
+{
+    public async Task<ResolutionReasonDto> HandleAsync(RenameResolutionReasonCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.ResolutionReasonManage, cancellationToken);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var reason = await reasons.FindActiveAsync(command.TenantId, command.ReasonId, cancellationToken)
+            ?? throw ResolutionReasonSupport.NotFound(command.ReasonId);
+        if (reason.Version != command.ExpectedVersion)
+        {
+            throw new RequestConcurrencyException("concurrency.conflict", "The resolution reason changed since it was loaded.");
+        }
+
+        var now = clock.UtcNow;
+        reason.Rename(command.Name, now);
+        audit.RecordResolutionReason(command.TenantId, executionContext.SubjectId, MessagingAuditActions.ResolutionReasonRenamed, reason.Id, now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return new ResolutionReasonDto(reason.Id, reason.Name, reason.Version);
+    }
+}
+
+/// <summary>§3.4 <c>DELETE /resolution-reasons/{id}</c>: archiva (D-R5). Ya archivado o ajeno es 404. Sin <c>If-Match</c>: archivar dos
+/// veces o archivar un nombre recién corregido deja el mismo resultado, y la pantalla confirma antes.</summary>
+public sealed class ArchiveResolutionReasonHandler(
+    IResolutionReasonRepository reasons,
+    IMessagingUnitOfWork unitOfWork,
+    IMessagingAuditRecorder audit,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext,
+    IClock clock)
+    : ICommandHandler<ArchiveResolutionReasonCommand, bool>
+{
+    public async Task<bool> HandleAsync(ArchiveResolutionReasonCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.ResolutionReasonManage, cancellationToken);
+        var reason = await reasons.FindActiveAsync(command.TenantId, command.ReasonId, cancellationToken)
+            ?? throw ResolutionReasonSupport.NotFound(command.ReasonId);
+
+        var now = clock.UtcNow;
+        reason.Archive(now);
+        audit.RecordResolutionReason(command.TenantId, executionContext.SubjectId, MessagingAuditActions.ResolutionReasonArchived, reason.Id, now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return true;
     }
 }

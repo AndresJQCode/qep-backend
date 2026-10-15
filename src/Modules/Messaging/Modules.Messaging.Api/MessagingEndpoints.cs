@@ -206,6 +206,7 @@ public static class MessagingEndpoints
         group.MapCampaignEndpoints();
         // Spec 2026-10-12 §3.6: respuestas rápidas.
         group.MapQuickReplyEndpoints();
+        group.MapResolutionReasonEndpoints();
         group.MapTemplateManagementEndpoints();
 
         return endpoints;
@@ -426,7 +427,7 @@ public static class MessagingEndpoints
 
     // Copia de IntegrationsEndpoints: mismo contrato que /pos y /orders-export-layout; sin If-Match 428,
     // vieja 412 (en el handler).
-    private static long RequireVersion(HttpContext httpContext) =>
+    internal static long RequireVersion(HttpContext httpContext) =>
         TryParseVersion(httpContext.Request.Headers.IfMatch, out var version)
             ? version
             : throw new PreconditionRequiredException(

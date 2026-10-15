@@ -611,6 +611,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<CreateQuickReplyCommand, QuickReplyDto>, CreateQuickReplyHandler>();
         services.AddScoped<ICommandHandler<UpdateQuickReplyCommand, QuickReplyDto>, UpdateQuickReplyHandler>();
         services.AddScoped<ICommandHandler<DeleteQuickReplyCommand, bool>, DeleteQuickReplyHandler>();
+        // Spec 2026-10-15 §3.4: el catálogo de motivos de resolución. Sin estos registros, 500.
+        services.AddScoped<IQueryHandler<ListResolutionReasonsQuery, IReadOnlyList<ResolutionReasonDto>>, ListResolutionReasonsHandler>();
+        services.AddScoped<ICommandHandler<RenameResolutionReasonCommand, ResolutionReasonDto>, RenameResolutionReasonHandler>();
+        services.AddScoped<ICommandHandler<ArchiveResolutionReasonCommand, bool>, ArchiveResolutionReasonHandler>();
         // Messaging (spec 2026-10-14 §4.3): la pantalla de plantillas de una conexión y su refresco contra Meta.
         services.AddScoped<IQueryHandler<GetTemplateManagementQuery, TemplateManagementDto>, GetTemplateManagementHandler>();
         services.AddScoped<ICommandHandler<SyncTemplatesCommand, TemplateManagementDto>, SyncTemplatesHandler>();
@@ -966,6 +970,8 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-10-12 D-Q6: lo que el asesor manda en nombre de la empresa lo decide quien administra.
                 // El rol vive en código: sin migración.
                 MessagingPermissions.QuickReplyManage,
+                // Spec 2026-10-15 D-R8: el catálogo de motivos de resolución. El rol vive en código: sin migración.
+                MessagingPermissions.ResolutionReasonManage,
                 // Spec 2026-10-14 D-T5: las plantillas de WhatsApp se gestionan desde QEP; de fábrica sólo en admin.
                 MessagingPermissions.TemplateManage,
                 // Spec 2026-10-13 D32: el embudo de ventas completo. De núcleo; la capacidad pipeline la revisa cada handler.
@@ -1022,6 +1028,8 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-10-09 (Mensajería), decisión 5: la asesora lee y responde la bandeja.
                 MessagingPermissions.ConversationRead,
                 MessagingPermissions.ConversationManage,
+                // Spec 2026-10-15 D-R8: la asesora también corrige y archiva los motivos con que resuelve (decisión del owner).
+                MessagingPermissions.ResolutionReasonManage,
                 // Spec 2026-10-13 D32: la asesora trabaja sus negocios; los ajustes del embudo los decide quien administra.
                 PipelinePermissions.DealRead,
                 PipelinePermissions.DealManage
@@ -1458,6 +1466,14 @@ public static class QepServiceCollectionExtensions
             "Messaging",
             "medium",
             RequiredModules: []));
+        // Spec 2026-10-15 §3.7: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.ResolutionReasonManage,
+            "Gestionar motivos de resolución",
+            "Permite renombrar y archivar los motivos con los que se resuelven las conversaciones de la bandeja.",
+            "Messaging",
+            "low",
+            RequiredModules: []));
         // Spec 2026-10-14 §4.6: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
         services.AddSingleton(new PermissionDefinition(
             MessagingPermissions.TemplateManage,
@@ -1788,6 +1804,10 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 MessagingPermissions.QuickReplyManage,
                 policy => AddPermissionRequirement(policy, MessagingPermissions.QuickReplyManage))
+            // Spec 2026-10-15: sin esta política, RequireAuthorization(ResolutionReasonManage) no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
+            .AddPolicy(
+                MessagingPermissions.ResolutionReasonManage,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.ResolutionReasonManage))
             // Spec 2026-10-14: sin esta política, RequireAuthorization(TemplateManage) no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
             .AddPolicy(
                 MessagingPermissions.TemplateManage,
