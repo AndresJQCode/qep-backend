@@ -24,6 +24,10 @@ internal sealed record UserIdUpdateChange(string WabaId, string? PhoneNumberId, 
 
 internal sealed record AccountUpdateChange(string WabaId, string Event, string? BanState) : WebhookChange;
 
+/// <summary>Spec 2026-10-14 §4.3: <c>message_template_status_update</c>. Llega por WABA; <c>MetaTemplateId</c> viene como número o string.
+/// <c>Reason</c> «NONE» lo descarta el dominio.</summary>
+internal sealed record TemplateStatusChange(string WabaId, string MetaTemplateId, string? Name, string? Language, string Event, string? Reason) : WebhookChange;
+
 internal sealed record UnknownChange(string Field) : WebhookChange;
 
 /// <summary>Decisión del owner 2026-10-12 (P1): el botón de respuesta rápida de una plantilla (<c>type = button</c>), con su texto y su

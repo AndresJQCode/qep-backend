@@ -66,6 +66,9 @@ internal static class MessagingApiHarness
     /// <summary>Spec 2026-10-11 §6.4: sólo el admin de fábrica; ni la bandeja ni el asesor llevan este permiso.</summary>
     public static readonly string[] CampaignPermissions = [MessagingPermissions.CampaignManage];
 
+    /// <summary>Spec 2026-10-14 D-T5: sólo el admin de fábrica gestiona plantillas.</summary>
+    public static readonly string[] TemplatePermissions = [MessagingPermissions.TemplateManage];
+
     public static string ConversationsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/messaging/conversations";
 
     public static string ConversationUrl(Guid tenantId, Guid conversationId) => $"{ConversationsUrl(tenantId)}/{conversationId}";
@@ -77,6 +80,9 @@ internal static class MessagingApiHarness
     public static string MediaUrl(Guid tenantId, Guid messageId) => $"/api/v1/tenants/{tenantId}/messaging/media/{messageId}";
 
     public static string AssigneesUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/messaging/assignees";
+
+    public static string TemplateManagementUrl(Guid tenantId, Guid connectionId) =>
+        $"/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management";
 
     private const string TemplateDatabase = "qep_template_messaging";
 

@@ -1,0 +1,323 @@
+using System.Text.Json;
+using BuildingBlocks.Application;
+using Modules.Messaging.Application;
+using Modules.Messaging.Domain;
+
+namespace Modules.Messaging.UnitTests;
+
+/// <summary>Spec 2026-10-14 §4.3 «Refrescar» y D-T8: el listado de Meta hace upsert por <c>id</c> en el espejo (conservando el kind), borra lo
+/// que Meta ya no lista, salta lo que no tiene id o nombre, marca la sincronización y guarda una vez. El catálogo de envío sincroniza
+/// sólo la primera vez o con refresh, y sirve las APPROVED del espejo.</summary>
+public sealed class TemplateMirrorSyncTests
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private static readonly Guid TenantId = Guid.CreateVersion7();
+    private static readonly Guid ConnectionId = Guid.CreateVersion7();
+    private static readonly DateTimeOffset Now = new(2026, 10, 14, 15, 0, 0, TimeSpan.Zero);
+    private static readonly MessagingTemplateSource Source = new("222", "token");
+
+    private sealed record Rig(
+        TemplateMirrorSync Sync, MirroredTemplateCatalog Catalog, FakeMessageTemplateRepository Repository, FakeWhatsAppClient Meta, FakeConnectionDirectory Connections,
+        FakeUnitOfWork UnitOfWork, FakeClock Clock, RecordingLogger<TemplateMirrorSync> Logger);
+
+    private static Rig NewRig(params JsonElement[] listing)
+    {
+        var repository = new FakeMessageTemplateRepository();
+        var meta = new FakeWhatsAppClient { NextTemplates = new MessagingGraphResult<TemplateListing>(new TemplateListing(listing, Complete: true), null) };
+        var connections = new FakeConnectionDirectory();
+        var unitOfWork = new FakeUnitOfWork();
+        var clock = new FakeClock(Now);
+        var logger = new RecordingLogger<TemplateMirrorSync>();
+        var sync = new TemplateMirrorSync(repository, meta, connections, unitOfWork, clock, logger);
+        return new Rig(sync, new MirroredTemplateCatalog(repository, sync, connections), repository, meta, connections, unitOfWork, clock, logger);
+    }
+
+    private static JsonElement Listed(string id, string name, string status = "APPROVED", string? rejectedReason = null, string category = "UTILITY", string body = "Hola {{1}}") =>
+        JsonDocument.Parse(JsonSerializer.Serialize(new
+        {
+            id,
+            name,
+            language = "es",
+            status,
+            category,
+            parameter_format = "POSITIONAL",
+            rejected_reason = rejectedReason,
+            components = new[] { new { type = "BODY", text = body } },
+        })).RootElement.Clone();
+
+    private static void ListingFails(Rig rig, MessagingGraphFailure failure) =>
+        rig.Meta.NextTemplates = new MessagingGraphResult<TemplateListing>(null, failure);
+
+    [Fact]
+    public async Task ANewTemplateIsMirroredAsExternalWithMetasStatusAndReason()
+    {
+        var rig = NewRig(Listed("1", "promo", "REJECTED", "INVALID_FORMAT", "MARKETING"));
+
+        await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
+
+        var row = Assert.Single(rig.Repository.Rows);
+        Assert.Equal(("1", "promo", "es", "MARKETING", "POSITIONAL", "REJECTED", "INVALID_FORMAT", MessageTemplateKind.External, Now),
+            (row.MetaTemplateId, row.Name, row.Language, row.Category, row.ParameterFormat, row.Status, row.StatusReason, row.Kind, row.SyncedAt));
+        Assert.Contains("\"BODY\"", row.ComponentsJson, StringComparison.Ordinal);
+        Assert.Equal(Now, rig.Repository.Syncs[(TenantId, ConnectionId)]);
+        Assert.Equal(1, rig.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task AKnownTemplateIsUpdatedAndKeepsItsKind()
+    {
+        var rig = NewRig(Listed("1", MessageTemplateName.QuotationName, "APPROVED", "NONE"));
+        rig.Repository.Rows.Add(MessageTemplate.Pending(TenantId, ConnectionId, "1", MessageTemplateName.QuotationName, "es", "UTILITY", "NAMED", "PENDING", "[]",
+            MessageTemplateKind.Quotation, Guid.CreateVersion7(), Now.AddDays(-1)));
+
+        await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
+
+        var row = Assert.Single(rig.Repository.Rows);
+        Assert.Equal((MessageTemplateKind.Quotation, "APPROVED", null, Now), (row.Kind, row.Status, row.StatusReason, row.SyncedAt));
+    }
+
+    [Fact]
+    public async Task ATemplateMetaNoLongerListsIsRemoved()
+    {
+        var rig = NewRig(Listed("1", "queda"));
+        rig.Repository.Rows.Add(MessageTemplate.Mirrored(TenantId, ConnectionId, "2", "se_fue", "es", "UTILITY", "POSITIONAL", "APPROVED", null, "[]", Now.AddDays(-1)));
+        // La de otra conexión no se toca.
+        rig.Repository.Rows.Add(MessageTemplate.Mirrored(TenantId, Guid.CreateVersion7(), "2", "ajena", "es", "UTILITY", "POSITIONAL", "APPROVED", null, "[]", Now));
+
+        await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
+
+        Assert.Equal(["ajena", "queda"], rig.Repository.Rows.Select(row => row.Name).Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>Revisión final F4: el cliente corta en <c>MaxTemplatePages</c> o ante un <c>paging.next</c> que no sigue y lo dice con
+    /// <c>Complete = false</c>. Lo que vino se actualiza, pero no se borra nada (tampoco la <c>Quotation</c>): que una plantilla no esté
+    /// en un listado incompleto no dice que Meta ya no la tenga. Queda un warning.</summary>
+    [Fact]
+    public async Task AnIncompleteListingUpsertsWhatCameButRemovesNothingAndWarns()
+    {
+        var rig = NewRig();
+        rig.Meta.NextTemplates = new MessagingGraphResult<TemplateListing>(new TemplateListing([Listed("1", "queda", "PAUSED")], Complete: false), null);
+        rig.Repository.Rows.Add(MessageTemplate.Mirrored(TenantId, ConnectionId, "1", "queda", "es", "UTILITY", "POSITIONAL", "APPROVED", null, "[]", Now.AddDays(-1)));
+        rig.Repository.Rows.Add(MessageTemplate.Pending(TenantId, ConnectionId, "2", MessageTemplateName.QuotationName, "es", "UTILITY", "NAMED", "APPROVED", "[]",
+            MessageTemplateKind.Quotation, Guid.CreateVersion7(), Now.AddDays(-1)));
+        rig.Repository.Rows.Add(MessageTemplate.Mirrored(TenantId, ConnectionId, "3", "en_otra_pagina", "es", "UTILITY", "POSITIONAL", "APPROVED", null, "[]", Now.AddDays(-1)));
+
+        await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
+
+        Assert.Equal(["en_otra_pagina", "qep_cotizacion", "queda"], rig.Repository.Rows.Select(row => row.Name).Order(StringComparer.Ordinal));
+        Assert.Equal("PAUSED", rig.Repository.Rows.Single(row => row.MetaTemplateId == "1").Status);
+        Assert.Equal(1, rig.UnitOfWork.Saves);
+        var warning = Assert.Single(rig.Logger.Entries);
+        Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, warning.Level);
+        Assert.Contains(TenantId.ToString(), warning.Message, StringComparison.Ordinal);
+        Assert.Contains(ConnectionId.ToString(), warning.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("token", warning.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ACompleteListingLeavesNoWarning()
+    {
+        var rig = NewRig(Listed("1", "queda"));
+
+        await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
+
+        Assert.Empty(rig.Logger.Entries);
+    }
+
+    /// <summary>Revisión final F5: la sincronización lista en Meta y después lee el espejo. Lo que cambió mientras listaba (una fila creada
+    /// por QEP, un estado que trajo el webhook) es más nuevo que el listado: no se borra ni se pisa con el estado viejo.</summary>
+    [Fact]
+    public async Task WhatChangedWhileListingIsNeitherRemovedNorOverwritten()
+    {
+        var rig = NewRig(Listed("1", "promo", "PENDING"), Listed("4", "vieja", "APPROVED"));
+        var approvedDuringTheListing = MessageTemplate.Pending(TenantId, ConnectionId, "1", "promo", "es", "MARKETING", "NAMED", "PENDING", "[]",
+            MessageTemplateKind.Free, Guid.CreateVersion7(), Now.AddDays(-1));
+        var stale = MessageTemplate.Mirrored(TenantId, ConnectionId, "4", "vieja", "es", "UTILITY", "POSITIONAL", "PAUSED", null, "[]", Now.AddDays(-1));
+        var gone = MessageTemplate.Mirrored(TenantId, ConnectionId, "5", "se_fue", "es", "UTILITY", "POSITIONAL", "APPROVED", null, "[]", Now.AddDays(-1));
+        rig.Repository.Rows.AddRange([approvedDuringTheListing, stale, gone]);
+        MessageTemplate? createdDuringTheListing = null;
+        rig.Meta.BeforeTemplateList = () =>
+        {
+            rig.Clock.UtcNow = Now.AddSeconds(5);
+            createdDuringTheListing = MessageTemplate.Pending(TenantId, ConnectionId, "9", "nueva", "es", "MARKETING", "NAMED", "PENDING", "[]",
+                MessageTemplateKind.Free, Guid.CreateVersion7(), Now.AddSeconds(2));
+            rig.Repository.Rows.Add(createdDuringTheListing);
+            approvedDuringTheListing.ApplyStatus(MessageTemplateStatuses.Approved, null, Now.AddSeconds(3));
+            return Task.CompletedTask;
+        };
+
+        await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
+
+        Assert.Contains(createdDuringTheListing!, rig.Repository.Rows);
+        Assert.Equal((MessageTemplateStatuses.Approved, Now.AddSeconds(3)), (approvedDuringTheListing.Status, approvedDuringTheListing.UpdatedAt));
+        // Lo que no cambió durante el listado se sincroniza y se borra como siempre.
+        Assert.Equal(MessageTemplateStatuses.Approved, stale.Status);
+        Assert.DoesNotContain(gone, rig.Repository.Rows);
+        Assert.Equal(3, rig.Repository.Rows.Count);
+    }
+
+    // Review Focus 3: una paginación que repite un id no puede insertar dos filas.
+    [Fact]
+    public async Task ADuplicatedIdInTheListingIsTakenOnce()
+    {
+        var rig = NewRig(Listed("1", "promo"), Listed("1", "promo"));
+
+        await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
+
+        Assert.Single(rig.Repository.Rows);
+    }
+
+    [Fact]
+    public async Task AnElementWithoutIdNameOrLanguageIsSkipped()
+    {
+        var withoutId = JsonDocument.Parse("""{"name":"x","language":"es","status":"APPROVED"}""").RootElement.Clone();
+        var withoutName = JsonDocument.Parse("""{"id":"9","language":"es","status":"APPROVED"}""").RootElement.Clone();
+        var notAnObject = JsonDocument.Parse("\"texto\"").RootElement.Clone();
+        var rig = NewRig(withoutId, withoutName, notAnObject, Listed("1", "ok"));
+
+        await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
+
+        Assert.Equal("ok", Assert.Single(rig.Repository.Rows).Name);
+    }
+
+    // Meta manda el id como string en el listado y como número en el webhook (Task 10 reusa el mismo lector).
+    [Fact]
+    public void AnIdIsReadAsTextOrAsANumber()
+    {
+        var asText = JsonDocument.Parse("""{"id":"771"}""").RootElement.Clone();
+        var asNumber = JsonDocument.Parse("""{"id":772}""").RootElement.Clone();
+        var asSomethingElse = JsonDocument.Parse("""{"id":true}""").RootElement.Clone();
+
+        Assert.Equal(("771", "772", null, null),
+            (TemplateMirrorSync.Identifier(asText, "id"), TemplateMirrorSync.Identifier(asNumber, "id"), TemplateMirrorSync.Identifier(asSomethingElse, "id"),
+             TemplateMirrorSync.Identifier(asText, "missing")));
+    }
+
+    [Fact]
+    public async Task AListingMetaDoesNotAnswerIsTemplatesUnavailableAndWritesNothing()
+    {
+        var rig = NewRig();
+        ListingFails(rig, new MessagingGraphFailure(502, null, "http_502"));
+
+        var exception = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct));
+
+        Assert.Equal(MessagingErrorCodes.TemplatesUnavailable, exception.Code);
+        Assert.Equal(0, rig.UnitOfWork.Saves);
+        Assert.Empty(rig.Repository.Syncs);
+    }
+
+    // Amendment 2: el listado no es una creación. Un 400 con el texto de «nombre ya existe» no es name_taken: es Meta sin lista.
+    [Fact]
+    public async Task AListingRejectedForAnyOtherReasonIsTemplatesUnavailableNeverACreateCode()
+    {
+        var rig = NewRig();
+        ListingFails(rig, new MessagingGraphFailure(400, 100, "http_400", "Message Template Name Already Exists", "x"));
+
+        var exception = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct));
+
+        Assert.Equal(MessagingErrorCodes.TemplatesUnavailable, exception.Code);
+        Assert.Empty(rig.Connections.Reported);
+        Assert.Equal(0, rig.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task ARejectedTokenMarksTheConnectionAndIsConnectionUnavailable()
+    {
+        var rig = NewRig();
+        ListingFails(rig, new MessagingGraphFailure(401, 190, "http_401"));
+
+        var exception = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct));
+
+        Assert.Equal(MessagingErrorCodes.ConnectionUnavailable, exception.Code);
+        Assert.Single(rig.Connections.Reported);
+    }
+
+    [Fact]
+    public async Task AMissingPermissionInTheListingAlsoMarksTheConnection()
+    {
+        var rig = NewRig();
+        ListingFails(rig, new MessagingGraphFailure(403, 200, "http_403"));
+
+        var exception = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct));
+
+        Assert.Equal(MessagingErrorCodes.ConnectionUnavailable, exception.Code);
+        Assert.Equal("token_expired", Assert.Single(rig.Connections.Reported).FailureCode);
+    }
+
+    [Fact]
+    public async Task TheCatalogSyncsOnlyTheFirstTimeAndThenServesTheMirror()
+    {
+        var rig = NewRig(Listed("1", "b"), Listed("2", "a"), Listed("3", "c", "PAUSED"));
+
+        var first = await rig.Catalog.ListAsync(TenantId, ConnectionId, refresh: false, Ct);
+        var second = await rig.Catalog.ListAsync(TenantId, ConnectionId, refresh: false, Ct);
+
+        Assert.Equal(1, rig.Meta.TemplateListCalls);
+        Assert.Equal(["a", "b"], first.Select(template => template.Name));
+        Assert.Equal(["a", "b"], second.Select(template => template.Name));
+        Assert.Equal(["1"], first[0].Parameters);
+    }
+
+    [Fact]
+    public async Task RefreshAsksMetaAgain()
+    {
+        var rig = NewRig(Listed("1", "a"));
+        await rig.Catalog.ListAsync(TenantId, ConnectionId, refresh: false, Ct);
+
+        await rig.Catalog.ListAsync(TenantId, ConnectionId, refresh: true, Ct);
+
+        Assert.Equal(2, rig.Meta.TemplateListCalls);
+    }
+
+    [Fact]
+    public async Task AnUnavailableConnectionIs422WithoutTouchingMeta()
+    {
+        var rig = NewRig(Listed("1", "a"));
+        rig.Connections.TemplateSource = null;
+
+        var exception = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.Catalog.ListAsync(TenantId, ConnectionId, refresh: false, Ct));
+
+        Assert.Equal(MessagingErrorCodes.ConnectionUnavailable, exception.Code);
+        Assert.Equal(0, rig.Meta.TemplateListCalls);
+    }
+
+    // Amendment 5: dos primeros llenados a la vez. El que pierde el PK de template_mirror_syncs no le devuelve un 412 a quien sólo
+    // quería leer el catálogo: el otro ya llenó el espejo, y se lee de ahí.
+    [Fact]
+    public async Task AnImplicitFirstFillThatLosesTheRaceKeepsReadingTheMirror()
+    {
+        var rig = NewRig(Listed("1", "a"));
+        rig.UnitOfWork.Failure = new RequestConcurrencyException("concurrency.conflict", "Another sync of the same connection committed first.");
+
+        var catalog = await rig.Catalog.ListAsync(TenantId, ConnectionId, refresh: false, Ct);
+
+        Assert.Equal(["a"], catalog.Select(template => template.Name));
+        Assert.Equal(1, rig.Meta.TemplateListCalls);
+        Assert.Equal(0, rig.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task ARefreshThatLosesTheRaceIsStillAConcurrencyConflict()
+    {
+        var rig = NewRig(Listed("1", "a"));
+        rig.Repository.Syncs[(TenantId, ConnectionId)] = Now.AddHours(-1);
+        rig.UnitOfWork.Failure = new RequestConcurrencyException("concurrency.conflict", "Another sync of the same connection committed first.");
+
+        var exception = await Assert.ThrowsAsync<RequestConcurrencyException>(() => rig.Catalog.ListAsync(TenantId, ConnectionId, refresh: true, Ct));
+
+        Assert.Equal("concurrency.conflict", exception.Code);
+    }
+
+    // Lo único que el llenado implícito perdona es la carrera: Meta caída en el primer llenado sigue siendo templates.unavailable.
+    [Fact]
+    public async Task AnImplicitFirstFillWithMetaDownIsStillTemplatesUnavailable()
+    {
+        var rig = NewRig();
+        ListingFails(rig, new MessagingGraphFailure(0, null, "unreachable"));
+
+        var exception = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.Catalog.ListAsync(TenantId, ConnectionId, refresh: false, Ct));
+
+        Assert.Equal(MessagingErrorCodes.TemplatesUnavailable, exception.Code);
+    }
+}

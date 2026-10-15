@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using BuildingBlocks.Application;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
@@ -452,16 +453,51 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
     }
 
     /// <summary>Spec 2026-10-11 §5.1: lo que responde la lista de plantillas, y cuántas veces se pidió.</summary>
-    public MessagingGraphResult<IReadOnlyList<System.Text.Json.JsonElement>> NextTemplates { get; set; } = new([], null);
+    public MessagingGraphResult<TemplateListing> NextTemplates { get; set; } = new(new TemplateListing([], Complete: true), null);
 
     private int _templateListCalls;
 
     public int TemplateListCalls => _templateListCalls;
 
+    public MessagingGraphResult<CreatedTemplate> NextCreatedTemplate { get; set; } = new(new CreatedTemplate("meta-1", "PENDING", "MARKETING"), null);
+
+    public List<JsonObject> CreatedTemplates { get; } = [];
+
+    /// <summary>Respuestas de creación en orden, una por llamada; vacía, responde <see cref="NextCreatedTemplate"/>. Sirve para «la
+    /// primera falla, la segunda no».</summary>
+    public Queue<MessagingGraphResult<CreatedTemplate>> CreateResults { get; } = new();
+
+    public MessagingGraphResult<DeletedTemplate> NextDelete { get; set; } = new(new DeletedTemplate(false), null);
+
+    public List<(string MetaTemplateId, string Name)> Deleted { get; } = [];
+
+    public MessagingGraphResult<string> NextHandle { get; set; } = new("4::handle", null);
+
+    public List<(string MimeType, string FileName, int Length)> ExampleUploads { get; } = [];
+
+    public Task<MessagingGraphResult<CreatedTemplate>> CreateTemplateAsync(MessagingTemplateSource source, JsonObject payload, CancellationToken cancellationToken)
+    {
+        CreatedTemplates.Add(payload);
+        return Task.FromResult(CreateResults.TryDequeue(out var next) ? next : NextCreatedTemplate);
+    }
+
+    public Task<MessagingGraphResult<DeletedTemplate>> DeleteTemplateAsync(MessagingTemplateSource source, string metaTemplateId, string name, CancellationToken cancellationToken)
+    {
+        Deleted.Add((metaTemplateId, name));
+        return Task.FromResult(NextDelete);
+    }
+
+    public Task<MessagingGraphResult<string>> UploadTemplateExampleAsync(
+        MessagingTemplateSource source, ReadOnlyMemory<byte> content, string mimeType, string fileName, CancellationToken cancellationToken)
+    {
+        ExampleUploads.Add((mimeType, fileName, content.Length));
+        return Task.FromResult(NextHandle);
+    }
+
     /// <summary>Retiene la respuesta de la lista hasta que la prueba lo suelte: sirve para ver cuántas llamadas se juntan en vuelo.</summary>
     public Func<Task>? BeforeTemplateList { get; set; }
 
-    public async Task<MessagingGraphResult<IReadOnlyList<System.Text.Json.JsonElement>>> ListTemplatesAsync(MessagingTemplateSource source, CancellationToken cancellationToken)
+    public async Task<MessagingGraphResult<TemplateListing>> ListTemplatesAsync(MessagingTemplateSource source, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _templateListCalls);
         if (BeforeTemplateList is { } gate)

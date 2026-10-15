@@ -281,6 +281,21 @@ internal static class MetaPayloads
         return root.ToJsonString();
     }
 
+    /// <summary>Spec 2026-10-14 §4.3: <c>message_template_status_update</c>. <paramref name="templateId"/> va tal cual (número o string),
+    /// porque Meta lo manda como número.</summary>
+    public static string TemplateStatusUpdate(string wabaId, object templateId, string name, string language, string @event, string? reason)
+    {
+        var value = new JsonObject
+        {
+            ["event"] = @event,
+            ["message_template_id"] = JsonValue.Create(templateId),
+            ["message_template_name"] = name,
+            ["message_template_language"] = language,
+            ["reason"] = reason,
+        };
+        return Change("message_template_status_update", value.ToJsonString(), wabaId);
+    }
+
     public static string AccountUpdate(string wabaId, string @event, string? banState = null)
     {
         var value = new JsonObject { ["event"] = @event };
