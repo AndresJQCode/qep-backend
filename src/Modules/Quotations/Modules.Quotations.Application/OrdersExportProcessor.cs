@@ -301,9 +301,13 @@ public sealed class OrdersExportProcessor(
         var fechaPedido = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         // "Observaciones" (hotfix 2026-10-15): las del pedido —las que se escriben al convertir o al
-        // editarlo, y las que la pantalla del pedido rotula igual—, no la nota de la cotización. Con
-        // Quotation.Notes, un pedido con observaciones y sin nota en la cotización salía vacío.
-        var observaciones = order.Notes ?? string.Empty;
+        // editarlo, y las que la pantalla del pedido rotula igual—. Sólo con Quotation.Notes, un
+        // pedido con observaciones y sin nota en la cotización salía vacío. Sin observaciones, la
+        // nota de la cotización: los pedidos convertidos antes de que la conversión la copiara
+        // (Order.NotesOnConversion) nacieron sin ella. Sin ninguna de las dos, vacía.
+        var observaciones = !string.IsNullOrWhiteSpace(order.Notes)
+            ? order.Notes
+            : quotation.Notes ?? string.Empty;
         var codAsesor = AdvisorCodeCell(quotation, context.Advisors);
         // "Transportadora" (spec 2026-10-05): sólo depende de la recogida. Las demás columnas de
         // entrega no cambian con ella (decisión del owner): sin parte de envío caen al cliente.

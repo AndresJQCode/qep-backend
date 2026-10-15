@@ -150,7 +150,9 @@ public sealed class ConvertQuotationToOrderHandler(
                 orderNumber,
                 quotation.Id,
                 paymentStatus,
-                command.Notes,
+                // Sin observaciones propias, el pedido hereda la nota de la cotización (hotfix
+                // 2026-10-15).
+                Order.NotesOnConversion(command.Notes, quotation.Notes),
                 convertedBy,
                 proofs,
                 now);

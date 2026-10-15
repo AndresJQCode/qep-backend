@@ -516,6 +516,39 @@ public sealed class Order
             : trimmed;
     }
 
+    /// <summary>
+    /// Las observaciones con las que nace el pedido (hotfix 2026-10-15): las que se escribieron al
+    /// convertir y, si no se escribió nada, la nota de la cotización. Antes el pedido nacía sin
+    /// ella y la nota se quedaba en la cotización, fuera del pedido y de su Excel.
+    ///
+    /// Lo escrito al convertir gana: es una elección de quien convierte, y la nota de la cotización
+    /// sigue en la cotización. La nota de la cotización no tiene tope y la del pedido sí
+    /// (<see cref="NotesMaxLength"/>): se recorta, porque copiarla entera haría fallar la conversión
+    /// con <c>order.order.notes_too_long</c> sobre un campo que nadie escribió. El corte no parte un
+    /// par sustituto: medio emoji es un carácter inválido.
+    /// </summary>
+    public static string? NotesOnConversion(string? requestedNotes, string? quotationNotes)
+    {
+        if (!string.IsNullOrWhiteSpace(requestedNotes))
+        {
+            return requestedNotes;
+        }
+
+        if (string.IsNullOrWhiteSpace(quotationNotes))
+        {
+            return null;
+        }
+
+        var trimmed = quotationNotes.Trim();
+        if (trimmed.Length <= NotesMaxLength)
+        {
+            return trimmed;
+        }
+
+        var cut = char.IsHighSurrogate(trimmed[NotesMaxLength - 1]) ? NotesMaxLength - 1 : NotesMaxLength;
+        return trimmed[..cut].TrimEnd();
+    }
+
     private static string? NormalizeNotes(string? notes)
     {
         if (string.IsNullOrWhiteSpace(notes))

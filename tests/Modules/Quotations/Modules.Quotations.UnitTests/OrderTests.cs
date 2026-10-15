@@ -1144,4 +1144,49 @@ public sealed class OrderTests
         Assert.Equal(60_000m, corrected.Amount);
         Assert.Equal(paidOn, corrected.PaidOn);
     }
+    // Hotfix 2026-10-15: al convertir, el pedido hereda la nota de la cotización si quien convierte
+    // no escribió observaciones propias. Sin esto, la nota se quedaba en la cotización y ni el
+    // pedido ni la columna "Observaciones" del Excel la tenían.
+    [Fact]
+    public void NotesOnConversionCopiesTheQuotationsNotesWhenNoneWereWritten()
+    {
+        Assert.Equal("Entregar el lunes", Order.NotesOnConversion(null, "  Entregar el lunes  "));
+        Assert.Equal("Entregar el lunes", Order.NotesOnConversion("   ", "Entregar el lunes"));
+    }
+
+    [Fact]
+    public void NotesOnConversionKeepsWhatWasWrittenWhenConverting()
+    {
+        Assert.Equal("Pago por transferencia", Order.NotesOnConversion("Pago por transferencia", "Entregar el lunes"));
+    }
+
+    [Fact]
+    public void NotesOnConversionIsNullWithoutNotesAnywhere()
+    {
+        Assert.Null(Order.NotesOnConversion(null, null));
+        Assert.Null(Order.NotesOnConversion("", "   "));
+    }
+
+    // La nota de la cotización no tiene tope y la del pedido sí: copiarla entera haría fallar la
+    // conversión con un error sobre un campo que nadie escribió. Se recorta al tope del pedido.
+    [Fact]
+    public void NotesOnConversionCutsAQuotationNoteLongerThanTheOrdersLimit()
+    {
+        var notes = Order.NotesOnConversion(null, new string('a', Order.NotesMaxLength + 20));
+
+        Assert.Equal(new string('a', Order.NotesMaxLength), notes);
+        var order = NewOrder(notes: notes);
+        Assert.Equal(Order.NotesMaxLength, order.Notes!.Length);
+    }
+
+    // Un emoji son dos char: cortar entre los dos dejaría un carácter inválido en la base.
+    [Fact]
+    public void NotesOnConversionDoesNotSplitACharacterAtTheLimit()
+    {
+        var quotationNotes = new string('a', Order.NotesMaxLength - 1) + "😀" + "b";
+
+        var notes = Order.NotesOnConversion(null, quotationNotes);
+
+        Assert.Equal(new string('a', Order.NotesMaxLength - 1), notes);
+    }
 }
