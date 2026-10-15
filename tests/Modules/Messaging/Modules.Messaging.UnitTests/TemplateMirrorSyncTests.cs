@@ -17,16 +17,20 @@ public sealed class TemplateMirrorSyncTests
     private static readonly DateTimeOffset Now = new(2026, 10, 14, 15, 0, 0, TimeSpan.Zero);
     private static readonly MessagingTemplateSource Source = new("222", "token");
 
-    private sealed record Rig(TemplateMirrorSync Sync, MirroredTemplateCatalog Catalog, FakeMessageTemplateRepository Repository, FakeWhatsAppClient Meta, FakeConnectionDirectory Connections, FakeUnitOfWork UnitOfWork);
+    private sealed record Rig(
+        TemplateMirrorSync Sync, MirroredTemplateCatalog Catalog, FakeMessageTemplateRepository Repository, FakeWhatsAppClient Meta, FakeConnectionDirectory Connections,
+        FakeUnitOfWork UnitOfWork, FakeClock Clock, RecordingLogger<TemplateMirrorSync> Logger);
 
     private static Rig NewRig(params JsonElement[] listing)
     {
         var repository = new FakeMessageTemplateRepository();
-        var meta = new FakeWhatsAppClient { NextTemplates = new MessagingGraphResult<IReadOnlyList<JsonElement>>(listing, null) };
+        var meta = new FakeWhatsAppClient { NextTemplates = new MessagingGraphResult<TemplateListing>(new TemplateListing(listing, Complete: true), null) };
         var connections = new FakeConnectionDirectory();
         var unitOfWork = new FakeUnitOfWork();
-        var sync = new TemplateMirrorSync(repository, meta, connections, unitOfWork, new FakeClock(Now));
-        return new Rig(sync, new MirroredTemplateCatalog(repository, sync, connections), repository, meta, connections, unitOfWork);
+        var clock = new FakeClock(Now);
+        var logger = new RecordingLogger<TemplateMirrorSync>();
+        var sync = new TemplateMirrorSync(repository, meta, connections, unitOfWork, clock, logger);
+        return new Rig(sync, new MirroredTemplateCatalog(repository, sync, connections), repository, meta, connections, unitOfWork, clock, logger);
     }
 
     private static JsonElement Listed(string id, string name, string status = "APPROVED", string? rejectedReason = null, string category = "UTILITY", string body = "Hola {{1}}") =>
@@ -43,7 +47,7 @@ public sealed class TemplateMirrorSyncTests
         })).RootElement.Clone();
 
     private static void ListingFails(Rig rig, MessagingGraphFailure failure) =>
-        rig.Meta.NextTemplates = new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, failure);
+        rig.Meta.NextTemplates = new MessagingGraphResult<TemplateListing>(null, failure);
 
     [Fact]
     public async Task ANewTemplateIsMirroredAsExternalWithMetasStatusAndReason()
@@ -84,6 +88,73 @@ public sealed class TemplateMirrorSyncTests
         await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
 
         Assert.Equal(["ajena", "queda"], rig.Repository.Rows.Select(row => row.Name).Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>Revisión final F4: el cliente corta en <c>MaxTemplatePages</c> o ante un <c>paging.next</c> que no sigue y lo dice con
+    /// <c>Complete = false</c>. Lo que vino se actualiza, pero no se borra nada (tampoco la <c>Quotation</c>): que una plantilla no esté
+    /// en un listado incompleto no dice que Meta ya no la tenga. Queda un warning.</summary>
+    [Fact]
+    public async Task AnIncompleteListingUpsertsWhatCameButRemovesNothingAndWarns()
+    {
+        var rig = NewRig();
+        rig.Meta.NextTemplates = new MessagingGraphResult<TemplateListing>(new TemplateListing([Listed("1", "queda", "PAUSED")], Complete: false), null);
+        rig.Repository.Rows.Add(MessageTemplate.Mirrored(TenantId, ConnectionId, "1", "queda", "es", "UTILITY", "POSITIONAL", "APPROVED", null, "[]", Now.AddDays(-1)));
+        rig.Repository.Rows.Add(MessageTemplate.Pending(TenantId, ConnectionId, "2", MessageTemplateName.QuotationName, "es", "UTILITY", "NAMED", "APPROVED", "[]",
+            MessageTemplateKind.Quotation, Guid.CreateVersion7(), Now.AddDays(-1)));
+        rig.Repository.Rows.Add(MessageTemplate.Mirrored(TenantId, ConnectionId, "3", "en_otra_pagina", "es", "UTILITY", "POSITIONAL", "APPROVED", null, "[]", Now.AddDays(-1)));
+
+        await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
+
+        Assert.Equal(["en_otra_pagina", "qep_cotizacion", "queda"], rig.Repository.Rows.Select(row => row.Name).Order(StringComparer.Ordinal));
+        Assert.Equal("PAUSED", rig.Repository.Rows.Single(row => row.MetaTemplateId == "1").Status);
+        Assert.Equal(1, rig.UnitOfWork.Saves);
+        var warning = Assert.Single(rig.Logger.Entries);
+        Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, warning.Level);
+        Assert.Contains(TenantId.ToString(), warning.Message, StringComparison.Ordinal);
+        Assert.Contains(ConnectionId.ToString(), warning.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("token", warning.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ACompleteListingLeavesNoWarning()
+    {
+        var rig = NewRig(Listed("1", "queda"));
+
+        await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
+
+        Assert.Empty(rig.Logger.Entries);
+    }
+
+    /// <summary>Revisión final F5: la sincronización lista en Meta y después lee el espejo. Lo que cambió mientras listaba (una fila creada
+    /// por QEP, un estado que trajo el webhook) es más nuevo que el listado: no se borra ni se pisa con el estado viejo.</summary>
+    [Fact]
+    public async Task WhatChangedWhileListingIsNeitherRemovedNorOverwritten()
+    {
+        var rig = NewRig(Listed("1", "promo", "PENDING"), Listed("4", "vieja", "APPROVED"));
+        var approvedDuringTheListing = MessageTemplate.Pending(TenantId, ConnectionId, "1", "promo", "es", "MARKETING", "NAMED", "PENDING", "[]",
+            MessageTemplateKind.Free, Guid.CreateVersion7(), Now.AddDays(-1));
+        var stale = MessageTemplate.Mirrored(TenantId, ConnectionId, "4", "vieja", "es", "UTILITY", "POSITIONAL", "PAUSED", null, "[]", Now.AddDays(-1));
+        var gone = MessageTemplate.Mirrored(TenantId, ConnectionId, "5", "se_fue", "es", "UTILITY", "POSITIONAL", "APPROVED", null, "[]", Now.AddDays(-1));
+        rig.Repository.Rows.AddRange([approvedDuringTheListing, stale, gone]);
+        MessageTemplate? createdDuringTheListing = null;
+        rig.Meta.BeforeTemplateList = () =>
+        {
+            rig.Clock.UtcNow = Now.AddSeconds(5);
+            createdDuringTheListing = MessageTemplate.Pending(TenantId, ConnectionId, "9", "nueva", "es", "MARKETING", "NAMED", "PENDING", "[]",
+                MessageTemplateKind.Free, Guid.CreateVersion7(), Now.AddSeconds(2));
+            rig.Repository.Rows.Add(createdDuringTheListing);
+            approvedDuringTheListing.ApplyStatus(MessageTemplateStatuses.Approved, null, Now.AddSeconds(3));
+            return Task.CompletedTask;
+        };
+
+        await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
+
+        Assert.Contains(createdDuringTheListing!, rig.Repository.Rows);
+        Assert.Equal((MessageTemplateStatuses.Approved, Now.AddSeconds(3)), (approvedDuringTheListing.Status, approvedDuringTheListing.UpdatedAt));
+        // Lo que no cambió durante el listado se sincroniza y se borra como siempre.
+        Assert.Equal(MessageTemplateStatuses.Approved, stale.Status);
+        Assert.DoesNotContain(gone, rig.Repository.Rows);
+        Assert.Equal(3, rig.Repository.Rows.Count);
     }
 
     // Review Focus 3: una paginación que repite un id no puede insertar dos filas.

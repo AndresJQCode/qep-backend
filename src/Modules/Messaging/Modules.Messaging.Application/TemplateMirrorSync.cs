@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging;
 using Modules.Messaging.Domain;
 
 namespace Modules.Messaging.Application;
@@ -8,8 +9,10 @@ namespace Modules.Messaging.Application;
 /// <summary>
 /// Spec 2026-10-14 §4.3 «Refrescar»: el listado completo de Meta hace upsert en el espejo por <c>meta_template_id</c> (<c>SyncFrom</c> en
 /// las conocidas, <c>Mirrored</c> en las nuevas), elimina las filas que Meta ya no lista, escribe <c>template_mirror_syncs</c> y guarda
-/// **una** vez. Un elemento sin <c>id</c>, nombre o idioma se salta; un <c>id</c> repetido en la misma lista se toma una vez (Review
-/// Focus 3). Público para que Infrastructure lo registre; no es API para otros módulos.
+/// **una** vez. Con un listado incompleto (<see cref="TemplateListing.Complete"/>) no elimina nada, y una fila creada o actualizada
+/// después de empezar a listar no se elimina ni se pisa (revisión final F4 y F5). Un elemento sin <c>id</c>, nombre o idioma se salta;
+/// un <c>id</c> repetido en la misma lista se toma una vez (Review Focus 3). Público para que Infrastructure lo registre; no es API para
+/// otros módulos.
 /// <para>
 /// Un listado que falla no es una creación: el token vencido o un permiso faltante reportan la conexión y son
 /// <c>messaging.connection_unavailable</c> (<see cref="TemplateGraphErrors.FailAsync"/>); <b>cualquier otra</b> falla es
@@ -17,16 +20,20 @@ namespace Modules.Messaging.Application;
 /// un 400 del listado no es un nombre repetido ni un rechazo de la plantilla.
 /// </para>
 /// </summary>
-public sealed class TemplateMirrorSync(
+public sealed partial class TemplateMirrorSync(
     IMessageTemplateRepository repository,
     IWhatsAppCloudClient meta,
     IMessagingConnectionDirectory connections,
     IMessagingUnitOfWork unitOfWork,
-    IClock clock)
+    IClock clock,
+    ILogger<TemplateMirrorSync> logger)
 {
     public async Task RunAsync(Guid tenantId, Guid connectionId, MessagingTemplateSource source, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(source);
+        // Revisión final F5: el corte es antes de llamar a Meta. Una fila creada o actualizada después (el webhook, otro aprovisionamiento)
+        // es más nueva que el listado y no se borra ni se pisa con lo que Meta decía al empezar.
+        var listedAt = clock.UtcNow;
         var result = await meta.ListTemplatesAsync(source, cancellationToken);
         if (!result.Succeeded || result.Value is null)
         {
@@ -42,7 +49,7 @@ public sealed class TemplateMirrorSync(
         var now = clock.UtcNow;
         var known = (await repository.ListAsync(tenantId, connectionId, cancellationToken)).ToDictionary(row => row.MetaTemplateId, StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var raw in result.Value)
+        foreach (var raw in result.Value.Templates)
         {
             if (raw.ValueKind != JsonValueKind.Object)
             {
@@ -64,7 +71,10 @@ public sealed class TemplateMirrorSync(
             var reason = TemplateCatalog.Text(raw, "rejected_reason");
             if (known.TryGetValue(id, out var existing))
             {
-                existing.SyncFrom(status, reason, category, format, components, now);
+                if (!ChangedSince(existing, listedAt))
+                {
+                    existing.SyncFrom(status, reason, category, format, components, now);
+                }
             }
             else
             {
@@ -72,17 +82,32 @@ public sealed class TemplateMirrorSync(
             }
         }
 
-        foreach (var (id, template) in known)
+        // Revisión final F4: un listado incompleto no dice que lo que falta ya no esté en Meta; se actualiza lo que vino y no se borra nada.
+        if (result.Value.Complete)
         {
-            if (!seen.Contains(id))
+            foreach (var (id, template) in known)
             {
-                repository.Remove(template);
+                if (!seen.Contains(id) && !ChangedSince(template, listedAt))
+                {
+                    repository.Remove(template);
+                }
             }
+        }
+        else
+        {
+            LogIncompleteListing(logger, tenantId, connectionId, seen.Count);
         }
 
         await repository.MarkSyncedAsync(tenantId, connectionId, now, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
     }
+
+    private static bool ChangedSince(MessageTemplate template, DateTimeOffset listedAt) => template.UpdatedAt > listedAt || template.CreatedAt > listedAt;
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The template listing of connection {ConnectionId} in tenant {TenantId} came back incomplete ({Listed} templates); the mirror was updated but nothing was removed.")]
+    private static partial void LogIncompleteListing(ILogger logger, Guid tenantId, Guid connectionId, int listed);
 
     /// <summary>Meta manda los ids como string en el listado y como número en el webhook; se aceptan los dos. Público para que el parser
     /// del webhook (<c>message_template_status_update</c>) lo reuse en vez de copiarlo.</summary>

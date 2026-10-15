@@ -84,10 +84,12 @@ internal sealed partial class WhatsAppCloudClient(
     /// <summary>Spec 2026-10-14 §4.4: <c>id</c> y <c>rejected_reason</c> alimentan el espejo.</summary>
     public const string TemplateFields = "id,name,language,status,category,components,parameter_format,rejected_reason";
 
-    public async Task<MessagingGraphResult<IReadOnlyList<JsonElement>>> ListTemplatesAsync(MessagingTemplateSource source, CancellationToken cancellationToken)
+    public async Task<MessagingGraphResult<TemplateListing>> ListTemplatesAsync(MessagingTemplateSource source, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(source);
         var templates = new List<JsonElement>();
+        // Revisión final F4: sólo es completo si la última página leída no traía un paging.next (ni uno que se descartó).
+        var complete = false;
         var next = new Uri(
             $"{Version}/{Uri.EscapeDataString(source.WabaId)}/message_templates?fields={TemplateFields}&limit=100", UriKind.Relative);
         for (var page = 0; page < MaxTemplatePages && next is not null; page++)
@@ -97,13 +99,13 @@ internal sealed partial class WhatsAppCloudClient(
             using var response = answer.Response;
             if (response is null)
             {
-                return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(0, null, answer.UnreachableReason ?? "unreachable"));
+                return new MessagingGraphResult<TemplateListing>(null, new MessagingGraphFailure(0, null, answer.UnreachableReason ?? "unreachable"));
             }
 
             var status = (int)response.StatusCode;
             if (!response.IsSuccessStatusCode)
             {
-                return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(status, answer.Error?.Code, $"http_{status}"));
+                return new MessagingGraphResult<TemplateListing>(null, new MessagingGraphFailure(status, answer.Error?.Code, $"http_{status}"));
             }
 
             try
@@ -112,33 +114,42 @@ internal sealed partial class WhatsAppCloudClient(
                 var root = document.RootElement;
                 if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
                 {
-                    return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(status, null, "unreadable"));
+                    return new MessagingGraphResult<TemplateListing>(null, new MessagingGraphFailure(status, null, "unreadable"));
                 }
 
                 templates.AddRange(data.EnumerateArray().Select(template => template.Clone()));
-                next = NextPage(root);
+                next = NextPage(root, out var declined);
+                complete = next is null && !declined;
             }
             catch (JsonException)
             {
-                return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(status, null, "unreadable"));
+                return new MessagingGraphResult<TemplateListing>(null, new MessagingGraphFailure(status, null, "unreadable"));
             }
         }
 
-        return new MessagingGraphResult<IReadOnlyList<JsonElement>>(templates, null);
+        return new MessagingGraphResult<TemplateListing>(new TemplateListing(templates, complete), null);
     }
 
     /// <summary><c>paging.next</c> es una URL absoluta y firmada de Graph. Sólo se sigue si es https y del mismo host que el
-    /// cliente: el token viaja en cada request y no debe salir de graph.facebook.com por lo que diga el cuerpo.</summary>
-    private static Uri? NextPage(JsonElement root)
+    /// cliente: el token viaja en cada request y no debe salir de graph.facebook.com por lo que diga el cuerpo. <paramref name="declined"/>
+    /// es <c>true</c> si había un <c>paging.next</c> y no se va a seguir: el listado queda incompleto (revisión final F4).</summary>
+    private static Uri? NextPage(JsonElement root, out bool declined)
     {
+        declined = false;
         if (!root.TryGetProperty("paging", out var paging) || paging.ValueKind != JsonValueKind.Object
-            || !paging.TryGetProperty("next", out var next) || next.ValueKind != JsonValueKind.String
-            || !Uri.TryCreate(next.GetString(), UriKind.Absolute, out var uri))
+            || !paging.TryGetProperty("next", out var next) || next.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(next.GetString()))
         {
             return null;
         }
 
-        return uri.Scheme == Uri.UriSchemeHttps && string.Equals(uri.Host, new Uri(BaseUrl).Host, StringComparison.OrdinalIgnoreCase) ? uri : null;
+        if (Uri.TryCreate(next.GetString(), UriKind.Absolute, out var uri)
+            && uri.Scheme == Uri.UriSchemeHttps && string.Equals(uri.Host, new Uri(BaseUrl).Host, StringComparison.OrdinalIgnoreCase))
+        {
+            return uri;
+        }
+
+        declined = true;
+        return null;
     }
 
     public Task<SendResult> SendTemplateAsync(

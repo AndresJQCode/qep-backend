@@ -33,6 +33,10 @@ public sealed record MessagingGraphResult<T>(T? Value, MessagingGraphFailure? Fa
     public bool Succeeded => Failure is null;
 }
 
+/// <summary>Revisión final F4: lo que trajo <c>GET /{waba_id}/message_templates</c>. <c>Complete = false</c> cuando el cliente cortó antes de
+/// la última página (el tope de páginas o un <c>paging.next</c> que no sigue): lo que vino es cierto, lo que falta no dice nada.</summary>
+public sealed record TemplateListing(IReadOnlyList<System.Text.Json.JsonElement> Templates, bool Complete);
+
 public sealed record MediaInfo(Uri Url, string MimeType, string? Sha256, long FileSize);
 
 /// <summary>Decisión 3: el cliente de Graph de Messaging (<c>messaging.meta-graph</c>). Nunca registra el token ni la URL firmada.</summary>
@@ -71,8 +75,9 @@ public interface IWhatsAppCloudClient
 
     /// <summary>Spec 2026-10-11 §5.1: <c>GET /{waba_id}/message_templates</c> con los campos que lee el normalizador, de a 100 y
     /// siguiendo <c>paging.next</c> hasta 10 páginas. Devuelve cada plantilla tal cual la mandó Meta (ya clonada, sin ligar al
-    /// documento), para que <see cref="TemplateCatalog"/> la normalice. Una falla en cualquier página es la falla de todo.</summary>
-    Task<MessagingGraphResult<IReadOnlyList<System.Text.Json.JsonElement>>> ListTemplatesAsync(
+    /// documento), para que <see cref="TemplateCatalog"/> la normalice. Una falla en cualquier página es la falla de todo; un corte por el
+    /// tope de páginas o por un <c>paging.next</c> que no se sigue es éxito con <see cref="TemplateListing.Complete"/> en <c>false</c>.</summary>
+    Task<MessagingGraphResult<TemplateListing>> ListTemplatesAsync(
         MessagingTemplateSource source, CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-11 §5.1: <c>type: "template"</c> por el mismo <c>MessagePayload</c> del texto. Devuelve el mismo

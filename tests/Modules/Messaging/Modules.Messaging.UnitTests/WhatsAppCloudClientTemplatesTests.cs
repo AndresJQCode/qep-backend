@@ -151,7 +151,8 @@ public sealed class WhatsAppCloudClientTemplatesTests
         var result = await ClientOver(handler).ListTemplatesAsync(new MessagingTemplateSource("222", "tok"), Ct);
 
         Assert.True(result.Succeeded);
-        Assert.Equal(["a", "b"], result.Value!.Select(element => element.GetProperty("name").GetString()));
+        Assert.Equal(["a", "b"], result.Value!.Templates.Select(element => element.GetProperty("name").GetString()));
+        Assert.True(result.Value.Complete);
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Get, request.Method);
         Assert.Equal("/v24.0/222/message_templates", request.Uri.AbsolutePath);
@@ -169,14 +170,16 @@ public sealed class WhatsAppCloudClientTemplatesTests
 
         var result = await ClientOver(handler).ListTemplatesAsync(new MessagingTemplateSource("222", "tok"), Ct);
 
-        Assert.Equal(["a", "b", "c"], result.Value!.Select(element => element.GetProperty("name").GetString()));
+        Assert.Equal(["a", "b", "c"], result.Value!.Templates.Select(element => element.GetProperty("name").GetString()));
+        Assert.True(result.Value.Complete);
         Assert.Equal(3, handler.Requests.Count);
         Assert.Equal("?after=p2", handler.Requests[1].Uri.Query);
         Assert.Equal("Bearer tok", handler.Requests[1].Authorization);
     }
 
+    // Revisión final F4: el corte por páginas devuelve lo que trajo, pero dice que el listado quedó incompleto.
     [Fact]
-    public async Task ListingStopsAtTenPages()
+    public async Task ListingStopsAtTenPagesAndSaysItIsIncomplete()
     {
         var handler = new ScriptedHandler((HttpStatusCode.OK, Page("x", "https://graph.facebook.com/v24.0/222/message_templates?after=more")));
 
@@ -184,18 +187,21 @@ public sealed class WhatsAppCloudClientTemplatesTests
 
         Assert.True(result.Succeeded);
         Assert.Equal(10, handler.Requests.Count);
-        Assert.Equal(10, result.Value!.Count);
+        Assert.Equal(10, result.Value!.Templates.Count);
+        Assert.False(result.Value.Complete);
     }
 
+    // Revisión final F4: un paging.next que no se sigue también deja el listado incompleto.
     [Fact]
-    public async Task ListingNeverFollowsANextLinkToAnotherHostWithTheToken()
+    public async Task ListingNeverFollowsANextLinkToAnotherHostWithTheTokenAndSaysItIsIncomplete()
     {
         var handler = new ScriptedHandler((HttpStatusCode.OK, Page("a", "https://evil.example/steal?after=p2")));
 
         var result = await ClientOver(handler).ListTemplatesAsync(new MessagingTemplateSource("222", "tok"), Ct);
 
         Assert.Single(handler.Requests);
-        Assert.Equal(["a"], result.Value!.Select(element => element.GetProperty("name").GetString()));
+        Assert.Equal(["a"], result.Value!.Templates.Select(element => element.GetProperty("name").GetString()));
+        Assert.False(result.Value.Complete);
     }
 
     [Fact]
