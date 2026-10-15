@@ -14,7 +14,7 @@ internal sealed class ApplierBed
     public ApplierBed()
     {
         Provisioner = new FakeProvisioner(SalesPipeline.CreateDefault(TenantId, Now));
-        Applier = new QuotationEventApplier(Modules, Provisioner, Deals, Quotations, Audit);
+        Applier = new QuotationEventApplier(Modules, Provisioner, Deals, Quotations, Orders, Audit);
     }
 
     public Guid TenantId { get; } = Guid.CreateVersion7();
@@ -31,12 +31,17 @@ internal sealed class ApplierBed
 
     public InMemoryDealQuotations Quotations { get; } = new();
 
+    public InMemoryDealOrders Orders { get; } = new();
+
     public RecordingPipelineAudit Audit { get; } = new();
 
     public QuotationEventApplier Applier { get; }
 
     public QuotationFact Fact(Guid clientId, Guid quotationId, decimal total = 1_000m, string currency = "COP", Guid? orderId = null) =>
         new(TenantId, quotationId, "COT-0001", clientId, AdvisorId, total, currency, orderId);
+
+    public OrderFact OrderFact(Guid clientId, Guid orderId, decimal total, string source = "Manual") =>
+        new(TenantId, orderId, "PED-0001", clientId, AdvisorId, total, "COP", source, null);
 
     public Deal OpenDeal(Guid clientId, string title = "Manual")
     {
@@ -120,6 +125,19 @@ internal sealed class InMemoryDealQuotations : IDealQuotationRepository
         Task.FromResult<IReadOnlyList<DealQuotation>>([.. Items.Where(quotation => quotation.CustomerId == customerId && quotation.DealId is null)]);
 
     public void Add(DealQuotation quotation) => Items.Add(quotation);
+}
+
+internal sealed class InMemoryDealOrders : IDealOrderRepository
+{
+    public List<DealOrder> Items { get; } = [];
+
+    public Task<DealOrder?> FindAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+        Task.FromResult(Items.SingleOrDefault(order => order.TenantId == tenantId && order.OrderId == orderId));
+
+    public Task<IReadOnlyList<DealOrder>> ListByDealAsync(Guid tenantId, Guid dealId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<DealOrder>>([.. Items.Where(order => order.TenantId == tenantId && order.DealId == dealId)]);
+
+    public void Add(DealOrder order) => Items.Add(order);
 }
 
 internal sealed class RecordingPipelineAudit : IPipelineAuditRecorder

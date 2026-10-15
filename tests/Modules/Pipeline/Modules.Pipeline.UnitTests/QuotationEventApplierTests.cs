@@ -227,7 +227,7 @@ public sealed class QuotationEventApplierTests
         await bed.Applier.ApplyConvertedAsync(bed.Fact(clientId, quotationId, orderId: orderId), Later.AddDays(1), Ct);
         bed.Deals.Flush();
 
-        await bed.Applier.ApplyOrderCancelledAsync(new OrderCancelledFact(bed.TenantId, orderId, quotationId), Later.AddDays(2), Ct);
+        await bed.Applier.ApplyOrderCancelledAsync(new OrderCancelledFact(bed.TenantId, orderId, quotationId, "Quotation"), Later.AddDays(2), Ct);
 
         var deal = Assert.Single(bed.Deals.Items);
         Assert.Equal((bed.Stage("Cotizado").Id, false), (deal.StageId, deal.IsClosed));
@@ -247,7 +247,7 @@ public sealed class QuotationEventApplierTests
         await bed.Applier.ApplySentAsync(bed.Fact(clientId, quotationId), Later, Ct);
         await bed.Applier.ApplyConvertedAsync(converted, Later.AddDays(1), Ct);
         bed.Deals.Flush();
-        await bed.Applier.ApplyOrderCancelledAsync(new OrderCancelledFact(bed.TenantId, orderId, quotationId), Later.AddDays(2), Ct);
+        await bed.Applier.ApplyOrderCancelledAsync(new OrderCancelledFact(bed.TenantId, orderId, quotationId, "Quotation"), Later.AddDays(2), Ct);
         var deal = Assert.Single(bed.Deals.Items);
         var snapshot = Assert.Single(bed.Quotations.Items);
         var cancelledAt = snapshot.OrderCancelledAt;
@@ -272,7 +272,7 @@ public sealed class QuotationEventApplierTests
         var quotationId = Guid.CreateVersion7();
         var orderId = Guid.CreateVersion7();
         await bed.Applier.ApplySentAsync(bed.Fact(clientId, quotationId), Later, Ct);
-        await bed.Applier.ApplyOrderCancelledAsync(new OrderCancelledFact(bed.TenantId, orderId, quotationId), Later.AddDays(1), Ct);
+        await bed.Applier.ApplyOrderCancelledAsync(new OrderCancelledFact(bed.TenantId, orderId, quotationId, "Quotation"), Later.AddDays(1), Ct);
 
         await bed.Applier.ApplyConvertedAsync(bed.Fact(clientId, quotationId, orderId: orderId), Later.AddDays(2), Ct);
 
@@ -301,7 +301,7 @@ public sealed class QuotationEventApplierTests
         Assert.Equal((bed.Pipeline.WonStage.Id, (Guid?)currentOrder), (deal.StageId, snapshot.OrderId));
         var version = deal.Version;
 
-        await bed.Applier.ApplyOrderCancelledAsync(new OrderCancelledFact(bed.TenantId, oldOrder, quotationId), Later.AddDays(3), Ct);
+        await bed.Applier.ApplyOrderCancelledAsync(new OrderCancelledFact(bed.TenantId, oldOrder, quotationId, "Quotation"), Later.AddDays(3), Ct);
 
         Assert.Equal((bed.Pipeline.WonStage.Id, true, version), (deal.StageId, deal.IsClosed, deal.Version));
         Assert.Null(snapshot.OrderCancelledAt);
@@ -328,7 +328,7 @@ public sealed class QuotationEventApplierTests
         Assert.Equal(((Guid?)winner, (Guid?)deal.Id, bed.Pipeline.WonStage.Id), (deal.PrimaryQuotationId, otherSnapshot.DealId, deal.StageId));
         var version = deal.Version;
 
-        await bed.Applier.ApplyOrderCancelledAsync(new OrderCancelledFact(bed.TenantId, otherOrder, other), Later.AddDays(2), Ct);
+        await bed.Applier.ApplyOrderCancelledAsync(new OrderCancelledFact(bed.TenantId, otherOrder, other, "Quotation"), Later.AddDays(2), Ct);
 
         Assert.Equal((bed.Pipeline.WonStage.Id, true, version), (deal.StageId, deal.IsClosed, deal.Version));
         Assert.NotNull(otherSnapshot.OrderCancelledAt);
@@ -346,5 +346,75 @@ public sealed class QuotationEventApplierTests
 
         Assert.Empty(bed.Deals.Items);
         Assert.Empty(bed.Quotations.Items);
+    }
+
+    [Fact]
+    public async Task AnOrderWithoutQuotationAndNoOpenDealCreatesAWonDeal()
+    {
+        var bed = new ApplierBed();
+        var clientId = Guid.CreateVersion7();
+        var orderId = Guid.CreateVersion7();
+
+        Assert.True(await bed.Applier.ApplyOrderCreatedAsync(bed.OrderFact(clientId, orderId, 500m, "Shopify"), Later, Ct));
+
+        var deal = Assert.Single(bed.Deals.Items);
+        Assert.Equal((DealSource.Order, bed.AdvisorId, clientId, bed.Pipeline.WonStage.Id, (decimal?)500m), (deal.Source, deal.OwnerMemberId, deal.CustomerId, deal.StageId, deal.Amount));
+        Assert.Equal((Guid?)deal.Id, Assert.Single(bed.Orders.Items).DealId);
+        Assert.Equal([PipelineAuditActions.DealCreated, PipelineAuditActions.OrderLinked, PipelineAuditActions.DealWon], bed.Audit.Entries.Select(entry => entry.Action));
+    }
+
+    [Fact]
+    public async Task AnOrderWithoutQuotationWinsTheOnlyOpenDeal()
+    {
+        var bed = new ApplierBed();
+        var clientId = Guid.CreateVersion7();
+        var deal = bed.OpenDeal(clientId);
+
+        await bed.Applier.ApplyOrderCreatedAsync(bed.OrderFact(clientId, Guid.CreateVersion7(), 700m), Later, Ct);
+
+        Assert.Single(bed.Deals.Items);
+        Assert.Equal(bed.Pipeline.WonStage.Id, deal.StageId);
+    }
+
+    [Fact]
+    public async Task AnOrderWithAQuotationDoesNothing()
+    {
+        var bed = new ApplierBed();
+        var fact = bed.OrderFact(Guid.CreateVersion7(), Guid.CreateVersion7(), 700m, "Quotation") with { QuotationId = Guid.CreateVersion7() };
+
+        Assert.True(await bed.Applier.ApplyOrderCreatedAsync(fact, Later, Ct));
+
+        Assert.Empty(bed.Deals.Items);
+        Assert.Empty(bed.Orders.Items);
+    }
+
+    // Review Focus 5: un reintento del outbox no crea un segundo negocio.
+    [Fact]
+    public async Task ARepeatedOrderCreatedIsIdempotent()
+    {
+        var bed = new ApplierBed();
+        var clientId = Guid.CreateVersion7();
+        var fact = bed.OrderFact(clientId, Guid.CreateVersion7(), 500m);
+        await bed.Applier.ApplyOrderCreatedAsync(fact, Later, Ct);
+
+        await bed.Applier.ApplyOrderCreatedAsync(fact, Later.AddMinutes(5), Ct);
+
+        Assert.Single(bed.Deals.Items);
+        Assert.Single(bed.Orders.Items);
+    }
+
+    [Fact]
+    public async Task CancellingAnOrderWithoutQuotationReopensItsWonDeal()
+    {
+        var bed = new ApplierBed();
+        var clientId = Guid.CreateVersion7();
+        var orderId = Guid.CreateVersion7();
+        await bed.Applier.ApplyOrderCreatedAsync(bed.OrderFact(clientId, orderId, 500m), Later, Ct);
+        var deal = Assert.Single(bed.Deals.Items);
+
+        await bed.Applier.ApplyOrderCancelledAsync(new OrderCancelledFact(bed.TenantId, orderId, null, "Manual"), Later.AddHours(1), Ct);
+
+        Assert.NotEqual(bed.Pipeline.WonStage.Id, deal.StageId);
+        Assert.NotNull(Assert.Single(bed.Orders.Items).CancelledAt);
     }
 }

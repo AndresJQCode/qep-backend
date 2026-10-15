@@ -59,4 +59,25 @@ public sealed class QuotationEventPayloadsTests
         Assert.False(QuotationEventPayloads.TryReadQuotation(Sent().Replace("\"COT-0007\"", "\"\"", StringComparison.Ordinal), out _));
         Assert.False(QuotationEventPayloads.TryReadQuotation(Sent().Replace("\"USD\"", "null", StringComparison.Ordinal), out _));
     }
+
+    [Fact]
+    public void AnOrderCreatedPayloadIsReadByNameWithANullQuotation()
+    {
+        var json = $$"""{"tenantId":"{{TenantId}}","orderId":"{{OrderId}}","orderNumber":"PED-0003","clientId":"{{ClientId}}","advisorMemberId":"{{AdvisorId}}","total":500.00,"currency":"COP","source":"Shopify","quotationId":null,"occurredAt":"2026-10-15T15:00:00+00:00"}""";
+
+        Assert.True(QuotationEventPayloads.TryReadOrderCreated(json, out var fact));
+
+        Assert.Equal((TenantId, OrderId, "PED-0003", ClientId, AdvisorId, 500.00m, "COP", "Shopify", (Guid?)null),
+            (fact!.TenantId, fact.OrderId, fact.OrderNumber, fact.ClientId, fact.AdvisorMemberId, fact.Total, fact.Currency, fact.Source, fact.QuotationId));
+    }
+
+    [Fact]
+    public void ACancelledPayloadAcceptsANullQuotation()
+    {
+        var json = $$"""{"tenantId":"{{TenantId}}","orderId":"{{OrderId}}","quotationId":null,"source":"Manual","occurredAt":"2026-10-15T15:00:00+00:00"}""";
+
+        Assert.True(QuotationEventPayloads.TryReadOrderCancelled(json, out var fact));
+
+        Assert.Equal(((Guid?)null, "Manual"), (fact!.QuotationId, fact.Source));
+    }
 }

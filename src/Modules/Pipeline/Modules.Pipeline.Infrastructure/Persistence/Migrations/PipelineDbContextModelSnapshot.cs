@@ -206,8 +206,66 @@ namespace Modules.Pipeline.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_deals_amount", "amount IS NULL OR amount >= 0");
 
-                            t.HasCheckConstraint("CK_deals_source", "source IN ('Manual','Conversation','Quotation')");
+                            t.HasCheckConstraint("CK_deals_source", "source IN ('Manual','Conversation','Quotation','Order')");
                         });
+                });
+
+            modelBuilder.Entity("Modules.Pipeline.Domain.DealOrder", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<DateTimeOffset?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cancelled_at");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("customer_id");
+
+                    b.Property<Guid?>("DealId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("deal_id");
+
+                    b.Property<string>("OrderNumber")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("order_number");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("source");
+
+                    b.Property<decimal>("Total")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("total");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("TenantId", "OrderId");
+
+                    b.HasIndex(new[] { "TenantId", "CustomerId" }, "IX_deal_orders_customer");
+
+                    b.HasIndex(new[] { "TenantId", "DealId" }, "IX_deal_orders_deal");
+
+                    b.ToTable("deal_orders", "pipeline");
                 });
 
             modelBuilder.Entity("Modules.Pipeline.Domain.DealQuotation", b =>

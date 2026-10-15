@@ -37,6 +37,10 @@ internal static class PipelineMapping
 public sealed record DealQuotationDto(
     Guid QuotationId, string QuotationNumber, decimal Total, string Currency, string Status, bool IsPrimary, Guid? OrderId, bool OrderCancelled);
 
+/// <summary>Spec 2026-10-15 §7: un pedido sin cotización enlazado al negocio. <c>Source</c> viaja con el nombre
+/// (<c>Manual</c>, <c>Shopify</c>…), que el frontend traduce.</summary>
+public sealed record DealOrderDto(Guid OrderId, string OrderNumber, decimal Total, string Currency, string Source, bool Cancelled);
+
 /// <summary>D19: una fila del historial con los nombres ya resueltos (una etapa borrada o un miembro que ya no está salen sin
 /// nombre o con «Miembro eliminado»).</summary>
 public sealed record StageHistoryDto(
@@ -79,4 +83,5 @@ public sealed record DealDetailDto(
     IReadOnlyList<StageHistoryDto> History,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    long Version);
+    long Version,
+    IReadOnlyList<DealOrderDto> Orders);

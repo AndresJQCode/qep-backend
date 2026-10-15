@@ -21,6 +21,7 @@ public static class PipelineInfrastructureExtensions
         services.AddScoped<IPipelineProvisioner, PipelineProvisioner>();
         services.AddScoped<IDealRepository, DealRepository>();
         services.AddScoped<IDealQuotationRepository, DealQuotationRepository>();
+        services.AddScoped<IDealOrderRepository, DealOrderRepository>();
         services.AddScoped<IPipelineReasonRepository, PipelineReasonRepository>();
         services.AddScoped<ITriageDecisionRepository, TriageDecisionRepository>();
         // D33 y P9: las consultas del tablero (agregados y tarjetas) se resuelven en la base.

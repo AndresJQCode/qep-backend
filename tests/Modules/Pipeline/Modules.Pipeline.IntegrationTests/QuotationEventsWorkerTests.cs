@@ -8,6 +8,7 @@ public sealed class QuotationEventsWorkerTests
 {
     private const string Sent = "quotations.quotation.sent.v1";
     private const string Converted = "quotations.quotation.converted.v1";
+    private const string OrderCreated = "quotations.order.created.v1";
     private const string Cancelled = "quotations.order.cancelled.v1";
 
     private static object SentPayload(Guid tenantId, Guid quotationId, Guid clientId, decimal total = 1_000m) => new
@@ -70,6 +71,48 @@ public sealed class QuotationEventsWorkerTests
             "SELECT count(*) FROM pipeline.deal_stage_history WHERE tenant_id = @t AND actor_kind = 'System'", ("t", tenant.TenantId)));
         Assert.Equal(1L, await CountAsync(connectionString,
             "SELECT count(*) FROM audit.entries WHERE tenant_id = @t AND action = 'pipeline.deal.reopened' AND actor_type = 'System'", ("t", tenant.TenantId)));
+    }
+
+    // Spec 2026-10-15 §7: un pedido sin cotización crea el negocio ganado con su foto, y su anulación lo reabre.
+    [Fact]
+    public async Task AnOrderWithoutQuotationAndItsCancellationFlowThroughTheWorker()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnablePipelineAsync(connectionString, tenant.TenantId);
+        var customerId = Guid.CreateVersion7();
+        var orderId = Guid.CreateVersion7();
+
+        await InsertOutboxAsync(connectionString, OrderCreated, new
+        {
+            tenantId = tenant.TenantId,
+            orderId,
+            orderNumber = "PED-0001",
+            clientId = customerId,
+            advisorMemberId = Guid.CreateVersion7(),
+            total = 500m,
+            currency = "COP",
+            source = "Shopify",
+            quotationId = (Guid?)null,
+            occurredAt = DateTimeOffset.UtcNow,
+        });
+        await DrainQuotationEventsAsync(factory);
+        var afterCreated = await StageOfAsync(connectionString, tenant.TenantId, customerId);
+        await InsertOutboxAsync(connectionString, Cancelled,
+            new { tenantId = tenant.TenantId, orderId, quotationId = (Guid?)null, source = "Shopify", occurredAt = DateTimeOffset.UtcNow });
+        await DrainQuotationEventsAsync(factory);
+
+        Assert.Equal("Ganado", afterCreated);
+        Assert.NotEqual("Ganado", await StageOfAsync(connectionString, tenant.TenantId, customerId));
+        Assert.Equal("Order", await ScalarAsync<string>(connectionString,
+            "SELECT source FROM pipeline.deals WHERE tenant_id = @t AND customer_id = @c", ("t", tenant.TenantId), ("c", customerId)));
+        Assert.Equal(1L, await CountAsync(connectionString,
+            "SELECT count(*) FROM pipeline.deal_orders WHERE tenant_id = @t AND order_id = @o AND deal_id IS NOT NULL AND cancelled_at IS NOT NULL AND source = 'Shopify'",
+            ("t", tenant.TenantId), ("o", orderId)));
+        Assert.Equal(1L, await CountAsync(connectionString,
+            "SELECT count(*) FROM audit.entries WHERE tenant_id = @t AND action = 'pipeline.deal.order_linked' AND actor_type = 'System'", ("t", tenant.TenantId)));
     }
 
     // Review Focus 1: el mismo mensaje dos veces no duplica el negocio.

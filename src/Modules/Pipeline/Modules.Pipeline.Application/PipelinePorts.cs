@@ -52,6 +52,17 @@ public interface IDealQuotationRepository
     void Add(DealQuotation quotation);
 }
 
+/// <summary>Spec 2026-10-15 §7: las fotos de los pedidos sin cotización.</summary>
+public interface IDealOrderRepository
+{
+    /// <summary>Con tracking.</summary>
+    Task<DealOrder?> FindAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<DealOrder>> ListByDealAsync(Guid tenantId, Guid dealId, CancellationToken cancellationToken);
+
+    void Add(DealOrder order);
+}
+
 public interface IPipelineReasonRepository
 {
     /// <summary>Activos e inactivos, con tracking: el reemplazo del catálogo (P8) los necesita a todos.</summary>
@@ -102,6 +113,7 @@ public static class PipelineAuditActions
     public const string DealReopened = "pipeline.deal.reopened";
     public const string QuotationLinked = "pipeline.deal.quotation_linked";
     public const string QuotationUnlinked = "pipeline.deal.quotation_unlinked";
+    public const string OrderLinked = "pipeline.deal.order_linked";
     public const string PrimaryQuotationSet = "pipeline.deal.primary_quotation_set";
     public const string TriageCreated = "pipeline.triage.created";
     public const string TriageDismissed = "pipeline.triage.dismissed";
