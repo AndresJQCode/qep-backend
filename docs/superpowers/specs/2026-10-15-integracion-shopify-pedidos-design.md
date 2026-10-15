@@ -2,17 +2,19 @@
 
 **Fecha:** 2026-10-15
 **Módulos:** Shopify (nuevo: Domain, Application, Infrastructure, Api), Integrations (proveedor, OAuth,
-instalación, enlace y registro de webhooks), Quotations (origen del pedido, servicio para pedidos externos,
-excepción de elegibilidad del cliente, filtros), Customers (alta de cliente completo o incompleto desde el
-sistema), Tenancy (clave de módulo `shopify`), Reporting (excluir cotizaciones de origen externo),
-Api/Bootstrapper (webhook, adaptadores, políticas). **Frontend:** `qep-frontend`, rutas públicas de
-instalación, `features/integrations`, `features/orders`, `features/quotes`, `features/operator`.
+instalación, enlace y registro de webhooks), Quotations/Orders (origen y referencia externa del pedido,
+servicio para pedidos externos, filtro por origen; sobre el modelo de **pedido con datos propios** del spec
+previo), Customers (alta de cliente completo o incompleto desde el sistema), Tenancy (clave de módulo
+`shopify`, por defecto en el signup), Api/Bootstrapper (webhook, adaptadores, políticas). **Frontend:**
+`qep-frontend`, rutas públicas de instalación, `features/integrations`, `features/orders`,
+`features/operator`.
 **Estado:** alcance, enfoque y las cuatro secciones del diseño aprobados por el owner en conversación el
-2026-10-15; revisado el mismo día con sus correcciones (§3, decisiones 2, 8, 11 y 13 a 15). Pendiente de su
+2026-10-15; revisado el mismo día con sus correcciones (§3, decisiones 2, 8, 11 y 13 a 16). Pendiente de su
 lectura final y del plan de implementación.
-**Depende de:** el spec de **flete en cotizaciones** (pendiente de escribir). Sin él, los pedidos de Shopify
-con costo de envío quedan en espera (§6.2, motivo `freight_unsupported`) y la integración no se entrega a un
-tenant real.
+**Depende de dos specs previos, pendientes de escribir (§11):** (1) **pedidos sin cotización**: `Order` con
+cliente, líneas, partes y totales propios, para todos los pedidos; (2) **flete** en pedidos y cotizaciones.
+Sin el primero no hay dónde poner un pedido de Shopify; sin el segundo, los pedidos con costo de envío quedan
+en espera (§6.2, `freight_unsupported`). La integración no se entrega a un tenant real sin los dos.
 **Ramas:** `feature/shopify-pedidos` desde `develop` en `qep-backend`; la homónima desde `develop` en
 `qep-frontend`.
 
@@ -41,11 +43,11 @@ en la vista de pedidos. Lo que no puede entrar queda en una bandeja con el motiv
   (§4.4).
 - Registro de webhooks por tienda al enlazar; webhook firmado, espejo de pedidos, conciliación periódica y
   sincronización manual (§5).
-- Traducción a `Quotation` + `Order` con cliente completo o incompleto, SKU = código de producto, asesor y
-  cuenta de cobro de la tienda (§6).
+- Traducción a un `Order` **sin cotización**, con cliente completo o incompleto, SKU = código de producto,
+  asesor y cuenta de cobro de la tienda (§6).
 - Bandeja de pedidos en espera, con reintento manual y automático (§6.4, §8).
-- Origen del pedido en la lista de pedidos y filtro; cotizaciones de origen externo fuera de la lista y de
-  los reportes de cotizaciones por defecto (§6.5).
+- Origen y referencia externa del pedido en la lista de pedidos, con filtro (§6.5). Las cotizaciones no se
+  tocan: un pedido de Shopify no tiene cotización.
 - Sincronización de estado de pago y de cancelación desde Shopify (§6.3).
 - Webhooks de cumplimiento exigidos a una app pública (§5.5).
 
@@ -55,7 +57,9 @@ WooCommerce u otras plataformas.
 
 ## 2. Hechos verificados en el código
 
-Lo que el diseño asume, con el lugar donde se confirmó. Ante discrepancia manda el código.
+Lo que el diseño asume, con el lugar donde se confirmó. Ante discrepancia manda el código. H1 a H5 describen
+el modelo de pedidos **de hoy**; el spec de pedidos sin cotización (§11) lo cambia, y este documento se
+alinea con lo que ese spec defina.
 
 | # | Hecho | Dónde |
 | --- | --- | --- |
@@ -98,6 +102,7 @@ Lo que el diseño asume, con el lugar donde se confirmó. Ante discrepancia mand
 | 13 | ¿Cuántas tiendas por tenant? | **N**, cada tienda una sola vez por tenant (y por plataforma: una tienda no puede estar en dos tenants). |
 | 14 | ¿Quién crea los webhooks? | **QEP, al vincular la tienda**, por la Admin API. |
 | 15 | ¿Y los campos que Shopify no trae? | **Se dejan en blanco**; el cliente puede quedar incompleto. |
+| 16 | ¿El pedido de Shopify nace de una cotización fantasma? | **No.** El owner quiere separar cotizaciones de pedidos: **debe poder existir un pedido sin cotización**, y el pedido lleva **datos propios para todos los casos** (también los que nacen de una cotización). Es un spec previo (§11); este documento asume ese modelo y deja de tocar `Quotation`. |
 
 ## 4. Instalación, OAuth y enlace con el tenant
 
@@ -308,7 +313,7 @@ Una fila por pedido de Shopify y conexión, única por `(connection_id, shopify_
 | `wait_reason`, `wait_detail` (jsonb) | §6.2 |
 | `warnings` (jsonb) | avisos de una importación que sí entró (§6.2.4): `customer_incomplete`, `shipping_address_unresolved`, `total_difference` |
 | `attempts`, `last_attempt_at`, `imported_at` | historia de la importación |
-| `qep_customer_id`, `qep_quotation_id`, `qep_order_id` | referencias blandas |
+| `qep_customer_id`, `qep_order_id` | referencias blandas |
 | `total_difference` | `total_price − Total de QEP` tras importar |
 
 Reglas del upsert:
@@ -354,9 +359,10 @@ que no tenga asesor y cuenta de cobro, todo pedido espera con `store_not_configu
 
 `ShopifyOrderImporter` (Application del módulo) toma un `ShopifyOrderSnapshot`, lo evalúa y llama a **un**
 método del puerto `IExternalOrderWriter.CreateAsync(ExternalOrderDraft)` cuyo adaptador en Bootstrapper
-invoca un servicio de aplicación nuevo de Quotations (`ExternalOrderService`) que crea cotización y pedido en
-**una transacción** del `QuotationsDbContext`. Ninguna de las dos partes pasa por los handlers HTTP (H4).
-La auditoría de Quotations va con `AuditActorType.Integration` y referencia la conexión.
+invoca un servicio de aplicación nuevo del módulo de pedidos (`ExternalOrderService`) que crea el pedido con
+sus datos propios en **una transacción**, sin cotización (decisión 16). Ninguna de las dos partes pasa por
+los handlers HTTP (H4). La auditoría del pedido va con `AuditActorType.Integration` y referencia la
+conexión.
 
 **Precondiciones, en este orden.** La primera que falla deja la fila `Waiting` con su motivo y detiene la
 evaluación; los motivos viajan al frontend con su nombre, que tiene el diccionario de textos:
@@ -370,7 +376,7 @@ evaluación; los motivos viajan al frontend con su nombre, que tiene el dicciona
 | `customer_inactive` | el cliente encontrado (§6.2.1) está inactivo | `{ customerId }` | reactivarlo |
 | `product_unmatched` | algún SKU no es un `Product.Code` activo del tenant, o la línea no trae SKU | `{ skus: [...] }` | crear o corregir el producto |
 | `freight_unsupported` | el pedido trae `shipping_lines` con monto > 0 y el flete no está implementado | `{ shippingTitle, amount }` | se levanta con el spec de flete |
-| `quotation_rejected` | una regla de Quotations tiró un código que esta lista no previó | `{ code }` | corregir lo que el código señala y reintentar |
+| `order_rejected` | una regla del pedido tiró un código que esta lista no previó | `{ code }` | corregir lo que el código señala y reintentar |
 
 El cliente **nunca** detiene la importación salvo que exista y esté inactivo: sin documento, sin ciudad o
 sin clasificación, nace incompleto (decisión 2 revisada).
@@ -413,41 +419,42 @@ sin clasificación, nace incompleto (decisión 2 revisada).
 - Precio unitario con IVA (H3): si `taxes_included`, `originalUnitPrice`; si no,
   `originalUnitPrice × (100 + TaxPercentage) / 100`. La tasa es la del **producto de QEP** (D-S3).
 - Descuento: `Σ discountAllocations.amount` de la línea sobre `originalUnitPrice × quantity`, como porcentaje
-  con 4 decimales; `AddItem` lo recibe resuelto.
+  con 4 decimales; la línea del pedido lo recibe resuelto.
 - Flete: `freight_unsupported` hasta el spec de flete.
 
-#### 6.2.3 Cotización y pedido (dentro de `ExternalOrderService`)
+#### 6.2.3 El pedido (dentro de `ExternalOrderService`)
 
-1. Elegibilidad del cliente con la **excepción de origen externo** (owner, 2026-10-15: «sólo deja pasar el
-   pedido incompleto si no viene de cotización»): `QuotationCustomerEligibility.Ensure` gana un parámetro
-   `allowIncomplete` que **sólo** `ExternalOrderService` pasa en `true`, y sólo porque la cotización que crea
-   nace con `Origin = Shopify`; con él, `client_incomplete` y `client_cuc_missing` no se lanzan,
-   `client_not_found` y `client_inactive` sí. Los cuatro llamadores de hoy (H2: crear, cambiar cliente, enviar
-   y convertir una cotización manual) **no cambian**: una cotización `Manual` sigue exigiendo cliente completo
-   con CUC para convertirse en pedido. La prueba de arquitectura/unitaria verifica que ningún handler HTTP
-   pase `allowIncomplete: true`.
-2. `Quotation.Create` con `Origin = Shopify` (§6.5), cliente, asesor de la tienda, `validUntil` = fecha del
-   pedido en la zona del tenant, `paymentMethod` = `gateway` recortado, notas = `Shopify #1001` + la nota
-   del comprador (tope 500), cuenta de cobro de la tienda, moneda del pedido, `customerWithRetention` y
-   `customerVatSurplus` del cliente (falsos en uno incompleto). Partes: `Shipping` con la dirección de envío
-   **sólo si queda completa** (nombre, teléfono, dirección, departamento y ciudad); si no, sin parte de envío
-   y la dirección cruda va a las notas con el aviso `shipping_address_unresolved`; `IsStorePickup = true` si
-   el método de envío es de recogida (`shipping_lines[].code` empieza por `pickup`); `Billing` vacío (factura
-   a los datos del cliente).
-3. `AddItem` por línea, en el orden de Shopify.
-4. `ConvertToOrder` (H2: `Draft` convierte sin enviar). Si `EnsureConvertibleToOrder` tira, el motivo se
-   guarda como `quotation_rejected`.
-5. `Order.Create` con el consecutivo del tenant (`PED-…`), `Source = Shopify`, `ExternalReference = "#1001"`,
-   `PaymentStatus` desde `financial_status` (`paid` → `FullPaymentReceived`; `partially_paid` →
-   `PartialPaymentReceived`; el resto → `PaymentPending`), sin comprobantes, `convertedBy` = asesor de la
-   tienda.
-6. Historial de la cotización (`Created`, `Converted`) y auditoría con actor `Integration`.
-7. `quotations.quotation.converted.v1` sale al outbox como siempre; Pipeline, si está prendido, gana el
-   negocio del cliente a nombre del asesor de la tienda (H18). No se emite `sent`.
+Lo que sigue usa el modelo del spec de pedidos sin cotización (§11): un `Order` con cliente, asesor, cuenta
+de cobro, partes, líneas y totales propios, y una fábrica para pedidos de origen externo. Los nombres
+exactos los fija ese spec; este documento describe qué datos entran.
+
+1. **Elegibilidad del cliente, sólo para origen externo** (owner, 2026-10-15: «sólo deja pasar el pedido
+   incompleto si no viene de cotización»): el pedido de Shopify acepta un cliente `Incomplete` y sin CUC;
+   exige que exista en el tenant y esté activo. Un pedido que nace de una cotización conserva la regla de
+   hoy (H2): cliente completo con CUC. El spec previo define dónde vive esa regla; aquí sólo se fija que la
+   excepción está atada a `Source != Quotation`, nunca a un parámetro que un handler HTTP pueda pasar.
+2. **Cabecera:** consecutivo del tenant (`PED-…`), `Source = Shopify`, `ExternalReference = "#1001"`,
+   cliente, asesor de la tienda, cuenta de cobro de la tienda, moneda del pedido, fecha del pedido en la zona
+   del tenant, `paymentMethod` = `gateway` recortado, notas = `Shopify #1001` + la nota del comprador (tope
+   500), retención y excedente de IVA del cliente (falsos en uno incompleto). Partes: envío con la dirección
+   de Shopify **sólo si queda completa** (nombre, teléfono, dirección, departamento y ciudad); si no, sin
+   parte de envío y la dirección cruda va a las notas con el aviso `shipping_address_unresolved`; recogida en
+   tienda si el método de envío es de recogida (`shipping_lines[].code` empieza por `pickup`); facturación a
+   los datos del cliente.
+3. **Líneas**, en el orden de Shopify, con producto, cantidad, precio unitario con IVA, descuento y tasa de
+   IVA del producto (§6.2.2). Los totales los calcula el pedido con las mismas reglas que la cotización.
+4. **Estado:** `Pending`; `PaymentStatus` desde `financial_status` (`paid` → `FullPaymentReceived`;
+   `partially_paid` → `PartialPaymentReceived`; el resto → `PaymentPending`); sin comprobantes; creado por el
+   asesor de la tienda, con auditoría de actor `Integration`.
+5. Si una regla del pedido rechaza el alta, el motivo se guarda como `order_rejected`.
+6. **Pipeline.** Hoy el embudo se mueve con eventos de cotización (H18) y un pedido de Shopify no tiene
+   cotización. El spec de pedidos sin cotización decide si un pedido sin cotización publica su propio evento
+   (`…order.created.v1`) y qué hace Pipeline con él; hasta entonces, un pedido de Shopify **no toca el
+   embudo** (D-S21).
 
 #### 6.2.4 Resultado
 
-La fila del espejo pasa a `Imported` con `qep_customer_id`, `qep_quotation_id`, `qep_order_id`,
+La fila del espejo pasa a `Imported` con `qep_customer_id`, `qep_order_id`,
 `total_difference` = `total_price` de Shopify − `Total` de QEP, y `warnings`: `customer_incomplete` (con el
 documento si vino), `shipping_address_unresolved`, `total_difference` si supera el 1 % del total (D-S6). La
 bandeja muestra los avisos en una pestaña «Con avisos»; ninguno frena la importación.
@@ -475,23 +482,22 @@ bandeja muestra los avisos en una pestaña «Con avisos»; ninguno frena la impo
   reintenta los `Waiting` de la tienda.
 - `attempts` y `last_attempt_at` se actualizan siempre; sin tope: un pedido en espera no se abandona solo.
 
-### 6.5 Cambios en Quotations, Customers y Reporting
+### 6.5 Cambios en el módulo de pedidos, Customers y Reporting
 
-- `Quotation.Origin` (`Manual` | `Shopify`) y `Order.Source` (`Quotation` | `Shopify`) +
-  `Order.ExternalReference` (hasta 64). Migración con backfill `Manual` / `Quotation`. En los DTO viajan como
-  texto con el nombre del enum (regla del BFF).
-- `QuotationCustomerEligibility.Ensure(…, allowIncomplete: false)`: parámetro con default; sólo
-  `ExternalOrderService` lo pasa en `true`, para cotizaciones con `Origin != Manual`. Un pedido que viene de
-  una cotización manual conserva la regla de hoy: cliente completo con CUC o `client_incomplete`.
-- `ListOrdersQuery.Source` (opcional; sin él, todos) y `ListQuotationsQuery.Origin` (opcional; **sin él,
-  sólo `Manual`**): una cotización que nace convertida confundiría al asesor en la lista y la pantalla no la
-  puede editar ni enviar. El detalle por id responde cualquiera.
-- `OrderListItemDto`, `OrderDto` y `QuotationDto` ganan `source` / `origin` / `externalReference`.
+- `Order.Source` (`Quotation` | `Shopify`) y `Order.ExternalReference` (hasta 64), si el spec de pedidos sin
+  cotización no los trae ya con otro nombre. Migración con backfill `Quotation`. En los DTO viajan como texto
+  con el nombre del enum (regla del BFF).
+- `ListOrdersQuery.Source` (opcional; sin él, todos). `OrderListItemDto` y `OrderDto` ganan `source` y
+  `externalReference`.
+- **Las cotizaciones no cambian:** ni `Quotation`, ni su lista, ni `QuotationCustomerEligibility`, ni los
+  reportes de cotizaciones. Un pedido de Shopify no aparece en ninguna pantalla de cotizaciones.
+- `Order.SyncExternalPaymentStatus` (§6.3) y `ExternalOrderService` son los puntos de entrada nuevos.
 - Customers: `ICustomerProvisioning` (alta completa desde el sistema), `Customer.CreateIncompleteFromExternalSale`,
   `FindByEmailAsync`. El `PUT` que completa un incompleto ya existe (spec 2026-10-10 §6.2) y sirve igual.
-- Reporting: `QuotationsReportSource` filtra `Origin = Manual` en los tres reportes de cotizaciones;
-  `OrdersReportSource` no filtra. Los reportes que agrupan por clasificación o ciudad ya filtran
-  `Completeness == Complete` (CLAUDE.md), así que un comprador incompleto no los rompe.
+- Reporting: `OrdersReportSource` incluye los pedidos de Shopify (son ventas); si el reporte lee datos del
+  pedido que antes leía de la cotización, eso lo resuelve el spec previo. Los reportes que agrupan por
+  clasificación o ciudad ya filtran `Completeness == Complete` (CLAUDE.md), así que un comprador incompleto
+  no los rompe.
 - El Excel de pedidos no cambia de columnas; `order_number` sigue siendo el `PED-…` (D-S2); con cliente
   incompleto, `Documento` y `Documento de identidad` salen vacías (H9), que es lo que el owner aceptó.
 
@@ -517,8 +523,8 @@ gestión de pedidos. Las rutas de `/shopify/*` y las de `/integrations/shopify/*
 | `POST /api/v1/tenants/{tenantId}/shopify/orders/{id}/retry` | `quotations.order.manage` | Reintento inmediato; devuelve la fila |
 | `POST /api/webhooks/shopify` | anónimo, `webhook` | §5.1 |
 
-Cambios en rutas existentes: `GET …/orders` acepta `source`; `GET …/quotations` acepta `origin`;
-`OrderListItemResponse`, `OrderDto` y `QuotationDto` ganan los campos de §6.5.
+Cambios en rutas existentes: `GET …/orders` acepta `source`; `OrderListItemResponse` y `OrderDto` ganan los
+campos de §6.5. Las rutas de cotizaciones no cambian.
 
 ### 7.1 Errores
 
@@ -556,7 +562,6 @@ Los motivos de espera y los avisos (§6.2) **no** son errores HTTP.
 | `routes/_authenticated/shopify/link.$installId.tsx` | Tienda, vencimiento y lista de tenants: elegible, «sin permiso para administrar integraciones», o «módulo no activado: pide a QCode que lo active; la instalación queda guardada hasta el *fecha*». Nombre de la conexión editable. Sin tenants: enlace a `/register` con `returnTo`. `install_expired`: «Vuelve a conectar la tienda». |
 | `routes/_authenticated/settings/integrations/shopify.$connectionId.tsx` | Formulario de §6.1: asesor (membresías activas), empresa y cuenta de cobro, clasificación por defecto (opcional, con la explicación de qué pasa sin ella), claves de atributos, tipo de documento por defecto. `If-Match`; 412 → «Alguien cambió esta configuración, recarga». Aviso mientras `isConfigured === false`. Botón «Sincronizar ahora» con el resumen que devuelve. |
 | `features/orders/` | Columna «Origen» (insignia `Shopify` con `#1001` debajo del `PED-…`) y filtro «Origen». Pestaña «Desde Shopify» con dos vistas: **En espera** (`Waiting` + `Cancelled` tras facturar, motivo en texto desde `describe-wait-reason.ts`, acción contextual: `product_unmatched` → SKUs y enlace a Catálogo; `store_not_configured` → «Configurar tienda»; `customer_inactive` → «Ver cliente»; «Reintentar» con `quotations.order.manage`) y **Con avisos** (`Imported` con `warnings`: «Cliente incompleto» con «Completar ficha» prellenando el documento si vino, «Dirección sin ciudad», «Total distinto al de Shopify»). Insignias con `summary` en la pestaña. |
-| `features/quotes/` | Filtro «Origen» oculto por defecto en `Manual`; una cotización `Shopify` se abre en lectura con aviso «Nació de un pedido de Shopify; se gestiona desde Pedidos». |
 | `features/customers/` | Un cliente incompleto que viene de Shopify se completa con el `PUT` de hoy; la ficha muestra «Creado desde Shopify» si `warnings` lo dice (dato del espejo, por `qepCustomerId`). |
 | `features/auth/` | `/login` y `/register` aceptan `returnTo` interno (misma app, ruta relativa) y vuelven ahí. |
 
@@ -588,9 +593,9 @@ Integrations:
 Tenancy: migración del `CHECK` de `tenant_modules.module_key` con `shopify`. **Sin backfill** a los tenants
 existentes (D-S20).
 
-Quotations: `quotations.quotations.origin` (`text`, default `Manual`, `CHECK`), `quotations.orders.source`
-(`text`, default `Quotation`, `CHECK`), `quotations.orders.external_reference` (`varchar(64)`, null); índice
-`(tenant_id, source)`.
+Pedidos: `orders.source` (`text`, default `Quotation`, `CHECK`) y `orders.external_reference`
+(`varchar(64)`, null) en la tabla de pedidos que deje el spec previo; índice `(tenant_id, source)`. Nada en
+`quotations.quotations`.
 
 Customers: sin columnas nuevas (`FindByEmailAsync` usa `email` con índice `(tenant_id, lower(email))`
 nuevo).
@@ -617,14 +622,46 @@ nuevo).
    todo comprador nace incompleto y sin forma de encontrarlo después), tienda de desarrollo para probar, y
    las verificaciones de §16.
 
-## 11. Dependencia del flete
+## 11. Dependencias: dos specs previos
 
-El spec de flete en cotizaciones (pendiente) tiene que resolver, al menos: si el flete lleva IVA y a qué
-tasa, si entra en la base de retención, cómo se edita en el cotizador, cómo sale en el PDF, qué columna del
-Excel de pedidos lo lleva, y cómo lo suman los reportes. Cuando exista, este spec recibe un delta que: (a)
-retira `freight_unsupported`, (b) define `shipping_lines[].discountedPrice` → flete de la cotización, (c)
-decide qué pasa con el IVA del envío que Shopify calculó. Hasta entonces, un tenant cuya tienda cobra envío
-vería casi todos sus pedidos en espera: **no se habilita la integración a un tenant real sin el flete**.
+Se escriben en sesiones aparte, desde `develop`, y se implementan **antes** que éste, en este orden.
+
+### 11.1 Pedidos sin cotización (decisión 16)
+
+Hoy un `Order` es un apéndice de su `Quotation` (H1-H5): no tiene cliente, líneas, partes ni totales, y la
+lista, el detalle, el Excel, los reportes de pedidos, la edición de líneas de un pedido pendiente y Pipeline
+los leen de la cotización. El owner quiere que **pueda existir un pedido sin cotización** y que el pedido
+lleve **datos propios para todos**, también los que nacen de una cotización. Ese spec tiene que resolver, al
+menos:
+
+- el agregado `Order` con cliente, asesor, cuenta de cobro, partes, líneas (con la foto del producto) y
+  totales, y las mismas reglas de cálculo que la cotización (IVA incluido, descuento, retención, excedente);
+- `ConvertToOrder` como **copia** de la cotización al pedido, y qué pasa después con la cotización
+  (`Converted` sigue siendo su estado) y con las ediciones de un pedido pendiente (hoy `AddItemAfterConversion`
+  edita la cotización);
+- una fábrica para pedidos de **origen externo** (sin cotización) y, si el owner lo quiere, la creación
+  manual de un pedido desde la pantalla;
+- la elegibilidad del cliente: completa con CUC para los que vienen de cotización; incompleto permitido para
+  los externos (decisión 2 revisada y precisión del owner);
+- `Source` y `ExternalReference`, o sus equivalentes;
+- la **migración de los pedidos existentes**: copiar a cada pedido los datos de su cotización, en una
+  migración de datos que no pierde nada y se puede verificar fila a fila;
+- lista, detalle, Excel de pedidos, reportes de pedidos y Reporting leyendo del pedido y no de la cotización;
+- el evento del pedido para Pipeline (hoy se mueve con `quotations.quotation.converted.v1`) y qué hace el
+  embudo con un pedido sin cotización (D-S21);
+- si pedidos queda dentro de `Modules.Quotations` o pasa a `Modules.Orders` con su `OrdersLayerTests`;
+- el frontend de pedidos (`features/orders`) leyendo del pedido.
+
+Cuando exista, este spec recibe un delta que alinee §6.2.3, §6.5, §9 y las pruebas con los nombres reales.
+
+### 11.2 Flete
+
+El spec de flete (pendiente) tiene que resolver, al menos: si el flete lleva IVA y a qué tasa, si entra en la
+base de retención, cómo se edita en el cotizador y en el pedido, cómo sale en el PDF, qué columna del Excel
+de pedidos lo lleva, y cómo lo suman los reportes. Cuando exista, este spec recibe un delta que: (a) retira
+`freight_unsupported`, (b) define `shipping_lines[].discountedPrice` → flete del pedido, (c) decide qué pasa
+con el IVA del envío que Shopify calculó. Hasta entonces, un tenant cuya tienda cobra envío vería casi todos
+sus pedidos en espera: **no se habilita la integración a un tenant real sin el flete**.
 
 ## 12. Seguridad
 
@@ -649,8 +686,8 @@ descuentos, recogida, pedido de prueba, cancelado, sin documento, sin ciudad); v
 vectores conocidos; `ColombiaProvinceCodes` completa contra Geography; evaluador de precondiciones (orden,
 `wait_detail`); decisión completo/incompleto del cliente (documento × clasificación × ciudad); avisos;
 mapeo de `financial_status`; máquina de estados del espejo; precio con IVA y descuento;
-`Quotation.Origin`, `Order.Source`, `Order.SyncExternalPaymentStatus`;
-`QuotationCustomerEligibility.Ensure` con y sin `allowIncomplete`.
+`Order.Source`, `Order.SyncExternalPaymentStatus`; la fábrica de pedido externo acepta cliente incompleto y
+la de conversión no (donde el spec previo la ubique).
 
 **Integración (`Modules.Shopify.IntegrationTests`, Testcontainers, `ShopifyApiHarness` que prende el módulo
 y crea tienda configurada, asesor, empresa con cuenta, clasificación y productos):** webhook firmado → 200 y
@@ -660,8 +697,9 @@ comprador reutiliza el cliente (por `shopify_customer_id`, teléfono y email); c
 cada motivo de espera y su reintento manual y automático; cancelación sobre `Pending`, `Approved`,
 `Invoiced` y `Waiting`; pago con y sin comprobantes; conciliación con `HttpMessageHandler` falso
 (paginación, `THROTTLED`, 401); «Sincronizar ahora» y su 409; conexión pausada y módulo apagado; tenant
-ajeno 403; Pipeline gana el negocio; Excel de pedidos con cliente incompleto sale con las dos columnas
-vacías; fuga de token con sentinela.
+ajeno 403; el pedido **no tiene cotización** y no aparece en `GET …/quotations`; Pipeline no se toca
+(D-S21); Excel de pedidos con cliente incompleto sale con las dos columnas vacías; fuga de token con
+sentinela.
 
 **Integración en Integrations:** inicio A (permiso, módulo apagado 403, dominio inválido), inicio B (HMAC
 bueno y malo, origen no permitido), canje (`state` desconocido, vencido, reutilizado; gateway falso; scopes
@@ -673,9 +711,9 @@ tenant → `shop_already_linked`; `install_tenant_mismatch`; tope 20), probador 
 `TenantRegistrationServiceTests` verifica que el tenant nuevo recibe `shopify`; `ChangeTenantModulesHandlerTests`
 sigue cubriendo el prendido manual.
 
-**Quotations y Customers:** barrer las pruebas que arman cuerpos a mano por los campos nuevos antes de
-correr nada; `ListOrders` por `source`; `ListQuotations` excluye `Shopify` por defecto; Reporting excluye en
-cotizaciones y no en pedidos; `ICustomerProvisioning` y `CreateIncompleteFromExternalSale`.
+**Pedidos y Customers:** barrer las pruebas que arman cuerpos a mano por los campos nuevos antes de correr
+nada; `ListOrders` por `source`; Reporting de pedidos incluye los de Shopify; `ICustomerProvisioning` y
+`CreateIncompleteFromExternalSale`.
 
 **Arquitectura:** `ShopifyLayerTests` (capas; sólo Tenancy y Audit entre los módulos; prohibido referenciar
 Integrations, Quotations, Customers, Catalog y Geography); `IntegrationsLayerTests` sigue prohibiendo que
@@ -717,7 +755,7 @@ cotización `Shopify` en lectura.
 | D-S8 | Orden de búsqueda del comprador: documento, `shopify_customer_id` visto, teléfono, email; completo o incompleto, se usa | Quitar un paso |
 | D-S9 | Los webhooks de cumplimiento **sólo auditan**; `shop/redact` borra espejo y entregas, no pedidos ni clientes | Un flujo de anonimización |
 | D-S10 | Sin parte de envío cuando la ciudad no resuelve; la dirección va a las notas con aviso | Un motivo de espera (`city_unresolved`) |
-| D-S11 | `ListQuotations` **excluye** `Shopify` por defecto; Reporting de cotizaciones lo excluye siempre | Un flag |
+| D-S11 | **Retirada** (decisión 16): ya no hay cotización de origen Shopify que ocultar | — |
 | D-S12 | Pedidos `test = true` y cancelados antes de importar → `Ignored`, visibles con filtro | Importarlos |
 | D-S13 | Nombre de la conexión por defecto = `shopName`; la configuración vive en `shopify.stores` (D6 de Integrations) | Mover campos |
 | D-S14 | Sin permiso nuevo: `integrations.connection.*` para la tienda y `quotations.order.*` para bandeja y sincronización | Un permiso `shopify.store.manage` con sus cuatro piezas |
@@ -727,6 +765,7 @@ cotización `Shopify` en lectura.
 | D-S18 | Con documento pero sin clasificación en la tienda o sin ciudad, el comprador nace **incompleto** y el documento queda en el aviso; no se inventa clasificación | Clasificación obligatoria al configurar |
 | D-S19 | `webhookSubscriptionIds` va como campo interno de la conexión, no en `shopify.stores`: lo escribe y lo repone Integrations (enlace y probador) | Moverlo |
 | D-S20 | `shopify` entra a `DefaultForNewTenants` **sin backfill** a los tenants existentes: el operador decide tenant por tenant, como se hizo con `pos`, `messaging` y `pipeline` | Una migración de datos que inserte la fila en cada tenant activo |
+| D-S21 | Mientras el spec de pedidos sin cotización no defina un evento de pedido para Pipeline, un pedido de Shopify **no toca el embudo** | Lo define ese spec; aquí no cambia nada |
 
 ## 16. Verificaciones pendientes contra Shopify (handoff)
 
@@ -742,16 +781,18 @@ cotización `Shopify` en lectura.
 
 ## 17. Entregables
 
-1. Spec de flete en cotizaciones (sesión aparte) y su implementación en `develop`.
-2. Backend: Tenancy (clave y módulo por defecto; README y CLAUDE.md actualizados), Integrations (proveedor, inicios A y B, canje, enlace con registro de webhooks,
-   probador), Quotations (origen, servicio externo, `allowIncomplete`, `SyncExternalPaymentStatus`, filtros),
-   Customers (`ICustomerProvisioning`, `CreateIncompleteFromExternalSale`, `FindByEmailAsync`), Reporting
-   (filtro), módulo Shopify (webhook, workers, espejo, importador, sincronización manual, API), Bootstrapper
-   (adaptadores, políticas, mapeo), README.
-3. Frontend: tarjeta del módulo en operador, diálogo de dominio, rutas de instalación y enlace,
-   configuración de tienda, bandeja en dos vistas, origen en pedidos, filtro en cotizaciones, `returnTo`.
-4. Handoff al owner con lo de §10.5 y §16.
-5. Plan de implementación (`writing-plans`) tras la lectura de este spec.
+1. Spec de **pedidos sin cotización** (§11.1), sesión aparte, y su implementación en `develop`.
+2. Spec de **flete** (§11.2), sesión aparte, y su implementación en `develop`.
+3. Delta a este spec con los nombres reales que dejen los dos anteriores.
+4. Backend: Tenancy (clave y módulo por defecto; README y CLAUDE.md actualizados), Integrations (proveedor,
+   inicios A y B, canje, enlace con registro de webhooks, probador), pedidos (`Source`, `ExternalReference`,
+   `ExternalOrderService`, `SyncExternalPaymentStatus`, filtro), Customers (`ICustomerProvisioning`,
+   `CreateIncompleteFromExternalSale`, `FindByEmailAsync`), módulo Shopify (webhook, workers, espejo,
+   importador, sincronización manual, API), Bootstrapper (adaptadores, políticas, mapeo), README.
+5. Frontend: tarjeta del módulo en operador, diálogo de dominio, rutas de instalación y enlace,
+   configuración de tienda, bandeja en dos vistas, origen en pedidos, `returnTo`.
+6. Handoff al owner con lo de §10.5 y §16.
+7. Plan de implementación (`writing-plans`) tras la lectura de este spec y con los dos previos en `develop`.
 
 ## Historial de revisión
 
@@ -765,4 +806,10 @@ cotización `Shopify` en lectura.
 - 2026-10-15 (misma sesión): el owner precisa que la excepción del cliente incompleto vale sólo si el pedido
   no viene de una cotización manual (§6.2.3), y que el módulo `shopify` **entra a los módulos por defecto
   del signup** (decisión 11, segunda revisión; §4.4, D-S20): los tenants nuevos nacen con él, los existentes
-  los prende el operador. Pendiente la lectura del owner, el spec de flete y el plan de implementación.
+  los prende el operador.
+- 2026-10-15 (misma sesión): el owner pide **separar cotizaciones de pedidos**: debe poder existir un pedido
+  sin cotización y el pedido lleva datos propios para todos (decisión 16). Se retira la cotización fantasma
+  de origen Shopify, `Quotation.Origin`, el filtro de la lista de cotizaciones, la exclusión en Reporting y la
+  excepción `allowIncomplete` sobre `QuotationCustomerEligibility`; §6.2.3 pasa a describir el pedido con
+  datos propios; §11 declara los dos specs previos (pedidos sin cotización y flete); D-S11 retirada, D-S21
+  agregada. Pendiente la lectura del owner, los dos specs previos y el plan de implementación.
