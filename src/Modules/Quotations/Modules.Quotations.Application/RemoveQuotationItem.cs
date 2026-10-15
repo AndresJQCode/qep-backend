@@ -7,9 +7,11 @@ namespace Modules.Quotations.Application;
 public sealed record RemoveQuotationItemCommand(
     Guid TenantId, Guid QuotationId, Guid ItemId) : ICommand<QuotationDto>;
 
+// Spec 2026-10-15 §4.4: una cotización Converted queda congelada; quitar líneas de un pedido
+// pendiente se hace sobre el pedido (SaveOrderEdits). Ver el comentario gemelo en
+// UpdateQuotationItemHandler.
 public sealed class RemoveQuotationItemHandler(
     IQuotationRepository repository,
-    IOrderRepository orderRepository,
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationCustomerLookup customerLookup,
@@ -31,23 +33,6 @@ public sealed class RemoveQuotationItemHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
-
-        // Mismo endpoint para dos pantallas (a pedido, 2026-09-15) — ver el comentario gemelo en
-        // UpdateQuotationItemHandler.
-        Order? order = null;
-        if (quotation.Status == QuotationStatus.Converted)
-        {
-            order = await orderRepository.FindByQuotationIdAsync(
-                command.TenantId, quotation.Id, cancellationToken)
-                ?? throw OrderNotFound.For(command.QuotationId);
-
-            if (order.Status != OrderStatus.Pending)
-            {
-                throw new QuotationsDomainException(
-                    "order.order.not_pending",
-                    "Products can only be removed while the order is pending.");
-            }
-        }
 
         // Deja la retención/excedente de IVA al día con el cliente maestro antes de recalcular
         // — ver Quotation.RefreshCustomerTaxProfile.
@@ -75,14 +60,7 @@ public sealed class RemoveQuotationItemHandler(
 
         var now = clock.UtcNow;
         // El propio agregado traduce un itemId desconocido a quotation.item.not_found.
-        if (order is not null)
-        {
-            quotation.RemoveItemAfterConversion(new QuotationItemId(command.ItemId), updatedBy, now);
-        }
-        else
-        {
-            quotation.RemoveItem(new QuotationItemId(command.ItemId), updatedBy, now);
-        }
+        quotation.RemoveItem(new QuotationItemId(command.ItemId), updatedBy, now);
 
         repository.AddHistoryEntry(QuotationHistoryEntry.Create(
             QuotationHistoryEntryId.New(),
@@ -94,8 +72,8 @@ public sealed class RemoveQuotationItemHandler(
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,
-            order is not null ? "quotation.order.item_removed" : "quotation.quotation.item_removed",
-            order?.Id.ToString() ?? quotation.Id.ToString(),
+            "quotation.quotation.item_removed",
+            quotation.Id.ToString(),
             "success",
             now);
 
@@ -105,7 +83,6 @@ public sealed class RemoveQuotationItemHandler(
         await QuotationPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, command.TenantId, quotation, now, cancellationToken);
 
-        order?.RecalculatePaymentStatus(quotation.NetTotal, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return quotation.ToDto();
