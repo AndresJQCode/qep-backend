@@ -22,6 +22,12 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<OrderPaymentProof> OrderPaymentProofs => Set<OrderPaymentProof>();
 
+    internal DbSet<OrderItem> OrderItems => Set<OrderItem>();
+
+    internal DbSet<OrderParty> OrderParties => Set<OrderParty>();
+
+    public DbSet<OrderHistoryEntry> OrderHistoryEntries => Set<OrderHistoryEntry>();
+
     internal DbSet<OrderNumberCounter> OrderNumberCounters => Set<OrderNumberCounter>();
 
     internal DbSet<QuotationPdf> QuotationPdfs => Set<QuotationPdf>();
@@ -47,6 +53,9 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureDocumentNumberingFormat(modelBuilder);
         ConfigureOrder(modelBuilder);
         ConfigureOrderPaymentProof(modelBuilder);
+        ConfigureOrderItem(modelBuilder);
+        ConfigureOrderParty(modelBuilder);
+        ConfigureOrderHistoryEntry(modelBuilder);
         ConfigureOrderNumberCounter(modelBuilder);
         ConfigureExportJob(modelBuilder);
         ConfigureOrdersExportLayout(modelBuilder);
@@ -399,7 +408,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     private static void ConfigureOrder(ModelBuilder modelBuilder)
     {
         var order = modelBuilder.Entity<Order>();
-        order.ToTable("orders", "quotations");
+        order.ToTable("orders", "quotations", table =>
+            table.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify')"));
         order.HasKey(value => value.Id);
         order.Property(value => value.Id)
             .HasColumnName("id")
@@ -409,9 +419,59 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.Property(value => value.OrderNumber)
             .HasColumnName("order_number")
             .HasMaxLength(Order.OrderNumberMaxLength);
+        // Spec 2026-10-15 §4.1: opcional. Un pedido manual o externo no tiene cotización.
         order.Property(value => value.QuotationId)
             .HasColumnName("quotation_id")
-            .HasConversion(id => id.Value, value => new QuotationId(value));
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new QuotationId(value.Value) : null);
+        order.Property(value => value.Source)
+            .HasColumnName("source")
+            .HasConversion<string>()
+            .HasMaxLength(20);
+        order.Property(value => value.ExternalReference)
+            .HasColumnName("external_reference")
+            .HasMaxLength(Order.ExternalReferenceMaxLength);
+        order.Property(value => value.ClientId).HasColumnName("client_id");
+        order.Property(value => value.AdvisorId)
+            .HasColumnName("advisor_id")
+            .HasConversion(id => id.Value, value => new MemberId(value));
+        order.Property(value => value.Currency).HasColumnName("currency").HasMaxLength(3);
+        order.Property(value => value.PaymentMethod)
+            .HasColumnName("payment_method")
+            .HasMaxLength(Order.PaymentMethodMaxLength);
+        order.Property(value => value.IsRetail).HasColumnName("is_retail");
+        order.Property(value => value.GlobalScaleFloor).HasColumnName("global_scale_floor");
+        order.Property(value => value.BillingUsesBusinessName).HasColumnName("billing_uses_business_name");
+        order.Property(value => value.IsStorePickup).HasColumnName("is_store_pickup");
+        order.Property(value => value.BillsToFinalConsumer).HasColumnName("bills_to_final_consumer");
+        order.Property(value => value.PartyWithRetention).HasColumnName("party_with_retention");
+        order.Property(value => value.PartyVatSurplus).HasColumnName("party_vat_surplus");
+        order.Property(value => value.CustomerWithRetention).HasColumnName("customer_with_retention");
+        order.Property(value => value.CustomerVatSurplus).HasColumnName("customer_vat_surplus");
+        order.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
+        order.Property(value => value.TaxPercentage).HasColumnName("tax_percentage").HasPrecision(5, 2);
+        order.Property(value => value.TaxAmount).HasColumnName("tax_amount").HasPrecision(14, 2);
+        order.Property(value => value.DiscountAmount).HasColumnName("discount_amount").HasPrecision(14, 2);
+        order.Property(value => value.Total).HasColumnName("total").HasPrecision(14, 2);
+        order.Property(value => value.RetentionAmount).HasColumnName("retention_amount").HasPrecision(14, 2);
+        order.Property(value => value.NetTotal).HasColumnName("net_total").HasPrecision(14, 2);
+        order.OwnsOne(value => value.BillingAccount, billing =>
+        {
+            billing.Property(value => value.CompanyId).HasColumnName("billing_company_id");
+            billing.Property(value => value.BankName)
+                .HasColumnName("billing_bank_name")
+                .HasMaxLength(QuotationBillingAccount.BankNameMaxLength);
+            billing.Property(value => value.AccountNumber)
+                .HasColumnName("billing_account_number")
+                .HasMaxLength(QuotationBillingAccount.AccountNumberMaxLength);
+            billing.Property(value => value.Currency)
+                .HasColumnName("billing_account_currency")
+                .HasMaxLength(QuotationBillingAccount.CurrencyLength);
+        });
+        order.Navigation(value => value.BillingAccount).IsRequired();
+        order.Navigation(value => value.Items).UsePropertyAccessMode(PropertyAccessMode.Field);
+        order.Navigation(value => value.Parties).UsePropertyAccessMode(PropertyAccessMode.Field);
         order.Property(value => value.Status)
             .HasColumnName("status")
             .HasConversion<string>()
@@ -420,7 +480,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("payment_status")
             .HasConversion<string>()
             .HasMaxLength(30);
-        order.Property(value => value.Notes).HasColumnName("notes").HasMaxLength(Order.NotesMaxLength);
+        // Plan 2026-10-15 P2: hereda las notas de la cotización, que no tienen tope.
+        order.Property(value => value.Notes).HasColumnName("notes").HasColumnType("text");
         order.Property(value => value.ConvertedAt).HasColumnName("converted_at");
         order.Property(value => value.ConvertedBy)
             .HasColumnName("converted_by")
@@ -485,7 +546,135 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.HasOne<Quotation>()
             .WithMany()
             .HasForeignKey(value => value.QuotationId)
+            .IsRequired(false)
             .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureOrderItem(ModelBuilder modelBuilder)
+    {
+        var item = modelBuilder.Entity<OrderItem>();
+        item.ToTable("order_items", "quotations");
+        item.HasKey(value => value.Id);
+        item.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new OrderItemId(value))
+            .ValueGeneratedNever();
+        item.Property(value => value.OrderId)
+            .HasColumnName("order_id")
+            .HasConversion(id => id.Value, value => new OrderId(value));
+        item.Property(value => value.ProductId).HasColumnName("product_id");
+        item.Property(value => value.ProductCode)
+            .HasColumnName("product_code")
+            .HasMaxLength(QuotationProductSnapshot.CodeMaxLength);
+        item.Property(value => value.ProductName)
+            .HasColumnName("product_name")
+            .HasMaxLength(QuotationProductSnapshot.NameMaxLength);
+        item.Property(value => value.Quantity).HasColumnName("quantity").HasPrecision(10, 2);
+        item.Property(value => value.UnitPrice).HasColumnName("unit_price").HasPrecision(14, 2);
+        item.Property(value => value.DiscountOrigin)
+            .HasColumnName("discount_origin")
+            .HasConversion<string>()
+            .HasMaxLength(20)
+            .IsRequired();
+        item.Property(value => value.DiscountPercentage)
+            .HasColumnName("discount_percentage")
+            .HasPrecision(5, 2);
+        item.Property(value => value.DiscountAmount)
+            .HasColumnName("discount_amount")
+            .HasPrecision(14, 2);
+        item.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
+        item.Property(value => value.TaxPercentage).HasColumnName("tax_percentage");
+        item.Property(value => value.TaxAmount).HasColumnName("tax_amount").HasPrecision(14, 2);
+        item.Property(value => value.Position).HasColumnName("position");
+        item.Property(value => value.CreatedAt).HasColumnName("created_at");
+        item.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        item.Ignore(value => value.Amounts);
+        item.HasIndex(value => value.OrderId).HasDatabaseName("IX_order_items_order");
+
+        item.HasOne<Order>()
+            .WithMany(order => order.Items)
+            .HasForeignKey(value => value.OrderId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureOrderParty(ModelBuilder modelBuilder)
+    {
+        var party = modelBuilder.Entity<OrderParty>();
+        party.ToTable("order_parties", "quotations");
+        party.HasKey(value => value.Id);
+        party.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new OrderPartyId(value))
+            .ValueGeneratedNever();
+        party.Property(value => value.OrderId)
+            .HasColumnName("order_id")
+            .HasConversion(id => id.Value, value => new OrderId(value));
+        party.Property(value => value.Role)
+            .HasColumnName("role")
+            .HasConversion<string>()
+            .HasMaxLength(20);
+        party.Property(value => value.Name)
+            .HasColumnName("name")
+            .HasMaxLength(QuotationPartyDetails.NameMaxLength);
+        party.Property(value => value.IdentificationNumber)
+            .HasColumnName("identification_number")
+            .HasMaxLength(QuotationPartyDetails.IdentificationNumberMaxLength);
+        party.Property(value => value.Phone)
+            .HasColumnName("phone")
+            .HasMaxLength(QuotationPartyDetails.PhoneMaxLength);
+        party.Property(value => value.Email)
+            .HasColumnName("email")
+            .HasMaxLength(QuotationPartyDetails.EmailMaxLength);
+        party.Property(value => value.Address)
+            .HasColumnName("address")
+            .HasMaxLength(QuotationPartyDetails.AddressMaxLength);
+        party.Property(value => value.DepartmentId).HasColumnName("department_id");
+        party.Property(value => value.CityId).HasColumnName("city_id");
+
+        party.HasIndex(value => new { value.OrderId, value.Role })
+            .IsUnique()
+            .HasDatabaseName("IX_order_parties_order_role");
+
+        party.HasOne<Order>()
+            .WithMany(order => order.Parties)
+            .HasForeignKey(value => value.OrderId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureOrderHistoryEntry(ModelBuilder modelBuilder)
+    {
+        var entry = modelBuilder.Entity<OrderHistoryEntry>();
+        entry.ToTable("order_history", "quotations");
+        entry.HasKey(value => value.Id);
+        entry.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new OrderHistoryEntryId(value))
+            .ValueGeneratedNever();
+        entry.Property(value => value.OrderId)
+            .HasColumnName("order_id")
+            .HasConversion(id => id.Value, value => new OrderId(value));
+        entry.Property(value => value.EventType)
+            .HasColumnName("event_type")
+            .HasConversion<string>()
+            .HasMaxLength(50);
+        entry.Property(value => value.EventAt).HasColumnName("event_at");
+        entry.Property(value => value.MemberId)
+            .HasColumnName("member_id")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new MemberId(value.Value) : null);
+        entry.Property(value => value.Details)
+            .HasColumnName("details")
+            .HasMaxLength(OrderHistoryEntry.DetailsMaxLength);
+        entry.Property(value => value.CreatedAt).HasColumnName("created_at");
+
+        entry.HasIndex(value => new { value.OrderId, value.EventAt })
+            .HasDatabaseName("IX_order_history_order_event_at");
+
+        entry.HasOne<Order>()
+            .WithMany()
+            .HasForeignKey(value => value.OrderId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 
     private static void ConfigureOrderPaymentProof(ModelBuilder modelBuilder)
