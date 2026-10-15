@@ -663,6 +663,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<LoseDealCommand, DealDetailDto>, LoseDealHandler>();
         services.AddScoped<ICommandHandler<ReopenDealCommand, DealDetailDto>, ReopenDealHandler>();
         services.AddScoped<ICommandHandler<LinkDealQuotationCommand, DealDetailDto>, LinkDealQuotationHandler>();
+        services.AddScoped<ICommandHandler<LinkDealOrderCommand, DealDetailDto>, LinkDealOrderHandler>();
         services.AddScoped<ICommandHandler<SetPrimaryQuotationCommand, DealDetailDto>, SetPrimaryQuotationHandler>();
         // Pipeline (D21 del spec del frontend): los posibles dueños de un negocio, para el selector del formulario.
         services.AddScoped<IQueryHandler<GetDealOwnersQuery, IReadOnlyList<DealOwnerDto>>, GetDealOwnersHandler>();

@@ -84,4 +84,5 @@ public sealed record DealDetailDto(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     long Version,
-    IReadOnlyList<DealOrderDto> Orders);
+    IReadOnlyList<DealOrderDto> Orders,
+    IReadOnlyList<DealOrderDto> UnlinkedCustomerOrders);

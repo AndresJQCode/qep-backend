@@ -96,6 +96,12 @@ internal sealed class DealOrderRepository(PipelineDbContext dbContext) : IDealOr
             .OrderByDescending(order => order.UpdatedAt)
             .ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<DealOrder>> ListUnlinkedByCustomerAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        await dbContext.DealOrders.AsNoTracking()
+            .Where(order => order.TenantId == tenantId && order.CustomerId == customerId && order.DealId == null)
+            .OrderByDescending(order => order.UpdatedAt)
+            .ToListAsync(cancellationToken);
+
     public void Add(DealOrder order) => dbContext.DealOrders.Add(order);
 }
 

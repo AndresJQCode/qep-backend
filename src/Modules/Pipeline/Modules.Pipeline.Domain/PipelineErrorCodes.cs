@@ -22,6 +22,9 @@ public static class PipelineErrorCodes
     public const string DealQuotationNotFound = "pipeline.deal.quotation_not_found";
     public const string DealQuotationNotLinked = "pipeline.deal.quotation_not_linked";
     public const string DealQuotationCustomerMismatch = "pipeline.deal.quotation_customer_mismatch";
+    public const string DealOrderNotFound = "pipeline.deal.order_not_found";
+    public const string DealOrderCustomerMismatch = "pipeline.deal.order_customer_mismatch";
+    public const string DealOrderAlreadyLinked = "pipeline.deal.order_already_linked";
     public const string StageNotFound = "pipeline.stage.not_found";
     public const string StageLayoutInvalid = "pipeline.stage.layout_invalid";
     public const string StageHasDeals = "pipeline.stage.has_deals";

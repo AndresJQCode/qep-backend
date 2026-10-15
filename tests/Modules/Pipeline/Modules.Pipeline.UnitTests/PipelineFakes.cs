@@ -137,6 +137,9 @@ internal sealed class InMemoryDealOrders : IDealOrderRepository
     public Task<IReadOnlyList<DealOrder>> ListByDealAsync(Guid tenantId, Guid dealId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<DealOrder>>([.. Items.Where(order => order.TenantId == tenantId && order.DealId == dealId)]);
 
+    public Task<IReadOnlyList<DealOrder>> ListUnlinkedByCustomerAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<DealOrder>>([.. Items.Where(order => order.TenantId == tenantId && order.CustomerId == customerId && order.DealId is null)]);
+
     public void Add(DealOrder order) => Items.Add(order);
 }
 

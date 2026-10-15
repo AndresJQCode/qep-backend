@@ -60,6 +60,9 @@ public interface IDealOrderRepository
 
     Task<IReadOnlyList<DealOrder>> ListByDealAsync(Guid tenantId, Guid dealId, CancellationToken cancellationToken);
 
+    /// <summary>Los del cliente sin negocio (varios abiertos al llegar), para el <c>link</c> del detalle.</summary>
+    Task<IReadOnlyList<DealOrder>> ListUnlinkedByCustomerAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
+
     void Add(DealOrder order);
 }
 

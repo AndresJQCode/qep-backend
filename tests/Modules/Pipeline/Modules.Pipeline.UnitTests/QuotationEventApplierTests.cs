@@ -376,6 +376,23 @@ public sealed class QuotationEventApplierTests
         Assert.Equal(bed.Pipeline.WonStage.Id, deal.StageId);
     }
 
+    // Spec 2026-10-15 §7 (D-O8): con varios abiertos la foto queda suelta; ninguno se gana ni se crea otro.
+    [Fact]
+    public async Task AnOrderWithoutQuotationAndSeveralOpenDealsLeavesItUnlinked()
+    {
+        var bed = new ApplierBed();
+        var clientId = Guid.CreateVersion7();
+        var first = bed.OpenDeal(clientId, "Uno");
+        var second = bed.OpenDeal(clientId, "Dos");
+
+        Assert.True(await bed.Applier.ApplyOrderCreatedAsync(bed.OrderFact(clientId, Guid.CreateVersion7(), 700m), Later, Ct));
+
+        Assert.Null(Assert.Single(bed.Orders.Items).DealId);
+        Assert.Equal(2, bed.Deals.Items.Count);
+        Assert.Equal((false, false), (first.IsClosed, second.IsClosed));
+        Assert.Empty(bed.Audit.Entries);
+    }
+
     [Fact]
     public async Task AnOrderWithAQuotationDoesNothing()
     {
