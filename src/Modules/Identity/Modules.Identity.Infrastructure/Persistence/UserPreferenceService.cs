@@ -36,14 +36,29 @@ internal sealed class UserPreferenceService(IdentityDbContext dbContext, IClock 
     public async Task<UserPreferenceDto> SaveAsync(
         Guid userId,
         Guid tenantId,
-        string colorScheme,
-        string mode,
+        string? colorScheme,
+        string? mode,
+        bool? messageSound,
         CancellationToken cancellationToken)
     {
+        if (colorScheme is null && mode is null && messageSound is null)
+        {
+            throw new IdentityDomainException(
+                "identity.preference.empty",
+                "At least one of colorScheme, mode or messageSound is required.");
+        }
+
         var identifier = new UserId(userId);
         var existing = await dbContext.UserPreferences.SingleOrDefaultAsync(
             preference => preference.UserId == identifier && preference.TenantId == tenantId,
             cancellationToken);
+
+        // Lo que no viene se conserva: lo guardado, o el default de quien nunca eligió. Así el PUT del
+        // interruptor del sonido no pisa el tema que otra pestaña acaba de cambiar (spec 2026-10-14 §2.2).
+        var current = existing ?? UserPreference.CreateDefault(identifier, tenantId, clock.UtcNow);
+        var effectiveScheme = colorScheme ?? current.ColorScheme;
+        var effectiveMode = mode ?? UserPreference.ToWireValue(current.Mode);
+        var effectiveSound = messageSound ?? current.MessageSound;
 
         UserPreference preferenceToSave;
         if (existing is null)
@@ -53,14 +68,15 @@ internal sealed class UserPreferenceService(IdentityDbContext dbContext, IClock 
             preferenceToSave = UserPreference.Create(
                 identifier,
                 tenantId,
-                colorScheme,
-                mode,
+                effectiveScheme,
+                effectiveMode,
+                effectiveSound,
                 clock.UtcNow);
             dbContext.UserPreferences.Add(preferenceToSave);
         }
         else
         {
-            existing.Change(colorScheme, mode, clock.UtcNow);
+            existing.Change(effectiveScheme, effectiveMode, effectiveSound, clock.UtcNow);
             preferenceToSave = existing;
         }
 
@@ -69,5 +85,5 @@ internal sealed class UserPreferenceService(IdentityDbContext dbContext, IClock 
     }
 
     private static UserPreferenceDto ToDto(UserPreference preference) =>
-        new(preference.ColorScheme, UserPreference.ToWireValue(preference.Mode));
+        new(preference.ColorScheme, UserPreference.ToWireValue(preference.Mode), preference.MessageSound);
 }

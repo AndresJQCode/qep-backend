@@ -9,6 +9,7 @@ using Modules.Messaging.Infrastructure.Media;
 using Modules.Messaging.Infrastructure.Meta;
 using Modules.Messaging.Infrastructure.Options;
 using Modules.Messaging.Infrastructure.Persistence;
+using Modules.Messaging.Infrastructure.Realtime;
 using Modules.Messaging.Infrastructure.Webhook;
 
 namespace Modules.Messaging.Infrastructure;
@@ -39,6 +40,10 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<CallerMembership>();
         // §7.3 y §8.8: la búsqueda full-text con statement_timeout acotado.
         services.AddScoped<IMessageSearch, MessageSearch>();
+        // Spec 2026-10-14 (tiempo real), decisión 6: los avisos salen por pg_notify y cada pod los escucha y los
+        // reparte a los IMessagingEventSink registrados (el del hub lo registra Modules.Messaging.Api).
+        services.AddScoped<IMessagingNotifier, PgMessagingNotifier>();
+        services.AddHostedService<MessagingEventsListener>();
         // Spec 2026-10-09 §8.2: la firma del webhook y la cola deduplicada de entregas.
         services.AddSingleton<IWebhookSignatureVerifier, HmacWebhookSignatureVerifier>();
         services.AddScoped<IWebhookDeliveries, WebhookDeliveries>();

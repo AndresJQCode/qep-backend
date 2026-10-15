@@ -5,7 +5,7 @@ namespace Modules.Identity.Application;
 /// como texto porque son identificadores de presentación, no dominio de Identity: el catálogo
 /// de esquemas pertenece al módulo <c>account</c> del frontend.
 /// </summary>
-public sealed record UserPreferenceDto(string ColorScheme, string Mode);
+public sealed record UserPreferenceDto(string ColorScheme, string Mode, bool MessageSound);
 
 /// <summary>
 /// ACC-03. Lee y escribe la preferencia por el par <c>(userId, tenantId)</c>.
@@ -27,14 +27,18 @@ public interface IUserPreferenceService
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Upsert idempotente. Lanza <c>IdentityDomainException</c> con
+    /// Upsert idempotente, campo por campo: un valor <c>null</c> conserva el guardado (o el default
+    /// para quien nunca eligió), para que el interruptor del sonido y el tema de otra pestaña no se
+    /// pisen (spec 2026-10-14, contrato §2.2). Los tres <c>null</c> a la vez es
+    /// <c>identity.preference.empty</c>. Lanza <c>IdentityDomainException</c> con
     /// <c>identity.preference.scheme.invalid</c> o <c>identity.preference.mode.invalid</c>
     /// si los valores no validan.
     /// </summary>
     Task<UserPreferenceDto> SaveAsync(
         Guid userId,
         Guid tenantId,
-        string colorScheme,
-        string mode,
+        string? colorScheme,
+        string? mode,
+        bool? messageSound,
         CancellationToken cancellationToken);
 }

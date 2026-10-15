@@ -48,6 +48,7 @@ public sealed class SendMessageHandler(
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IClock clock,
+    IMessagingNotifier notifier,
     IValidator<SendMessageCommand> validator)
     : ICommandHandler<SendMessageCommand, MessageDto>
 {
@@ -59,7 +60,7 @@ public sealed class SendMessageHandler(
 
     // CS9124: los parámetros que van a la guarda no se usan en los métodos; el reloj y el reclamo se piden a ella.
     private readonly OutboundGuards _guards = new(
-        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock);
+        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier);
 
     public async Task<MessageDto> HandleAsync(SendMessageCommand command, CancellationToken cancellationToken)
     {

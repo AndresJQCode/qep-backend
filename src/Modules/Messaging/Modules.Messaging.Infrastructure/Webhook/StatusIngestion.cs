@@ -11,11 +11,20 @@ internal enum StatusOutcome
     NotFound,
 }
 
+/// <summary>El resultado y, con <see cref="StatusOutcome.Applied"/>, las conversaciones cuya foto cambió: el aviso en tiempo real
+/// las nombra (spec 2026-10-14).</summary>
+internal sealed record StatusApplied(StatusOutcome Outcome, IReadOnlyList<Guid> ConversationIds)
+{
+    public static readonly StatusApplied NotFound = new(StatusOutcome.NotFound, []);
+
+    public static readonly StatusApplied NoChange = new(StatusOutcome.NoChange, []);
+}
+
 /// <summary>Spec 2026-10-09 §7.5 («Estados»), literal: un UPDATE monótono por índice único. Si tocó el último
 /// de su conversación, actualiza la foto sin subir version ni updated_at (HOT).</summary>
 internal static class StatusIngestion
 {
-    public static async Task<StatusOutcome> ApplyAsync(MessagingDbContext dbContext, Guid connectionId, StatusUpdate update, CancellationToken cancellationToken)
+    public static async Task<StatusApplied> ApplyAsync(MessagingDbContext dbContext, Guid connectionId, StatusUpdate update, CancellationToken cancellationToken)
     {
         var newStatus = MessageColumnCodes.ToCode(update.Status);
         // Sin callback no hay id que buscar: Guid.Empty no coincide con ninguna fila.
@@ -51,7 +60,7 @@ internal static class StatusIngestion
             var exists = await dbContext.Database.SqlQuery<int>(
                 $"""SELECT 1 AS "Value" FROM messaging.messages WHERE connection_id = {connectionId} AND (wamid = {update.Wamid} OR id = {callback}) AND direction = 2""")
                 .ToListAsync(cancellationToken);
-            return exists.Count == 0 ? StatusOutcome.NotFound : StatusOutcome.NoChange;
+            return exists.Count == 0 ? StatusApplied.NotFound : StatusApplied.NoChange;
         }
 
         foreach (var row in updated)
@@ -63,7 +72,7 @@ internal static class StatusIngestion
         }
 
         await transaction.CommitAsync(cancellationToken);
-        return StatusOutcome.Applied;
+        return new StatusApplied(StatusOutcome.Applied, [.. updated.Select(row => row.ConversationId).Distinct()]);
     }
 
     /// <summary>Spec 2026-10-11 decisión 10: Meta aceptó una plantilla de marketing y la reporta después con este código, porque la persona

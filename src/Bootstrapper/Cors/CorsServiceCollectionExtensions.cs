@@ -36,7 +36,9 @@ public static class CorsServiceCollectionExtensions
                     .WithMethods("GET", "POST", "PUT", "PATCH", "DELETE")
                     // Lo que manda el api-client de la SPA: Authorization lleva el ID token de Google
                     // en el login y el registro; If-Match la concurrencia optimista.
-                    .WithHeaders("Content-Type", "Authorization", "X-Qep-Client", "X-Tenant-Id", "If-Match")
+                    // X-Requested-With y X-SignalR-User-Agent los manda el cliente de SignalR en el negotiate del hub
+                    // de Mensajería (spec 2026-10-14); sin ellos el preflight falla y el canal nunca abre.
+                    .WithHeaders("Content-Type", "Authorization", "X-Qep-Client", "X-Tenant-Id", "If-Match", "X-Requested-With", "X-SignalR-User-Agent")
                     // Sin WithExposedHeaders: la SPA sólo lee Content-Type y Content-Length, que el
                     // navegador ya expone por estar en la lista segura de CORS.
                     .SetPreflightMaxAge(TimeSpan.FromMinutes(10))));

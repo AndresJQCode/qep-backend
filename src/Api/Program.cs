@@ -23,6 +23,7 @@ using Modules.Identity.Infrastructure;
 using Modules.Integrations.Api;
 using Modules.Integrations.Infrastructure;
 using Modules.Messaging.Api;
+using Modules.Messaging.Api.Realtime;
 using Modules.Messaging.Application;
 using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
@@ -54,6 +55,8 @@ builder.Services.AddQepPlatform(
 builder.Services.AddQepHealthChecks(builder.Configuration);
 builder.Services.AddQepForwardedHeaders(builder.Configuration);
 builder.Services.AddQepCors(builder.Configuration);
+// Spec 2026-10-14 (Mensajería en tiempo real): SignalR y el sink que lleva al hub lo que Infrastructure escucha por NOTIFY.
+builder.Services.AddMessagingRealtime();
 
 // Superficies públicas/sin autenticar: ventana fija por IP del cliente —la que deja
 // UseForwardedHeaders detrás del ingress, no la del nodo—, generosa para tráfico real
@@ -179,6 +182,7 @@ app.MapPosEndpoints();
 app.MapIntegrationsEndpoints();
 app.MapWhatsAppWebhook(RateLimiterPolicies.Webhook);
 app.MapMessagingEndpoints();
+app.MapMessagingHub();
 app.MapPipelineEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);

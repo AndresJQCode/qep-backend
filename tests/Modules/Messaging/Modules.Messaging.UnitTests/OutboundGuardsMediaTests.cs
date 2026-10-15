@@ -16,7 +16,8 @@ public sealed class OutboundGuardsMediaTests
         return new OutboundGuards(
             bed.Conversations, bed.Repository, bed.Messages, bed.Outbound, bed.Connections, new FakeMemberNames(bed.MemberId), membership, bed.TenantModules,
             new FakeExecutionContext(bed.TenantId, bed.SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
-            new FakeClock(bed.Now));
+            new FakeClock(bed.Now),
+            bed.Notifier);
     }
 
     [Fact]

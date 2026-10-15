@@ -99,9 +99,9 @@ internal sealed class ExternalClaimsTransformation(
             return;
         }
 
-        var tenantHeader = httpContextAccessor.HttpContext?.Request.Headers["X-Tenant-Id"]
-            .ToString();
-        if (!Guid.TryParse(tenantHeader, out var tenantId))
+        // Header, o el query `tenantId` sólo bajo /api/v1/hubs/ (spec 2026-10-14): el handshake WebSocket
+        // no puede llevar X-Tenant-Id. La membresía se valida igual abajo.
+        if (!TenantRequestResolver.TryResolve(httpContextAccessor.HttpContext?.Request, out var tenantId))
         {
             return;
         }

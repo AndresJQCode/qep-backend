@@ -29,7 +29,8 @@ internal sealed class OutboundGuards(
     IMembershipDirectory membershipDirectory,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    IMessagingNotifier notifier)
 {
     public DateTimeOffset UtcNow => clock.UtcNow;
 
@@ -162,6 +163,7 @@ internal sealed class OutboundGuards(
         {
             case SendOutcome.Sent when !string.IsNullOrEmpty(result.Wamid):
                 await claim.CommitSentAsync(result.Wamid, answeredAt, metaMediaId, CancellationToken.None);
+                await NotifyConsolidatedAsync(tenantId, claim.ConversationId);
                 return;
 
             case SendOutcome.GraphError when result.Code is MetaErrorCodes.TokenExpired or MetaErrorCodes.NumberUnregistered:
@@ -177,16 +179,34 @@ internal sealed class OutboundGuards(
 
             case SendOutcome.GraphError when result.Code is 131047:
                 await claim.CommitFailedAsync(131047, result.Title, answeredAt, metaMediaId, CancellationToken.None);
+                await NotifyConsolidatedAsync(tenantId, claim.ConversationId);
                 throw new MessagingDomainException(MessagingErrorCodes.WindowClosed, "Meta closed the 24-hour window.");
 
             case SendOutcome.GraphError:
                 await claim.CommitFailedAsync(result.Code ?? SendMessageHandler.UnknownGraphErrorCode, result.Title, answeredAt, metaMediaId, CancellationToken.None);
+                await NotifyConsolidatedAsync(tenantId, claim.ConversationId);
                 throw new MessagingDomainException(MessagingErrorCodes.MessageRejected, "Meta rejected the message.");
 
             default:
                 // Timeout, 5xx, red o un 2xx sin messages[0].id: Meta pudo haberlo aceptado (riesgo residual de §8.3).
                 await claim.CommitFailedAsync(MessageFailureReasons.Unconfirmed, null, answeredAt, metaMediaId, CancellationToken.None);
+                await NotifyConsolidatedAsync(tenantId, claim.ConversationId);
                 throw new MessagingDomainException(MessagingErrorCodes.MessageRejected, "The send could not be confirmed with Meta.");
+        }
+    }
+
+    /// <summary>Spec 2026-10-14: Sent o Failed quedaron commiteados, así que el otro asesor del hilo tiene algo que leer. Un
+    /// rollback no avisa. Un fallo del aviso no deshace el envío ni cambia la respuesta: Meta ya aceptó, y el polling cubre.</summary>
+    private async Task NotifyConsolidatedAsync(Guid tenantId, Guid conversationId)
+    {
+        try
+        {
+            await notifier.ConversationChangedAsync(tenantId, conversationId, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Application no tiene logger; la causa no se pierde del todo: el listener del otro lado registra la suya.
+            _ = exception;
         }
     }
 

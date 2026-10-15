@@ -102,6 +102,8 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
 
         public Guid MessageId => existing?.Id ?? draft.MessageId;
 
+        public Guid ConversationId => draft.ConversationId;
+
         public ExistingOutbound? Existing => existing;
 
         public async Task CommitSentAsync(string wamid, DateTimeOffset occurredAt, string? metaMediaId, CancellationToken cancellationToken)
