@@ -137,7 +137,7 @@ public static class OrderEndpoints
         group.MapPost("/", ConvertQuotationToOrderAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
             .Accepts<ConvertQuotationToOrderRequest>("application/json")
-            .Produces<OrderResponse>(StatusCodes.Status201Created)
+            .Produces<OrderDetailResponse>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -242,15 +242,18 @@ public static class OrderEndpoints
         Guid quotationId,
         ConvertQuotationToOrderRequest request,
         IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
-        var order = await dispatcher.SendAsync(
+        // Spec 2026-10-15 §8: responde el detalle, no sólo el pedido. La pantalla de conversión
+        // dibuja el resumen (líneas, cliente, cotización de origen) sin pedir nada después.
+        var detail = await dispatcher.SendAsync(
             new ConvertQuotationToOrderCommand(
                 tenantId, quotationId, request.PaymentStatus, request.Notes, request.PaymentProofs),
             cancellationToken);
         return Results.Created(
-            $"/api/v1/tenants/{tenantId}/orders/{order.Id}",
-            OrderResponses.ToResponse(order));
+            $"/api/v1/tenants/{tenantId}/orders/{detail.Order.Id}",
+            await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
 
     private static async Task<IResult> AddOrderPaymentProofsAsync(

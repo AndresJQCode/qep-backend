@@ -71,7 +71,7 @@ Todo lo que cuelga de `/quotations/{id}/items...` sigue siendo de la cotización
 | `POST` | `/quotations/{id}/send` | `SendQuotationRequest` | El PDF ya se subió a Storage antes de este llamado (ver abajo) |
 | `POST` | `/quotations/{id}/void` | — (sin body) | |
 | `GET` | `/quotations/{id}/order` | — | 200 `OrderDetailResponse`, el mismo de `GET /orders/{orderId}`. 404 si no se convirtió todavía |
-| `POST` | `/quotations/{id}/order` | `ConvertQuotationToOrderRequest` | 201 `OrderResponse`. Copia la cotización a un pedido en `Pending` (`source: "Quotation"`) y la deja en `Converted`, en una sola operación. Las notas del pedido son las de la cotización más las que vengan acá, separadas por una línea en blanco |
+| `POST` | `/quotations/{id}/order` | `ConvertQuotationToOrderRequest` | 201 `OrderDetailResponse` (el mismo de `GET /orders/{orderId}`: la pantalla dibuja el resumen sin pedir nada después) + `Location`. Copia la cotización a un pedido en `Pending` (`source: "Quotation"`) y la deja en `Converted`, en una sola operación. Las notas del pedido son las de la cotización más las que vengan acá, separadas por una línea en blanco |
 
 Y los del pedido, siempre por su `orderId` (el `id` que devuelve la conversión, el listado
 `GET /orders` o el detalle `GET /orders/{orderId}`):

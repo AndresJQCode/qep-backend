@@ -47,6 +47,12 @@ namespace Modules.Quotations.IntegrationTests;
 /// </summary>
 internal static class QuotationsApiHarness
 {
+    /// <summary>Spec 2026-10-15 §8: la conversión responde el detalle (<see cref="OrderDetailResponse"/>);
+    /// las pruebas que sólo necesitan el pedido lo sacan de ahí.</summary>
+    public static async Task<OrderResponse?> ReadConvertedOrderAsync(
+        this HttpContent content, CancellationToken cancellationToken) =>
+        (await content.ReadFromJsonAsync<OrderDetailResponse>(cancellationToken))?.Order;
+
     /// <summary>31 de diciembre de 2026 a las 23:00 en Bogotá, que en UTC ya es 2027: la frontera
     /// de la spec 2026-09-17. Las pruebas del día del tenant fijan acá el reloj del host.</summary>
     public static readonly DateTimeOffset NewYearsEveInBogota = new(2027, 1, 1, 4, 0, 0, TimeSpan.Zero);

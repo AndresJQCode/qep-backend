@@ -10,7 +10,7 @@ public sealed record ConvertQuotationToOrderCommand(
     Guid QuotationId,
     string PaymentStatus,
     string? Notes,
-    IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs) : ICommand<OrderDto>;
+    IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs) : ICommand<OrderDetailDto>;
 
 public sealed class ConvertQuotationToOrderValidator : AbstractValidator<ConvertQuotationToOrderCommand>
 {
@@ -61,9 +61,9 @@ public sealed class ConvertQuotationToOrderHandler(
     IExecutionContext executionContext,
     ITenantClock tenantClock,
     IValidator<ConvertQuotationToOrderCommand> validator)
-    : ICommandHandler<ConvertQuotationToOrderCommand, OrderDto>
+    : ICommandHandler<ConvertQuotationToOrderCommand, OrderDetailDto>
 {
-    public async Task<OrderDto> HandleAsync(
+    public async Task<OrderDetailDto> HandleAsync(
         ConvertQuotationToOrderCommand command,
         CancellationToken cancellationToken)
     {
@@ -200,6 +200,7 @@ public sealed class ConvertQuotationToOrderHandler(
             throw;
         }
 
-        return order.ToDto();
+        // Spec 2026-10-15 §8: la pantalla de conversión dibuja el resumen con esta respuesta.
+        return await OrderDetails.LoadAsync(orderRepository, quotationRepository, command.TenantId, order, cancellationToken);
     }
 }

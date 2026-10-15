@@ -72,7 +72,7 @@ public sealed class OrderEditsApiTests
                 "FullPaymentReceived", null, [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
-        var order = await converted.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        var order = await converted.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
         Assert.NotNull(order);
 
         await using var scope = factory.Services.CreateAsyncScope();
@@ -275,7 +275,7 @@ public sealed class OrderEditsApiTests
                 [new OrderPaymentProofRequest(keptFileId, 60_000m), new OrderPaymentProofRequest(removedFileId, 40_000m)]),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
-        var order = await converted.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        var order = await converted.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
         Assert.NotNull(order);
         var kept = Assert.Single(order.PaymentProofs, proof => proof.FileId == keptFileId);
         var removed = Assert.Single(order.PaymentProofs, proof => proof.FileId == removedFileId);
@@ -317,7 +317,7 @@ public sealed class OrderEditsApiTests
                 [new OrderPaymentProofRequest(proofFileId, quotation.Total, new DateOnly(2026, 10, 1))]),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
-        var order = await converted.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        var order = await converted.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
         Assert.NotNull(order);
         var existing = Assert.Single(order.PaymentProofs);
 
@@ -549,7 +549,7 @@ public sealed class OrderEditsApiTests
                 [new OrderPaymentProofRequest(keptFileId, 60_000m), new OrderPaymentProofRequest(removedFileId, 40_000m)]),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
-        var order = await converted.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        var order = await converted.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
         Assert.NotNull(order);
         var kept = Assert.Single(order.PaymentProofs, proof => proof.FileId == keptFileId);
         var removed = Assert.Single(order.PaymentProofs, proof => proof.FileId == removedFileId);
@@ -638,7 +638,7 @@ public sealed class OrderEditsApiTests
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
-        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
         Assert.NotNull(order);
         return (quotation, order, productId);
     }

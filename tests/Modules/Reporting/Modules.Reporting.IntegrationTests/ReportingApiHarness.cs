@@ -537,10 +537,11 @@ internal static class ReportingApiHarness
                 [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
-        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(
+        // Spec 2026-10-15 §8: la conversión responde el detalle.
+        var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(
             TestContext.Current.CancellationToken);
-        Assert.NotNull(order);
-        return order;
+        Assert.NotNull(detail);
+        return detail.Order;
     }
 
     /// <summary>Spec 2026-10-15: un pedido manual, sin cotización, por <c>POST /orders</c>. Las

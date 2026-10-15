@@ -475,7 +475,7 @@ public sealed class RetailQuotationApiTests
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
-        var order = await converted.Content.ReadFromJsonAsync<OrderResponse>(
+        var order = await converted.Content.ReadConvertedOrderAsync(
             TestContext.Current.CancellationToken);
         Assert.NotNull(order);
         return (await GetQuotationAsync(client, tenantId, quotation.Id), order);

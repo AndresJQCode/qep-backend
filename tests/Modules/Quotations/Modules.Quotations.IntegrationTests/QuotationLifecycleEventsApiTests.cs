@@ -26,7 +26,7 @@ public sealed class QuotationLifecycleEventsApiTests
             new ConvertQuotationToOrderRequest("FullPaymentReceived", null, [new OrderPaymentProofRequest(proof, quotation.Total)]),
             Ct);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(Ct);
+        var order = await response.Content.ReadConvertedOrderAsync(Ct);
         Assert.NotNull(order);
         return order;
     }

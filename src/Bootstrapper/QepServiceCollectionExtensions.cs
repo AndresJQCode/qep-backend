@@ -477,7 +477,7 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<RevertOrderInvoicingCommand, OrderDto>,
             RevertOrderInvoicingHandler>();
         services.AddScoped<
-            ICommandHandler<ConvertQuotationToOrderCommand, OrderDto>,
+            ICommandHandler<ConvertQuotationToOrderCommand, OrderDetailDto>,
             ConvertQuotationToOrderHandler>();
         services.AddScoped<
             ICommandHandler<AddOrderPaymentProofsCommand, OrderDto>,
