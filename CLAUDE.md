@@ -309,6 +309,16 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   cambia en los dos lados, y en `QuotationEventPayloadsTests`. Pipeline lee las conversaciones de Messaging por
   `MessagingDbContext` desde Bootstrapper (`PipelineConversationDirectory`), como Reporting lee Quotations: no
   por un puerto de Messaging.
+- **Un pedido tiene datos propios y puede no tener cotización** (spec 2026-10-15). `Order` lleva cliente,
+  asesor, cuenta de cobro, partes, líneas y totales; `QuotationId` es opcional y `Source` dice de dónde nació
+  (`Quotation`, `Manual`, `Shopify`). Convertir **copia**: la cotización `Converted` queda congelada y editar un
+  pedido pendiente edita `order_items`, nunca `quotation_items`. Un pedido sin sesión se crea sólo por
+  `IExternalOrderWriter` (acepta cliente incompleto); el manual exige cliente completo con CUC. Los eventos
+  `quotations.order.created.v1` y `order.cancelled.v1` llevan `source` y `quotationId` nullable: Pipeline los lee
+  por nombre y guarda la foto en `pipeline.deal_orders` (un `order.created` **con** cotización no hace nada: ya
+  actuó el `converted`). `Observaciones` del Excel sale de `Order.Notes`, que al convertir hereda las de la
+  cotización. Un `INSERT` a mano en `quotations.orders` (siembras, pruebas) tiene que llenar las columnas propias
+  y copiar `order_items`/`order_parties`: son `NOT NULL` desde `AddOrderOwnData`.
 - **El embudo de un tenant nace en su primer acceso, no al prender el módulo.** Tenancy no publica nada al
   activar una capacidad; `PipelineProvisioner` crea el embudo con `INSERT … ON CONFLICT (tenant_id) DO NOTHING`.
   Una consulta directa a `pipeline.stages` de un tenant que nunca abrió el tablero devuelve cero filas: no es

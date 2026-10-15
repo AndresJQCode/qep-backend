@@ -28,12 +28,18 @@ Order.status:        Pending → Approved → Invoiced
                      Invoiced → Approved (revertir la facturación; no anula nada fuera de QEP)
                      Pending | Approved → Cancelled (con motivo; la cotización sigue Converted)
 Order.paymentStatus: FullPaymentReceived | PartialPaymentReceived | PaymentPending
+Order.source:        Quotation | Manual | Shopify   (de dónde nació; no cambia)
 ```
 
 Editar (encabezado o líneas) sólo funciona en `Draft`/`Sent`. `Converted`, `Voided` y `Expired`
-son de sólo lectura (422 `quotation.quotation.not_editable`). Única excepción: mientras el pedido
-sigue `Pending`, `POST /orders/{orderId}/items` le suma líneas a su cotización —sólo sumar,
-nada de cambiar cantidad ni quitar—, sin importar el `status` de la cotización.
+son de sólo lectura (422 `quotation.quotation.not_editable`), sin excepciones.
+
+**El pedido tiene sus propios datos** (spec 2026-10-15): cliente, asesor, cuenta de cobro, partes,
+líneas y totales. Convertir **copia** la cotización al pedido; desde ahí son independientes. Mientras
+el pedido sigue `Pending`, `PUT /orders/{orderId}` y `POST /orders/{orderId}/items` editan **las
+líneas del pedido**, y la cotización `Converted` no cambia. Un pedido puede no tener cotización:
+el manual (`POST /orders`, `source: "Manual"`) y el de una integración (`source: "Shopify"`) traen
+`quotationId: null`.
 
 ## Endpoints
 
@@ -64,26 +70,28 @@ Todo lo que cuelga de `/quotations/{id}/items...` sigue siendo de la cotización
 | `DELETE` | `/quotations/{id}/items/{itemId}` | — | |
 | `POST` | `/quotations/{id}/send` | `SendQuotationRequest` | El PDF ya se subió a Storage antes de este llamado (ver abajo) |
 | `POST` | `/quotations/{id}/void` | — (sin body) | |
-| `GET` | `/quotations/{id}/order` | — | 404 si no se convirtió todavía |
-| `POST` | `/quotations/{id}/order` | `ConvertQuotationToOrderRequest` | Crea el pedido en `Pending` y deja la cotización en `Converted`, en una sola operación |
+| `GET` | `/quotations/{id}/order` | — | 200 `OrderDetailResponse`, el mismo de `GET /orders/{orderId}`. 404 si no se convirtió todavía |
+| `POST` | `/quotations/{id}/order` | `ConvertQuotationToOrderRequest` | 201 `OrderResponse`. Copia la cotización a un pedido en `Pending` (`source: "Quotation"`) y la deja en `Converted`, en una sola operación. Las notas del pedido son las de la cotización más las que vengan acá, separadas por una línea en blanco |
 
 Y los del pedido, siempre por su `orderId` (el `id` que devuelve la conversión, el listado
 `GET /orders` o el detalle `GET /orders/{orderId}`):
 
 | Método | Ruta | Body | Notas |
 |---|---|---|---|
-| `GET` | `/orders` | — (query: `clientId`, `advisorId`, `status`, `paymentStatus`, `convertedFrom`, `convertedTo`, `clientCuc`, `orderNumber`, `page`, `pageSize`) | Paginado |
-| `GET` | `/orders/{orderId}` | — | 200 `OrderDetailResponse`: el pedido y su cotización compuesta |
+| `GET` | `/orders` | — (query: `clientId`, `advisorId`, `status`, `paymentStatus`, `convertedFrom`, `convertedTo`, `clientCuc`, `orderNumber`, `source`, `page`, `pageSize`) | Paginado, `OrdersPageResponse`. `source` es `Quotation`, `Manual` o `Shopify` (sin él, todos; otro valor → 422 `order.order.source_invalid`) |
+| `POST` | `/orders` | `CreateOrderRequest` | 201 `OrderDetailResponse` + `Location`. Pedido manual, sin cotización, en `Pending`. Exige `quotations.order.manage` y cliente completo con CUC |
+| `POST` | `/orders/preview` | `CreateOrderRequest` (los comprobantes pueden ir sin `fileId`) | 200 `OrderDetailResponse` calculado **sin persistir** y sin gastar número de pedido |
+| `GET` | `/orders/{orderId}` | — | 200 `OrderDetailResponse`: el pedido con sus datos, el cliente y el asesor resueltos, las líneas, la cotización de origen (si la hay) y el historial |
 | `POST` | `/orders/{orderId}/approve` | — (sin body) | 200 `OrderResponse` en `Approved`. Sólo desde `Pending`; exige `quotations.order.approve` (admin y facturación, no el asesor: `quotations.order.manage` no alcanza) |
 | `POST` | `/orders/{orderId}/cancel` | `CancelOrderRequest` | 200 `OrderResponse` en `Cancelled`. Desde `Pending` o `Approved`; exige `quotations.order.cancel` (sólo admin). Conserva `approvedAt`/`approvedBy` |
 | `POST` | `/orders/{orderId}/invoice` | — (sin body) | 200 `OrderResponse` en `Invoiced`, con `invoicedAt`/`invoicedBy`. Sólo desde `Approved`; no exige el pago completo. Exige `quotations.order.invoice` (admin y facturación: `quotations.order.approve` no alcanza). Es sólo el estado: QEP no emite la factura |
 | `POST` | `/orders/{orderId}/uninvoice` | — (sin body) | 200 `OrderResponse` de vuelta en `Approved`, con `invoicedAt`/`invoicedBy` en `null`. Sólo desde `Invoiced`; mismo permiso que facturar. No anula nada fuera de QEP |
 | `POST` | `/orders/{orderId}/proofs` | `AddOrderPaymentProofsRequest` | 200 `OrderResponse`. Suma comprobantes y corrige monto o archivo de los ya cargados. Sólo con el pedido en `Pending` |
 | `DELETE` | `/orders/{orderId}/proofs/{proofId}` | — | 200 `OrderResponse`. Quita un comprobante y recalcula `paymentStatus`. Sólo con el pedido en `Pending` |
-| `POST` | `/orders/{orderId}/items` | `AddOrderItemsRequest` | 200 `OrderDetailResponse`. Sólo con el pedido en `Pending`; suma líneas a la cotización y recalcula `paymentStatus` contra el total nuevo |
+| `POST` | `/orders/{orderId}/items` | `AddOrderItemsRequest` | 200 `OrderDetailResponse`. Sólo con el pedido en `Pending`; suma líneas al pedido y recalcula `paymentStatus` contra el total nuevo |
 | `PUT` | `/orders/{orderId}` | `SaveOrderEditsRequest` + header `If-Match: "<order.version>"` | 200 `OrderDetailResponse` + `ETag`. Guarda de una vez productos (lista completa), comprobantes (`add`/`update`/`removeIds`) y notas; `paymentStatus` lo deriva el servidor. Sin cambios reales responde 200 con la misma `version`. Sin `If-Match` → 428; versión vieja → 412 |
 | `POST` | `/orders/{orderId}/preview` | `SaveOrderEditsRequest` (sin `fileId` en `add`) | 200 `OrderDetailResponse` recalculado **sin persistir**. `order.version` es la guardada; los comprobantes nuevos vuelven con `id`/`fileId` sintéticos que no se deben usar |
-| `POST` | `/orders/export` | — (mismos filtros del listado por query string) | 202: el Excel del listado llega por correo |
+| `POST` | `/orders/export` | — (mismos filtros del listado por query string, `source` incluido) | 202: el Excel del listado llega por correo |
 
 ## Formas de los DTOs
 
@@ -135,11 +143,39 @@ type QuotationResponse = {
 
 type CancelOrderRequest = { reason: string }; // obligatorio, se recorta, máx. 500
 
+// Spec 2026-10-15 §5.2: el mismo cuerpo que la pantalla arma para una cotización, más el estado de
+// pago y los comprobantes. Precio, descuento por escala y tasa los resuelve el backend.
+type CreateOrderRequest = {
+  clientId: string;
+  paymentMethod: string | null;
+  notes: string | null;
+  isRetail: boolean;
+  globalScaleFloor: number | null;
+  parties: QuotationPartiesRequest | null; // null: facturación y envío con los datos del cliente
+  billingAccount: { companyId: string; bankName: string; accountNumber: string; currency: string };
+  items: { productId: string; quantity: number }[]; // al menos uno, sin productos repetidos
+  paymentStatus: "FullPaymentReceived" | "PartialPaymentReceived" | "PaymentPending";
+  paymentProofs: { fileId: string; amount: number; paidOn?: string | null }[]; // vacío sólo con PaymentPending
+};
+
 type OrderResponse = {
-  id: string; orderNumber: string; quotationId: string;
+  id: string; orderNumber: string;
+  source: "Quotation" | "Manual" | "Shopify";
+  quotationId: string | null;          // null en un pedido manual o de una integración
+  externalReference: string | null;    // "#1001" en uno de Shopify
+  clientId: string; advisorId: string;
   status: "Pending" | "Approved" | "Cancelled" | "Invoiced";
-  paymentStatus: string; notes: string | null;
-  convertedAt: string; convertedBy: string;
+  paymentStatus: string; paymentMethod: string | null; currency: string;
+  isRetail: boolean; globalScaleFloor: number | null;
+  billingUsesBusinessName: boolean; isStorePickup: boolean; billsToFinalConsumer: boolean;
+  billingWithRetention: boolean | null; billingVatSurplus: boolean | null;
+  customerVatSurplus: boolean;         // el valor efectivo: con consumidor final es false
+  subtotal: number; taxPercentage: number; taxAmount: number; discountAmount: number;
+  total: number; retentionAmount: number; netTotal: number;
+  notes: string | null;                // sin tope de largo
+  billingAccount: { companyId: string; bankName: string; accountNumber: string; currency: string };
+  parties: QuotationPartyResponse[];   // las líneas no viajan acá: van en OrderDetailResponse.items
+  convertedAt: string; convertedBy: string; // en un pedido manual o externo: cuándo y quién lo creó
   approvedAt: string | null; approvedBy: string | null;
   cancelledAt: string | null; cancelledBy: string | null; cancellationReason: string | null;
   invoicedAt: string | null; invoicedBy: string | null; // null si no está facturado
@@ -153,7 +189,27 @@ type OrderResponse = {
 
 type AddOrderItemsRequest = { toAdd: { productId: string; quantity: number }[] }; // al menos uno
 
-type OrderDetailResponse = { order: OrderResponse; quotation: QuotationResponse };
+// Spec 2026-10-15 §6.2: la cotización ya no viaja. `items` son las líneas del pedido con su producto
+// resuelto (mismo QuotationItemResponse de la cotización); `sourceQuotation` es null sin cotización.
+type OrderDetailResponse = {
+  order: OrderResponse;
+  client: QuotationClientResponse | null;
+  advisorName: string | null; advisorEmail: string | null;
+  billingAccount: QuotationBillingResponse | null;
+  items: QuotationItemResponse[];
+  sourceQuotation: { id: string; quotationNumber: string } | null;
+  history: { id: string; eventType: string; eventAt: string; memberId: string | null; memberName: string | null; details: string | null }[];
+  availableFloors: number[];
+};
+
+type OrderListItemResponse = {
+  id: string; orderNumber: string;
+  quotationId: string | null; quotationNumber: string | null;
+  clientId: string; clientName: string | null; advisorId: string; advisorName: string | null;
+  status: string; paymentStatus: string; paymentMethod: string | null;
+  convertedAt: string; currency: string; total: number;
+  source: string; externalReference: string | null;
+};
 ```
 
 `advisorId`/`createdBy`/`updatedBy`/`convertedBy`/`approvedBy`/`cancelledBy`/`invoicedBy` son ids de **membership** (Tenancy), no el
@@ -202,8 +258,16 @@ URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a a
 | `quotation.quotation.not_sent` | 422 | `void`/convertir sobre algo que no es `Sent` (void también acepta Draft) |
 | `quotation.quotation.changed_since_sent` | 422 | Convertir una cotización editada después de su último envío: hay que reenviarla primero |
 | `quotation.quotation.pdf_not_found` / `pdf_not_available` / `pdf_not_a_pdf` | 422 | Problema con el `pdfFileId` de `send` |
-| `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea |
+| `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea, a la cotización o al pedido (también en `POST /orders`) |
 | `quotation.item.duplicate_product` | 422 | El producto ya está en la cotización: se cambia la cantidad de su línea, no se agrega otra |
+| `order.order.client_not_found` / `client_inactive` / `client_incomplete` / `client_cuc_missing` | 422 | `POST /orders` (y su `/preview`) con un cliente que no existe en el tenant, inactivo, incompleto o sin CUC |
+| `order.order.items_required` | 422 | `POST /orders` sin líneas |
+| `order.item.duplicate_product` | 422 | El producto ya está en el pedido (`POST /orders`, `PUT /orders/{orderId}`, `POST /orders/{orderId}/items`): se cambia la cantidad de su línea |
+| `order.billing.account_required` | 422 | `POST /orders` sin cuenta de cobro |
+| `order.billing.party_incomplete` / `order.shipping.party_incomplete` | 422 | La parte de facturación o de envío del pedido quedó incompleta |
+| `order.billing.identification_required` | 422 | Una parte de facturación con nombre propio sin documento de identidad |
+| `order.billing.tax_profile_required` | 422 | Una parte de facturación propia sin decir si practica retención y si tiene excedente de IVA |
+| `order.order.source_invalid` | 422 | `GET /orders` o `POST /orders/export` con un `source` que no es `Quotation`, `Manual` ni `Shopify` |
 | `order.order.not_pending` | 422 | El pedido ya está `Approved`, `Invoiced` o `Cancelled`: no admite comprobantes (`/orders/{orderId}/proofs`), productos (`/orders/{orderId}/items`), edición (`PUT /orders/{orderId}` y su `/preview`) ni otra aprobación |
 | `concurrency.conflict` | 412 | `PUT /orders/{orderId}` con un `If-Match` que ya no es la `version` del pedido, o cualquiera de `/approve`, `/cancel`, `/invoice` y `/uninvoice` que choca con otro cambio simultáneo sobre el mismo pedido: otra persona lo cambió. Recargar |
 | `precondition.if_match_required` | 428 | `PUT /orders/{orderId}` sin `If-Match` o con un valor que no es un número positivo |
@@ -214,7 +278,7 @@ URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a a
 | `order.order.already_invoiced` | 422 | `POST /orders/{orderId}/cancel` sobre un pedido `Invoiced`, con o sin motivo: primero se revierte la facturación |
 | `order.order.not_approved` | 422 | `POST /orders/{orderId}/invoice` sobre un pedido que no está `Approved` (`Pending`, `Cancelled` o ya `Invoiced`) |
 | `order.order.not_invoiced` | 422 | `POST /orders/{orderId}/uninvoice` sobre un pedido que no está `Invoiced` |
-| `order.order.payment_proof_required` | 422 | `POST /quotations/{id}/order` sin comprobantes y el pago no es `PaymentPending`; en `POST /orders/{orderId}/proofs`, ni `paymentProofs` ni `updatedProofs` traen nada |
+| `order.order.payment_proof_required` | 422 | `POST /quotations/{id}/order` o `POST /orders` sin comprobantes y el pago no es `PaymentPending`; en `POST /orders/{orderId}/proofs`, ni `paymentProofs` ni `updatedProofs` traen nada |
 | `order.payment_proof.file_not_found` / `file_not_available` / `file_type_not_allowed` / `file_too_large` | 422 | Problema con un comprobante nuevo |
 | `order.payment_proof.amount_invalid` | 422 | Un comprobante (nuevo o corregido en `updatedProofs`) con monto ≤ 0 |
 | `order.payment_proof.not_found` | 422 | `updatedProofs` referencia un `proofId` que no es de este pedido |

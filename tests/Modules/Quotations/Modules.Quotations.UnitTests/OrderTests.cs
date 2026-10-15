@@ -12,7 +12,10 @@ public sealed class OrderTests
 
     private static QuotationBillingAccount Account => new()
     {
-        CompanyId = Guid.CreateVersion7(), BankName = "Bancolombia", AccountNumber = "7542", Currency = "COP",
+        CompanyId = Guid.CreateVersion7(),
+        BankName = "Bancolombia",
+        AccountNumber = "7542",
+        Currency = "COP",
     };
 
     private static OrderHeader Header(bool isRetail = false, bool withRetention = false) =>
@@ -101,8 +104,12 @@ public sealed class OrderTests
                 new QuotationParties(
                     new QuotationPartyDetails
                     {
-                        Name = "Otra S.A.S.", Phone = "1", Email = "a@b.co", Address = "x",
-                        DepartmentId = Guid.CreateVersion7(), CityId = Guid.CreateVersion7(),
+                        Name = "Otra S.A.S.",
+                        Phone = "1",
+                        Email = "a@b.co",
+                        Address = "x",
+                        DepartmentId = Guid.CreateVersion7(),
+                        CityId = Guid.CreateVersion7(),
                     },
                     null, BillingWithRetention: false, BillingVatSurplus: false),
                 Account, [Line()], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now));
@@ -264,8 +271,12 @@ public sealed class OrderTests
             "Entregar en portería",
             new QuotationParties(null, new QuotationPartyDetails
             {
-                Name = "Bodega", Phone = "3001234567", Email = "bodega@x.co", Address = "Cl 1",
-                DepartmentId = Guid.CreateVersion7(), CityId = Guid.CreateVersion7(),
+                Name = "Bodega",
+                Phone = "3001234567",
+                Email = "bodega@x.co",
+                Address = "Cl 1",
+                DepartmentId = Guid.CreateVersion7(),
+                CityId = Guid.CreateVersion7(),
             }),
             Account, "COP", customerWithRetention: true, customerVatSurplus: false, Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);

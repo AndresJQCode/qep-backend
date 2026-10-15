@@ -425,14 +425,18 @@ sin clasificación, nace incompleto (decisión 2 revisada).
 #### 6.2.3 El pedido (dentro de `ExternalOrderService`)
 
 Lo que sigue usa el modelo del spec de pedidos sin cotización (§11): un `Order` con cliente, asesor, cuenta
-de cobro, partes, líneas y totales propios, y una fábrica para pedidos de origen externo. Los nombres
-exactos los fija ese spec; este documento describe qué datos entran.
+de cobro, partes, líneas y totales propios. El punto de entrada es
+`IExternalOrderWriter.CreateAsync(ExternalOrderDraft, CancellationToken)` (implementado por
+`ExternalOrderService` en `Modules.Quotations.Application`), que arma el pedido con `Order.CreateExternal`
+y devuelve `ExternalOrderResult(OrderId, OrderNumber, Total, NetTotal, Currency)`. Las líneas llegan como
+`ExternalOrderLine` ya preciadas (§6.2.2).
 
 1. **Elegibilidad del cliente, sólo para origen externo** (owner, 2026-10-15: «sólo deja pasar el pedido
    incompleto si no viene de cotización»): el pedido de Shopify acepta un cliente `Incomplete` y sin CUC;
    exige que exista en el tenant y esté activo. Un pedido que nace de una cotización conserva la regla de
-   hoy (H2): cliente completo con CUC. El spec previo define dónde vive esa regla; aquí sólo se fija que la
-   excepción está atada a `Source != Quotation`, nunca a un parámetro que un handler HTTP pueda pasar.
+   hoy (H2): cliente completo con CUC. La regla vive en `OrderCustomerEligibility.Ensure(…, allowIncomplete)`
+   (interna de Application); `ExternalOrderService` la llama con `allowIncomplete: true` y los dos caminos HTTP
+   (`POST /orders` y su `/preview`) con `false`, así que ningún handler HTTP puede pedir la excepción.
 2. **Cabecera:** consecutivo del tenant (`PED-…`), `Source = Shopify`, `ExternalReference = "#1001"`,
    cliente, asesor de la tienda, cuenta de cobro de la tienda, moneda del pedido, fecha del pedido en la zona
    del tenant, `paymentMethod` = `gateway` recortado, notas = `Shopify #1001` + la nota del comprador (tope
@@ -444,13 +448,14 @@ exactos los fija ese spec; este documento describe qué datos entran.
 3. **Líneas**, en el orden de Shopify, con producto, cantidad, precio unitario con IVA, descuento y tasa de
    IVA del producto (§6.2.2). Los totales los calcula el pedido con las mismas reglas que la cotización.
 4. **Estado:** `Pending`; `PaymentStatus` desde `financial_status` (`paid` → `FullPaymentReceived`;
-   `partially_paid` → `PartialPaymentReceived`; el resto → `PaymentPending`); sin comprobantes; creado por el
-   asesor de la tienda, con auditoría de actor `Integration`.
+   `partially_paid` → `PartialPaymentReceived`; el resto → `PaymentPending`); sin comprobantes (un pedido
+   externo no los exige aunque esté pagado: el pago vive en Shopify); creado por el asesor de la tienda, con
+   auditoría de actor `Integration`.
 5. Si una regla del pedido rechaza el alta, el motivo se guarda como `order_rejected`.
-6. **Pipeline.** Hoy el embudo se mueve con eventos de cotización (H18) y un pedido de Shopify no tiene
-   cotización. El spec de pedidos sin cotización decide si un pedido sin cotización publica su propio evento
-   (`…order.created.v1`) y qué hace Pipeline con él; hasta entonces, un pedido de Shopify **no toca el
-   embudo** (D-S21).
+6. **Pipeline.** Todo pedido publica `quotations.order.created.v1` con `source` y `quotationId` (nulo acá).
+   Pipeline lo consume: el pedido de Shopify gana el único negocio abierto del cliente o, si no hay ninguno,
+   crea uno ganado (`DealSource.Order`), y guarda su foto en `pipeline.deal_orders`; con varios abiertos la
+   foto queda suelta. Su anulación (`order.cancelled.v1`) reabre ese negocio (D-S21, resuelta).
 
 #### 6.2.4 Resultado
 
@@ -462,12 +467,13 @@ bandeja muestra los avisos en una pestaña «Con avisos»; ninguno frena la impo
 ### 6.3 Cambios posteriores
 
 - **Pago.** Un snapshot con otro `financial_status` sobre una fila `Imported` llama a
-  `IExternalOrderWriter.SyncPaymentStatusAsync(orderId, status)` → `Order.SyncExternalPaymentStatus` (método
-  nuevo, H5): sólo cambia si el pedido **no tiene comprobantes** propios; con comprobantes, el aviso se audita
-  y se ignora. `refunded`, `partially_refunded` y `voided` no cambian nada.
+  `IExternalOrderWriter.SyncPaymentStatusAsync(tenantId, orderId, status)` → `Order.SyncExternalPaymentStatus`:
+  sólo cambia si el pedido **no tiene comprobantes** propios; con comprobantes lanza
+  `order.order.payment_has_proofs`, que el worker audita e ignora. Un aviso con el estado que ya tiene no
+  audita ni sube versión. `refunded`, `partially_refunded` y `voided` no cambian nada.
 - **Cancelación.** `cancelled_at` no nulo sobre una fila `Imported`: pedido `Pending` o `Approved` →
-  `IExternalOrderWriter.CancelAsync(orderId, "Cancelado en Shopify: {cancel_reason}")` a nombre del asesor
-  de la tienda; `Invoiced` → la fila pasa a `Cancelled` con `wait_detail = { reason: "invoiced_before_cancel" }`
+  `IExternalOrderWriter.CancelAsync(tenantId, orderId, cancelledByMembershipId, "Cancelado en Shopify: {cancel_reason}")`
+  a nombre del asesor de la tienda; `Invoiced` → la fila pasa a `Cancelled` con `wait_detail = { reason: "invoiced_before_cancel" }`
   y la bandeja la muestra para revertir la facturación y anular a mano; ya `Cancelled` en QEP → nada. Sobre
   una fila `Waiting` → `Ignored`.
 - **Líneas, dirección y cliente** editados en Shopify después de importar: no se sincronizan.
@@ -484,18 +490,18 @@ bandeja muestra los avisos en una pestaña «Con avisos»; ninguno frena la impo
 
 ### 6.5 Cambios en el módulo de pedidos, Customers y Reporting
 
-- `Order.Source` (`Quotation` | `Shopify`) y `Order.ExternalReference` (hasta 64), si el spec de pedidos sin
-  cotización no los trae ya con otro nombre. Migración con backfill `Quotation`. En los DTO viajan como texto
-  con el nombre del enum (regla del BFF).
-- `ListOrdersQuery.Source` (opcional; sin él, todos). `OrderListItemDto` y `OrderDto` ganan `source` y
-  `externalReference`.
+- **Ya hecho por el spec de pedidos sin cotización:** `Order.Source` (`Quotation` | `Manual` | `Shopify`) y
+  `Order.ExternalReference`, con backfill `Quotation` en `AddOrderOwnData`; viajan como texto con el nombre
+  del enum. `ListOrdersQuery.Source` (opcional; sin él, todos) y `source`/`externalReference` en
+  `OrderListItemResponse` y `OrderResponse`.
 - **Las cotizaciones no cambian:** ni `Quotation`, ni su lista, ni `QuotationCustomerEligibility`, ni los
   reportes de cotizaciones. Un pedido de Shopify no aparece en ninguna pantalla de cotizaciones.
-- `Order.SyncExternalPaymentStatus` (§6.3) y `ExternalOrderService` son los puntos de entrada nuevos.
+- `Order.SyncExternalPaymentStatus` (§6.3) e `IExternalOrderWriter`/`ExternalOrderService` son los puntos de
+  entrada, ya implementados por el spec previo; este spec sólo los consume.
 - Customers: `ICustomerProvisioning` (alta completa desde el sistema), `Customer.CreateIncompleteFromExternalSale`,
   `FindByEmailAsync`. El `PUT` que completa un incompleto ya existe (spec 2026-10-10 §6.2) y sirve igual.
-- Reporting: `OrdersReportSource` incluye los pedidos de Shopify (son ventas); si el reporte lee datos del
-  pedido que antes leía de la cotización, eso lo resuelve el spec previo. Los reportes que agrupan por
+- Reporting: `OrdersReportSource` ya lee del pedido (spec previo), así que incluye los pedidos de Shopify con
+  `source` y sin `quotationId`. Los reportes que agrupan por
   clasificación o ciudad ya filtran `Completeness == Complete` (CLAUDE.md), así que un comprador incompleto
   no los rompe.
 - El Excel de pedidos no cambia de columnas; `order_number` sigue siendo el `PED-…` (D-S2); con cliente
@@ -772,7 +778,7 @@ cotización `Shopify` en lectura.
 | D-S18 | Con documento pero sin clasificación en la tienda o sin ciudad, el comprador nace **incompleto** y el documento queda en el aviso; no se inventa clasificación | Clasificación obligatoria al configurar |
 | D-S19 | `webhookSubscriptionIds` va como campo interno de la conexión, no en `shopify.stores`: lo escribe y lo repone Integrations (enlace y probador) | Moverlo |
 | D-S20 | `shopify` entra a `DefaultForNewTenants` **sin backfill** a los tenants existentes: el operador decide tenant por tenant, como se hizo con `pos`, `messaging` y `pipeline` | Una migración de datos que inserte la fila en cada tenant activo |
-| D-S21 | Mientras el spec de pedidos sin cotización no defina un evento de pedido para Pipeline, un pedido de Shopify **no toca el embudo** | Lo define ese spec; aquí no cambia nada |
+| D-S21 | **Resuelta** (spec de pedidos sin cotización §7): `order.created` sin cotización gana o crea el negocio, y `order.cancelled` lo reabre | — |
 
 ## 16. Verificaciones pendientes contra Shopify (handoff)
 
@@ -820,3 +826,7 @@ cotización `Shopify` en lectura.
   excepción `allowIncomplete` sobre `QuotationCustomerEligibility`; §6.2.3 pasa a describir el pedido con
   datos propios; §11 declara los dos specs previos (pedidos sin cotización y flete); D-S11 retirada, D-S21
   agregada. Pendiente la lectura del owner, los dos specs previos y el plan de implementación.
+- 2026-10-15: delta tras implementar el spec de pedidos sin cotización: §6.2.3, §6.3 y §6.5 citan los nombres
+  reales (`IExternalOrderWriter`, `ExternalOrderDraft`, `ExternalOrderLine`, `ExternalOrderResult`,
+  `Order.CreateExternal`, `OrderCustomerEligibility`), un pedido externo pagado no exige comprobantes, y
+  D-S21 queda resuelta.

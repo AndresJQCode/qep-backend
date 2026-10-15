@@ -775,6 +775,8 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 
 - [Imágenes de producto](docs/integracion-imagenes-de-producto.md) — subir a R2,
   publicar y asignar la portada, con los códigos de error que la UI debe distinguir.
+- [Cotizaciones y pedidos](docs/integracion-cotizaciones-y-pedidos.md) — estados, rutas, formas de
+  los DTOs (el pedido con sus datos propios y el pedido manual) y códigos de error.
 
 | Grupo de rutas                                     | Operaciones                                                                                 | Autorización                                                                                 |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -791,6 +793,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles`, `profile` por membership   | `advisorship.invite` / `.read` / `.manage`                                            |
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET`, `POST`, `PUT`, y `deactivate` por producto                                           | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
+| `/api/v1/tenants/{tenantId}/orders`                | `GET` (filtros, entre ellos `source`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `approve`, `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`) (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual)) | `quotations.order.read` / `.manage` / `.approve` / `.cancel` / `.invoice` |
 | `/api/v1/tenants/{tenantId}/pos`                   | 12 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void`                               |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
@@ -1067,7 +1070,7 @@ suyo—, `422 tenancy.membership.advisor_code_taken`. El mismo código en otro t
 
 El código de asesor llega al sistema externo por el Excel de pedidos: la columna `Cod. Asesor`,
 después de `Email`, numérica y repetida en cada línea del pedido. Se resuelve al exportar desde la
-membresía asesora de la cotización con el código **de hoy** —si se lo cambian, los pedidos viejos
+membresía asesora del pedido con el código **de hoy** —si se lo cambian, los pedidos viejos
 salen con el nuevo— y queda vacía si la membresía no tiene código.
 
 ### Facturar a otra persona: documento de identidad
@@ -1097,6 +1100,29 @@ dentro de `parties[]` (rol `Billing`):
 - El PDF lo imprime debajo del nombre en «Facturar a», y el Excel de pedidos lo lleva en
   `Documento de identidad` (ver abajo).
 
+### Pedidos: datos propios y pedido manual
+
+Desde el spec 2026-10-15 (`docs/superpowers/specs/2026-10-15-pedidos-sin-cotizacion-design.md`) un
+pedido ya no es un apéndice de su cotización: `Order` lleva su propio cliente, asesor, cuenta de
+cobro, partes (facturación y envío), líneas con la foto del producto y totales, calculados con las
+mismas reglas que la cotización. `quotationId` es opcional y `source` dice de dónde nació:
+
+- `Quotation`: `POST /quotations/{id}/order` **copia** la cotización al pedido. La cotización queda
+  `Converted` y congelada; editar el pedido pendiente (`PUT /orders/{id}`, `POST /orders/{id}/items`)
+  cambia `order_items`, nunca la cotización.
+- `Manual`: `POST /orders` crea un pedido sin cotización desde la pantalla, con el mismo cuerpo que
+  una cotización más el estado de pago y los comprobantes; `POST /orders/preview` lo calcula sin
+  guardarlo ni gastar número. Exige cliente completo con CUC, como convertir. Permiso
+  `quotations.order.manage`.
+- Integraciones (`Shopify`): sin sesión HTTP, por `IExternalOrderWriter`; acepta un cliente
+  incompleto y lleva `externalReference` (`#1001`).
+
+Todos nacen `Pending` y publican `quotations.order.created.v1` con `source` y `quotationId`
+(nulo sin cotización). Pipeline lo consume: un pedido sin cotización gana el único negocio abierto
+del cliente o crea uno ganado (`pipeline.deal_orders`). La lista (`GET /orders?source=`), el
+detalle, el Excel y el reporte de pedidos leen del pedido. Los pedidos que existían antes los copió
+la migración `AddOrderOwnData` desde su cotización.
+
 ### Código y nombre del producto en cada línea
 
 Una línea de cotización referencia su producto por `productId` (sin FK) y congela precio e IVA al
@@ -1107,7 +1133,8 @@ agregarse. El **código y el nombre** siguen otra regla (owner, 2026-09-26):
 - Cuando **sale del borrador**, cada línea guarda el código y el nombre que tenía su producto en ese
   momento (`quotation_items.product_code` / `product_name`), y desde ahí la cotización y su pedido
   ya no cambian con el catálogo. Sale del borrador al **enviarla** y también al **convertirla en
-  pedido** sin haberla enviado.
+  pedido** sin haberla enviado. Al convertir, la foto viaja con la línea a `order_items`; un pedido
+  manual o externo congela la suya al crearse.
 - Lo congelado no se pisa nunca: ni un reenvío ni la conversión lo vuelven a leer. Sí se completan
   las líneas que todavía no lo tienen: las agregadas a una cotización ya enviada se congelan en el
   siguiente envío (o al convertir), y las que se suman a un pedido pendiente
@@ -1120,8 +1147,8 @@ agregarse. El **código y el nombre** siguen otra regla (owner, 2026-09-26):
 - Una cotización anulada desde borrador no congela nada (ya no se usa ni en pedidos ni en el
   Excel). Ninguna transición devuelve una cotización a borrador.
 
-La regla vive en un solo lugar (`QuotationItemProductLabel`) y la usan la respuesta de cotización y
-de pedido, el PDF (que sale de esa misma respuesta) y `Cod. Producto` del Excel de pedidos. La forma
+La regla vive en `QuotationItemProductLabel` (cotización y PDF) y en su espejo del pedido,
+`OrderItemProductLabel` (respuesta de pedido y `Cod. Producto` del Excel de pedidos). La forma
 de la respuesta no cambió: `items[].productCode` y `items[].productName` siguen ahí; lo que cambia
 es de dónde salen. Portada y escalas de la línea siguen siendo las de hoy.
 
@@ -1139,7 +1166,7 @@ nombres (la fecha del pedido en `FECHA`, `Bloq/act` y `Vencimiento`).
 Las dos últimas del catálogo (2026-09-25) son `Fecha Pedido` (`order_date`: el día en que nació
 el pedido, en la zona del tenant, como texto `yyyy-MM-dd`) y `Cliente` (`customer_name`: a nombre
 de quién sale la factura — `Consumidor final`, el nombre de la parte de facturación propia, la
-razón social si la cotización factura a ella, o el nombre de la ficha del cliente).
+razón social si el pedido factura a ella, o el nombre de la ficha del cliente).
 
 Detrás de todas (2026-09-26) va `Documento de identidad` (`customer_identification`): el número de
 documento de la misma persona que nombra `Cliente`, con la misma precedencia — `222222222222` para
@@ -1156,14 +1183,14 @@ los cinco con columna propia, como número; vacía si el pedido no tiene comprob
 
 Después (2026-09-26) va `Tasa IVA` (`tax_rate`): la tasa de IVA de cada línea como fracción y
 como número —19 % sale `0.19`, 0 % sale `0`—, tomada de la foto que la línea guardó del producto
-al agregarse (`QuotationItem.TaxPercentage`), no de la tarifa de hoy. `IVA` (`tax`) sigue siendo el
-monto. En una cotización en **USD** las dos salen en `0` (hotfix 2026-10-14): en dólares el IVA no se
+al agregarse (`OrderItem.TaxPercentage`), no de la tarifa de hoy. `IVA` (`tax`) sigue siendo el
+monto. En un pedido en **USD** las dos salen en `0` (hotfix 2026-10-14): en dólares el IVA no se
 discrimina —el precio se cobra completo, como si lo trajera adentro— y `Valor Unit sin IVA` es el
 precio tal cual. Por lo mismo, en USD tampoco se resta la retención en la fuente aunque el cliente
 la practique: `Retención` sale en `0` y el neto es igual al total.
 
 Después (2026-09-26) va `NIT Empresa` (`company_tax_id`): el NIT de la empresa por la que se
-factura la cotización, la misma que nombra `EMPRESA`, tal como está hoy en Companies. Con la misma
+factura el pedido, la misma que nombra `EMPRESA`, tal como está hoy en Companies. Con la misma
 regla que las fijas: sólo dígitos (`901851609`) sale como número; con puntos o dígito de
 verificación (`901851609-1`) sale como texto. Vacía sin cuenta de facturación o si la empresa no
 resuelve.
@@ -1186,7 +1213,7 @@ repetida bajo dos encabezados llenaba la forma de pago 2 aunque hubiera una sola
 ocultas**, por la misma razón que `coordinadora_city`.
 
 La última (2026-10-05) es `Transportadora` (`carrier`): `Recoger en tienda` si la cotización del
-pedido es de recogida (`Quotation.IsStorePickup`) y `Coordinadora` en cualquier otro caso, como
+pedido es de recogida (`Order.IsStorePickup`) y `Coordinadora` en cualquier otro caso, como
 texto. Los dos textos son contrato del ERP del tenant. La recogida no cambia ninguna otra columna:
 `Direccion`, `Ciudad` y `Telefono` siguen cayendo a los datos del cliente sin parte de envío propia.
 También **nace oculta**, por la misma razón que `coordinadora_city`.
@@ -1231,6 +1258,10 @@ repetida es válida desde el 2026-09-25), `header_duplicated` (dos **visibles** 
 encabezado, sin distinguir mayúsculas), `all_hidden`, `too_many_fixed_columns` (más de 40). Audita
 `quotations.orders_export_layout.updated` sólo si algo cambió. No hay `DELETE`: restaurar es un
 `PUT` con el catálogo en su orden, nombres y visibilidad por defecto, sin fijas.
+
+`Observaciones` (`notes`) sale de las notas del pedido (`Order.Notes`, spec 2026-10-15), sin tope de
+largo. Al convertir, el pedido hereda las notas de la cotización y, si al convertir se escribieron
+otras, van detrás separadas por una línea en blanco.
 
 Un layout guardado se aplica en la siguiente exportación de pedidos; el de cotizaciones no cambia.
 

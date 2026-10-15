@@ -51,14 +51,14 @@ public sealed class OrdersExportProcessorTests
 
     private static QuotationPartyDetails CompleteShippingParty(
         string name, Guid? cityId, string address = "Zona Franca, Bodega 14") => new()
-    {
-        Name = name,
-        Phone = "6015550000",
-        Email = "bodega@ejemplo.co",
-        Address = address,
-        DepartmentId = Guid.CreateVersion7(),
-        CityId = cityId ?? Guid.CreateVersion7(),
-    };
+        {
+            Name = name,
+            Phone = "6015550000",
+            Email = "bodega@ejemplo.co",
+            Address = address,
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = cityId ?? Guid.CreateVersion7(),
+        };
 
     [Fact]
     public async Task WritesTheErpColumnsInOrder()
@@ -1791,7 +1791,10 @@ public sealed class OrdersExportProcessorTests
             parties: parties,
             billingAccount: new QuotationBillingAccount
             {
-                CompanyId = CompanyId, BankName = "Bancolombia", AccountNumber = "7542", Currency = "COP",
+                CompanyId = CompanyId,
+                BankName = "Bancolombia",
+                AccountNumber = "7542",
+                Currency = "COP",
             },
             notes: "Entregar en portería");
         Assert.Equal((OrderSource.Manual, (QuotationId?)null), (row.Source, row.QuotationId));

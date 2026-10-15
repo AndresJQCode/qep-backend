@@ -248,7 +248,10 @@ public sealed class ListOrdersHandlerTests
             QuotationParties.Empty,
             new QuotationBillingAccount
             {
-                CompanyId = Guid.CreateVersion7(), BankName = "Bancolombia", AccountNumber = "7542", Currency = "COP",
+                CompanyId = Guid.CreateVersion7(),
+                BankName = "Bancolombia",
+                AccountNumber = "7542",
+                Currency = "COP",
             },
             [new OrderLineInput(Guid.CreateVersion7(), 2m, total / 2m, 0m, 19)],
             OrderPaymentStatus.PaymentPending,

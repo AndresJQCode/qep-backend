@@ -376,3 +376,12 @@ viejo falla con 422 donde se esperaba 201 y esconde la causa.
 
 - 2026-10-15: decisiones 1–5 tomadas en conversación con el owner, con un inventario previo del
   acoplamiento (§2); secciones aprobadas una por una; spec escrito. Pendiente la lectura del owner y el plan.
+- 2026-10-15: plan escrito (`docs/superpowers/plans/2026-10-15-pedidos-sin-cotizacion-backend.md`); decisiones
+  del plan P1-P5: sin renombrar los records compartidos (`QuotationBillingAccount`, `QuotationPartyDetails`,
+  `QuotationParties`: el rename de §4.1 y §4.2 queda sin hacer); `Notes` sin tope y, al convertir, las de la
+  cotización más las de la conversión; `ConvertedAt/By` como «creado el / por» en un pedido manual o externo;
+  `OrderPricingRecalculation` espejo de `QuotationPricingRecalculation`; DTOs compartidos (`QuotationItemDto`,
+  `QuotationPartyDto`, `QuotationPartyResponse`, `QuotationBillingAccountDto`).
+- 2026-10-15: backend implementado en `feature/pedidos-sin-cotizacion` (17 tareas del plan). Un pedido externo
+  con estado de pago distinto de pendiente no exige comprobantes (el pago vive en la plataforma); el manual y
+  el convertido sí. La auditoría de un pedido externo la firma el actor `Integration`.

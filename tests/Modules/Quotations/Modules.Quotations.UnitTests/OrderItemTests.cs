@@ -14,8 +14,12 @@ public sealed class OrderItemTests
     {
         var party = OrderParty.Create(OrderId, QuotationPartyRole.Shipping, new QuotationPartyDetails
         {
-            Name = "Bodega", Phone = "3001234567", Email = "bodega@x.co", Address = "Cl 1 # 2-3",
-            DepartmentId = Guid.CreateVersion7(), CityId = Guid.CreateVersion7(),
+            Name = "Bodega",
+            Phone = "3001234567",
+            Email = "bodega@x.co",
+            Address = "Cl 1 # 2-3",
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = Guid.CreateVersion7(),
         });
         Assert.True(party.IsComplete);
 
@@ -28,7 +32,8 @@ public sealed class OrderItemTests
     {
         var party = OrderParty.Create(OrderId, QuotationPartyRole.Shipping, new QuotationPartyDetails
         {
-            Name = "Bodega", IdentificationNumber = "900.123.456-1",
+            Name = "Bodega",
+            IdentificationNumber = "900.123.456-1",
         });
 
         Assert.Null(party.IdentificationNumber);
