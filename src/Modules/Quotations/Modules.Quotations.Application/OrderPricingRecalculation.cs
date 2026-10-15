@@ -37,15 +37,12 @@ internal static class OrderPricingRecalculation
             tenantId,
             order.Items.Select(item => item.ProductId).Distinct().ToArray(),
             cancellationToken);
-        var scalesByProduct = order.Items
-            .Select(item => item.ProductId)
-            .Distinct()
-            .ToDictionary(
-                productId => productId,
-                productId => products.TryGetValue(productId, out var product)
-                    ? product.Scales
-                    : []);
+        // A diferencia del cotizador, una línea cuyo producto el catálogo ya no devuelve queda fuera
+        // de la pasada: el pedido ya está vendido y, sin escalas contra las que recalcular, conserva el
+        // descuento con el que se vendió. Darle escalas vacías lo bajaría a 0 % al editar otra línea.
+        var scalesByProduct = products.ToDictionary(entry => entry.Key, entry => entry.Value.Scales);
         var lines = order.Items
+            .Where(item => scalesByProduct.ContainsKey(item.ProductId))
             .Select(item => new QuotationPricingLine(item.Id.Value, item.ProductId, item.Quantity))
             .ToArray();
 
