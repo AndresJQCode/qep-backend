@@ -70,6 +70,14 @@ public interface IMessagingCustomerDirectory
     /// aparece: el detalle de la campaña la omite.</summary>
     Task<IReadOnlyList<MessagingTagRef>> FindTagsAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, CancellationToken cancellationToken);
 
+    /// <summary>Spec qep-frontend 2026-10-15: los clientes con esa etiqueta, para <c>customer_id = ANY(@ids)</c> del filtro de la bandeja.
+    /// Con tope, como la búsqueda por nombre.</summary>
+    Task<IReadOnlyList<Guid>> FindIdsByTagAsync(Guid tenantId, Guid tagId, CancellationToken cancellationToken);
+
+    /// <summary>Las etiquetas de los clientes de una página, en una llamada: los chips de cada fila.</summary>
+    Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessagingTagRef>>> FindTagsByCustomerAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
+
     /// <summary>§4.4 y decisión 10: Meta respondió 131050. Idempotente; el origen queda en <c>meta</c>.</summary>
     Task MarkMarketingOptOutAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
 

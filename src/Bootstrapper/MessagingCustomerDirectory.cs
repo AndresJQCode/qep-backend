@@ -16,6 +16,10 @@ internal sealed partial class MessagingCustomerDirectory(
     /// <summary>El tope de <c>FindPhonesByNameAsync</c> (spec §6.5); el puerto de Customers no tiene default.</summary>
     public const int NameCap = 200;
 
+    /// <summary>El tope del filtro por etiqueta de la bandeja: 5000 ids en <c>ANY(@ids)</c> siguen siendo una sola consulta barata. Una
+    /// etiqueta con más clientes recorta el filtro, el mismo compromiso que la búsqueda por nombre.</summary>
+    public const int TagCap = 5000;
+
     public async Task<IReadOnlyDictionary<string, CustomerRefDto>> MatchAsync(Guid tenantId, IReadOnlyCollection<string> waIds, CancellationToken cancellationToken)
     {
         var matches = await phones.MatchAsync(tenantId, waIds.Select(waId => "+" + waId).ToArray(), cancellationToken);
@@ -77,6 +81,15 @@ internal sealed partial class MessagingCustomerDirectory(
 
     public async Task<IReadOnlyList<MessagingTagRef>> FindTagsAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, CancellationToken cancellationToken) =>
         [.. (await tagLookup.FindAsync(tenantId, tagIds, cancellationToken)).Select(tag => new MessagingTagRef(tag.Id, tag.Name, tag.Color))];
+
+    public Task<IReadOnlyList<Guid>> FindIdsByTagAsync(Guid tenantId, Guid tagId, CancellationToken cancellationToken) =>
+        tagLookup.FindCustomerIdsAsync(tenantId, tagId, TagCap, cancellationToken);
+
+    public async Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessagingTagRef>>> FindTagsByCustomerAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+        (await tagLookup.FindForCustomersAsync(tenantId, customerIds, cancellationToken)).ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlyList<MessagingTagRef>)[.. pair.Value.Select(tag => new MessagingTagRef(tag.Id, tag.Name, tag.Color))]);
 
     public Task MarkMarketingOptOutAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
         whatsApp.MarkMarketingOptOutAsync(tenantId, customerId, cancellationToken);

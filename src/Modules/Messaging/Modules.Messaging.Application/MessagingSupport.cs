@@ -62,8 +62,18 @@ public sealed class ConversationSummaryBuilder(
             ? new Dictionary<Guid, string>()
             : await memberNames.FindAsync(tenantId, assignees, cancellationToken);
         var me = assignees.Length == 0 ? null : await caller.FindAsync(tenantId, cancellationToken);
-        return rows.Select(row => ToSummary(row, names, byId, byPhone, assigneeNames, me)).ToArray();
+        // Spec qep-frontend 2026-10-15: los chips, una consulta por página para todos los clientes resueltos.
+        var customerIds = byId.Keys.Concat(byPhone.Values.Select(customer => customer.Id)).Distinct().ToArray();
+        var tags = customerIds.Length == 0
+            ? new Dictionary<Guid, IReadOnlyList<MessagingTagRef>>()
+            : await customers.FindTagsByCustomerAsync(tenantId, customerIds, cancellationToken);
+        var tagged = byId.ToDictionary(pair => pair.Key, pair => WithTags(pair.Value, tags));
+        var taggedByPhone = byPhone.ToDictionary(pair => pair.Key, pair => WithTags(pair.Value, tags), StringComparer.Ordinal);
+        return rows.Select(row => ToSummary(row, names, tagged, taggedByPhone, assigneeNames, me)).ToArray();
     }
+
+    private static CustomerRefDto WithTags(CustomerRefDto customer, IReadOnlyDictionary<Guid, IReadOnlyList<MessagingTagRef>> tags) =>
+        tags.TryGetValue(customer.Id, out var found) ? customer with { Tags = found } : customer;
 
     public static ConversationSummary ToSummary(
         ConversationRow row,
