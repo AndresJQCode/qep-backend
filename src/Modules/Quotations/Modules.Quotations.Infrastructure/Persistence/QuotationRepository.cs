@@ -227,6 +227,25 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         return found.Select(id => id.Value).ToHashSet();
     }
 
+    public async Task<IReadOnlyDictionary<QuotationId, string>> FindNumbersAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken)
+    {
+        if (quotationIds.Count == 0)
+        {
+            return new Dictionary<QuotationId, string>();
+        }
+
+        var ids = quotationIds.ToArray();
+        var rows = await dbContext.Quotations
+            .AsNoTracking()
+            .Where(quotation => quotation.TenantId == tenantId && ids.Contains(quotation.Id))
+            .Select(quotation => new { quotation.Id, quotation.QuotationNumber })
+            .ToListAsync(cancellationToken);
+        return rows.ToDictionary(row => row.Id, row => row.QuotationNumber);
+    }
+
     public void Add(Quotation quotation) => dbContext.Quotations.Add(quotation);
 
     public void AddHistoryEntry(QuotationHistoryEntry entry) =>

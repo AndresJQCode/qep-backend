@@ -185,6 +185,15 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
                 ? new HashSet<Guid> { quotation.Id.Value }
                 : []);
 
+    public Task<IReadOnlyDictionary<QuotationId, string>> FindNumbersAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<QuotationId, string>>(
+            quotationIds.Contains(quotation.Id)
+                ? new Dictionary<QuotationId, string> { [quotation.Id] = quotation.QuotationNumber }
+                : new Dictionary<QuotationId, string>());
+
     public Task<(IReadOnlyList<Quotation> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,

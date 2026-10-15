@@ -92,6 +92,13 @@ public interface IQuotationRepository
         IReadOnlyCollection<QuotationId> quotationIds,
         CancellationToken cancellationToken);
 
+    /// <summary>El número de cada cotización, por id, en una sola consulta: lo que la lista de pedidos
+    /// muestra como enlace a la cotización de origen (spec 2026-10-15 §6.1).</summary>
+    Task<IReadOnlyDictionary<QuotationId, string>> FindNumbersAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken);
+
     void Add(Quotation quotation);
 
     /// <summary>

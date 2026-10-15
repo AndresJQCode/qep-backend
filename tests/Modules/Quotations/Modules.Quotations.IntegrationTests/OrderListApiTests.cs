@@ -17,6 +17,37 @@ public sealed class OrderListApiTests
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
+    // Spec 2026-10-15 §6.1: el filtro por cliente y el de origen aplican sobre columnas del pedido.
+    [Fact]
+    public async Task ListFiltersByClientAndSourceOnTheOrderItself()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var otherClientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var first = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        await ConvertToOrderAsync(client, tenantId, first.Id);
+        var second = await CreateSentQuotationAsync(client, factory, tenantId, otherClientId, productId);
+        await ConvertToOrderAsync(client, tenantId, second.Id);
+
+        var page = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?clientId={clientId}&source=Quotation", TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(page!.Items);
+        Assert.Equal((clientId, "Quotation", first.QuotationNumber), (row.ClientId, row.Source, row.QuotationNumber));
+        Assert.Null(row.ExternalReference);
+
+        var none = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?source=Manual", TestContext.Current.CancellationToken);
+        Assert.Empty(none!.Items);
+
+        var invalid = await client.GetAsync($"{OrdersUrl(tenantId)}?source=Telegram", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
+    }
+
     [Fact]
     public async Task ListReturnsTheOrderWithItsClientAdvisorAndTotalsResolved()
     {
