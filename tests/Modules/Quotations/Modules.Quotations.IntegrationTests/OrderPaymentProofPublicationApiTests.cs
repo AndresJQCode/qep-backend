@@ -218,8 +218,9 @@ public sealed class OrderPaymentProofPublicationApiTests
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
         Assert.Matches(PublicKeyPattern, Assert.Single(factory.PublicObjectStorage.DeletedKeys));
         Assert.Empty(factory.PublicObjectStorage.Copies);
-        var order = await client.GetFromJsonAsync<OrderResponse>(
-            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken);
+        // GET /quotations/{id}/order responde el detalle desde el spec 2026-10-15 (D-O7).
+        var order = (await client.GetFromJsonAsync<OrderDetailResponse>(
+            OrderUrl(tenantId, quotation.Id), TestContext.Current.CancellationToken))?.Order;
         Assert.NotNull(order);
         Assert.Empty(order.PaymentProofs);
         Assert.Equal("PaymentPending", order.PaymentStatus);
@@ -1277,7 +1278,7 @@ public sealed class OrderPaymentProofPublicationApiTests
                 proofFileIds.Select(fileId => new OrderPaymentProofRequest(fileId, 10_000m)).ToArray()),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
-        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
         Assert.NotNull(order);
         return order;
     }
