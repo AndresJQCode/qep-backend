@@ -23,6 +23,19 @@ public static class WhatsAppCloudFieldKeys
     public const string RegistrationPin = "registrationPin";
 }
 
+/// <summary>Spec 2026-10-14 §6.1. <see cref="Username"/> y <see cref="AccountName"/> son de sólo lectura para la
+/// pantalla (los refresca el probador); <see cref="IgUserId"/>, <see cref="TokenExpiresAt"/> y
+/// <see cref="AccessToken"/> son internos: los escribe el handler de Instagram Login y el worker de refresco.
+/// <see cref="TokenExpiresAt"/> viaja en ISO 8601 (<c>O</c>, UTC): el worker lo lee para saber cuándo refrescar.</summary>
+public static class InstagramFieldKeys
+{
+    public const string Username = "username";
+    public const string AccountName = "accountName";
+    public const string IgUserId = "igUserId";
+    public const string TokenExpiresAt = "tokenExpiresAt";
+    public const string AccessToken = "accessToken";
+}
+
 /// <summary>
 /// La lista cerrada de proveedores, como <see cref="TenantModuleKeys.All"/> (spec 2026-10-08,
 /// «Catálogo»). Cada proveedor entra con el spec de su consumidor, porque sin módulo consumidor nunca
@@ -106,7 +119,40 @@ public static class IntegrationProviders
         maxConnections: 5,
         onboarding: ProviderOnboarding.MetaEmbeddedSignup);
 
-    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud];
+    /// <summary>Spec 2026-10-14 §6.1: Instagram (Meta), con Instagram Login. Lo consume <c>messaging</c>; tope 5 por
+    /// tenant, como <see cref="WhatsAppCloud"/>. El id de la cuenta es numérico (el IGSID del negocio); el token es
+    /// un secreto interno que nunca escribe una persona.</summary>
+    public static readonly IntegrationProvider Instagram = new(
+        "instagram",
+        "Instagram (Meta)",
+        IntegrationCategory.Messaging,
+        [TenantModuleKeys.Messaging],
+        [
+            new FieldDefinition(
+                InstagramFieldKeys.Username, "Usuario", FieldKind.Text,
+                required: false, maxLength: 64, pattern: null,
+                invalidMessage: "El usuario que devolvió Meta no tiene una forma válida."),
+            new FieldDefinition(
+                InstagramFieldKeys.AccountName, "Nombre de la cuenta", FieldKind.Text,
+                required: false, maxLength: 256, pattern: null,
+                invalidMessage: "El nombre que devolvió Meta no tiene una forma válida."),
+            new FieldDefinition(
+                InstagramFieldKeys.IgUserId, "Id de la cuenta en Meta", FieldKind.Text,
+                required: false, maxLength: 64, pattern: @"^[0-9]{1,64}\z",
+                invalidMessage: "El id de la cuenta tiene que ser numérico.", isInternal: true),
+            new FieldDefinition(
+                InstagramFieldKeys.TokenExpiresAt, "Vencimiento del token", FieldKind.Text,
+                required: false, maxLength: 40, pattern: null,
+                invalidMessage: "El vencimiento del token no tiene una forma válida.", isInternal: true),
+            new FieldDefinition(
+                InstagramFieldKeys.AccessToken, "Token de acceso", FieldKind.Secret,
+                required: false, maxLength: 2048, pattern: null,
+                invalidMessage: "El token que devolvió Meta no tiene una forma válida.", isInternal: true),
+        ],
+        maxConnections: 5,
+        onboarding: ProviderOnboarding.InstagramLogin);
+
+    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram];
 
     /// <summary>Ordinal, como el <c>CHECK</c>: <c>"Zenvia"</c> no es <c>"zenvia"</c>.</summary>
     public static IntegrationProvider? Find(string? key) =>

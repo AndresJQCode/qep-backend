@@ -12,6 +12,16 @@ internal sealed record ResolvedTemplate(MessageTemplateDto Template, IReadOnlyDi
 /// </summary>
 internal sealed class TemplateOutbound(OutboundGuards guards, IWhatsAppCloudClient meta, IMessageTemplates templates, IMessagingCustomerDirectory customers)
 {
+    /// <summary>Spec 2026-10-14 §3 y §5.2: las plantillas son de WhatsApp. En Instagram no existen, y el 422 lo dice antes de tocar
+    /// el catálogo, el estado o el dueño.</summary>
+    public static void EnsureWhatsApp(ConversationChannel channel)
+    {
+        if (channel != ConversationChannel.WhatsApp)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.ChannelUnsupported, "Templates exist only on WhatsApp.");
+        }
+    }
+
     public OutboundGuards Guards => guards;
 
     public async Task<ResolvedTemplate> ResolveAsync(

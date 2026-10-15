@@ -146,6 +146,16 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("identification_type");
 
+                    b.Property<string>("InstagramUserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("instagram_user_id");
+
+                    b.Property<string>("InstagramUsername")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("instagram_username");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
@@ -239,6 +249,10 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
 
                     b.HasIndex(new[] { "TenantId" }, "IX_customers_tenant_incomplete")
                         .HasFilter("completeness = 'Incomplete'");
+
+                    b.HasIndex(new[] { "TenantId", "InstagramUserId" }, "IX_customers_tenant_instagram_user_id")
+                        .IsUnique()
+                        .HasFilter("instagram_user_id IS NOT NULL");
 
                     b.HasIndex(new[] { "TenantId", "WhatsAppUserId" }, "IX_customers_tenant_whatsapp_user_id")
                         .IsUnique()

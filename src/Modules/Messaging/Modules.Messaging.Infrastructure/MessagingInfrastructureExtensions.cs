@@ -63,6 +63,16 @@ public static class MessagingInfrastructureExtensions
             .ConfigurePrimaryHttpMessageHandler(() => WhatsAppCloudClient.CreatePrimaryHandler())
             .RemoveAllLoggers();
         services.AddSingleton<IWhatsAppCloudClient, WhatsAppCloudClient>();
+        // Spec 2026-10-14 §6.2: la Messaging API de Instagram (graph.instagram.com, 10 s) y la descarga de adjuntos entrantes desde el
+        // CDN de Meta (con redirecciones, 5 min). Decisión 16: el transcodificador de notas de voz.
+        services.AddHttpClient(InstagramClient.HttpClientName, InstagramClient.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => InstagramClient.CreatePrimaryHandler())
+            .RemoveAllLoggers();
+        services.AddHttpClient(InstagramClient.DownloadHttpClientName, InstagramClient.ConfigureDownloadClient)
+            .ConfigurePrimaryHttpMessageHandler(() => InstagramClient.CreateDownloadHandler())
+            .RemoveAllLoggers();
+        services.AddSingleton<IInstagramClient, InstagramClient>();
+        services.AddSingleton<IOpusTranscoder, ConcentusOpusTranscoder>();
         services.AddScoped<IOutboundMessages, OutboundMessages>();
         // Spec 2026-10-14 D-T8: el catálogo lee del espejo; el refresco es el mismo servicio que usa la pantalla de administración.
         services.AddScoped<TemplateMirrorSync>();
@@ -94,6 +104,8 @@ public static class MessagingInfrastructureExtensions
 
         // Spec 2026-10-09 §9. Meta:App se valida en Integrations (P1); acá sólo se bindea lo que se usa.
         services.AddOptions<MessagingMetaOptions>().Bind(configuration.GetSection(MessagingMetaOptions.SectionName));
+        // Spec 2026-10-14 §9: Meta:Instagram se valida en Integrations; acá sólo el secreto del webhook y la versión.
+        services.AddOptions<MessagingInstagramOptions>().Bind(configuration.GetSection(MessagingInstagramOptions.SectionName));
         services.AddOptions<MessagingWebhookOptions>()
             .Bind(configuration.GetSection(MessagingWebhookOptions.SectionName))
             .ValidateOnStart();

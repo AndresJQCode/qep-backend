@@ -6,6 +6,14 @@ public enum ConversationStatus
     Resolved,
 }
 
+/// <summary>Spec 2026-10-14 decisión 4: por dónde llega y sale la conversación. Lo determina la conexión y lo escribe la
+/// ingesta; se guarda por nombre. En Instagram <c>user_id</c> es el IGSID y <c>wa_id</c> es siempre <c>null</c>.</summary>
+public enum ConversationChannel
+{
+    WhatsApp,
+    Instagram,
+}
+
 /// <summary>Spec 2026-10-09 §7.1: en <c>messages</c> viajan como smallint con estos valores (excepción
 /// documentada a los enums por texto). La API sigue mandando los nombres.</summary>
 public enum MessageDirection
@@ -34,6 +42,10 @@ public enum MessageKind
 
     /// <summary>Spec 2026-10-10 §6.1.5: un evento del sistema en el hilo; nunca va a WhatsApp.</summary>
     Event = 13,
+
+    /// <summary>Spec 2026-10-14 D-I4: una publicación, reel o historia de Instagram compartida en el DM. El texto es la URL
+    /// que Meta manda; no se copia el medio.</summary>
+    Share = 14,
 }
 
 /// <summary>El orden numérico <b>es</b> el de avance (§7.5): un acuse nunca retrocede.</summary>

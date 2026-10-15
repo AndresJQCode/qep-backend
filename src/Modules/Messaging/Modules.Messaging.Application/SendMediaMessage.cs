@@ -47,6 +47,7 @@ public sealed class SendMediaMessageHandler(
     IMessageQueries messages,
     IOutboundMessages outbound,
     IWhatsAppCloudClient meta,
+    IInstagramClient instagram,
     IMessagingMediaStore store,
     IMessagingUploadStaging staging,
     IMessagingImageCompressor compressor,
@@ -64,13 +65,18 @@ public sealed class SendMediaMessageHandler(
     private const string GenericImageName = "image.jpg";
     private const string GenericDocumentName = "document";
 
+    /// <summary>Spec 2026-10-14 decisión 12 y §11: cuánto vive la URL firmada con la que Meta descarga el adjunto de Instagram. Más
+    /// que los 10 s del envío, por si Meta la baja después de responder.</summary>
+    public static readonly TimeSpan InstagramDownloadLifetime = TimeSpan.FromMinutes(10);
+
     // CS9124: los parámetros que van a la guarda no se usan en los métodos; el reloj y el reclamo se piden a ella.
     private readonly OutboundGuards _guards = new(
         conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock);
 
     /// <summary>Lo que quedó de la preparación: el medio ya subido (o la falla de la subida) y los bytes finales si es una imagen.</summary>
+    /// <paramref name="Upload"/> es <c>null</c> en Instagram: Meta descarga el adjunto desde R2 (decisión 12), no hay subida previa.</summary>
     private sealed record Prepared(
-        string MimeType, string FileName, long SizeBytes, string? Sha256Hex, byte[]? Compressed, MessagingGraphResult<string> Upload);
+        string MimeType, string FileName, long SizeBytes, string? Sha256Hex, byte[]? Compressed, MessagingGraphResult<string>? Upload);
 
     public async Task<MessageDto> HandleAsync(SendMediaMessageCommand command, CancellationToken cancellationToken)
     {
@@ -94,6 +100,13 @@ public sealed class SendMediaMessageHandler(
             throw new MessagingDomainException(MessagingErrorCodes.MediaUnsupportedFormat, "Only JPEG and PNG images and PDF, Word and Excel documents can be sent.");
         }
 
+        // Spec 2026-10-14 decisión 12: Instagram no acepta Word ni Excel.
+        var channel = conversation.Channel;
+        if (!OutboundMediaPolicy.IsAllowed(declared, channel))
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.MediaUnsupportedFormat, "Instagram only accepts JPEG and PNG images and PDF documents.");
+        }
+
         var permit = await _guards.AdmitAsync(command.TenantId, target, command.ReplyTo, cancellationToken);
 
         // La clave sale del contexto autenticado: el uploadId de otro tenant, conversación o miembro no existe.
@@ -108,13 +121,24 @@ public sealed class SendMediaMessageHandler(
         }
 
         // R10: el PUT prefirmado no impone tope; el stat sobre el objeto real manda.
-        if (staged.SizeBytes <= 0 || staged.SizeBytes > OutboundMediaPolicy.MaxBytesOf(declared))
+        if (staged.SizeBytes <= 0 || staged.SizeBytes > OutboundMediaPolicy.MaxBytesOf(declared, channel))
         {
             await DiscardAsync(stagingKey);
-            throw new MessagingDomainException(MessagingErrorCodes.MediaTooLarge, "The file is bigger than WhatsApp allows for its type.");
+            throw new MessagingDomainException(MessagingErrorCodes.MediaTooLarge, "The file is bigger than the channel allows for its type.");
         }
 
-        var sender = await _guards.ResolveSenderAsync(command.TenantId, conversation.ConnectionId, cancellationToken);
+        var isInstagram = channel == ConversationChannel.Instagram;
+        MessagingSender? sender = null;
+        InstagramSender? igSender = null;
+        if (isInstagram)
+        {
+            igSender = await _guards.ResolveInstagramSenderAsync(command.TenantId, conversation.ConnectionId, cancellationToken);
+        }
+        else
+        {
+            sender = await _guards.ResolveSenderAsync(command.TenantId, conversation.ConnectionId, cancellationToken);
+        }
+
         var prepared = await PrepareAsync(sender, stagingKey, staged, fileName, extension, cancellationToken);
 
         var caption = string.IsNullOrWhiteSpace(command.Caption) ? null : command.Caption.Trim();
@@ -156,14 +180,26 @@ public sealed class SendMediaMessageHandler(
         DateTimeOffset answeredAt;
         try
         {
-            var mediaId = prepared.Upload is { Succeeded: true, Value: { Length: > 0 } uploaded } ? uploaded : null;
-            var callback = SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D");
-            var recipient = SendTarget.For(conversation.UserId, conversation.WaId);
-            var result = mediaId is null
-                ? SendAudioMessageHandler.FromUploadFailure(prepared.Upload.Failure)
-                : kind == MessageKind.Image
-                    ? await meta.SendImageAsync(sender, recipient, mediaId, caption, callback, permit.Quoted?.Wamid, CancellationToken.None)
-                    : await meta.SendDocumentAsync(sender, recipient, mediaId, prepared.FileName, caption, callback, permit.Quoted?.Wamid, CancellationToken.None);
+            string? mediaId = null;
+            SendResult result;
+            if (isInstagram)
+            {
+                // Spec 2026-10-14 decisión 12: Meta baja el adjunto desde una URL firmada de R2, de vida corta. Ni la leyenda ni la cita
+                // viajan: la API de Instagram no los tiene en un adjunto; el pie queda guardado y se muestra en QEP.
+                result = await SendInstagramAttachmentAsync(igSender!, conversation.UserId!, finalKey, OutboundMediaPolicy.InstagramAttachmentType(declared));
+            }
+            else
+            {
+                mediaId = prepared.Upload is { Succeeded: true, Value: { Length: > 0 } uploaded } ? uploaded : null;
+                var callback = SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D");
+                var recipient = SendTarget.For(conversation.UserId, conversation.WaId);
+                result = mediaId is null
+                    ? SendAudioMessageHandler.FromUploadFailure(prepared.Upload?.Failure)
+                    : kind == MessageKind.Image
+                        ? await meta.SendImageAsync(sender!, recipient, mediaId, caption, callback, permit.Quoted?.Wamid, CancellationToken.None)
+                        : await meta.SendDocumentAsync(sender!, recipient, mediaId, prepared.FileName, caption, callback, permit.Quoted?.Wamid, CancellationToken.None);
+            }
+
             answeredAt = _guards.UtcNow;
 
             // Un rollback por credencial deja sin fila lo que escribió una fila nueva: se borra de R2. En un reintento de un Failed
@@ -186,11 +222,29 @@ public sealed class SendMediaMessageHandler(
             CancellationToken.None);
     }
 
+    /// <summary>Spec 2026-10-14 decisión 12: la URL firmada y el envío. Si R2 no firma, no se envió nada: cae como no confirmado y la
+    /// fila queda Failed, con el objeto ya escrito (el reintento con el mismo clientId lo sobrescribe).</summary>
+    private async Task<SendResult> SendInstagramAttachmentAsync(InstagramSender sender, string recipientId, string key, string attachmentType)
+    {
+        Uri url;
+        try
+        {
+            url = await store.CreateDownloadUrlAsync(key, InstagramDownloadLifetime, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            return new SendResult(SendOutcome.NotSent, null, null, null);
+        }
+
+        return await instagram.SendAttachmentAsync(sender, recipientId, attachmentType, url, CancellationToken.None);
+    }
+
     /// <summary>Un solo GET del staging: la cabecera decide el formato (R9) y el resto sigue por el mismo stream. La imagen se
     /// comprime y sube desde memoria (≤ 1600 px, unos cientos de KB); el documento va de R2 a Meta sin pasar por memoria, con el
-    /// SHA-256 calculado al pasar (<c>null</c> si Meta cortó antes de leerlo entero).</summary>
+    /// SHA-256 calculado al pasar (<c>null</c> si Meta cortó antes de leerlo entero). Con <paramref name="sender"/> en <c>null</c>
+    /// (Instagram) no hay subida a Meta: el documento sólo se verifica y se mide.</summary>
     private async Task<Prepared> PrepareAsync(
-        MessagingSender sender, string stagingKey, StagedUpload staged, string fileName, string extension, CancellationToken cancellationToken)
+        MessagingSender? sender, string stagingKey, StagedUpload staged, string fileName, string extension, CancellationToken cancellationToken)
     {
         var opened = await store.OpenReadAsync(stagingKey, cancellationToken) ?? throw UploadNotFound();
         await using var source = opened.Content;
@@ -206,6 +260,12 @@ public sealed class SendMediaMessageHandler(
         if (!OutboundMediaPolicy.IsImage(format))
         {
             var mimeType = OutboundMediaPolicy.MimeTypeOf(format);
+            if (sender is null)
+            {
+                // Instagram: el documento se promueve en R2 tal cual; el hash no hace falta para enviar y no se lee entero acá.
+                return new Prepared(mimeType, fileName, staged.SizeBytes, null, null, null);
+            }
+
             var upload = await meta.UploadMediaAsync(sender, whole, staged.SizeBytes, mimeType, GenericDocumentName + extension, cancellationToken);
             return new Prepared(mimeType, fileName, staged.SizeBytes, whole.BytesRead == staged.SizeBytes ? whole.FinishHex() : null, null, upload);
         }
@@ -217,8 +277,13 @@ public sealed class SendMediaMessageHandler(
             throw new MessagingDomainException(MessagingErrorCodes.MediaInvalidImage, "The image could not be read.");
         }
 
-        using var content = new MemoryStream(compressed.Content, writable: false);
-        var uploaded = await meta.UploadMediaAsync(sender, content, compressed.Content.Length, ImageMimeType, GenericImageName, cancellationToken);
+        MessagingGraphResult<string>? uploaded = null;
+        if (sender is not null)
+        {
+            using var content = new MemoryStream(compressed.Content, writable: false);
+            uploaded = await meta.UploadMediaAsync(sender, content, compressed.Content.Length, ImageMimeType, GenericImageName, cancellationToken);
+        }
+
         // Se guarda con el nombre base y .jpg: lo que viaja y lo que se guarda es la comprimida (R12).
         return new Prepared(
             ImageMimeType, Path.GetFileNameWithoutExtension(fileName) + ".jpg", compressed.Content.Length,

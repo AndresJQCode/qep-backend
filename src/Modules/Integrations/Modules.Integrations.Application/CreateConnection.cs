@@ -41,8 +41,8 @@ public sealed class CreateConnectionValidator : AbstractValidator<CreateConnecti
                 return;
             }
 
-            // Spec 2026-10-09 §6.1: el formulario genérico no crea una conexión de Meta (quedaría sin token).
-            if (provider.Onboarding == ProviderOnboarding.MetaEmbeddedSignup)
+            // Spec 2026-10-09 §6.1 y 2026-10-14: el formulario genérico no crea una conexión de Meta (quedaría sin token).
+            if (provider.IsBackendOwned)
             {
                 context.AddFailure(new FluentValidation.Results.ValidationFailure(
                     "providerKey", ConnectionInputRules.ProviderUsesMetaSignupMessage));

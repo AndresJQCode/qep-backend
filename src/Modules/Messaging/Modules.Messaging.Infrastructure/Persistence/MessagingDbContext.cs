@@ -19,7 +19,11 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     public const string Schema = "messaging";
 
     public const string DirectionCheck = "direction IN (1, 2, 3)";
-    public const string KindCheck = "kind BETWEEN 1 AND 13";
+    /// <summary>Spec 2026-10-14 D-I4: 14 es <c>Share</c>.</summary>
+    public const string KindCheck = "kind BETWEEN 1 AND 14";
+
+    /// <summary>Spec 2026-10-14 decisión 4.</summary>
+    public const string ChannelCheck = "channel IN ('WhatsApp','Instagram')";
     public const string StatusCheck = "status BETWEEN 1 AND 4";
 
     /// <summary>Spec 2026-10-10 §7.1: un evento es System y Event a la vez, nunca uno sin el otro.</summary>
@@ -98,11 +102,16 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
             table.HasCheckConstraint("CK_conversations_unread", "unread_count >= 0");
             table.HasCheckConstraint("CK_conversations_identity", IdentityCheck);
             table.HasCheckConstraint("CK_conversations_assignment", AssignmentCheck);
+            table.HasCheckConstraint("CK_conversations_channel", ChannelCheck);
         });
         conversation.HasKey(value => value.Id);
         conversation.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
         conversation.Property(value => value.TenantId).HasColumnName("tenant_id");
         conversation.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        // Spec 2026-10-14 decisión 4: por nombre, con default para las filas que ya existían (todas de WhatsApp). El centinela hace
+        // que EF escriba siempre la columna, también cuando vale WhatsApp (el 0 del enum).
+        conversation.Property(value => value.Channel).HasColumnName("channel").HasConversion<string>().HasMaxLength(16)
+            .HasDefaultValue(ConversationChannel.WhatsApp).HasSentinel((ConversationChannel)(-1));
         conversation.Property(value => value.UserId).HasColumnName("user_id").HasMaxLength(Conversation.UserIdMaxLength);
         conversation.Property(value => value.WaId).HasColumnName("wa_id").HasMaxLength(Conversation.WaIdMaxLength);
         conversation.Property(value => value.Username).HasColumnName("username").HasMaxLength(Conversation.UsernameMaxLength);
@@ -155,6 +164,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.HasIndex(value => value.WaId, "IX_conversations_wa_id_trgm")
             .HasMethod("gin").HasOperators("gin_trgm_ops");
         conversation.HasIndex(value => value.Username, "IX_conversations_username_trgm").HasMethod("gin").HasOperators("gin_trgm_ops");
+        // Spec 2026-10-14 §5.2: el filtro por canal de la lista, con la misma forma que el índice de la lista.
+        conversation.HasIndex(value => new { value.TenantId, value.Channel, value.Status, value.LastActivityAt, value.Id }, "IX_conversations_tenant_channel_status_activity")
+            .IsDescending(false, false, false, true, true);
     }
 
     private static void ConfigureMessage(ModelBuilder modelBuilder)
@@ -225,6 +237,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         media.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(0);
         media.Property(value => value.NextAttemptAt).HasColumnName("next_attempt_at");
         media.Property(value => value.LastError).HasColumnName("last_error").HasMaxLength(256);
+        // Spec 2026-10-14 §6.2: la URL pública (firmada, con vencimiento) del adjunto de Instagram; null en WhatsApp.
+        media.Property(value => value.SourceUrl).HasColumnName("source_url");
         media.HasIndex(value => value.NextAttemptAt).HasDatabaseName("IX_message_media_pending").HasFilter("stored_at IS NULL");
     }
 
@@ -396,6 +410,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         delivery.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(0);
         delivery.Property(value => value.ProcessedAt).HasColumnName("processed_at");
         delivery.Property(value => value.LastError).HasColumnName("last_error").HasMaxLength(512);
+        // Spec 2026-10-14 §6.2: con qué parser se procesa; las filas anteriores eran todas de WhatsApp.
+        delivery.Property(value => value.Provider).HasColumnName("provider").HasMaxLength(16).HasDefaultValue("whatsapp");
         delivery.HasIndex(value => value.BodySha256).IsUnique().HasDatabaseName("IX_webhook_deliveries_body_sha256");
         delivery.HasIndex(value => value.Id).HasDatabaseName("IX_webhook_deliveries_pending").HasFilter("processed_at IS NULL");
     }

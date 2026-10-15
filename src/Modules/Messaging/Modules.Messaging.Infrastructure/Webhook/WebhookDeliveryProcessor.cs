@@ -21,6 +21,7 @@ internal sealed partial class WebhookDeliveryProcessor(
     IMessagingConnectionDirectory directory,
     IMessagingCustomerDirectory customers,
     IMessagingAssignees assignees,
+    IInstagramClient instagram,
     IClock clock,
     MarketingOptOutButtons optOutButtons,
     ILogger<WebhookDeliveryProcessor> logger)
@@ -56,7 +57,16 @@ internal sealed partial class WebhookDeliveryProcessor(
     [LoggerMessage(Level = LogLevel.Warning, Message = "Webhook delivery {DeliveryId}: the marketing opt-out by button could not be recorded; the message was ingested anyway.")]
     private static partial void LogButtonOptOutFailed(ILogger logger, long deliveryId, Exception exception);
 
-    public async Task<DeliveryOutcome> ProcessAsync(long deliveryId, string payload, int attempts, CancellationToken cancellationToken)
+    public Task<DeliveryOutcome> ProcessAsync(long deliveryId, string payload, int attempts, CancellationToken cancellationToken) =>
+        ProcessAsync(deliveryId, WebhookProvider.WhatsApp, payload, attempts, cancellationToken);
+
+    /// <summary>Spec 2026-10-14 §6.2: la entrega sabe de qué producto vino (<c>provider</c>) y eso decide el parser.</summary>
+    public Task<DeliveryOutcome> ProcessAsync(long deliveryId, WebhookProvider provider, string payload, int attempts, CancellationToken cancellationToken) =>
+        provider == WebhookProvider.Instagram
+            ? ProcessInstagramAsync(deliveryId, payload, cancellationToken)
+            : ProcessWhatsAppAsync(deliveryId, payload, attempts, cancellationToken);
+
+    private async Task<DeliveryOutcome> ProcessWhatsAppAsync(long deliveryId, string payload, int attempts, CancellationToken cancellationToken)
     {
         var outcome = DeliveryOutcome.Processed;
         foreach (var change in WebhookPayloadParser.Parse(payload))

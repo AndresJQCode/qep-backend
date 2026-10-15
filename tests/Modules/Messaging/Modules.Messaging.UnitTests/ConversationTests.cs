@@ -179,3 +179,39 @@ public sealed class ConversationTests
         Assert.Equal(ConversationStatus.Resolved, conversation.Status);
     }
 }
+
+/// <summary>Spec 2026-10-14 decisión 4: el canal es un dato de la conversación y decide la forma de <c>user_id</c>.</summary>
+public sealed class ConversationChannelTests
+{
+    [Fact]
+    public void AnInstagramConversationTakesTheNumericIgsidAndNoPhone()
+    {
+        var conversation = Modules.Messaging.Domain.Conversation.StartWithUserId(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "1234567890123456", null, "Laura", DateTimeOffset.UtcNow,
+            Modules.Messaging.Domain.ConversationChannel.Instagram);
+
+        Assert.Equal(Modules.Messaging.Domain.ConversationChannel.Instagram, conversation.Channel);
+        Assert.Equal("1234567890123456", conversation.UserId);
+        Assert.Null(conversation.WaId);
+    }
+
+    [Theory]
+    [InlineData("CO.1349120865530274")]
+    [InlineData("")]
+    [InlineData("abc")]
+    public void AnInstagramConversationRejectsANonNumericUserId(string userId) =>
+        Assert.Throws<ArgumentException>(() => Modules.Messaging.Domain.Conversation.StartWithUserId(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), userId, null, "Laura", DateTimeOffset.UtcNow,
+            Modules.Messaging.Domain.ConversationChannel.Instagram));
+
+    [Fact]
+    public void AWhatsAppConversationStillTakesABsuidAndDefaultsToWhatsApp()
+    {
+        var conversation = Modules.Messaging.Domain.Conversation.StartWithUserId(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "CO.1349120865530274", "573001234567", "Laura", DateTimeOffset.UtcNow);
+
+        Assert.Equal(Modules.Messaging.Domain.ConversationChannel.WhatsApp, conversation.Channel);
+        Assert.False(Modules.Messaging.Domain.Conversation.IsValidUserId("1234567890123456", Modules.Messaging.Domain.ConversationChannel.WhatsApp));
+        Assert.True(Modules.Messaging.Domain.Conversation.IsValidUserId("1234567890123456", Modules.Messaging.Domain.ConversationChannel.Instagram));
+    }
+}

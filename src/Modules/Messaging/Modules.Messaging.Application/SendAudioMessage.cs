@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using BuildingBlocks.Application;
 using FluentValidation;
+using FluentValidation.Results;
 using Modules.Messaging.Domain;
 using Modules.Tenancy.Application;
 
@@ -44,6 +45,8 @@ public sealed class SendAudioMessageHandler(
     IMessageQueries messages,
     IOutboundMessages outbound,
     IWhatsAppCloudClient meta,
+    IInstagramClient instagram,
+    IOpusTranscoder transcoder,
     IMessagingMediaStore store,
     IMessagingConnectionDirectory connections,
     IMessagingMemberNames memberNames,
@@ -71,10 +74,20 @@ public sealed class SendAudioMessageHandler(
             return await _guards.ToDtoAsync(command.TenantId, OutboundGuards.ExistingRow(conversation.Id, sent, command.ClientId), cancellationToken);
         }
 
+        // Spec 2026-10-14 decisión 16: Instagram no acepta Opus; la nota pasa a WAV antes de admitir, para que una grabación que no
+        // decodifica sea un 422 del campo y no cambie el dueño. Se guarda y se envía el WAV: es lo que la persona recibió.
+        var isInstagram = conversation.Channel == ConversationChannel.Instagram;
+        var audio = command.Audio!;
+        var mimeType = OggOpusSniffer.MimeType;
+        if (isInstagram)
+        {
+            audio = Transcode(audio);
+            mimeType = InstagramAudio.WavMimeType;
+        }
+
         var permit = await _guards.AdmitAsync(command.TenantId, target, command.ReplyTo, cancellationToken);
         // El validador ya garantizó el audio: presente, de 1 B a 16 MB y OGG/Opus.
-        var audio = command.Audio!;
-        var media = new OutboundMedia(OggOpusSniffer.MimeType, audio.Length, Convert.ToHexStringLower(SHA256.HashData(audio)));
+        var media = new OutboundMedia(mimeType, audio.Length, Convert.ToHexStringLower(SHA256.HashData(audio)));
         var draft = new OutboundDraft(
             Guid.CreateVersion7(), conversation.Id, command.TenantId, conversation.ConnectionId, command.ClientId!.Value, Text: null, target.Member, permit.Now,
             permit.Quoted?.Id, permit.Quoted?.Wamid, MessageKind.Audio, media);
@@ -85,14 +98,23 @@ public sealed class SendAudioMessageHandler(
             return await _guards.ToDtoAsync(command.TenantId, OutboundGuards.ExistingRow(conversation.Id, inFlight, command.ClientId), cancellationToken);
         }
 
-        var sender = await _guards.ResolveSenderAsync(command.TenantId, conversation.ConnectionId, claim, cancellationToken);
+        MessagingSender? sender = null;
+        InstagramSender? igSender = null;
+        if (isInstagram)
+        {
+            igSender = await _guards.ResolveInstagramSenderAsync(command.TenantId, conversation.ConnectionId, claim, cancellationToken);
+        }
+        else
+        {
+            sender = await _guards.ResolveSenderAsync(command.TenantId, conversation.ConnectionId, claim, cancellationToken);
+        }
 
         // 1. R2, con la clave del reclamo: un reintento de un Failed reutiliza el messageId y sobrescribe el mismo objeto.
         var key = MessagingMediaKeys.For(command.TenantId, claim.MessageId);
         try
         {
             using var content = new MemoryStream(audio, writable: false);
-            await store.UploadAsync(key, content, audio.Length, OggOpusSniffer.MimeType, cancellationToken);
+            await store.UploadAsync(key, content, audio.Length, mimeType, cancellationToken);
         }
         catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
         {
@@ -104,17 +126,27 @@ public sealed class SendAudioMessageHandler(
         // 2 y 3. Desde acá, como el texto, todo va con CancellationToken.None: si Meta ya aceptó, cortar por la pestaña
         // cerrada borraría la fila y el reintento mandaría la nota dos veces. Una subida fallida no envió nada todavía, así
         // que entra a la misma tabla sin riesgo de duplicar.
-        string? mediaId;
+        string? mediaId = null;
         DateTimeOffset answeredAt;
         try
         {
-            var upload = await meta.UploadMediaAsync(sender, audio, OggOpusSniffer.MimeType, CancellationToken.None);
-            mediaId = upload is { Succeeded: true, Value: { Length: > 0 } uploaded } ? uploaded : null;
-            var result = mediaId is null
-                ? FromUploadFailure(upload.Failure)
-                : await meta.SendAudioAsync(
-                    sender, SendTarget.For(conversation.UserId, conversation.WaId), mediaId, SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D"),
-                    permit.Quoted?.Wamid, CancellationToken.None);
+            SendResult result;
+            if (isInstagram)
+            {
+                // Spec 2026-10-14 decisión 12: Meta baja el WAV desde una URL firmada de R2; no hay subida previa.
+                result = await SendInstagramAudioAsync(igSender!, conversation.UserId!, key);
+            }
+            else
+            {
+                var upload = await meta.UploadMediaAsync(sender!, audio, OggOpusSniffer.MimeType, CancellationToken.None);
+                mediaId = upload is { Succeeded: true, Value: { Length: > 0 } uploaded } ? uploaded : null;
+                result = mediaId is null
+                    ? FromUploadFailure(upload.Failure)
+                    : await meta.SendAudioAsync(
+                        sender!, SendTarget.For(conversation.UserId, conversation.WaId), mediaId, SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D"),
+                        permit.Quoted?.Wamid, CancellationToken.None);
+            }
+
             answeredAt = _guards.UtcNow;
 
             // 4. La tabla del texto. Un rollback por credencial deja sin fila lo que subió una fila nueva: se borra de R2. En
@@ -134,8 +166,46 @@ public sealed class SendAudioMessageHandler(
         return await _guards.ToDtoAsync(
             command.TenantId,
             new MessageRow(claim.MessageId, conversation.Id, MessageDirection.Outbound, MessageKind.Audio, null, null, null, MessageStatus.Sent, null, answeredAt, target.Member,
-                command.ClientId, new MessageMediaRow(OggOpusSniffer.MimeType, null), permit.Quoted?.Id),
+                command.ClientId, new MessageMediaRow(mimeType, null), permit.Quoted?.Id),
             CancellationToken.None);
+    }
+
+    /// <summary>Decisión 16: OGG/Opus → WAV. Un OGG que no decodifica es un 422 de <c>file</c>, como el que no es Opus; un WAV más
+    /// grande que el tope de Instagram es <c>media_too_large</c> (una nota de 16 MB de Opus serían horas de audio).</summary>
+    private byte[] Transcode(byte[] oggOpus)
+    {
+        byte[] wav;
+        try
+        {
+            wav = transcoder.ToWav(oggOpus);
+        }
+        catch (InvalidDataException)
+        {
+            throw new ValidationException([new ValidationFailure("file", "La nota de voz no se pudo leer. Graba de nuevo.")]);
+        }
+
+        if (wav.Length is 0 or > (int)InstagramAudio.MaxBytes)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.MediaTooLarge, "The voice note is bigger than Instagram allows.");
+        }
+
+        return wav;
+    }
+
+    private async Task<SendResult> SendInstagramAudioAsync(InstagramSender sender, string recipientId, string key)
+    {
+        Uri url;
+        try
+        {
+            url = await store.CreateDownloadUrlAsync(key, SendMediaMessageHandler.InstagramDownloadLifetime, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // Sin URL no se envió nada: la fila queda Failed sin riesgo de duplicar.
+            return new SendResult(SendOutcome.NotSent, null, null, null);
+        }
+
+        return await instagram.SendAttachmentAsync(sender, recipientId, InstagramAudio.AttachmentType, url, CancellationToken.None);
     }
 
     /// <summary>§6.3 paso 2: una subida fallida usa la tabla del envío. Un 4xx es un rechazo con su código (190/133010

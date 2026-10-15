@@ -51,6 +51,8 @@ public static class CustomersInfrastructureExtensions
         services.AddScoped<ICustomerPhoneDirectory, CustomerPhoneDirectory>();
         // Spec 2026-10-10 §6.2: el cliente de quien escribe por WhatsApp (asegurar, BSUID, nombres, búsqueda).
         services.AddScoped<ICustomerWhatsAppDirectory, CustomerWhatsAppDirectory>();
+        // Spec 2026-10-14 decisión 10: la ficha incompleta que nace de un DM de Instagram.
+        services.AddScoped<ICustomerInstagramDirectory, CustomerInstagramDirectory>();
         services.AddHostedService<CustomerPhoneBackfillWorker>();
 
         return services;

@@ -180,6 +180,12 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         customer.HasIndex(value => new { value.TenantId, value.WhatsAppUserId }, "IX_customers_tenant_whatsapp_user_id")
             .IsUnique().HasFilter("whatsapp_user_id IS NOT NULL");
         customer.HasIndex(value => value.TenantId, "IX_customers_tenant_incomplete").HasFilter("completeness = 'Incomplete'");
+        // Spec 2026-10-14 decisión 10: la identidad de Instagram, con el mismo esquema que la de WhatsApp. CustomersUnitOfWork la
+        // traduce por este nombre.
+        customer.Property(value => value.InstagramUserId).HasColumnName("instagram_user_id").HasMaxLength(Customer.InstagramUserIdMaxLength);
+        customer.Property(value => value.InstagramUsername).HasColumnName("instagram_username").HasMaxLength(Customer.InstagramUsernameMaxLength);
+        customer.HasIndex(value => new { value.TenantId, value.InstagramUserId }, "IX_customers_tenant_instagram_user_id")
+            .IsUnique().HasFilter("instagram_user_id IS NOT NULL");
 
         // La coleccion se lee por el campo de respaldo: el agregado la expone como
         // IReadOnlyCollection y EF no puede escribir en ella.

@@ -68,6 +68,9 @@ public sealed class CustomerWhatsAppDirectoryRaceTests
         public Task<Customer?> FindByWhatsAppUserIdAsync(Guid tenantId, string whatsAppUserId, CancellationToken cancellationToken) =>
             Task.FromResult(ByWhatsAppUserId.Count == 0 ? null : ByWhatsAppUserId.Dequeue());
 
+        public Task<Customer?> FindByInstagramUserIdAsync(Guid tenantId, string instagramUserId, CancellationToken cancellationToken) =>
+            Task.FromResult<Customer?>(null);
+
         public Task<Customer?> FindOldestByPhoneE164Async(Guid tenantId, string phoneE164, CancellationToken cancellationToken) =>
             Task.FromResult(ByPhone);
 

@@ -38,8 +38,35 @@ public sealed class IntegrationCatalogTests
         Assert.True(provider.FindField("registrationPin")!.IsSecret);
         Assert.Equal(@"^[0-9]{6}\z", provider.FindField("registrationPin")!.Pattern!.ToString());
         Assert.Null(provider.FindField("displayPhoneNumber")!.Pattern);
-        Assert.Equal([IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud], IntegrationProviders.All);
+        Assert.Equal([IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud, IntegrationProviders.Instagram], IntegrationProviders.All);
         Assert.Equal(ProviderOnboarding.Form, IntegrationProviders.Zenvia.Onboarding);
+    }
+
+    // Spec 2026-10-14 §6.1: la fila literal de Instagram. Lo consume messaging, se conecta con Instagram Login y los
+    // campos los llena el backend (username y accountName los refresca el probador; igUserId, tokenExpiresAt y el
+    // token son internos).
+    [Fact]
+    public void InstagramIsInTheCatalogWithItsFieldsAndOnboarding()
+    {
+        var provider = IntegrationProviders.Instagram;
+
+        Assert.Equal("instagram", provider.Key);
+        Assert.Equal("Instagram (Meta)", provider.DisplayName);
+        Assert.Equal(IntegrationCategory.Messaging, provider.Category);
+        Assert.Equal([TenantModuleKeys.Messaging], provider.ConsumingModules);
+        Assert.Equal(5, provider.MaxConnections);
+        Assert.Equal(ProviderOnboarding.InstagramLogin, provider.Onboarding);
+        Assert.True(provider.IsBackendOwned);
+        Assert.Equal(["username", "accountName", "igUserId", "tokenExpiresAt", "accessToken"], provider.Fields.Select(field => field.Key));
+        Assert.Equal(["username", "accountName"], provider.CatalogFields.Select(field => field.Key));
+        Assert.True(provider.FindField("igUserId")!.Internal);
+        Assert.Equal(@"^[0-9]{1,64}\z", provider.FindField("igUserId")!.Pattern!.ToString());
+        Assert.True(provider.FindField("tokenExpiresAt")!.Internal);
+        Assert.True(provider.FindField("accessToken")!.Internal);
+        Assert.True(provider.FindField("accessToken")!.IsSecret);
+        Assert.Equal(2048, provider.FindField("accessToken")!.MaxLength);
+        Assert.False(IntegrationProviders.Zenvia.IsBackendOwned);
+        Assert.True(IntegrationProviders.WhatsAppCloud.IsBackendOwned);
     }
 
     // Meta devuelve el número formateado: "+57 300 123 4567" tiene que pasar tal cual.

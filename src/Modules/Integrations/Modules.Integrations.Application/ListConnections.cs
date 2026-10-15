@@ -14,6 +14,7 @@ public sealed class ListConnectionsHandler(
     IIntegrationConnectionRepository repository,
     ITenantModules tenantModules,
     IMetaAppSettings metaApp,
+    IInstagramAppSettings instagramApp,
     ISecretProtector protector,
     IConnectionAuthorNames authorNames,
     IExecutionContext executionContext)
@@ -23,7 +24,7 @@ public sealed class ListConnectionsHandler(
     {
         IntegrationsAuthorization.EnsureAuthorized(executionContext, query.TenantId, IntegrationsPermissions.ConnectionRead);
 
-        var visible = (await ProviderVisibility.VisibleAsync(catalog, tenantModules, metaApp, query.TenantId, cancellationToken))
+        var visible = (await ProviderVisibility.VisibleAsync(catalog, tenantModules, metaApp, instagramApp, query.TenantId, cancellationToken))
             .ToDictionary(provider => provider.Key, StringComparer.Ordinal);
         var connections = (await repository.ListAsync(query.TenantId, cancellationToken))
             .Where(connection => visible.ContainsKey(connection.ProviderKey))

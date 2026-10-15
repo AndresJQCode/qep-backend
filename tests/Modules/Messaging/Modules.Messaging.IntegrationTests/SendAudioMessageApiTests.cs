@@ -46,6 +46,10 @@ public sealed class SendAudioMessageApiTests
             Objects.Remove(key);
             return Task.CompletedTask;
         }
+
+        /// <summary>Spec 2026-10-14 decisión 12: la URL que Meta bajaría; en pruebas apunta al handler falso de Graph.</summary>
+        public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken) =>
+            Task.FromResult(new Uri($"https://r2.test/{key}?signed=1", UriKind.Absolute));
     }
 
     /// <summary>Sin <c>Content-Length</c>: <c>StreamContent</c> sobre un stream que no se puede recorrer viaja chunked.</summary>

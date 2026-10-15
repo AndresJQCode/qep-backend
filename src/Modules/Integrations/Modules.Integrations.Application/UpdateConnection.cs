@@ -68,7 +68,7 @@ public sealed class UpdateConnectionHandler(
         // Un fields null conserva los campos guardados; un secrets null no trae secretos nuevos.
         // Con Embedded Signup (spec 2026-10-09 §6.1) los campos los llena el backend: el request sólo puede
         // cambiar el nombre, y lo guardado se conserva tal cual (P6 del plan).
-        var backendOwned = provider.Onboarding == ProviderOnboarding.MetaEmbeddedSignup;
+        var backendOwned = provider.IsBackendOwned;
         IReadOnlyDictionary<string, string?> requestedFields = command.Fields is { } sent && !backendOwned
             ? sent
             : connection.Fields.ToDictionary(pair => pair.Key, pair => (string?)pair.Value, StringComparer.Ordinal);

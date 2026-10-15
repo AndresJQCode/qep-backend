@@ -232,10 +232,10 @@ internal sealed partial class IntegrationsTestBed
     public FakeMetaAppSettings MetaApp { get; } = new();
 
     public GetIntegrationsCatalogHandler CatalogHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, Modules, MetaApp, context ?? Context());
+        new(Catalog, Repository, Modules, MetaApp, InstagramApp, context ?? Context());
 
     public ListConnectionsHandler ListHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, Modules, MetaApp, Protector, AuthorNames, context ?? Context());
+        new(Catalog, Repository, Modules, MetaApp, InstagramApp, Protector, AuthorNames, context ?? Context());
 
     /// <summary>Una conexión de Meta ya creada por Embedded Signup: los campos los escribió el backend.</summary>
     public IntegrationConnection SeedWhatsAppCloud(string name = "Ventas")

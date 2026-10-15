@@ -224,7 +224,7 @@ public sealed class IntegrationConnection
     /// <summary>
     /// Spec 2026-10-09 §6.1: lo que el probador refresca (número, nombre verificado, calidad). Sólo toca
     /// campos <b>no secretos</b> que el backend es dueño de: los internos, o todos los de un proveedor con
-    /// Embedded Signup. Lo demás se ignora sin lanzar. No sube la versión: quien llama ya la sube con la
+    /// Embedded Signup o Instagram Login (<see cref="IntegrationProvider.IsBackendOwned"/>). Lo demás se ignora sin lanzar. No sube la versión: quien llama ya la sube con la
     /// verificación.
     /// </summary>
     /// <returns>Las claves que cambiaron, ordenadas.</returns>
@@ -240,7 +240,7 @@ public sealed class IntegrationConnection
         foreach (var (key, raw) in values)
         {
             if (provider.FindField(key) is not { IsSecret: false } definition
-                || !(definition.Internal || provider.Onboarding == ProviderOnboarding.MetaEmbeddedSignup))
+                || !(definition.Internal || provider.IsBackendOwned))
             {
                 continue;
             }

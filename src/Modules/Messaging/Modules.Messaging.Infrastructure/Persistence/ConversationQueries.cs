@@ -13,13 +13,19 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
         conversation.Id, conversation.TenantId, conversation.ConnectionId, conversation.UserId, conversation.WaId, conversation.Username,
         conversation.ProfileName, conversation.CustomerId, conversation.AssignedMemberId, conversation.Status,
         conversation.UnreadCount, conversation.LastInboundAt, conversation.LastMessageId, conversation.LastMessageDirection, conversation.LastMessageKind,
-        conversation.LastMessagePreview, conversation.LastMessageStatus, conversation.LastMessageAt, conversation.UpdatedAt, conversation.Version);
+        conversation.LastMessagePreview, conversation.LastMessageStatus, conversation.LastMessageAt, conversation.UpdatedAt, conversation.Version, conversation.Channel);
 
     public async Task<(IReadOnlyList<ConversationRow> Items, int Total)> ListAsync(
         Guid tenantId, ConversationListFilter filter, int page, int pageSize, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(filter);
         var query = dbContext.Conversations.AsNoTracking().Where(conversation => conversation.TenantId == tenantId && conversation.Status == filter.Status);
+        // Spec 2026-10-14 §5.2: ausente = todos los canales.
+        if (filter.Channel is { } channel)
+        {
+            query = query.Where(conversation => conversation.Channel == channel);
+        }
+
         query = filter.Assigned switch
         {
             // P15: sin membresía activa, «mías» no encuentra nada.

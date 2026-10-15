@@ -20,9 +20,9 @@ public sealed class VerifyWebhookHandler(IWebhookSignatureVerifier verifier) : I
 
 /// <summary>§8.2 POST: firma → guardar deduplicado → 200. <c>true</c> si la entrega era nueva.
 /// <see cref="ToString"/> no imprime el cuerpo (trae mensajes de personas).</summary>
-public sealed record ReceiveWebhookCommand(byte[] Body, string? Signature) : ICommand<bool>
+public sealed record ReceiveWebhookCommand(byte[] Body, string? Signature, WebhookProvider Provider = WebhookProvider.WhatsApp) : ICommand<bool>
 {
-    public override string ToString() => $"ReceiveWebhookCommand {{ Bytes = {Body.Length} }}";
+    public override string ToString() => $"ReceiveWebhookCommand {{ Provider = {Provider}, Bytes = {Body.Length} }}";
 }
 
 public sealed class ReceiveWebhookHandler(IWebhookSignatureVerifier verifier, IWebhookDeliveries deliveries, IClock clock)
@@ -31,11 +31,11 @@ public sealed class ReceiveWebhookHandler(IWebhookSignatureVerifier verifier, IW
     public Task<bool> HandleAsync(ReceiveWebhookCommand command, CancellationToken cancellationToken)
     {
         // 401 antes de tocar la base (§11).
-        if (!verifier.IsConfigured || !verifier.VerifyBody(command.Body, command.Signature))
+        if (!verifier.IsConfigured || !verifier.VerifyBody(command.Provider, command.Body, command.Signature))
         {
             throw new RequestUnauthorizedException(MessagingErrorCodes.WebhookSignatureInvalid, "The webhook signature is missing or invalid.");
         }
 
-        return deliveries.EnqueueAsync(command.Body, clock.UtcNow, cancellationToken);
+        return deliveries.EnqueueAsync(command.Provider, command.Body, clock.UtcNow, cancellationToken);
     }
 }

@@ -56,7 +56,7 @@ public sealed class ReadHandlersTests
 
         var catalog = await bed.CatalogHandler().HandleAsync(new GetIntegrationsCatalogQuery(bed.TenantId), Ct);
 
-        Assert.Equal(["zenvia", "whatsapp-cloud"], catalog.Providers.Select(provider => provider.Key));
+        Assert.Equal(["zenvia", "whatsapp-cloud", "instagram"], catalog.Providers.Select(provider => provider.Key));
     }
 
     // Spec §5.2: cada proveedor trae onboarding; los campos internos no salen del catálogo.

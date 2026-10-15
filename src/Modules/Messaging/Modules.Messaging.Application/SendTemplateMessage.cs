@@ -107,6 +107,7 @@ public sealed class SendTemplateMessageHandler(
         ArgumentNullException.ThrowIfNull(command);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var target = await _template.Guards.LoadAsync(command.TenantId, command.ConversationId, cancellationToken);
+        TemplateOutbound.EnsureWhatsApp(target.Conversation.Channel);
 
         // Lo que ya salió, ya salió: antes de mirar el catálogo, el estado o el dueño.
         if (await _template.FindAlreadySentAsync(command.TenantId, target, command.ClientId!.Value, cancellationToken) is { } sent)

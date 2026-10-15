@@ -1,3 +1,5 @@
+using Modules.Messaging.Domain;
+
 namespace Modules.Messaging.Application;
 
 /// <summary>Una ruta resuelta cross-tenant (spec §6.4): tenant, conexión y su estado por nombre
@@ -13,6 +15,13 @@ public sealed record MessagingRoute(Guid TenantId, Guid ConnectionId, string Sta
 public sealed record MessagingSender(string PhoneNumberId, string AccessToken)
 {
     public override string ToString() => $"MessagingSender {{ PhoneNumberId = {PhoneNumberId} }}";
+}
+
+/// <summary>Spec 2026-10-14 §6.2: con qué se envía por Instagram: el id de la cuenta profesional y el token en claro para ese
+/// request. <see cref="ToString"/> no lo imprime.</summary>
+public sealed record InstagramSender(string IgUserId, string AccessToken)
+{
+    public override string ToString() => $"InstagramSender {{ IgUserId = {IgUserId} }}";
 }
 
 /// <summary>
@@ -44,4 +53,15 @@ public interface IMessagingConnectionDirectory
 
     /// <summary><c>Active → NeedsAttention</c> con el código (<c>token_expired</c>, <c>number_unregistered</c>, <c>account_disabled</c>).</summary>
     Task ReportRejectedAsync(Guid tenantId, Guid connectionId, string failureCode, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-14 §8.2: la ruta de una cuenta de Instagram (<c>entry[].id</c>). Cross-tenant, como
+    /// <see cref="FindRouteAsync"/>. <c>null</c> = cuenta desconocida o conexión borrada.</summary>
+    Task<MessagingRoute?> FindInstagramRouteAsync(string igUserId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-14 §6.2: sólo una conexión <c>instagram</c> <c>Active</c> y visible, con el token en claro; <c>null</c> si no.</summary>
+    Task<InstagramSender?> ResolveInstagramSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-14 §5.2: el canal de una conexión del tenant, Active o no; <c>null</c> si no existe o es de otro tenant.
+    /// Lo usan las guardas de plantillas y de conversación nueva, que reciben una conexión y no una conversación.</summary>
+    Task<ConversationChannel?> FindChannelAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }

@@ -27,6 +27,12 @@ public sealed class Customer
     /// <summary>Spec 2026-10-10 §6.2: el BSUID de Meta mide hasta 131 (2 + 1 + 128); 150 deja margen.</summary>
     public const int WhatsAppUserIdMaxLength = 150;
 
+    /// <summary>Spec 2026-10-14 decisión 10: el IGSID es numérico y hoy tiene 16 o 17 dígitos; 64 deja margen. El usuario de
+    /// Instagram tiene hasta 30 caracteres.</summary>
+    public const int InstagramUserIdMaxLength = 64;
+
+    public const int InstagramUsernameMaxLength = 64;
+
     // P14: libphonenumber ignora la región cuando el número empieza con «+», pero ToE164 exige una.
     private const string UnknownRegion = "ZZ";
 
@@ -250,6 +256,13 @@ public sealed class Customer
     /// (<c>IX_customers_tenant_whatsapp_user_id</c>). Lo pone la ingesta de Messaging; nunca viaja por HTTP.</summary>
     public string? WhatsAppUserId { get; private set; }
 
+    /// <summary>Spec 2026-10-14 decisión 10: el IGSID (id de la persona ante la cuenta profesional del tenant), único por tenant
+    /// (<c>IX_customers_tenant_instagram_user_id</c>). Lo pone la ingesta de Messaging; nunca viaja por HTTP.</summary>
+    public string? InstagramUserId { get; private set; }
+
+    /// <summary>Decisión 10: el <c>@usuario</c> de Instagram, informativo; puede cambiar y viajar en <c>null</c> (V-7).</summary>
+    public string? InstagramUsername { get; private set; }
+
     public bool WithRetention { get; private set; }
 
     public bool VatSurplus { get; private set; }
@@ -392,6 +405,45 @@ public sealed class Customer
 
     /// <summary>La regla del BSUID (recortado, 1 a <see cref="WhatsAppUserIdMaxLength"/> caracteres). Pública porque
     /// <c>CustomerWhatsAppDirectory</c> lo escribe con un <c>UPDATE</c> condicional, sin pasar por el agregado.</summary>
+    /// <summary>
+    /// Spec 2026-10-14 decisión 10: la persona que escribió por Instagram y todavía no tiene ficha. Sólo nombre, IGSID y usuario:
+    /// sin teléfono, sin país (Instagram no los da) y sin libreta. Lo crea el sistema, nunca una persona por HTTP.
+    /// </summary>
+    public static Customer CreateIncompleteFromInstagram(
+        CustomerId id,
+        Guid tenantId,
+        string name,
+        string instagramUserId,
+        string? instagramUsername,
+        DateTimeOffset now) =>
+        new()
+        {
+            Id = id,
+            TenantId = tenantId,
+            Name = NormalizeName(name),
+            InstagramUserId = NormalizeInstagramUserId(instagramUserId),
+            InstagramUsername = NormalizeInstagramUsername(instagramUsername),
+            Completeness = CustomerCompleteness.Incomplete,
+            IsActive = true,
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+
+    public static string NormalizeInstagramUserId(string value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrEmpty(trimmed) || trimmed.Length > InstagramUserIdMaxLength || !trimmed.All(char.IsAsciiDigit)
+            ? throw new ArgumentException($"An Instagram user id has 1 to {InstagramUserIdMaxLength} digits.", nameof(value))
+            : trimmed;
+    }
+
+    public static string? NormalizeInstagramUsername(string? value)
+    {
+        var trimmed = value?.Trim().TrimStart('@');
+        return string.IsNullOrEmpty(trimmed) ? null : trimmed.Length <= InstagramUsernameMaxLength ? trimmed : trimmed[..InstagramUsernameMaxLength];
+    }
+
     public static string NormalizeWhatsAppUserId(string value)
     {
         var trimmed = value?.Trim();

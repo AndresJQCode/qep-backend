@@ -26,6 +26,18 @@ public static class IntegrationsErrorCodes
     /// <see cref="WhatsAppRegistrationFailed"/>.</summary>
     public const string WhatsAppRegistrationLimit = "integrations.whatsapp.registration_limit";
     public const string WhatsAppNumberAlreadyConnected = "integrations.whatsapp.number_already_connected";
+
+    // Spec 2026-10-14 §10, Instagram Login.
+    public const string InstagramCodeExchangeFailed = "integrations.instagram.code_exchange_failed";
+    /// <summary>La persona desmarcó un permiso en la ventana de Meta: sin los dos no hay bandeja.</summary>
+    public const string InstagramPermissionsMissing = "integrations.instagram.permissions_missing";
+    public const string InstagramAccountNotProfessional = "integrations.instagram.account_not_professional";
+    /// <summary>Una cuenta vive en una sola conexión, de cualquier tenant (índice único de las rutas).</summary>
+    public const string InstagramAccountAlreadyConnected = "integrations.instagram.account_already_connected";
+    /// <summary>Agregado al implementar (el spec lo deja como V-2): Meta no aceptó suscribir la cuenta al webhook.</summary>
+    public const string InstagramSubscriptionFailed = "integrations.instagram.subscription_failed";
+    /// <summary>Agregado al implementar: el token canjeó pero <c>/me</c> no respondió; reintentar pide otro code.</summary>
+    public const string InstagramAccountReadFailed = "integrations.instagram.account_read_failed";
 }
 
 /// <summary>Lo que va a <c>last_failure_code</c> (varchar(64)): el resultado, no el código HTTP.</summary>

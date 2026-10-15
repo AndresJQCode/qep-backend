@@ -34,15 +34,17 @@ public sealed class MessageColumnCodesTests
         Assert.Equal((short)3, MessageColumnCodes.ToCode(MessageDirection.System));
         Assert.Equal((short)12, MessageColumnCodes.ToCode(MessageKind.Unsupported));
         Assert.Equal((short)13, MessageColumnCodes.ToCode(MessageKind.Event));
+        // Spec 2026-10-14 D-I4: la publicación compartida de Instagram.
+        Assert.Equal((short)14, MessageColumnCodes.ToCode(MessageKind.Share));
         Assert.Equal((short)4, MessageColumnCodes.ToCode(MessageStatus.Failed));
         Assert.Equal("direction IN (1, 2, 3)", MessagingDbContext.DirectionCheck);
-        Assert.Equal("kind BETWEEN 1 AND 13", MessagingDbContext.KindCheck);
+        Assert.Equal("kind BETWEEN 1 AND 14", MessagingDbContext.KindCheck);
         Assert.Equal("status BETWEEN 1 AND 4", MessagingDbContext.StatusCheck);
     }
 
     [Theory]
     [InlineData(0)]
-    [InlineData(14)]
+    [InlineData(15)]
     public void AnUnknownCodeIsLoudNotSilent(short code) =>
         Assert.Throws<ArgumentOutOfRangeException>(() => MessageColumnCodes.ToKind(code));
 }

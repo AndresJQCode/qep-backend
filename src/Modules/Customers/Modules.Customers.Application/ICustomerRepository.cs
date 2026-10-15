@@ -153,6 +153,9 @@ public interface ICustomerRepository
     /// <c>UPDATE</c> condicionales de abajo, y una instancia rastreada quedaría vieja después de ellos.</summary>
     Task<Customer?> FindByWhatsAppUserIdAsync(Guid tenantId, string whatsAppUserId, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-14 decisión 10: el cliente con ese IGSID. Sin tracking, como el de WhatsApp.</summary>
+    Task<Customer?> FindByInstagramUserIdAsync(Guid tenantId, string instagramUserId, CancellationToken cancellationToken);
+
     /// <summary>§8.2 con la regla de D-M7: el más viejo con ese <c>phone_e164</c>, luego el id menor. Sin tracking,
     /// por lo mismo.</summary>
     Task<Customer?> FindOldestByPhoneE164Async(Guid tenantId, string phoneE164, CancellationToken cancellationToken);

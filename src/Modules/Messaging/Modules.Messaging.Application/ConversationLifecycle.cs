@@ -26,6 +26,7 @@ public sealed partial class MarkConversationReadHandler(
     IConversationRepository repository,
     IMessagingConnectionDirectory connections,
     IWhatsAppCloudClient meta,
+    IInstagramClient instagram,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IClock clock,
@@ -55,6 +56,18 @@ public sealed partial class MarkConversationReadHandler(
 
         try
         {
+            if (target.Channel == ConversationChannel.Instagram)
+            {
+                // Spec 2026-10-14 decisión 14 (V-5): sender_action mark_seen, por persona y no por mensaje; best effort.
+                var igSender = await connections.ResolveInstagramSenderAsync(command.TenantId, target.ConnectionId, cancellationToken);
+                if (igSender is not null && target.UserId is { } userId && !await instagram.MarkSeenAsync(igSender, userId, cancellationToken))
+                {
+                    LogReceiptFailed(logger, command.ConversationId, null);
+                }
+
+                return true;
+            }
+
             var sender = await connections.ResolveSenderAsync(command.TenantId, target.ConnectionId, cancellationToken);
             if (sender is not null && !await meta.MarkReadAsync(sender, wamid, cancellationToken))
             {

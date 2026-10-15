@@ -54,6 +54,21 @@ internal static class MessagingApiHarness
 
     public const string WebhookUrl = "/api/webhooks/whatsapp";
 
+    /// <summary>Spec 2026-10-14 §5.1: el webhook de Instagram, con su propia ruta.</summary>
+    public const string InstagramWebhookUrl = "/api/webhooks/instagram";
+
+    /// <summary>Centinelas del caso de uso Instagram (V-1 cerrada: claves propias). El secreto firma el webhook de Instagram.</summary>
+    public const string InstagramAppId = "700800900";
+
+    public const string TestInstagramAppSecret = "ig-app-secret-SENTINEL-m4";
+
+    public const string SentinelInstagramAccessToken = "ig-access-token-SENTINEL-m5";
+
+    /// <summary>El cliente de Graph de Instagram de Messaging y el de descarga de medios por URL.</summary>
+    public const string MessagingInstagramClientName = "messaging.instagram-graph";
+
+    public const string MessagingInstagramDownloadClientName = "messaging.instagram-download";
+
     /// <summary>La llave con la que el host cifra los tokens de las conexiones. Calculada, no escrita.</summary>
     public static string TestSecretProtectionKey { get; } =
         Convert.ToBase64String(Enumerable.Range(0, 32).Select(index => (byte)index).ToArray());
@@ -88,7 +103,7 @@ internal static class MessagingApiHarness
 
     // Un solo contenedor por ensamblado, con una plantilla ya migrada: cada prueba clona la plantilla
     // (CREATE DATABASE … TEMPLATE) y su host sólo comprueba que no hay migraciones pendientes.
-    private static readonly Lazy<Task<PostgreSqlContainer>> SharedServer = new(StartServerAsync);
+    private static readonly Lazy<Task<TestServer>> SharedServer = new(StartServerAsync);
 
     // Postgres rechaza dos CREATE DATABASE simultáneos desde la misma plantilla: los clones van de a uno.
     private static readonly SemaphoreSlim CloneGate = new(1, 1);
@@ -111,20 +126,16 @@ internal static class MessagingApiHarness
         return new TestDatabase(server, name);
     }
 
-    private static async Task<PostgreSqlContainer> StartServerAsync()
+    private static async Task<TestServer> StartServerAsync()
     {
-        // Sin el token de una prueba: el servidor es de todas.
-        var server = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            // Con la suite completa xUnit corre las clases en paralelo, cada una con su base, su host y su
-            // pool de Npgsql, más los 64 INSERT concurrentes de la prueba de carga y los workers: el límite
-            // por defecto (100) se agota y la API responde 500 con 53300 (too many clients). Con las campañas (E3) cada host suma
-            // los envíos en paralelo del worker, y la prueba de dos pods levanta tres: 800 deja margen a la suite entera.
-            .WithCommand("-c", "max_connections=800")
-            .Build();
-        await server.StartAsync(CancellationToken.None);
+        // Sin Docker (QEP_TEST_POSTGRES con la cadena de admin de un servidor ya levantado) se usa ese servidor: la
+        // plantilla se recrea en cada corrida para que no herede migraciones viejas.
+        var server = await StartContainerOrExternalAsync();
+        if (server.Container is null)
+        {
+            await ExecuteAdminAsync(server, $"DROP DATABASE IF EXISTS \"{TemplateDatabase}\" WITH (FORCE)");
+        }
+
         await ExecuteAdminAsync(server, $"CREATE DATABASE \"{TemplateDatabase}\"");
 
         // El host migra al arrancar: arrancarlo una vez contra la plantilla la deja con todo.
@@ -140,20 +151,48 @@ internal static class MessagingApiHarness
         return server;
     }
 
-    private static string ConnectionStringFor(PostgreSqlContainer server, string database) =>
-        new NpgsqlConnectionStringBuilder(server.GetConnectionString()) { Database = database }.ConnectionString;
+    /// <summary>El servidor de las pruebas: el contenedor de Testcontainers o, con <c>QEP_TEST_POSTGRES</c> (la cadena
+    /// de conexión de administración de un PostgreSQL ya levantado, con permiso de crear bases), ese servidor, para
+    /// correr la suite donde no hay Docker. <see cref="Container"/> es <c>null</c> en el segundo caso.</summary>
+    internal sealed record TestServer(string AdminConnectionString, PostgreSqlContainer? Container);
 
-    private static async Task ExecuteAdminAsync(PostgreSqlContainer server, string sql)
+    private static async Task<TestServer> StartContainerOrExternalAsync()
+    {
+        if (Environment.GetEnvironmentVariable("QEP_TEST_POSTGRES") is { Length: > 0 } external)
+        {
+            return new TestServer(external, null);
+        }
+
+        // Sin el token de una prueba: el servidor es de todas, y cancelar la primera no puede
+        // dejar a las demás sin base.
+        var container = new PostgreSqlBuilder("postgres:18-alpine")
+            .WithDatabase("qep")
+            .WithUsername("qep")
+            .WithPassword("qep-integration")
+            // Con la suite completa xUnit corre las clases en paralelo, cada una con su base, su host y su
+            // pool de Npgsql, más los 64 INSERT concurrentes de la prueba de carga y los workers: el límite
+            // por defecto (100) se agota y la API responde 500 con 53300 (too many clients). Con las campañas (E3) cada host suma
+            // los envíos en paralelo del worker, y la prueba de dos pods levanta tres: 800 deja margen a la suite entera.
+            .WithCommand("-c", "max_connections=800")
+            .Build();
+        await container.StartAsync(CancellationToken.None);
+        return new TestServer(container.GetConnectionString(), container);
+    }
+
+    private static string ConnectionStringFor(TestServer server, string database) =>
+        new NpgsqlConnectionStringBuilder(server.AdminConnectionString) { Database = database }.ConnectionString;
+
+    private static async Task ExecuteAdminAsync(TestServer server, string sql)
     {
         // Contra la base "qep" del contenedor, nunca contra la plantilla ni contra la de una prueba.
-        await using var connection = new NpgsqlConnection(server.GetConnectionString());
+        await using var connection = new NpgsqlConnection(server.AdminConnectionString);
         await connection.OpenAsync(CancellationToken.None);
         await using var command = new NpgsqlCommand(sql, connection);
         await command.ExecuteNonQueryAsync(CancellationToken.None);
     }
 
     /// <summary>La base de una prueba.</summary>
-    public sealed class TestDatabase(PostgreSqlContainer server, string name) : IAsyncDisposable
+    public sealed class TestDatabase(TestServer server, string name) : IAsyncDisposable
     {
         public string GetConnectionString() => ConnectionStringFor(server, name);
 
@@ -201,6 +240,11 @@ internal static class MessagingApiHarness
             builder.UseSetting("Meta:App:GraphApiVersion", "v24.0");
             builder.UseSetting("Meta:App:AppSecret", TestAppSecret);
             builder.UseSetting("Meta:App:WebhookVerifyToken", TestVerifyToken);
+            // Spec 2026-10-14 §9: el caso de uso Instagram, con centinelas propios.
+            builder.UseSetting("Meta:Instagram:AppId", InstagramAppId);
+            builder.UseSetting("Meta:Instagram:AppSecret", TestInstagramAppSecret);
+            builder.UseSetting("Meta:Instagram:GraphApiVersion", "v24.0");
+            builder.UseSetting("Meta:Instagram:AllowedRedirectOrigins:0", "https://qep.qcode.co");
             // Los workers no corren solos durante una prueba: la prueba llama DrainAsync.
             builder.UseSetting("Messaging:Workers:DeliveryPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
@@ -215,6 +259,14 @@ internal static class MessagingApiHarness
                 services.AddHttpClient(MessagingGraphUploadClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
                 services.AddHttpClient(MessagingGraphMediaClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
+                // Instagram (spec 2026-10-14): el canal de Messaging y el de Integrations contra graph.instagram.com, y la descarga de
+                // medios por URL, por el mismo handler: ninguna prueba sale a Instagram ni al CDN de Meta.
+                services.AddHttpClient(MessagingInstagramClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
+                services.AddHttpClient(MessagingInstagramDownloadClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
+                services.AddHttpClient("integrations.instagram-graph")
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
             });
         }
@@ -325,6 +377,37 @@ internal static class MessagingApiHarness
         scope.ServiceProvider.GetRequiredService<IIntegrationConnectionRepository>().Add(connection);
         scope.ServiceProvider.GetRequiredService<IConnectionRouteRepository>().Add(
             IntegrationConnectionRoute.Create(IntegrationProviders.WhatsAppCloud.Key, phoneNumberId, wabaId, tenantId, connection.Id));
+        await scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>()
+            .SaveChangesAsync(TestContext.Current.CancellationToken);
+        return connection.Id;
+    }
+
+    /// <summary>Spec 2026-10-14: una conexión <c>instagram</c> con su ruta por el id de la cuenta, escrita directo por el
+    /// repositorio de Integrations (sin Meta), cifrada con la llave activa del host.</summary>
+    public static async Task<Guid> SeedInstagramConnectionAsync(
+        WebApplicationFactory<Program> host, Guid tenantId, string name, string igUserId, string username = "origenbotanico",
+        string accessToken = SentinelInstagramAccessToken)
+    {
+        using var scope = host.Services.CreateScope();
+        var protector = scope.ServiceProvider.GetRequiredService<ISecretProtector>();
+        var connection = IntegrationConnection.Create(
+            IntegrationProviders.Instagram,
+            tenantId,
+            name,
+            new Dictionary<string, string>
+            {
+                [InstagramFieldKeys.Username] = username,
+                [InstagramFieldKeys.AccountName] = "Origen Botánico",
+                [InstagramFieldKeys.IgUserId] = igUserId,
+                [InstagramFieldKeys.TokenExpiresAt] = DateTimeOffset.UtcNow.AddDays(60).ToString("O"),
+            },
+            new Dictionary<string, string> { [InstagramFieldKeys.AccessToken] = accessToken },
+            protector.Protect,
+            Guid.CreateVersion7(),
+            DateTimeOffset.UtcNow);
+        scope.ServiceProvider.GetRequiredService<IIntegrationConnectionRepository>().Add(connection);
+        scope.ServiceProvider.GetRequiredService<IConnectionRouteRepository>().Add(
+            IntegrationConnectionRoute.Create(IntegrationProviders.Instagram.Key, igUserId, null, tenantId, connection.Id));
         await scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>()
             .SaveChangesAsync(TestContext.Current.CancellationToken);
         return connection.Id;
@@ -489,6 +572,20 @@ internal static class MessagingApiHarness
     /// <summary>La firma que Meta pone en <c>X-Hub-Signature-256</c>: HMAC-SHA256 del cuerpo con el AppSecret.</summary>
     public static string Sign(byte[] body) =>
         "sha256=" + Convert.ToHexStringLower(HMACSHA256.HashData(Encoding.UTF8.GetBytes(TestAppSecret), body));
+
+    /// <summary>La firma del webhook de Instagram: HMAC-SHA256 del cuerpo con el app secret del caso de uso Instagram.</summary>
+    public static string SignInstagram(byte[] body) =>
+        "sha256=" + Convert.ToHexStringLower(HMACSHA256.HashData(Encoding.UTF8.GetBytes(TestInstagramAppSecret), body));
+
+    public static async Task<HttpResponseMessage> PostInstagramWebhookAsync(HttpClient client, string json, string? signature = null)
+    {
+        var bytes = Encoding.UTF8.GetBytes(json);
+        using var request = new HttpRequestMessage(HttpMethod.Post, InstagramWebhookUrl);
+        request.Content = new ByteArrayContent(bytes);
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        request.Headers.TryAddWithoutValidation("X-Hub-Signature-256", signature ?? SignInstagram(bytes));
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
 
     /// <summary>Sin <c>X-Qep-Client</c>: el webhook está exento de CSRF por ruta.</summary>
     public static async Task<HttpResponseMessage> PostWebhookAsync(HttpClient client, string json, string? signature = null)

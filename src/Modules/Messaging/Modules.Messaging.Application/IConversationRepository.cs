@@ -61,7 +61,10 @@ public enum UnreadFromOutcome
 }
 
 /// <summary>Lo que el read devuelve de la fila que marcó: lo justo para el acuse a Meta (§8.4).</summary>
-public sealed record ReadReceiptTarget(Guid ConnectionId, string? LastInboundWamid, DateTimeOffset? LastInboundAt);
+/// <param name="Channel">Spec 2026-10-14 decisión 14: en Instagram el acuse es por persona (<paramref name="UserId"/>, el IGSID).</param>
+public sealed record ReadReceiptTarget(
+    Guid ConnectionId, string? LastInboundWamid, DateTimeOffset? LastInboundAt,
+    ConversationChannel Channel = ConversationChannel.WhatsApp, string? UserId = null);
 
 /// <summary>Guarda el agregado y su auditoría en una transacción; traduce la concurrencia a
 /// <c>concurrency.conflict</c> en Infrastructure.</summary>

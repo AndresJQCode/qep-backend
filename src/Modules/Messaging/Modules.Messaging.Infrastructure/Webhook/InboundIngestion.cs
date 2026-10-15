@@ -16,26 +16,83 @@ internal static class InboundIngestion
     private const string ConnectionUserIndex = "IX_conversations_connection_user";
 
     /// <returns>El id del mensaje insertado, o <c>null</c> si Meta lo reenvió (ya estaba).</returns>
+    /// <param name="channel">Spec 2026-10-14 decisión 4: lo escribe la conversación al nacer; después no cambia.</param>
     public static async Task<Guid?> IngestAsync(
-        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now, CancellationToken cancellationToken)
+        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now,
+        CancellationToken cancellationToken, ConversationChannel channel = ConversationChannel.WhatsApp)
     {
         try
         {
-            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, cancellationToken);
+            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, channel, cancellationToken);
         }
         catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UniqueViolation && exception.ConstraintName == ConnectionUserIndex)
         {
-            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, cancellationToken);
+            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, channel, cancellationToken);
         }
     }
 
+    /// <summary>
+    /// Spec 2026-10-14 D-I3: un <c>is_echo</c> de Instagram es un saliente que el negocio mandó desde la app (o desde QEP, que ya lo
+    /// guardó con su <c>mid</c>: el <c>ON CONFLICT</c> lo deja pasar). Entra como <c>Outbound</c>, <c>Sent</c>, sin autor ni
+    /// <c>client_id</c>; mueve la foto de la lista y la actividad, pero no el contador ni la ventana: no es un entrante. Si la
+    /// conversación no existe (el negocio escribió primero desde la app) se crea con el contexto resuelto afuera.
+    /// </summary>
+    public static async Task<Guid?> IngestEchoAsync(
+        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now,
+        ConversationChannel channel, CancellationToken cancellationToken)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var (conversationId, _) = await ResolveConversationAsync(dbContext, tenantId, connectionId, message, context, now, channel, cancellationToken);
+        var messageId = Guid.CreateVersion7();
+        var kind = MessageColumnCodes.ToCode(message.Kind);
+        var inserted = await dbContext.Database.SqlQuery<Guid>(
+            $"""
+            INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, caption, details, wamid, reply_to_wamid, reply_to_message_id, created_at)
+            VALUES ({messageId}, {conversationId}, {tenantId}, {connectionId}, {message.OccurredAt}, 2, {kind}, 1, {message.Text}, {message.Caption}, {message.DetailsJson}::jsonb, {message.Wamid}, {message.QuotedWamid},
+                    (SELECT id FROM messaging.messages WHERE connection_id = {connectionId} AND wamid = {message.QuotedWamid}), {now})
+            ON CONFLICT (connection_id, wamid) WHERE wamid IS NOT NULL DO NOTHING
+            RETURNING id AS "Value"
+            """).ToListAsync(cancellationToken);
+        if (inserted.Count == 0)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return null;
+        }
+
+        var preview = Preview(message);
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE messaging.conversations SET
+                customer_id            = COALESCE(customer_id, {context.CustomerId}),
+                last_activity_at       = GREATEST(last_activity_at, {message.OccurredAt}),
+                last_message_id        = CASE WHEN last_message_at IS NULL OR {message.OccurredAt} >= last_message_at THEN {messageId} ELSE last_message_id END,
+                last_message_direction = CASE WHEN last_message_at IS NULL OR {message.OccurredAt} >= last_message_at THEN 2 ELSE last_message_direction END,
+                last_message_kind      = CASE WHEN last_message_at IS NULL OR {message.OccurredAt} >= last_message_at THEN {kind} ELSE last_message_kind END,
+                last_message_preview   = CASE WHEN last_message_at IS NULL OR {message.OccurredAt} >= last_message_at THEN {preview} ELSE last_message_preview END,
+                last_message_status    = CASE WHEN last_message_at IS NULL OR {message.OccurredAt} >= last_message_at THEN 1 ELSE last_message_status END,
+                last_message_at        = GREATEST(last_message_at, {message.OccurredAt}),
+                updated_at             = {now},
+                version                = version + 1
+            WHERE id = {conversationId}
+            """, cancellationToken);
+
+        if (message.Media is { } media)
+        {
+            await InsertMediaAsync(dbContext, messageId, media, now, cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return messageId;
+    }
+
     private static async Task<Guid?> IngestOnceAsync(
-        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now, CancellationToken cancellationToken)
+        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now,
+        ConversationChannel channel, CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
         // 1. La conversación (spec 2026-10-10 §8.1).
-        var conversation = await ResolveConversationAsync(dbContext, tenantId, connectionId, message, context, now, cancellationToken);
+        var conversation = await ResolveConversationAsync(dbContext, tenantId, connectionId, message, context, now, channel, cancellationToken);
         var conversationId = conversation.Id;
 
         // 2. El mensaje; un reenvío no inserta nada. reply_to_wamid guarda la cita tal cual y reply_to_message_id la
@@ -92,17 +149,7 @@ internal static class InboundIngestion
 
         if (message.Media is { } media)
         {
-            // §8.6: un id que no cabe en la columna haría fallar el INSERT y con él el mensaje entero. El
-            // mensaje entra; el medio queda rendido de una vez, con el motivo, y el worker nunca lo reclama.
-            var valid = Media.MediaTransfer.IsValidMetaMediaId(media.MetaMediaId);
-            var metaMediaId = valid ? media.MetaMediaId : string.Empty;
-            var nextAttemptAt = valid ? now : Media.MediaCopyProcessor.GiveUpAt;
-            var lastError = valid ? null : "invalid_media_id";
-            await dbContext.Database.ExecuteSqlAsync(
-                $"""
-                INSERT INTO messaging.message_media (message_id, mime_type, file_name, meta_media_id, sha256, attempts, next_attempt_at, last_error)
-                VALUES ({messageId}, {media.MimeType}, {media.FileName}, {metaMediaId}, {media.Sha256}, 0, {nextAttemptAt}, {lastError})
-                """, cancellationToken);
+            await InsertMediaAsync(dbContext, messageId, media, now, cancellationToken);
         }
 
         // Spec 2026-10-10 §8.7: justo antes del mensaje que los causó, cada uno con su propio milisegundo para que el
@@ -138,11 +185,29 @@ internal static class InboundIngestion
         return messageId;
     }
 
+    /// <summary>§8.6: un id que no cabe en la columna haría fallar el INSERT y con él el mensaje entero. El mensaje entra; el medio
+    /// queda rendido de una vez, con el motivo, y el worker nunca lo reclama. Spec 2026-10-14 §6.2: un adjunto de Instagram no tiene
+    /// id; viene con <c>source_url</c>, y con eso alcanza para copiarlo.</summary>
+    private static Task<int> InsertMediaAsync(MessagingDbContext dbContext, Guid messageId, InboundMedia media, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var valid = media.SourceUrl is not null || Media.MediaTransfer.IsValidMetaMediaId(media.MetaMediaId);
+        var metaMediaId = valid ? media.MetaMediaId : string.Empty;
+        var nextAttemptAt = valid ? now : Media.MediaCopyProcessor.GiveUpAt;
+        var lastError = valid ? null : "invalid_media_id";
+        return dbContext.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO messaging.message_media (message_id, mime_type, file_name, meta_media_id, sha256, attempts, next_attempt_at, last_error, source_url)
+            VALUES ({messageId}, {media.MimeType}, {media.FileName}, {metaMediaId}, {media.Sha256}, 0, {nextAttemptAt}, {lastError}, {media.SourceUrl})
+            """, cancellationToken);
+    }
+
     /// <summary>Spec 2026-10-10 §8.1, sentencia 1: por BSUID; si no, adopción de la fila vieja por teléfono; si no, crear
     /// con el cliente y el asignado heredado ya resueltos. <c>Created</c> sólo si esta llamada la insertó.</summary>
     private static async Task<(Guid Id, bool Created)> ResolveConversationAsync(
-        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now, CancellationToken cancellationToken)
+        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now,
+        ConversationChannel channel, CancellationToken cancellationToken)
     {
+        var channelName = channel.ToString();
         var known = await dbContext.Database.SqlQuery<Guid>(
             $"""SELECT id AS "Value" FROM messaging.conversations WHERE connection_id = {connectionId} AND user_id = {message.UserId}""")
             .ToListAsync(cancellationToken);
@@ -171,10 +236,10 @@ internal static class InboundIngestion
         var newConversationId = Guid.CreateVersion7();
         var inserted = await dbContext.Database.SqlQuery<Guid>(
             $"""
-            INSERT INTO messaging.conversations (id, tenant_id, connection_id, user_id, wa_id, username, parent_user_id, profile_name,
+            INSERT INTO messaging.conversations (id, tenant_id, connection_id, channel, user_id, wa_id, username, parent_user_id, profile_name,
                                                  customer_id, assigned_member_id, assigned_at,
                                                  status, unread_count, last_activity_at, created_at, updated_at, version)
-            VALUES ({newConversationId}, {tenantId}, {connectionId}, {message.UserId}, {message.WaId}, {message.Username}, {message.ParentUserId},
+            VALUES ({newConversationId}, {tenantId}, {connectionId}, {channelName}, {message.UserId}, {message.WaId}, {message.Username}, {message.ParentUserId},
                     {message.ProfileName}, {context.CustomerId}, {context.InheritedMemberId},
                     CASE WHEN {context.InheritedMemberId}::uuid IS NULL THEN NULL ELSE {now} END,
                     'Open', 0, {message.OccurredAt}, {now}, {now}, 1)
