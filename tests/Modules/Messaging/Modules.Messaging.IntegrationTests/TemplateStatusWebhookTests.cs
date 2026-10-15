@@ -105,9 +105,54 @@ public sealed class TemplateStatusWebhookTests
         var f = await ArrangeAsync(database);
         using var host = f.Factory;
 
-        await PostWebhookAsync(f.Anonymous, MetaPayloads.TemplateStatusUpdate("222", 1407L, "promo", "es", "flagged", null));
+        await PostWebhookAsync(f.Anonymous, MetaPayloads.TemplateStatusUpdate("222", 1407L, "promo", "es", "some_new_event", null));
         await DrainDeliveriesAsync(f.Factory);
 
-        Assert.Equal("FLAGGED|-", await StatusOfAsync(f, "Ventas"));
+        Assert.Equal("SOME_NEW_EVENT|-", await StatusOfAsync(f, "Ventas"));
+    }
+
+    /// <summary>Revisión final F2: <c>FLAGGED</c> es feedback negativo, no un estado; la plantilla sigue enviable. La fila queda como
+    /// estaba (estado y motivo) y el catálogo de envío la sigue devolviendo.</summary>
+    [Fact]
+    public async Task AFlaggedEventLeavesTheRowAsItWasAndTheTemplateStaysSendable()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        using var reader = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ReadPermissions);
+        var catalogUrl = $"/api/v1/tenants/{f.Tenant.TenantId}/messaging/connections/{f.ConnectionId}/templates";
+        await PostWebhookAsync(f.Anonymous, MetaPayloads.TemplateStatusUpdate("222", 1407L, "promo", "es", "APPROVED", "NONE"));
+        await DrainDeliveriesAsync(f.Factory);
+
+        await PostWebhookAsync(f.Anonymous, MetaPayloads.TemplateStatusUpdate("222", 1407L, "promo", "es", "FLAGGED", "LOW_QUALITY"));
+        await DrainDeliveriesAsync(f.Factory);
+
+        Assert.Equal("APPROVED|-", await StatusOfAsync(f, "Ventas"));
+        var catalog = (await reader.GetFromJsonAsync<JsonElement>(catalogUrl, Ct)).EnumerateArray().ToArray();
+        Assert.Equal("promo", Assert.Single(catalog).GetProperty("name").GetString());
+        Assert.Equal(2L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.webhook_deliveries WHERE processed_at IS NOT NULL"));
+    }
+
+    /// <summary>Revisión final F2: <c>REINSTATED</c> («ya no está marcada ni deshabilitada y se puede volver a enviar») deja la fila
+    /// <c>APPROVED</c>, y el catálogo de envío vuelve a verla.</summary>
+    [Fact]
+    public async Task AReinstatedEventOnAPausedRowLeavesItApprovedAndTheSendCatalogSeesIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        using var reader = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ReadPermissions);
+        var catalogUrl = $"/api/v1/tenants/{f.Tenant.TenantId}/messaging/connections/{f.ConnectionId}/templates";
+        await PostWebhookAsync(f.Anonymous, MetaPayloads.TemplateStatusUpdate("222", 1407L, "promo", "es", "PAUSED", "NONE"));
+        await DrainDeliveriesAsync(f.Factory);
+        Assert.Equal("PAUSED|-", await StatusOfAsync(f, "Ventas"));
+        Assert.Empty((await reader.GetFromJsonAsync<JsonElement>(catalogUrl, Ct)).EnumerateArray());
+
+        await PostWebhookAsync(f.Anonymous, MetaPayloads.TemplateStatusUpdate("222", 1407L, "promo", "es", "REINSTATED", "NONE"));
+        await DrainDeliveriesAsync(f.Factory);
+
+        Assert.Equal("APPROVED|-", await StatusOfAsync(f, "Ventas"));
+        var catalog = (await reader.GetFromJsonAsync<JsonElement>(catalogUrl, Ct)).EnumerateArray().ToArray();
+        Assert.Equal("promo", Assert.Single(catalog).GetProperty("name").GetString());
     }
 }

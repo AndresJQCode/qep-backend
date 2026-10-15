@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Modules.Messaging.Application;
+using Modules.Messaging.Domain;
 using Modules.Messaging.Infrastructure.Persistence;
 
 namespace Modules.Messaging.Infrastructure.Webhook;
@@ -32,6 +33,9 @@ internal sealed partial class WebhookDeliveryProcessor(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Webhook delivery {DeliveryId}: template {MetaTemplateId} is now {Event} (reason {Reason}) in tenant {TenantId}, connection {ConnectionId}.")]
     private static partial void LogTemplateStatus(ILogger logger, long deliveryId, string metaTemplateId, string @event, string? reason, Guid tenantId, Guid connectionId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Webhook delivery {DeliveryId}: template {MetaTemplateId} was flagged in tenant {TenantId}, connection {ConnectionId}; it stays sendable and its status is not changed.")]
+    private static partial void LogTemplateFlagged(ILogger logger, long deliveryId, string metaTemplateId, Guid tenantId, Guid connectionId);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Webhook delivery {DeliveryId}: no mirror row for meta_template_id {MetaTemplateId} in tenant {TenantId}, connection {ConnectionId}; the next refresh will bring it.")]
     private static partial void LogTemplateWithoutRow(ILogger logger, long deliveryId, string metaTemplateId, Guid tenantId, Guid connectionId);
@@ -294,7 +298,8 @@ internal sealed partial class WebhookDeliveryProcessor(
     }
 
     /// <summary>Spec 2026-10-14 §4.3: por cada conexión de la WABA, la fila del espejo con ese <c>meta_template_id</c> toma el estado y el
-    /// motivo. Sin fila sólo hay log por conexión (el refresco la trae). Un <c>event</c> desconocido se guarda como texto. No se audita (D-T14).</summary>
+    /// motivo. Sin fila sólo hay log por conexión (el refresco la trae). Un <c>event</c> desconocido se guarda como texto; <c>REINSTATED</c> y
+    /// <c>FLAGGED</c> pasan por <see cref="MessageTemplateStatuses.FromWebhookEvent"/> (revisión final F2). No se audita (D-T14).</summary>
     private async Task ProcessTemplateStatusAsync(long deliveryId, TemplateStatusChange change, CancellationToken cancellationToken)
     {
         var updated = false;
@@ -311,7 +316,14 @@ internal sealed partial class WebhookDeliveryProcessor(
                 continue;
             }
 
-            template.ApplyStatus(change.Event, change.Reason, now);
+            // Revisión final F2: REINSTATED vuelve a APPROVED y FLAGGED no toca la fila (sigue enviable); sólo queda el log.
+            if (MessageTemplateStatuses.FromWebhookEvent(change.Event) is not { } status)
+            {
+                LogTemplateFlagged(logger, deliveryId, change.MetaTemplateId, route.TenantId, route.ConnectionId);
+                continue;
+            }
+
+            template.ApplyStatus(status, change.Reason, now);
             updated = true;
             LogTemplateStatus(logger, deliveryId, change.MetaTemplateId, change.Event, change.Reason, route.TenantId, route.ConnectionId);
         }

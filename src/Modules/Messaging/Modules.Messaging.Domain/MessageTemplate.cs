@@ -28,6 +28,10 @@ public static class MessageTemplateStatuses
     /// <summary>Un listado o un webhook sin <c>status</c>/<c>event</c>: no es un error, es un dato que no vino.</summary>
     public const string Unknown = "UNKNOWN";
 
+    // Eventos del webhook que no son estados (FromWebhookEvent).
+    private const string Reinstated = "REINSTATED";
+    private const string Flagged = "FLAGGED";
+
     /// <summary>Recorta, pasa a mayúsculas y ajusta al ancho de la columna; vacío es <see cref="Unknown"/>.</summary>
     public static string Normalize(string? status)
     {
@@ -38,6 +42,24 @@ public static class MessageTemplateStatuses
         }
 
         return trimmed.Length <= MaxLength ? trimmed : trimmed[..MaxLength];
+    }
+
+    /// <summary>
+    /// Revisión final F2: el estado que deja un <c>event</c> del webhook <c>message_template_status_update</c>, o <c>null</c> = no tocar la
+    /// fila. Dos eventos de Meta no son estados: <c>REINSTATED</c> («ya no está marcada ni deshabilitada y se puede volver a enviar») es
+    /// <see cref="Approved"/>, y <c>FLAGGED</c> («recibió feedback negativo y está en riesgo de deshabilitarse») no cambia nada porque la
+    /// plantilla sigue enviable. Cualquier otro pasa por <see cref="Normalize"/>: uno desconocido se guarda crudo (§4.3). El listado del
+    /// refresco no pasa por acá: trae el <c>status</c> real.
+    /// </summary>
+    public static string? FromWebhookEvent(string? webhookEvent)
+    {
+        var status = Normalize(webhookEvent);
+        return status switch
+        {
+            Reinstated => Approved,
+            Flagged => null,
+            _ => status,
+        };
     }
 
     /// <summary>§4.5: lo que cuenta como «ya existe» para la plantilla de cotización: viva en Meta, aprobada o en camino.</summary>

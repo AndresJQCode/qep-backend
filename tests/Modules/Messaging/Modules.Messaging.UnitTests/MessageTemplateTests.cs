@@ -140,6 +140,22 @@ public sealed class MessageTemplateTests
     [InlineData("UNKNOWN", false)]
     public void IsLiveIsPendingApprovedOrInAppeal(string status, bool live) => Assert.Equal(live, MessageTemplateStatuses.IsLive(status));
 
+    /// <summary>Revisión final F2: <c>REINSTATED</c> y <c>FLAGGED</c> son eventos del webhook, no estados. <c>REINSTATED</c> («ya no está
+    /// marcada ni deshabilitada») vuelve a <c>APPROVED</c>; <c>FLAGGED</c> («en riesgo», pero sigue enviable) no toca nada (<c>null</c>). El
+    /// resto pasa normalizado, y uno desconocido se guarda crudo (§4.3).</summary>
+    [Theory]
+    [InlineData("REINSTATED", "APPROVED")]
+    [InlineData(" reinstated ", "APPROVED")]
+    [InlineData("FLAGGED", null)]
+    [InlineData("flagged", null)]
+    [InlineData("APPROVED", "APPROVED")]
+    [InlineData("paused", "PAUSED")]
+    [InlineData("REJECTED", "REJECTED")]
+    [InlineData("SOME_NEW_EVENT", "SOME_NEW_EVENT")]
+    [InlineData(null, "UNKNOWN")]
+    public void AWebhookEventMapsToTheStatusItLeavesOrToNothing(string? webhookEvent, string? status) =>
+        Assert.Equal(status, MessageTemplateStatuses.FromWebhookEvent(webhookEvent));
+
     [Theory]
     [InlineData("promo_octubre", true)]
     [InlineData("a", true)]
