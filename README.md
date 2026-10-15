@@ -1123,6 +1123,26 @@ del cliente o crea uno ganado (`pipeline.deal_orders`). La lista (`GET /orders?s
 detalle, el Excel y el reporte de pedidos leen del pedido. Los pedidos que existían antes los copió
 la migración `AddOrderOwnData` desde su cotización.
 
+**Rollback.** El código anterior no sabe escribir las siete columnas que `AddOrderOwnData` deja
+`NOT NULL` sin default: sin este paso, toda conversión falla con `23502`. Se corre **antes** de
+arrancar el código viejo:
+
+```sql
+ALTER TABLE quotations.orders
+    ALTER COLUMN client_id DROP NOT NULL,
+    ALTER COLUMN advisor_id DROP NOT NULL,
+    ALTER COLUMN currency DROP NOT NULL,
+    ALTER COLUMN billing_company_id DROP NOT NULL,
+    ALTER COLUMN billing_bank_name DROP NOT NULL,
+    ALTER COLUMN billing_account_number DROP NOT NULL,
+    ALTER COLUMN billing_account_currency DROP NOT NULL;
+```
+
+Con el código viejo, un pedido manual o externo da 500 al leerlo, y los pedidos que se conviertan
+nacen sin datos propios. Antes de volver al código nuevo, esos pedidos se completan con el SQL del
+pasos 4 y 5 de `AddOrderOwnData` acotado a `client_id IS NULL` y se restauran los `NOT NULL` (spec
+2026-10-15 §10).
+
 ### Código y nombre del producto en cada línea
 
 Una línea de cotización referencia su producto por `productId` (sin FK) y congela precio e IVA al

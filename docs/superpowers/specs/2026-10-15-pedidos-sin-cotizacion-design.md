@@ -304,7 +304,26 @@ compara fila a fila. `ExportLoadSeeder` pasa a sembrar las tablas nuevas.
 - La migración corre al arrancar; con las guardas de §9.4 un dato inconsistente deja el pod sin arrancar con
   el motivo en el log, a propósito. Antes de desplegar, correr las tres consultas de las guardas contra
   producción.
-- Rollback: sólo backend y frontend juntos; las columnas nuevas quedan y el código viejo las ignora.
+- Rollback: sólo backend y frontend juntos. Las columnas nuevas quedan, pero el código viejo **no** las
+  ignora del todo: `AddOrderOwnData` deja siete de ellas `NOT NULL` sin default y el `INSERT` de la conversión
+  vieja no las conoce, así que sin un paso previo toda conversión falla con `23502`. Antes de arrancar el
+  código viejo:
+
+  ```sql
+  ALTER TABLE quotations.orders
+      ALTER COLUMN client_id DROP NOT NULL,
+      ALTER COLUMN advisor_id DROP NOT NULL,
+      ALTER COLUMN currency DROP NOT NULL,
+      ALTER COLUMN billing_company_id DROP NOT NULL,
+      ALTER COLUMN billing_bank_name DROP NOT NULL,
+      ALTER COLUMN billing_account_number DROP NOT NULL,
+      ALTER COLUMN billing_account_currency DROP NOT NULL;
+  ```
+
+  Dos costos que el rollback no evita: un pedido manual o externo (`quotation_id` nulo) da 500 al leerlo con el
+  código viejo, y los pedidos que el código viejo cree nacen sin datos propios (columnas nulas, sin
+  `order_items` ni `order_parties`). Antes de volver a desplegar el código nuevo, esos pedidos se completan con
+  el SQL de los pasos 4 y 5 de `AddOrderOwnData` acotado a `client_id IS NULL`, y se restauran los `NOT NULL`.
 - README: la sección de cotizaciones y pedidos describe el modelo nuevo y el pedido manual; CLAUDE.md gana el
   gotcha de los eventos de pedido como contrato con Pipeline.
 
