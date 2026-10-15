@@ -7,10 +7,38 @@ internal static class OrderMapping
     public static OrderDto ToDto(this Order order) => new(
         order.Id.Value,
         order.OrderNumber,
-        order.QuotationId.Value,
+        order.Source.ToString(),
+        order.QuotationId?.Value,
+        order.ExternalReference,
+        order.ClientId,
+        order.AdvisorId.Value,
         order.Status.ToString(),
         order.PaymentStatus.ToString(),
+        order.PaymentMethod,
+        order.Currency,
+        order.IsRetail,
+        order.GlobalScaleFloor,
+        order.BillingUsesBusinessName,
+        order.IsStorePickup,
+        order.BillsToFinalConsumer,
+        order.PartyWithRetention,
+        order.PartyVatSurplus,
+        order.AppliesVatSurplus,
+        order.Subtotal,
+        order.TaxPercentage,
+        order.TaxAmount,
+        order.DiscountAmount,
+        order.Total,
+        order.RetentionAmount,
+        order.NetTotal,
         order.Notes,
+        new QuotationBillingAccountDto(
+            order.BillingAccount.CompanyId,
+            order.BillingAccount.BankName,
+            order.BillingAccount.AccountNumber,
+            order.BillingAccount.Currency),
+        order.Parties.Select(ToDto).ToArray(),
+        order.Items.OrderBy(item => item.Position).Select(ToDto).ToArray(),
         order.ConvertedAt,
         order.ConvertedBy.Value,
         order.ApprovedAt,
@@ -26,24 +54,58 @@ internal static class OrderMapping
         order.Version,
         order.PaymentProofs.Select(ToDto).ToArray());
 
-    /// <summary>La fila del listado, con el nombre del cliente y el de la asesora (o su correo) ya
-    /// resueltos por el handler para toda la pagina de una vez.</summary>
     public static OrderListItemDto ToListItemDto(
-        this OrderWithQuotation row, string? clientName, string? advisorName) => new(
-        row.Order.Id.Value,
-        row.Order.OrderNumber,
-        row.Quotation.Id.Value,
-        row.Quotation.QuotationNumber,
-        row.Quotation.ClientId,
+        this Order order, string? quotationNumber, string? clientName, string? advisorName) => new(
+        order.Id.Value,
+        order.OrderNumber,
+        order.QuotationId?.Value,
+        quotationNumber,
+        order.ClientId,
         clientName,
-        row.Quotation.AdvisorId.Value,
+        order.AdvisorId.Value,
         advisorName,
-        row.Order.Status.ToString(),
-        row.Order.PaymentStatus.ToString(),
-        row.Quotation.PaymentMethod,
-        row.Order.ConvertedAt,
-        row.Quotation.Currency,
-        row.Quotation.Total);
+        order.Status.ToString(),
+        order.PaymentStatus.ToString(),
+        order.PaymentMethod,
+        order.ConvertedAt,
+        order.Currency,
+        order.Total,
+        order.Source.ToString(),
+        order.ExternalReference);
+
+    public static OrderHistoryEntryDto ToDto(this OrderHistoryEntry entry) => new(
+        entry.Id.Value,
+        entry.EventType.ToString(),
+        entry.EventAt,
+        entry.MemberId?.Value,
+        entry.Details);
+
+    private static QuotationPartyDto ToDto(OrderParty party) => new(
+        party.Id.Value,
+        party.Role.ToString(),
+        party.Name,
+        party.IdentificationNumber,
+        party.Phone,
+        party.Email,
+        party.Address,
+        party.DepartmentId,
+        party.CityId);
+
+    private static QuotationItemDto ToDto(OrderItem item) => new(
+        item.Id.Value,
+        item.ProductId,
+        item.Quantity,
+        item.UnitPrice,
+        item.DiscountPercentage,
+        item.DiscountAmount,
+        item.DiscountedUnitPrice,
+        item.Subtotal,
+        item.TaxPercentage,
+        item.TaxAmount,
+        item.Position,
+        item.DiscountOrigin.ToString(),
+        item.ProductCode,
+        item.ProductName);
 
     private static OrderPaymentProofDto ToDto(OrderPaymentProof proof) => new(
         proof.Id.Value, proof.FileId, proof.Amount, proof.UploadedAt, proof.PaidOn);

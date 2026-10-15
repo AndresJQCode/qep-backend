@@ -106,7 +106,9 @@ public sealed class QuotationResponseComposer(
     // Un cliente que no resuelve deja la cotización sin bloque de cliente en vez de tirar la
     // respuesta abajo: `ClientId` es una referencia blanda entre módulos, y una cotización
     // histórica tiene que poder leerse aunque su cliente se haya borrado.
-    private static QuotationClientResponse? ToClientResponse(QuotationCustomerRef? customer) =>
+    // Internos y no privados: el compositor del detalle del pedido (OrderResponseComposer) resuelve
+    // cliente, líneas y cuenta de cobro con las mismas formas (spec 2026-10-15 §6.2).
+    internal static QuotationClientResponse? ToClientResponse(QuotationCustomerRef? customer) =>
         customer is null
             ? null
             : new QuotationClientResponse(
@@ -143,7 +145,7 @@ public sealed class QuotationResponseComposer(
     // El producto puede no existir más (se dio de baja y se borró): la línea conserva lo que la
     // cotización congeló —cantidad, precio, descuento— y el nombre queda vacío, que es lo único
     // que este lado no puede reconstruir.
-    private static QuotationItemResponse ToItemResponse(
+    internal static QuotationItemResponse ToItemResponse(
         QuotationItemDto item,
         IReadOnlyDictionary<Guid, QuotationProductRef> products,
         int? globalScaleFloor)
@@ -206,7 +208,12 @@ public sealed class QuotationResponseComposer(
     private static int[] AvailableFloors(
         QuotationDto quotation,
         IReadOnlyDictionary<Guid, QuotationProductRef> products) =>
-        quotation.Items
+        AvailableFloors(quotation.Items, products);
+
+    internal static int[] AvailableFloors(
+        IReadOnlyCollection<QuotationItemDto> items,
+        IReadOnlyDictionary<Guid, QuotationProductRef> products) =>
+        items
             .Select(item => item.ProductId)
             .Distinct()
             .SelectMany(productId => products.TryGetValue(productId, out var product)
@@ -219,7 +226,7 @@ public sealed class QuotationResponseComposer(
     // La empresa que no resuelve deja el bloque con la cuenta guardada y sin razón social, por
     // el mismo motivo que el cliente: la cotización es histórica y tiene que poder leerse aunque
     // la empresa se haya borrado. Lo que se muestra es lo que se congeló, no lo que hay hoy.
-    private static QuotationBillingResponse? ToBillingResponse(
+    internal static QuotationBillingResponse? ToBillingResponse(
         QuotationBillingAccountDto? account, QuotationCompanyRef? company) =>
         account is null
             ? null

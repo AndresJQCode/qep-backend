@@ -787,6 +787,7 @@ public static class QepServiceCollectionExtensions
         // Arma la respuesta de una cotizacion con todo lo que su pantalla muestra, para que el
         // navegador no tenga que pedir cliente, miembros y catalogo por separado.
         services.AddScoped<IQuotationResponseComposer, QuotationResponseComposer>();
+        services.AddScoped<IOrderResponseComposer, OrderResponseComposer>();
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
         services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();
         // Los comprobantes de pago públicos (spec 2026-09-15, P3): el publicador que copia al bucket
