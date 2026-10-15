@@ -82,6 +82,13 @@ public sealed class MessagingCustomerDirectoryAudienceTests
 
         public Task<IReadOnlyList<CustomerTagRef>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<CustomerTagRef>>(Tags.Where(tag => tagIds.Contains(tag.Id)).ToList());
+
+        public Task<IReadOnlyList<Guid>> FindCustomerIdsAsync(Guid tenantId, Guid tagId, int cap, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Guid>>([]);
+
+        public Task<IReadOnlyDictionary<Guid, IReadOnlyList<CustomerTagRef>>> FindForCustomersAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<CustomerTagRef>>>(new Dictionary<Guid, IReadOnlyList<CustomerTagRef>>());
     }
 
     /// <summary>Spec 2026-10-14 decisión 10: la rama de Instagram no entra en estas pruebas.</summary>

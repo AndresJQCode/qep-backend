@@ -163,6 +163,17 @@ internal static class EngagementTestBed
         private TagWithCount WithCount(Tag tag) =>
             new(tag, Assignments.Count(assignment => assignment.TagId == tag.Id));
 
+        public Task<IReadOnlyList<CustomerId>> ListCustomerIdsAsync(Guid tenantId, TagId tagId, int cap, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<CustomerId>>(
+                Assignments.Where(assignment => assignment.TenantId == tenantId && assignment.TagId == tagId)
+                    .Select(assignment => assignment.CustomerId).Take(cap).ToList());
+
+        public Task<IReadOnlyList<(CustomerId Customer, Tag Tag)>> ListForCustomersAsync(
+            Guid tenantId, IReadOnlyCollection<CustomerId> customerIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<(CustomerId Customer, Tag Tag)>>(
+                [.. Assignments.Where(assignment => assignment.TenantId == tenantId && customerIds.Contains(assignment.CustomerId))
+                    .Join(Tags, assignment => assignment.TagId, tag => tag.Id, (assignment, tag) => (assignment.CustomerId, tag))]);
+
         public Task<IReadOnlyList<TagWithCount>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<TagWithCount>>(
                 Tags.Where(tag => tag.TenantId == tenantId)
