@@ -12,8 +12,9 @@ internal sealed record ReportPageDto<TItem>(
 internal sealed record OrdersReportItem(
     Guid OrderId,
     string OrderNumber,
-    Guid QuotationId,
-    string QuotationNumber,
+    string Source,
+    Guid? QuotationId,
+    string? QuotationNumber,
     DateTimeOffset ConvertedAt,
     Guid AdvisorId,
     string? AdvisorName,

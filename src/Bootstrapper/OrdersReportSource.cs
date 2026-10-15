@@ -21,9 +21,9 @@ namespace Bootstrapper;
 /// **No decide nada.** La normalizacion de la paginacion, los topes del resumen y la autorizacion
 /// son de los handlers de <c>reporting</c>; esto arma la consulta y devuelve filas.
 ///
-/// El pedido no duplica cliente, importes ni numero de cotizacion: todo eso se lee de la
-/// <c>Quotation</c> asociada, que es 1:1 (modelo-datos-cotizaciones.md §1.2). Por eso la consulta
-/// arranca con un join y no con la tabla de pedidos sola.
+/// Desde el spec 2026-10-15 el pedido tiene sus propios cliente, asesor, moneda e importes, y
+/// puede no tener cotización (manual o de una integración): todo se lee del pedido, sin join. El
+/// número de la cotización de origen, cuando la hay, se resuelve aparte para la página.
 /// </summary>
 internal sealed class OrdersReportSource(
     QuotationsDbContext quotations,
@@ -51,10 +51,8 @@ internal sealed class OrdersReportSource(
     /// Todo se agrega **en la base**: ningun camino de aca trae filas para sumarlas en memoria,
     /// que es justo lo que el resumen existe para evitar.
     ///
-    /// Las cuatro consultas viven en un solo metodo por una razon de EF, no de estilo: se agrega
-    /// sobre el **tipo anonimo del join**, y un tipo anonimo no puede cruzar una frontera de
-    /// metodo. Proyectarlo antes a un record nombrado —que fue el primer intento— hace que EF no
-    /// vea a traves del constructor y falle con "could not be translated" en tiempo de ejecucion.
+    /// Se agrega sobre la entidad <see cref="Order"/> y no sobre <see cref="OrderRow"/>: EF no ve
+    /// a traves del constructor de un record y falla con "could not be translated".
     ///
     /// Son varias consultas y no una porque son agregaciones de distinta granularidad —los totales
     /// por moneda, la serie por mes y dos rankings—; una sola que las mezclara necesitaria funciones de
@@ -67,26 +65,21 @@ internal sealed class OrdersReportSource(
     {
         // Un pedido anulado no es una venta (spec 2026-09-16, decisión 6): no suma en el total, la
         // serie ni los rankings, y tampoco en el período anterior, que pasa por este mismo método.
-        // Se filtra antes del join para que llegue a la base como WHERE. El listado (BuildQuery) no
-        // lo filtra: ahí el anulado se ve con su estado.
-        var joined = from order in FilterOrders(criteria)
-                         .Where(candidate => candidate.Status != OrderStatus.Cancelled)
-                     join quotation in FilterQuotations(criteria)
-                         on order.QuotationId equals quotation.Id
-                     select new { order, quotation };
+        // El listado (BuildQuery) no lo filtra: ahí el anulado se ve con su estado.
+        var orders = FilterOrders(criteria).Where(candidate => candidate.Status != OrderStatus.Cancelled);
 
         // One row per currency: COP and USD are never added together (spec 2026-10-08, Reports).
         // Grouping by currency also replaces the old GroupBy over a constant: zero orders give zero
         // rows, and the count below is zero.
-        var byCurrency = await joined
-            .GroupBy(row => row.quotation.Currency)
+        var byCurrency = await orders
+            .GroupBy(row => row.Currency)
             .Select(group => new
             {
                 Currency = group.Key,
                 Count = group.Count(),
-                Subtotal = group.Sum(row => row.quotation.Subtotal),
-                TaxAmount = group.Sum(row => row.quotation.TaxAmount),
-                Total = group.Sum(row => row.quotation.Total),
+                Subtotal = group.Sum(row => row.Subtotal),
+                TaxAmount = group.Sum(row => row.TaxAmount),
+                Total = group.Sum(row => row.Total),
             })
             .ToListAsync(cancellationToken);
 
@@ -111,12 +104,12 @@ internal sealed class OrdersReportSource(
         // Solo vuelven los meses con pedidos: rellenar los huecos con cero depende del rango que
         // el eje dibuje, asi que es del frontend.
         var timeZoneId = criteria.Period.TimeZone.Id;
-        var monthRows = await joined
+        var monthRows = await orders
             .GroupBy(row => new
             {
-                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(row.order.ConvertedAt.UtcDateTime, timeZoneId).Year,
-                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(row.order.ConvertedAt.UtcDateTime, timeZoneId).Month,
-                row.quotation.Currency,
+                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(row.ConvertedAt.UtcDateTime, timeZoneId).Year,
+                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(row.ConvertedAt.UtcDateTime, timeZoneId).Month,
+                row.Currency,
             })
             .Select(group => new
             {
@@ -124,7 +117,7 @@ internal sealed class OrdersReportSource(
                 group.Key.Month,
                 group.Key.Currency,
                 Count = group.Count(),
-                Total = group.Sum(row => row.quotation.Total),
+                Total = group.Sum(row => row.Total),
             })
             .ToListAsync(cancellationToken);
 
@@ -146,13 +139,13 @@ internal sealed class OrdersReportSource(
         // identical calls.
         var defaultCurrency = await tenantDefaultCurrency.GetAsync(criteria.TenantId, cancellationToken);
 
-        var topAdvisors = await joined
-            .GroupBy(row => row.quotation.AdvisorId)
+        var topAdvisors = await orders
+            .GroupBy(row => row.AdvisorId)
             .Select(group => new
             {
                 AdvisorId = group.Key,
                 Count = group.Count(),
-                Ranking = group.Sum(row => row.quotation.Currency == defaultCurrency ? row.quotation.Total : 0m),
+                Ranking = group.Sum(row => row.Currency == defaultCurrency ? row.Total : 0m),
             })
             .OrderByDescending(entry => entry.Ranking)
             .ThenByDescending(entry => entry.Count)
@@ -161,14 +154,14 @@ internal sealed class OrdersReportSource(
             .ToListAsync(cancellationToken);
 
         var advisorIds = topAdvisors.Select(entry => entry.AdvisorId).ToArray();
-        var advisorTotals = await joined
-            .Where(row => advisorIds.Contains(row.quotation.AdvisorId))
-            .GroupBy(row => new { row.quotation.AdvisorId, row.quotation.Currency })
+        var advisorTotals = await orders
+            .Where(row => advisorIds.Contains(row.AdvisorId))
+            .GroupBy(row => new { row.AdvisorId, row.Currency })
             .Select(group => new
             {
                 group.Key.AdvisorId,
                 group.Key.Currency,
-                Total = group.Sum(row => row.quotation.Total),
+                Total = group.Sum(row => row.Total),
             })
             .ToListAsync(cancellationToken);
 
@@ -189,8 +182,8 @@ internal sealed class OrdersReportSource(
 
         var otherAdvisors = await ReportRankFolding.FoldOthersAsync(
             byAdvisor, rankSize, orderCount, totals,
-            () => joined
-                .Select(row => row.quotation.AdvisorId)
+            () => orders
+                .Select(row => row.AdvisorId)
                 .Distinct()
                 .CountAsync(cancellationToken));
         if (otherAdvisors is not null)
@@ -198,13 +191,13 @@ internal sealed class OrdersReportSource(
             byAdvisor.Add(otherAdvisors);
         }
 
-        var topClients = await joined
-            .GroupBy(row => row.quotation.ClientId)
+        var topClients = await orders
+            .GroupBy(row => row.ClientId)
             .Select(group => new
             {
                 ClientId = group.Key,
                 Count = group.Count(),
-                Ranking = group.Sum(row => row.quotation.Currency == defaultCurrency ? row.quotation.Total : 0m),
+                Ranking = group.Sum(row => row.Currency == defaultCurrency ? row.Total : 0m),
             })
             .OrderByDescending(entry => entry.Ranking)
             .ThenByDescending(entry => entry.Count)
@@ -213,14 +206,14 @@ internal sealed class OrdersReportSource(
             .ToListAsync(cancellationToken);
 
         var clientIds = topClients.Select(entry => entry.ClientId).ToArray();
-        var clientTotals = await joined
-            .Where(row => clientIds.Contains(row.quotation.ClientId))
-            .GroupBy(row => new { row.quotation.ClientId, row.quotation.Currency })
+        var clientTotals = await orders
+            .Where(row => clientIds.Contains(row.ClientId))
+            .GroupBy(row => new { row.ClientId, row.Currency })
             .Select(group => new
             {
                 group.Key.ClientId,
                 group.Key.Currency,
-                Total = group.Sum(row => row.quotation.Total),
+                Total = group.Sum(row => row.Total),
             })
             .ToListAsync(cancellationToken);
 
@@ -244,8 +237,8 @@ internal sealed class OrdersReportSource(
 
         var otherClients = await ReportRankFolding.FoldOthersAsync(
             byClient, rankSize, orderCount, totals,
-            () => joined
-                .Select(row => row.quotation.ClientId)
+            () => orders
+                .Select(row => row.ClientId)
                 .Distinct()
                 .CountAsync(cancellationToken));
         if (otherClients is not null)
@@ -258,14 +251,8 @@ internal sealed class OrdersReportSource(
     }
 
     /// <summary>
-    /// Los pedidos filtrados por lo que es propio del pedido: tenant, rango de conversion y
-    /// estado de pago.
-    ///
-    /// Separado de <see cref="FilterQuotations"/> porque los filtros del criterio caen sobre dos
-    /// tablas distintas, y porque el join tiene que armarse **dentro** de cada metodo que
-    /// consulta: EF no traduce un agregado sobre una proyeccion a un record —no ve a traves del
-    /// constructor y falla con "could not be translated"—, asi que el resumen agrupa sobre el
-    /// tipo anonimo del join y no sobre <see cref="OrderRow"/>.
+    /// Los pedidos del tenant filtrados por el criterio: rango de conversion, estado de pago,
+    /// asesor y cliente. Todo es propio del pedido (spec 2026-10-15).
     /// </summary>
     private IQueryable<Order> FilterOrders(OrdersReportCriteria criteria)
     {
@@ -290,32 +277,18 @@ internal sealed class OrdersReportSource(
             orders = orders.Where(order => order.PaymentStatus == mapped);
         }
 
-        return orders;
-    }
-
-    /// <summary>
-    /// Las cotizaciones filtradas por lo que es propio de la cotizacion: asesor y cliente.
-    ///
-    /// **Sin filtro de tenant a proposito.** Lo aporta el join contra
-    /// <see cref="FilterOrders"/>, que si lo tiene: una cotizacion solo entra si hay un pedido de
-    /// este tenant que la apunte.
-    /// </summary>
-    private IQueryable<Quotation> FilterQuotations(OrdersReportCriteria criteria)
-    {
-        var candidates = quotations.Quotations.AsNoTracking();
-
         if (criteria.AdvisorId is { } advisorId)
         {
             var advisor = new MemberId(advisorId);
-            candidates = candidates.Where(quotation => quotation.AdvisorId == advisor);
+            orders = orders.Where(order => order.AdvisorId == advisor);
         }
 
         if (criteria.ClientId is { } clientId)
         {
-            candidates = candidates.Where(quotation => quotation.ClientId == clientId);
+            orders = orders.Where(order => order.ClientId == clientId);
         }
 
-        return candidates;
+        return orders;
     }
 
     /// <summary>
@@ -328,31 +301,26 @@ internal sealed class OrdersReportSource(
     /// </summary>
     private IQueryable<OrderRow> BuildQuery(OrdersReportCriteria criteria)
     {
-        var joined = from order in FilterOrders(criteria)
-                     join quotation in FilterQuotations(criteria)
-                         on order.QuotationId equals quotation.Id
-                     select new { order, quotation };
-
-        return joined
-            .OrderByDescending(row => row.order.ConvertedAt)
-            .ThenBy(row => row.order.OrderNumber)
+        return FilterOrders(criteria)
+            .OrderByDescending(row => row.ConvertedAt)
+            .ThenBy(row => row.OrderNumber)
             .Select(row => new OrderRow(
-                row.order.Id,
-                row.order.OrderNumber,
-                row.quotation.Id,
-                row.quotation.QuotationNumber,
-                row.order.ConvertedAt,
-                row.quotation.AdvisorId,
-                row.quotation.ClientId,
-                row.order.Status,
-                row.order.PaymentStatus,
-                row.quotation.Currency,
-                row.quotation.Subtotal,
-                row.quotation.TaxAmount,
-                row.quotation.Total));
+                row.Id,
+                row.OrderNumber,
+                row.Source,
+                row.QuotationId,
+                row.ConvertedAt,
+                row.AdvisorId,
+                row.ClientId,
+                row.Status,
+                row.PaymentStatus,
+                row.Currency,
+                row.Subtotal,
+                row.TaxAmount,
+                row.Total));
     }
 
-    // Dos consultas para toda la pagina, no dos por fila.
+    // Tres consultas para toda la pagina, no tres por fila.
     private async Task<IReadOnlyList<OrdersReportItemDto>> ToDtosAsync(
         Guid tenantId,
         IReadOnlyList<OrderRow> rows,
@@ -367,6 +335,17 @@ internal sealed class OrdersReportSource(
             rows.Select(row => row.AdvisorId.Value).ToArray(), cancellationToken);
         var clients = await clientLookup.FindAsync(
             tenantId, rows.Select(row => row.ClientId).ToArray(), cancellationToken);
+        var quotationIds = rows
+            .Where(row => row.QuotationId is not null)
+            .Select(row => row.QuotationId!.Value)
+            .Distinct()
+            .ToArray();
+        var quotationNumbers = quotationIds.Length == 0
+            ? new Dictionary<QuotationId, string>()
+            : await quotations.Quotations
+                .AsNoTracking()
+                .Where(quotation => quotation.TenantId == tenantId && quotationIds.Contains(quotation.Id))
+                .ToDictionaryAsync(quotation => quotation.Id, quotation => quotation.QuotationNumber, cancellationToken);
 
         return rows
             .Select(row =>
@@ -375,8 +354,9 @@ internal sealed class OrdersReportSource(
                 return new OrdersReportItemDto(
                     row.OrderId.Value,
                     row.OrderNumber,
-                    row.QuotationId.Value,
-                    row.QuotationNumber,
+                    row.Source.ToString(),
+                    row.QuotationId?.Value,
+                    row.QuotationId is { } quotationId ? quotationNumbers.GetValueOrDefault(quotationId) : null,
                     row.ConvertedAt,
                     row.AdvisorId.Value,
                     advisors.GetValueOrDefault(row.AdvisorId.Value),
@@ -404,14 +384,14 @@ internal sealed class OrdersReportSource(
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown payment status.")
     };
 
-    /// <summary>La fila cruda del join, con los tipos del dominio de <c>quotations</c>: los
+    /// <summary>La fila cruda del pedido, con los tipos del dominio de <c>quotations</c>: los
     /// <c>.Value</c> de los identificadores se desenvuelven ya en memoria, porque EF no traduce
     /// el acceso a un miembro de una propiedad con conversor de valor.</summary>
     private sealed record OrderRow(
         OrderId OrderId,
         string OrderNumber,
-        QuotationId QuotationId,
-        string QuotationNumber,
+        OrderSource Source,
+        QuotationId? QuotationId,
         DateTimeOffset ConvertedAt,
         MemberId AdvisorId,
         Guid ClientId,

@@ -1,8 +1,11 @@
 namespace Modules.Reporting.Application;
 
 /// <summary>
-/// Un pedido convertido, con la cotización de origen ya resuelta. Los importes son los de la
-/// cotización: <c>Order</c> no los duplica (modelo-datos-cotizaciones.md §1.2).
+/// Un pedido, con sus propios importes y la cotización de origen ya resuelta cuando la hay (spec
+/// 2026-10-15). <c>Source</c> viaja con el nombre (<c>Quotation</c>, <c>Manual</c>, <c>Shopify</c>…)
+/// porque el diccionario lo tiene el frontend; un pedido manual o de una integración trae
+/// <c>QuotationId</c> y <c>QuotationNumber</c> en <c>null</c>, y la tabla dibuja la celda vacía
+/// sin tener que adivinar el origen.
 ///
 /// <c>AdvisorName</c> es el **email** del asesor, no su nombre. El nombre vive en
 /// <c>Tenancy.Membership.DisplayName</c> desde el 2026-09-11, pero sólo lo usan el PDF y el
@@ -15,8 +18,9 @@ namespace Modules.Reporting.Application;
 public sealed record OrdersReportItemDto(
     Guid OrderId,
     string OrderNumber,
-    Guid QuotationId,
-    string QuotationNumber,
+    string Source,
+    Guid? QuotationId,
+    string? QuotationNumber,
     DateTimeOffset ConvertedAt,
     Guid AdvisorId,
     string? AdvisorName,
