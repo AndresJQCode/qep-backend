@@ -87,6 +87,18 @@ public sealed class QuotationParty
     // El documento se descarta en la parte de entrega antes de normalizar, igual que recoger en
     // tienda descarta la entrega entera: es un dato que ahí no aplica, no una contradicción que
     // merezca un 422 (ésas se rechazan, ver final_consumer_conflict).
+    /// <summary>La parte como la recibió: lo que <c>Order.FromQuotation</c> copia al pedido (spec 2026-10-15 §4.4).</summary>
+    public QuotationPartyDetails ToDetails() => new()
+    {
+        Name = Name,
+        IdentificationNumber = IdentificationNumber,
+        Phone = Phone,
+        Email = Email,
+        Address = Address,
+        DepartmentId = DepartmentId,
+        CityId = CityId,
+    };
+
     internal void Apply(QuotationPartyDetails details)
     {
         var normalized = (Role == QuotationPartyRole.Billing
