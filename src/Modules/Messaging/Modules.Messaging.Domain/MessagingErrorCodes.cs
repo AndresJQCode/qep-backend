@@ -13,6 +13,9 @@ public static class MessagingErrorCodes
     public const string MessageNotFound = "messaging.message.not_found";
     public const string WebhookSignatureInvalid = "messaging.webhook.signature_invalid";
 
+    /// <summary>Spec 2026-10-14 §5.2: plantillas, campañas e inicio de conversación no existen en Instagram (§3).</summary>
+    public const string ChannelUnsupported = "messaging.channel_unsupported";
+
     /// <summary>Spec 2026-10-10 §10: enviar a una conversación asignada a otra membresía.</summary>
     public const string AssignedToOther = "messaging.conversation.assigned_to_other";
 

@@ -30,7 +30,9 @@ internal sealed record UnknownChange(string Field) : WebhookChange;
 /// payload. Sólo ese tipo lo trae: ni un texto escrito a mano ni la respuesta a un mensaje interactivo.</summary>
 internal sealed record QuickReplyButton(string Text, string? Payload);
 
-internal sealed record InboundMedia(string MetaMediaId, string MimeType, string? Sha256, string? FileName);
+/// <param name="SourceUrl">Spec 2026-10-14 §6.2: en Instagram el adjunto no tiene id de medio; viene como URL pública con
+/// vencimiento, y la copia a R2 la baja desde ahí. En WhatsApp es <c>null</c> y manda <paramref name="MetaMediaId"/>.</param>
+internal sealed record InboundMedia(string MetaMediaId, string MimeType, string? Sha256, string? FileName, string? SourceUrl = null);
 
 /// <summary>Ya con el <c>kind</c> del mapa de §8.7 y el texto/leyenda/detalles separados como los guarda §7.3.
 /// Spec 2026-10-10 §8.1: <paramref name="UserId"/> (el BSUID) es la clave y siempre viene; el teléfono, el usuario y

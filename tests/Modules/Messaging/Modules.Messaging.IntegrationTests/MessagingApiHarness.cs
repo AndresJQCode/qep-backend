@@ -54,6 +54,21 @@ internal static class MessagingApiHarness
 
     public const string WebhookUrl = "/api/webhooks/whatsapp";
 
+    /// <summary>Spec 2026-10-14 §5.1: el webhook de Instagram, con su propia ruta.</summary>
+    public const string InstagramWebhookUrl = "/api/webhooks/instagram";
+
+    /// <summary>Centinelas del caso de uso Instagram (V-1 cerrada: claves propias). El secreto firma el webhook de Instagram.</summary>
+    public const string InstagramAppId = "700800900";
+
+    public const string TestInstagramAppSecret = "ig-app-secret-SENTINEL-m4";
+
+    public const string SentinelInstagramAccessToken = "ig-access-token-SENTINEL-m5";
+
+    /// <summary>El cliente de Graph de Instagram de Messaging y el de descarga de medios por URL.</summary>
+    public const string MessagingInstagramClientName = "messaging.instagram-graph";
+
+    public const string MessagingInstagramDownloadClientName = "messaging.instagram-download";
+
     /// <summary>La llave con la que el host cifra los tokens de las conexiones. Calculada, no escrita.</summary>
     public static string TestSecretProtectionKey { get; } =
         Convert.ToBase64String(Enumerable.Range(0, 32).Select(index => (byte)index).ToArray());
@@ -219,6 +234,11 @@ internal static class MessagingApiHarness
             builder.UseSetting("Meta:App:GraphApiVersion", "v24.0");
             builder.UseSetting("Meta:App:AppSecret", TestAppSecret);
             builder.UseSetting("Meta:App:WebhookVerifyToken", TestVerifyToken);
+            // Spec 2026-10-14 §9: el caso de uso Instagram, con centinelas propios.
+            builder.UseSetting("Meta:Instagram:AppId", InstagramAppId);
+            builder.UseSetting("Meta:Instagram:AppSecret", TestInstagramAppSecret);
+            builder.UseSetting("Meta:Instagram:GraphApiVersion", "v24.0");
+            builder.UseSetting("Meta:Instagram:AllowedRedirectOrigins:0", "https://qep.qcode.co");
             // Los workers no corren solos durante una prueba: la prueba llama DrainAsync.
             builder.UseSetting("Messaging:Workers:DeliveryPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
@@ -233,6 +253,14 @@ internal static class MessagingApiHarness
                 services.AddHttpClient(MessagingGraphUploadClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
                 services.AddHttpClient(MessagingGraphMediaClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
+                // Instagram (spec 2026-10-14): el canal de Messaging y el de Integrations contra graph.instagram.com, y la descarga de
+                // medios por URL, por el mismo handler: ninguna prueba sale a Instagram ni al CDN de Meta.
+                services.AddHttpClient(MessagingInstagramClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
+                services.AddHttpClient(MessagingInstagramDownloadClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
+                services.AddHttpClient("integrations.instagram-graph")
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
             });
         }
@@ -343,6 +371,37 @@ internal static class MessagingApiHarness
         scope.ServiceProvider.GetRequiredService<IIntegrationConnectionRepository>().Add(connection);
         scope.ServiceProvider.GetRequiredService<IConnectionRouteRepository>().Add(
             IntegrationConnectionRoute.Create(IntegrationProviders.WhatsAppCloud.Key, phoneNumberId, wabaId, tenantId, connection.Id));
+        await scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>()
+            .SaveChangesAsync(TestContext.Current.CancellationToken);
+        return connection.Id;
+    }
+
+    /// <summary>Spec 2026-10-14: una conexión <c>instagram</c> con su ruta por el id de la cuenta, escrita directo por el
+    /// repositorio de Integrations (sin Meta), cifrada con la llave activa del host.</summary>
+    public static async Task<Guid> SeedInstagramConnectionAsync(
+        WebApplicationFactory<Program> host, Guid tenantId, string name, string igUserId, string username = "origenbotanico",
+        string accessToken = SentinelInstagramAccessToken)
+    {
+        using var scope = host.Services.CreateScope();
+        var protector = scope.ServiceProvider.GetRequiredService<ISecretProtector>();
+        var connection = IntegrationConnection.Create(
+            IntegrationProviders.Instagram,
+            tenantId,
+            name,
+            new Dictionary<string, string>
+            {
+                [InstagramFieldKeys.Username] = username,
+                [InstagramFieldKeys.AccountName] = "Origen Botánico",
+                [InstagramFieldKeys.IgUserId] = igUserId,
+                [InstagramFieldKeys.TokenExpiresAt] = DateTimeOffset.UtcNow.AddDays(60).ToString("O"),
+            },
+            new Dictionary<string, string> { [InstagramFieldKeys.AccessToken] = accessToken },
+            protector.Protect,
+            Guid.CreateVersion7(),
+            DateTimeOffset.UtcNow);
+        scope.ServiceProvider.GetRequiredService<IIntegrationConnectionRepository>().Add(connection);
+        scope.ServiceProvider.GetRequiredService<IConnectionRouteRepository>().Add(
+            IntegrationConnectionRoute.Create(IntegrationProviders.Instagram.Key, igUserId, null, tenantId, connection.Id));
         await scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>()
             .SaveChangesAsync(TestContext.Current.CancellationToken);
         return connection.Id;
@@ -507,6 +566,20 @@ internal static class MessagingApiHarness
     /// <summary>La firma que Meta pone en <c>X-Hub-Signature-256</c>: HMAC-SHA256 del cuerpo con el AppSecret.</summary>
     public static string Sign(byte[] body) =>
         "sha256=" + Convert.ToHexStringLower(HMACSHA256.HashData(Encoding.UTF8.GetBytes(TestAppSecret), body));
+
+    /// <summary>La firma del webhook de Instagram: HMAC-SHA256 del cuerpo con el app secret del caso de uso Instagram.</summary>
+    public static string SignInstagram(byte[] body) =>
+        "sha256=" + Convert.ToHexStringLower(HMACSHA256.HashData(Encoding.UTF8.GetBytes(TestInstagramAppSecret), body));
+
+    public static async Task<HttpResponseMessage> PostInstagramWebhookAsync(HttpClient client, string json, string? signature = null)
+    {
+        var bytes = Encoding.UTF8.GetBytes(json);
+        using var request = new HttpRequestMessage(HttpMethod.Post, InstagramWebhookUrl);
+        request.Content = new ByteArrayContent(bytes);
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        request.Headers.TryAddWithoutValidation("X-Hub-Signature-256", signature ?? SignInstagram(bytes));
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
 
     /// <summary>Sin <c>X-Qep-Client</c>: el webhook está exento de CSRF por ruta.</summary>
     public static async Task<HttpResponseMessage> PostWebhookAsync(HttpClient client, string json, string? signature = null)

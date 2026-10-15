@@ -19,6 +19,9 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
     // Interna: CustomerRepository la usa para traducir sus UPDATE condicionales, que no pasan por SaveChanges.
     internal const string WhatsAppUserIdIndex = "IX_customers_tenant_whatsapp_user_id";
 
+    /// <summary>Spec 2026-10-14 decisión 10.</summary>
+    internal const string InstagramUserIdIndex = "IX_customers_tenant_instagram_user_id";
+
     private const string TagForeignKey = "FK_customer_tags_tags_tag_id";
 
     private const string ClassificationNameIndex = "IX_client_classifications_tenant_name";
@@ -79,6 +82,12 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
             // CustomerWhatsAppDirectory, en un scope sin más cambios; quien lo reutilice tiene que saberlo.
             dbContext.ChangeTracker.Clear();
             throw new WhatsAppUserIdTakenException(exception);
+        }
+        catch (DbUpdateException exception) when (IsUniqueViolationOf(exception, InstagramUserIdIndex))
+        {
+            // Spec 2026-10-14 decisión 10: dos entregas del mismo IGSID nuevo. Mismo tratamiento que el BSUID: CustomerInstagramDirectory relee.
+            dbContext.ChangeTracker.Clear();
+            throw new InstagramUserIdTakenException(exception);
         }
         catch (DbUpdateException exception)
             when (IsUniqueViolationOf(exception, CustomersDbContext.TagNameIndex))

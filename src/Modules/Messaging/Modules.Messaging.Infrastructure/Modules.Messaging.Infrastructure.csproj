@@ -19,6 +19,9 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <!-- Spec 2026-10-14 decisión 16: decodificador Opus administrado para pasar la nota de voz a WAV antes de mandarla a Instagram. -->
+    <PackageReference Include="Concentus" />
+    <PackageReference Include="Concentus.Oggfile" />
   </ItemGroup>
   <ItemGroup>
     <!-- Workers, parser, ingesta y verificador son internal; las pruebas los construyen o los

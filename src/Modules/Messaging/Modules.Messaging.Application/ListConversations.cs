@@ -5,7 +5,8 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Messaging.Application;
 
-public sealed record ListConversationsQuery(Guid TenantId, string? Status, string? Search, int? Page, int? PageSize, string? Assigned = null)
+public sealed record ListConversationsQuery(
+    Guid TenantId, string? Status, string? Search, int? Page, int? PageSize, string? Assigned = null, string? Channel = null)
     : IQuery<ConversationPageDto>;
 
 /// <summary>Spec §6.4: status ∈ Open|Resolved (default Open), search ≤ 100, page ≥ 1, pageSize 1–50 (default 30);
@@ -25,6 +26,10 @@ public sealed class ListConversationsValidator : AbstractValidator<ListConversat
         RuleFor(query => query.Assigned)
             .Must(value => value is null or "me" or "none" or "all")
             .OverridePropertyName("assigned").WithMessage("assigned must be me, none or all.");
+        // Spec 2026-10-14 §5.2: ausente = todos los canales.
+        RuleFor(query => query.Channel)
+            .Must(value => value is null or nameof(ConversationChannel.WhatsApp) or nameof(ConversationChannel.Instagram))
+            .OverridePropertyName("channel").WithMessage("channel must be WhatsApp or Instagram.");
     }
 }
 
@@ -57,7 +62,13 @@ public sealed class ListConversationsHandler(
         // §6.1.6: los clientes cuyo nombre contiene el término aportan sus ids (y sus números, para las conversaciones viejas).
         var customerWaIds = search is null ? Array.Empty<string>() : await customers.FindWaIdsByNameAsync(query.TenantId, search, cancellationToken);
         var customerIds = search is null ? Array.Empty<Guid>() : await customers.FindIdsByNameAsync(query.TenantId, search, cancellationToken);
-        var filter = new ConversationListFilter(status, assigned, me, search, customerWaIds, customerIds);
+        ConversationChannel? channel = query.Channel switch
+        {
+            nameof(ConversationChannel.WhatsApp) => ConversationChannel.WhatsApp,
+            nameof(ConversationChannel.Instagram) => ConversationChannel.Instagram,
+            _ => null,
+        };
+        var filter = new ConversationListFilter(status, assigned, me, search, customerWaIds, customerIds, channel);
 
         var (rows, total) = await queries.ListAsync(query.TenantId, filter, page, pageSize, cancellationToken);
         var counts = await queries.CountsAsync(query.TenantId, me, cancellationToken);

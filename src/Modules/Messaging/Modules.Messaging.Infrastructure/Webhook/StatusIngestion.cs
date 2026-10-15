@@ -91,5 +91,61 @@ internal static class StatusIngestion
         return customers.Count == 1 ? customers[0] : null;
     }
 
+    /// <summary>
+    /// Spec 2026-10-14 §6.2, <c>messaging_seen</c>: la persona leyó hasta <paramref name="mid"/>. Instagram no manda <c>delivered</c>
+    /// ni un <c>read</c> por mensaje, así que el visto cubre todos nuestros mensajes de esa conversación hasta ese instante, en una
+    /// sentencia monótona (sólo Sent o Delivered pasan a Read). La foto de la lista se corrige sin subir <c>version</c>, como los
+    /// estados de WhatsApp. <see cref="StatusOutcome.NotFound"/> si el <c>mid</c> no es nuestro (la app del teléfono).
+    /// </summary>
+    public static async Task<StatusOutcome> ApplySeenAsync(
+        MessagingDbContext dbContext, Guid connectionId, string userId, string mid, CancellationToken cancellationToken)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var updated = await dbContext.Database.SqlQuery<AppliedRow>(
+            $"""
+            UPDATE messaging.messages AS m
+               SET status = 3
+              FROM messaging.conversations AS c, messaging.messages AS seen
+             WHERE c.id = m.conversation_id AND c.connection_id = {connectionId} AND c.user_id = {userId}
+               AND seen.connection_id = {connectionId} AND seen.wamid = {mid} AND seen.direction = 2
+               AND m.direction = 2 AND m.status IN (1, 2) AND m.occurred_at <= seen.occurred_at
+            RETURNING m.id AS "Id", m.conversation_id AS "ConversationId"
+            """).ToListAsync(cancellationToken);
+
+        if (updated.Count == 0)
+        {
+            var exists = await dbContext.Database.SqlQuery<int>(
+                $"""SELECT 1 AS "Value" FROM messaging.messages WHERE connection_id = {connectionId} AND wamid = {mid} AND direction = 2""")
+                .ToListAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return exists.Count == 0 ? StatusOutcome.NotFound : StatusOutcome.NoChange;
+        }
+
+        var conversationIds = updated.Select(row => row.ConversationId).Distinct().ToArray();
+        var messageIds = updated.Select(row => row.Id).ToArray();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"UPDATE messaging.conversations SET last_message_status = 3 WHERE id = ANY({conversationIds}) AND last_message_id = ANY({messageIds})",
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return StatusOutcome.Applied;
+    }
+
+    /// <summary>Spec 2026-10-14 D-I6, <c>is_deleted</c>: la persona borró su mensaje. El texto se conserva (ya se leyó) y la burbuja lo
+    /// tacha por <c>details.deleted</c>. Idempotente. <c>false</c> si el mensaje no está (llegó antes que él, o no era de esa persona).</summary>
+    public static async Task<bool> MarkDeletedAsync(MessagingDbContext dbContext, Guid connectionId, string userId, string mid, CancellationToken cancellationToken)
+    {
+        const string empty = "{}";
+        const string deletedFlag = """{"deleted": true}""";
+        var rows = await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE messaging.messages AS m
+               SET details = COALESCE(m.details, {empty}::jsonb) || {deletedFlag}::jsonb
+              FROM messaging.conversations AS c
+             WHERE c.id = m.conversation_id AND c.connection_id = {connectionId} AND c.user_id = {userId}
+               AND m.connection_id = {connectionId} AND m.wamid = {mid} AND m.direction = 1
+            """, cancellationToken);
+        return rows == 1;
+    }
+
     private sealed record AppliedRow(Guid Id, Guid ConversationId);
 }

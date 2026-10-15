@@ -14,4 +14,8 @@ public interface IMessagingMediaStore
     Task<MediaStreamDto?> OpenReadAsync(string key, CancellationToken cancellationToken);
 
     Task DeleteAsync(string key, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-14 decisión 12: una URL firmada de lectura de vida corta, para que Meta descargue el adjunto de un
+    /// saliente de Instagram (<c>attachment.payload.url</c>). No hay subida previa como en WhatsApp.</summary>
+    Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken);
 }

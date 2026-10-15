@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Modules.Messaging.Domain;
 using Modules.Tenancy.Application;
 
 namespace Modules.Messaging.Application;
@@ -31,7 +32,8 @@ public sealed class ListMessagingConnectionsHandler(IMessagingConnectionDirector
 /// <summary>Spec 2026-10-11 §5.2: <c>GET /connections/{connectionId}/templates?refresh=</c>.</summary>
 public sealed record ListTemplatesQuery(Guid TenantId, Guid ConnectionId, bool Refresh) : IQuery<IReadOnlyList<MessageTemplateDto>>;
 
-public sealed class ListTemplatesHandler(IMessageTemplates templates, ITenantModules tenantModules, IExecutionContext executionContext)
+public sealed class ListTemplatesHandler(
+    IMessageTemplates templates, IMessagingConnectionDirectory connections, ITenantModules tenantModules, IExecutionContext executionContext)
     : IQueryHandler<ListTemplatesQuery, IReadOnlyList<MessageTemplateDto>>
 {
     public async Task<IReadOnlyList<MessageTemplateDto>> HandleAsync(ListTemplatesQuery query, CancellationToken cancellationToken)
@@ -40,6 +42,13 @@ public sealed class ListTemplatesHandler(IMessageTemplates templates, ITenantMod
         // R8: leer la caché es lectura; refresh se la salta y le pega a Meta, así que pide el permiso de gestionar.
         var permission = query.Refresh ? MessagingPermissions.ConversationManage : MessagingPermissions.ConversationRead;
         await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, permission, cancellationToken);
+        // Spec 2026-10-14 §5.2 (BFF): una conexión de Instagram no tiene plantillas y la lista viaja vacía, no como error: la pantalla
+        // dibuja «sin plantillas» sin tener que distinguir un canal de una falla de Meta.
+        if (await connections.FindChannelAsync(query.TenantId, query.ConnectionId, cancellationToken) == ConversationChannel.Instagram)
+        {
+            return [];
+        }
+
         return await templates.ListAsync(query.TenantId, query.ConnectionId, query.Refresh, cancellationToken);
     }
 }

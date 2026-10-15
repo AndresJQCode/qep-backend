@@ -39,9 +39,14 @@ internal sealed record MediaTransferResult(MediaTransferStatus Status, string? R
 internal sealed class MediaTransfer(
     IMessagingConnectionDirectory connections,
     IWhatsAppCloudClient meta,
+    IInstagramClient instagram,
     IMessagingMediaStore store,
     IClock clock)
 {
+    /// <summary>Spec 2026-10-14 §3: el tope de un adjunto de Instagram. Se baja a memoria porque el CDN no siempre dice el largo, y R2
+    /// lo exige antes de subir.</summary>
+    public const long InstagramMaxBytes = 25L * 1024 * 1024;
+
     /// <summary>§8.6: el tope de WhatsApp para un documento. Más que eso no se intenta.</summary>
     public const long MaxBytes = 100L * 1024 * 1024;
 
@@ -112,6 +117,11 @@ internal sealed class MediaTransfer(
     {
         ArgumentNullException.ThrowIfNull(pending);
         var key = KeyFor(pending.TenantId, pending.MessageId);
+        if (pending.SourceUrl is { } sourceUrl)
+        {
+            return await RunInstagramAsync(pending, sourceUrl, key, cancellationToken);
+        }
+
         if (!IsValidMetaMediaId(pending.MetaMediaId))
         {
             return MediaTransferResult.Failed(MediaTransferStatus.GiveUp, "invalid_media_id", key);
@@ -176,7 +186,99 @@ internal sealed class MediaTransfer(
             return new MediaTransferResult(MediaTransferStatus.Mismatch, "size_mismatch", key, length, hex, mimeType);
         }
 
-        var matches = media.Sha256 is { } reference ? Sha256Matches(reference, hash) : true;
+        return Verified(media.Sha256, hash, key, length, hex, mimeType);
+    }
+
+    /// <summary>Spec 2026-10-14 §6.2: GET a la URL pública (sin token), a memoria con tope, y a R2 con el tipo que dijo el CDN. Sin
+    /// hash de referencia: Meta no manda ninguno para Instagram, así que queda <c>Stored</c> con el hash propio.</summary>
+    private async Task<MediaTransferResult> RunInstagramAsync(PendingMedia pending, string sourceUrl, string key, CancellationToken cancellationToken)
+    {
+        if (clock.UtcNow - pending.OccurredAt > MetaRetention)
+        {
+            return MediaTransferResult.Failed(MediaTransferStatus.GiveUp, "expired", key);
+        }
+
+        if (!Uri.TryCreate(sourceUrl, UriKind.Absolute, out var url) || url.Scheme != Uri.UriSchemeHttps)
+        {
+            return MediaTransferResult.Failed(MediaTransferStatus.GiveUp, "invalid_url", key);
+        }
+
+        byte[] content;
+        string mimeType;
+        using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        {
+            timeout.CancelAfter(CopyTimeout);
+            try
+            {
+                var download = await instagram.OpenAsync(url, timeout.Token);
+                if (download is null)
+                {
+                    return MediaTransferResult.Failed(MediaTransferStatus.Retry, "download:unavailable", key);
+                }
+
+                await using var source = download.Content;
+                if (download.Length is { } declared && declared > InstagramMaxBytes)
+                {
+                    return MediaTransferResult.Failed(MediaTransferStatus.GiveUp, "too_large", key);
+                }
+
+                var read = await ReadCappedAsync(source, InstagramMaxBytes, timeout.Token);
+                if (read is null)
+                {
+                    return MediaTransferResult.Failed(MediaTransferStatus.GiveUp, "too_large", key);
+                }
+
+                content = read;
+
+                mimeType = NormalizeMimeType(download.ContentType);
+            }
+            catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                var reason = timeout.IsCancellationRequested ? "copy:timeout" : "copy:" + exception.GetType().Name;
+                return MediaTransferResult.Failed(MediaTransferStatus.Retry, reason, key);
+            }
+        }
+
+        if (content.Length == 0)
+        {
+            return MediaTransferResult.Failed(MediaTransferStatus.Retry, "empty", key);
+        }
+
+        try
+        {
+            using var upload = new MemoryStream(content, writable: false);
+            await store.UploadAsync(key, upload, content.Length, mimeType, cancellationToken);
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return MediaTransferResult.Failed(MediaTransferStatus.Retry, "upload:" + exception.GetType().Name, key);
+        }
+
+        return new MediaTransferResult(MediaTransferStatus.Stored, null, key, content.Length, Convert.ToHexStringLower(SHA256.HashData(content)), mimeType);
+    }
+
+    /// <summary><c>null</c> si el stream supera el tope.</summary>
+    private static async Task<byte[]?> ReadCappedAsync(Stream source, long maxBytes, CancellationToken cancellationToken)
+    {
+        using var buffer = new MemoryStream();
+        var chunk = new byte[64 * 1024];
+        int read;
+        while ((read = await source.ReadAsync(chunk, cancellationToken)) > 0)
+        {
+            if (buffer.Length + read > maxBytes)
+            {
+                return null;
+            }
+
+            buffer.Write(chunk, 0, read);
+        }
+
+        return buffer.ToArray();
+    }
+
+    private static MediaTransferResult Verified(string? sha256, byte[] hash, string key, long length, string hex, string mimeType)
+    {
+        var matches = sha256 is { } reference ? Sha256Matches(reference, hash) : true;
         return matches switch
         {
             true => new MediaTransferResult(MediaTransferStatus.Stored, null, key, length, hex, mimeType),

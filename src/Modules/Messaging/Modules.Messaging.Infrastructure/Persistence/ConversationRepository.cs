@@ -19,9 +19,16 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
             UPDATE messaging.conversations
                SET unread_count = 0, updated_at = {now}, version = version + 1
              WHERE id = {conversationId} AND tenant_id = {tenantId} AND unread_count > 0
-            RETURNING connection_id AS "ConnectionId", last_inbound_wamid AS "LastInboundWamid", last_inbound_at AS "LastInboundAt"
+            RETURNING connection_id AS "ConnectionId", last_inbound_wamid AS "LastInboundWamid", last_inbound_at AS "LastInboundAt", channel AS "Channel", user_id AS "UserId"
             """).ToListAsync(cancellationToken);
-        return rows.Count == 1 ? new ReadReceiptTarget(rows[0].ConnectionId, rows[0].LastInboundWamid, rows[0].LastInboundAt) : null;
+        if (rows.Count != 1)
+        {
+            return null;
+        }
+
+        var row = rows[0];
+        var channel = Enum.TryParse<ConversationChannel>(row.Channel, out var parsed) ? parsed : ConversationChannel.WhatsApp;
+        return new ReadReceiptTarget(row.ConnectionId, row.LastInboundWamid, row.LastInboundAt, channel, row.UserId);
     }
 
     public async Task<bool> MarkUnreadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken)
@@ -115,5 +122,5 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
         return AutoAssignOutcome.AssignedToOther;
     }
 
-    private sealed record ReadRow(Guid ConnectionId, string? LastInboundWamid, DateTimeOffset? LastInboundAt);
+    private sealed record ReadRow(Guid ConnectionId, string? LastInboundWamid, DateTimeOffset? LastInboundAt, string Channel, string? UserId);
 }

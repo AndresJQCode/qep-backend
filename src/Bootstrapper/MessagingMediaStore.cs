@@ -16,4 +16,8 @@ internal sealed class MessagingMediaStore(IObjectStorage objectStorage) : IMessa
             : null;
 
     public Task DeleteAsync(string key, CancellationToken cancellationToken) => objectStorage.DeleteAsync(key, cancellationToken);
+
+    /// <summary>Spec 2026-10-14 decisión 12: sin nombre de archivo, la lee Meta y no una persona.</summary>
+    public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken) =>
+        objectStorage.CreatePresignedDownloadUrlAsync(key, lifetime, null, cancellationToken);
 }

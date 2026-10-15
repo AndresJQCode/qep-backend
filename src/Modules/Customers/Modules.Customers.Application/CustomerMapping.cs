@@ -55,7 +55,8 @@ internal static class CustomerMapping
         // Spec 2026-10-11 §4.2: la ficha y la modal se dibujan con un solo GET. El listado y el Excel no las
         // piden y pasan una colección vacía.
         tags,
-        customer.ToConsentDto());
+        customer.ToConsentDto(),
+        customer.InstagramUsername);
 
     // La FK de base garantiza que la ciudad de cada direccion exista, asi que un miss aca es
     // corrupcion de datos: se prefiere un nombre vacio a tirar la ficha entera abajo, que es lo

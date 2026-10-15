@@ -1,3 +1,5 @@
+using Modules.Messaging.Domain;
+
 namespace Modules.Messaging.Application;
 
 /// <summary>
@@ -43,4 +45,16 @@ public static class OutboundMediaPolicy
     public static bool IsImage(OutboundMediaFormat format) => format is OutboundMediaFormat.Jpeg or OutboundMediaFormat.Png;
 
     public static long MaxBytesOf(OutboundMediaFormat format) => IsImage(format) ? MaxImageBytes : MaxDocumentBytes;
+
+    /// <summary>Spec 2026-10-14 §3 y decisión 12: Instagram acepta imagen y PDF, de hasta 25 MB; Word y Excel no.</summary>
+    public const long InstagramMaxBytes = 25L * 1024 * 1024;
+
+    public static bool IsAllowed(OutboundMediaFormat format, ConversationChannel channel) =>
+        channel != ConversationChannel.Instagram || IsImage(format) || format == OutboundMediaFormat.Pdf;
+
+    public static long MaxBytesOf(OutboundMediaFormat format, ConversationChannel channel) =>
+        channel == ConversationChannel.Instagram ? InstagramMaxBytes : MaxBytesOf(format);
+
+    /// <summary>§3: el <c>attachment.type</c> de la Messaging API de Instagram.</summary>
+    public static string InstagramAttachmentType(OutboundMediaFormat format) => IsImage(format) ? "image" : "file";
 }

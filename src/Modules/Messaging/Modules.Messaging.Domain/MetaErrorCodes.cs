@@ -22,6 +22,15 @@ public static class MetaErrorCodes
     /// <summary>El número de la conexión no está registrado en WhatsApp Business: <c>number_unregistered</c>.</summary>
     public const int NumberUnregistered = 133010;
 
+    /// <summary>Spec 2026-10-14 §6.2: en la Messaging API de Instagram «fuera de la ventana de 24 horas» llega como el código genérico
+    /// de permiso (10) con el subcódigo <see cref="InstagramOutsideWindowSubcode"/>. El envío lo trata como ventana cerrada.</summary>
+    public const int InstagramOutsideWindow = 10;
+
+    public const int InstagramOutsideWindowSubcode = 2534022;
+
+    /// <summary>§6.2: la persona no está disponible (bloqueó la cuenta o borró la suya).</summary>
+    public const int InstagramUserUnavailable = 551;
+
     /// <summary>La plantilla no existe en ese idioma (decisión 15).</summary>
     public const int TemplateDoesNotExist = 132001;
 

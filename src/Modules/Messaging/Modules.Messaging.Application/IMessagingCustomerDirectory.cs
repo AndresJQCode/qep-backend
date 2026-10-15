@@ -1,7 +1,12 @@
+using Modules.Messaging.Domain;
+
 namespace Modules.Messaging.Application;
 
 /// <summary>Spec 2026-10-10 §8.2: quien escribió, como lo ve Messaging (el <c>waId</c> son los dígitos sin «+»).</summary>
-public sealed record MessagingContact(string UserId, string? WaId, string? ProfileName, string? Username);
+/// <param name="Channel">Spec 2026-10-14 decisión 10: en Instagram <c>UserId</c> es el IGSID y el cliente se empareja por
+/// <c>instagram_user_id</c>; nunca por teléfono, que no viene.</param>
+public sealed record MessagingContact(
+    string UserId, string? WaId, string? ProfileName, string? Username, ConversationChannel Channel = ConversationChannel.WhatsApp);
 
 /// <summary><c>Created</c> decide el evento: <c>CustomerCreated</c> si se creó, si no <c>CustomerLinked</c> (§8.2).</summary>
 public sealed record MessagingEnsuredCustomer(Guid CustomerId, bool Created);

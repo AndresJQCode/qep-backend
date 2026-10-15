@@ -77,7 +77,7 @@ internal sealed partial class MediaCopyWorker(
                   JOIN messaging.messages AS message ON message.id = pending.message_id
                  WHERE media.message_id = pending.message_id
                 RETURNING media.message_id AS "MessageId", message.tenant_id AS "TenantId", message.connection_id AS "ConnectionId",
-                          media.meta_media_id AS "MetaMediaId", message.occurred_at AS "OccurredAt", media.attempts AS "Attempts"
+                          media.meta_media_id AS "MetaMediaId", message.occurred_at AS "OccurredAt", media.attempts AS "Attempts", media.source_url AS "SourceUrl"
                 """).ToListAsync(cancellationToken);
         }
 

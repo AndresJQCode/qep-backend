@@ -31,6 +31,15 @@ public sealed partial class Conversation
     /// <summary>§6.1.1: código ISO 3166 alfa-2 + «.» + 1 a 128 alfanuméricos.</summary>
     public static bool IsValidUserId(string? value) => value is not null && UserIdShape().IsMatch(value);
 
+    /// <summary>Spec 2026-10-14 §6.2: en Instagram la clave es el IGSID, numérico; en WhatsApp el BSUID.</summary>
+    public static bool IsValidUserId(string? value, ConversationChannel channel) =>
+        channel == ConversationChannel.Instagram ? IsValidInstagramUserId(value) : IsValidUserId(value);
+
+    public static bool IsValidInstagramUserId(string? value) => value is not null && InstagramUserIdShape().IsMatch(value);
+
+    [GeneratedRegex("^[0-9]{1,64}\\z", RegexOptions.CultureInvariant)]
+    private static partial Regex InstagramUserIdShape();
+
     // «\z» y no «$»: en .NET «$» también acepta un «\n» final, y "CO.1\n" llegaría a la columna.
     [GeneratedRegex("^[A-Z]{2}\\.[A-Za-z0-9]{1,128}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex UserIdShape();
@@ -42,6 +51,9 @@ public sealed partial class Conversation
     public Guid TenantId { get; private set; }
 
     public Guid ConnectionId { get; private set; }
+
+    /// <summary>Spec 2026-10-14 decisión 4: lo fija la conexión al crear la conversación; nunca cambia.</summary>
+    public ConversationChannel Channel { get; private set; }
 
     /// <summary>Spec 2026-10-10 §6.1.1: el BSUID, la clave de la conversación. <c>null</c> sólo en una fila vieja que
     /// todavía no recibió un entrante con BSUID (§8.1, adopción).</summary>
@@ -130,11 +142,21 @@ public sealed partial class Conversation
     /// <summary>Spec 2026-10-10 §6.1.1: una conversación nueva por BSUID, con teléfono si Meta lo mandó. En producción la
     /// crea la ingesta por SQL; esto lo usan las pruebas y el harness.</summary>
     public static Conversation StartWithUserId(
-        Guid id, Guid tenantId, Guid connectionId, string userId, string? waId, string? profileName, DateTimeOffset now)
+        Guid id, Guid tenantId, Guid connectionId, string userId, string? waId, string? profileName, DateTimeOffset now,
+        ConversationChannel channel = ConversationChannel.WhatsApp)
     {
-        if (!IsValidUserId(userId))
+        if (!IsValidUserId(userId, channel))
         {
-            throw new ArgumentException("A user id is a business-scoped user id (CC.alphanumerics).", nameof(userId));
+            throw new ArgumentException(
+                channel == ConversationChannel.Instagram
+                    ? "An Instagram user id is numeric (the IGSID)."
+                    : "A user id is a business-scoped user id (CC.alphanumerics).",
+                nameof(userId));
+        }
+
+        if (channel == ConversationChannel.Instagram && waId is not null)
+        {
+            throw new ArgumentException("An Instagram conversation has no phone number.", nameof(waId));
         }
 
         if (waId is not null && (waId.Length is 0 or > WaIdMaxLength || !waId.All(char.IsAsciiDigit)))
@@ -147,6 +169,7 @@ public sealed partial class Conversation
             Id = id,
             TenantId = tenantId,
             ConnectionId = connectionId,
+            Channel = channel,
             UserId = userId,
             WaId = waId,
             ProfileName = Truncate(profileName, ProfileNameMaxLength),

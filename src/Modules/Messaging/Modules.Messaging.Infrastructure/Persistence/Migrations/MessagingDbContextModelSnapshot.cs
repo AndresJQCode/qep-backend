@@ -229,6 +229,14 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("assigned_member_id");
 
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("WhatsApp")
+                        .HasColumnName("channel");
+
                     b.Property<Guid>("ConnectionId")
                         .HasColumnType("uuid")
                         .HasColumnName("connection_id");
@@ -347,6 +355,9 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .IsDescending(false, false, false, true, true)
                         .HasFilter("assigned_member_id IS NOT NULL");
 
+                    b.HasIndex(new[] { "TenantId", "Channel", "Status", "LastActivityAt", "Id" }, "IX_conversations_tenant_channel_status_activity")
+                        .IsDescending(false, false, false, true, true);
+
                     b.HasIndex(new[] { "TenantId", "CustomerId", "LastActivityAt" }, "IX_conversations_tenant_customer_activity")
                         .IsDescending(false, false, true)
                         .HasFilter("customer_id IS NOT NULL");
@@ -379,6 +390,8 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.ToTable("conversations", "messaging", t =>
                         {
                             t.HasCheckConstraint("CK_conversations_assignment", "(assigned_member_id IS NULL) = (assigned_at IS NULL)");
+
+                            t.HasCheckConstraint("CK_conversations_channel", "channel IN ('WhatsApp','Instagram')");
 
                             t.HasCheckConstraint("CK_conversations_identity", "user_id IS NOT NULL OR wa_id IS NOT NULL");
 
@@ -610,6 +623,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("size_bytes");
 
+                    b.Property<string>("SourceUrl")
+                        .HasColumnType("text")
+                        .HasColumnName("source_url");
+
                     b.Property<string>("StorageKey")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)")
@@ -742,7 +759,7 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_messages_inbound_not_failed", "direction = 2 OR status <> 4");
 
-                            t.HasCheckConstraint("CK_messages_kind", "kind BETWEEN 1 AND 13");
+                            t.HasCheckConstraint("CK_messages_kind", "kind BETWEEN 1 AND 14");
 
                             t.HasCheckConstraint("CK_messages_status", "status BETWEEN 1 AND 4");
 
@@ -787,6 +804,14 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("ProcessedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("processed_at");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("whatsapp")
+                        .HasColumnName("provider");
 
                     b.Property<DateTimeOffset>("ReceivedAt")
                         .HasColumnType("timestamp with time zone")

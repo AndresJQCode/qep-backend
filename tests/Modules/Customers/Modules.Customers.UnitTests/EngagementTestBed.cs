@@ -117,6 +117,9 @@ internal static class EngagementTestBed
         public Task<Customer?> FindByWhatsAppUserIdAsync(Guid tenantId, string whatsAppUserId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<Customer?> FindByInstagramUserIdAsync(Guid tenantId, string instagramUserId, CancellationToken cancellationToken) =>
+            Task.FromResult<Customer?>(null);
+
         public Task<Customer?> FindOldestByPhoneE164Async(Guid tenantId, string phoneE164, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

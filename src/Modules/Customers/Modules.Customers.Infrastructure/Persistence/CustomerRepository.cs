@@ -394,6 +394,11 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             .AsNoTracking()
             .SingleOrDefaultAsync(customer => customer.TenantId == tenantId && customer.WhatsAppUserId == whatsAppUserId, cancellationToken);
 
+    public Task<Customer?> FindByInstagramUserIdAsync(Guid tenantId, string instagramUserId, CancellationToken cancellationToken) =>
+        dbContext.Customers
+            .AsNoTracking()
+            .SingleOrDefaultAsync(customer => customer.TenantId == tenantId && customer.InstagramUserId == instagramUserId, cancellationToken);
+
     public Task<Customer?> FindOldestByPhoneE164Async(Guid tenantId, string phoneE164, CancellationToken cancellationToken) =>
         dbContext.Customers
             .AsNoTracking()

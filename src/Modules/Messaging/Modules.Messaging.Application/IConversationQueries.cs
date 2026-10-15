@@ -23,7 +23,8 @@ public sealed record ConversationRow(
     MessageStatus? LastMessageStatus,
     DateTimeOffset? LastMessageAt,
     DateTimeOffset UpdatedAt,
-    long Version);
+    long Version,
+    ConversationChannel Channel = ConversationChannel.WhatsApp);
 
 /// <summary>Spec 2026-10-10 §5.1: <c>assigned=all|me|none</c>.</summary>
 public enum AssignedFilter
@@ -41,7 +42,8 @@ public sealed record ConversationListFilter(
     Guid? MemberId,
     string? Search,
     IReadOnlyCollection<string> CustomerWaIds,
-    IReadOnlyCollection<Guid> CustomerIds);
+    IReadOnlyCollection<Guid> CustomerIds,
+    ConversationChannel? Channel = null);
 
 /// <summary>Spec 2026-10-09 §7.6: las lecturas de la bandeja. Todo método recibe <c>tenantId</c>.</summary>
 public interface IConversationQueries

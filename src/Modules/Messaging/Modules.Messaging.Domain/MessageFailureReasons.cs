@@ -36,6 +36,11 @@ public static class MessageFailureReasons
         [132016] = "WhatsApp deshabilitó esta plantilla. Elige otra o crea una nueva en WhatsApp Manager.",
         [132018] = "WhatsApp rechazó el valor de una variable: no puede tener saltos de línea, tabulaciones ni más de 4 espacios seguidos.",
         [Unconfirmed] = "No pudimos confirmar el envío con WhatsApp. Intenta de nuevo.",
+
+        // Spec 2026-10-14 §6.2: los de la Messaging API de Instagram. 10 es «permiso denegado» de Graph y Meta lo usa, entre otros,
+        // cuando pasaron las 24 horas; 551 es la persona que no está disponible (bloqueó la cuenta o borró la suya).
+        [10] = "Instagram no permitió el envío: puede que hayan pasado más de 24 horas desde el último mensaje de la persona.",
+        [551] = "Instagram no pudo entregar el mensaje: la persona no está disponible.",
     };
 
     public static string? For(int? failureCode) =>
