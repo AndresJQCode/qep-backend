@@ -19,4 +19,9 @@ public static class MessagingPermissions
     /// <summary>Spec 2026-10-12 §3.5 y D-Q6: crear, editar y borrar las respuestas rápidas del tenant. Leerlas no lo pide (basta
     /// <see cref="ConversationRead"/>). De núcleo y de fábrica sólo en <c>admin</c>, como <see cref="CampaignManage"/>.</summary>
     public const string QuickReplyManage = "messaging.quick_reply.manage";
+
+    /// <summary>Spec 2026-10-14 D-T5: crear, aprovisionar, sincronizar y borrar las plantillas de WhatsApp de una conexión. Leer el
+    /// catálogo de envío no lo pide (basta <see cref="ConversationRead"/>). De núcleo y de fábrica sólo en <c>admin</c>: lo que la empresa
+    /// manda en su nombre y lo que Meta cobra lo decide quien administra, como <see cref="CampaignManage"/>.</summary>
+    public const string TemplateManage = "messaging.template.manage";
 }

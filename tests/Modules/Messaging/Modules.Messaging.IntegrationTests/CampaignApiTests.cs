@@ -14,9 +14,9 @@ public sealed class CampaignApiTests
 
     private const string Catalog = """
         {"data":[
-          {"name":"promo","language":"es","status":"APPROVED","category":"MARKETING",
+          {"id":"1","name":"promo","language":"es","status":"APPROVED","category":"MARKETING",
            "components":[{"type":"BODY","text":"Hola {{1}}, tu código es {{2}}"}]},
-          {"name":"aviso","language":"es","status":"APPROVED","category":"UTILITY",
+          {"id":"2","name":"aviso","language":"es","status":"APPROVED","category":"UTILITY",
            "components":[{"type":"BODY","text":"Tu pedido salió"}]}
         ]}
         """;

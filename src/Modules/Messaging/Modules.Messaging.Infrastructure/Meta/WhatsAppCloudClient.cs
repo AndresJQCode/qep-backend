@@ -81,12 +81,15 @@ internal sealed partial class WhatsAppCloudClient(
     /// máximo que Meta deja tener por cuenta.</summary>
     public const int MaxTemplatePages = 10;
 
-    public const string TemplateFields = "name,language,status,category,components,parameter_format";
+    /// <summary>Spec 2026-10-14 §4.4: <c>id</c> y <c>rejected_reason</c> alimentan el espejo.</summary>
+    public const string TemplateFields = "id,name,language,status,category,components,parameter_format,rejected_reason";
 
-    public async Task<MessagingGraphResult<IReadOnlyList<JsonElement>>> ListTemplatesAsync(MessagingTemplateSource source, CancellationToken cancellationToken)
+    public async Task<MessagingGraphResult<TemplateListing>> ListTemplatesAsync(MessagingTemplateSource source, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(source);
         var templates = new List<JsonElement>();
+        // Revisión final F4: sólo es completo si la última página leída no traía un paging.next (ni uno que se descartó).
+        var complete = false;
         var next = new Uri(
             $"{Version}/{Uri.EscapeDataString(source.WabaId)}/message_templates?fields={TemplateFields}&limit=100", UriKind.Relative);
         for (var page = 0; page < MaxTemplatePages && next is not null; page++)
@@ -96,13 +99,13 @@ internal sealed partial class WhatsAppCloudClient(
             using var response = answer.Response;
             if (response is null)
             {
-                return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(0, null, answer.UnreachableReason ?? "unreachable"));
+                return new MessagingGraphResult<TemplateListing>(null, new MessagingGraphFailure(0, null, answer.UnreachableReason ?? "unreachable"));
             }
 
             var status = (int)response.StatusCode;
             if (!response.IsSuccessStatusCode)
             {
-                return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(status, answer.Error?.Code, $"http_{status}"));
+                return new MessagingGraphResult<TemplateListing>(null, new MessagingGraphFailure(status, answer.Error?.Code, $"http_{status}"));
             }
 
             try
@@ -111,33 +114,42 @@ internal sealed partial class WhatsAppCloudClient(
                 var root = document.RootElement;
                 if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
                 {
-                    return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(status, null, "unreadable"));
+                    return new MessagingGraphResult<TemplateListing>(null, new MessagingGraphFailure(status, null, "unreadable"));
                 }
 
                 templates.AddRange(data.EnumerateArray().Select(template => template.Clone()));
-                next = NextPage(root);
+                next = NextPage(root, out var declined);
+                complete = next is null && !declined;
             }
             catch (JsonException)
             {
-                return new MessagingGraphResult<IReadOnlyList<JsonElement>>(null, new MessagingGraphFailure(status, null, "unreadable"));
+                return new MessagingGraphResult<TemplateListing>(null, new MessagingGraphFailure(status, null, "unreadable"));
             }
         }
 
-        return new MessagingGraphResult<IReadOnlyList<JsonElement>>(templates, null);
+        return new MessagingGraphResult<TemplateListing>(new TemplateListing(templates, complete), null);
     }
 
     /// <summary><c>paging.next</c> es una URL absoluta y firmada de Graph. Sólo se sigue si es https y del mismo host que el
-    /// cliente: el token viaja en cada request y no debe salir de graph.facebook.com por lo que diga el cuerpo.</summary>
-    private static Uri? NextPage(JsonElement root)
+    /// cliente: el token viaja en cada request y no debe salir de graph.facebook.com por lo que diga el cuerpo. <paramref name="declined"/>
+    /// es <c>true</c> si había un <c>paging.next</c> y no se va a seguir: el listado queda incompleto (revisión final F4).</summary>
+    private static Uri? NextPage(JsonElement root, out bool declined)
     {
+        declined = false;
         if (!root.TryGetProperty("paging", out var paging) || paging.ValueKind != JsonValueKind.Object
-            || !paging.TryGetProperty("next", out var next) || next.ValueKind != JsonValueKind.String
-            || !Uri.TryCreate(next.GetString(), UriKind.Absolute, out var uri))
+            || !paging.TryGetProperty("next", out var next) || next.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(next.GetString()))
         {
             return null;
         }
 
-        return uri.Scheme == Uri.UriSchemeHttps && string.Equals(uri.Host, new Uri(BaseUrl).Host, StringComparison.OrdinalIgnoreCase) ? uri : null;
+        if (Uri.TryCreate(next.GetString(), UriKind.Absolute, out var uri)
+            && uri.Scheme == Uri.UriSchemeHttps && string.Equals(uri.Host, new Uri(BaseUrl).Host, StringComparison.OrdinalIgnoreCase))
+        {
+            return uri;
+        }
+
+        declined = true;
+        return null;
     }
 
     public Task<SendResult> SendTemplateAsync(
@@ -380,9 +392,9 @@ internal sealed partial class WhatsAppCloudClient(
     /// llamador desecha la respuesta.</summary>
     private async Task<GraphAnswer> SendAsync(
         string operation, HttpRequestMessage request, string accessToken, TimeSpan? timeout, CancellationToken cancellationToken,
-        string clientName = HttpClientName)
+        string clientName = HttpClientName, string scheme = "Bearer")
     {
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        request.Headers.Authorization = new AuthenticationHeaderValue(scheme, accessToken);
         var client = httpClientFactory.CreateClient(clientName);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         if (timeout is { } limit)
@@ -414,6 +426,164 @@ internal sealed partial class WhatsAppCloudClient(
             return new GraphAnswer(null, string.Empty, null, neverLeft ? "not-sent" : "network");
         }
     }
+
+    public async Task<MessagingGraphResult<CreatedTemplate>> CreateTemplateAsync(MessagingTemplateSource source, JsonObject payload, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(payload);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{Version}/{Uri.EscapeDataString(source.WabaId)}/message_templates")
+        {
+            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json"),
+        };
+        var answer = await SendAsync("template-create", request, source.AccessToken, null, cancellationToken);
+        using var response = answer.Response;
+        if (response is null)
+        {
+            return new MessagingGraphResult<CreatedTemplate>(null, Unreachable(answer));
+        }
+
+        var status = (int)response.StatusCode;
+        if (!response.IsSuccessStatusCode)
+        {
+            return new MessagingGraphResult<CreatedTemplate>(null, FailureOf(status, answer));
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(answer.Body);
+            var root = document.RootElement;
+            var id = ReadId(answer.Body);
+            if (string.IsNullOrEmpty(id) || id.Length > 64)
+            {
+                return new MessagingGraphResult<CreatedTemplate>(null, new MessagingGraphFailure(status, null, "no_id"));
+            }
+
+            var category = Text(root, "category") ?? payload["category"]?.GetValue<string>() ?? string.Empty;
+            return new MessagingGraphResult<CreatedTemplate>(new CreatedTemplate(id, Text(root, "status") ?? "PENDING", category), null);
+        }
+        catch (JsonException)
+        {
+            return new MessagingGraphResult<CreatedTemplate>(null, new MessagingGraphFailure(status, null, "unreadable"));
+        }
+    }
+
+    public async Task<MessagingGraphResult<DeletedTemplate>> DeleteTemplateAsync(
+        MessagingTemplateSource source, string metaTemplateId, string name, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Delete,
+            $"{Version}/{Uri.EscapeDataString(source.WabaId)}/message_templates?hsm_id={Uri.EscapeDataString(metaTemplateId)}&name={Uri.EscapeDataString(name)}");
+        var answer = await SendAsync("template-delete", request, source.AccessToken, null, cancellationToken);
+        using var response = answer.Response;
+        if (response is null)
+        {
+            return new MessagingGraphResult<DeletedTemplate>(null, Unreachable(answer));
+        }
+
+        if (response.IsSuccessStatusCode)
+        {
+            return new MessagingGraphResult<DeletedTemplate>(new DeletedTemplate(false), null);
+        }
+
+        var status = (int)response.StatusCode;
+        // D-T13: lo que Meta ya no tiene, tampoco lo tiene el espejo. Se reconoce por el texto: Graph no da un código propio para esto.
+        if (status == 400 && Mentions(answer.Error, "does not exist"))
+        {
+            return new MessagingGraphResult<DeletedTemplate>(new DeletedTemplate(true), null);
+        }
+
+        return new MessagingGraphResult<DeletedTemplate>(null, FailureOf(status, answer));
+    }
+
+    public async Task<MessagingGraphResult<string>> UploadTemplateExampleAsync(
+        MessagingTemplateSource source, ReadOnlyMemory<byte> content, string mimeType, string fileName, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var appId = options.Value.AppId?.Trim();
+        if (string.IsNullOrEmpty(appId))
+        {
+            return new MessagingGraphResult<string>(null, new MessagingGraphFailure(0, null, "no_app_id"));
+        }
+
+        using var start = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"{Version}/{Uri.EscapeDataString(appId)}/uploads?file_length={content.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + $"&file_type={Uri.EscapeDataString(mimeType)}&file_name={Uri.EscapeDataString(fileName)}");
+        var started = await SendAsync("template-upload-start", start, source.AccessToken, null, cancellationToken, UploadHttpClientName);
+        using var startResponse = started.Response;
+        if (startResponse is null)
+        {
+            return new MessagingGraphResult<string>(null, Unreachable(started));
+        }
+
+        var startStatus = (int)startResponse.StatusCode;
+        if (!startResponse.IsSuccessStatusCode)
+        {
+            return new MessagingGraphResult<string>(null, FailureOf(startStatus, started));
+        }
+
+        var uploadId = ReadId(started.Body);
+        if (string.IsNullOrEmpty(uploadId))
+        {
+            return new MessagingGraphResult<string>(null, new MessagingGraphFailure(startStatus, null, "no_id"));
+        }
+
+        // El id viaja en la ruta sin escapar (Graph lo documenta con los dos puntos literales) y, si trae «?sig=…», esa firma va como
+        // query del URI, no escapada dentro de la ruta. Sólo se sigue si tiene la forma esperada.
+        if (!UploadIdPattern().IsMatch(uploadId))
+        {
+            return new MessagingGraphResult<string>(null, new MessagingGraphFailure(startStatus, null, "invalid_upload_id"));
+        }
+
+        using var data = new HttpRequestMessage(HttpMethod.Post, new Uri($"{Version}/{uploadId}", UriKind.Relative)) { Content = new ReadOnlyMemoryContent(content) };
+        data.Content.Headers.ContentType = new MediaTypeHeaderValue(mimeType);
+        data.Headers.TryAddWithoutValidation("file_offset", "0");
+        // La Resumable Upload documenta «Authorization: OAuth {token}» para la subida de bytes, no «Bearer».
+        var uploaded = await SendAsync("template-upload-data", data, source.AccessToken, null, cancellationToken, UploadHttpClientName, "OAuth");
+        using var dataResponse = uploaded.Response;
+        if (dataResponse is null)
+        {
+            return new MessagingGraphResult<string>(null, Unreachable(uploaded));
+        }
+
+        var dataStatus = (int)dataResponse.StatusCode;
+        if (!dataResponse.IsSuccessStatusCode)
+        {
+            return new MessagingGraphResult<string>(null, FailureOf(dataStatus, uploaded));
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(uploaded.Body);
+            var handle = Text(document.RootElement, "h");
+            return string.IsNullOrEmpty(handle)
+                ? new MessagingGraphResult<string>(null, new MessagingGraphFailure(dataStatus, null, "no_handle"))
+                : new MessagingGraphResult<string>(handle, null);
+        }
+        catch (JsonException)
+        {
+            return new MessagingGraphResult<string>(null, new MessagingGraphFailure(dataStatus, null, "unreadable"));
+        }
+    }
+
+    private static MessagingGraphFailure Unreachable(GraphAnswer answer) => new(0, null, answer.UnreachableReason ?? "unreachable");
+
+    private static MessagingGraphFailure FailureOf(int status, GraphAnswer answer) =>
+        new(status, answer.Error?.Code, $"http_{status}", answer.Error?.UserTitle, answer.Error?.UserMessage);
+
+    private static bool Mentions(GraphError? error, string text) =>
+        error is not null
+        && ((error.UserTitle ?? string.Empty).Contains(text, StringComparison.OrdinalIgnoreCase)
+            || (error.UserMessage ?? string.Empty).Contains(text, StringComparison.OrdinalIgnoreCase));
+
+    private static string? Text(JsonElement element, string property) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^upload:[A-Za-z0-9_=:-]{1,512}(\?sig=[A-Za-z0-9_=-]{1,512})?\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant)]
+    private static partial System.Text.RegularExpressions.Regex UploadIdPattern();
 
     private static string? ReadId(string body)
     {
@@ -455,9 +625,10 @@ internal sealed partial class WhatsAppCloudClient(
 
     private sealed record GraphAnswer(HttpResponseMessage? Response, string Body, GraphError? Error, string? UnreachableReason);
 
-    /// <summary>Copia chica de <c>MetaGraphError</c> de Integrations (no se referencia): código, subcódigo, título y
-    /// fbtrace; nunca <c>message</c>, que puede repetir lo que se mandó.</summary>
-    private sealed record GraphError(int? Code, int? Subcode, string? Title, string? FbTraceId)
+    /// <summary>Copia chica de <c>MetaGraphError</c> de Integrations (no se referencia): código, subcódigo, título y fbtrace; nunca
+    /// <c>message</c>, que puede repetir lo que se mandó. Spec 2026-10-14 §4.8: <c>UserTitle</c> y <c>UserMessage</c> son
+    /// <c>error_user_title</c> y <c>error_user_msg</c>, el texto que Meta escribe para la persona; sólo los leen las plantillas.</summary>
+    private sealed record GraphError(int? Code, int? Subcode, string? Title, string? FbTraceId, string? UserTitle, string? UserMessage)
     {
         public static GraphError? TryParse(string body)
         {
@@ -471,12 +642,14 @@ internal sealed partial class WhatsAppCloudClient(
                     return null;
                 }
 
+                var userTitle = error.TryGetProperty("error_user_title", out var title) && title.ValueKind == JsonValueKind.String ? title.GetString() : null;
                 return new GraphError(
                     error.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.Number && code.TryGetInt32(out var c) ? c : null,
                     error.TryGetProperty("error_subcode", out var sub) && sub.ValueKind == JsonValueKind.Number && sub.TryGetInt32(out var s) ? s : null,
-                    error.TryGetProperty("error_user_title", out var title) && title.ValueKind == JsonValueKind.String ? title.GetString()
-                        : error.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String ? type.GetString() : null,
-                    error.TryGetProperty("fbtrace_id", out var trace) && trace.ValueKind == JsonValueKind.String ? trace.GetString() : null);
+                    userTitle ?? (error.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String ? type.GetString() : null),
+                    error.TryGetProperty("fbtrace_id", out var trace) && trace.ValueKind == JsonValueKind.String ? trace.GetString() : null,
+                    userTitle,
+                    error.TryGetProperty("error_user_msg", out var userMessage) && userMessage.ValueKind == JsonValueKind.String ? userMessage.GetString() : null);
             }
             catch (JsonException)
             {

@@ -4,10 +4,10 @@ using Modules.Tenancy.Application;
 namespace Modules.Messaging.Application;
 
 /// <summary>
-/// Spec 2026-10-11 §5.1: el catálogo de plantillas aprobadas de una conexión, normalizado. El adaptador de Infrastructure lo
-/// guarda 5 minutos por <c>(tenant, conexión)</c>; <c>refresh</c> se lo salta. Una conexión que no es del tenant, no está
-/// <c>Active</c> o no tiene <c>wabaId</c> lanza <c>messaging.connection_unavailable</c>; una lista que Meta no contesta,
-/// <c>messaging.templates.unavailable</c>.
+/// Spec 2026-10-11 §5.1: el catálogo de plantillas aprobadas de una conexión, normalizado. Desde el spec 2026-10-14 (D-T8) se lee del
+/// espejo local (<see cref="MirroredTemplateCatalog"/>), que se llena la primera vez y se sincroniza con Meta con <c>refresh</c>. Una
+/// conexión que no es del tenant, no está <c>Active</c> o no tiene <c>wabaId</c> lanza <c>messaging.connection_unavailable</c>; una
+/// lista que Meta no contesta, <c>messaging.templates.unavailable</c>.
 /// </summary>
 public interface IMessageTemplates
 {
@@ -37,7 +37,7 @@ public sealed class ListTemplatesHandler(IMessageTemplates templates, ITenantMod
     public async Task<IReadOnlyList<MessageTemplateDto>> HandleAsync(ListTemplatesQuery query, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
-        // R8: leer la caché es lectura; refresh se la salta y le pega a Meta, así que pide el permiso de gestionar.
+        // R8: leer el espejo es lectura; refresh lo sincroniza contra Meta, así que pide el permiso de gestionar.
         var permission = query.Refresh ? MessagingPermissions.ConversationManage : MessagingPermissions.ConversationRead;
         await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, permission, cancellationToken);
         return await templates.ListAsync(query.TenantId, query.ConnectionId, query.Refresh, cancellationToken);

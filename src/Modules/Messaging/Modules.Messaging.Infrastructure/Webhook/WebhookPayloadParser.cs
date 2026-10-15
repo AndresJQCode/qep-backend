@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
 
 namespace Modules.Messaging.Infrastructure.Webhook;
@@ -53,6 +54,7 @@ internal static partial class WebhookPayloadParser
                     changes.Add(field switch
                     {
                         "messages" => ParseMessages(value),
+                        "message_template_status_update" => ParseTemplateStatus(wabaId ?? string.Empty, value),
                         "account_update" => ParseAccountUpdate(wabaId ?? string.Empty, value),
                         "user_id_update" => ParseUserIdUpdate(wabaId ?? string.Empty, value),
                         _ => new UnknownChange(field),
@@ -294,6 +296,26 @@ internal static partial class WebhookPayloadParser
         }
 
         return new StatusUpdate(wamid, status.Value, occurredAt, callback, errorCode, errorTitle);
+    }
+
+    /// <summary>Spec 2026-10-14 §4.3: sin <c>message_template_id</c> o sin <c>event</c> no hay qué aplicar y cae como campo ignorado, en el log.
+    /// El id viene como número JSON; <c>TemplateMirrorSync.Identifier</c> acepta número o string.</summary>
+    private static WebhookChange ParseTemplateStatus(string wabaId, JsonElement value)
+    {
+        var metaTemplateId = TemplateMirrorSync.Identifier(value, "message_template_id");
+        var @event = ReadString(value, "event");
+        if (metaTemplateId is null || string.IsNullOrWhiteSpace(@event))
+        {
+            return new UnknownChange("message_template_status_update");
+        }
+
+        return new TemplateStatusChange(
+            wabaId,
+            metaTemplateId,
+            ReadString(value, "message_template_name"),
+            ReadString(value, "message_template_language"),
+            @event,
+            ReadString(value, "reason"));
     }
 
     private static AccountUpdateChange ParseAccountUpdate(string wabaId, JsonElement value)

@@ -64,14 +64,20 @@ public static class MessagingInfrastructureExtensions
             .RemoveAllLoggers();
         services.AddSingleton<IWhatsAppCloudClient, WhatsAppCloudClient>();
         services.AddScoped<IOutboundMessages, OutboundMessages>();
-        // Spec 2026-10-11 §5.1: el catálogo de plantillas aprobadas, 5 minutos por (tenant, conexión) en IMemoryCache.
-        services.AddScoped<IMessageTemplates, MessageTemplateCatalog>();
+        // Spec 2026-10-14 D-T8: el catálogo lee del espejo; el refresco es el mismo servicio que usa la pantalla de administración.
+        services.AddScoped<TemplateMirrorSync>();
+        services.AddScoped<TemplateManagementReader>();
+        services.AddScoped<IMessageTemplates, MirroredTemplateCatalog>();
         // Spec 2026-10-11 §6: las campañas. El agregado con tracking, las lecturas con sus contadores y el armado de los DTO.
         services.AddScoped<ICampaignRepository, CampaignRepository>();
         services.AddScoped<ICampaignQueries, CampaignQueries>();
         services.AddScoped<CampaignMapper>();
         // Spec 2026-10-12 §3.1: las respuestas rápidas, con tracking; el atajo repetido lo traduce MessagingUnitOfWork.
         services.AddScoped<IQuickReplyRepository, QuickReplyRepository>();
+        // Spec 2026-10-14 §4.3: el espejo de plantillas.
+        services.AddScoped<IMessageTemplateRepository, MessageTemplateRepository>();
+        // Spec 2026-10-14 §5: la señal que el consumidor Quotations leerá por un adaptador en Bootstrapper.
+        services.AddScoped<IQuotationTemplateReadiness, QuotationTemplateReadiness>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();

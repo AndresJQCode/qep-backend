@@ -24,6 +24,8 @@ backend; sin estos pasos el flujo de conexión no abre y el webhook no recibe.
    la app lo ofrece en la lista de campos, `user_id_update` (spec 2026-10-10 §13: la documentación no muestra
    si es un campo aparte). Después del primer cambio de número real, revisa en el log que llegó y que la
    conversación siguió siendo la misma; hasta entonces el cambio de número se considera no verificado.
+   Desde el gestor de plantillas (spec 2026-10-14) suscribe también `message_template_status_update`: sin él, las
+   aprobaciones y los rechazos sólo se ven al refrescar la pantalla de plantillas.
 6. **Secretos en `Backend-prod`** (Azure DevOps → Pipelines → Library): variables secretas `META_APP_SECRET` y
    `META_WEBHOOK_VERIFY_TOKEN`; variables normales `META_APP_ID` y `META_CONFIG_ID`. Van **antes** del deploy:
    sin las cinco claves el pod no arranca (`MetaAppOptionsValidator`, a propósito).
@@ -69,13 +71,45 @@ backend; sin estos pasos el flujo de conexión no abre y el webhook no recibe.
   `OTEL_DOTNET_EXPERIMENTAL_HTTPCLIENT_DISABLE_URL_QUERY_REDACTION` en `true`. Comprobación: abre en Tempo una
   traza de un Embedded Signup y confirma que `url.full` muestra `client_secret=Redacted&code=Redacted`.
 - **Plantillas rechazadas.** Precedente de Zenvia: un rechazo con «An error occurred while sending the
-  template for approval» lo produce el agregador, no Meta. En esta versión no se envían plantillas (sólo texto
-  dentro de la ventana de 24 h), pero si se agregan, aplica lo mismo.
+  template for approval» lo produce el agregador, no Meta. Con la Cloud API no hay agregador de por medio: las
+  plantillas que crea el gestor (spec 2026-10-14) las revisa Meta, y su motivo llega en `rejected_reason`.
 
 - **Número ya registrado.** El signup no llama `/register` si `GET /{phoneNumberId}` devuelve `status = CONNECTED` y
   `platform_type = CLOUD_API`. La documentación de Meta sólo muestra `CLOUD_API` en un ejemplo y no lista los otros
   valores: confirma con el primer número **nuevo** que conectes que antes del `/register` no aparece así (si apareciera,
   QEP no lo registraría y el número no recibiría). La auditoría de la conexión lleva `register:skipped` cuando se saltó.
+
+**Gestor de plantillas** (spec 2026-10-14, §3). Todo esto se ejercitó sólo contra dobles de prueba:
+
+- **Token de la Resumable Upload.** El aprovisionamiento de la plantilla de cotización sube el PDF de ejemplo a
+  `/{AppId}/uploads` con el **token de negocio de la conexión**. La documentación lo ejemplifica con un token de
+  usuario. Si el primer aprovisionamiento real responde `messaging.template.upload_failed`, mira el warning
+  «Meta did not accept the example PDF of the quotation template…» (status HTTP, `code` de Graph y motivo) y el log de
+  `template-upload-start` antes de cambiar nada; la alternativa es un token de la app. Una falla de la subida nunca
+  pausa la conexión, ni siquiera con 401 o `code` 190: es un endpoint de la app, no de la WABA.
+- **Formato del id de la subida.** QEP acepta `upload:…` con o sin firma (`upload:…?sig=…`), que es la forma que se
+  vio en la práctica, y manda la `?sig=` como query del segundo request (`template-upload-data`). Un id con otra forma
+  corta la subida con `upload_failed` aunque `template-upload-start` haya respondido 200 (falla interna
+  `invalid_upload_id`). Confirma en el primer aprovisionamiento real que el segundo request responde con
+  `{ "h": … }`.
+- **Cuerpo exacto del error de nombre en cuarentena (a confirmar).** Meta bloquea un tiempo el nombre de una plantilla
+  borrada. QEP trata como «el nombre ya existe» (`name_taken`) un 400 cuyo `error_user_title` o `error_user_msg` diga
+  «already exist», «being deleted», o «deleted» junto a «language» o «template» —las pruebas usan
+  `"error_user_title":"Message Template Name Already Exists"` y `"error_user_title":"Message template language is
+  being deleted"`, con `"error_user_msg":"New es content can't be added while the existing es content is being
+  deleted. Try again in 4 weeks or create a new message template."`— y con eso el aprovisionamiento de la plantilla
+  de cotización salta a la versión siguiente. Importa sobre todo cuando el admin borró la `Quotation` desde la
+  pantalla: la fila ya no está y el siguiente aprovisionamiento recalcula `qep_cotizacion`. **No se ha visto el
+  cuerpo real de un nombre en cuarentena.** La primera vez que aparezca (un reintento, un aprovisionamiento después
+  de borrar, o una libre recreada con el nombre de una borrada), anota el cuerpo completo: si no coincide con esa
+  regla, cae en `rejected_by_meta` con el `error_user_msg` de Meta, cada intento recalcula la misma versión y hay
+  que ajustar `TemplateGraphErrors`.
+- **Textos de `error_user_title`.** Igual para el tope de plantillas («limit»). Si un rechazo real llega con otro
+  título, cae en `rejected_by_meta`; anota el título para ajustar `TemplateGraphErrors`.
+- **`rejected_reason` en `fields`.** El refresco pide `id,name,language,status,category,components,parameter_format,
+  rejected_reason` al listar. Confirma con una plantilla rechazada real que el motivo llega en el listado. Si Meta
+  rechazara el campo, el listado entero fallaría con `messaging.templates.unavailable` y habría que quitarlo de
+  `TemplateFields`; si lo acepta pero no lo llena, el espejo sólo sabría el motivo por el webhook.
 
 ## Decisiones a ratificar (spec §13)
 

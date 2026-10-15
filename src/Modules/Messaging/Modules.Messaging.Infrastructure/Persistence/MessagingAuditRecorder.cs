@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Modules.Audit.Domain;
 using Modules.Messaging.Application;
 
@@ -52,6 +53,22 @@ internal sealed class MessagingAuditRecorder(MessagingDbContext dbContext) : IMe
             quickReplyId.ToString(),
             Outcome,
             NoChangedFields,
+            Source,
+            occurredAt));
+
+    // Spec 2026-10-14 §4.6: siempre una persona (el admin en la pantalla de plantillas). changed_fields vacío salvo que quien llama
+    // diga qué cambió (la adopción manda ["kind"]).
+    public void RecordTemplate(
+        Guid tenantId, Guid actorId, string action, Guid templateId, DateTimeOffset occurredAt, IReadOnlyCollection<string>? changedFields = null) =>
+        dbContext.AuditEntries.Add(AuditEntry.Create(
+            tenantId,
+            actorId,
+            AuditActorType.Human,
+            action,
+            MessagingAuditActions.TemplateResourceType,
+            templateId.ToString(),
+            Outcome,
+            changedFields is { Count: > 0 } ? JsonSerializer.Serialize(changedFields) : NoChangedFields,
             Source,
             occurredAt));
 }

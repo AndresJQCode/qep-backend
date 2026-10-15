@@ -71,11 +71,15 @@ internal sealed class FakeCampaignQueries(FakeCampaignRepository repository) : I
             campaign.ScheduledAt, campaign.StartedAt, campaign.CompletedAt, campaign.CreatedByMemberId, campaign.CreatedAt, campaign.UpdatedAt, campaign.Version, counts);
 }
 
+internal sealed record TemplateAuditCall(Guid TenantId, Guid ActorId, string Action, Guid TemplateId, IReadOnlyCollection<string>? ChangedFields);
+
 internal sealed record CampaignAuditCall(Guid TenantId, Guid ActorId, bool BySystem, string Action, Guid CampaignId);
 
 internal sealed class RecordingAudit : IMessagingAuditRecorder
 {
     public List<CampaignAuditCall> Campaigns { get; } = [];
+
+    public List<TemplateAuditCall> Templates { get; } = [];
 
     public void Record(Guid tenantId, Guid actorId, string action, Guid conversationId, DateTimeOffset occurredAt) => throw new NotSupportedException();
 
@@ -84,6 +88,10 @@ internal sealed class RecordingAudit : IMessagingAuditRecorder
 
     public void RecordQuickReply(Guid tenantId, Guid actorId, string action, Guid quickReplyId, DateTimeOffset occurredAt) =>
         throw new NotSupportedException();
+
+    public void RecordTemplate(
+        Guid tenantId, Guid actorId, string action, Guid templateId, DateTimeOffset occurredAt, IReadOnlyCollection<string>? changedFields = null) =>
+        Templates.Add(new TemplateAuditCall(tenantId, actorId, action, templateId, changedFields));
 }
 
 internal sealed class FakeUnitOfWork : IMessagingUnitOfWork

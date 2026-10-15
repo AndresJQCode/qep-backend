@@ -16,9 +16,9 @@ public sealed class SendTemplateApiTests
 
     private const string Catalog = """
         {"data":[
-          {"name":"seguimiento","language":"es","status":"APPROVED","category":"MARKETING","parameter_format":"NAMED",
+          {"id":"1","name":"seguimiento","language":"es","status":"APPROVED","category":"MARKETING","parameter_format":"NAMED",
            "components":[{"type":"BODY","text":"Hola {{first_name}}, ¿sigues interesado?"},{"type":"FOOTER","text":"QCode"}]},
-          {"name":"promo","language":"es","status":"APPROVED","category":"MARKETING","components":[{"type":"HEADER","format":"IMAGE"},{"type":"BODY","text":"Mira"}]}
+          {"id":"2","name":"promo","language":"es","status":"APPROVED","category":"MARKETING","components":[{"type":"HEADER","format":"IMAGE"},{"type":"BODY","text":"Mira"}]}
         ]}
         """;
 
