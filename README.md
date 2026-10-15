@@ -27,7 +27,8 @@ El alcance ejecutable actual incluye:
 
 ## Requisitos
 
-- .NET SDK `10.0.400` o un parche posterior compatible con `global.json`;
+- .NET SDK `10.0.400` o un parche posterior compatible con `global.json` (la imagen compila con `10.0.402`, el
+  que trae el runtime 10.0.13; instalarlo en local deja tu máquina igual que el build);
 - Docker con Docker Compose.
 
 Las pruebas de integración también requieren Docker, ya que crean una instancia
@@ -2131,9 +2132,8 @@ lista sin ser un entrante, así que sólo avisa `conversationChanged`; el visto 
 avisan `conversationChanged` como un acuse de WhatsApp.
 
 **Runtime ≥ 10.0.13.** CVE-2026-70159 (DoS en SignalR, `SignalR.Common` ≤ 10.0.12) afecta al servidor, que
-sale del runtime de `mcr.microsoft.com/dotnet/aspnet:10.0` del `Dockerfile`, no de NuGet. Antes de desplegar,
-confirma que la imagen trae el parche. El paquete `Microsoft.AspNetCore.SignalR.Client` de las pruebas queda en
-10.0.11 con el aviso suprimido sólo en ese proyecto.
+sale del runtime del `Dockerfile`, no de NuGet. Por eso la imagen se clava en `aspnet:10.0.13` y no en el flotante
+`10.0`, y los paquetes `Microsoft.*` de `Directory.Packages.props` van en la misma línea 10.0.13.
 
 La preferencia de sonido viaja en `GET/PUT /api/v1/auth/preferences` como `messageSound` (default `true`). El
 `PUT` acepta cada campo por separado y conserva el que no viene; un cuerpo vacío es 422
