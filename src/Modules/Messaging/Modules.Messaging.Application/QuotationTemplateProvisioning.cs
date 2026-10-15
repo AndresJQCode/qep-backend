@@ -171,6 +171,8 @@ public sealed record ProvisionQuotationTemplateCommand(Guid TenantId, Guid Conne
 /// token, <c>connection_unavailable</c> y no se escribe nada: la nueva ya quedó en Meta y el siguiente refresco la trae como
 /// <c>External</c>. Si falla por otra cosa, queda un warning y se sigue: el próximo refresco traerá la vieja como <c>External</c> si Meta
 /// todavía la tiene.</item>
+/// <item>Toda falla de la subida es <c>upload_failed</c> con un warning, nunca un reporte de la conexión: <c>/{AppId}/uploads</c> es un
+/// endpoint de la app, no de la WABA (revisión final F1).</item>
 /// <item>Quita la fila vieja e inserta la <c>PENDING</c> <c>Quotation</c> con el nombre usado, audita y guarda: una sola transacción, así
 /// que nunca quedan dos filas <c>Quotation</c>. Si Meta falla al subir o al crear no se escribe nada.</item>
 /// </list>
@@ -279,11 +281,12 @@ public sealed partial class ProvisionQuotationTemplateHandler(
             return handle;
         }
 
-        if (upload.Failure is { } failure && TemplateGraphErrors.IsTokenRejected(failure))
-        {
-            throw await TemplateGraphErrors.FailAsync(connections, command.TenantId, command.ConnectionId, failure, cancellationToken);
-        }
-
+        // Revisión final F1: la subida le pega a /{AppId}/uploads, un endpoint de la app y no de la WABA, así que un 401, un 190 o un
+        // permiso faltante acá no dicen nada del token de negocio de la conexión: nunca se reporta (pausarla tumbaría la bandeja y las
+        // campañas por un endpoint que ellas no usan). Toda falla es upload_failed.
+        var failure = upload.Failure ?? new MessagingGraphFailure(0, null, "no_handle");
+        LogUploadFailed(
+            logger, command.TenantId, command.ConnectionId, failure.HttpStatus, failure.Code?.ToString(CultureInfo.InvariantCulture) ?? "none", failure.Reason);
         throw new MessagingDomainException(MessagingErrorCodes.TemplateUploadFailed, "WhatsApp did not accept the example PDF of the quotation template.");
     }
 
@@ -318,4 +321,10 @@ public sealed partial class ProvisionQuotationTemplateHandler(
         Level = LogLevel.Warning,
         Message = "Meta did not delete the previous quotation template {MetaTemplateId} of connection {ConnectionId} in tenant {TenantId}; its mirror row is removed anyway and the next refresh brings it back as External if Meta still has it.")]
     private static partial void LogPreviousVersionNotDeleted(ILogger logger, Guid tenantId, Guid connectionId, string metaTemplateId);
+
+    // El Reason es un código propio del cliente (http_401, no_app_id, unreachable…), nunca el cuerpo de Meta ni la credencial.
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Meta did not accept the example PDF of the quotation template for connection {ConnectionId} in tenant {TenantId}: status {HttpStatus}, code {GraphCode}, reason {Reason}; the connection is not reported.")]
+    private static partial void LogUploadFailed(ILogger logger, Guid tenantId, Guid connectionId, int httpStatus, string graphCode, string reason);
 }

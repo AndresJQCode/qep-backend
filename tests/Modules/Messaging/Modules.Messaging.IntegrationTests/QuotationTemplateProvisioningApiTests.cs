@@ -34,7 +34,8 @@ public sealed class QuotationTemplateProvisioningApiTests
 
     /// <param name="create">La respuesta de la creación número n (desde 1); <c>null</c> = la normal, con id 771, 772… por cada éxito.</param>
     private static async Task<Fixture> ArrangeAsync(
-        TestDatabase database, string listing = """{"data":[]}""", bool uploadFails = false, Func<int, HttpResponseMessage?>? create = null)
+        TestDatabase database, string listing = """{"data":[]}""", bool uploadFails = false, Func<int, HttpResponseMessage?>? create = null,
+        Func<HttpResponseMessage>? upload = null)
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString);
@@ -42,9 +43,9 @@ public sealed class QuotationTemplateProvisioningApiTests
         await EnableMessagingAsync(connectionString, tenant.TenantId);
         var connectionId = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", "111", "222");
         var meta = factory.MetaHandler;
-        meta.RespondWith($"/{MetaAppId}/uploads", _ => uploadFails
+        meta.RespondWith($"/{MetaAppId}/uploads", _ => upload?.Invoke() ?? (uploadFails
             ? FakeMetaGraphHandler.Json(HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(100))
-            : FakeMetaGraphHandler.Json(HttpStatusCode.OK, """{"id":"upload:MTph"}"""));
+            : FakeMetaGraphHandler.Json(HttpStatusCode.OK, """{"id":"upload:MTph"}""")));
         meta.Respond("/upload:MTph", HttpStatusCode.OK, """{"h":"4::handle"}""");
         // Cada creación exitosa devuelve un id distinto (771, 772…), como Meta: el reintento crea la 772 y borra la 771.
         var attempts = 0;
@@ -246,6 +247,24 @@ public sealed class QuotationTemplateProvisioningApiTests
         Assert.DoesNotContain(MetaCalls(f), IsCreate);
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_templates WHERE tenant_id = @t", ("t", f.Tenant.TenantId)));
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM audit.entries WHERE action = 'messaging.template.quotation_provisioned'"));
+    }
+
+    /// <summary>Revisión final F1: la subida es un endpoint de la app, no de la WABA. Un 401 con <c>code</c> 190 ahí no pausa la conexión: la
+    /// bandeja y las campañas siguen andando y el admin ve <c>upload_failed</c>.</summary>
+    [Fact]
+    public async Task AnUploadRejectedWithTokenCodesIs422UploadFailedAndTheConnectionStaysActive()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, upload: () => FakeMetaGraphHandler.Json(HttpStatusCode.Unauthorized, FakeMetaGraphHandler.GraphError(190)));
+        using var host = f.Factory;
+
+        var response = await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("messaging.template.upload_failed", (await ProblemAsync(response)).Code);
+        Assert.DoesNotContain(MetaCalls(f), IsCreate);
+        Assert.Equal("Active|-", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT status || '|' || coalesce(last_failure_code, '-') FROM integrations.connections WHERE id = @id", ("id", f.ConnectionId)));
     }
 
     [Fact]

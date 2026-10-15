@@ -107,6 +107,37 @@ public sealed class ProvisionQuotationTemplateHandlerTests
         Assert.Single(rig.Bed.Meta.CreatedTemplates);
     }
 
+    /// <summary>Revisión final F1: la subida le pega a <c>/{AppId}/uploads</c>, un endpoint de la app y no de la WABA. Ninguna falla suya
+    /// —ni un 401, ni un <c>code</c> 190 o de permiso— dice nada del token de la conexión: es <c>upload_failed</c> y la conexión no se reporta.</summary>
+    [Theory]
+    [InlineData(401, 190, "http_401")]
+    [InlineData(403, 10, "http_403")]
+    [InlineData(400, 200, "http_400")]
+    [InlineData(500, null, "http_500")]
+    [InlineData(0, null, "no_app_id")]
+    [InlineData(200, null, "no_handle")]
+    public async Task AnyUploadFailureIsUploadFailedWithAWarningAndNeverReportsTheConnection(int status, int? code, string reason)
+    {
+        var rig = new Rig();
+        rig.Bed.Meta.NextHandle = new(null, new MessagingGraphFailure(status, code, reason));
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(rig.ProvisionAsync);
+
+        Assert.Equal(MessagingErrorCodes.TemplateUploadFailed, error.Code);
+        Assert.Empty(rig.Bed.Connections.Reported);
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+        Assert.Empty(rig.Repository.Rows);
+        Assert.Equal(0, rig.UnitOfWork.Saves);
+        var warning = Assert.Single(rig.Logger.Entries);
+        Assert.Equal(LogLevel.Warning, warning.Level);
+        Assert.Contains(rig.Bed.TenantId.ToString(), warning.Message, StringComparison.Ordinal);
+        Assert.Contains(rig.Bed.ConnectionId.ToString(), warning.Message, StringComparison.Ordinal);
+        Assert.Contains($"status {status}", warning.Message, StringComparison.Ordinal);
+        Assert.Contains($"code {(code is { } value ? value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "none")}", warning.Message, StringComparison.Ordinal);
+        Assert.Contains(reason, warning.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("token", warning.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task AnOldVersionMetaWillNotDeleteForAnotherReasonLeavesAWarningWithoutTheTokenAndTheRowIsReplacedAnyway()
     {
