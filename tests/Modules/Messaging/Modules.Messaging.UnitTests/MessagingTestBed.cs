@@ -660,6 +660,16 @@ internal sealed class FakeConversationRepository : IConversationRepository
 
     public Task<ReadReceiptTarget?> MarkReadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken) => throw new NotSupportedException();
 
+    public List<(Guid ConversationId, int Seen)> Replied { get; } = [];
+
+    public RepliedTarget? NextReplied { get; set; }
+
+    public Task<RepliedTarget?> MarkRepliedAsync(Guid tenantId, Guid conversationId, int seen, CancellationToken cancellationToken)
+    {
+        Replied.Add((conversationId, seen));
+        return Task.FromResult(NextReplied);
+    }
+
     public Task<bool> MarkUnreadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<UnreadFromOutcome> MarkUnreadFromAsync(Guid tenantId, Guid conversationId, Guid messageId, DateTimeOffset now, CancellationToken cancellationToken) => throw new NotSupportedException();

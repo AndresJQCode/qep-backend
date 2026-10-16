@@ -14,6 +14,11 @@ public interface IConversationRepository
     /// si no tocó nada (ya estaba en 0, o no existe en el tenant).</summary>
     Task<ReadReceiptTarget?> MarkReadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-16 §3.1: responder resta de <c>unread_count</c> sólo lo que el asesor tenía a la vista
+    /// (<paramref name="seen"/>), para que un entrante que llegó durante el envío sobreviva. Devuelve <c>null</c> si
+    /// <paramref name="seen"/> es 0 (sin ir a la base) o si el contador ya estaba por debajo de lo visto.</summary>
+    Task<RepliedTarget?> MarkRepliedAsync(Guid tenantId, Guid conversationId, int seen, CancellationToken cancellationToken);
+
     /// <summary>Spec 2026-10-14 §3.2: el espejo de <see cref="MarkReadAsync"/>: <c>unread_count = 1</c>,
     /// <c>updated_at</c> y <c>version + 1</c>, sólo si estaba en 0. Misma sentencia única y sin token: pisar un 3
     /// con un 1 mentiría sobre cuántos entrantes hay. <c>true</c> si tocó la fila.</summary>
@@ -65,6 +70,9 @@ public enum UnreadFromOutcome
 public sealed record ReadReceiptTarget(
     Guid ConnectionId, string? LastInboundWamid, DateTimeOffset? LastInboundAt,
     ConversationChannel Channel = ConversationChannel.WhatsApp, string? UserId = null);
+
+/// <summary>Spec 2026-10-16 §3.1: el acuse a Meta y lo que quedó sin leer después de responder.</summary>
+public sealed record RepliedTarget(ReadReceiptTarget Receipt, int RemainingUnread);
 
 /// <summary>Guarda el agregado y su auditoría en una transacción; traduce la concurrencia a
 /// <c>concurrency.conflict</c> en Infrastructure.</summary>
