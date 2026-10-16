@@ -60,6 +60,13 @@ public sealed class Tenant
     public string NumberFormat { get; private set; } = TenantNumberFormats.CommaDecimal;
 
     /// <summary>
+    /// El país de la organización, ISO-3166-1 alpha-2. Hoy es informativo: ninguna regla lo lee.
+    /// Arranca en <c>CO</c> igual que la moneda arranca en <c>COP</c>, y la migración rellena los
+    /// tenants existentes con el mismo valor, así que uno nuevo y uno viejo no se distinguen.
+    /// </summary>
+    public string Country { get; private set; } = "CO";
+
+    /// <summary>
     /// El archivo del logo en Storage, o null sin logo. La URL pública **no** se guarda acá: se
     /// arma al leer con <see cref="LogoPublicKey"/> y la base pública configurada (decisión 3 del
     /// spec 2026-09-19) — igual que <c>FileResourceDto.PublicUrl</c>. `Tenant` no conoce
@@ -126,6 +133,7 @@ public sealed class Tenant
         string dateFormat,
         string defaultCurrency,
         string numberFormat,
+        string country,
         DateTimeOffset occurredAt)
     {
         EnsureActive();
@@ -136,6 +144,7 @@ public sealed class Tenant
         var validatedDateFormat = ValidateDateFormat(dateFormat);
         var validatedCurrency = NormalizeCurrencyCode(defaultCurrency);
         var validatedNumberFormat = TenantNumberFormats.Normalize(numberFormat);
+        var validatedCountry = NormalizeCountryCode(country);
         List<string> changedFields = [];
 
         TrackChange(nameof(DisplayName), DisplayName, validatedDisplayName, changedFields);
@@ -144,6 +153,7 @@ public sealed class Tenant
         TrackChange(nameof(DateFormat), DateFormat, validatedDateFormat, changedFields);
         TrackChange(nameof(DefaultCurrency), DefaultCurrency, validatedCurrency, changedFields);
         TrackChange(nameof(NumberFormat), NumberFormat, validatedNumberFormat, changedFields);
+        TrackChange(nameof(Country), Country, validatedCountry, changedFields);
 
         if (changedFields.Count == 0)
         {
@@ -156,6 +166,7 @@ public sealed class Tenant
         DateFormat = validatedDateFormat;
         DefaultCurrency = validatedCurrency;
         NumberFormat = validatedNumberFormat;
+        Country = validatedCountry;
         Version++;
         UpdatedAt = occurredAt;
         _domainEvents.Add(new TenantSettingsUpdatedDomainEvent(
@@ -378,6 +389,18 @@ public sealed class Tenant
             : throw new TenantDomainException(
                 "tenancy.settings.default_currency.invalid",
                 "Default currency must be a three-letter ISO 4217 code.");
+    }
+
+    // Shape only, same as Customers (CustomerContactInfo.NormalizeCountry): there is no world
+    // geography module to check the code against, and the frontend picks it from its own list.
+    private static string NormalizeCountryCode(string value)
+    {
+        var normalized = value?.Trim().ToUpperInvariant() ?? string.Empty;
+        return normalized.Length == 2 && normalized.All(char.IsAsciiLetterUpper)
+            ? normalized
+            : throw new TenantDomainException(
+                "tenancy.settings.country.invalid",
+                "Country must be a two-letter ISO-3166-1 alpha-2 code.");
     }
 
     private static string ValidateDateFormat(string value)

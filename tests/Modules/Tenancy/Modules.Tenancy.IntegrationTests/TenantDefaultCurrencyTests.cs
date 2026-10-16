@@ -52,6 +52,7 @@ public sealed class TenantDefaultCurrencyTests
             tenant.DateFormat,
             currency,
             tenant.NumberFormat,
+            tenant.Country,
             DateTimeOffset.UtcNow);
         dbContext.Tenants.Add(tenant);
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
