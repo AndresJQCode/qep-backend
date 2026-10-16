@@ -40,21 +40,15 @@ public sealed record ReopenConversationCommand(Guid TenantId, Guid ConversationI
 /// <summary>§8.4: commit primero, por un UPDATE atómico sin token de concurrencia (un entrante que sube
 /// <c>version</c> en medio no lo convierte en 412); después el acuse a Meta, best effort (5 s), sólo si había
 /// no leídos, hay último entrante de menos de 30 días y la conexión está Active. Siempre 204.</summary>
-public sealed partial class MarkConversationReadHandler(
+public sealed class MarkConversationReadHandler(
     IConversationRepository repository,
-    IMessagingConnectionDirectory connections,
-    IWhatsAppCloudClient meta,
-    IInstagramClient instagram,
+    ReadReceipts readReceipts,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IClock clock,
-    IMessagingNotifier notifier,
-    ILogger<MarkConversationReadHandler> logger)
+    IMessagingNotifier notifier)
     : ICommandHandler<MarkConversationReadCommand, bool>
 {
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Read receipt for conversation {ConversationId} could not be sent to Meta; the conversation is marked read anyway.")]
-    private static partial void LogReceiptFailed(ILogger logger, Guid conversationId, Exception? exception);
-
     public async Task<bool> HandleAsync(MarkConversationReadCommand command, CancellationToken cancellationToken)
     {
         await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.ConversationManage, cancellationToken);
@@ -70,36 +64,7 @@ public sealed partial class MarkConversationReadHandler(
 
         // Spec 2026-10-14: el contador bajó a 0 en la base; la lista de las otras pestañas lo relee.
         await notifier.ConversationChangedAsync(command.TenantId, command.ConversationId, cancellationToken);
-        if (target.LastInboundWamid is not { } wamid || !Conversation.CanAcknowledgeReading(wamid, target.LastInboundAt, now))
-        {
-            return true;
-        }
-
-        try
-        {
-            if (target.Channel == ConversationChannel.Instagram)
-            {
-                // Spec 2026-10-14 decisión 14 (V-5): sender_action mark_seen, por persona y no por mensaje; best effort.
-                var igSender = await connections.ResolveInstagramSenderAsync(command.TenantId, target.ConnectionId, cancellationToken);
-                if (igSender is not null && target.UserId is { } userId && !await instagram.MarkSeenAsync(igSender, userId, cancellationToken))
-                {
-                    LogReceiptFailed(logger, command.ConversationId, null);
-                }
-
-                return true;
-            }
-
-            var sender = await connections.ResolveSenderAsync(command.TenantId, target.ConnectionId, cancellationToken);
-            if (sender is not null && !await meta.MarkReadAsync(sender, wamid, cancellationToken))
-            {
-                LogReceiptFailed(logger, command.ConversationId, null);
-            }
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            LogReceiptFailed(logger, command.ConversationId, exception);
-        }
-
+        await readReceipts.SendAsync(command.TenantId, command.ConversationId, target, now, cancellationToken);
         return true;
     }
 }

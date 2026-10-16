@@ -637,6 +637,7 @@ public static class QepServiceCollectionExtensions
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
+        services.AddScoped<ReadReceipts>();
         services.AddScoped<ICommandHandler<MarkConversationReadCommand, bool>, MarkConversationReadHandler>();
         // Spec 2026-10-14: marcar no leída, espejo del read.
         services.AddScoped<ICommandHandler<MarkConversationUnreadCommand, bool>, MarkConversationUnreadHandler>();
