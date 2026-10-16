@@ -17,10 +17,59 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.11")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("Modules.Quotations.Domain.Carrier", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_active");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("name");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer")
+                        .HasColumnName("sort_order");
+
+                    b.Property<bool>("SupportsCashOnDelivery")
+                        .HasColumnType("boolean")
+                        .HasColumnName("supports_cash_on_delivery");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "SortOrder")
+                        .HasDatabaseName("IX_carriers_tenant_sort");
+
+                    b.ToTable("carriers", "quotations");
+                });
 
             modelBuilder.Entity("Modules.Quotations.Domain.ExportJob", b =>
                 {
@@ -139,6 +188,21 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("cancelled_by");
 
+                    b.Property<Guid?>("CarrierId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("carrier_id");
+
+                    b.Property<string>("CarrierName")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("carrier_name");
+
+                    b.Property<bool>("CashOnDelivery")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("cash_on_delivery");
+
                     b.Property<Guid>("ClientId")
                         .HasColumnType("uuid")
                         .HasColumnName("client_id");
@@ -178,6 +242,38 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)")
                         .HasColumnName("external_reference");
+
+                    b.Property<decimal>("FreightAmount")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("freight_amount");
+
+                    b.Property<string>("FreightChargeMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("freight_charge_mode");
+
+                    b.Property<decimal>("FreightSubtotal")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("freight_subtotal");
+
+                    b.Property<decimal>("FreightTaxAmount")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("freight_tax_amount");
+
+                    b.Property<int>("FreightTaxPercentage")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("freight_tax_percentage");
 
                     b.Property<int?>("GlobalScaleFloor")
                         .HasColumnType("integer")
@@ -320,6 +416,8 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
 
                     b.ToTable("orders", "quotations", t =>
                         {
+                            t.HasCheckConstraint("CK_orders_freight_charge_mode", "freight_charge_mode IS NULL OR freight_charge_mode IN ('Charged','OnDelivery','Free')");
+
                             t.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify')");
                         });
                 });
@@ -604,6 +702,21 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("bills_to_final_consumer");
 
+                    b.Property<Guid?>("CarrierId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("carrier_id");
+
+                    b.Property<string>("CarrierName")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("carrier_name");
+
+                    b.Property<bool>("CashOnDelivery")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("cash_on_delivery");
+
                     b.Property<Guid>("ClientId")
                         .HasColumnType("uuid")
                         .HasColumnName("client_id");
@@ -634,6 +747,38 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasPrecision(14, 2)
                         .HasColumnType("numeric(14,2)")
                         .HasColumnName("discount_amount");
+
+                    b.Property<decimal>("FreightAmount")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("freight_amount");
+
+                    b.Property<string>("FreightChargeMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("freight_charge_mode");
+
+                    b.Property<decimal>("FreightSubtotal")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("freight_subtotal");
+
+                    b.Property<decimal>("FreightTaxAmount")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("freight_tax_amount");
+
+                    b.Property<int>("FreightTaxPercentage")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("freight_tax_percentage");
 
                     b.Property<int?>("GlobalScaleFloor")
                         .HasColumnType("integer")
@@ -759,7 +904,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "CreatedAt", "QuotationNumber")
                         .HasDatabaseName("IX_quotations_tenant_created_at_number");
 
-                    b.ToTable("quotations", "quotations");
+                    b.ToTable("quotations", "quotations", t =>
+                        {
+                            t.HasCheckConstraint("CK_quotations_freight_charge_mode", "freight_charge_mode IS NULL OR freight_charge_mode IN ('Charged','OnDelivery','Free')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Quotations.Domain.QuotationHistoryEntry", b =>
@@ -1142,6 +1290,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
+                    b.Property<Guid?>("FreightTaxRateId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("freight_tax_rate_id");
+
                     b.Property<int>("MinimumUnits")
                         .HasColumnType("integer")
                         .HasColumnName("minimum_units");
@@ -1152,6 +1304,53 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_tenant_quotation_settings_minimum_units", "minimum_units >= 1");
                         });
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.Carrier", b =>
+                {
+                    b.OwnsMany("Modules.Quotations.Domain.CarrierNameEntry", "Names", b1 =>
+                        {
+                            b1.Property<Guid>("CarrierId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("carrier_id");
+
+                            b1.Property<string>("NormalizedName")
+                                .HasMaxLength(120)
+                                .HasColumnType("character varying(120)")
+                                .HasColumnName("normalized_name");
+
+                            b1.Property<string>("Kind")
+                                .IsRequired()
+                                .HasMaxLength(16)
+                                .HasColumnType("character varying(16)")
+                                .HasColumnName("kind");
+
+                            b1.Property<Guid>("TenantId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("tenant_id");
+
+                            b1.Property<string>("Value")
+                                .IsRequired()
+                                .HasMaxLength(120)
+                                .HasColumnType("character varying(120)")
+                                .HasColumnName("value");
+
+                            b1.HasKey("CarrierId", "NormalizedName");
+
+                            b1.HasIndex("TenantId", "NormalizedName")
+                                .IsUnique()
+                                .HasDatabaseName("IX_carrier_names_tenant_name");
+
+                            b1.ToTable("carrier_names", "quotations", t =>
+                                {
+                                    t.HasCheckConstraint("CK_carrier_names_kind", "kind IN ('Name','External')");
+                                });
+
+                            b1.WithOwner()
+                                .HasForeignKey("CarrierId");
+                        });
+
+                    b.Navigation("Names");
                 });
 
             modelBuilder.Entity("Modules.Quotations.Domain.Order", b =>

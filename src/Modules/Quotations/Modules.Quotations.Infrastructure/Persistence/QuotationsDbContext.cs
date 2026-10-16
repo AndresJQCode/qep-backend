@@ -42,6 +42,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<TenantMinimumTotalRow> TenantMinimumTotals => Set<TenantMinimumTotalRow>();
 
+    internal DbSet<Carrier> Carriers => Set<Carrier>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureQuotation(modelBuilder);
@@ -60,13 +62,15 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureExportJob(modelBuilder);
         ConfigureOrdersExportLayout(modelBuilder);
         ConfigureQuotationSettings(modelBuilder);
+        ConfigureCarrier(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
     private static void ConfigureQuotation(ModelBuilder modelBuilder)
     {
         var quotation = modelBuilder.Entity<Quotation>();
-        quotation.ToTable("quotations", "quotations");
+        quotation.ToTable("quotations", "quotations", table =>
+            table.HasCheckConstraint("CK_quotations_freight_charge_mode", FreightChargeModeCheck));
         quotation.HasKey(value => value.Id);
         quotation.Property(value => value.Id)
             .HasColumnName("id")
@@ -142,6 +146,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         quotation.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();
+        ConfigureFreight(quotation);
 
         // Owned y no tabla aparte: es a lo sumo una cuenta por cotizacion, y una tabla hija con
         // una fila como maximo solo agrega un JOIN. Las cuatro columnas viven en `quotations`.
@@ -183,6 +188,48 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         quotation.HasIndex(value => new { value.TenantId, value.QuotationNumber })
             .IsUnique()
             .HasDatabaseName("IX_quotations_tenant_number");
+    }
+
+    private const string FreightChargeModeCheck =
+        "freight_charge_mode IS NULL OR freight_charge_mode IN ('Charged','OnDelivery','Free')";
+
+    /// <summary>
+    /// El envío de cotización y pedido (spec 2026-10-17): las mismas ocho columnas en los dos. Los
+    /// montos, el porcentaje y el recaudo son NOT NULL con default —las filas anteriores quedan "sin
+    /// envío" y su total no cambia—; la transportadora y el modo, nulos. `carrier_id` no tiene FK:
+    /// el documento guarda además el nombre (`carrier_name`) como foto, y una transportadora puede
+    /// desactivarse sin tocar lo ya emitido. `ProductsTotal` y `ShippingDetails` se derivan y no se
+    /// persisten.
+    /// </summary>
+    private static void ConfigureFreight<TDocument>(Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<TDocument> document)
+        where TDocument : class
+    {
+        document.Property<Guid?>("CarrierId").HasColumnName("carrier_id");
+        document.Property<string?>("CarrierName").HasColumnName("carrier_name").HasMaxLength(CarrierName.MaxLength);
+        document.Property<FreightChargeMode?>("FreightChargeMode")
+            .HasColumnName("freight_charge_mode")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        document.Property<decimal>("FreightAmount")
+            .HasColumnName("freight_amount")
+            .HasPrecision(14, 2)
+            .HasDefaultValue(0m);
+        document.Property<int>("FreightTaxPercentage")
+            .HasColumnName("freight_tax_percentage")
+            .HasDefaultValue(0);
+        document.Property<decimal>("FreightSubtotal")
+            .HasColumnName("freight_subtotal")
+            .HasPrecision(14, 2)
+            .HasDefaultValue(0m);
+        document.Property<decimal>("FreightTaxAmount")
+            .HasColumnName("freight_tax_amount")
+            .HasPrecision(14, 2)
+            .HasDefaultValue(0m);
+        document.Property<bool>("CashOnDelivery")
+            .HasColumnName("cash_on_delivery")
+            .HasDefaultValue(false);
+        document.Ignore("ProductsTotal");
+        document.Ignore("ShippingDetails");
     }
 
     private static void ConfigureQuotationItem(ModelBuilder modelBuilder)
@@ -409,7 +456,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     {
         var order = modelBuilder.Entity<Order>();
         order.ToTable("orders", "quotations", table =>
-            table.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify')"));
+        {
+            table.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify')");
+            table.HasCheckConstraint("CK_orders_freight_charge_mode", FreightChargeModeCheck);
+        });
         order.HasKey(value => value.Id);
         order.Property(value => value.Id)
             .HasColumnName("id")
@@ -520,6 +570,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();
+        ConfigureFreight(order);
 
         order.Navigation(value => value.PaymentProofs)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
@@ -785,6 +836,56 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasFilter(ActiveExportJobFilter);
     }
 
+    /// <summary>
+    /// Las transportadoras del tenant (spec 2026-10-17). Los nombres —el propio y los alias— viven en
+    /// `carrier_names` con su forma normalizada: el índice único por tenant es el que impide que dos
+    /// transportadoras se llamen igual, y QuotationsUnitOfWork lo traduce por nombre. Se borran con la
+    /// transportadora (CASCADE): no significan nada sin ella.
+    /// </summary>
+    private static void ConfigureCarrier(ModelBuilder modelBuilder)
+    {
+        var carrier = modelBuilder.Entity<Carrier>();
+        carrier.ToTable("carriers", "quotations");
+        carrier.HasKey(value => value.Id);
+        carrier.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new CarrierId(value))
+            .ValueGeneratedNever();
+        carrier.Property(value => value.TenantId).HasColumnName("tenant_id");
+        carrier.Property(value => value.Name).HasColumnName("name").HasMaxLength(CarrierName.MaxLength);
+        carrier.Property(value => value.SupportsCashOnDelivery).HasColumnName("supports_cash_on_delivery");
+        carrier.Property(value => value.SortOrder).HasColumnName("sort_order");
+        carrier.Property(value => value.IsActive).HasColumnName("is_active");
+        carrier.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
+        carrier.Property(value => value.CreatedAt).HasColumnName("created_at");
+        carrier.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // Se deriva de Names: la fuente es carrier_names.
+        carrier.Ignore(value => value.ExternalNames);
+        carrier.HasIndex(value => new { value.TenantId, value.SortOrder }).HasDatabaseName("IX_carriers_tenant_sort");
+
+        carrier.OwnsMany(value => value.Names, names =>
+        {
+            names.ToTable("carrier_names", "quotations", table =>
+                table.HasCheckConstraint("CK_carrier_names_kind", "kind IN ('Name','External')"));
+            names.WithOwner().HasForeignKey("CarrierId");
+            names.Property<CarrierId>("CarrierId").HasColumnName("carrier_id");
+            names.HasKey("CarrierId", nameof(CarrierNameEntry.NormalizedName));
+            names.Property(value => value.TenantId).HasColumnName("tenant_id");
+            names.Property(value => value.Kind)
+                .HasColumnName("kind")
+                .HasConversion<string>()
+                .HasMaxLength(16);
+            names.Property(value => value.Value).HasColumnName("value").HasMaxLength(CarrierName.ExternalMaxLength);
+            names.Property(value => value.NormalizedName)
+                .HasColumnName("normalized_name")
+                .HasMaxLength(CarrierName.ExternalMaxLength);
+            names.HasIndex(value => new { value.TenantId, value.NormalizedName })
+                .IsUnique()
+                .HasDatabaseName("IX_carrier_names_tenant_name");
+        });
+        carrier.Navigation(value => value.Names).UsePropertyAccessMode(PropertyAccessMode.Field);
+    }
+
     private static void ConfigureQuotationSettings(ModelBuilder modelBuilder)
     {
         var settings = modelBuilder.Entity<TenantQuotationSettingsRow>();
@@ -793,6 +894,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         settings.HasKey(value => value.TenantId);
         settings.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
         settings.Property(value => value.MinimumUnits).HasColumnName("minimum_units");
+        settings.Property(value => value.FreightTaxRateId).HasColumnName("freight_tax_rate_id");
 
         var totals = modelBuilder.Entity<TenantMinimumTotalRow>();
         totals.ToTable("tenant_minimum_totals", "quotations", table =>

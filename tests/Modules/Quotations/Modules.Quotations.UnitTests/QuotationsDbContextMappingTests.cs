@@ -404,6 +404,131 @@ public sealed class QuotationsDbContextMappingTests
     }
 
     /// <summary>
+    /// Spec 2026-10-17 (flete): las transportadoras del tenant y sus nombres. El índice único de
+    /// `carrier_names` es el que QuotationsUnitOfWork traduce a `quotations.carrier.name_taken`, así
+    /// que su nombre es contrato; `version` es el token de concurrencia.
+    /// </summary>
+    [Fact]
+    public void CarriersMapToTheirTablesColumnsConstraintsAndIndexes()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var carrier = model.FindEntityType(typeof(Carrier))!;
+        Assert.Equal("carriers", carrier.GetTableName());
+        Assert.Equal("quotations", carrier.GetSchema());
+        Assert.Equal("PK_carriers", carrier.FindPrimaryKey()!.GetName());
+        Assert.Equal("tenant_id", carrier.FindProperty(nameof(Carrier.TenantId))!.GetColumnName());
+        var name = carrier.FindProperty(nameof(Carrier.Name))!;
+        Assert.Equal("name", name.GetColumnName());
+        Assert.Equal(60, name.GetMaxLength());
+        Assert.Equal(
+            "supports_cash_on_delivery",
+            carrier.FindProperty(nameof(Carrier.SupportsCashOnDelivery))!.GetColumnName());
+        Assert.Equal("sort_order", carrier.FindProperty(nameof(Carrier.SortOrder))!.GetColumnName());
+        Assert.Equal("is_active", carrier.FindProperty(nameof(Carrier.IsActive))!.GetColumnName());
+        var version = carrier.FindProperty(nameof(Carrier.Version))!;
+        Assert.Equal("version", version.GetColumnName());
+        Assert.True(version.IsConcurrencyToken);
+        Assert.Equal("created_at", carrier.FindProperty(nameof(Carrier.CreatedAt))!.GetColumnName());
+        Assert.Equal("updated_at", carrier.FindProperty(nameof(Carrier.UpdatedAt))!.GetColumnName());
+        var sortIndex = Assert.Single(carrier.GetIndexes());
+        Assert.Equal("IX_carriers_tenant_sort", sortIndex.GetDatabaseName());
+        Assert.False(sortIndex.IsUnique);
+        Assert.Equal(["TenantId", "SortOrder"], sortIndex.Properties.Select(property => property.Name));
+
+        var entry = model.FindEntityType(typeof(CarrierNameEntry))!;
+        Assert.Equal("carrier_names", entry.GetTableName());
+        Assert.Equal("quotations", entry.GetSchema());
+        Assert.Equal(["carrier_id", "normalized_name"], entry.FindPrimaryKey()!.Properties.Select(p => p.GetColumnName()));
+        var kind = entry.FindProperty(nameof(CarrierNameEntry.Kind))!;
+        Assert.Equal("kind", kind.GetColumnName());
+        Assert.Equal(16, kind.GetMaxLength());
+        Assert.Equal(120, entry.FindProperty(nameof(CarrierNameEntry.Value))!.GetMaxLength());
+        Assert.Equal("value", entry.FindProperty(nameof(CarrierNameEntry.Value))!.GetColumnName());
+        Assert.Equal(120, entry.FindProperty(nameof(CarrierNameEntry.NormalizedName))!.GetMaxLength());
+        Assert.Equal("tenant_id", entry.FindProperty(nameof(CarrierNameEntry.TenantId))!.GetColumnName());
+        var unique = Assert.Single(entry.GetIndexes());
+        Assert.Equal("IX_carrier_names_tenant_name", unique.GetDatabaseName());
+        Assert.True(unique.IsUnique);
+        var foreignKey = Assert.Single(entry.GetForeignKeys());
+        Assert.Equal(DeleteBehavior.Cascade, foreignKey.DeleteBehavior);
+        Assert.Contains(
+            entry.GetCheckConstraints(),
+            check => check.Name == "CK_carrier_names_kind" && check.Sql.Contains("'Name'") && check.Sql.Contains("'External'"));
+    }
+
+    /// <summary>
+    /// Spec 2026-10-17: el envío vive en columnas propias de cotización y pedido. Los montos y el
+    /// porcentaje son NOT NULL con default 0 (las filas anteriores quedan sin envío); modo y
+    /// transportadora son nulos, y la transportadora no tiene FK. Lo derivado no se persiste.
+    /// </summary>
+    [Theory]
+    [InlineData(typeof(Quotation), "CK_quotations_freight_charge_mode")]
+    [InlineData(typeof(Order), "CK_orders_freight_charge_mode")]
+    public void DocumentsMapTheirFreightColumns(Type documentType, string checkName)
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var document = model.FindEntityType(documentType)!;
+
+        var carrierId = document.FindProperty("CarrierId")!;
+        Assert.Equal("carrier_id", carrierId.GetColumnName());
+        Assert.True(carrierId.IsNullable);
+        var carrierName = document.FindProperty("CarrierName")!;
+        Assert.Equal("carrier_name", carrierName.GetColumnName());
+        Assert.Equal(60, carrierName.GetMaxLength());
+        Assert.True(carrierName.IsNullable);
+        var mode = document.FindProperty("FreightChargeMode")!;
+        Assert.Equal("freight_charge_mode", mode.GetColumnName());
+        Assert.Equal(16, mode.GetMaxLength());
+        Assert.True(mode.IsNullable);
+        Assert.Equal(typeof(string), mode.GetProviderClrType());
+        foreach (var (property, column) in new[]
+                 {
+                     ("FreightAmount", "freight_amount"),
+                     ("FreightSubtotal", "freight_subtotal"),
+                     ("FreightTaxAmount", "freight_tax_amount"),
+                 })
+        {
+            var money = document.FindProperty(property)!;
+            Assert.Equal(column, money.GetColumnName());
+            Assert.Equal(14, money.GetPrecision());
+            Assert.Equal(2, money.GetScale());
+            Assert.False(money.IsNullable);
+            Assert.Equal(0m, money.GetDefaultValue());
+        }
+
+        var percentage = document.FindProperty("FreightTaxPercentage")!;
+        Assert.Equal("freight_tax_percentage", percentage.GetColumnName());
+        Assert.Equal(0, percentage.GetDefaultValue());
+        var cashOnDelivery = document.FindProperty("CashOnDelivery")!;
+        Assert.Equal("cash_on_delivery", cashOnDelivery.GetColumnName());
+        Assert.Equal(false, cashOnDelivery.GetDefaultValue());
+
+        Assert.Null(document.FindProperty("ProductsTotal"));
+        Assert.Null(document.FindProperty("ShippingDetails"));
+        Assert.DoesNotContain(document.GetForeignKeys(), key => key.Properties.Any(p => p.Name == "CarrierId"));
+        Assert.Contains(
+            document.GetCheckConstraints(),
+            check => check.Name == checkName
+                && check.Sql.Contains("'Charged'") && check.Sql.Contains("'OnDelivery'") && check.Sql.Contains("'Free'"));
+    }
+
+    [Fact]
+    public void TheSettingsRowMapsTheFreightTaxRateAsANullableColumn()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var property = model.FindEntityType(typeof(TenantQuotationSettingsRow))!
+            .FindProperty(nameof(TenantQuotationSettingsRow.FreightTaxRateId))!;
+
+        Assert.Equal("freight_tax_rate_id", property.GetColumnName());
+        Assert.True(property.IsNullable);
+    }
+
+    /// <summary>
     /// El modelo y el último snapshot describen la misma base. Renombrar un tipo CLR sin tocar
     /// tablas, columnas ni índices no pide migración (plan 2026-09-14, Task 1), y una migración
     /// generada y después escrita a mano tiene que dejar el snapshot al día (Tasks 2 y 5). No abre

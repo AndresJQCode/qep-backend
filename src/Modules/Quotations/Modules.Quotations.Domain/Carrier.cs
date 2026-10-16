@@ -21,14 +21,13 @@ public sealed class Carrier
         Id = id;
         TenantId = tenantId;
         Name = name;
-        ExternalNames = externalNames.ToArray();
         SupportsCashOnDelivery = supportsCashOnDelivery;
         SortOrder = sortOrder;
         IsActive = true;
         Version = 1;
         CreatedAt = occurredAt;
         UpdatedAt = occurredAt;
-        RebuildNames();
+        RebuildNames(externalNames);
     }
 
     public CarrierId Id { get; private set; }
@@ -37,7 +36,11 @@ public sealed class Carrier
 
     public string Name { get; private set; }
 
-    public IReadOnlyList<string> ExternalNames { get; private set; } = [];
+    /// <summary>Se deriva de <see cref="Names"/> y no se guarda aparte: la tabla
+    /// <c>carrier_names</c> es la única fuente, así que una transportadora rehidratada por EF los
+    /// trae sin un segundo campo que sincronizar.</summary>
+    public IReadOnlyList<string> ExternalNames =>
+        [.. _names.Where(entry => entry.Kind == CarrierNameKind.External).Select(entry => entry.Value)];
 
     public bool SupportsCashOnDelivery { get; private set; }
 
@@ -76,9 +79,8 @@ public sealed class Carrier
     {
         var (cleanName, cleanExternals) = Validate(name, externalNames);
         Name = cleanName;
-        ExternalNames = cleanExternals;
         SupportsCashOnDelivery = supportsCashOnDelivery;
-        RebuildNames();
+        RebuildNames(cleanExternals);
         Touch(occurredAt);
     }
 
@@ -106,11 +108,11 @@ public sealed class Carrier
         UpdatedAt = occurredAt;
     }
 
-    private void RebuildNames()
+    private void RebuildNames(IEnumerable<string> externalNames)
     {
         _names.Clear();
         _names.Add(new CarrierNameEntry(TenantId, CarrierNameKind.Name, Name));
-        _names.AddRange(ExternalNames.Select(e => new CarrierNameEntry(TenantId, CarrierNameKind.External, e)));
+        _names.AddRange(externalNames.Select(e => new CarrierNameEntry(TenantId, CarrierNameKind.External, e)));
     }
 
     private static (string Name, string[] Externals) Validate(

@@ -45,6 +45,11 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
 
     private const string MinimumTotalsKey = "PK_tenant_minimum_totals";
 
+    // El nombre de una transportadora, o cualquiera de sus alias, ya es de otra del mismo tenant
+    // (spec 2026-10-17). Es la regla de negocio, no una red: la comprobación previa en el handler
+    // no cierra la carrera entre dos altas simultáneas, este índice sí.
+    private const string CarrierNameIndex = "IX_carrier_names_tenant_name";
+
     // IOrderNumberGenerator recibe el mismo QuotationsDbContext scoped que esta clase, así que su
     // SQL crudo corre en esta conexión y queda dentro de la transacción. Si alguna vez se
     // registrara con un DbContext propio, el incremento volvería a autocommitearse aparte.
@@ -114,6 +119,18 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
             throw new QuotationsDomainException(
                 "order.order.number_taken",
                 "Another order in this tenant already uses that number.");
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(
+                      postgres.ConstraintName,
+                      CarrierNameIndex,
+                      StringComparison.Ordinal))
+        {
+            throw new QuotationsDomainException(
+                "quotations.carrier.name_taken",
+                "Ya hay una transportadora con ese nombre o con alguno de esos nombres externos.");
         }
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException postgres &&
