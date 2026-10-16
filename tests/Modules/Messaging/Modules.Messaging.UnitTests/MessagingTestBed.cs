@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
 using Modules.Tenancy.Application;
@@ -53,6 +54,10 @@ internal sealed class MessagingTestBed
 
     public MessagingTestBed() => Staging = new FakeUploadStaging(Store);
 
+    /// <summary>Spec 2026-10-16 §3.1: el acuse real sobre los dobles de Meta e Instagram; lo mandado queda en
+    /// <see cref="FakeWhatsAppClient.ReadReceipts"/> y <see cref="FakeInstagramClient.Seen"/>.</summary>
+    public ReadReceipts Receipts => new(Connections, Meta, Instagram, NullLogger<ReadReceipts>.Instance);
+
     /// <summary>Lo que "subió el front" al staging del miembro de la prueba: el objeto en el bucket bajo la clave que reconstruye el
     /// handler. Devuelve la clave.</summary>
     public string Stage(Guid conversationId, Guid uploadId, string fileName, byte[] bytes, Guid? memberId = null)
@@ -83,6 +88,7 @@ internal sealed class MessagingTestBed
             new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
             new FakeClock(Now),
             Notifier,
+            Receipts,
             new SendMediaMessageValidator());
     }
 
@@ -102,6 +108,7 @@ internal sealed class MessagingTestBed
             new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
             new FakeClock(Now),
             Notifier,
+            Receipts,
             Staging,
             new CreateMediaUploadSessionValidator());
     }
@@ -145,6 +152,7 @@ internal sealed class MessagingTestBed
             new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
             new FakeClock(Now),
             Notifier,
+            Receipts,
             new SendMessageValidator());
     }
 
@@ -167,6 +175,7 @@ internal sealed class MessagingTestBed
             new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
             new FakeClock(Now),
             Notifier,
+            Receipts,
             new SendTemplateMessageValidator());
     }
 
@@ -193,6 +202,7 @@ internal sealed class MessagingTestBed
             context,
             new FakeClock(Now),
             Notifier,
+            Receipts,
             new StartConversationValidator());
     }
 
@@ -222,6 +232,7 @@ internal sealed class MessagingTestBed
             new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
             new FakeClock(Now),
             Notifier,
+            Receipts,
             new SendAudioMessageValidator());
     }
 }
@@ -544,8 +555,14 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
         return Task.FromResult(NextSend);
     }
 
-    public Task<bool> MarkReadAsync(MessagingSender sender, string wamid, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+    /// <summary>Spec 2026-10-16 §3.1: los wamid que recibieron el acuse de leído al responder.</summary>
+    public List<string> ReadReceipts { get; } = [];
+
+    public Task<bool> MarkReadAsync(MessagingSender sender, string wamid, CancellationToken cancellationToken)
+    {
+        ReadReceipts.Add(wamid);
+        return Task.FromResult(true);
+    }
 
     /// <summary>§8.6: lo que responde <c>GET /{media-id}</c>; sin configurar, la prueba no debía llegar acá.</summary>
     public MessagingGraphResult<MediaInfo>? MediaInfo { get; set; }
@@ -664,10 +681,13 @@ internal sealed class FakeConversationRepository : IConversationRepository
 
     public RepliedTarget? NextReplied { get; set; }
 
+    /// <summary>Spec 2026-10-16 §3.1: la resta falla (la base se cayó justo después del commit del envío).</summary>
+    public Exception? RepliedFailure { get; set; }
+
     public Task<RepliedTarget?> MarkRepliedAsync(Guid tenantId, Guid conversationId, int seen, CancellationToken cancellationToken)
     {
         Replied.Add((conversationId, seen));
-        return Task.FromResult(NextReplied);
+        return RepliedFailure is { } failure ? Task.FromException<RepliedTarget?>(failure) : Task.FromResult(NextReplied);
     }
 
     public Task<bool> MarkUnreadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken) => throw new NotSupportedException();

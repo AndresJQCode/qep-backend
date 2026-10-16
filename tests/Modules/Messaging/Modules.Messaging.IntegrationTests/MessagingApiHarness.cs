@@ -680,6 +680,12 @@ internal static class MessagingApiHarness
         await worker.DrainAsync(TestContext.Current.CancellationToken);
     }
 
+    /// <summary>Spec 2026-10-16 §3.1: responder manda el acuse de leído por la misma ruta de Graph que el envío (<c>/{número}/messages</c>
+    /// en WhatsApp, <c>/{cuenta}/messages</c> en Instagram). Las pruebas que cuentan envíos lo descartan con esto.</summary>
+    public static bool IsReadReceipt(MetaRequest request) =>
+        request.Body is { } body
+        && (body.Contains("\"status\":\"read\"", StringComparison.Ordinal) || body.Contains("\"sender_action\":\"mark_seen\"", StringComparison.Ordinal));
+
     public static Task<long> CountAsync(string connectionString, string sql, params (string Name, object Value)[] parameters) =>
         ScalarAsync<long>(connectionString, sql, parameters);
 

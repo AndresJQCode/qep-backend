@@ -34,7 +34,7 @@ public sealed class SendAssignmentApiTests
         meta.Respond("/111/messages", HttpStatusCode.OK, """{"messaging_product":"whatsapp","contacts":[{"input":"CO.1","user_id":"CO.1"}],"messages":[{"id":"wamid.out"}]}""");
 
     private static int SendCalls(FakeMetaGraphHandler meta) =>
-        meta.Requests.Count(request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal));
+        meta.Requests.Count(request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal) && !IsReadReceipt(request));
 
     private static Task<HttpResponseMessage> PostAsync(Fixture f, Guid clientId, string text = "hola") =>
         SendAsync(f.Client, HttpMethod.Post, MessagesUrl(f.Tenant.TenantId, f.ConversationId), new { clientId, text });

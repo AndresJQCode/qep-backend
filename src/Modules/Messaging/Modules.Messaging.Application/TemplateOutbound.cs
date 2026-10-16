@@ -80,7 +80,7 @@ internal sealed class TemplateOutbound(OutboundGuards guards, IWhatsAppCloudClie
             await customers.MarkMarketingOptOutAsync(tenantId, customerId, CancellationToken.None);
         }
 
-        await guards.SettleAsync(tenantId, conversation.ConnectionId, claim, result, answeredAt, metaMediaId: null, afterRollback: null);
+        await guards.SettleAsync(tenantId, conversation.ConnectionId, claim, result, answeredAt, metaMediaId: null, afterRollback: null, seen: conversation.UnreadCount);
         return await guards.ToDtoAsync(
             tenantId,
             new MessageRow(claim.MessageId, conversation.Id, MessageDirection.Outbound, MessageKind.Template, text, null, details, MessageStatus.Sent, null, answeredAt,

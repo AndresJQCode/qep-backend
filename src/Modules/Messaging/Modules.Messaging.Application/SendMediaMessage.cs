@@ -58,6 +58,7 @@ public sealed class SendMediaMessageHandler(
     IExecutionContext executionContext,
     IClock clock,
     IMessagingNotifier notifier,
+    ReadReceipts receipts,
     IValidator<SendMediaMessageCommand> validator)
     : ICommandHandler<SendMediaMessageCommand, MessageDto>
 {
@@ -72,7 +73,7 @@ public sealed class SendMediaMessageHandler(
 
     // CS9124: los parámetros que van a la guarda no se usan en los métodos; el reloj y el reclamo se piden a ella.
     private readonly OutboundGuards _guards = new(
-        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier);
+        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier, receipts);
 
     /// <summary>Lo que quedó de la preparación: el medio ya subido (o la falla de la subida) y los bytes finales si es una imagen.</summary>
     /// <paramref name="Upload"/> es <c>null</c> en Instagram: Meta descarga el adjunto desde R2 (decisión 12), no hay subida previa.</summary>
@@ -206,7 +207,8 @@ public sealed class SendMediaMessageHandler(
             // Un rollback por credencial deja sin fila lo que escribió una fila nueva: se borra de R2. En un reintento de un Failed
             // el objeto es el que esa fila ya sirve, y se queda.
             await _guards.SettleAsync(
-                command.TenantId, conversation.ConnectionId, claim, result, answeredAt, mediaId, claim.Inserted ? () => DiscardAsync(finalKey) : null);
+                command.TenantId, conversation.ConnectionId, claim, result, answeredAt, mediaId, claim.Inserted ? () => DiscardAsync(finalKey) : null,
+                seen: conversation.UnreadCount);
         }
         catch (Exception exception) when (claim.Inserted && exception is not MessagingDomainException)
         {

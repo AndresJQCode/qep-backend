@@ -112,7 +112,7 @@ public sealed class InstagramSendApiTests
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var message = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
         Assert.Equal(("Text", "Sent", "¡Claro que sí!"), (message.GetProperty("kind").GetString(), message.GetProperty("status").GetString(), message.GetProperty("text").GetString()));
-        var send = Assert.Single(Sends(f.Factory.MetaHandler));
+        var send = Assert.Single(Sends(f.Factory.MetaHandler), request => !IsReadReceipt(request));
         Assert.Equal("graph.instagram.com", send.Uri!.Host);
         Assert.Equal($"Bearer {SentinelInstagramAccessToken}", send.Authorization);
         using var body = JsonDocument.Parse(send.Body!);
@@ -181,7 +181,7 @@ public sealed class InstagramSendApiTests
         var message = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
         Assert.Equal(("Image", "Sent", "image/jpeg"), (message.GetProperty("kind").GetString(), message.GetProperty("status").GetString(), message.GetProperty("media").GetProperty("mimeType").GetString()));
         var id = message.GetProperty("id").GetGuid();
-        var send = Assert.Single(Sends(f.Factory.MetaHandler));
+        var send = Assert.Single(Sends(f.Factory.MetaHandler), request => !IsReadReceipt(request));
         using var body = JsonDocument.Parse(send.Body!);
         var attachment = body.RootElement.GetProperty("message").GetProperty("attachment");
         Assert.Equal("image", attachment.GetProperty("type").GetString());
@@ -235,7 +235,7 @@ public sealed class InstagramSendApiTests
         var stored = f.Bucket.Objects[key];
         Assert.Equal("audio/wav", stored.ContentType);
         Assert.Equal("RIFF", Encoding.ASCII.GetString(stored.Bytes, 0, 4));
-        var send = Assert.Single(Sends(f.Factory.MetaHandler));
+        var send = Assert.Single(Sends(f.Factory.MetaHandler), request => !IsReadReceipt(request));
         using var body = JsonDocument.Parse(send.Body!);
         var attachment = body.RootElement.GetProperty("message").GetProperty("attachment");
         Assert.Equal("audio", attachment.GetProperty("type").GetString());
