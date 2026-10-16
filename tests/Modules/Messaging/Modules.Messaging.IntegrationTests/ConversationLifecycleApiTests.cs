@@ -281,6 +281,21 @@ public sealed class ConversationLifecycleApiTests
         Assert.Contains("\"message_id\":\"wamid.in\"", ack.Body, StringComparison.Ordinal);
     }
 
+    // El acuse es best effort (§3.2): si Meta lo rechaza, resolver sigue siendo 200 y la marca ya se quitó.
+    [Fact]
+    public async Task AFailingReceiptStillAnswersTheResolveAs200()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.InternalServerError, FakeMetaGraphHandler.GraphError(2));
+
+        var summary = await ResolveAsync(f);
+
+        Assert.Equal(0, summary.GetProperty("unreadCount").GetInt32());
+        Assert.Single(f.Factory.MetaHandler.Requests, IsReadReceipt);
+    }
+
     [Fact]
     public async Task ResolvingWithNothingUnreadSendsNoReceipt()
     {

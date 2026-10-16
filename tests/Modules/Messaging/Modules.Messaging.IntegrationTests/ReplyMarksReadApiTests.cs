@@ -303,6 +303,32 @@ public sealed class ReplyMarksReadApiTests
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         Assert.Equal(1, await UnreadAsync(f.ConnectionString));
+        Assert.Empty(ReceiptsSent(f.Factory.MetaHandler));
+    }
+
+    /// <summary>§3.1 punto 4: el acuse es best effort. Meta acepta el envío y responde 500 al acuse: el asesor igual recibe 201, el
+    /// mensaje queda Sent y la marca ya se quitó antes del acuse.</summary>
+    [Fact]
+    public async Task AFailingReceiptStillAnswersTheSendAs201()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        f.Factory.MetaHandler.RespondWith("/111/messages", request =>
+        {
+            var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return body.Contains("\"status\":\"read\"", StringComparison.Ordinal)
+                ? FakeMetaGraphHandler.Json(HttpStatusCode.InternalServerError, FakeMetaGraphHandler.GraphError(2))
+                : FakeMetaGraphHandler.Json(HttpStatusCode.OK, SendOk);
+        });
+
+        var response = await SendTextAsync(f);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal("Sent", (await response.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("status").GetString());
+        Assert.Equal(0, await UnreadAsync(f.ConnectionString));
+        Assert.Single(ReceiptsSent(f.Factory.MetaHandler));
     }
 
     [Fact]
