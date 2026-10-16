@@ -74,17 +74,23 @@ cerrado, y un fallido puede reintentarse mucho después con el mismo `clientId`.
 en ese hueco es un pendiente nuevo y no puede borrarse ni recibir el check azul sin que nadie lo lea.
 En la rama `Sent`, después de `CommitSentAsync`:
 
-1. Un `UPDATE` atómico, sin comparar `version` (spec base §8.4), que deja `unread_count` en la cantidad
-   de entrantes con `occurred_at > permit.Now`. Es el mismo conteo con `UPDATE … FROM (SELECT count(*)
-   …)` que usa `MarkUnreadFromAsync`, pero sin `GREATEST`, porque acá sí baja. Si no había nada que
-   bajar, no toca nada. El instante de admisión tiene que llegar hasta `SettleAsync`; cómo se pasa
-   queda a criterio de quien construye.
-2. Si bajó algo, `notifier.ConversationChangedAsync` (la lista de las otras pestañas lo relee) y el
-   **mismo acuse best effort** que `MarkConversationReadHandler`, con las mismas guardas
-   (`CanAcknowledgeReading`, conexión activa, 5 s, y un fallo sólo se loguea). En WhatsApp va
-   `MarkReadAsync` con el `wamid` del **último entrante anterior a `permit.Now`**, no con
-   `last_inbound_wamid`. En Instagram va `MarkSeenAsync`, que es por persona: se manda sólo si el
-   conteo quedó en 0.
+1. Se resta lo que el asesor tenía a la vista. `seen` es el `unread_count` de la fila que cargó
+   `OutboundGuards.LoadAsync` (`target.Conversation.UnreadCount`), y con eso corre un `UPDATE` atómico:
+   `unread_count = unread_count - seen WHERE unread_count >= seen`. Con `seen = 0` no se corre. Si el
+   contador quedó por debajo de `seen`, alguien lo tocó en el hueco (un `/read`, un resolver) y no se
+   toca. Un entrante en el hueco sumó encima y sobrevive a la resta. *(Corrección del plan, 2026-10-16:
+   reemplaza el conteo por `occurred_at > permit.Now`. `occurred_at` es la hora de Meta, no la de
+   ingesta, y un entrante demorado en la cola de webhooks se habría borrado.)*
+2. **El `UPDATE` no sube `version` ni `updated_at`.** Es parte del envío, y el envío no los sube a
+   propósito: `SendMessageApiTests.AHappySendAnswers201SentWithTheClientIdAndUpdatesTheSnapshot`
+   («Fix 1, hallazgo 1») lo exige para que un resolver con la versión de antes no dé 412.
+3. El aviso por el hub es el `NotifyConsolidatedAsync` que la rama `Sent` ya manda. El `UPDATE` va antes,
+   así que alcanza con ese único aviso.
+4. El **acuse**, el mismo best effort que `MarkConversationReadHandler`, con las mismas guardas
+   (`CanAcknowledgeReading`, conexión activa, 5 s, y un fallo sólo se loguea), **sólo si el contador
+   quedó en 0**. Con un entrante nuevo en el hueco no se manda nada: el acuse de WhatsApp sobre el
+   último `wamid` marcaría leído también el nuevo, y en Instagram `mark_seen` es por persona. Se manda
+   cuando alguien quite la marca después.
 3. Va **después** de que el saliente está commiteado y con `CancellationToken.None`, como el resto de
    ese tramo: un fallo acá nunca convierte un envío exitoso en error. La respuesta del endpoint de envío
    no cambia.
@@ -92,14 +98,9 @@ En la rama `Sent`, después de `CommitSentAsync`:
 El acuse hoy vive dentro de `MarkConversationReadHandler`; se extrae a una pieza compartida que usan
 los dos caminos (y el de resolver). Nombre y ubicación, a criterio de quien construye.
 
-**Concurrencia con `version`.** El `UPDATE` sube `version`, como `/read`. No es un caso nuevo: el
-primer envío en una conversación sin asignar ya la sube (autoasignación en `AdmitAsync`), y por eso
-`settleSent` en `outbox-drainer.ts` invalida cabecera y lista. **Decisión de diseño: no se cambia la
-semántica de `version`.** El requisito es no abrir una clase nueva de 412. Después de un envío
-confirmado, el `version` se refresca con la misma invalidación que ya existe. Después del `/read` de
-la barra, `markRead` invalida la conversación al terminar, cosa que hoy no hace. Si un «Resolver» sale
-con el envío todavía en vuelo y choca, lo atrapa el manejo de 412 que ya existe (`shouldReload`),
-igual que pasa hoy con la autoasignación. No hay reintento automático del resolver.
+**Concurrencia con `version`.** Responder no sube `version` (punto 2), así que no abre ninguna clase
+nueva de 412. `/read` sí la sube, como siempre. Por eso, después del `/read` de la barra, `markRead`
+invalida la conversación al terminar, cosa que hoy no hace.
 
 ### 3.2 Resolver quita la marca
 
@@ -158,8 +159,8 @@ encima de `MessageComposer`.
 - Texto, adjunto, nota de voz, plantilla y `POST /conversations` sobre una existente, aceptados con
   `unread_count = 2` → queda 0, un acuse a Meta con el último `wamid` entrante y `ConversationChanged`
   notificado.
-- Un entrante que llega entre la admisión y la respuesta de Meta → `unread_count = 1`, y el acuse va con
-  el `wamid` anterior, no con el del entrante nuevo. En Instagram no hay `mark_seen`.
+- Un entrante que llega entre la carga y la respuesta de Meta → `unread_count = 1` y ningún acuse.
+- Responder con no leídos deja `version` y `updated_at` como estaban.
 - Con `unread_count = 0` → ningún acuse.
 - Envío que Meta rechaza → `unread_count` intacto, ningún acuse.
 - Acuse que falla → el envío responde igual que sin el cambio.
@@ -192,11 +193,10 @@ frontend (se quitó en `92ea5e5`). El endpoint sigue en el backend y este cambio
 Las tomé al escribir el diseño. Revísalas al leerlo:
 
 - **R1.** `POST /conversations` sobre una conversación existente cuenta como respuesta (§3.1).
-- **R2.** Sólo se limpia lo que llegó antes de admitir el envío. Un entrante en el hueco sigue
-  pendiente y no recibe check azul (§3.1).
+- **R2.** Sólo se limpia lo que el asesor tenía a la vista al enviar. Un entrante en el hueco sigue
+  pendiente y en ese caso no sale ningún check azul (§3.1).
 - **R3.** Resolver también manda el check azul, porque quitar la marca siempre lo manda (§3.2).
-- **R4.** No cambia la semántica de `version`. No se abre ninguna clase nueva de 412 y no hay
-  reintento automático (§3.1).
+- **R4.** Responder no sube `version` (§3.1).
 - **R5.** Después de enviar no hay parche optimista de `unreadCount`: la barra se va cuando llega el
   dato del servidor (§4.3).
 - **R6.** El error de la barra se muestra en línea, sin modal (§4.2).
