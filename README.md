@@ -1114,7 +1114,8 @@ mismas reglas que la cotización. `quotationId` es opcional y `source` dice de d
   cambia `order_items`, nunca la cotización.
 - `Manual`: `POST /orders` crea un pedido sin cotización desde la pantalla, con el mismo cuerpo que
   una cotización más el estado de pago y los comprobantes; `POST /orders/preview` lo calcula sin
-  guardarlo ni gastar número. Exige cliente completo con CUC, como convertir. Permiso
+  guardarlo ni gastar número, y sin cuenta de cobro lo precia en la moneda por defecto del tenant (crear
+  sí la exige). Exige cliente completo con CUC, como convertir. Permiso
   `quotations.order.manage`.
 - Integraciones (`Shopify`): sin sesión HTTP, por `IExternalOrderWriter`; acepta un cliente
   incompleto y lleva `externalReference` (`#1001`).

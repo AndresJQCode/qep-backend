@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Modules.Quotations.Application;
+using Npgsql;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -89,6 +90,103 @@ public sealed class ManualOrderApiTests
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var saved = await created.Content.ReadFromJsonAsync<OrderDetailResponse>(TestContext.Current.CancellationToken);
         Assert.EndsWith("0001", saved!.Order.OrderNumber, StringComparison.Ordinal);
+    }
+
+    // La pantalla de «Nuevo pedido» muestra el precio de la línea en cuanto hay cliente y producto, antes
+    // de elegir la empresa que factura. Sin cuenta, el cálculo previo usa la moneda por defecto del tenant,
+    // mismo precedente que la cotización (CreateQuotation.cs). El tenant queda en USD para que la prueba
+    // distinga la moneda por defecto de un COP fijo.
+    [Fact]
+    public async Task PreviewWithoutABillingAccountPricesInTheTenantDefaultCurrency()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        await SetTenantDefaultCurrencyAsync(database.GetConnectionString(), tenantId, "USD");
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, prices: new Dictionary<string, decimal> { ["COP"] = 100_000m, ["USD"] = 25m });
+        var request = (await ValidRequestAsync(client, tenantId, clientId, productId)) with { BillingAccount = null };
+
+        var preview = await client.PostAsJsonAsync(
+            $"{OrdersUrl(tenantId)}/preview", request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+        var body = await preview.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        var order = body.GetProperty("order");
+        Assert.Equal("USD", order.GetProperty("currency").GetString());
+        Assert.Equal(JsonValueKind.Null, order.GetProperty("billingAccount").ValueKind);
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("billingAccount").ValueKind);
+        var item = Assert.Single(body.GetProperty("items").EnumerateArray());
+        Assert.Equal(25m, item.GetProperty("unitPrice").GetDecimal());
+        Assert.Equal(75m, order.GetProperty("total").GetDecimal());
+        Assert.Equal(75m, order.GetProperty("netTotal").GetDecimal());
+    }
+
+    [Fact]
+    public async Task PreviewWithABillingAccountPricesInTheAccountCurrency()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, prices: new Dictionary<string, decimal> { ["COP"] = 100_000m, ["USD"] = 25m });
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId, currency: "USD");
+        var request = (await ValidRequestAsync(client, tenantId, clientId, productId)) with
+        {
+            BillingAccount = new QuotationBillingAccountRequest(
+                billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
+        };
+
+        var preview = await client.PostAsJsonAsync(
+            $"{OrdersUrl(tenantId)}/preview", request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+        var body = await preview.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        var order = body.GetProperty("order");
+        Assert.Equal("USD", order.GetProperty("currency").GetString());
+        Assert.Equal("USD", order.GetProperty("billingAccount").GetProperty("currency").GetString());
+        Assert.Equal(billing.CompanyId, body.GetProperty("billingAccount").GetProperty("companyId").GetGuid());
+        var item = Assert.Single(body.GetProperty("items").EnumerateArray());
+        Assert.Equal(25m, item.GetProperty("unitPrice").GetDecimal());
+    }
+
+    // Guardar sigue exigiendo la cuenta: un pedido guardado nunca queda sin ella. Mismo 422 que antes de que
+    // el cálculo previo la dejara opcional.
+    [Fact]
+    public async Task CreatingWithoutABillingAccountIsStillAValidationError()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var request = (await ValidRequestAsync(client, tenantId, clientId, productId)) with { BillingAccount = null };
+
+        var response = await client.PostAsJsonAsync(OrdersUrl(tenantId), request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("validation.failed", problem.GetProperty("code").GetString());
+        Assert.True(problem.GetProperty("errors").TryGetProperty("BillingAccount", out var billingErrors));
+        Assert.True(billingErrors.GetArrayLength() > 0);
+        var page = await client.GetFromJsonAsync<OrdersPageResponse>(OrdersUrl(tenantId), TestContext.Current.CancellationToken);
+        Assert.Empty(page!.Items);
+    }
+
+    private static async Task SetTenantDefaultCurrencyAsync(string connectionString, Guid tenantId, string currency)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "UPDATE tenancy.tenants SET default_currency = @currency WHERE id = @id", connection);
+        command.Parameters.AddWithValue("currency", currency);
+        command.Parameters.AddWithValue("id", tenantId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]

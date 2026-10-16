@@ -152,7 +152,9 @@ public sealed class OrdersExportProcessor(
             ? new Dictionary<Guid, QuotationProductRef>()
             : await productLookup.FindManyAsync(tenantId, productIds, cancellationToken);
 
-        var companyIds = batch.Select(order => order.BillingAccount.CompanyId).Distinct().ToArray();
+        // Un pedido guardado siempre tiene cuenta de cobro: sólo el cálculo previo nace sin ella, y no se
+        // guarda (Order.Preview). De ahí el `!` acá y en RowsFor.
+        var companyIds = batch.Select(order => order.BillingAccount!.CompanyId).Distinct().ToArray();
         var companies = new Dictionary<Guid, QuotationCompanyRef>();
         foreach (var companyId in companyIds)
         {
@@ -205,7 +207,7 @@ public sealed class OrdersExportProcessor(
         var proofs = context.ProofsByOrder.TryGetValue(order.Id, out var foundProofs)
             ? foundProofs
             : [];
-        var billingCompany = context.Companies.TryGetValue(order.BillingAccount.CompanyId, out var company)
+        var billingCompany = context.Companies.TryGetValue(order.BillingAccount!.CompanyId, out var company)
             ? company
             : null;
         var empresa = billingCompany?.Name ?? string.Empty;

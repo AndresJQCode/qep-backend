@@ -151,6 +151,52 @@ public sealed class OrderTests
         Assert.Equal("order.order.source_invalid", error.Code);
     }
 
+    // Un pedido que se guarda nunca nace sin cuenta de cobro: sólo el cálculo previo puede (Order.Preview).
+    [Fact]
+    public void CreateManualRequiresTheBillingAccount()
+    {
+        Assert.Throws<ArgumentNullException>(() => Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0001", Header(), QuotationParties.Empty, null!, [Line()],
+            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now));
+    }
+
+    [Fact]
+    public void CreateExternalRequiresTheBillingAccount()
+    {
+        Assert.Throws<ArgumentNullException>(() => Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, null!, [Line()],
+            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001"));
+    }
+
+    [Fact]
+    public void APreviewWithoutAnAccountIsPricedInTheHeaderCurrency()
+    {
+        var header = Header() with { Currency = "USD" };
+
+        var order = Order.Preview(
+            OrderId.New(), TenantId, "PREVIEW", header, QuotationParties.Empty, billingAccount: null,
+            [Line(quantity: 2m, unitPrice: 11_900m)], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now);
+
+        Assert.Null(order.BillingAccount);
+        Assert.Equal(("USD", OrderSource.Manual), (order.Currency, order.Source));
+        Assert.Equal(2, Assert.Single(order.Items).Quantity);
+        Assert.True(order.Total > 0);
+    }
+
+    // Con cuenta, el cálculo previo es el de siempre: la moneda la fija la cuenta, no el encabezado.
+    [Fact]
+    public void APreviewWithAnAccountTakesTheAccountCurrency()
+    {
+        var account = Account with { Currency = "USD" };
+
+        var order = Order.Preview(
+            OrderId.New(), TenantId, "PREVIEW", Header(), QuotationParties.Empty, account, [Line()],
+            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now);
+
+        Assert.Equal("USD", order.Currency);
+        Assert.Equal(account.CompanyId, order.BillingAccount?.CompanyId);
+    }
+
     [Fact]
     public void RetentionAppliesToTheSubtotalWhenTheCustomerWithholds()
     {

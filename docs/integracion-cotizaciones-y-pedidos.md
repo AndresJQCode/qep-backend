@@ -80,7 +80,7 @@ Y los del pedido, siempre por su `orderId` (el `id` que devuelve la conversión,
 |---|---|---|---|
 | `GET` | `/orders` | — (query: `clientId`, `advisorId`, `status`, `paymentStatus`, `convertedFrom`, `convertedTo`, `clientCuc`, `orderNumber`, `source`, `timeZone`, `page`, `pageSize`) | Paginado, `OrdersPageResponse`. `source` es `Quotation`, `Manual` o `Shopify` (sin él, todos; otro valor → 422 `order.order.source_invalid`). `timeZone` es la zona IANA del navegador (`Europe/Madrid`): los días de `convertedFrom`/`convertedTo` se cortan en ella; sin ella, en la del tenant; una zona que no es IANA → 422 `order.time_zone_invalid` |
 | `POST` | `/orders` | `CreateOrderRequest` | 201 `OrderDetailResponse` + `Location`. Pedido manual, sin cotización, en `Pending`. Exige `quotations.order.manage` y cliente completo con CUC |
-| `POST` | `/orders/preview` | `CreateOrderRequest` (los comprobantes pueden ir sin `fileId`) | 200 `OrderDetailResponse` calculado **sin persistir** y sin gastar número de pedido |
+| `POST` | `/orders/preview` | `CreateOrderRequest` (los comprobantes pueden ir sin `fileId`; `billingAccount` puede ir `null`) | 200 `OrderDetailResponse` calculado **sin persistir** y sin gastar número de pedido. Sin `billingAccount` se precia en la moneda por defecto del tenant, como una cotización sin cuenta, y `order.billingAccount` y `billingAccount` vuelven `null` |
 | `GET` | `/orders/{orderId}` | — | 200 `OrderDetailResponse`: el pedido con sus datos, el cliente y el asesor resueltos, las líneas, la cotización de origen (si la hay) y el historial |
 | `POST` | `/orders/{orderId}/approve` | — (sin body) | 200 `OrderResponse` en `Approved`. Sólo desde `Pending`; exige `quotations.order.approve` (admin y facturación, no el asesor: `quotations.order.manage` no alcanza) |
 | `POST` | `/orders/{orderId}/cancel` | `CancelOrderRequest` | 200 `OrderResponse` en `Cancelled`. Desde `Pending` o `Approved`; exige `quotations.order.cancel` (sólo admin). Conserva `approvedAt`/`approvedBy` |
@@ -152,7 +152,9 @@ type CreateOrderRequest = {
   isRetail: boolean;
   globalScaleFloor: number | null;
   parties: QuotationPartiesRequest | null; // null: facturación y envío con los datos del cliente
-  billingAccount: { companyId: string; bankName: string; accountNumber: string; currency: string };
+  // Obligatoria en POST /orders (422 validation.failed, errors.BillingAccount). En /orders/preview puede ir
+  // null: la pantalla pinta el precio antes de elegir la empresa que factura.
+  billingAccount: { companyId: string; bankName: string; accountNumber: string; currency: string } | null;
   items: { productId: string; quantity: number }[]; // al menos uno, sin productos repetidos
   paymentStatus: "FullPaymentReceived" | "PartialPaymentReceived" | "PaymentPending";
   paymentProofs: { fileId: string; amount: number; paidOn?: string | null }[]; // vacío sólo con PaymentPending
@@ -173,7 +175,8 @@ type OrderResponse = {
   subtotal: number; taxPercentage: number; taxAmount: number; discountAmount: number;
   total: number; retentionAmount: number; netTotal: number;
   notes: string | null;                // sin tope de largo
-  billingAccount: { companyId: string; bankName: string; accountNumber: string; currency: string };
+  // null sólo en el cálculo previo sin cuenta (POST /orders/preview); un pedido guardado siempre la trae.
+  billingAccount: { companyId: string; bankName: string; accountNumber: string; currency: string } | null;
   parties: QuotationPartyResponse[];   // las líneas no viajan acá: van en OrderDetailResponse.items
   convertedAt: string; convertedBy: string; // en un pedido manual o externo: cuándo y quién lo creó
   approvedAt: string | null; approvedBy: string | null;

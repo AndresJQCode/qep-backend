@@ -11,7 +11,9 @@ public sealed record OrderHistoryEntryDto(
 /// <c>Source</c>, <c>Status</c> y <c>PaymentStatus</c> viajan con el nombre del enum, mismo criterio
 /// que <c>QuotationDto.Status</c>. <c>CustomerVatSurplus</c> es el valor **efectivo**
 /// (<c>Order.AppliesVatSurplus</c>): facturando a consumidor final el IVA se cobra aunque el cliente
-/// tenga excedente, y la pantalla imprime «exento» con sólo ver esto en true.
+/// tenga excedente, y la pantalla imprime «exento» con sólo ver esto en true. <c>BillingAccount</c> es null
+/// sólo en el cálculo previo sin cuenta (la pantalla precia la línea antes de elegir la empresa que
+/// factura); un pedido guardado siempre la trae.
 /// </summary>
 public sealed record OrderDto(
     Guid Id,
@@ -41,7 +43,7 @@ public sealed record OrderDto(
     decimal RetentionAmount,
     decimal NetTotal,
     string? Notes,
-    QuotationBillingAccountDto BillingAccount,
+    QuotationBillingAccountDto? BillingAccount,
     IReadOnlyCollection<QuotationPartyDto> Parties,
     IReadOnlyCollection<QuotationItemDto> Items,
     DateTimeOffset ConvertedAt,
@@ -75,7 +77,8 @@ public sealed record OrderPaymentProofUpdateRequest(
 /// El cuerpo de un pedido manual (spec 2026-10-15 §5.2) y de su cálculo previo: el mismo que la
 /// pantalla arma para una cotización, más el estado de pago y los comprobantes, porque un pedido nace
 /// vendido. <c>Items</c> lleva producto y cantidad: el precio, el descuento por escala y la tasa los
-/// resuelve el backend, igual que al convertir.
+/// resuelve el backend, igual que al convertir. <c>BillingAccount</c> es obligatoria al crear y opcional en
+/// el cálculo previo, que sin ella precia en la moneda por defecto del tenant.
 /// </summary>
 public sealed record CreateOrderRequest(
     Guid ClientId,
@@ -84,7 +87,7 @@ public sealed record CreateOrderRequest(
     bool IsRetail,
     int? GlobalScaleFloor,
     QuotationPartiesRequest? Parties,
-    QuotationBillingAccountRequest BillingAccount,
+    QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<OrderEditItemRequest> Items,
     string PaymentStatus,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs);
@@ -127,8 +130,9 @@ public sealed record SaveOrderEditsRequest(
 public sealed record OrderPaymentProofResponse(
     Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt, DateOnly? PaidOn);
 
-/// <summary>Espeja <see cref="OrderDto"/>. Las líneas no viajan acá: van resueltas (nombre, código,
-/// imagen, escalas) en <see cref="OrderDetailResponse.Items"/>.</summary>
+/// <summary>Espeja <see cref="OrderDto"/>, incluido el <c>BillingAccount</c> null del cálculo previo sin
+/// cuenta. Las líneas no viajan acá: van resueltas (nombre, código, imagen, escalas) en
+/// <see cref="OrderDetailResponse.Items"/>.</summary>
 public sealed record OrderResponse(
     Guid Id,
     string OrderNumber,
@@ -157,7 +161,7 @@ public sealed record OrderResponse(
     decimal RetentionAmount,
     decimal NetTotal,
     string? Notes,
-    QuotationBillingAccountDto BillingAccount,
+    QuotationBillingAccountDto? BillingAccount,
     IReadOnlyCollection<QuotationPartyResponse> Parties,
     DateTimeOffset ConvertedAt,
     Guid ConvertedBy,

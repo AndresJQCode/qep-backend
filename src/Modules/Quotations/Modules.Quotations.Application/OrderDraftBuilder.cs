@@ -1,4 +1,5 @@
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -13,7 +14,7 @@ public sealed record OrderDraftInput(
     bool IsRetail,
     int? GlobalScaleFloor,
     QuotationPartiesRequest? Parties,
-    QuotationBillingAccountRequest BillingAccount,
+    QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<OrderItemAddition> Items,
     OrderPaymentStatus PaymentStatus,
     IReadOnlyCollection<OrderPaymentProofInput> Proofs,
@@ -24,18 +25,32 @@ public sealed record OrderDraftInput(
 /// <summary>
 /// Arma un <see cref="Order"/> preciado como lo haría el cotizador: cliente elegible, cuenta de cobro
 /// validada contra Companies, precio y descuento por escala de cada línea, foto del producto, descuentos
-/// de grupo y mínimo de compra. No guarda nada: crear, previsualizar y el servicio de pedidos externos lo
-/// comparten. Público porque el composition root lo registra.
+/// de grupo y mínimo de compra. No guarda nada: crear (<see cref="BuildAsync"/>) y previsualizar
+/// (<see cref="PreviewAsync"/>) lo comparten. Público porque el composition root lo registra.
 /// </summary>
 public sealed class OrderDraftBuilder(
     IQuotationCustomerLookup customerLookup,
     IQuotationCompanyLookup companyLookup,
     IQuotationProductPricingLookup pricingLookup,
     IQuotationProductLookup productLookup,
-    IQuotationSettingsStore settingsStore)
+    IQuotationSettingsStore settingsStore,
+    ITenantDefaultCurrency tenantDefaultCurrency)
 {
-    public async Task<Order> BuildAsync(
-        OrderDraftInput input, string orderNumber, DateTimeOffset now, CancellationToken cancellationToken)
+    // El preview no tiene número: el handler lo borra antes de responder.
+    private const string PreviewOrderNumber = "PREVIEW";
+
+    /// <summary>El pedido que se va a guardar: sin cuenta de cobro no hay pedido.</summary>
+    public Task<Order> BuildAsync(
+        OrderDraftInput input, string orderNumber, DateTimeOffset now, CancellationToken cancellationToken) =>
+        BuildCoreAsync(input, orderNumber, now, preview: false, cancellationToken);
+
+    /// <summary>El cálculo previo: la cuenta es opcional y, sin ella, se precia en la moneda por defecto del
+    /// tenant. El resultado no se guarda.</summary>
+    public Task<Order> PreviewAsync(OrderDraftInput input, DateTimeOffset now, CancellationToken cancellationToken) =>
+        BuildCoreAsync(input, PreviewOrderNumber, now, preview: true, cancellationToken);
+
+    private async Task<Order> BuildCoreAsync(
+        OrderDraftInput input, string orderNumber, DateTimeOffset now, bool preview, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(input);
 
@@ -43,10 +58,18 @@ public sealed class OrderDraftBuilder(
         OrderCustomerEligibility.Ensure(customer, input.TenantId, input.ClientId, input.AllowIncompleteCustomer);
 
         var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
-                companyLookup, input.TenantId, input.BillingAccount, cancellationToken)
-            ?? throw new QuotationsDomainException(
+            companyLookup, input.TenantId, input.BillingAccount, cancellationToken);
+        if (billingAccount is null && !preview)
+        {
+            throw new QuotationsDomainException(
                 "order.billing.account_required", "An order needs a billing account.");
-        var currency = billingAccount.Currency;
+        }
+
+        // Sin cuenta de cobro, el cálculo previo usa la moneda por defecto del tenant, el mismo precedente que
+        // la cotización (CreateQuotation.cs): la pantalla de «Nuevo pedido» pinta el precio de la línea antes
+        // de que se elija la empresa que factura. Con cuenta, manda la suya, como siempre.
+        var currency = billingAccount?.Currency
+            ?? Currencies.Normalize(await tenantDefaultCurrency.GetAsync(input.TenantId, cancellationToken));
 
         // Línea por línea, como el alta de una línea en la cotización: un producto ausente, de otro
         // tenant o inactivo se rechaza con el código de siempre (ResolveManyAsync deja pasar el
@@ -78,14 +101,18 @@ public sealed class OrderDraftBuilder(
             customer.WithRetention,
             customer.VatSurplus);
         var parties = input.Parties.ToDomain();
-        var order = input.Source == OrderSource.Manual
-            ? Order.CreateManual(
+        var order = preview
+            ? Order.Preview(
                 OrderId.New(), input.TenantId, orderNumber, header, parties, billingAccount, lines,
                 input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now)
-            : Order.CreateExternal(
-                OrderId.New(), input.TenantId, orderNumber, header, parties, billingAccount, lines,
-                input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now, input.Source,
-                input.ExternalReference!);
+            : input.Source == OrderSource.Manual
+                ? Order.CreateManual(
+                    OrderId.New(), input.TenantId, orderNumber, header, parties, billingAccount!, lines,
+                    input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now)
+                : Order.CreateExternal(
+                    OrderId.New(), input.TenantId, orderNumber, header, parties, billingAccount!, lines,
+                    input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now, input.Source,
+                    input.ExternalReference!);
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, input.TenantId, order, now, cancellationToken);
         return order;
