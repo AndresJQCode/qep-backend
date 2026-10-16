@@ -795,8 +795,8 @@ public sealed class OrphanUserCleanupTests
     }
 
     // Por el DbContext, misma razón que SeedQuotationAsync: lo que importa acá es approved_by,
-    // cancelled_by o invoiced_by, no el resto del contrato de pedidos. La cotización subyacente
-    // existe sólo porque orders.quotation_id tiene FK — su contenido no se ejercita.
+    // cancelled_by o invoiced_by, no el resto del contrato de pedidos. Desde el spec 2026-10-15 el
+    // pedido tiene datos propios y no necesita cotización: se siembra uno manual.
     private static async Task SeedOrderAsync(
         QepApiFactory factory,
         Guid tenantId,
@@ -809,29 +809,20 @@ public sealed class OrphanUserCleanupTests
         var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
         var convertedBy = new MemberId(convertedByMembershipId);
         var occurredAt = DateTimeOffset.UtcNow;
-        var quotation = Quotation.Create(
-            QuotationId.New(),
-            tenantId,
-            $"COT-{Guid.NewGuid():N}"[..20],
-            Guid.CreateVersion7(),
-            convertedBy,
-            validUntil: null,
-            paymentMethod: null,
-            notes: null,
-            QuotationParties.Empty,
-            billingAccount: null,
-            defaultCurrency: "COP",
-            customerWithRetention: false,
-            customerVatSurplus: false,
-            convertedBy,
-            occurredAt);
-        dbContext.Quotations.Add(quotation);
-
-        var order = Order.Create(
+        var order = Order.CreateManual(
             OrderId.New(),
             tenantId,
             $"PED-{Guid.NewGuid():N}"[..20],
-            quotation.Id,
+            new OrderHeader(Guid.CreateVersion7(), convertedBy, "COP", null, IsRetail: false, null, false, false),
+            QuotationParties.Empty,
+            new QuotationBillingAccount
+            {
+                CompanyId = Guid.CreateVersion7(),
+                BankName = "Bancolombia",
+                AccountNumber = "7542",
+                Currency = "COP",
+            },
+            [new OrderLineInput(Guid.CreateVersion7(), 1m, 119_000m, 0m, 19)],
             OrderPaymentStatus.PaymentPending,
             notes: null,
             convertedBy,

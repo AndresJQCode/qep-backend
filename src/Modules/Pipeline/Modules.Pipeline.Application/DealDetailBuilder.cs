@@ -12,6 +12,7 @@ public sealed class DealDetailBuilder(
     IPipelineConversationDirectory conversations,
     IDealRepository deals,
     IDealQuotationRepository quotations,
+    IDealOrderRepository orders,
     IPipelineReasonRepository reasons,
     IClock clock)
 {
@@ -23,6 +24,8 @@ public sealed class DealDetailBuilder(
         var history = await deals.ListHistoryAsync(tenantId, deal.Id, cancellationToken);
         var linked = await quotations.ListByDealAsync(tenantId, deal.Id, cancellationToken);
         var unlinked = await quotations.ListUnlinkedByCustomerAsync(tenantId, deal.CustomerId, cancellationToken);
+        var linkedOrders = await orders.ListByDealAsync(tenantId, deal.Id, cancellationToken);
+        var unlinkedOrders = await orders.ListUnlinkedByCustomerAsync(tenantId, deal.CustomerId, cancellationToken);
         var customer = (await customers.FindAsync(tenantId, [deal.CustomerId], cancellationToken)).GetValueOrDefault(deal.CustomerId);
         var memberIds = history
             .Where(row => row.ActorMemberId is not null)
@@ -68,8 +71,13 @@ public sealed class DealDetailBuilder(
             [.. history.Select(row => ToDto(row, pipeline, names))],
             deal.CreatedAt,
             deal.UpdatedAt,
-            deal.Version);
+            deal.Version,
+            [.. linkedOrders.Select(ToDto)],
+            [.. unlinkedOrders.Select(ToDto)]);
     }
+
+    private static DealOrderDto ToDto(DealOrder order) =>
+        new(order.OrderId, order.OrderNumber, order.Total, order.Currency, order.Source, order.CancelledAt is not null);
 
     internal static DealQuotationDto ToDto(DealQuotation quotation, Guid? primaryQuotationId) =>
         new(quotation.QuotationId, quotation.QuotationNumber, quotation.Total, quotation.Currency, quotation.Status.ToString(),

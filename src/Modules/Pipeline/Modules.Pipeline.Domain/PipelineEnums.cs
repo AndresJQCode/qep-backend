@@ -17,6 +17,9 @@ public enum DealSource
     Manual,
     Conversation,
     Quotation,
+
+    /// <summary>Spec 2026-10-15 §7: lo creó un pedido sin cotización (manual o de una integración) que no encontró negocio abierto.</summary>
+    Order,
 }
 
 /// <summary>Spec 2026-10-13 D19: quién movió la etapa. <c>Ai</c> llega con el slice de IA.</summary>

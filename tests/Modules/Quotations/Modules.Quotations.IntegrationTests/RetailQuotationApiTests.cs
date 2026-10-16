@@ -195,7 +195,7 @@ public sealed class RetailQuotationApiTests
             TestContext.Current.CancellationToken);
         withoutRetail.EnsureSuccessStatusCode();
         Assert.Equal(
-            5m, Assert.Single((await ReadDetailAsync(withoutRetail)).Quotation.Items).DiscountPercentage);
+            5m, Assert.Single((await ReadDetailAsync(withoutRetail)).Items).DiscountPercentage);
 
         var preview = await client.PostAsJsonAsync(
             $"{OrderUrl(tenantId, order.Id)}/preview",
@@ -204,8 +204,8 @@ public sealed class RetailQuotationApiTests
 
         Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
         var calculated = await ReadDetailAsync(preview);
-        Assert.True(calculated.Quotation.IsRetail);
-        var line = Assert.Single(calculated.Quotation.Items);
+        Assert.True(calculated.Order.IsRetail);
+        var line = Assert.Single(calculated.Items);
         Assert.Equal(0m, line.DiscountPercentage);
         Assert.Equal("Own", line.DiscountOrigin);
         Assert.False((await GetQuotationAsync(client, tenantId, quotation.Id)).IsRetail);
@@ -217,9 +217,10 @@ public sealed class RetailQuotationApiTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var saved = await ReadDetailAsync(response);
-        Assert.True(saved.Quotation.IsRetail);
+        Assert.True(saved.Order.IsRetail);
         Assert.True(saved.Order.Version > order.Version);
-        Assert.True((await GetQuotationAsync(client, tenantId, quotation.Id)).IsRetail);
+        // Spec 2026-10-15 §4.5: el detal se guarda en el pedido; la cotización queda congelada.
+        Assert.False((await GetQuotationAsync(client, tenantId, quotation.Id)).IsRetail);
     }
 
     // El pedido que ya no esta Pending no admite cambiarlo: el mismo error que ya da su guardado.
@@ -305,8 +306,8 @@ public sealed class RetailQuotationApiTests
                 && item.Details.Contains("detal", StringComparison.Ordinal));
     }
 
-    // El rastro del guardado del pedido: fila propia con el texto de RetailChanged y auditoria
-    // sobre el pedido, igual que el piso en ese mismo guardado.
+    // El rastro del guardado del pedido: fila propia en el historial del pedido (spec 2026-10-15
+    // §4.5: la cotización no se toca) con el texto de RetailChanged y auditoria sobre el pedido.
     [Fact]
     public async Task SavingRetailOnThePendingOrderLeavesHistoryAndAudit()
     {
@@ -320,14 +321,19 @@ public sealed class RetailQuotationApiTests
             client, tenantId, order, OrderRequestFor(quotation, quantity: null, isRetail: true));
         applied.EnsureSuccessStatusCode();
 
-        var history = await GetHistoryAsync(client, tenantId, quotation.Id);
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            OrderUrl(tenantId, order.Id), TestContext.Current.CancellationToken);
         var entry = Assert.Single(
-            history.Items,
+            detail!.History,
             item => item.Details is not null
                 && item.Details.Contains("detal", StringComparison.Ordinal));
-        Assert.Equal("Edited", entry.EventType);
+        Assert.Equal("PricingChanged", entry.EventType);
         Assert.Equal(
-            "Marcó la cotización como detal: ninguna línea recibe descuento.", entry.Details);
+            "Marcó el pedido como detal: ninguna línea recibe descuento.", entry.Details);
+        var quotationHistory = await GetHistoryAsync(client, tenantId, quotation.Id);
+        Assert.DoesNotContain(
+            quotationHistory.Items,
+            item => item.Details is not null && item.Details.Contains("detal", StringComparison.Ordinal));
 
         // El EventName del outbox es el del sobre de auditoria; la accion va adentro del payload.
         var audits = await OutboxMessagesAsync(factory, "platform.audit.recorded.v1");
@@ -425,8 +431,8 @@ public sealed class RetailQuotationApiTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var saved = await ReadDetailAsync(response);
-        Assert.True(saved.Quotation.IsRetail);
-        Assert.Contains(saved.Quotation.Items, item => item.ProductId == incomplete);
+        Assert.True(saved.Order.IsRetail);
+        Assert.Contains(saved.Items, item => item.ProductId == incomplete);
     }
 
     // Un producto cuyas escalas salen de copiar las de otro: la copia deja el tramo sin
@@ -469,7 +475,7 @@ public sealed class RetailQuotationApiTests
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
-        var order = await converted.Content.ReadFromJsonAsync<OrderResponse>(
+        var order = await converted.Content.ReadConvertedOrderAsync(
             TestContext.Current.CancellationToken);
         Assert.NotNull(order);
         return (await GetQuotationAsync(client, tenantId, quotation.Id), order);

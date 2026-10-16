@@ -185,6 +185,15 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
                 ? new HashSet<Guid> { quotation.Id.Value }
                 : []);
 
+    public Task<IReadOnlyDictionary<QuotationId, string>> FindNumbersAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<QuotationId, string>>(
+            quotationIds.Contains(quotation.Id)
+                ? new Dictionary<QuotationId, string> { [quotation.Id] = quotation.QuotationNumber }
+                : new Dictionary<QuotationId, string>());
+
     public Task<(IReadOnlyList<Quotation> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
@@ -272,6 +281,10 @@ internal sealed class RecordingQuotationAuditPublisher : IQuotationAuditPublishe
     public void Publish(
         Guid tenantId, Guid actorId, string action, string resourceId,
         string outcome, DateTimeOffset occurredAt) => Actions.Add(action);
+
+    public void PublishByIntegration(
+        Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+        Actions.Add(action);
 }
 
 internal sealed class NoOpQuotationAuditPublisher : IQuotationAuditPublisher
@@ -279,6 +292,11 @@ internal sealed class NoOpQuotationAuditPublisher : IQuotationAuditPublisher
     public void Publish(
         Guid tenantId, Guid actorId, string action, string resourceId,
         string outcome, DateTimeOffset occurredAt)
+    {
+    }
+
+    public void PublishByIntegration(
+        Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt)
     {
     }
 }
@@ -476,6 +494,15 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
                 .Select(quotation => quotation.Id.Value)
                 .ToHashSet());
 
+    public Task<IReadOnlyDictionary<QuotationId, string>> FindNumbersAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<QuotationId, string>>(
+            quotations
+                .Where(quotation => quotationIds.Contains(quotation.Id))
+                .ToDictionary(quotation => quotation.Id, quotation => quotation.QuotationNumber));
+
     public void Add(Quotation quotation)
     {
     }
@@ -661,16 +688,20 @@ internal sealed record RecordedOrderExportSearch(
     OrderPaymentStatus? PaymentStatus,
     DateTimeOffset? ConvertedFrom,
     DateTimeOffset? ConvertedBefore,
-    string? OrderNumber);
+    string? OrderNumber,
+    OrderSource? Source = null);
 
-/// <summary>Devuelve las filas sembradas y anota con que filtro se la llamo — lo que las pruebas
-/// del listado de pedidos necesitan comprobar es el camino del handler, no la consulta SQL.</summary>
-internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) : IOrderRepository
+/// <summary>Devuelve los pedidos sembrados y anota con que filtro se la llamo — lo que las pruebas
+/// del listado de pedidos necesitan comprobar es el camino del handler, no la consulta SQL. Desde el
+/// spec 2026-10-15 las filas son pedidos con sus propias líneas y partes, sin cotización al lado.</summary>
+internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepository
 {
     public IReadOnlyCollection<Guid>? LastClientIds { get; private set; }
 
     /// <summary>El rango, ya en instantes, con que se pidió la última página del listado.</summary>
     public (DateTimeOffset? From, DateTimeOffset? Before) LastSearchRange { get; private set; }
+
+    public OrderSource? LastSource { get; private set; }
 
     public int AnyCalls { get; private set; }
 
@@ -681,17 +712,20 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
 
     public RecordedOrderExportSearch? LastExportSearch { get; private set; }
 
+    /// <summary>Lo que los handlers escribieron en el historial del pedido.</summary>
+    public List<OrderHistoryEntry> History { get; } = [];
+
     public Task<Order?> FindByQuotationIdAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
-        Task.FromResult(rows.FirstOrDefault(row => row.Quotation.Id == quotationId)?.Order);
+        Task.FromResult(rows.FirstOrDefault(row => row.QuotationId == quotationId));
 
     public Task<Order?> FindUntrackedByIdAsync(
         Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
-        Task.FromResult(rows.FirstOrDefault(row => row.Order.Id == orderId)?.Order);
+        Task.FromResult(rows.FirstOrDefault(row => row.Id == orderId));
 
     public Task<Order?> FindByIdAsync(
         Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
-        Task.FromResult(rows.FirstOrDefault(row => row.Order.Id == orderId)?.Order);
+        Task.FromResult(rows.FirstOrDefault(row => row.Id == orderId));
 
     public Task<IReadOnlyDictionary<Guid, Order>> FindByQuotationIdsAsync(
         Guid tenantId,
@@ -699,10 +733,10 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyDictionary<Guid, Order>>(
             rows
-                .Where(row => quotationIds.Contains(row.Quotation.Id))
-                .ToDictionary(row => row.Quotation.Id.Value, row => row.Order));
+                .Where(row => row.QuotationId is { } quotationId && quotationIds.Contains(quotationId))
+                .ToDictionary(row => row.QuotationId!.Value.Value, row => row));
 
-    public Task<(IReadOnlyList<OrderWithQuotation> Items, int Total)> SearchAsync(
+    public Task<(IReadOnlyList<Order> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
         IReadOnlyCollection<Guid>? clientIds,
@@ -712,13 +746,15 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
+        OrderSource? source,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
         LastClientIds = clientIds;
         LastSearchRange = (convertedFrom, convertedBefore);
-        return Task.FromResult<(IReadOnlyList<OrderWithQuotation>, int)>((rows, rows.Length));
+        LastSource = source;
+        return Task.FromResult<(IReadOnlyList<Order>, int)>((rows, rows.Length));
     }
 
     // Honra el contrato de `clientIds` (vacío = ninguna fila): es lo que hace que un CUC sin
@@ -733,15 +769,16 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
+        OrderSource? source,
         CancellationToken cancellationToken)
     {
         AnyCalls++;
         LastExportSearch = new RecordedOrderExportSearch(
-            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber);
+            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
         return Task.FromResult(Matching(clientIds).Any());
     }
 
-    public Task<IReadOnlyList<OrderWithQuotation>> ListForExportAsync(
+    public Task<IReadOnlyList<Order>> ListForExportAsync(
         Guid tenantId,
         Guid? clientId,
         IReadOnlyCollection<Guid>? clientIds,
@@ -751,6 +788,7 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
+        OrderSource? source,
         OrderExportCursor? after,
         int limit,
         CancellationToken cancellationToken)
@@ -758,18 +796,18 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         ExportCalls++;
         ExportCursors.Add(after);
         LastExportSearch = new RecordedOrderExportSearch(
-            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber);
+            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
         // Reproduce la forma del keyset en memoria, con comparación ordinal: alcanza para estas
         // pruebas unitarias, aunque el SQL real compara con la collation de la columna. El
         // keyset real contra Postgres lo prueba
         // OrdersCreatedOrLeavingTheFilterBetweenBatchesNeitherRepeatNorSkip.
-        IReadOnlyList<OrderWithQuotation> page = Matching(clientIds)
+        IReadOnlyList<Order> page = Matching(clientIds)
             .Where(row => after is null
-                || row.Order.ConvertedAt < after.ConvertedAt
-                || (row.Order.ConvertedAt == after.ConvertedAt
-                    && string.CompareOrdinal(row.Order.OrderNumber, after.OrderNumber) < 0))
-            .OrderByDescending(row => row.Order.ConvertedAt)
-            .ThenByDescending(row => row.Order.OrderNumber, StringComparer.Ordinal)
+                || row.ConvertedAt < after.ConvertedAt
+                || (row.ConvertedAt == after.ConvertedAt
+                    && string.CompareOrdinal(row.OrderNumber, after.OrderNumber) < 0))
+            .OrderByDescending(row => row.ConvertedAt)
+            .ThenByDescending(row => row.OrderNumber, StringComparer.Ordinal)
             .Take(limit)
             .ToArray();
         return Task.FromResult(page);
@@ -789,34 +827,38 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         PaymentProofRequests.Add(orderIds);
         return Task.FromResult<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>>>(
             rows
-                .Where(row => orderIds.Contains(row.Order.Id) && row.Order.PaymentProofs.Count > 0)
+                .Where(row => orderIds.Contains(row.Id) && row.PaymentProofs.Count > 0)
                 .ToDictionary(
-                    row => row.Order.Id,
-                    row => (IReadOnlyList<OrderExportPaymentProof>)row.Order.PaymentProofs
+                    row => row.Id,
+                    row => (IReadOnlyList<OrderExportPaymentProof>)row.PaymentProofs
                         .Select(proof => new OrderExportPaymentProof(
                             proof.Id, proof.PublicStorageKey, proof.UploadedAt, proof.Amount, proof.PaidOn))
                         .ToArray()));
     }
 
     // Las líneas y las partes ya viven en el agregado sembrado: a diferencia del repositorio
-    // real, acá no hace falta una consulta aparte, sólo leer lo que la prueba cargó con
-    // Quotation.AddItemAfterConversion / UpdateDetails.
-    public Task<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationItem>>> ListItemsForExportAsync(
-        Guid tenantId, IReadOnlyCollection<QuotationId> quotationIds, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationItem>>>(
+    // real, acá no hace falta una consulta aparte.
+    public Task<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderItem>>> ListItemsForExportAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderItem>>>(
             rows
-                .Where(row => quotationIds.Contains(row.Quotation.Id) && row.Quotation.Items.Count > 0)
-                .ToDictionary(row => row.Quotation.Id, row => (IReadOnlyList<QuotationItem>)row.Quotation.Items.ToArray()));
+                .Where(row => orderIds.Contains(row.Id) && row.Items.Count > 0)
+                .ToDictionary(row => row.Id, row => (IReadOnlyList<OrderItem>)row.Items.ToArray()));
 
-    public Task<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationParty>>> ListPartiesForExportAsync(
-        Guid tenantId, IReadOnlyCollection<QuotationId> quotationIds, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationParty>>>(
+    public Task<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderParty>>> ListPartiesForExportAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderParty>>>(
             rows
-                .Where(row => quotationIds.Contains(row.Quotation.Id) && row.Quotation.Parties.Count > 0)
-                .ToDictionary(row => row.Quotation.Id, row => (IReadOnlyList<QuotationParty>)row.Quotation.Parties.ToArray()));
+                .Where(row => orderIds.Contains(row.Id) && row.Parties.Count > 0)
+                .ToDictionary(row => row.Id, row => (IReadOnlyList<OrderParty>)row.Parties.ToArray()));
 
-    private IEnumerable<OrderWithQuotation> Matching(IReadOnlyCollection<Guid>? clientIds) =>
-        clientIds is null ? rows : rows.Where(row => clientIds.Contains(row.Quotation.ClientId));
+    public Task<IReadOnlyList<OrderHistoryEntry>> ListHistoryAsync(
+        Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<OrderHistoryEntry>>(
+            History.Where(entry => entry.OrderId == orderId).OrderByDescending(entry => entry.EventAt).ToArray());
+
+    private IEnumerable<Order> Matching(IReadOnlyCollection<Guid>? clientIds) =>
+        clientIds is null ? rows : rows.Where(row => clientIds.Contains(row.ClientId));
 
     /// <summary>Lo que responde <see cref="IsPaymentProofFileInUseAsync"/> (revisión final, I2).</summary>
     public bool PaymentProofFileInUse { get; set; }
@@ -832,6 +874,8 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
     }
 
     public void Add(Order order) { }
+
+    public void AddHistoryEntry(OrderHistoryEntry entry) => History.Add(entry);
 }
 
 /// <summary>
@@ -967,6 +1011,42 @@ internal sealed class FixedTenantModules(TenantModuleSet? set) : ITenantModules
     }
 }
 
+/// <summary>Pedidos para los handlers (spec 2026-10-15): un pedido manual, sin cotización, con una
+/// línea de 119.000 con el IVA adentro. Es lo que necesita casi toda prueba de un caso de uso de
+/// pedidos; la que mira la relación con la cotización usa <see cref="Order.FromQuotation"/>.</summary>
+internal static class OrderBuilders
+{
+    public static readonly QuotationBillingAccount BillingAccount = new()
+    {
+        CompanyId = Guid.CreateVersion7(),
+        BankName = "Bancolombia",
+        AccountNumber = "7542",
+        Currency = "COP",
+    };
+
+    public static Order Pending(
+        Guid tenantId,
+        MemberId advisorId,
+        DateTimeOffset now,
+        Guid? clientId = null,
+        OrderPaymentStatus paymentStatus = OrderPaymentStatus.PaymentPending,
+        IReadOnlyCollection<OrderPaymentProofInput>? proofs = null,
+        string orderNumber = "PED-2026-0001") =>
+        Order.CreateManual(
+            OrderId.New(),
+            tenantId,
+            orderNumber,
+            new OrderHeader(clientId ?? Guid.CreateVersion7(), advisorId, "COP", null, IsRetail: false, null, false, false),
+            QuotationParties.Empty,
+            BillingAccount,
+            [new OrderLineInput(Guid.CreateVersion7(), 1m, 119_000m, 0m, 19)],
+            paymentStatus,
+            notes: null,
+            advisorId,
+            proofs ?? [],
+            now);
+}
+
 /// <summary>Spec 2026-10-13 §4.5: anota qué eventos del ciclo pidió el handler, sin outbox.</summary>
 internal sealed class RecordingQuotationLifecycleEventPublisher : IQuotationLifecycleEventPublisher
 {
@@ -978,6 +1058,10 @@ internal sealed class RecordingQuotationLifecycleEventPublisher : IQuotationLife
     public void PublishConverted(Quotation quotation, Order order, DateTimeOffset occurredAt) =>
         Published.Add(("converted", quotation.Id.Value, quotation.Total, quotation.Currency));
 
+    public void PublishOrderCreated(Order order, DateTimeOffset occurredAt) =>
+        Published.Add(("order.created", order.Id.Value, order.Total, order.Currency));
+
+    // El pedido puede no tener cotización (spec 2026-10-15): la clave es el pedido.
     public void PublishOrderCancelled(Order order, DateTimeOffset occurredAt) =>
-        Published.Add(("cancelled", order.QuotationId.Value, 0m, string.Empty));
+        Published.Add(("cancelled", order.Id.Value, 0m, string.Empty));
 }

@@ -5,16 +5,9 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 /// <summary>
-/// Arma el Excel de pedidos para el ERP contable del tenant (ajuste 2026-09-20): una fila por
-/// línea de producto, no por pedido — el ERP necesita Cod. Producto, Cantidad, Valor Unit, IVA y
-/// Descuento por línea, y esos datos no existen a nivel pedido. Los campos que sí son del pedido
-/// entero (EMPRESA, Pedido, Documento, dirección de entrega, Observaciones) se repiten en cada una
-/// de sus líneas.
-///
-/// Mismo esquema de lote que <see cref="QuotationsExportProcessor"/>: keyset de a mil y streaming
-/// (<see cref="ExportBatchLoop"/>). Lo que cambia es que <c>toRows</c> ya no devuelve una fila por
-/// entidad del lote — un pedido con tres líneas aporta tres filas — así que el conteo de filas del
-/// archivo se lleva aparte del conteo de pedidos leídos (ver <see cref="ProcessAsync"/>).
+/// El Excel de pedidos (spec 2026-09-12 y homologación por tenant). Desde el spec 2026-10-15 §6.4 las
+/// 47 columnas conservan clave, encabezado y orden, pero todo sale del pedido: su cuenta de cobro, sus
+/// líneas, sus partes, su cliente, su asesor y sus totales. Un pedido sin cotización exporta igual.
 /// </summary>
 public sealed class OrdersExportProcessor(
     IOrderRepository repository,
@@ -32,50 +25,15 @@ public sealed class OrdersExportProcessor(
 {
     public const string FilePrefix = "pedidos";
 
-    /// <summary>Cuántas fechas de pago tienen columna propia (ajuste 2026-09-20). El número vive en
-    /// el catálogo desde la homologación (spec 2026-09-24); acá queda el alias que ya usan las
-    /// pruebas.</summary>
     public const int PaymentDateColumns = OrdersExportColumnCatalog.PaymentDateColumns;
 
-    /// <summary>La celda "URL Comprobante N" de un comprobante privado, o con los enlaces públicos
-    /// apagados: que no haya enlace no es lo mismo que no haya comprobante, y una celda vacía no
-    /// puede significar las dos cosas.</summary>
+    /// <summary>Texto de la celda de enlace cuando el comprobante no tiene copia pública.</summary>
     public const string PrivateProofText = "Sin enlace";
 
-    /// <summary>"Transportadora" de un pedido cuya cotización es de recogida en tienda (spec
-    /// 2026-10-05). Contrato del ERP del tenant, no copy de UI: su importador compara el texto, así
-    /// que no se traduce ni se cambia sin hablarlo con el tenant.</summary>
     public const string StorePickupCarrier = "Recoger en tienda";
 
-    /// <summary>"Transportadora" de todo pedido que no es de recogida: la transportadora con la que
-    /// despacha el tenant, la misma que su hoja tenía fija hasta el 2026-10-05. Contrato del ERP,
-    /// igual que <see cref="StorePickupCarrier"/>.</summary>
     public const string DefaultCarrier = "Coordinadora";
 
-    /// <summary>
-    /// Las columnas por defecto del ERP contable, en su orden: las del catálogo
-    /// (<see cref="OrdersExportColumnCatalog"/>, spec 2026-09-24) con su encabezado y su ancho. Ya
-    /// no es una lista literal: es lo que sale sin layout guardado, y es lo que
-    /// <see cref="OrdersExportLayoutProjection"/> reordena, renombra y recorta cuando lo hay.
-    ///
-    /// Las razones de cada columna siguen valiendo y viven con su llave en el catálogo: "Nota
-    /// Detalle" sale siempre vacía (no existe nota por línea); "Cod. Asesor" (D9 del spec del código
-    /// de asesor) va después de "Email" para no mover lo que el ERP ya importa; "Banco", "Cuenta" y
-    /// los pares "V. Comprobante N" / "URL Comprobante N" (2026-09-24) van al final por lo mismo; y
-    /// de última "Valor Unit sin IVA" (<see cref="QuotationItem.UnitPriceWithoutTax"/>, el bruto sin
-    /// IVA), mientras "Valor Unit" lleva desde 2026-10-03 el neto, con descuento y sin IVA
-    /// (<see cref="QuotationItem.DiscountedUnitPriceWithoutTax"/>). Detrás, por lo mismo, las dos que pidió
-    /// la hoja de importación del ERP (ajuste 2026-09-25): "Fecha Pedido" (<see cref="Order.CreatedAt"/>
-    /// en el día del tenant) y "Cliente" (a nombre de quién sale la factura); y detrás de todas,
-    /// "Documento de identidad" (ajuste 2026-09-26), el número de documento de ese mismo cliente,
-    /// "Banco y cuenta" y "Total consignado" (la suma de todos los comprobantes del pedido). De
-    /// últimas, "Total facturado" (ajuste 2026-10-05, <see cref="Quotation.Total"/>) y "Retencion"
-    /// (ajuste 2026-10-06, <see cref="Quotation.RetentionAmount"/>).
-    ///
-    /// Sólo las visibles por defecto: "Ciudad Coordinadora" (ajuste 2026-10-02), las "Forma de pago
-    /// N" (ajuste 2026-10-03) y "Transportadora" (ajuste 2026-10-05) están en el catálogo pero
-    /// ocultas, así que sin layout guardado no salen.
-    /// </summary>
     public static readonly IReadOnlyList<ExportColumn> Columns = OrdersExportColumnCatalog.Columns
         .Where(column => column.DefaultVisible)
         .Select(column => new ExportColumn(column.DefaultHeader, column.Width))
@@ -86,7 +44,7 @@ public sealed class OrdersExportProcessor(
     public async Task<ExportJobResult> ProcessAsync(ExportJob job, CancellationToken cancellationToken)
     {
         var filters = ExportJobFilters.Read<OrdersExportFilters>(job);
-        var (status, paymentStatus) = ParseStatuses(filters);
+        var (status, paymentStatus, source) = ParseFilters(filters);
         var advisorId = filters.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, job.TenantId, filters.ClientCuc, cancellationToken);
@@ -98,22 +56,13 @@ public sealed class OrdersExportProcessor(
             OrderListing.CalendarFor(calendar, filters.TimeZone), filters.ConvertedFrom, filters.ConvertedTo);
         var generatedAt = calendar.UtcNow;
 
-        // El layout del tenant, una vez por job (spec 2026-09-24): encabezados, orden y ocultas del
-        // tenant, más sus fijas. Sin fila guardada, el efectivo es el catálogo y el archivo es el de
-        // siempre (D8). El nombre de la hoja también sale de ahí (spec 2026-10-05, D7): el
-        // importador del tenant la busca por nombre; sin fila, "Pedidos".
         var storedLayout = await layoutRepository.FindAsync(job.TenantId, cancellationToken);
         var layout = OrdersExportLayoutProjection.For(OrdersExportLayout.Effective(storedLayout));
         var sheetName = OrdersExportLayout.EffectiveSheetName(storedLayout);
 
-        // El conteo del archivo (filas de producto) se lleva aparte del que devuelve el lote
-        // (pedidos leídos, para el chequeo de "vacío" de abajo): un pedido con tres líneas aporta
-        // tres filas, y ExportBatchLoop no lo sabe — cuenta entidades del lote, no lo que
-        // devuelve `toRows`.
         var exportedRows = 0;
-
         using var workbook = writer.Create(sheetName, layout.Columns);
-        var orderCount = await ExportBatchLoop.WriteAllAsync<OrderWithQuotation, OrderExportCursor>(
+        var orderCount = await ExportBatchLoop.WriteAllAsync<Order, OrderExportCursor>(
             workbook,
             (after, limit, ct) => repository.ListForExportAsync(
                 job.TenantId,
@@ -125,22 +74,21 @@ public sealed class OrdersExportProcessor(
                 converted.From,
                 converted.Before,
                 filters.OrderNumber,
+                source,
                 after,
                 limit,
                 ct),
             async (batch, ct) =>
             {
                 var context = await LoadBatchContextAsync(job.TenantId, batch, ct);
-                // RowsFor sigue armando las celdas en el orden del catálogo; la proyección las lleva
-                // al orden del tenant. Cambio mínimo, y el mismo para todas las filas del job.
                 var rows = batch
-                    .SelectMany(row => RowsFor(row, context, calendar, paymentProofPublisher))
+                    .SelectMany(order => RowsFor(order, context, calendar, paymentProofPublisher))
                     .Select(cells => layout.Project(cells))
                     .ToArray();
                 exportedRows += rows.Length;
                 return rows;
             },
-            row => new OrderExportCursor(row.Order.ConvertedAt, row.Order.OrderNumber),
+            order => new OrderExportCursor(order.ConvertedAt, order.OrderNumber),
             cancellationToken);
 
         if (orderCount == 0)
@@ -155,13 +103,16 @@ public sealed class OrdersExportProcessor(
         return new ExportJobResult(fileName, exportedRows, upload.DownloadUrl, upload.ExpiresAt);
     }
 
-    // El request ya validó el estado y la forma de pago; si igual no se pueden leer —el enum
-    // cambió entre el pedido y el proceso—, reintentar no lo arregla.
-    private static (OrderStatus? Status, OrderPaymentStatus? PaymentStatus) ParseStatuses(OrdersExportFilters filters)
+    // Un filtro ilegible es definitivo: el trabajo nació con él y reintentar no lo arregla.
+    private static (OrderStatus? Status, OrderPaymentStatus? PaymentStatus, OrderSource? Source) ParseFilters(
+        OrdersExportFilters filters)
     {
         try
         {
-            return (OrderListing.ParseStatus(filters.Status), OrderListing.ParsePaymentStatus(filters.PaymentStatus));
+            return (
+                OrderListing.ParseStatus(filters.Status),
+                OrderListing.ParsePaymentStatus(filters.PaymentStatus),
+                OrderListing.ParseSource(filters.Source));
         }
         catch (QuotationsDomainException exception)
         {
@@ -169,15 +120,9 @@ public sealed class OrdersExportProcessor(
         }
     }
 
-    /// <summary>Todo lo que un lote necesita resuelto de una sola vez, para que <see cref="RowsFor"/>
-    /// no pida nada por fila: líneas y partes por cotización, comprobantes por pedido, productos y
-    /// empresas por id, ciudades de las partes de entrega, la ficha de cada cliente del lote —
-    /// la necesitan tanto "Documento" (siempre) como el respaldo de "los mismos datos del cliente"
-    /// cuando el pedido no tiene una parte de entrega propia—, la asesora de cada cotización, por
-    /// su código, y el nombre de Coordinadora de las ciudades de entrega y de los clientes.</summary>
     private readonly record struct BatchContext(
-        IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationItem>> ItemsByQuotation,
-        IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationParty>> PartiesByQuotation,
+        IReadOnlyDictionary<OrderId, IReadOnlyList<OrderItem>> ItemsByOrder,
+        IReadOnlyDictionary<OrderId, IReadOnlyList<OrderParty>> PartiesByOrder,
         IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>> ProofsByOrder,
         IReadOnlyDictionary<Guid, QuotationProductRef> Products,
         IReadOnlyDictionary<Guid, QuotationCompanyRef> Companies,
@@ -186,19 +131,18 @@ public sealed class OrdersExportProcessor(
         IReadOnlyDictionary<Guid, QuotationAdvisor> Advisors,
         IReadOnlyDictionary<Guid, string> CoordinadoraCityNames);
 
+    // Todo lo que un lote necesita, en una consulta por tipo (spec 2026-09-15, E6): nunca una por
+    // pedido.
     private async Task<BatchContext> LoadBatchContextAsync(
-        Guid tenantId, IReadOnlyList<OrderWithQuotation> batch, CancellationToken cancellationToken)
+        Guid tenantId, IReadOnlyList<Order> batch, CancellationToken cancellationToken)
     {
-        var quotationIds = batch.Select(row => row.Quotation.Id).ToArray();
-        var orderIds = batch.Select(row => row.Order.Id).ToArray();
-
-        var itemsByQuotation = await repository.ListItemsForExportAsync(tenantId, quotationIds, cancellationToken);
-        var partiesByQuotation = await repository.ListPartiesForExportAsync(tenantId, quotationIds, cancellationToken);
+        var orderIds = batch.Select(order => order.Id).ToArray();
+        var itemsByOrder = await repository.ListItemsForExportAsync(tenantId, orderIds, cancellationToken);
+        var partiesByOrder = await repository.ListPartiesForExportAsync(tenantId, orderIds, cancellationToken);
         var proofsByOrder = await repository.ListPaymentProofsForExportAsync(tenantId, orderIds, cancellationToken);
 
-        // Sólo las líneas sin snapshot: de las congeladas el Excel no usa nada del catálogo, y un
-        // lote de pedidos de hoy no tiene por qué leerlo.
-        var productIds = itemsByQuotation.Values
+        // Sólo las líneas sin foto consultan el catálogo: la foto es lo que el pedido vendió.
+        var productIds = itemsByOrder.Values
             .SelectMany(items => items)
             .Where(item => item.ProductCode is null)
             .Select(item => item.ProductId)
@@ -208,16 +152,7 @@ public sealed class OrdersExportProcessor(
             ? new Dictionary<Guid, QuotationProductRef>()
             : await productLookup.FindManyAsync(tenantId, productIds, cancellationToken);
 
-        // Pocas empresas distintas en la práctica (un tenant no suele facturar por más de un
-        // puñado de cuentas), así que una consulta por empresa distinta y no un puerto batch
-        // nuevo — a diferencia de clientes, donde "los mismos datos del cliente" es el caso
-        // normal y el batch sí importa.
-        var companyIds = batch
-            .Select(row => row.Quotation.BillingAccount?.CompanyId)
-            .Where(id => id is not null)
-            .Select(id => id!.Value)
-            .Distinct()
-            .ToArray();
+        var companyIds = batch.Select(order => order.BillingAccount.CompanyId).Distinct().ToArray();
         var companies = new Dictionary<Guid, QuotationCompanyRef>();
         foreach (var companyId in companyIds)
         {
@@ -228,7 +163,7 @@ public sealed class OrdersExportProcessor(
             }
         }
 
-        var shippingCityIds = partiesByQuotation.Values
+        var shippingCityIds = partiesByOrder.Values
             .SelectMany(parties => parties)
             .Where(party => party.Role == QuotationPartyRole.Shipping && party.CityId is not null)
             .Select(party => party.CityId!.Value)
@@ -236,14 +171,9 @@ public sealed class OrdersExportProcessor(
             .ToArray();
         var cityNames = await geographyLookup.FindCityNamesAsync(shippingCityIds, cancellationToken);
 
-        // Todos los clientes del lote, no sólo los que necesitan el respaldo: "Documento" los
-        // necesita a todos.
-        var clientIds = batch.Select(row => row.Quotation.ClientId).Distinct().ToArray();
+        var clientIds = batch.Select(order => order.ClientId).Distinct().ToArray();
         var customers = await customerLookup.FindManyAsync(tenantId, clientIds, cancellationToken);
 
-        // "Ciudad Coordinadora" (ajuste 2026-10-02): las ciudades de entrega y las de los clientes
-        // del lote en una sola consulta. Se pide aunque la columna esté oculta, como todas las del
-        // catálogo: RowsFor arma una celda por columna y la proyección decide cuáles salen.
         var coordinadoraCityIds = shippingCityIds
             .Concat(customers.Values.Where(customer => customer.CityId is not null).Select(customer => customer.CityId!.Value))
             .Distinct()
@@ -251,23 +181,20 @@ public sealed class OrdersExportProcessor(
         var coordinadoraCityNames = await geographyLookup.FindCoordinadoraCityNamesAsync(
             coordinadoraCityIds, cancellationToken);
 
-        // "Cod. Asesor" (D9): Quotation.AdvisorId → membresía → código de hoy, en una consulta
-        // por lote con las asesoras distintas, que en un lote son una o dos.
-        var advisorIds = batch.Select(row => row.Quotation.AdvisorId.Value).Distinct().ToArray();
+        var advisorIds = batch.Select(order => order.AdvisorId.Value).Distinct().ToArray();
         var advisors = await advisorLookup.FindAsync(tenantId, advisorIds, cancellationToken);
 
         return new BatchContext(
-            itemsByQuotation, partiesByQuotation, proofsByOrder, products, companies, cityNames, customers,
+            itemsByOrder, partiesByOrder, proofsByOrder, products, companies, cityNames, customers,
             advisors, coordinadoraCityNames);
     }
 
+    // Una fila por línea del pedido. Un pedido sin líneas no puede existir (el dominio lo exige),
+    // pero el procesador se defiende igual.
     private static IEnumerable<ExportCell[]> RowsFor(
-        OrderWithQuotation row, BatchContext context, TenantCalendar calendar, IPaymentProofPublisher publisher)
+        Order order, BatchContext context, TenantCalendar calendar, IPaymentProofPublisher publisher)
     {
-        var quotation = row.Quotation;
-        var order = row.Order;
-
-        var items = context.ItemsByQuotation.TryGetValue(quotation.Id, out var foundItems)
+        var items = context.ItemsByOrder.TryGetValue(order.Id, out var foundItems)
             ? foundItems
             : [];
         if (items.Count == 0)
@@ -278,43 +205,34 @@ public sealed class OrdersExportProcessor(
         var proofs = context.ProofsByOrder.TryGetValue(order.Id, out var foundProofs)
             ? foundProofs
             : [];
-
-        var billingCompany = quotation.BillingAccount is { } billing
-            && context.Companies.TryGetValue(billing.CompanyId, out var company)
-                ? company
-                : null;
+        var billingCompany = context.Companies.TryGetValue(order.BillingAccount.CompanyId, out var company)
+            ? company
+            : null;
         var empresa = billingCompany?.Name ?? string.Empty;
-        // "NIT Empresa" (ajuste 2026-09-26): el de la misma empresa que "EMPRESA". Desde el
-        // 2026-09-28 va como lo lee el ERP —ver ErpTaxId— y, con la regla de las fijas, sólo
-        // dígitos sale número.
         var nitEmpresa = OrdersExportLayoutProjection.FixedCellFor(ErpTaxId(billingCompany?.TaxId));
-
-        context.Customers.TryGetValue(quotation.ClientId, out var customer);
+        context.Customers.TryGetValue(order.ClientId, out var customer);
         var documento = customer?.Cuc ?? string.Empty;
-
-        var parties = context.PartiesByQuotation.TryGetValue(quotation.Id, out var foundParties)
+        var parties = context.PartiesByOrder.TryGetValue(order.Id, out var foundParties)
             ? foundParties
             : [];
         var shipping = parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Shipping);
         var billingParty = parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Billing);
         var (ciudad, direccion, telefono, email) = ContactFor(shipping, customer, context.CityNames);
         var ciudadCoordinadora = CoordinadoraCityFor(shipping, customer, context.CoordinadoraCityNames);
-        var cliente = BilledNameFor(quotation, billingParty, customer);
-        var documentoIdentidad = BilledIdentificationFor(quotation, billingParty, customer);
+        var cliente = BilledNameFor(order, billingParty, customer);
+        var documentoIdentidad = BilledIdentificationFor(order, billingParty, customer);
         var fechaPedido = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-        // "Observaciones" (hotfix 2026-10-15): las del pedido —las que se escriben al convertir o al
-        // editarlo, y las que la pantalla del pedido rotula igual—, no la nota de la cotización. Con
-        // Quotation.Notes, un pedido con observaciones y sin nota en la cotización salía vacío.
+        // Spec 2026-10-15 §6.4 (y el hotfix del mismo día): las observaciones son las del pedido, que
+        // al convertir heredó las de la cotización.
         var observaciones = order.Notes ?? string.Empty;
-        var codAsesor = AdvisorCodeCell(quotation, context.Advisors);
+        var codAsesor = AdvisorCodeCell(order, context.Advisors);
         // "Transportadora" (spec 2026-10-05): sólo depende de la recogida. Las demás columnas de
         // entrega no cambian con ella (decisión del owner): sin parte de envío caen al cliente.
-        var transportadora = quotation.IsStorePickup ? StorePickupCarrier : DefaultCarrier;
-        var banco = quotation.BillingAccount?.BankName ?? string.Empty;
-        var cuenta = quotation.BillingAccount?.AccountNumber ?? string.Empty;
+        var transportadora = order.IsStorePickup ? StorePickupCarrier : DefaultCarrier;
+        var banco = order.BillingAccount.BankName;
+        var cuenta = order.BillingAccount.AccountNumber;
         var bancoYCuenta = BankAndAccount(banco, cuenta);
-        // Iguales en todas las líneas del pedido: se arman una vez, no por línea.
         var proofCells = Enumerable.Range(0, PaymentDateColumns)
             .SelectMany(index => ProofCells(proofs, index, publisher))
             .ToArray();
@@ -326,7 +244,6 @@ public sealed class OrdersExportProcessor(
         foreach (var item in items)
         {
             context.Products.TryGetValue(item.ProductId, out var product);
-
             yield return
             [
                 ExportCell.OfText(empresa),
@@ -354,59 +271,35 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(documentoIdentidad),
                 ExportCell.OfText(bancoYCuenta),
                 totalConsignado,
-                // La foto de la tasa que la línea tomó del producto al agregarse, no la de hoy: el
-                // pedido ya se cobró con ésa.
                 ExportCell.OfNumber(item.TaxPercentage / 100m),
                 nitEmpresa,
                 ExportCell.OfText(ciudadCoordinadora),
                 .. formasDePago,
                 ExportCell.OfText(transportadora),
-                // "Total facturado" (ajuste 2026-10-05): lo facturado del pedido entero, número como
-                // "Total consignado" para que el ERP lo cuadre contra él. Total y no NetTotal: la
-                // retención no rebaja la factura, sólo lo que se cobra.
-                ExportCell.OfNumber(quotation.Total),
-                // "Retencion" (ajuste 2026-10-06): la retención del pedido entero, número como "Total
-                // facturado" para que el ERP cuadre lo facturado contra lo que se cobra (NetTotal =
-                // Total − RetentionAmount). Sin retención sale 0 y no vacía: a diferencia de "Total
-                // consignado", acá 0 dice la verdad —no se retiene nada—.
-                ExportCell.OfNumber(quotation.RetentionAmount),
+                ExportCell.OfNumber(order.Total),
+                ExportCell.OfNumber(order.RetentionAmount),
             ];
         }
     }
 
-    // "Forma de pago N" (ajuste 2026-10-03): lo mismo que "Banco y cuenta", pero sólo si el pedido
-    // tiene el comprobante N, con el mismo índice que "Fecha Pago N" y "V. Comprobante N". Sin ese
-    // comprobante, vacía como "V. Comprobante N": "bank_account" repetida bajo dos encabezados
-    // llenaba la forma de pago 2 de un pedido con una sola consignación.
     private static ExportCell PaymentMethodCell(
         IReadOnlyList<OrderExportPaymentProof> proofs, int index, string bankAndAccount) =>
         ExportCell.OfText(index < proofs.Count ? bankAndAccount : string.Empty);
 
-    // "Banco y cuenta" (ajuste 2026-09-26): lo mismo que "Banco" y "Cuenta", en una celda y con un
-    // solo espacio en medio. El dominio exige las dos mitades, pero si una llegara vacía sale la
-    // otra sola, sin espacios de sobra; sin cuenta de facturación, vacía.
     private static string BankAndAccount(string bank, string account) =>
         string.Join(' ', new[] { bank, account }.Where(part => !string.IsNullOrWhiteSpace(part)));
 
-    // "Total consignado" (ajuste 2026-09-26): la suma de todos los comprobantes del pedido —no sólo
-    // los cinco con columna propia—, como número porque el ERP lo suma. Sin comprobantes, vacía como
-    // "V. Comprobante N" sin comprobante: un 0 diría que hubo una consignación de cero pesos.
     private static ExportCell ProofTotalCell(IReadOnlyList<OrderExportPaymentProof> proofs) =>
         proofs.Count == 0
             ? ExportCell.OfText(string.Empty)
             : ExportCell.OfNumber(proofs.Sum(proof => proof.Amount));
 
-    // "Cliente" (ajuste 2026-09-25): a nombre de quién sale la factura, con la misma precedencia que
-    // el bloque Facturación del PDF (QuotationPdfDocumentMapper.BillingFor). Consumidor final gana
-    // —el dominio le prohíbe parte propia—; después la parte de facturación con datos propios, cuyo
-    // nombre escribió alguien; y con los datos del cliente, la razón social si la cotización factura
-    // a ella (CLI-RS-01) o el nombre de contacto. Una razón social pedida pero vacía cae al contacto
-    // en vez de dejar la celda en blanco. Todo sale de lo que el lote ya cargó: ninguna consulta
-    // por fila.
+    // A nombre de quién sale la factura, con la precedencia de siempre: consumidor final, la parte
+    // de facturación propia, la razón social si el pedido factura a ella, o el nombre de la ficha.
     private static string BilledNameFor(
-        Quotation quotation, QuotationParty? billing, QuotationCustomerRef? customer)
+        Order order, OrderParty? billing, QuotationCustomerRef? customer)
     {
-        if (quotation.BillsToFinalConsumer)
+        if (order.BillsToFinalConsumer)
         {
             return FinalConsumer.Name;
         }
@@ -416,7 +309,7 @@ public sealed class OrdersExportProcessor(
             return billingName;
         }
 
-        if (quotation.BillingUsesBusinessName && !string.IsNullOrWhiteSpace(customer?.BusinessName))
+        if (order.BillingUsesBusinessName && !string.IsNullOrWhiteSpace(customer?.BusinessName))
         {
             return customer.BusinessName;
         }
@@ -424,34 +317,26 @@ public sealed class OrdersExportProcessor(
         return customer?.Name ?? string.Empty;
     }
 
-    // "Documento de identidad" (ajuste 2026-09-26): el número de documento de la misma persona que
-    // nombra "Cliente", en el mismo orden que BilledNameFor. Consumidor final lleva el NIT genérico
-    // (FinalConsumer.IdentificationNumber, el mismo que imprime el PDF). Una parte de facturación
-    // con nombre propio es otra persona y QuotationParty no guarda identificación: la celda queda
-    // vacía antes que ponerle el documento de alguien que no es a quien se factura. La razón
-    // social y el contacto son el mismo cliente, así que llevan el número de su ficha.
     private static string BilledIdentificationFor(
-        Quotation quotation, QuotationParty? billing, QuotationCustomerRef? customer)
+        Order order, OrderParty? billing, QuotationCustomerRef? customer)
     {
-        if (quotation.BillsToFinalConsumer)
+        if (order.BillsToFinalConsumer)
         {
             return FinalConsumer.IdentificationNumber;
         }
 
-        // Con nombre propio la factura sale a otra persona, con su documento. Una fila guardada
-        // antes de que existiera el número no lo tiene: vacío, nunca el del cliente, que es otro.
         if (billing?.Name is { Length: > 0 })
         {
+            // Una parte guardada antes del número lo deja vacío, nunca con el del cliente, que es
+            // otra persona.
             return billing.IdentificationNumber ?? string.Empty;
         }
 
         return customer?.IdentificationNumber ?? string.Empty;
     }
 
-    // La entrega con datos propios manda; sin ella, "los mismos datos del cliente" (el caso
-    // normal, ver QuotationParty) resuelve contra la ficha del cliente ya cargada en el contexto.
     private static (string Ciudad, string Direccion, string Telefono, string Email) ContactFor(
-        QuotationParty? shipping,
+        OrderParty? shipping,
         QuotationCustomerRef? customer,
         IReadOnlyDictionary<Guid, string> cityNames)
     {
@@ -470,13 +355,8 @@ public sealed class OrdersExportProcessor(
             customer?.Email ?? string.Empty);
     }
 
-    // "Ciudad Coordinadora" (ajuste 2026-10-02): la misma precedencia que "Ciudad" en ContactFor
-    // —con parte de entrega manda su ciudad, aunque no tenga; sin ella, la del cliente—, pero con
-    // el nombre que escribe Coordinadora. Vacía si esa ciudad no lo tiene (Coordinadora no lista el
-    // municipio, o el cliente es del exterior y no tiene ciudad): nunca el nombre del DANE, que la
-    // transportadora no reconoce.
     private static string CoordinadoraCityFor(
-        QuotationParty? shipping,
+        OrderParty? shipping,
         QuotationCustomerRef? customer,
         IReadOnlyDictionary<Guid, string> coordinadoraCityNames)
     {
@@ -486,12 +366,7 @@ public sealed class OrdersExportProcessor(
             : string.Empty;
     }
 
-    // "Cod. Asesor" (D9): numérica, para que el ERP la lea como el número que es. Vacía si la
-    // membresía no tiene código o si el lookup no la devuelve —otro tenant, una fila que ya no
-    // está—: un pedido sin código no es una razón para frenar el archivo.
-    // El ERP espera el NIT sin puntos, sin espacios y sin dígito de verificación:
-    // "901.851.609-1" sale "901851609". Se limpia sólo acá; la empresa guarda el NIT como se
-    // escribió, porque es el que se muestra en pantalla y en el PDF.
+    // El NIT como lo importa el ERP: sin dígito de verificación, puntos ni espacios.
     private static string ErpTaxId(string? taxId)
     {
         if (string.IsNullOrEmpty(taxId))
@@ -505,16 +380,12 @@ public sealed class OrdersExportProcessor(
     }
 
     private static ExportCell AdvisorCodeCell(
-        Quotation quotation, IReadOnlyDictionary<Guid, QuotationAdvisor> advisors) =>
-        advisors.TryGetValue(quotation.AdvisorId.Value, out var advisor)
+        Order order, IReadOnlyDictionary<Guid, QuotationAdvisor> advisors) =>
+        advisors.TryGetValue(order.AdvisorId.Value, out var advisor)
             && advisor.AdvisorCode is { } code
                 ? ExportCell.OfNumber(code)
                 : ExportCell.OfText(string.Empty);
 
-    // "Fecha Pago N": la fecha del soporte que escribió quien adjuntó el comprobante (a pedido,
-    // 2026-10-08), sin hora porque el soporte no la trae. Un comprobante sin ella —anterior al campo,
-    // o adjuntado sin mandarla— sigue mostrando el instante de subida en la hora local del tenant,
-    // como siempre: es lo único que se sabe de él, y una celda vacía diría que no hubo pago.
     private static ExportCell PaymentDateCell(
         IReadOnlyList<OrderExportPaymentProof> proofs, int index, TenantCalendar calendar)
     {
@@ -529,9 +400,6 @@ public sealed class OrdersExportProcessor(
             : calendar.ToLocal(proof.UploadedAt).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
     }
 
-    // "V. Comprobante N" y "URL Comprobante N" (2026-09-24): el monto como número, porque el ERP lo
-    // suma, y el enlace con la URL como texto. Sin copia pública, o con la opción apagada —UrlFor
-    // da null—, «Sin enlace»; sin comprobante en ese índice, las dos celdas vacías.
     private static ExportCell[] ProofCells(
         IReadOnlyList<OrderExportPaymentProof> proofs, int index, IPaymentProofPublisher publisher)
     {

@@ -2,28 +2,10 @@ using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
 
-/// <summary>
-/// Un pedido junto a la cotización de la que salió. Viajan las dos porque el listado necesita
-/// las dos: cliente, asesora, moneda y totales viven en la cotización y el pedido no los repite
-/// (<see cref="Order"/> es 1:1 con ella justamente para no duplicarlos).
-/// </summary>
-public sealed record OrderWithQuotation(Order Order, Quotation Quotation);
-
-/// <summary>
-/// Dónde quedó el export de pedidos (spec 2026-09-12, D8): la fecha de conversión y el número del
-/// último pedido leído, el mismo orden que el listado. El número y no el id porque
-/// <see cref="OrderId"/> no se compara, y el número es único por tenant
-/// (<c>IX_orders_tenant_number</c>).
-/// </summary>
+/// <summary>Posición de keyset para la exportación de pedidos (spec 2026-09-12, D8): el orden del
+/// listado, fecha de conversión y número como desempate.</summary>
 public sealed record OrderExportCursor(DateTimeOffset ConvertedAt, string OrderNumber);
 
-/// <summary>
-/// Lo mínimo de un comprobante de pago que el Excel de pedidos necesita (spec 2026-09-15, E6): cuál
-/// es, para el orden, su copia pública, si tiene, y su monto, que la hoja muestra desde el
-/// 2026-09-24 en «V. Comprobante N». Sin archivo: el enlace se arma con la clave pública.
-/// <c>PaidOn</c> (a pedido, 2026-10-08) es la fecha del soporte para «Fecha Pago N»; null en los
-/// comprobantes que no la trajeron, donde la hoja cae a <c>UploadedAt</c>.
-/// </summary>
 public sealed record OrderExportPaymentProof(
     OrderPaymentProofId Id,
     string? PublicStorageKey,
@@ -32,47 +14,29 @@ public sealed record OrderExportPaymentProof(
     DateOnly? PaidOn = null);
 
 /// <summary>
-/// Las fechas de los filtros llegan como instantes: <c>convertedFrom</c> inclusivo y
-/// <c>convertedBefore</c> exclusivo, ya cortados en el día del tenant por quien llama (spec
-/// 2026-09-17, punto 3). El repositorio no decide husos.
+/// Spec 2026-10-15 §6: el pedido se lista, filtra y exporta por sus propias columnas (cliente,
+/// asesor, origen, totales), y sus líneas y partes son suyas. Ya no existe la fila
+/// «pedido + cotización»: lo único que la cotización aporta es su número, para el enlace.
 /// </summary>
 public interface IOrderRepository
 {
     Task<Order?> FindByQuotationIdAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken);
 
-    /// <summary>Igual que <see cref="FindByIdAsync"/> —con comprobantes— pero sin rastreo: lo usa el
-    /// cálculo previo de «Editar pedido» (spec 2026-09-17, decisión 4).</summary>
     Task<Order?> FindUntrackedByIdAsync(
         Guid tenantId, OrderId orderId, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Los pedidos de varias cotizaciones de una sola vez, indexados por id de cotizacion. Para el
-    /// listado de cotizaciones, que necesita saber por fila si ya se convirtio y si ese pedido
-    /// sigue pendiente: con <see cref="FindByQuotationIdAsync"/> seria una consulta por fila.
-    ///
-    /// Sin comprobantes: el listado no los muestra.
-    /// </summary>
+    /// <summary>Los pedidos de estas cotizaciones, por id de cotización: lo usa la lista de
+    /// cotizaciones para mostrar si cada una tiene pedido y en qué estado.</summary>
     Task<IReadOnlyDictionary<Guid, Order>> FindByQuotationIdsAsync(
         Guid tenantId,
         IReadOnlyCollection<QuotationId> quotationIds,
         CancellationToken cancellationToken);
 
-    /// <summary>Por el id del pedido, para el detalle que se abre desde el listado (SALE-04).
-    /// Trae los comprobantes: la pantalla los lista y ofrece descargarlos.</summary>
     Task<Order?> FindByIdAsync(
         Guid tenantId, OrderId orderId, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Una página del listado de pedidos del tenant (SALE-01), ya unida a su cotización.
-    ///
-    /// <paramref name="clientIds"/> es el filtro por CUC ya resuelto a ids: <c>null</c> es "sin
-    /// filtro" y una colección vacía es "no matchear ninguna fila" —el CUC buscado no resolvió a
-    /// ningún cliente—, mismo criterio que <c>clientIds</c> en
-    /// <see cref="IQuotationRepository.SearchAsync"/>. Es independiente de
-    /// <paramref name="clientId"/>, que es el filtro puntual del combobox.
-    /// </summary>
-    Task<(IReadOnlyList<OrderWithQuotation> Items, int Total)> SearchAsync(
+    Task<(IReadOnlyList<Order> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
         IReadOnlyCollection<Guid>? clientIds,
@@ -82,12 +46,11 @@ public interface IOrderRepository
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
+        OrderSource? source,
         int page,
         int pageSize,
         CancellationToken cancellationToken);
 
-    /// <summary>Si hay al menos un pedido con los filtros del listado: el paso 3 de D4 antes de
-    /// encolar una exportación.</summary>
     Task<bool> AnyForExportAsync(
         Guid tenantId,
         Guid? clientId,
@@ -98,13 +61,10 @@ public interface IOrderRepository
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
+        OrderSource? source,
         CancellationToken cancellationToken);
 
-    /// <summary>Un lote de los pedidos del listado, en su mismo orden, para el Excel de
-    /// OrdersExportProcessor (D8). Mismos filtros y semántica que <see cref="SearchAsync"/>. Keyset
-    /// y no offset: <paramref name="after"/> es la clave del último pedido del lote anterior
-    /// (<c>null</c> en el primero).</summary>
-    Task<IReadOnlyList<OrderWithQuotation>> ListForExportAsync(
+    Task<IReadOnlyList<Order>> ListForExportAsync(
         Guid tenantId,
         Guid? clientId,
         IReadOnlyCollection<Guid>? clientIds,
@@ -114,51 +74,35 @@ public interface IOrderRepository
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
+        OrderSource? source,
         OrderExportCursor? after,
         int limit,
         CancellationToken cancellationToken);
 
-    /// <summary>Los comprobantes de un lote de pedidos del Excel (spec 2026-09-15, E6), en una sola
-    /// consulta: por pedido, ordenados por fecha de subida y después por id, así «Comprobante 1» es
-    /// el primero que se subió. Un pedido sin comprobantes, o de otro tenant, no aparece en el
-    /// diccionario.</summary>
     Task<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>>> ListPaymentProofsForExportAsync(
         Guid tenantId,
         IReadOnlyCollection<OrderId> orderIds,
         CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Las líneas de un lote de cotizaciones del Excel de pedidos, en una sola consulta, indexadas
-    /// por cotización — el Excel pasó a ser una fila por línea de producto y no una por pedido, y
-    /// sin esto sería una consulta por pedido. Mismo criterio que
-    /// <see cref="ListPaymentProofsForExportAsync"/>: <c>ListForExportAsync</c> no las trae para no
-    /// repetir el mismo problema que <c>QuotationRepository.SearchAsync</c> evita (un <c>Include</c>
-    /// de líneas y partes juntos multiplica filas). Una cotización sin líneas —no debería pasar en
-    /// un pedido ya convertido, pero el método no lo asume— no aparece en el diccionario.
-    /// </summary>
-    Task<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationItem>>> ListItemsForExportAsync(
+    /// <summary>Las líneas de estos pedidos, por pedido y en su posición: lo que el Excel recorre.</summary>
+    Task<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderItem>>> ListItemsForExportAsync(
         Guid tenantId,
-        IReadOnlyCollection<QuotationId> quotationIds,
+        IReadOnlyCollection<OrderId> orderIds,
         CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Las partes (facturación/entrega con datos propios) de un lote de cotizaciones del Excel de
-    /// pedidos, en una sola consulta, indexadas por cotización — mismo motivo y mismo criterio que
-    /// <see cref="ListItemsForExportAsync"/>. Una cotización que factura y entrega "a los mismos
-    /// datos del cliente" —el caso normal— no tiene fila propia y no aparece en el diccionario.
-    /// </summary>
-    Task<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationParty>>> ListPartiesForExportAsync(
+    Task<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderParty>>> ListPartiesForExportAsync(
         Guid tenantId,
-        IReadOnlyCollection<QuotationId> quotationIds,
+        IReadOnlyCollection<OrderId> orderIds,
         CancellationToken cancellationToken);
 
-    /// <summary>Si algún comprobante de algún pedido usa el archivo, salvo <paramref name="exceptProofId"/>
-    /// (revisión final de la spec 2026-09-16, I2): un PaymentProof se adjunta una sola vez (D16), y el
-    /// comprobante que se reemplaza con su propio archivo no cuenta. Sin tenant, igual que
-    /// <c>OrderPaymentProofFileReferenceProbe</c>: el id del archivo es global, y el resolver ya comprobó
-    /// que el archivo es del tenant. Usa el índice <c>IX_order_payment_proofs_file</c> (D17).</summary>
+    /// <summary>El historial del pedido, del más reciente al más viejo (spec 2026-10-15 §4.6).</summary>
+    Task<IReadOnlyList<OrderHistoryEntry>> ListHistoryAsync(
+        Guid tenantId, OrderId orderId, CancellationToken cancellationToken);
+
     Task<bool> IsPaymentProofFileInUseAsync(
         Guid fileId, OrderPaymentProofId? exceptProofId, CancellationToken cancellationToken);
 
     void Add(Order order);
+
+    void AddHistoryEntry(OrderHistoryEntry entry);
 }

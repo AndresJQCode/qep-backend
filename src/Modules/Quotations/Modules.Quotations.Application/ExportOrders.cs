@@ -5,11 +5,8 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
-/// <summary>
-/// Pide el listado de pedidos en un <c>.xlsx</c> por correo (spec 2026-09-12). Mismo modelo que
-/// <see cref="ExportQuotationsCommand"/>: los filtros de <see cref="ListOrdersQuery"/> sin
-/// paginación, con el rango de conversión obligatorio y de a lo sumo un año.
-/// </summary>
+/// <summary>Encola la exportación de pedidos a Excel (spec 2026-09-12). Los filtros son los de la
+/// lista, incluido <c>Source</c> (spec 2026-10-15 §6.1).</summary>
 public sealed record ExportOrdersCommand(
     Guid TenantId,
     Guid? ClientId,
@@ -20,10 +17,11 @@ public sealed record ExportOrdersCommand(
     DateOnly? ConvertedTo,
     string? ClientCuc,
     string? OrderNumber,
+    string? Source = null,
     /// <summary>La zona IANA de quien pide el archivo, igual que en <see cref="ListOrdersQuery"/>.</summary>
     string? TimeZone = null) : ICommand<ExportJobAccepted>;
 
-/// <summary>Los filtros tal como quedan en <c>export_jobs.filters</c>.</summary>
+/// <summary>Lo que viaja serializado en el trabajo y el procesador vuelve a leer.</summary>
 public sealed record OrdersExportFilters(
     Guid? ClientId,
     Guid? AdvisorId,
@@ -33,11 +31,10 @@ public sealed record OrdersExportFilters(
     DateOnly ConvertedTo,
     string? ClientCuc,
     string? OrderNumber,
+    string? Source = null,
     /// <summary>Nula en los jobs encolados antes de que existiera: cortan en el día del tenant.</summary>
     string? TimeZone = null);
 
-/// <summary>El mismo rango que <see cref="ExportQuotationsValidator"/>, sobre la fecha del pedido
-/// (D3). Validador para que el 422 lleve el mapa <c>errors</c>.</summary>
 public sealed class ExportOrdersValidator : AbstractValidator<ExportOrdersCommand>
 {
     public ExportOrdersValidator()
@@ -73,14 +70,15 @@ public sealed class ExportOrdersHandler(
         ExportOrdersCommand command,
         CancellationToken cancellationToken)
     {
-        // D4, mismo orden que cotizaciones. 1: tenant y permiso de pedidos.
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, OrdersPermissions.OrderRead);
-
-        // 2: filtros y rango.
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+
+        // Un estado u origen inválido se rechaza acá, antes de encolar: en el procesador sería un
+        // trabajo que nace muerto.
         var status = OrderListing.ParseStatus(command.Status);
         var paymentStatus = OrderListing.ParsePaymentStatus(command.PaymentStatus);
+        var source = OrderListing.ParseSource(command.Source);
         var advisorId = command.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, command.TenantId, command.ClientCuc, cancellationToken);
@@ -90,6 +88,7 @@ public sealed class ExportOrdersHandler(
         var calendar = OrderListing.CalendarFor(
             await tenantClock.GetAsync(command.TenantId, cancellationToken), command.TimeZone);
         var converted = TenantDayRange.Of(calendar, command.ConvertedFrom, command.ConvertedTo);
+
         var anyRow = await repository.AnyForExportAsync(
             command.TenantId,
             command.ClientId,
@@ -100,6 +99,7 @@ public sealed class ExportOrdersHandler(
             converted.From,
             converted.Before,
             command.OrderNumber,
+            source,
             cancellationToken);
         if (!anyRow)
         {
@@ -108,8 +108,6 @@ public sealed class ExportOrdersHandler(
                 "There are no orders matching the export filters.");
         }
 
-        // 4: el mismo cupo que cotizaciones, contando los dos tipos. Es de mejor esfuerzo —cuenta
-        // y después inserta, sin bloqueo—: ver ExportJobLimits.PendingPerRequester.
         var pending = await queue.CountPendingAsync(
             command.TenantId, executionContext.SubjectId, cancellationToken);
         if (pending >= ExportJobLimits.PendingPerRequester)
@@ -133,6 +131,7 @@ public sealed class ExportOrdersHandler(
                 command.ConvertedTo!.Value,
                 command.ClientCuc,
                 command.OrderNumber,
+                command.Source,
                 command.TimeZone)),
             calendar.UtcNow);
         queue.Add(job);

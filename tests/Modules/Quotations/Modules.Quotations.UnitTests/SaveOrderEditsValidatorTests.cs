@@ -134,8 +134,4 @@ public sealed class SaveOrderEditsValidatorTests
 
         AssertFailsOn(_save.Validate(Command(proofs: proofs)), "Proofs");
     }
-
-    [Fact]
-    public void RejectsNotesLongerThanTheLimit() =>
-        AssertFailsOn(_save.Validate(Command(notes: new string('a', Order.NotesMaxLength + 1))), "Notes");
 }

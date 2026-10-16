@@ -6,7 +6,8 @@ using Modules.Pipeline.Infrastructure.Persistence;
 namespace Modules.Pipeline.Infrastructure.Messaging;
 
 /// <summary>
-/// Spec 2026-10-13 D6: consume del outbox de plataforma los tres eventos del ciclo de una cotización y delega en
+/// Spec 2026-10-13 D6: consume del outbox de plataforma los eventos del ciclo de una cotización y de un pedido (spec 2026-10-15
+/// §7: <c>order.created</c>) y delega en
 /// <see cref="QuotationEventApplier"/>. El efecto (negocio, foto, historial y auditoría) y el inbox se guardan en el mismo
 /// SaveChanges: un mensaje procesado nunca queda sin marcar, ni uno marcado sin su efecto. Singleton: el estado es del proceso.
 /// La curva es la de <c>SessionRevocationWorker</c> (5 s, 30 s, 5 minutos): la falla más probable es una carrera de versión con
@@ -17,6 +18,7 @@ internal sealed partial class QuotationEventsProcessor(IServiceScopeFactory scop
     internal const string Consumer = "pipeline.quotation-events";
     internal const string SentEvent = "quotations.quotation.sent.v1";
     internal const string ConvertedEvent = "quotations.quotation.converted.v1";
+    internal const string OrderCreatedEvent = "quotations.order.created.v1";
     internal const string OrderCancelledEvent = "quotations.order.cancelled.v1";
 
     /// <summary>Desde qué intento una falla se loguea en Error: el primero que deja la espera de 5 minutos por delante.</summary>
@@ -26,7 +28,7 @@ internal sealed partial class QuotationEventsProcessor(IServiceScopeFactory scop
         [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(5)];
 
     internal ClaimedOutboxConsumer Claims { get; } =
-        new(scopeFactory, Consumer, [SentEvent, ConvertedEvent, OrderCancelledEvent], RetryDelays);
+        new(scopeFactory, Consumer, [SentEvent, ConvertedEvent, OrderCreatedEvent, OrderCancelledEvent], RetryDelays);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Outbox message {MessageId} ({EventName}) has a malformed payload; it is marked as processed without effect.")]
     private static partial void LogMalformed(ILogger logger, Guid messageId, string eventName);
@@ -50,6 +52,9 @@ internal sealed partial class QuotationEventsProcessor(IServiceScopeFactory scop
         var readable = true;
         switch (record.EventName)
         {
+            case OrderCreatedEvent when QuotationEventPayloads.TryReadOrderCreated(record.PayloadJson, out var created):
+                await applier.ApplyOrderCreatedAsync(created, message.Now, cancellationToken);
+                break;
             case OrderCancelledEvent when QuotationEventPayloads.TryReadOrderCancelled(record.PayloadJson, out var cancelled):
                 await applier.ApplyOrderCancelledAsync(cancelled, message.Now, cancellationToken);
                 break;

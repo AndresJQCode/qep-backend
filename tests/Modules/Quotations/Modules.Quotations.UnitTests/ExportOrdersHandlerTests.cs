@@ -209,18 +209,7 @@ public sealed class ExportOrdersHandlerTests
         string? clientCuc = null) =>
         new(TenantId, null, null, status, paymentStatus, convertedFrom, convertedTo, clientCuc, null);
 
-    private static OrderWithQuotation NewRow()
-    {
-        var quotation = Quotation.Create(
-            QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 10, 30),
-            paymentMethod: null, notes: null, QuotationParties.Empty, billingAccount: null,
-            defaultCurrency: "COP",
-            customerWithRetention: false, customerVatSurplus: false, AdvisorId, Now);
-        var order = Order.Create(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation.Id, OrderPaymentStatus.PaymentPending,
-            notes: null, AdvisorId, [], Now);
-        return new OrderWithQuotation(order, quotation);
-    }
+    private static Order NewRow() => OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId);
 
     private static StubQuotationCustomerLookup NewCustomerLookup() =>
         new(new QuotationCustomerRef(

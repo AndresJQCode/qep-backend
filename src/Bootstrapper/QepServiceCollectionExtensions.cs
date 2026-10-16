@@ -453,7 +453,7 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<ExportQuotationPdfCommand, QuotationPdfExportDto>,
             ExportQuotationPdfHandler>();
         services.AddScoped<
-            IQueryHandler<GetOrderQuery, OrderDto>,
+            IQueryHandler<GetOrderQuery, OrderDetailDto>,
             GetOrderHandler>();
         services.AddScoped<
             IQueryHandler<ListOrdersQuery, OrderPage>,
@@ -477,13 +477,13 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<RevertOrderInvoicingCommand, OrderDto>,
             RevertOrderInvoicingHandler>();
         services.AddScoped<
-            ICommandHandler<ConvertQuotationToOrderCommand, OrderDto>,
+            ICommandHandler<ConvertQuotationToOrderCommand, OrderDetailDto>,
             ConvertQuotationToOrderHandler>();
         services.AddScoped<
             ICommandHandler<AddOrderPaymentProofsCommand, OrderDto>,
             AddOrderPaymentProofsHandler>();
         services.AddScoped<
-            ICommandHandler<AddOrderItemsCommand, OrderItemsAddedResult>,
+            ICommandHandler<AddOrderItemsCommand, OrderDetailDto>,
             AddOrderItemsHandler>();
         services.AddScoped<
             ICommandHandler<RemoveOrderPaymentProofCommand, OrderDto>,
@@ -494,6 +494,18 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<PreviewOrderEditsQuery, OrderDetailDto>,
             PreviewOrderEditsHandler>();
+        // Pedido manual y su cálculo previo (spec 2026-10-15 §5.2); el armador lo comparten con el
+        // servicio de pedidos externos.
+        services.AddScoped<OrderDraftBuilder>();
+        services.AddScoped<
+            ICommandHandler<CreateOrderCommand, OrderDetailDto>,
+            CreateOrderHandler>();
+        services.AddScoped<
+            IQueryHandler<PreviewOrderQuery, OrderDetailDto>,
+            PreviewOrderHandler>();
+        // Pedidos desde integraciones (spec 2026-10-15 §5.4): el puerto que el adaptador de Shopify
+        // consume; ningún consumidor referencia Modules.Quotations.Application.
+        services.AddScoped<IExternalOrderWriter, ExternalOrderService>();
         // La homologación de columnas del Excel de pedidos (spec 2026-09-24). A mano, como el
         // resto: un handler que falte compila, mapea su endpoint y falla recién en runtime con 500.
         services.AddScoped<
@@ -655,6 +667,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<LoseDealCommand, DealDetailDto>, LoseDealHandler>();
         services.AddScoped<ICommandHandler<ReopenDealCommand, DealDetailDto>, ReopenDealHandler>();
         services.AddScoped<ICommandHandler<LinkDealQuotationCommand, DealDetailDto>, LinkDealQuotationHandler>();
+        services.AddScoped<ICommandHandler<LinkDealOrderCommand, DealDetailDto>, LinkDealOrderHandler>();
         services.AddScoped<ICommandHandler<SetPrimaryQuotationCommand, DealDetailDto>, SetPrimaryQuotationHandler>();
         // Pipeline (D21 del spec del frontend): los posibles dueños de un negocio, para el selector del formulario.
         services.AddScoped<IQueryHandler<GetDealOwnersQuery, IReadOnlyList<DealOwnerDto>>, GetDealOwnersHandler>();
@@ -791,6 +804,7 @@ public static class QepServiceCollectionExtensions
         // Arma la respuesta de una cotizacion con todo lo que su pantalla muestra, para que el
         // navegador no tenga que pedir cliente, miembros y catalogo por separado.
         services.AddScoped<IQuotationResponseComposer, QuotationResponseComposer>();
+        services.AddScoped<IOrderResponseComposer, OrderResponseComposer>();
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
         services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();
         // Los comprobantes de pago públicos (spec 2026-09-15, P3): el publicador que copia al bucket

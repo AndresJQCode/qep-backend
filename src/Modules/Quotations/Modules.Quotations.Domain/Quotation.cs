@@ -15,10 +15,10 @@ namespace Modules.Quotations.Domain;
 /// una vez convertida a pedido, anulada o vencida". <see cref="Send"/> sale de Draft o de Sent
 /// (reenvío); <see cref="Void"/> y <see cref="ConvertToOrder"/> también.
 ///
-/// Única excepción (a pedido, 2026-09): <see cref="AddItemAfterConversion"/> suma una línea a
-/// la cotización de un pedido que sigue <c>OrderStatus.Pending</c>, sin exigir
-/// <see cref="QuotationStatus.Converted"/> en este campo — ver su propio comentario para el
-/// porqué. Sólo sumar, nada de editar cantidad ni quitar.
+/// Convertir es copiar (spec 2026-10-15 §4.4): el pedido nace con sus propias líneas, partes y
+/// totales, y la cotización <see cref="QuotationStatus.Converted"/> queda congelada como el
+/// documento que el cliente vio. Editar el pedido pendiente edita el pedido, nunca esta
+/// cotización.
 /// </summary>
 public sealed class Quotation
 {
@@ -119,12 +119,10 @@ public sealed class Quotation
     /// —eso lo pisaría el primer recálculo—; es el corte de arriba del recálculo, en
     /// <c>QuotationPricingRecalculation.ApplyAsync</c>.
     ///
-    /// Vive en la cotización y no en el pedido por el mismo motivo que
-    /// <see cref="GlobalScaleFloor"/>: el pedido no tiene líneas propias, las suyas son éstas, y
-    /// las dos pantallas muestran el mismo interruptor.
+    /// El pedido lleva su propio interruptor (<c>Order.IsRetail</c>), copiado al convertir.
     ///
-    /// Es excluyente con <see cref="GlobalScaleFloor"/> — ver <see cref="SetIsRetailCore"/> y
-    /// <see cref="SetGlobalScaleFloorCore"/>.
+    /// Es excluyente con <see cref="GlobalScaleFloor"/> — ver <see cref="SetIsRetail"/> y
+    /// <see cref="SetGlobalScaleFloor"/>.
     /// </summary>
     public bool IsRetail { get; private set; }
 
@@ -386,39 +384,6 @@ public sealed class Quotation
     }
 
     /// <summary>
-    /// Agrega una línea a la cotización de un pedido pendiente (a pedido, 2026-09): la pantalla
-    /// del pedido ofrece "Editar" mientras sigue <c>OrderStatus.Pending</c> —sumar productos que
-    /// faltaron al convertir, sin recrear el pedido entero—, y ese estado lo controla
-    /// <c>Order</c>, no este agregado (no tiene referencia a su pedido). El caso de uso ya
-    /// encontró un <c>Order</c> pendiente para esta cotización antes de llamar acá —eso alcanza
-    /// como autorización; este método no vuelve a exigir <see cref="QuotationStatus.Converted"/>.
-    ///
-    /// Repetirlo acá rompía con datos reales: las conversiones de antes del 2026-09-13 no movían
-    /// el estado de la cotización (el campo se agregó ese día, sin backfill), así que hay pedidos
-    /// `Pending` genuinos cuya cotización quedó en `Draft` o `Sent` para siempre. Exigir
-    /// `Converted` los dejaba sin poder editarse — el índice único `Order.QuotationId` ya es la
-    /// garantía real de que esta cotización tiene un pedido, sea cual sea el valor de este campo.
-    ///
-    /// A diferencia de <see cref="AddItem"/>, no hay forma paralela de editar cantidad ni quitar
-    /// líneas acá: sólo sumar. Tocar lo que el cliente ya vio en la cotización que recibió es
-    /// otra decisión, no tomada todavía.
-    /// </summary>
-    public void AddItemAfterConversion(
-        QuotationItemId itemId,
-        Guid productId,
-        decimal quantity,
-        decimal unitPrice,
-        decimal discountPercentage,
-        int taxPercentage,
-        MemberId updatedBy,
-        DateTimeOffset occurredAt)
-    {
-        AddItemCore(
-            itemId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
-            updatedBy, occurredAt);
-    }
-
-    /// <summary>
     /// Elige el piso de escala global, o lo quita con <c>null</c>. Es una edición del
     /// encabezado: sube la versión y deja rastro de quién la hizo.
     ///
@@ -428,21 +393,6 @@ public sealed class Quotation
     public void SetGlobalScaleFloor(int? floor, MemberId updatedBy, DateTimeOffset occurredAt)
     {
         EnsureEditable();
-        SetGlobalScaleFloorCore(floor, updatedBy, occurredAt);
-    }
-
-    /// <summary>
-    /// El mismo cambio sobre la cotización de un pedido que sigue <c>OrderStatus.Pending</c>,
-    /// sin exigir que la cotización sea editable. Misma excepción y mismo motivo que
-    /// <see cref="AddItemAfterConversion"/>: el estado del pedido lo comprueba su caso de uso.
-    /// </summary>
-    public void SetGlobalScaleFloorAfterConversion(
-        int? floor, MemberId updatedBy, DateTimeOffset occurredAt) =>
-        SetGlobalScaleFloorCore(floor, updatedBy, occurredAt);
-
-    private void SetGlobalScaleFloorCore(
-        int? floor, MemberId updatedBy, DateTimeOffset occurredAt)
-    {
         EnsureGlobalScaleFloorAllowed(floor, IsRetail);
         GlobalScaleFloor = floor;
         Touch(updatedBy, occurredAt);
@@ -455,21 +405,6 @@ public sealed class Quotation
     public void SetIsRetail(bool isRetail, MemberId updatedBy, DateTimeOffset occurredAt)
     {
         EnsureEditable();
-        SetIsRetailCore(isRetail, updatedBy, occurredAt);
-    }
-
-    /// <summary>
-    /// El mismo cambio sobre la cotización de un pedido que sigue <c>OrderStatus.Pending</c>, sin
-    /// exigir que la cotización sea editable. Mismo motivo que
-    /// <see cref="SetGlobalScaleFloorAfterConversion"/>: el estado del pedido lo comprueba su
-    /// caso de uso.
-    /// </summary>
-    public void SetIsRetailAfterConversion(
-        bool isRetail, MemberId updatedBy, DateTimeOffset occurredAt) =>
-        SetIsRetailCore(isRetail, updatedBy, occurredAt);
-
-    private void SetIsRetailCore(bool isRetail, MemberId updatedBy, DateTimeOffset occurredAt)
-    {
         IsRetail = isRetail;
 
         // Prender detal limpia el piso y apagarlo no lo restaura: el piso es una elección del
@@ -575,48 +510,6 @@ public sealed class Quotation
         Touch(updatedBy, occurredAt);
     }
 
-    /// <summary>
-    /// Cambia la cantidad de una línea desde "Editar" pedido pendiente (a pedido, 2026-09-15) —
-    /// mismo endpoint que <see cref="UpdateItemQuantity"/>, sin exigir <see cref="EnsureEditable"/>
-    /// por el mismo motivo que <see cref="AddItemAfterConversion"/>: el caso de uso ya encontró un
-    /// <c>Order</c> pendiente para esta cotización antes de llamar acá.
-    /// </summary>
-    public void UpdateItemQuantityAfterConversion(
-        QuotationItemId itemId,
-        decimal quantity,
-        decimal discountPercentage,
-        int taxPercentage,
-        MemberId updatedBy,
-        DateTimeOffset occurredAt)
-    {
-        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, occurredAt);
-        Touch(updatedBy, occurredAt);
-    }
-
-    /// <summary>
-    /// Quita una línea desde "Editar" pedido pendiente (a pedido, 2026-09-15) — mismo endpoint que
-    /// <see cref="RemoveItem"/>, sin exigir <see cref="EnsureEditable"/>, mismo motivo que
-    /// <see cref="AddItemAfterConversion"/>.
-    ///
-    /// A diferencia de quitar de un borrador, acá no hay un paso posterior (enviar, convertir) que
-    /// vuelva a exigir al menos una línea (<see cref="EnsureConvertibleToOrder"/> ya se pasó): sin
-    /// este chequeo, el pedido se quedaría con una cotización en cero productos y un total en
-    /// cero, sin ninguna vuelta atrás.
-    /// </summary>
-    public void RemoveItemAfterConversion(
-        QuotationItemId itemId, MemberId updatedBy, DateTimeOffset occurredAt)
-    {
-        if (_items.Count == 1)
-        {
-            throw new QuotationsDomainException(
-                "quotation.item.last_item_required",
-                "The last remaining item cannot be removed from the order.");
-        }
-
-        _items.Remove(FindItem(itemId));
-        Touch(updatedBy, occurredAt);
-    }
-
     /// <summary>Edita el encabezado (US-6, US-10): forma de pago, vigencia, notas y los datos de
     /// facturación/entrega. La tasa de impuesto no se edita acá — la trae
     /// cada línea desde su producto (RN-013). Reemplaza el recurso entero, mismo criterio que
@@ -645,7 +538,7 @@ public sealed class Quotation
         ValidUntil = validUntil;
         // El guardado manda el encabezado entero, así que un piso ausente es "quitalo" y no "no
         // lo toques" — mismo criterio que ValidUntil o Notes. Lo mismo el detal: ausente es
-        // false. Prender el detal deja el piso en null sin pasar por SetIsRetailCore porque el
+        // false. Prender el detal deja el piso en null sin pasar por SetIsRetail porque el
         // guard de arriba ya garantizó que, con detal, el piso del cuerpo es null.
         IsRetail = isRetail;
         GlobalScaleFloor = globalScaleFloor;
@@ -771,20 +664,6 @@ public sealed class Quotation
         UpdatedAt = occurredAt;
         Version++;
     }
-
-    /// <summary>
-    /// Congela código y nombre de las líneas que se le sumaron al pedido después de convertir
-    /// (<see cref="AddItemAfterConversion"/>): esas no tienen un envío ni una conversión posterior
-    /// que lo haga. Las que ya los tienen no se tocan.
-    ///
-    /// Mismo criterio que las demás variantes <c>*AfterConversion</c>: no exige estado, porque el
-    /// pedido pendiente lo comprobó el caso de uso. Y como <see cref="ApplyGroupDiscounts"/>, no es
-    /// una edición: no toca <see cref="Version"/> ni <see cref="UpdatedAt"/>, que ya los movió la
-    /// línea que se agregó.
-    /// </summary>
-    public void CaptureProductSnapshotsAfterConversion(
-        IReadOnlyDictionary<Guid, QuotationProductSnapshot> products) =>
-        CaptureProductSnapshots(products);
 
     private void CaptureProductSnapshots(IReadOnlyDictionary<Guid, QuotationProductSnapshot> products)
     {
@@ -1156,30 +1035,22 @@ public sealed class Quotation
         Version++;
     }
 
+    // La aritmética vive en DocumentTotals (spec 2026-10-15 §4.3): el pedido suma con la misma
+    // regla, y un cambio de redondeo cambia los dos documentos a la vez.
     private void RecalculateTotals()
     {
-        Subtotal = Round(_items.Sum(item => item.Subtotal));
-        DiscountAmount = Round(_items.Sum(item => item.DiscountAmount));
-
-        // Un cliente con excedente de IVA no paga IVA en la cotización, cualquiera sea la tasa
-        // de cada línea — el impuesto de cada QuotationItem queda intacto (sigue reflejando la
-        // tasa real del producto), pero el encabezado lo ignora entero. Salvo que la factura
-        // salga a consumidor final: ahí el excedente no aplica (AppliesVatSurplus).
-        var rawTaxAmount = Round(_items.Sum(item => item.TaxAmount));
-        TaxAmount = AppliesVatSurplus ? 0m : rawTaxAmount;
-        TaxPercentage = Subtotal > 0 ? Round(TaxAmount / Subtotal * 100m) : 0m;
-
-        Total = Subtotal + TaxAmount;
-
-        // Retención en la fuente: 2.5% de lo facturado sin IVA. Resta del neto a cobrar, no de
-        // Total — Total sigue siendo lo facturado, RetentionAmount es lo que el cliente le
-        // retiene al vendedor y no paga en efectivo.
-        RetentionAmount = AppliesRetention ? Round(Subtotal * 0.025m) : 0m;
-        NetTotal = Total - RetentionAmount;
+        var totals = DocumentTotals.Compute(
+            _items.Select(item => new LineAmountsView(item.Subtotal, item.DiscountAmount, item.TaxAmount)),
+            AppliesVatSurplus,
+            AppliesRetention);
+        Subtotal = totals.Subtotal;
+        DiscountAmount = totals.DiscountAmount;
+        TaxAmount = totals.TaxAmount;
+        TaxPercentage = totals.TaxPercentage;
+        Total = totals.Total;
+        RetentionAmount = totals.RetentionAmount;
+        NetTotal = totals.NetTotal;
     }
-
-    private static decimal Round(decimal value) =>
-        Math.Round(value, 2, MidpointRounding.AwayFromZero);
 
     private static string NormalizeQuotationNumber(string quotationNumber)
     {

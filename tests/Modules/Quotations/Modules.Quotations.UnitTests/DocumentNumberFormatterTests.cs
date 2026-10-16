@@ -90,16 +90,9 @@ public sealed class DocumentNumberFormatterTests
         Assert.True(number.Length > Quotation.QuotationNumberMaxLength);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            Order.Create(
-                OrderId.New(),
-                Guid.CreateVersion7(),
-                number,
-                QuotationId.New(),
-                OrderPaymentStatus.FullPaymentReceived,
-                null,
-                new MemberId(Guid.CreateVersion7()),
-                [new OrderPaymentProofInput(Guid.CreateVersion7(), 1m)],
-                DateTimeOffset.UtcNow));
+            OrderBuilders.Pending(
+                Guid.CreateVersion7(), new MemberId(Guid.CreateVersion7()), DateTimeOffset.UtcNow,
+                orderNumber: number));
 
         Assert.Equal("order.order.number_too_long", error.Code);
     }

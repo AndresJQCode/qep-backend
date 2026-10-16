@@ -46,6 +46,8 @@ public sealed class ApproveOrderHandler(
 
         var now = clock.UtcNow;
         order.Approve(approvedBy, now);
+        repository.AddHistoryEntry(OrderHistoryEntry.Create(
+            OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Approved, approvedBy, OrderChangeSummary.Approved(), now));
 
         auditPublisher.Publish(
             command.TenantId,

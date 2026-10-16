@@ -537,10 +537,32 @@ internal static class ReportingApiHarness
                 [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
-        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(
+        // Spec 2026-10-15 §8: la conversión responde el detalle.
+        var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(
             TestContext.Current.CancellationToken);
-        Assert.NotNull(order);
-        return order;
+        Assert.NotNull(detail);
+        return detail.Order;
+    }
+
+    /// <summary>Spec 2026-10-15: un pedido manual, sin cotización, por <c>POST /orders</c>. Las
+    /// partes salen del cliente; la cuenta de cobro, de una empresa con cuenta en COP.</summary>
+    public static async Task<OrderResponse> CreateManualOrderAsync(HttpClient client, Guid tenantId)
+    {
+        var customer = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductAsync(client, tenantId);
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId, "COP");
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/orders",
+            new CreateOrderRequest(
+                customer.Id, null, null, false, null, null,
+                new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
+                [new OrderEditItemRequest(productId, 1m)], "PaymentPending", []),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        return detail.Order;
     }
 
     private static async Task<Guid> CreateAvailablePdfFileAsync(

@@ -11,7 +11,8 @@ namespace Modules.Quotations.IntegrationTests;
 /// incompleto responden 422 <c>quotation.quotation.client_incomplete</c>.</summary>
 public sealed class IncompleteCustomerQuotationApiTests
 {
-    private static async Task MarkIncompleteAsync(string connectionString, Guid customerId)
+    // internal: ManualOrderApiTests lo reutiliza para el cliente incompleto del pedido manual.
+    internal static async Task MarkIncompleteAsync(string connectionString, Guid customerId)
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(TestContext.Current.CancellationToken);

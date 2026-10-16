@@ -8,8 +8,6 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
 {
     private const string LikeEscapeCharacter = "\\";
 
-    // Mismo criterio que QuotationRepository: un numero de pedido buscado que por casualidad trae
-    // "%" o "_" no debe actuar como comodin SQL.
     private static string EscapeLikeWildcards(string term) => term
         .Replace("\\", "\\\\", StringComparison.Ordinal)
         .Replace("%", "\\%", StringComparison.Ordinal)
@@ -21,27 +19,28 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         return string.IsNullOrEmpty(trimmed) ? null : $"%{EscapeLikeWildcards(trimmed)}%";
     }
 
+    // El agregado entero: líneas, partes y comprobantes. Lo que lee un pedido para mostrarlo o
+    // editarlo necesita las tres.
+    private static IQueryable<Order> WithAggregate(IQueryable<Order> orders) =>
+        orders
+            .Include(order => order.PaymentProofs)
+            .Include(order => order.Items)
+            .Include(order => order.Parties);
+
     public Task<Order?> FindByQuotationIdAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
-        dbContext.Orders
-            .Include(order => order.PaymentProofs)
+        WithAggregate(dbContext.Orders)
             .SingleOrDefaultAsync(
                 order => order.TenantId == tenantId && order.QuotationId == quotationId,
                 cancellationToken);
 
-    // Con comprobantes: el cálculo previo suma sus montos para derivar el estado de pago.
     public Task<Order?> FindUntrackedByIdAsync(
         Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
-        dbContext.Orders
-            .AsNoTracking()
-            .Include(order => order.PaymentProofs)
+        WithAggregate(dbContext.Orders.AsNoTracking())
             .SingleOrDefaultAsync(
                 order => order.TenantId == tenantId && order.Id == orderId,
                 cancellationToken);
 
-    // AsNoTracking y sin comprobantes: esto alimenta una fila de listado, que solo pregunta si
-    // la cotizacion ya se convirtio y como quedo ese pedido. La relacion es 1:1, asi que indexar
-    // por cotizacion no puede perder filas.
     public async Task<IReadOnlyDictionary<Guid, Order>> FindByQuotationIdsAsync(
         Guid tenantId,
         IReadOnlyCollection<QuotationId> quotationIds,
@@ -52,24 +51,22 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
             return new Dictionary<Guid, Order>();
         }
 
-        var ids = quotationIds.ToArray();
+        var ids = quotationIds.Select(id => (QuotationId?)id).ToArray();
         var orders = await dbContext.Orders
             .AsNoTracking()
-            .Where(order => order.TenantId == tenantId && ids.Contains(order.QuotationId))
+            .Where(order => order.TenantId == tenantId && order.QuotationId != null && ids.Contains(order.QuotationId))
             .ToListAsync(cancellationToken);
-
-        return orders.ToDictionary(order => order.QuotationId.Value);
+        return orders.ToDictionary(order => order.QuotationId!.Value.Value);
     }
 
     public Task<Order?> FindByIdAsync(
         Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
-        dbContext.Orders
-            .Include(order => order.PaymentProofs)
+        WithAggregate(dbContext.Orders)
             .SingleOrDefaultAsync(
                 order => order.TenantId == tenantId && order.Id == orderId,
                 cancellationToken);
 
-    public async Task<(IReadOnlyList<OrderWithQuotation> Items, int Total)> SearchAsync(
+    public async Task<(IReadOnlyList<Order> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
         IReadOnlyCollection<Guid>? clientIds,
@@ -79,31 +76,20 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
+        OrderSource? source,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
-        // El join va acá adentro y no en el composition root --como sí lo hace el reporte de
-        // pedidos-- porque las dos tablas son de este módulo y viven en el mismo DbContext.
-        var (orders, quotations) = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber);
-        var joined =
-            from order in orders
-            join quotation in quotations on order.QuotationId equals quotation.Id
-            select new { order, quotation };
-
-        var total = await joined.CountAsync(cancellationToken);
-        var items = await joined
-            // Por fecha de conversión, y el número como desempate: dos pedidos del mismo instante
-            // --el mismo segundo en una siembra de prueba-- tienen que paginar en un orden
-            // estable, o una fila puede repetirse o saltarse entre páginas.
-            .OrderByDescending(row => row.order.ConvertedAt)
-            .ThenByDescending(row => row.order.OrderNumber)
+        var orders = Filtered(
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
+        var total = await orders.CountAsync(cancellationToken);
+        var items = await orders
+            .OrderByDescending(order => order.ConvertedAt)
+            .ThenByDescending(order => order.OrderNumber)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(row => new OrderWithQuotation(row.order, row.quotation))
             .ToListAsync(cancellationToken);
-
         return (items, total);
     }
 
@@ -117,24 +103,12 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
-        CancellationToken cancellationToken)
-    {
-        var (orders, quotations) = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber);
-        return (from order in orders
-                join quotation in quotations on order.QuotationId equals quotation.Id
-                select order.Id)
+        OrderSource? source,
+        CancellationToken cancellationToken) =>
+        Filtered(tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source)
             .AnyAsync(cancellationToken);
-    }
 
-    // Keyset sobre el orden exacto del listado —(ConvertedAt, OrderNumber), los dos descendentes—:
-    // el lote siguiente es "lo que viene después del último pedido leído" y no un offset, así que
-    // un pedido convertido o que sale del filtro durante el export no repite ni salta filas
-    // (spec 2026-09-12, D8). El corte va sobre `orders`, antes del join, igual que los filtros, y es
-    // una comparación de filas de Postgres, `(converted_at, order_number) < (@fecha, @numero)`, que
-    // Npgsql traduce desde EF.Functions.LessThan: IX_orders_tenant_converted_at_number la resuelve
-    // como un rango, y el número se compara con la collation de la columna, la misma del ORDER BY.
-    public async Task<IReadOnlyList<OrderWithQuotation>> ListForExportAsync(
+    public async Task<IReadOnlyList<Order>> ListForExportAsync(
         Guid tenantId,
         Guid? clientId,
         IReadOnlyCollection<Guid>? clientIds,
@@ -144,13 +118,13 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
+        OrderSource? source,
         OrderExportCursor? after,
         int limit,
         CancellationToken cancellationToken)
     {
-        var (orders, quotations) = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber);
-
+        var orders = Filtered(
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
         if (after is not null)
         {
             var convertedAt = after.ConvertedAt;
@@ -160,23 +134,16 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                 ValueTuple.Create(convertedAt, number)));
         }
 
-        return await (
-                from order in orders
-                join quotation in quotations on order.QuotationId equals quotation.Id
-                select new { order, quotation })
-            .OrderByDescending(row => row.order.ConvertedAt)
-            .ThenByDescending(row => row.order.OrderNumber)
+        return await orders
+            .OrderByDescending(order => order.ConvertedAt)
+            .ThenByDescending(order => order.OrderNumber)
             .Take(limit)
-            .Select(row => new OrderWithQuotation(row.order, row.quotation))
             .ToListAsync(cancellationToken);
     }
 
-    // Los filtros del listado y de su Excel salen de acá y de ningún otro lado. Se aplican sobre
-    // cada tabla por separado y el join se arma recién al final, proyectando ahí mismo: filtrar
-    // después de proyectar a un tipo propio es lo que hacía que el proveedor no tradujera la
-    // consulta y el endpoint respondiera 500. Sin comprobantes ni líneas: la fila no los muestra, y
-    // traerlos sería el mismo N+1 que QuotationRepository.SearchAsync evita.
-    private (IQueryable<Order> Orders, IQueryable<Quotation> Quotations) Filtered(
+    // Spec 2026-10-15 §6.1: todos los filtros, también cliente, CUC (ids de cliente) y asesor, son
+    // columnas del pedido.
+    private IQueryable<Order> Filtered(
         Guid tenantId,
         Guid? clientId,
         IReadOnlyCollection<Guid>? clientIds,
@@ -185,12 +152,12 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         OrderPaymentStatus? paymentStatus,
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
-        string? orderNumber)
+        string? orderNumber,
+        OrderSource? source)
     {
         var orders = dbContext.Orders
             .AsNoTracking()
             .Where(order => order.TenantId == tenantId);
-
         if (status is { } orderStatus)
         {
             orders = orders.Where(order => order.Status == orderStatus);
@@ -199,6 +166,11 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         if (paymentStatus is { } orderPaymentStatus)
         {
             orders = orders.Where(order => order.PaymentStatus == orderPaymentStatus);
+        }
+
+        if (source is { } orderSource)
+        {
+            orders = orders.Where(order => order.Source == orderSource);
         }
 
         var orderNumberPattern = LikePattern(orderNumber);
@@ -215,38 +187,27 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
 
         if (convertedBefore is { } before)
         {
-            // Exclusivo, igual que el listado de cotizaciones: quien llama ya lo corrió al 00:00
-            // local del día siguiente al "hasta" (spec 2026-09-17, punto 3).
             orders = orders.Where(order => order.ConvertedAt < before);
         }
 
-        // Cliente y asesora viven en la cotizacion: sus filtros se aplican de ese lado.
-        var quotations = dbContext.Quotations
-            .AsNoTracking()
-            .Where(quotation => quotation.TenantId == tenantId);
-
         if (clientId is { } client)
         {
-            quotations = quotations.Where(quotation => quotation.ClientId == client);
+            orders = orders.Where(order => order.ClientId == client);
         }
 
         if (clientIds is not null)
         {
-            quotations = quotations.Where(quotation => clientIds.Contains(quotation.ClientId));
+            orders = orders.Where(order => clientIds.Contains(order.ClientId));
         }
 
         if (advisorId is { } advisor)
         {
-            quotations = quotations.Where(quotation => quotation.AdvisorId == advisor);
+            orders = orders.Where(order => order.AdvisorId == advisor);
         }
 
-        return (orders, quotations);
+        return orders;
     }
 
-    // Una consulta por lote del Excel (spec 2026-09-15, E6), no una por pedido. La tabla de
-    // comprobantes no tiene tenant: el filtro va por el join con `orders`, que sí lo tiene. El orden
-    // —fecha de subida, y el id como desempate entre los que llegaron en el mismo request— es el de
-    // las columnas del Excel. Se agrupa en memoria, donde GroupBy conserva ese orden.
     public async Task<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>>> ListPaymentProofsForExportAsync(
         Guid tenantId,
         IReadOnlyCollection<OrderId> orderIds,
@@ -265,7 +226,6 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                 orderby proof.UploadedAt, proof.Id
                 select new { proof.OrderId, proof.Id, proof.PublicStorageKey, proof.UploadedAt, proof.Amount, proof.PaidOn })
             .ToListAsync(cancellationToken);
-
         return rows
             .GroupBy(row => row.OrderId)
             .ToDictionary(
@@ -276,52 +236,60 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                     .ToArray());
     }
 
-    public async Task<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationItem>>> ListItemsForExportAsync(
+    public async Task<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderItem>>> ListItemsForExportAsync(
         Guid tenantId,
-        IReadOnlyCollection<QuotationId> quotationIds,
+        IReadOnlyCollection<OrderId> orderIds,
         CancellationToken cancellationToken)
     {
-        if (quotationIds.Count == 0)
+        if (orderIds.Count == 0)
         {
-            return new Dictionary<QuotationId, IReadOnlyList<QuotationItem>>();
+            return new Dictionary<OrderId, IReadOnlyList<OrderItem>>();
         }
 
-        var ids = quotationIds.ToArray();
+        var ids = orderIds.ToArray();
         var items = await (
-                from item in dbContext.QuotationItems.AsNoTracking()
-                join quotation in dbContext.Quotations.AsNoTracking() on item.QuotationId equals quotation.Id
-                where quotation.TenantId == tenantId && ids.Contains(quotation.Id)
+                from item in dbContext.OrderItems.AsNoTracking()
+                join order in dbContext.Orders.AsNoTracking() on item.OrderId equals order.Id
+                where order.TenantId == tenantId && ids.Contains(order.Id)
                 orderby item.Position
                 select item)
             .ToListAsync(cancellationToken);
-
         return items
-            .GroupBy(item => item.QuotationId)
-            .ToDictionary(group => group.Key, group => (IReadOnlyList<QuotationItem>)group.ToArray());
+            .GroupBy(item => item.OrderId)
+            .ToDictionary(group => group.Key, group => (IReadOnlyList<OrderItem>)group.ToArray());
     }
 
-    public async Task<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationParty>>> ListPartiesForExportAsync(
+    public async Task<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderParty>>> ListPartiesForExportAsync(
         Guid tenantId,
-        IReadOnlyCollection<QuotationId> quotationIds,
+        IReadOnlyCollection<OrderId> orderIds,
         CancellationToken cancellationToken)
     {
-        if (quotationIds.Count == 0)
+        if (orderIds.Count == 0)
         {
-            return new Dictionary<QuotationId, IReadOnlyList<QuotationParty>>();
+            return new Dictionary<OrderId, IReadOnlyList<OrderParty>>();
         }
 
-        var ids = quotationIds.ToArray();
+        var ids = orderIds.ToArray();
         var parties = await (
-                from party in dbContext.QuotationParties.AsNoTracking()
-                join quotation in dbContext.Quotations.AsNoTracking() on party.QuotationId equals quotation.Id
-                where quotation.TenantId == tenantId && ids.Contains(quotation.Id)
+                from party in dbContext.OrderParties.AsNoTracking()
+                join order in dbContext.Orders.AsNoTracking() on party.OrderId equals order.Id
+                where order.TenantId == tenantId && ids.Contains(order.Id)
                 select party)
             .ToListAsync(cancellationToken);
-
         return parties
-            .GroupBy(party => party.QuotationId)
-            .ToDictionary(group => group.Key, group => (IReadOnlyList<QuotationParty>)group.ToArray());
+            .GroupBy(party => party.OrderId)
+            .ToDictionary(group => group.Key, group => (IReadOnlyList<OrderParty>)group.ToArray());
     }
+
+    public async Task<IReadOnlyList<OrderHistoryEntry>> ListHistoryAsync(
+        Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
+        await (
+                from entry in dbContext.OrderHistoryEntries.AsNoTracking()
+                join order in dbContext.Orders.AsNoTracking() on entry.OrderId equals order.Id
+                where order.TenantId == tenantId && order.Id == orderId
+                orderby entry.EventAt descending, entry.CreatedAt descending
+                select entry)
+            .ToListAsync(cancellationToken);
 
     public Task<bool> IsPaymentProofFileInUseAsync(
         Guid fileId, OrderPaymentProofId? exceptProofId, CancellationToken cancellationToken)
@@ -336,4 +304,6 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
     }
 
     public void Add(Order order) => dbContext.Orders.Add(order);
+
+    public void AddHistoryEntry(OrderHistoryEntry entry) => dbContext.OrderHistoryEntries.Add(entry);
 }

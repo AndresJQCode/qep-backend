@@ -8,8 +8,13 @@ namespace Modules.Pipeline.Application;
 public sealed record QuotationFact(
     Guid TenantId, Guid QuotationId, string QuotationNumber, Guid ClientId, Guid AdvisorMemberId, decimal Total, string Currency, Guid? OrderId);
 
-/// <summary>§4.5: lo que trae <c>quotations.order.cancelled.v1</c>.</summary>
-public sealed record OrderCancelledFact(Guid TenantId, Guid OrderId, Guid QuotationId);
+/// <summary>Spec 2026-10-15 §7: lo que trae <c>quotations.order.created.v1</c>. <c>Source</c> es el origen del pedido por nombre;
+/// <c>QuotationId</c> es <c>null</c> en un pedido manual o de una integración.</summary>
+public sealed record OrderFact(
+    Guid TenantId, Guid OrderId, string OrderNumber, Guid ClientId, Guid AdvisorMemberId, decimal Total, string Currency, string Source, Guid? QuotationId);
+
+/// <summary>§4.5: lo que trae <c>quotations.order.cancelled.v1</c>. Sin cotización (spec 2026-10-15) <c>QuotationId</c> es <c>null</c>.</summary>
+public sealed record OrderCancelledFact(Guid TenantId, Guid OrderId, Guid? QuotationId, string Source);
 
 /// <summary>
 /// Spec 2026-10-13 §4.4, D17, D18 y D25–D28: lo que cada evento de Quotations le hace al negocio, con actor <c>System</c>. No
@@ -23,6 +28,7 @@ public sealed class QuotationEventApplier(
     IPipelineProvisioner provisioner,
     IDealRepository deals,
     IDealQuotationRepository quotations,
+    IDealOrderRepository orders,
     IPipelineAuditRecorder audit)
 {
     /// <returns><c>false</c> si el tenant no tiene la capacidad (P12): el mensaje se marca procesado sin efecto.</returns>
@@ -33,7 +39,71 @@ public sealed class QuotationEventApplier(
     public Task<bool> ApplyConvertedAsync(QuotationFact fact, DateTimeOffset now, CancellationToken cancellationToken) =>
         ApplyQuotationAsync(fact, converted: true, now, cancellationToken);
 
-    /// <summary>§4.4: si el negocio está ganado y su principal es la cotización de ese pedido, se reabre (D15).</summary>
+    /// <summary>
+    /// Spec 2026-10-15 §7: un pedido sin cotización gana el único negocio abierto del cliente o, si no hay ninguno, crea uno
+    /// ganado (<see cref="DealSource.Order"/>). Con varios abiertos la foto queda suelta (D-O8). Un pedido con cotización no hace
+    /// nada: el <c>converted</c> de esa cotización ya ganó el negocio. Idempotente por <c>(tenant, pedido)</c>.
+    /// </summary>
+    public async Task<bool> ApplyOrderCreatedAsync(OrderFact fact, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(fact);
+        if (fact.QuotationId is not null)
+        {
+            return true;
+        }
+
+        if (!await IsEnabledAsync(fact.TenantId, cancellationToken))
+        {
+            return false;
+        }
+
+        var pipeline = await provisioner.EnsureAsync(fact.TenantId, cancellationToken);
+        if (await orders.FindAsync(fact.TenantId, fact.OrderId, cancellationToken) is not null)
+        {
+            return true;
+        }
+
+        var snapshot = DealOrder.Create(fact.TenantId, fact.OrderId, fact.OrderNumber, fact.ClientId, fact.Total, fact.Currency, fact.Source, now);
+        orders.Add(snapshot);
+        var open = await deals.ListOpenByCustomerAsync(fact.TenantId, fact.ClientId, cancellationToken);
+        if (open.Count > 1)
+        {
+            return true;
+        }
+
+        Deal deal;
+        if (open.Count == 1)
+        {
+            deal = open[0];
+        }
+        else
+        {
+            deal = Deal.Create(fact.TenantId, pipeline, fact.ClientId, fact.AdvisorMemberId, fact.OrderNumber, fact.Total, fact.Currency, null,
+                DealSource.Order, null, DealActor.ForSystem, now);
+            deals.Add(deal);
+            Record(fact.TenantId, PipelineAuditActions.DealCreated, deal.Id, now);
+        }
+
+        snapshot.LinkTo(deal.Id, now);
+        Record(fact.TenantId, PipelineAuditActions.OrderLinked, deal.Id, now);
+
+        // D18: con principal el monto sigue a la cotización; sin principal y sin monto, el del pedido es el mejor dato que hay.
+        if (deal.PrimaryQuotationId is null && deal.Amount is null)
+        {
+            deal.Update(deal.Title, deal.OwnerMemberId, fact.Total, fact.Currency, deal.ExpectedCloseDate, now);
+        }
+
+        if (!deal.IsClosed)
+        {
+            deal.Win(pipeline, DealActor.ForSystem, now);
+            Record(fact.TenantId, PipelineAuditActions.DealWon, deal.Id, now);
+        }
+
+        return true;
+    }
+
+    /// <summary>§4.4: si el negocio está ganado y su principal es la cotización de ese pedido, se reabre (D15). Sin cotización
+    /// (spec 2026-10-15 §7), se reabre el negocio ganado al que quedó enlazada la foto del pedido.</summary>
     public async Task<bool> ApplyOrderCancelledAsync(OrderCancelledFact fact, DateTimeOffset now, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(fact);
@@ -42,7 +112,12 @@ public sealed class QuotationEventApplier(
             return false;
         }
 
-        var snapshot = await quotations.FindAsync(fact.TenantId, fact.QuotationId, cancellationToken);
+        if (fact.QuotationId is not { } quotationId)
+        {
+            return await ApplyOrderWithoutQuotationCancelledAsync(fact, now, cancellationToken);
+        }
+
+        var snapshot = await quotations.FindAsync(fact.TenantId, quotationId, cancellationToken);
         if (snapshot is null)
         {
             return true;
@@ -60,15 +135,42 @@ public sealed class QuotationEventApplier(
         }
 
         var pipeline = await provisioner.EnsureAsync(fact.TenantId, cancellationToken);
-        if (deal.PrimaryQuotationId != fact.QuotationId || deal.StageId != pipeline.WonStage.Id)
+        if (deal.PrimaryQuotationId != quotationId || deal.StageId != pipeline.WonStage.Id)
         {
             return true;
         }
 
-        var lastOpen = await deals.FindLastOpenStageIdAsync(fact.TenantId, deal.Id, cancellationToken);
-        deal.Reopen(pipeline, lastOpen, DealActor.ForSystem, now);
-        Record(fact.TenantId, PipelineAuditActions.DealReopened, deal.Id, now);
+        await ReopenAsync(fact.TenantId, pipeline, deal, now, cancellationToken);
         return true;
+    }
+
+    private async Task<bool> ApplyOrderWithoutQuotationCancelledAsync(OrderCancelledFact fact, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var snapshot = await orders.FindAsync(fact.TenantId, fact.OrderId, cancellationToken);
+        if (snapshot is null || !snapshot.MarkCancelled(now))
+        {
+            return true;
+        }
+
+        if (snapshot.DealId is not { } dealId || await deals.FindAsync(fact.TenantId, dealId, cancellationToken) is not { } deal)
+        {
+            return true;
+        }
+
+        var pipeline = await provisioner.EnsureAsync(fact.TenantId, cancellationToken);
+        if (deal.StageId == pipeline.WonStage.Id)
+        {
+            await ReopenAsync(fact.TenantId, pipeline, deal, now, cancellationToken);
+        }
+
+        return true;
+    }
+
+    private async Task ReopenAsync(Guid tenantId, SalesPipeline pipeline, Deal deal, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var lastOpen = await deals.FindLastOpenStageIdAsync(tenantId, deal.Id, cancellationToken);
+        deal.Reopen(pipeline, lastOpen, DealActor.ForSystem, now);
+        Record(tenantId, PipelineAuditActions.DealReopened, deal.Id, now);
     }
 
     private async Task<bool> ApplyQuotationAsync(QuotationFact fact, bool converted, DateTimeOffset now, CancellationToken cancellationToken)

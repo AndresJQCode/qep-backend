@@ -26,9 +26,34 @@ public sealed class QuotationLifecycleEventsApiTests
             new ConvertQuotationToOrderRequest("FullPaymentReceived", null, [new OrderPaymentProofRequest(proof, quotation.Total)]),
             Ct);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(Ct);
+        var order = await response.Content.ReadConvertedOrderAsync(Ct);
         Assert.NotNull(order);
         return order;
+    }
+
+    // Spec 2026-10-15 §7: convertir publica el converted de siempre y, además, el order.created del
+    // pedido, con el pedido como correlación y la cotización de origen en el payload.
+    [Fact]
+    public async Task ConvertingPublishesConvertedAndOrderCreatedWithTheOrderAsCorrelation()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+
+        var order = await ConvertAsync(client, factory, tenantId, quotation);
+
+        var created = Assert.Single(await OutboxMessagesAsync(factory, "quotations.order.created.v1"));
+        Assert.Equal(order.Id.ToString(), created.CorrelationId);
+        using var payload = JsonDocument.Parse(created.PayloadJson);
+        Assert.Equal("Quotation", payload.RootElement.GetProperty("source").GetString());
+        Assert.Equal(quotation.Id, payload.RootElement.GetProperty("quotationId").GetGuid());
+        Assert.Equal(order.OrderNumber, payload.RootElement.GetProperty("orderNumber").GetString());
+        Assert.Equal(clientId, payload.RootElement.GetProperty("clientId").GetGuid());
+        Assert.Single(await OutboxMessagesAsync(factory, Converted));
     }
 
     [Fact]

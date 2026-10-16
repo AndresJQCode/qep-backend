@@ -5,10 +5,8 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
-/// <summary>
-/// El documento que quedaría si se guardara el borrador de «Editar pedido», sin persistir nada (spec
-/// 2026-09-17, decisión 3). Mismo cuerpo que <see cref="SaveOrderEditsCommand"/> salvo archivos.
-/// </summary>
+/// <summary>El cálculo previo de «Editar» pedido (spec 2026-09-17, decisión 4): aplica las ediciones
+/// a una copia sin tracking y devuelve el pedido como quedaría, sin guardar nada.</summary>
 public sealed record PreviewOrderEditsQuery(
     Guid TenantId,
     Guid OrderId,
@@ -26,19 +24,9 @@ public sealed class PreviewOrderEditsValidator : OrderEditsValidator<PreviewOrde
     }
 }
 
-/// <summary>
-/// Aplica en memoria los pasos 4, 5 y 7 del guardado sobre agregados leídos **sin rastreo**
-/// (decisión 4): mismos métodos de dominio, así que los errores salen con el mismo código. Sin
-/// historial, auditoría, outbox ni <c>SaveChangesAsync</c>.
-///
-/// Los comprobantes nuevos se agregan con un <c>fileId</c> sintético: el dominio no admite
-/// <see cref="Guid.Empty"/> y sus montos tienen que contar para el estado de pago. El reemplazo de
-/// archivo se ignora (sólo importan los montos). La versión que vuelve es la guardada: la pantalla
-/// nunca debe mandar en <c>If-Match</c> una versión que sólo existió en este cálculo.
-/// </summary>
 public sealed class PreviewOrderEditsHandler(
-    IQuotationRepository quotationRepository,
     IOrderRepository orderRepository,
+    IQuotationRepository quotationRepository,
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
     IQuotationCustomerLookup customerLookup,
@@ -56,14 +44,11 @@ public sealed class PreviewOrderEditsHandler(
             executionContext, query.TenantId, OrdersPermissions.OrderManage);
         await validator.ValidateAndThrowAsync(query, cancellationToken);
 
-        // Mismo orden que el guardado: primero el pedido por su id, después su cotización.
+        // Sin tracking: el preview muta el agregado en memoria y nada de eso puede llegar a un
+        // SaveChangesAsync del mismo scope.
         var order = await orderRepository.FindUntrackedByIdAsync(
             query.TenantId, new OrderId(query.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(query.OrderId);
-        var quotation = await quotationRepository.FindUntrackedAsync(
-            query.TenantId, order.QuotationId, cancellationToken)
-            ?? throw OrderNotFound.ById(query.OrderId);
-
         if (order.Status != OrderStatus.Pending)
         {
             throw new QuotationsDomainException(
@@ -72,20 +57,17 @@ public sealed class PreviewOrderEditsHandler(
         }
 
         var storedVersion = order.Version;
-
-        var customer = await customerLookup.FindAsync(query.TenantId, quotation.ClientId, cancellationToken);
+        var customer = await customerLookup.FindAsync(query.TenantId, order.ClientId, cancellationToken);
         if (customer is not null)
         {
-            quotation.RefreshCustomerTaxProfile(customer.WithRetention, customer.VatSurplus);
+            order.RefreshCustomerTaxProfile(customer.WithRetention, customer.VatSurplus);
         }
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, query.TenantId, cancellationToken);
         var now = clock.UtcNow;
-
         await OrderItemEdits.ApplyAsync(
-            quotation, query.Items, pricingLookup, query.TenantId, updatedBy, now, query.IsRetail, cancellationToken);
-
+            order, query.Items, pricingLookup, query.TenantId, updatedBy, now, query.IsRetail, cancellationToken);
         foreach (var proofId in query.Proofs.RemoveIds)
         {
             order.RemovePaymentProof(new OrderPaymentProofId(proofId), now);
@@ -97,6 +79,7 @@ public sealed class PreviewOrderEditsHandler(
                     new OrderPaymentProofId(update.ProofId), update.Amount, PaidOn: update.PaidOn))
                 .ToArray(),
             now);
+        // Sin archivo todavía (el preview no lo exige): un id cualquiera sirve para sumar el monto.
         order.AttachPaymentProofs(
             query.Proofs.Add
                 .Select(addition => new OrderPaymentProofInput(
@@ -105,28 +88,25 @@ public sealed class PreviewOrderEditsHandler(
             updatedBy,
             now);
         order.UpdateNotes(query.Notes, now);
-
-        // El detal del borrador, en memoria y antes que el piso: mismo orden que
-        // SaveOrderEditsHandler, o la vista previa aceptaría un cuerpo que el guardado rechaza.
-        if (quotation.IsRetail != query.IsRetail)
+        if (order.IsRetail != query.IsRetail)
         {
-            quotation.SetIsRetailAfterConversion(query.IsRetail, updatedBy, now);
+            order.SetIsRetail(query.IsRetail, updatedBy, now);
         }
 
-        // El piso del borrador, en memoria: es lo que hace que cambiar el select recalcule al
-        // vuelo sin escribir nada, igual que cambiar una cantidad.
-        if (quotation.GlobalScaleFloor != query.GlobalScaleFloor)
+        if (order.GlobalScaleFloor != query.GlobalScaleFloor)
         {
-            quotation.SetGlobalScaleFloorAfterConversion(query.GlobalScaleFloor, updatedBy, now);
+            order.SetGlobalScaleFloor(query.GlobalScaleFloor, updatedBy, now);
         }
 
-        // La misma pasada que corre SaveOrderEditsHandler, y por el mismo motivo: si el preview no
-        // la hace, muestra un total y un descuento distintos de los que va a dejar el guardado.
-        await QuotationPricingRecalculation.ApplyAsync(
-            pricingLookup, settingsStore, query.TenantId, quotation, now, cancellationToken);
+        await OrderPricingRecalculation.ApplyAsync(
+            pricingLookup, settingsStore, query.TenantId, order, now, cancellationToken);
+        order.RecalculatePaymentStatus(now);
 
-        order.RecalculatePaymentStatus(quotation.NetTotal, now);
-
-        return new OrderDetailDto(order.ToDto() with { Version = storedVersion }, quotation.ToDto());
+        var quotationNumber = order.QuotationId is { } quotationId
+            ? (await quotationRepository.FindUntrackedAsync(query.TenantId, quotationId, cancellationToken))?.QuotationNumber
+            : null;
+        // La versión que viaja es la guardada: el preview no es una edición y el If-Match del
+        // guardado tiene que seguir valiendo.
+        return new OrderDetailDto(order.ToDto() with { Version = storedVersion }, quotationNumber, []);
     }
 }

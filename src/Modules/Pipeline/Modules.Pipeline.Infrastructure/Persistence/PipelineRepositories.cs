@@ -85,6 +85,26 @@ internal sealed class DealQuotationRepository(PipelineDbContext dbContext) : IDe
     public void Add(DealQuotation quotation) => dbContext.DealQuotations.Add(quotation);
 }
 
+internal sealed class DealOrderRepository(PipelineDbContext dbContext) : IDealOrderRepository
+{
+    public Task<DealOrder?> FindAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+        dbContext.DealOrders.SingleOrDefaultAsync(order => order.TenantId == tenantId && order.OrderId == orderId, cancellationToken);
+
+    public async Task<IReadOnlyList<DealOrder>> ListByDealAsync(Guid tenantId, Guid dealId, CancellationToken cancellationToken) =>
+        await dbContext.DealOrders.AsNoTracking()
+            .Where(order => order.TenantId == tenantId && order.DealId == dealId)
+            .OrderByDescending(order => order.UpdatedAt)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<DealOrder>> ListUnlinkedByCustomerAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        await dbContext.DealOrders.AsNoTracking()
+            .Where(order => order.TenantId == tenantId && order.CustomerId == customerId && order.DealId == null)
+            .OrderByDescending(order => order.UpdatedAt)
+            .ToListAsync(cancellationToken);
+
+    public void Add(DealOrder order) => dbContext.DealOrders.Add(order);
+}
+
 internal sealed class PipelineReasonRepository(PipelineDbContext dbContext) : IPipelineReasonRepository
 {
     public async Task<IReadOnlyList<PipelineReason>> ListAsync(Guid tenantId, ReasonKind kind, CancellationToken cancellationToken) =>

@@ -6,21 +6,15 @@ using Modules.Quotations.Application;
 
 namespace Modules.Quotations.Api;
 
-// TEMPORAL (a pedido, 2026-08-24): mismo interruptor que QuotationEndpoints -- las políticas por
-// permiso quedan comentadas mientras se prueba el flujo manualmente. Reactivar antes de
-// producción.
+/// <summary>
+/// Pedidos (US-13 a US-17 y spec 2026-10-15). Todo lo que se le hace a un pedido va por su propio id;
+/// sólo convertir y leer el pedido de una cotización cuelgan de ella. El detalle responde el pedido
+/// con sus propios datos (<see cref="OrderDetailResponse"/>): la cotización ya no viaja.
+/// </summary>
 public static class OrderEndpoints
 {
     public static IEndpointRouteBuilder MapOrderEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        // SALE-01: el listado vive en su propia coleccion y no colgado de una cotizacion. Un
-        // pedido se sigue creando y leyendo como sub-recurso de la suya --sigue siendo 1:1-- pero
-        // "los pedidos del tenant" no son de ninguna cotizacion en particular.
-        //
-        // Y desde 2026-09-17 todo lo que se le *hace* al pedido cuelga de este grupo, por su
-        // propio id: quien llega desde el listado tiene el id del pedido y no el de su cotización.
-        // De la cotización quedan sólo convertir y leer su pedido, los dos casos en los que
-        // todavía no hay un orderId que usar.
         var collection = endpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/orders")
             .WithTags("Orders");
@@ -31,29 +25,33 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // SALE-04: por el id del pedido. Desde una fila del listado no hay por donde entrar si
-        // la unica ruta cuelga de la cotizacion.
+        // Spec 2026-10-15 §5.2: un pedido a mano, sin cotización, y su cálculo previo con el mismo cuerpo.
+        collection.MapPost("/", CreateOrderAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Accepts<CreateOrderRequest>("application/json")
+            .Produces<OrderDetailResponse>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        collection.MapPost("/preview", PreviewOrderAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Accepts<CreateOrderRequest>("application/json")
+            .Produces<OrderDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         collection.MapGet("/{orderId:guid}", GetOrderByIdAsync)
             .RequireAuthorization(OrdersPermissions.OrderRead)
             .Produces<OrderDetailResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
-        // El listado de pedidos en un .xlsx por correo (spec 2026-09-12): mismo contrato que
-        // `POST /quotations/export` —202, filtros del listado por query string, sin paginación—.
-        // "export" no choca con "/{orderId:guid}": no es un guid.
         collection.MapPost("/export", ExportOrdersAsync)
             .RequireAuthorization(OrdersPermissions.OrderRead)
             .Produces<ExportJobAcceptedResponse>(StatusCodes.Status202Accepted)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // Guardar «Editar pedido» de una vez (spec 2026-09-17): el estado deseado completo, con
-        // If-Match de Order.Version. Mismo contrato de precondición que PATCH /roles: sin If-Match
-        // 428, versión vieja 412. Responde el detalle compuesto, igual que GetOrderByIdAsync.
-        //
-        // Por el id del pedido y no colgado de su cotización: lo que se edita es el pedido, y quien
-        // llega desde el listado tiene su id, no el de la cotización.
         collection.MapPut("/{orderId:guid}", SaveOrderEditsAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
             .Accepts<SaveOrderEditsRequest>("application/json")
@@ -64,8 +62,6 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status428PreconditionRequired)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // Cálculo previo (spec 2026-09-17, decisión 3): mismo cuerpo que el PUT, sin archivos y sin
-        // persistir. POST y no GET porque lleva el borrador entero en el cuerpo.
         collection.MapPost("/{orderId:guid}/preview", PreviewOrderEditsAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
             .Accepts<SaveOrderEditsRequest>("application/json")
@@ -74,9 +70,6 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // US-13 a US-16: el visto bueno de quien revisa. Ruta propia y no un campo del POST de
-        // conversión: es otra persona, en otro momento. Política propia y no OrderManage, que
-        // tiene la asesora -- ver ApproveOrderHandler.
         collection.MapPost("/{orderId:guid}/approve", ApproveOrderAsync)
             .RequireAuthorization(OrdersPermissions.OrderApprove)
             .Produces<OrderResponse>()
@@ -84,8 +77,6 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // Anular (spec 2026-09-16): desde Pending o Approved, con motivo obligatorio. Política
-        // propia y no OrderManage — ver CancelOrderHandler.
         collection.MapPost("/{orderId:guid}/cancel", CancelOrderAsync)
             .RequireAuthorization(OrdersPermissions.OrderCancel)
             .Accepts<CancelOrderRequest>("application/json")
@@ -94,9 +85,6 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // Facturar (spec 2026-10-05): sólo un cambio de estado, sin cuerpo. QEP no emite la
-        // factura; deja constancia de quién la marcó y cuándo. Política propia y no OrderApprove
-        // — ver InvoiceOrderHandler.
         collection.MapPost("/{orderId:guid}/invoice", InvoiceOrderAsync)
             .RequireAuthorization(OrdersPermissions.OrderInvoice)
             .Produces<OrderResponse>()
@@ -104,7 +92,6 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // Revertir la facturación (decisión 4): vuelve a Approved. Mismo permiso que facturar.
         collection.MapPost("/{orderId:guid}/uninvoice", RevertOrderInvoicingAsync)
             .RequireAuthorization(OrdersPermissions.OrderInvoice)
             .Produces<OrderResponse>()
@@ -112,10 +99,6 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // Cargar lo que faltó al convertir, lo que se terminó de cobrar después, o corregir el
-        // monto de un comprobante ya cargado (a pedido, 2026-09): "Aprobar pedido" se bloquea
-        // mientras el pago no está completo o correcto, y esto es la única forma de destrabarlo
-        // sin recrear el pedido entero. Sólo sobre Pending — ver Order.AddPaymentProofs.
         collection.MapPost("/{orderId:guid}/proofs", AddOrderPaymentProofsAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
             .Accepts<AddOrderPaymentProofsRequest>("application/json")
@@ -124,9 +107,6 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // Quitar un comprobante cargado por error (a pedido, 2026-09-15) — distinto de corregirlo
-        // (eso sigue siendo POST /proofs con `updatedProofs`). Sólo sobre Pending — ver
-        // Order.RemovePaymentProof.
         collection.MapDelete("/{orderId:guid}/proofs/{proofId:guid}", RemoveOrderPaymentProofAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
             .Produces<OrderResponse>()
@@ -134,9 +114,6 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // "Editar" un pedido pendiente para sumarle productos que faltaron al convertir (a
-        // pedido, 2026-09) — sólo mientras Pending, ver AddOrderItemsHandler. Devuelve el pedido y
-        // la cotización juntos, igual que GetOrderByIdAsync: el total nuevo vive en la segunda.
         collection.MapPost("/{orderId:guid}/items", AddOrderItemsAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
             .Accepts<AddOrderItemsRequest>("application/json")
@@ -149,19 +126,18 @@ public static class OrderEndpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/quotations/{quotationId:guid}/order")
             .WithTags("Orders");
 
+        // Se conserva por compatibilidad (plan 2026-10-15, D-O7): responde el mismo detalle que
+        // GET /orders/{id}.
         group.MapGet("/", GetOrderAsync)
             .RequireAuthorization(OrdersPermissions.OrderRead)
-            .Produces<OrderResponse>()
+            .Produces<OrderDetailResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
-        // US-13 a US-16: el asistente de conversión completo en un solo llamado -- estado de
-        // pago, notas y comprobantes (ya subidos a Storage por fuera de este request, US-14) --
-        // que aprueba la cotización y crea el pedido en la misma transacción.
         group.MapPost("/", ConvertQuotationToOrderAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
             .Accepts<ConvertQuotationToOrderRequest>("application/json")
-            .Produces<OrderResponse>(StatusCodes.Status201Created)
+            .Produces<OrderDetailResponse>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -181,6 +157,7 @@ public static class OrderEndpoints
         DateOnly? convertedTo = null,
         string? clientCuc = null,
         string? orderNumber = null,
+        string? source = null,
         int page = 1,
         int pageSize = QuotationPaging.DefaultPageSize,
         string? timeZone = null)
@@ -188,9 +165,8 @@ public static class OrderEndpoints
         var result = await dispatcher.QueryAsync(
             new ListOrdersQuery(
                 tenantId, clientId, advisorId, status, paymentStatus, convertedFrom, convertedTo,
-                clientCuc, orderNumber, page, pageSize, timeZone),
+                clientCuc, orderNumber, source, page, pageSize, timeZone),
             cancellationToken);
-
         return Results.Ok(new OrdersPageResponse(
             result.Items.Select(ToListItemResponse).ToArray(),
             result.Total,
@@ -210,14 +186,14 @@ public static class OrderEndpoints
         DateOnly? convertedTo = null,
         string? clientCuc = null,
         string? orderNumber = null,
+        string? source = null,
         string? timeZone = null)
     {
         var accepted = await dispatcher.SendAsync(
             new ExportOrdersCommand(
                 tenantId, clientId, advisorId, status, paymentStatus, convertedFrom, convertedTo,
-                clientCuc, orderNumber, timeZone),
+                clientCuc, orderNumber, source, timeZone),
             cancellationToken);
-
         return Results.Accepted(value: new ExportJobAcceptedResponse(accepted.JobId, accepted.RequestedAt));
     }
 
@@ -225,17 +201,12 @@ public static class OrderEndpoints
         Guid tenantId,
         Guid orderId,
         IRequestDispatcher dispatcher,
-        IQuotationResponseComposer composer,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var detail = await dispatcher.QueryAsync(
             new GetOrderByIdQuery(tenantId, orderId), cancellationToken);
-
-        // La cotizacion se compone igual que en su propio detalle: el mismo composer, para que
-        // las dos pantallas no puedan mostrar cosas distintas de la misma cotizacion.
-        return Results.Ok(new OrderDetailResponse(
-            ToResponse(detail.Order),
-            await composer.ComposeAsync(tenantId, detail.Quotation, cancellationToken)));
+        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
 
     private static OrderListItemResponse ToListItemResponse(OrderListItemDto order) => new(
@@ -252,18 +223,20 @@ public static class OrderEndpoints
         order.PaymentMethod,
         order.ConvertedAt,
         order.Currency,
-        order.Total);
+        order.Total,
+        order.Source,
+        order.ExternalReference);
 
     private static async Task<IResult> GetOrderAsync(
         Guid tenantId,
         Guid quotationId,
         IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
-        var order = await dispatcher.QueryAsync(
+        var detail = await dispatcher.QueryAsync(
             new GetOrderQuery(tenantId, quotationId), cancellationToken);
-
-        return Results.Ok(ToResponse(order));
+        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
 
     private static async Task<IResult> ConvertQuotationToOrderAsync(
@@ -271,18 +244,18 @@ public static class OrderEndpoints
         Guid quotationId,
         ConvertQuotationToOrderRequest request,
         IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
-        var order = await dispatcher.SendAsync(
+        // Spec 2026-10-15 §8: responde el detalle, no sólo el pedido. La pantalla de conversión
+        // dibuja el resumen (líneas, cliente, cotización de origen) sin pedir nada después.
+        var detail = await dispatcher.SendAsync(
             new ConvertQuotationToOrderCommand(
                 tenantId, quotationId, request.PaymentStatus, request.Notes, request.PaymentProofs),
             cancellationToken);
-
-        // El pedido tiene id propio desde SALE-01: el Location apunta a su recurso canónico bajo
-        // /orders, no a la cotización que lo originó.
         return Results.Created(
-            $"/api/v1/tenants/{tenantId}/orders/{order.Id}",
-            ToResponse(order));
+            $"/api/v1/tenants/{tenantId}/orders/{detail.Order.Id}",
+            await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
 
     private static async Task<IResult> AddOrderPaymentProofsAsync(
@@ -301,8 +274,7 @@ public static class OrderEndpoints
                 request.PaymentProofs,
                 request.UpdatedProofs ?? []),
             cancellationToken);
-
-        return Results.Ok(ToResponse(order));
+        return Results.Ok(OrderResponses.ToResponse(order));
     }
 
     private static async Task<IResult> RemoveOrderPaymentProofAsync(
@@ -315,31 +287,63 @@ public static class OrderEndpoints
         var order = await dispatcher.SendAsync(
             new RemoveOrderPaymentProofCommand(tenantId, orderId, proofId),
             cancellationToken);
-
-        return Results.Ok(ToResponse(order));
+        return Results.Ok(OrderResponses.ToResponse(order));
     }
+
+    private static async Task<IResult> CreateOrderAsync(
+        Guid tenantId,
+        CreateOrderRequest request,
+        IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var detail = await dispatcher.SendAsync(
+            new CreateOrderCommand(
+                tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
+                request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
+                request.PaymentStatus, request.PaymentProofs),
+            cancellationToken);
+        return Results.Created(
+            $"/api/v1/tenants/{tenantId}/orders/{detail.Order.Id}",
+            await composer.ComposeAsync(tenantId, detail, cancellationToken));
+    }
+
+    private static async Task<IResult> PreviewOrderAsync(
+        Guid tenantId,
+        CreateOrderRequest request,
+        IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var detail = await dispatcher.QueryAsync(
+            new PreviewOrderQuery(
+                tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
+                request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
+                request.PaymentStatus, request.PaymentProofs),
+            cancellationToken);
+        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
+    }
+
+    private static OrderItemAddition[] ToAdditions(IReadOnlyList<OrderEditItemRequest>? items) =>
+        (items ?? [])
+            .Select(item => new OrderItemAddition(item.ProductId, item.Quantity))
+            .ToArray();
 
     private static async Task<IResult> AddOrderItemsAsync(
         Guid tenantId,
         Guid orderId,
         AddOrderItemsRequest request,
         IRequestDispatcher dispatcher,
-        IQuotationResponseComposer composer,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var toAdd = request.ToAdd
             .Select(item => new OrderItemAddition(item.ProductId, item.Quantity))
             .ToArray();
-
-        var result = await dispatcher.SendAsync(
+        var detail = await dispatcher.SendAsync(
             new AddOrderItemsCommand(tenantId, orderId, toAdd),
             cancellationToken);
-
-        // Misma composición que GetOrderByIdAsync: el mismo composer, para que las dos pantallas
-        // no puedan mostrar cosas distintas de la misma cotización.
-        return Results.Ok(new OrderDetailResponse(
-            ToResponse(result.Order),
-            await composer.ComposeAsync(tenantId, result.Quotation, cancellationToken)));
+        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
 
     private static async Task<IResult> SaveOrderEditsAsync(
@@ -347,7 +351,7 @@ public static class OrderEndpoints
         Guid orderId,
         SaveOrderEditsRequest request,
         IRequestDispatcher dispatcher,
-        IQuotationResponseComposer composer,
+        IOrderResponseComposer composer,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
@@ -364,11 +368,8 @@ public static class OrderEndpoints
                 tenantId, orderId, expectedVersion, items, proofs, request.Notes, request.GlobalScaleFloor,
                 request.IsRetail),
             cancellationToken);
-
         httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
-        return Results.Ok(new OrderDetailResponse(
-            ToResponse(detail.Order),
-            await composer.ComposeAsync(tenantId, detail.Quotation, cancellationToken)));
+        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
 
     private static async Task<IResult> PreviewOrderEditsAsync(
@@ -376,7 +377,7 @@ public static class OrderEndpoints
         Guid orderId,
         SaveOrderEditsRequest request,
         IRequestDispatcher dispatcher,
-        IQuotationResponseComposer composer,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var (items, proofs) = ToEdits(request);
@@ -384,13 +385,9 @@ public static class OrderEndpoints
             new PreviewOrderEditsQuery(
                 tenantId, orderId, items, proofs, request.Notes, request.GlobalScaleFloor, request.IsRetail),
             cancellationToken);
-
-        return Results.Ok(new OrderDetailResponse(
-            ToResponse(detail.Order),
-            await composer.ComposeAsync(tenantId, detail.Quotation, cancellationToken)));
+        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
 
-    // Ausentes o null equivalen a vacíos: así el validador y los handlers nunca ven colecciones null.
     private static (IReadOnlyList<OrderItemAddition> Items, OrderEditProofs Proofs) ToEdits(
         SaveOrderEditsRequest request) =>
         (
@@ -413,8 +410,7 @@ public static class OrderEndpoints
         var order = await dispatcher.SendAsync(
             new ApproveOrderCommand(tenantId, orderId),
             cancellationToken);
-
-        return Results.Ok(ToResponse(order));
+        return Results.Ok(OrderResponses.ToResponse(order));
     }
 
     private static async Task<IResult> CancelOrderAsync(
@@ -427,8 +423,7 @@ public static class OrderEndpoints
         var order = await dispatcher.SendAsync(
             new CancelOrderCommand(tenantId, orderId, request.Reason),
             cancellationToken);
-
-        return Results.Ok(ToResponse(order));
+        return Results.Ok(OrderResponses.ToResponse(order));
     }
 
     private static async Task<IResult> InvoiceOrderAsync(
@@ -440,8 +435,7 @@ public static class OrderEndpoints
         var order = await dispatcher.SendAsync(
             new InvoiceOrderCommand(tenantId, orderId),
             cancellationToken);
-
-        return Results.Ok(ToResponse(order));
+        return Results.Ok(OrderResponses.ToResponse(order));
     }
 
     private static async Task<IResult> RevertOrderInvoicingAsync(
@@ -453,37 +447,10 @@ public static class OrderEndpoints
         var order = await dispatcher.SendAsync(
             new RevertOrderInvoicingCommand(tenantId, orderId),
             cancellationToken);
-
-        return Results.Ok(ToResponse(order));
+        return Results.Ok(OrderResponses.ToResponse(order));
     }
 
-    private static OrderResponse ToResponse(OrderDto order) => new(
-        order.Id,
-        order.OrderNumber,
-        order.QuotationId,
-        order.Status,
-        order.PaymentStatus,
-        order.Notes,
-        order.ConvertedAt,
-        order.ConvertedBy,
-        order.ApprovedAt,
-        order.ApprovedBy,
-        order.CancelledAt,
-        order.CancelledBy,
-        order.CancellationReason,
-        order.InvoicedAt,
-        order.InvoicedBy,
-        order.RitualCollectionSyncId,
-        order.CreatedAt,
-        order.UpdatedAt,
-        order.Version,
-        order.PaymentProofs
-            .Select(proof => new OrderPaymentProofResponse(
-                proof.Id, proof.FileId, proof.Amount, proof.UploadedAt, proof.PaidOn))
-            .ToArray());
-
-    // Copia de RoleEndpoints.TryParseVersion (src/Api): este proyecto no puede referenciar Api, y
-    // TenantSettingsEndpoints y MembershipEndpoints ya llevan la suya. Acepta "3", 3 y W/"3".
+    // Acepta un ETag fuerte o débil, con o sin comillas: el frontend manda lo que recibió.
     private static bool TryParseVersion(string? etag, out long version)
     {
         version = 0;

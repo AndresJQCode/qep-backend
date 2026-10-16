@@ -37,6 +37,8 @@ public sealed class PipelineDbContext(DbContextOptions<PipelineDbContext> option
 
     public DbSet<DealQuotation> DealQuotations => Set<DealQuotation>();
 
+    public DbSet<DealOrder> DealOrders => Set<DealOrder>();
+
     public DbSet<PipelineReason> Reasons => Set<PipelineReason>();
 
     public DbSet<TriageDecision> TriageDecisions => Set<TriageDecision>();
@@ -54,6 +56,7 @@ public sealed class PipelineDbContext(DbContextOptions<PipelineDbContext> option
         ConfigureDeal(modelBuilder);
         ConfigureHistory(modelBuilder);
         ConfigureDealQuotation(modelBuilder);
+        ConfigureDealOrder(modelBuilder);
         ConfigureReason(modelBuilder);
         ConfigureTriageDecision(modelBuilder);
         ConfigureInbox(modelBuilder);
@@ -108,7 +111,7 @@ public sealed class PipelineDbContext(DbContextOptions<PipelineDbContext> option
         var deal = modelBuilder.Entity<Deal>();
         deal.ToTable("deals", Schema, table =>
         {
-            table.HasCheckConstraint("CK_deals_source", "source IN ('Manual','Conversation','Quotation')");
+            table.HasCheckConstraint("CK_deals_source", "source IN ('Manual','Conversation','Quotation','Order')");
             table.HasCheckConstraint("CK_deals_amount", "amount IS NULL OR amount >= 0");
         });
         deal.HasKey(value => value.Id);
@@ -196,6 +199,26 @@ public sealed class PipelineDbContext(DbContextOptions<PipelineDbContext> option
         quotation.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         quotation.HasIndex(value => new { value.TenantId, value.DealId }, "IX_deal_quotations_deal");
         quotation.HasIndex(value => new { value.TenantId, value.CustomerId }, "IX_deal_quotations_customer");
+    }
+
+    private static void ConfigureDealOrder(ModelBuilder modelBuilder)
+    {
+        var order = modelBuilder.Entity<DealOrder>();
+        order.ToTable("deal_orders", Schema);
+        // Spec 2026-10-15 §7: la clave es la idempotencia de order.created.
+        order.HasKey(value => new { value.TenantId, value.OrderId });
+        order.Property(value => value.TenantId).HasColumnName("tenant_id");
+        order.Property(value => value.OrderId).HasColumnName("order_id");
+        order.Property(value => value.DealId).HasColumnName("deal_id");
+        order.Property(value => value.CustomerId).HasColumnName("customer_id");
+        order.Property(value => value.OrderNumber).HasColumnName("order_number").HasMaxLength(DealOrder.NumberMaxLength);
+        order.Property(value => value.Total).HasColumnName("total").HasPrecision(14, 2);
+        order.Property(value => value.Currency).HasColumnName("currency").HasMaxLength(3);
+        order.Property(value => value.Source).HasColumnName("source").HasMaxLength(DealOrder.SourceMaxLength);
+        order.Property(value => value.CancelledAt).HasColumnName("cancelled_at");
+        order.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        order.HasIndex(value => new { value.TenantId, value.DealId }, "IX_deal_orders_deal");
+        order.HasIndex(value => new { value.TenantId, value.CustomerId }, "IX_deal_orders_customer");
     }
 
     private static void ConfigureReason(ModelBuilder modelBuilder)

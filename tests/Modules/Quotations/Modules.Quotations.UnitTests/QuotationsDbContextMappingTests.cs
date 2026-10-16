@@ -145,7 +145,8 @@ public sealed class QuotationsDbContextMappingTests
         Assert.Equal("order_number", order.FindProperty(nameof(Order.OrderNumber))!.GetColumnName());
         Assert.Equal("PK_orders", order.FindPrimaryKey()!.GetName());
         Assert.Equal(
-            ["IX_orders_quotation", "IX_orders_tenant", "IX_orders_tenant_converted_at_number", "IX_orders_tenant_number"],
+            ["IX_orders_quotation", "IX_orders_tenant", "IX_orders_tenant_advisor", "IX_orders_tenant_client",
+             "IX_orders_tenant_converted_at_number", "IX_orders_tenant_number", "IX_orders_tenant_source"],
             order.GetIndexes().Select(index => index.GetDatabaseName()!).Order(StringComparer.Ordinal));
         Assert.Equal(
             "FK_orders_quotations_quotation_id",
@@ -165,6 +166,35 @@ public sealed class QuotationsDbContextMappingTests
         var counter = model.FindEntityType(typeof(OrderNumberCounter))!;
         Assert.Equal("order_number_counters", counter.GetTableName());
         Assert.Equal("PK_order_number_counters", counter.FindPrimaryKey()!.GetName());
+    }
+
+    /// <summary>
+    /// Spec 2026-10-15 §4 y §9: el pedido tiene cabecera, líneas, partes e historial propios;
+    /// `quotation_id` es opcional con índice único parcial, y la cuenta de cobro es un owned
+    /// obligatorio. Contra el modelo de diseño, por el mismo motivo que los casos de arriba.
+    /// </summary>
+    [Fact]
+    public void OrdersOwnTheirHeaderLinesPartiesAndHistory()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var order = model.FindEntityType(typeof(Order))!;
+
+        Assert.Equal("client_id", order.FindProperty(nameof(Order.ClientId))!.GetColumnName());
+        Assert.Equal("source", order.FindProperty(nameof(Order.Source))!.GetColumnName());
+        Assert.True(order.FindProperty(nameof(Order.QuotationId))!.IsNullable);
+        Assert.Equal("net_total", order.FindProperty(nameof(Order.NetTotal))!.GetColumnName());
+        Assert.Equal("text", order.FindProperty(nameof(Order.Notes))!.GetColumnType());
+        var quotationIndex = order.GetIndexes().Single(index => index.GetDatabaseName() == "IX_orders_quotation");
+        Assert.True(quotationIndex.IsUnique);
+        Assert.Equal("quotation_id IS NOT NULL", quotationIndex.GetFilter());
+
+        Assert.Equal("order_items", model.FindEntityType(typeof(OrderItem))!.GetTableName());
+        Assert.Equal("order_parties", model.FindEntityType(typeof(OrderParty))!.GetTableName());
+        Assert.Equal("order_history", model.FindEntityType(typeof(OrderHistoryEntry))!.GetTableName());
+        var billing = order.FindNavigation(nameof(Order.BillingAccount))!;
+        Assert.True(billing.ForeignKey.IsOwnership);
+        Assert.True(billing.ForeignKey.IsRequiredDependent);
     }
 
     /// <summary>

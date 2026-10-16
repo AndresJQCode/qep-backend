@@ -247,4 +247,23 @@ public sealed class OrdersReportApiTests
 
         Assert.Equal(reports.Select(report => $"{report}: 404"), answered);
     }
+
+    // Spec 2026-10-15: el reporte lee del pedido, así que uno manual entra con su origen y sin cotización.
+    [Fact]
+    public async Task TheReportListsAManualOrderWithoutQuotation()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var order = await CreateManualOrderAsync(client, tenant.TenantId);
+
+        var page = await client.GetFromJsonAsync<ReportPageDto<OrdersReportItem>>(
+            $"{ReportsUrl(tenant.TenantId)}/orders", TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(page!.Items, item => item.OrderNumber == order.OrderNumber);
+        Assert.Equal(("Manual", (Guid?)null, (string?)null), (row.Source, row.QuotationId, row.QuotationNumber));
+        Assert.Equal((order.Subtotal, order.TaxAmount, order.Total), (row.Subtotal, row.TaxAmount, row.Total));
+        Assert.True(row.Total > 0);
+    }
 }

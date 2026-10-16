@@ -157,6 +157,24 @@ public sealed class ExportLoadSeedTests
               AND item.tax_amount <> round(
                       (item.subtotal + item.tax_amount) * item.tax_percentage / (100 + item.tax_percentage), 2)
             """));
+        // Spec 2026-10-15: el pedido tiene sus propias líneas e importes, copiados de su cotización.
+        Assert.Equal((long)result.Orders * ExportLoadSeeder.ItemsPerQuotation, await ScalarAsync<long>(connectionString, """
+            SELECT count(*) FROM quotations.order_items AS item
+            JOIN quotations.orders AS o ON o.id = item.order_id
+            WHERE o.tenant_id = @tenant
+            """));
+        Assert.Equal(0L, await ScalarAsync<long>(connectionString, """
+            SELECT count(*) FROM quotations.orders AS o
+            JOIN quotations.quotations AS quotation ON quotation.id = o.quotation_id
+            WHERE o.tenant_id = @tenant
+              AND (o.source <> 'Quotation'
+                   OR o.client_id <> quotation.client_id
+                   OR o.total <> quotation.total
+                   OR o.total <> (
+                       SELECT sum(item.subtotal + item.tax_amount)
+                       FROM quotations.order_items AS item
+                       WHERE item.order_id = o.id))
+            """));
         // Ni outbox, ni auditoría, ni historial: el SQL masivo no pasa por los handlers.
         Assert.Equal(outboxBefore, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM platform.outbox_messages"));
         Assert.Equal(0L, await ScalarAsync<long>(

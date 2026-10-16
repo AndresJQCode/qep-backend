@@ -12,10 +12,19 @@ internal sealed class QuotationAuditPublisher(QuotationsDbContext dbContext) : I
 
     public void Publish(
         Guid tenantId, Guid actorId, string action, string resourceId,
+        string outcome, DateTimeOffset occurredAt) =>
+        Add(tenantId, actorId, "Human", action, resourceId, outcome, occurredAt);
+
+    public void PublishByIntegration(
+        Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+        Add(tenantId, Guid.Empty, "Integration", action, resourceId, outcome, occurredAt);
+
+    private void Add(
+        Guid tenantId, Guid actorId, string actorType, string action, string resourceId,
         string outcome, DateTimeOffset occurredAt)
     {
         var payload = JsonSerializer.Serialize(new AuditEventPayload(
-            tenantId, actorId, "Human", action, "quotation", resourceId, outcome, [], "quotations", occurredAt));
+            tenantId, actorId, actorType, action, "quotation", resourceId, outcome, [], "quotations", occurredAt));
         dbContext.Outbox.Add(new QuotationsOutboxMessage
         {
             Id = Guid.CreateVersion7(),

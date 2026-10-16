@@ -99,8 +99,8 @@ public sealed class QuotationGlobalScaleFloorTests
         Assert.Equal("quotation.global_scale.floor_invalid", error.Code);
     }
 
-    // Una cotizacion convertida no se edita por la puerta normal: para eso esta el mutador propio
-    // del pedido, igual que AddItemAfterConversion.
+    // Una cotizacion convertida no se edita por ninguna puerta (spec 2026-10-15 §4.5): el piso del
+    // pedido vive en el pedido.
     [Fact]
     public void AConvertedQuotationRejectsTheOrdinarySetter()
     {
@@ -110,16 +110,6 @@ public sealed class QuotationGlobalScaleFloorTests
             () => quotation.SetGlobalScaleFloor(1000, AdvisorId, Now.AddHours(3)));
 
         Assert.Equal("quotation.quotation.not_editable", error.Code);
-    }
-
-    [Fact]
-    public void AConvertedQuotationAcceptsTheAfterConversionSetter()
-    {
-        var quotation = ConvertedQuotation();
-
-        quotation.SetGlobalScaleFloorAfterConversion(1000, AdvisorId, Now.AddHours(3));
-
-        Assert.Equal(1000, quotation.GlobalScaleFloor);
     }
 
     // El recalculo baja descuento y origen juntos: aplicar uno sin el otro deja la linea diciendo

@@ -41,17 +41,32 @@ internal static class QuotationEventPayloads
         }
     }
 
-    public static bool TryReadOrderCancelled(string json, [NotNullWhen(true)] out OrderCancelledFact? fact)
+    /// <summary>Spec 2026-10-15 §7: <c>quotationId</c> es <c>null</c> en un pedido manual o de una integración.</summary>
+    public static bool TryReadOrderCreated(string json, [NotNullWhen(true)] out OrderFact? fact)
     {
         fact = null;
         try
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
-            fact = new OrderCancelledFact(
+            var number = root.GetProperty("orderNumber").GetString();
+            var currency = root.GetProperty("currency").GetString();
+            var source = root.GetProperty("source").GetString();
+            if (string.IsNullOrWhiteSpace(number) || string.IsNullOrWhiteSpace(currency) || string.IsNullOrWhiteSpace(source))
+            {
+                return false;
+            }
+
+            fact = new OrderFact(
                 root.GetProperty("tenantId").GetGuid(),
                 root.GetProperty("orderId").GetGuid(),
-                root.GetProperty("quotationId").GetGuid());
+                number,
+                root.GetProperty("clientId").GetGuid(),
+                root.GetProperty("advisorMemberId").GetGuid(),
+                root.GetProperty("total").GetDecimal(),
+                currency,
+                source,
+                OptionalGuid(root, "quotationId"));
             return true;
         }
         catch (Exception exception) when (exception is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
@@ -59,4 +74,29 @@ internal static class QuotationEventPayloads
             return false;
         }
     }
+
+    /// <summary>Un mensaje anterior al spec 2026-10-15 no trae <c>source</c>: todo pedido de entonces venía de una cotización.</summary>
+    public static bool TryReadOrderCancelled(string json, [NotNullWhen(true)] out OrderCancelledFact? fact)
+    {
+        fact = null;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            var source = root.TryGetProperty("source", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+            fact = new OrderCancelledFact(
+                root.GetProperty("tenantId").GetGuid(),
+                root.GetProperty("orderId").GetGuid(),
+                OptionalGuid(root, "quotationId"),
+                string.IsNullOrWhiteSpace(source) ? "Quotation" : source);
+            return true;
+        }
+        catch (Exception exception) when (exception is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
+        {
+            return false;
+        }
+    }
+
+    private static Guid? OptionalGuid(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetGuid() : null;
 }

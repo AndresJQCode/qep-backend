@@ -3,11 +3,6 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
-/// <summary>
-/// Lo que el listado de pedidos y su Excel comparten fuera de la consulta: cómo se leen los filtros
-/// que llegan como texto y cómo se completa cada fila. Mismo papel que
-/// <see cref="QuotationListing"/>: la tabla y el archivo no pueden empezar a contar cosas distintas.
-/// </summary>
 internal static class OrderListing
 {
     /// <summary>
@@ -71,8 +66,23 @@ internal static class OrderListing
                 $"'{paymentStatus}' is not a valid order payment status.");
     }
 
-    // Sin término, null ("sin filtro"); con término que no resolvió a ningún cliente, vacío, y la
-    // búsqueda ya sabe que no hay nada que traer.
+    /// <summary>Spec 2026-10-15 §6.1: el filtro por origen del pedido; sin valor, todos.</summary>
+    public static OrderSource? ParseSource(string? source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return null;
+        }
+
+        return Enum.TryParse<OrderSource>(source, ignoreCase: true, out var parsed)
+            ? parsed
+            : throw new QuotationsDomainException(
+                "order.order.source_invalid",
+                $"'{source}' is not a valid order source.");
+    }
+
+    // El CUC no vive en el pedido: se resuelve a ids de cliente contra Customers y recién entonces se
+    // filtra. Sin término no se consulta nada.
     public static async Task<IReadOnlyCollection<Guid>?> ResolveClientIdsByCucAsync(
         IQuotationCustomerLookup customerLookup,
         Guid tenantId,
@@ -88,35 +98,38 @@ internal static class OrderListing
         return matchedIds.ToArray();
     }
 
+    /// <summary>Las filas de la lista: cliente y asesor del pedido resueltos en una consulta cada uno,
+    /// y el número de la cotización de origen para las que la tienen.</summary>
     public static async Task<IReadOnlyList<OrderListItemDto>> ToListItemsAsync(
         IQuotationCustomerLookup customerLookup,
         IQuotationAdvisorLookup advisorLookup,
+        IQuotationRepository quotationRepository,
         Guid tenantId,
-        IReadOnlyList<OrderWithQuotation> rows,
+        IReadOnlyList<Order> rows,
         CancellationToken cancellationToken)
     {
-        // Una ida para los clientes y otra para las asesoras, con los ids sin repetir.
-        var clientNames = rows.Count == 0
-            ? new Dictionary<Guid, string>()
-            : await customerLookup.FindNamesAsync(
-                tenantId,
-                rows.Select(row => row.Quotation.ClientId).Distinct().ToArray(),
-                cancellationToken);
+        if (rows.Count == 0)
+        {
+            return [];
+        }
 
-        // El nombre con respaldo al correo (QuotationAdvisor.Label), igual que QuotationListing: la
-        // tabla y el Excel de pedidos presentan a la asesora como los de cotizaciones (spec
-        // 2026-09-11, D1, nota del 2026-09-15).
-        var advisors = rows.Count == 0
-            ? new Dictionary<Guid, QuotationAdvisor>()
-            : await advisorLookup.FindAsync(
-                tenantId,
-                rows.Select(row => row.Quotation.AdvisorId.Value).Distinct().ToArray(),
-                cancellationToken);
-
+        var clientNames = await customerLookup.FindNamesAsync(
+            tenantId, rows.Select(row => row.ClientId).Distinct().ToArray(), cancellationToken);
+        var advisors = await advisorLookup.FindAsync(
+            tenantId, rows.Select(row => row.AdvisorId.Value).Distinct().ToArray(), cancellationToken);
+        var quotationIds = rows
+            .Where(row => row.QuotationId is not null)
+            .Select(row => row.QuotationId!.Value)
+            .Distinct()
+            .ToArray();
+        var quotationNumbers = quotationIds.Length == 0
+            ? new Dictionary<QuotationId, string>()
+            : await quotationRepository.FindNumbersAsync(tenantId, quotationIds, cancellationToken);
         return rows
             .Select(row => row.ToListItemDto(
-                clientNames.GetValueOrDefault(row.Quotation.ClientId),
-                advisors.GetValueOrDefault(row.Quotation.AdvisorId.Value)?.Label))
+                row.QuotationId is { } quotationId ? quotationNumbers.GetValueOrDefault(quotationId) : null,
+                clientNames.GetValueOrDefault(row.ClientId),
+                advisors.GetValueOrDefault(row.AdvisorId.Value)?.Label))
             .ToArray();
     }
 }

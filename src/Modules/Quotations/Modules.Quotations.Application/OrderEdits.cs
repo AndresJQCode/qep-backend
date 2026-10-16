@@ -91,9 +91,7 @@ public abstract class OrderEditsValidator<TEdits> : AbstractValidator<TEdits>
                     .Select(update => update.NewFileId!.Value))))
             .WithMessage("The same file cannot be attached more than once in a request.");
 
-        RuleFor(edits => edits.Notes)
-            .MaximumLength(Order.NotesMaxLength)
-            .When(edits => edits.Notes is not null);
+        // Las notas no tienen tope (plan 2026-10-15, P2): heredan las de la cotización.
     }
 
     private static bool HasDuplicates<TValue>(IEnumerable<TValue> values)

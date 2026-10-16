@@ -24,7 +24,7 @@ BEGIN
 END
 $$;
 
--- orders -> quotations es RESTRICT: primero los pedidos. Sus comprobantes caen en cascada.
+-- orders -> quotations es RESTRICT: primero los pedidos. Sus líneas, partes, historial y comprobantes caen en cascada.
 DELETE FROM quotations.orders WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
 -- Ítems, partes, historial y PDFs caen en cascada con la cotización.
 DELETE FROM quotations.quotations WHERE tenant_id = '01900000-0000-7000-8000-000000000004';

@@ -58,7 +58,7 @@ public sealed class QuotationProductSnapshotApiTests
         await RenameProductAsync(client, tenantId, productId, "Vela renombrada", "VR-NUEVO");
 
         var detail = await GetOrderDetailAsync(client, tenantId, order.Id);
-        Assert.Equal(sentCode, Assert.Single(detail.Quotation.Items).ProductCode);
+        Assert.Equal(sentCode, Assert.Single(detail.Items).ProductCode);
         var sheet = await ExportOrdersAsync(client, factory, tenantId);
         Assert.Equal("Cod. Producto", sheet.Rows[0][1]);
         Assert.Equal(sentCode, sheet.Rows[1][1]);
@@ -89,7 +89,7 @@ public sealed class QuotationProductSnapshotApiTests
         await RenameProductAsync(client, tenantId, productId, "Vela renombrada", "VR-NUEVO");
 
         var detail = await GetOrderDetailAsync(client, tenantId, order.Id);
-        Assert.Equal(draftCode, Assert.Single(detail.Quotation.Items).ProductCode);
+        Assert.Equal(draftCode, Assert.Single(detail.Items).ProductCode);
     }
 
     // Una línea que se le suma al pedido pendiente no tiene envío posterior: se congela al sumarla.
@@ -109,13 +109,13 @@ public sealed class QuotationProductSnapshotApiTests
             $"{OrdersUrl(tenantId)}/{order.Id}/items",
             new AddOrderItemsRequest([new OrderItemAdditionRequest(addedProductId, 1m)]),
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
-        var addedCode = (await GetOrderDetailAsync(client, tenantId, order.Id)).Quotation.Items
+        var addedCode = (await GetOrderDetailAsync(client, tenantId, order.Id)).Items
             .Single(item => item.ProductId == addedProductId).ProductCode;
 
         await RenameProductAsync(client, tenantId, addedProductId, "Otra renombrada", "OR-NUEVO", baseCop: 50_000m);
 
         var detail = await GetOrderDetailAsync(client, tenantId, order.Id);
-        Assert.Equal(addedCode, detail.Quotation.Items.Single(item => item.ProductId == addedProductId).ProductCode);
+        Assert.Equal(addedCode, detail.Items.Single(item => item.ProductId == addedProductId).ProductCode);
     }
 
     private static async Task<QuotationResponse> GetQuotationAsync(
@@ -143,7 +143,7 @@ public sealed class QuotationProductSnapshotApiTests
             new ConvertQuotationToOrderRequest("PaymentPending", null, []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
-        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
         Assert.NotNull(order);
         return order;
     }
