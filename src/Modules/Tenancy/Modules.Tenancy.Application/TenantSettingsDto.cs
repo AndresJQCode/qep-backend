@@ -10,6 +10,7 @@ public sealed record TenantSettingsDto(
     string DateFormat,
     string DefaultCurrency,
     string NumberFormat,
+    string Country,
     long Version,
     TenantLogoDto? Logo);
 

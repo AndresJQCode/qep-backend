@@ -106,6 +106,7 @@ public static class TenantSettingsEndpoints
                 request.DateFormat,
                 defaultCurrency,
                 numberFormat,
+                request.Country,
                 expectedVersion,
                 httpContext.TraceIdentifier),
             cancellationToken);
@@ -155,6 +156,7 @@ public static class TenantSettingsEndpoints
             settings.DateFormat,
             settings.DefaultCurrency,
             settings.NumberFormat,
+            settings.Country,
             settings.Version,
             settings.Logo is { } logo ? new TenantLogoResponse(logo.FileId, logo.Url) : null));
     }
@@ -166,7 +168,8 @@ public sealed record UpdateTenantSettingsRequest(
     string TimeZone,
     string DateFormat,
     string? DefaultCurrency,
-    string? NumberFormat);
+    string? NumberFormat,
+    string? Country);
 
 public sealed record SetTenantLogoRequest(Guid FileId);
 
@@ -184,5 +187,8 @@ public sealed record TenantSettingsResponse(
     string DateFormat,
     string DefaultCurrency,
     string NumberFormat,
+    /// <summary>ISO-3166-1 alpha-2. El frontend tiene la lista de nombres (la misma del alta de
+    /// clientes); el backend sólo guarda el código.</summary>
+    string Country,
     long Version,
     TenantLogoResponse? Logo);

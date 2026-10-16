@@ -19,6 +19,7 @@ public sealed class TenantTests
             "MM/dd/yyyy",
             tenant.DefaultCurrency,
             tenant.NumberFormat,
+            tenant.Country,
             CreatedAt.AddMinutes(5));
 
         Assert.True(changed);
@@ -46,7 +47,7 @@ public sealed class TenantTests
 
         var changed = tenant.UpdateSettings(
             tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
-            "usd", "1,234.56", CreatedAt.AddMinutes(5));
+            "usd", "1,234.56", tenant.Country, CreatedAt.AddMinutes(5));
 
         Assert.True(changed);
         Assert.Equal("USD", tenant.DefaultCurrency);
@@ -62,10 +63,54 @@ public sealed class TenantTests
 
         var exception = Assert.Throws<TenantDomainException>(() => tenant.UpdateSettings(
             tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
-            "US", tenant.NumberFormat, CreatedAt.AddMinutes(5)));
+            "US", tenant.NumberFormat, tenant.Country, CreatedAt.AddMinutes(5)));
 
         Assert.Equal("tenancy.settings.default_currency.invalid", exception.Code);
         Assert.Equal("COP", tenant.DefaultCurrency);
+        Assert.Equal(1, tenant.Version);
+    }
+
+    // Los tenants que ya existían antes del país son colombianos: la migración rellena con el
+    // mismo valor que Create, así que un tenant nuevo y uno viejo no se distinguen.
+    [Fact]
+    public void CreateDefaultsToColombia()
+    {
+        var tenant = CreateTenant();
+
+        Assert.Equal("CO", tenant.Country);
+    }
+
+    [Fact]
+    public void UpdateSettingsChangesTheCountryNormalizedAndTracksIt()
+    {
+        var tenant = CreateTenant();
+
+        var changed = tenant.UpdateSettings(
+            tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
+            tenant.DefaultCurrency, tenant.NumberFormat, " mx ", CreatedAt.AddMinutes(5));
+
+        Assert.True(changed);
+        Assert.Equal("MX", tenant.Country);
+        Assert.Equal(2, tenant.Version);
+        var settingsUpdated = Assert.IsType<TenantSettingsUpdatedDomainEvent>(Assert.Single(tenant.DomainEvents));
+        Assert.Equal(["country"], settingsUpdated.ChangedFields);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("C")]
+    [InlineData("COL")]
+    [InlineData("C1")]
+    public void UpdateSettingsWithAMalformedCountryThrowsAndChangesNothing(string country)
+    {
+        var tenant = CreateTenant();
+
+        var exception = Assert.Throws<TenantDomainException>(() => tenant.UpdateSettings(
+            tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
+            tenant.DefaultCurrency, tenant.NumberFormat, country, CreatedAt.AddMinutes(5)));
+
+        Assert.Equal("tenancy.settings.country.invalid", exception.Code);
+        Assert.Equal("CO", tenant.Country);
         Assert.Equal(1, tenant.Version);
     }
 
@@ -81,6 +126,7 @@ public sealed class TenantTests
             tenant.DateFormat,
             tenant.DefaultCurrency,
             tenant.NumberFormat,
+            tenant.Country,
             CreatedAt.AddMinutes(5));
 
         Assert.False(changed);
@@ -141,6 +187,7 @@ public sealed class TenantTests
                 tenant.DateFormat,
                 tenant.DefaultCurrency,
                 tenant.NumberFormat,
+                tenant.Country,
                 CreatedAt.AddMinutes(5)));
 
         Assert.Equal("tenancy.settings.time_zone.invalid", exception.Code);

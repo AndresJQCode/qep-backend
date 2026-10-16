@@ -13,6 +13,7 @@ internal static class TenantMappings
             tenant.DateFormat,
             tenant.DefaultCurrency,
             tenant.NumberFormat,
+            tenant.Country,
             tenant.Version,
             LogoOf(tenant, logoStorage));
 

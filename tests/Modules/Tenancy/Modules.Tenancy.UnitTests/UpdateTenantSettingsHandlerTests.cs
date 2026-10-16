@@ -31,10 +31,34 @@ public sealed class UpdateTenantSettingsHandlerTests
             Handler().HandleAsync(Command(defaultCurrency: ""), TestContext.Current.CancellationToken));
     }
 
+    [Fact]
+    public async Task HandlePassesTheCountryToTheAggregate()
+    {
+        var result = await Handler().HandleAsync(
+            Command(country: "mx"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("MX", result.Country);
+        Assert.Equal(2, result.Version);
+    }
+
+    // Ventana de despliegue: un frontend anterior al país no lo manda. Sin él se conserva el
+    // guardado, y como nada más cambió, la versión no sube.
+    [Fact]
+    public async Task HandleKeepsTheStoredCountryWhenTheCommandOmitsIt()
+    {
+        var result = await Handler().HandleAsync(
+            Command(country: null),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("CO", result.Country);
+        Assert.Equal(1, result.Version);
+    }
+
     private UpdateTenantSettingsCommand Command(
-        string defaultCurrency = "COP", string numberFormat = "1.234,56") =>
+        string defaultCurrency = "COP", string numberFormat = "1.234,56", string? country = "CO") =>
         new(_tenant.Id, "QCode Demo", "es-CO", "America/Bogota", "yyyy-MM-dd",
-            defaultCurrency, numberFormat, 1, "corr-1");
+            defaultCurrency, numberFormat, country, 1, "corr-1");
 
     private UpdateTenantSettingsHandler Handler() =>
         new(

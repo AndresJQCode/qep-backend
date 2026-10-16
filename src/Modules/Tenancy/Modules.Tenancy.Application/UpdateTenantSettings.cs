@@ -13,6 +13,9 @@ public sealed record UpdateTenantSettingsCommand(
     string DateFormat,
     string DefaultCurrency,
     string NumberFormat,
+    // Null keeps the stored country: a frontend older than the field does not send it (deployment
+    // window). The handler resolves it against the tenant it already loaded, not with a second read.
+    string? Country,
     long ExpectedVersion,
     string CorrelationId) : ICommand<TenantSettingsDto>;
 
@@ -27,6 +30,9 @@ public sealed class UpdateTenantSettingsValidator
         RuleFor(command => command.DateFormat).NotEmpty().MaximumLength(30);
         RuleFor(command => command.DefaultCurrency).NotEmpty().MaximumLength(3);
         RuleFor(command => command.NumberFormat).NotEmpty().MaximumLength(10);
+        // Only the column limit: the two-letter shape is a domain rule, and its code
+        // (tenancy.settings.country.invalid) is what the settings form maps to the field.
+        RuleFor(command => command.Country).MaximumLength(2);
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
     }
 }
@@ -78,6 +84,7 @@ public sealed class UpdateTenantSettingsHandler(
             command.DateFormat,
             command.DefaultCurrency,
             command.NumberFormat,
+            command.Country ?? tenant.Country,
             clock.UtcNow);
 
         if (!changed)

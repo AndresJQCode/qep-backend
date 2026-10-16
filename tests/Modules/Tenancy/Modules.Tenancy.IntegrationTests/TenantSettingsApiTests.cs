@@ -75,6 +75,79 @@ public sealed class TenantSettingsApiTests
     }
 
     [Fact]
+    public async Task GetReturnsColombiaAndPutChangesTheCountry()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var settings = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{TenantId}/settings", TestContext.Current.CancellationToken);
+        Assert.Equal("CO", settings.GetProperty("country").GetString());
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(client, TenantId, etag, NewDisplayName(), country: "mx");
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("MX", body.GetProperty("country").GetString());
+    }
+
+    // Ventana de despliegue: un frontend anterior al país no lo manda. El PUT no debe fallar ni
+    // pisarlo: conserva lo guardado.
+    [Fact]
+    public async Task PutWithoutCountryKeepsTheStoredValue()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+        var first = await PutAsync(client, TenantId, etag, NewDisplayName(), country: "MX");
+        first.EnsureSuccessStatusCode();
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put,
+            $"/api/v1/tenants/{TenantId}/settings")
+        {
+            Content = JsonContent.Create(new
+            {
+                displayName = NewDisplayName(),
+                defaultCulture = "es-CO",
+                timeZone = "America/Bogota",
+                dateFormat = "dd/MM/yyyy",
+                defaultCurrency = "COP",
+                numberFormat = "1.234,56",
+            })
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", first.Headers.ETag!.Tag);
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("MX", body.GetProperty("country").GetString());
+    }
+
+    [Fact]
+    public async Task PutWithAMalformedCountryIsA422WithTheDomainCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(client, TenantId, etag, NewDisplayName(), country: "C1");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.settings.country.invalid", problem.GetProperty("code").GetString());
+    }
+
+    [Fact]
     public async Task PutAcceptsEurNowThatTheCatalogueHasIt()
     {
         await using var database = await StartDatabaseAsync();
@@ -344,7 +417,8 @@ public sealed class TenantSettingsApiTests
         string ifMatch,
         string displayName,
         string defaultCurrency = "COP",
-        string numberFormat = "1.234,56")
+        string numberFormat = "1.234,56",
+        string country = "CO")
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Put,
@@ -357,7 +431,8 @@ public sealed class TenantSettingsApiTests
                 timeZone = "America/Bogota",
                 dateFormat = "dd/MM/yyyy",
                 defaultCurrency,
-                numberFormat
+                numberFormat,
+                country
             })
         };
         request.Headers.TryAddWithoutValidation("If-Match", ifMatch);
