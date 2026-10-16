@@ -147,6 +147,10 @@ encima de `MessageComposer`.
   cabecera y lista que `settleSent` ya hace. Con el hub conectado llega al instante, y por polling en el
   siguiente ciclo. La barra desaparece cuando llega el dato nuevo, no al tipear.
 - **Envío fallido:** la marca se queda (la barra sigue).
+- **Timeout del envío:** `SEND_TIMEOUT_MS` sube de 15 s a **20 s**. El acuse corre dentro del request
+  del envío, así que en el peor caso el servidor tarda 10 s del envío más 5 s del acuse. Con 15 s, un
+  Meta lento haría ver como «No enviado» un mensaje que sí salió y frenaría la cola. *(Corrección de la
+  revisión de la Task 3 del backend, 2026-10-16.)*
 - **Resolver:** la respuesta ya trae `ConversationSummary` con `unreadCount: 0`; no hace falta nada
   extra.
 - **Entra otro mensaje con el hilo abierto:** el poll o el hub traen `unreadCount > 0` y la barra
