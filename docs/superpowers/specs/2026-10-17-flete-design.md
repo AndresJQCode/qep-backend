@@ -301,8 +301,8 @@ cotizaciones ganan un objeto `shipping` con forma fija, también en recogida:
   "chargeMode": "Charged",
   "freightAmount": 15000,
   "freightTaxPercentage": 19,
-  "freightSubtotal": 12605,
-  "freightTaxAmount": 2395,
+  "freightSubtotal": 12605.04,
+  "freightTaxAmount": 2394.96,
   "cashOnDelivery": false
 }
 ```
