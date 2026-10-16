@@ -7,8 +7,9 @@ cotizaciones), Bootstrapper (lectura de la tasa de impuesto de Catalog, `OrdersR
 `QuotationsReportSource`). **Frontend:** `qep-frontend`, `features/quotes`, `features/orders`,
 `features/tenant-settings`, `features/catalog` (el gestor de tasas de impuesto pasa a Configuración), rutas
 nuevas `/settings/carriers` y `/settings/tax-rates`.
-**Estado:** alcance y diseño conversados con el owner el 2026-10-16 y 2026-10-17, con mockups en el lienzo
-«Entrega y flete del pedido» (claude.ai, privado). Pendiente de su lectura y del plan de implementación.
+**Estado:** aprobado por el owner el 2026-10-17 tras leerlo, con mockups en el lienzo «Entrega y flete del
+pedido» (claude.ai, privado). P1 y P2 siguen con su valor por defecto (D-F6, D-F9). Pendiente el plan de
+implementación.
 **Lo necesita:** `2026-10-15-integracion-shopify-pedidos-design.md` (§11.2): retira `freight_unsupported` y
 mapea el envío de Shopify (§10 de este spec). Va **después** de pedidos sin cotización (ya en `develop`) y
 **antes** que Shopify.
@@ -517,3 +518,4 @@ completa.
 - 2026-10-17: decisiones 1–12 tomadas en conversación con el owner (2026-10-16 y 2026-10-17), con mockups en el
   lienzo «Entrega y flete del pedido» y un inventario del código (§2); spec escrito. Pendientes P1 y P2, la
   lectura del owner y el plan.
+- 2026-10-17: aprobado por el owner. P1 y P2 quedan con su valor por defecto hasta que diga otra cosa.
