@@ -14,7 +14,7 @@ public sealed record CreateOrderCommand(
     bool IsRetail,
     int? GlobalScaleFloor,
     QuotationPartiesRequest? Parties,
-    QuotationBillingAccountRequest BillingAccount,
+    QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<OrderItemAddition> Items,
     string PaymentStatus,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs) : ICommand<OrderDetailDto>, IOrderDraft;
@@ -30,7 +30,7 @@ public interface IOrderDraft
 
     QuotationPartiesRequest? Parties { get; }
 
-    QuotationBillingAccountRequest BillingAccount { get; }
+    QuotationBillingAccountRequest? BillingAccount { get; }
 
     IReadOnlyList<OrderItemAddition> Items { get; }
 
@@ -41,15 +41,17 @@ public interface IOrderDraft
 
 /// <summary>
 /// Abstracta a propósito, como <see cref="OrderEditsValidator{TEdits}"/>: el escaneo de validadores del
-/// composition root sólo registra las dos concretas. El guardado exige el documento de la facturación
-/// propia y el archivo de cada comprobante; el cálculo previo, ninguno de los dos (todavía no se subieron).
+/// composition root sólo registra las dos concretas. El guardado exige la cuenta de cobro, el documento de
+/// la facturación propia y el archivo de cada comprobante; el cálculo previo, ninguno de los tres: los dos
+/// últimos todavía no se subieron, y la pantalla de «Nuevo pedido» pinta el precio de la línea en cuanto
+/// hay cliente y producto, antes de que se elija la empresa que factura.
 /// </summary>
 public abstract class OrderDraftValidator<TDraft> : AbstractValidator<TDraft>
     where TDraft : IOrderDraft
 {
     private static readonly string[] ValidPaymentStatuses = Enum.GetNames<OrderPaymentStatus>();
 
-    protected OrderDraftValidator(bool requireBillingIdentification, bool requireFileIds)
+    protected OrderDraftValidator(bool requireBillingAccount, bool requireBillingIdentification, bool requireFileIds)
     {
         RuleFor(draft => draft.ClientId).NotEmpty();
         RuleFor(draft => draft.PaymentMethod)
@@ -58,7 +60,7 @@ public abstract class OrderDraftValidator<TDraft> : AbstractValidator<TDraft>
         RuleFor(draft => draft.GlobalScaleFloor)
             .GreaterThan(0)
             .When(draft => draft.GlobalScaleFloor is not null);
-        RuleFor(draft => draft.BillingAccount).NotNull();
+        RuleFor(draft => draft.BillingAccount).NotNull().When(_ => requireBillingAccount);
         RuleFor(draft => draft.Items)
             .NotNull()
             .Must(items => items.Count > 0)
@@ -96,7 +98,7 @@ public abstract class OrderDraftValidator<TDraft> : AbstractValidator<TDraft>
 public sealed class CreateOrderValidator : OrderDraftValidator<CreateOrderCommand>
 {
     public CreateOrderValidator()
-        : base(requireBillingIdentification: true, requireFileIds: true)
+        : base(requireBillingAccount: true, requireBillingIdentification: true, requireFileIds: true)
     {
     }
 }
@@ -158,8 +160,7 @@ public sealed class CreateOrderHandler(
                 new OrderDraftInput(
                     command.TenantId, command.ClientId, advisorId, command.PaymentMethod, command.Notes,
                     command.IsRetail, command.GlobalScaleFloor, command.Parties, command.BillingAccount,
-                    command.Items, paymentStatus, proofs, OrderSource.Manual, ExternalReference: null,
-                    AllowIncompleteCustomer: false),
+                    command.Items, paymentStatus, proofs, AllowIncompleteCustomer: false),
                 orderNumber,
                 now,
                 cancellationToken);

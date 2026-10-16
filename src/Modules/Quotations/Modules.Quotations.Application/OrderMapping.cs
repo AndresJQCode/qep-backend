@@ -32,11 +32,9 @@ internal static class OrderMapping
         order.RetentionAmount,
         order.NetTotal,
         order.Notes,
-        new QuotationBillingAccountDto(
-            order.BillingAccount.CompanyId,
-            order.BillingAccount.BankName,
-            order.BillingAccount.AccountNumber,
-            order.BillingAccount.Currency),
+        order.BillingAccount is { } account
+            ? new QuotationBillingAccountDto(account.CompanyId, account.BankName, account.AccountNumber, account.Currency)
+            : null,
         order.Parties.Select(ToDto).ToArray(),
         order.Items.OrderBy(item => item.Position).Select(ToDto).ToArray(),
         order.ConvertedAt,

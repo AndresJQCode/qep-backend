@@ -15,7 +15,7 @@ public sealed record PreviewOrderQuery(
     bool IsRetail,
     int? GlobalScaleFloor,
     QuotationPartiesRequest? Parties,
-    QuotationBillingAccountRequest BillingAccount,
+    QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<OrderItemAddition> Items,
     string PaymentStatus,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs) : IQuery<OrderDetailDto>, IOrderDraft;
@@ -23,7 +23,7 @@ public sealed record PreviewOrderQuery(
 public sealed class PreviewOrderValidator : OrderDraftValidator<PreviewOrderQuery>
 {
     public PreviewOrderValidator()
-        : base(requireBillingIdentification: false, requireFileIds: false)
+        : base(requireBillingAccount: false, requireBillingIdentification: false, requireFileIds: false)
     {
     }
 }
@@ -48,13 +48,12 @@ public sealed class PreviewOrderHandler(
         var proofs = query.PaymentProofs
             .Select(proof => new OrderPaymentProofInput(Guid.CreateVersion7(), proof.Amount, PaidOn: proof.PaidOn))
             .ToArray();
-        var order = await drafts.BuildAsync(
+        var order = await drafts.PreviewAsync(
             new OrderDraftInput(
                 query.TenantId, query.ClientId, advisorId, query.PaymentMethod, query.Notes, query.IsRetail,
                 query.GlobalScaleFloor, query.Parties, query.BillingAccount, query.Items,
                 Enum.Parse<OrderPaymentStatus>(query.PaymentStatus, ignoreCase: true), proofs,
-                OrderSource.Manual, ExternalReference: null, AllowIncompleteCustomer: false),
-            orderNumber: "PREVIEW",
+                AllowIncompleteCustomer: false),
             now,
             cancellationToken);
 

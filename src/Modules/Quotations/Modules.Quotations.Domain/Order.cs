@@ -8,6 +8,9 @@ namespace Modules.Quotations.Domain;
 /// que incluye sus comprobantes de pago (<see cref="OrderPaymentProof"/>): nacen con él, pero mientras
 /// sigue pendiente se le pueden sumar más y corregir el monto de los que ya tiene.
 ///
+/// <see cref="Preview"/> arma el cálculo previo del pedido manual, que no se guarda y es el único que puede
+/// no tener cuenta de cobro.
+///
 /// <see cref="ConvertedAt"/> y <see cref="ConvertedBy"/> conservan su nombre para un pedido manual o
 /// externo: significan «creado el / por» (plan 2026-10-15, P3).
 ///
@@ -33,7 +36,6 @@ public sealed class Order
     {
         OrderNumber = string.Empty;
         Currency = string.Empty;
-        BillingAccount = null!;
     }
 
     private Order(
@@ -45,7 +47,7 @@ public sealed class Order
         string? externalReference,
         OrderHeader header,
         QuotationParties parties,
-        QuotationBillingAccount billingAccount,
+        QuotationBillingAccount? billingAccount,
         OrderPaymentStatus paymentStatus,
         string? notes,
         MemberId createdBy,
@@ -74,8 +76,10 @@ public sealed class Order
         BillsToFinalConsumer = parties.BillsToFinalConsumer;
         PartyWithRetention = parties.Billing is null ? null : parties.BillingWithRetention;
         PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
-        BillingAccount = billingAccount.Normalized();
-        Currency = BillingAccount.Currency;
+        BillingAccount = billingAccount?.Normalized();
+        // La misma regla que Quotation: la cuenta fija la moneda y, sin ella, manda la del encabezado, que
+        // Application llena con la moneda por defecto del tenant. Sólo el cálculo previo llega acá sin cuenta.
+        Currency = BillingAccount?.Currency ?? header.Currency;
         Status = OrderStatus.Pending;
         PaymentStatus = paymentStatus;
         Notes = NormalizeNotes(notes);
@@ -110,7 +114,10 @@ public sealed class Order
 
     public string Currency { get; private set; }
 
-    public QuotationBillingAccount BillingAccount { get; private set; }
+    /// <summary>Null sólo en un cálculo previo (<see cref="Preview"/>): la pantalla de «Nuevo pedido» precia
+    /// la línea antes de que se elija la empresa que factura. Un pedido guardado siempre la tiene:
+    /// <see cref="FromQuotation"/>, <see cref="CreateManual"/> y <see cref="CreateExternal"/> la exigen.</summary>
+    public QuotationBillingAccount? BillingAccount { get; private set; }
 
     public string? PaymentMethod { get; private set; }
 
@@ -281,6 +288,34 @@ public sealed class Order
         string? notes,
         MemberId createdBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(billingAccount);
+        return Build(
+            id, tenantId, orderNumber, OrderSource.Manual, null, header, parties, billingAccount, lines,
+            paymentStatus, notes, createdBy, proofs, occurredAt);
+    }
+
+    /// <summary>
+    /// El cálculo previo del pedido manual: las mismas reglas y la misma aritmética que
+    /// <see cref="CreateManual"/>, pero la cuenta de cobro es opcional. Sin ella, el pedido se precia en
+    /// <see cref="OrderHeader.Currency"/> (la moneda por defecto del tenant), igual que una cotización sin
+    /// cuenta. Existe aparte, y no como un null aceptado por <see cref="CreateManual"/>, para que el
+    /// pedido que se guarda no pueda nacer sin cuenta por descuido: el resultado de este método no se
+    /// guarda nunca.
+    /// </summary>
+    public static Order Preview(
+        OrderId id,
+        Guid tenantId,
+        string orderNumber,
+        OrderHeader header,
+        QuotationParties parties,
+        QuotationBillingAccount? billingAccount,
+        IReadOnlyCollection<OrderLineInput> lines,
+        OrderPaymentStatus paymentStatus,
+        string? notes,
+        MemberId createdBy,
+        IReadOnlyCollection<OrderPaymentProofInput> proofs,
         DateTimeOffset occurredAt) =>
         Build(
             id, tenantId, orderNumber, OrderSource.Manual, null, header, parties, billingAccount, lines,
@@ -318,6 +353,7 @@ public sealed class Order
                 "An external order needs its reference in the source system.");
         }
 
+        ArgumentNullException.ThrowIfNull(billingAccount);
         return Build(
             id, tenantId, orderNumber, source, externalReference, header, parties, billingAccount, lines,
             paymentStatus, notes, createdBy, proofs, occurredAt);
@@ -331,7 +367,7 @@ public sealed class Order
         string? externalReference,
         OrderHeader header,
         QuotationParties parties,
-        QuotationBillingAccount billingAccount,
+        QuotationBillingAccount? billingAccount,
         IReadOnlyCollection<OrderLineInput> lines,
         OrderPaymentStatus paymentStatus,
         string? notes,
@@ -340,7 +376,6 @@ public sealed class Order
         DateTimeOffset occurredAt)
     {
         ArgumentNullException.ThrowIfNull(header);
-        ArgumentNullException.ThrowIfNull(billingAccount);
         var order = new Order(
             id, tenantId, orderNumber, source, null, externalReference, header, parties, billingAccount,
             paymentStatus, notes, createdBy, occurredAt);

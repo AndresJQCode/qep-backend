@@ -33,8 +33,22 @@ public sealed class CreateOrderValidatorTests
     [Fact]
     public void RequiresTheBillingAccount()
     {
-        var result = new CreateOrderValidator().Validate(Valid() with { BillingAccount = null! });
+        var result = new CreateOrderValidator().Validate(Valid() with { BillingAccount = null });
         Assert.Contains(result.Errors, error => error.PropertyName == "BillingAccount");
+    }
+
+    // El cálculo previo pinta el precio antes de que se elija la empresa que factura: sin cuenta, el backend
+    // precia en la moneda por defecto del tenant. Guardar la sigue exigiendo (RequiresTheBillingAccount).
+    [Fact]
+    public void ThePreviewDoesNotRequireTheBillingAccount()
+    {
+        var command = Valid();
+        var previewed = new PreviewOrderValidator().Validate(new PreviewOrderQuery(
+            command.TenantId, command.ClientId, command.PaymentMethod, command.Notes, command.IsRetail,
+            command.GlobalScaleFloor, command.Parties, BillingAccount: null, command.Items, command.PaymentStatus,
+            command.PaymentProofs));
+
+        Assert.True(previewed.IsValid);
     }
 
     [Fact]

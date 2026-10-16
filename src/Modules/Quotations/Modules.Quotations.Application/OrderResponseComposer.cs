@@ -31,7 +31,10 @@ public sealed class OrderResponseComposer(
             .ToArray();
         var members = await advisorLookup.FindAsync(tenantId, memberIds, cancellationToken);
         var advisor = members.GetValueOrDefault(order.AdvisorId);
-        var company = await companyLookup.FindAsync(tenantId, order.BillingAccount.CompanyId, cancellationToken);
+        // Sin cuenta sólo llega el cálculo previo, que precia antes de que se elija la empresa que factura.
+        var company = order.BillingAccount is { } billing
+            ? await companyLookup.FindAsync(tenantId, billing.CompanyId, cancellationToken)
+            : null;
         var products = await productLookup.FindManyAsync(
             tenantId, order.Items.Select(item => item.ProductId).Distinct().ToArray(), cancellationToken);
 
