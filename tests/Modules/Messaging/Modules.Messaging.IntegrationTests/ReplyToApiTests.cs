@@ -48,7 +48,7 @@ public sealed class ReplyToApiTests
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
         Assert.Equal((inbound, "Inbound", "¿Tienen?"), (body.GetProperty("replyTo").GetProperty("id").GetGuid(), body.GetProperty("replyTo").GetProperty("direction").GetString(), body.GetProperty("replyTo").GetProperty("preview").GetString()));
-        Assert.Contains("\"context\":{\"message_id\":\"wamid.in\"}", Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal)).Body, StringComparison.Ordinal);
+        Assert.Contains("\"context\":{\"message_id\":\"wamid.in\"}", Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal) && !IsReadReceipt(request)).Body, StringComparison.Ordinal);
         Assert.Equal($"{inbound}|wamid.in", await ScalarAsync<string>(f.ConnectionString, "SELECT reply_to_message_id::text || '|' || reply_to_wamid FROM messaging.messages WHERE direction = 2"));
         // §5.1: el reintento devuelve la cita guardada aunque el cuerpo traiga otra (y aunque ésa no se pudiera citar).
         Assert.Equal(inbound, (await retry.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("replyTo").GetProperty("id").GetGuid());

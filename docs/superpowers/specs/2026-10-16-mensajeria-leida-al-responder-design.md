@@ -91,12 +91,14 @@ En la rama `Sent`, después de `CommitSentAsync`:
    quedó en 0**. Con un entrante nuevo en el hueco no se manda nada: el acuse de WhatsApp sobre el
    último `wamid` marcaría leído también el nuevo, y en Instagram `mark_seen` es por persona. Se manda
    cuando alguien quite la marca después.
-3. Va **después** de que el saliente está commiteado y con `CancellationToken.None`, como el resto de
+5. Va **después** de que el saliente está commiteado y con `CancellationToken.None`, como el resto de
    ese tramo: un fallo acá nunca convierte un envío exitoso en error. La respuesta del endpoint de envío
    no cambia.
 
 El acuse hoy vive dentro de `MarkConversationReadHandler`; se extrae a una pieza compartida que usan
 los dos caminos (y el de resolver). Nombre y ubicación, a criterio de quien construye.
+
+**Límite conocido (revisión final, 2026-10-16).** `seen` protege el hueco dentro de un mismo request, no entre requests. La cola del frontend envía de a uno: si el asesor encola dos mensajes y entra un entrante mientras sale el primero, el segundo carga un `seen` que ya lo incluye, lo resta y manda el acuse. Cerrarlo exige que la entrada de la cola guarde lo que el asesor vio al encolar y lo mande en el request; queda como mejora posterior. No es una regresión: antes, abrir el hilo limpiaba todo.
 
 **Concurrencia con `version`.** Responder no sube `version` (punto 2), así que no abre ninguna clase
 nueva de 412. `/read` sí la sube, como siempre. Por eso, después del `/read` de la barra, `markRead`
@@ -147,6 +149,10 @@ encima de `MessageComposer`.
   cabecera y lista que `settleSent` ya hace. Con el hub conectado llega al instante, y por polling en el
   siguiente ciclo. La barra desaparece cuando llega el dato nuevo, no al tipear.
 - **Envío fallido:** la marca se queda (la barra sigue).
+- **Timeout del envío:** `SEND_TIMEOUT_MS` sube de 15 s a **20 s**. El acuse corre dentro del request
+  del envío, así que en el peor caso el servidor tarda 10 s del envío más 5 s del acuse. Con 15 s, un
+  Meta lento haría ver como «No enviado» un mensaje que sí salió y frenaría la cola. *(Corrección de la
+  revisión de la Task 3 del backend, 2026-10-16.)*
 - **Resolver:** la respuesta ya trae `ConversationSummary` con `unreadCount: 0`; no hace falta nada
   extra.
 - **Entra otro mensaje con el hilo abierto:** el poll o el hub traen `unreadCount > 0` y la barra
@@ -200,3 +206,4 @@ Las tomé al escribir el diseño. Revísalas al leerlo:
 - **R5.** Después de enviar no hay parche optimista de `unreadCount`: la barra se va cuando llega el
   dato del servidor (§4.3).
 - **R6.** El error de la barra se muestra en línea, sin modal (§4.2).
+- **R7.** El límite de la cola de §3.1 se acepta por ahora (revisión final).

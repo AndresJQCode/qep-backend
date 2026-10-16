@@ -64,12 +64,13 @@ public sealed class StartConversationHandler(
     IExecutionContext executionContext,
     IClock clock,
     IMessagingNotifier notifier,
+    ReadReceipts receipts,
     IValidator<StartConversationCommand> validator)
     : ICommandHandler<StartConversationCommand, StartConversationResult>
 {
     // CS9124: los parámetros que van a la guarda y al envío no se usan en los métodos; todo se pide al pegamento.
     private readonly TemplateOutbound _template = new(
-        new OutboundGuards(conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier),
+        new OutboundGuards(conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier, receipts),
         meta, templates, customers);
 
     public async Task<StartConversationResult> HandleAsync(StartConversationCommand command, CancellationToken cancellationToken)

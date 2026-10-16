@@ -55,6 +55,7 @@ public sealed class SendMessageHandler(
     IExecutionContext executionContext,
     IClock clock,
     IMessagingNotifier notifier,
+    ReadReceipts receipts,
     IValidator<SendMessageCommand> validator)
     : ICommandHandler<SendMessageCommand, MessageDto>
 {
@@ -66,7 +67,7 @@ public sealed class SendMessageHandler(
 
     // CS9124: los parámetros que van a la guarda no se usan en los métodos; el reloj y el reclamo se piden a ella.
     private readonly OutboundGuards _guards = new(
-        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier);
+        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier, receipts);
 
     public async Task<MessageDto> HandleAsync(SendMessageCommand command, CancellationToken cancellationToken)
     {
@@ -117,7 +118,7 @@ public sealed class SendMessageHandler(
         }
         // §8.3: occurred_at del saliente = hora del servidor al recibir la respuesta de Meta.
         var answeredAt = _guards.UtcNow;
-        await _guards.SettleAsync(command.TenantId, conversation.ConnectionId, claim, result, answeredAt, metaMediaId: null, afterRollback: null);
+        await _guards.SettleAsync(command.TenantId, conversation.ConnectionId, claim, result, answeredAt, metaMediaId: null, afterRollback: null, seen: conversation.UnreadCount);
         return await _guards.ToDtoAsync(
             command.TenantId,
             new MessageRow(claim.MessageId, conversation.Id, MessageDirection.Outbound, MessageKind.Text, text, null, null, MessageStatus.Sent, null, answeredAt, target.Member,

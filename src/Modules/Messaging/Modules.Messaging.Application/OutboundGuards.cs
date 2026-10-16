@@ -30,7 +30,8 @@ internal sealed class OutboundGuards(
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IClock clock,
-    IMessagingNotifier notifier)
+    IMessagingNotifier notifier,
+    ReadReceipts receipts)
 {
     public DateTimeOffset UtcNow => clock.UtcNow;
 
@@ -172,10 +173,12 @@ internal sealed class OutboundGuards(
     /// §8.3, la tabla de respuestas. Vuelve sólo si quedó <c>Sent</c>; en cualquier otro caso cierra el reclamo y lanza.
     /// Todo cierre va con <c>CancellationToken.None</c>: si Meta ya aceptó, un rollback por cancelación borraría la fila
     /// y el reintento con el mismo clientId lo mandaría dos veces. <paramref name="afterRollback"/> corre después de un
-    /// rollback por credencial (la nota de voz borra ahí lo que subió a R2).
+    /// rollback por credencial (la nota de voz borra ahí lo que subió a R2). <paramref name="seen"/> es el <c>unread_count</c> que
+    /// tenía la conversación al cargarla en este request: lo que el asesor tenía a la vista al responder (spec 2026-10-16 §3.1).
     /// </summary>
     public async Task SettleAsync(
-        Guid tenantId, Guid connectionId, IOutboundClaim claim, SendResult result, DateTimeOffset answeredAt, string? metaMediaId, Func<Task>? afterRollback)
+        Guid tenantId, Guid connectionId, IOutboundClaim claim, SendResult result, DateTimeOffset answeredAt, string? metaMediaId, Func<Task>? afterRollback,
+        int seen)
     {
         ArgumentNullException.ThrowIfNull(claim);
         ArgumentNullException.ThrowIfNull(result);
@@ -183,7 +186,16 @@ internal sealed class OutboundGuards(
         {
             case SendOutcome.Sent when !string.IsNullOrEmpty(result.Wamid):
                 await claim.CommitSentAsync(result.Wamid, answeredAt, metaMediaId, CancellationToken.None);
+                // Spec 2026-10-16 §3.1: responder quita la marca. Va antes del aviso para que ese único aviso ya lleve el contador nuevo.
+                var replied = await MarkRepliedAsync(tenantId, claim.ConversationId, seen);
                 await NotifyConsolidatedAsync(tenantId, claim.ConversationId);
+                // Sólo con el contador en 0: si entró algo durante el envío, el acuse de WhatsApp sobre el último wamid lo marcaría
+                // leído también, y en Instagram mark_seen es por persona. Se manda cuando alguien quite la marca después.
+                if (replied is { RemainingUnread: 0 })
+                {
+                    await receipts.SendAsync(tenantId, claim.ConversationId, replied.Receipt, clock.UtcNow, CancellationToken.None);
+                }
+
                 return;
 
             case SendOutcome.GraphError when result.Code is MetaErrorCodes.TokenExpired or MetaErrorCodes.NumberUnregistered:
@@ -233,6 +245,24 @@ internal sealed class OutboundGuards(
         {
             // Application no tiene logger; la causa no se pierde del todo: el listener del otro lado registra la suya.
             _ = exception;
+        }
+    }
+
+    /// <summary>Spec 2026-10-16 §3.1: resta lo que el asesor vio, no lo pone en 0, para que un entrante que llegó durante el envío
+    /// sobreviva. Un fallo se traga como el aviso: Meta ya aceptó y la respuesta del envío no cambia; la marca queda y se quita a
+    /// mano.</summary>
+    private async Task<RepliedTarget?> MarkRepliedAsync(Guid tenantId, Guid conversationId, int seen)
+    {
+        try
+        {
+            return await repository.MarkRepliedAsync(tenantId, conversationId, seen, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Como en NotifyConsolidatedAsync, aquí no hay logger. Sin resta tampoco sale acuse: a Meta nunca le llega un leído que la
+            // base no refleja.
+            _ = exception;
+            return null;
         }
     }
 

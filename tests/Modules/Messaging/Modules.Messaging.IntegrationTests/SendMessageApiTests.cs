@@ -33,7 +33,7 @@ public sealed class SendMessageApiTests
         meta.Respond("/111/messages", HttpStatusCode.OK, $$"""{"messaging_product":"whatsapp","contacts":[{"input":"573001234567","wa_id":"573001234567"}],"messages":[{"id":"{{wamid}}"}]}""");
 
     private static int SendCalls(FakeMetaGraphHandler meta) =>
-        meta.Requests.Count(request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal));
+        meta.Requests.Count(request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal) && !IsReadReceipt(request));
 
     [Fact]
     public async Task AHappySendAnswers201SentWithTheClientIdAndUpdatesTheSnapshot()
@@ -60,7 +60,7 @@ public sealed class SendMessageApiTests
         Assert.Equal("Sí, tenemos 12 unidades.", message.GetProperty("text").GetString());
         Assert.False(string.IsNullOrEmpty(message.GetProperty("sentBy").GetProperty("displayName").GetString()));
         Assert.Equal(await OwnerMembershipIdAsync(f.ConnectionString, f.Tenant), message.GetProperty("sentBy").GetProperty("memberId").GetGuid());
-        var send = Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal));
+        var send = Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal) && !IsReadReceipt(request));
         Assert.Equal("/v24.0/111/messages", send.Uri!.AbsolutePath);
         Assert.Equal($"Bearer {SentinelMetaAccessToken}", send.Authorization);
         Assert.Contains($"\"biz_opaque_callback_data\":\"qep:{message.GetProperty("id").GetGuid()}\"", send.Body, StringComparison.Ordinal);

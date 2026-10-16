@@ -176,6 +176,71 @@ public sealed class MessagingPersistenceTests
         Assert.Equal("IX_conversations_connection_wa_legacy", Assert.IsType<PostgresException>(legacyDuplicate.InnerException).ConstraintName);
     }
 
+    // Spec 2026-10-16 §3.1: responder resta sólo lo que el asesor tenía a la vista y el envío nunca sube version
+    // ni updated_at (Fix 1, hallazgo 1), así que el UPDATE tampoco.
+    [Fact]
+    public async Task MarkRepliedSubtractsWhatWasSeenAndLeavesVersionAndUpdatedAtAlone()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var conversationId = await SeedConversationAsync(factory, tenantId, connectionId, "573001234567");
+        await ExecuteAsync(connectionString,
+            "UPDATE messaging.conversations SET unread_count = 3, last_inbound_wamid = 'wamid.X' WHERE id = @c", ("c", conversationId));
+        var versionBefore = await ScalarAsync<long>(connectionString, "SELECT version FROM messaging.conversations WHERE id = @c", ("c", conversationId));
+        var updatedBefore = await ScalarAsync<DateTime>(connectionString, "SELECT updated_at FROM messaging.conversations WHERE id = @c", ("c", conversationId));
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IConversationRepository>();
+        var target = await repository.MarkRepliedAsync(tenantId, conversationId, 2, Ct);
+
+        Assert.NotNull(target);
+        Assert.Equal(1, target.RemainingUnread);
+        Assert.Equal(connectionId, target.Receipt.ConnectionId);
+        Assert.Equal("wamid.X", target.Receipt.LastInboundWamid);
+        Assert.Equal(1, await ScalarAsync<int>(connectionString, "SELECT unread_count FROM messaging.conversations WHERE id = @c", ("c", conversationId)));
+        Assert.Equal(versionBefore, await ScalarAsync<long>(connectionString, "SELECT version FROM messaging.conversations WHERE id = @c", ("c", conversationId)));
+        Assert.Equal(updatedBefore, await ScalarAsync<DateTime>(connectionString, "SELECT updated_at FROM messaging.conversations WHERE id = @c", ("c", conversationId)));
+    }
+
+    [Fact]
+    public async Task MarkRepliedLeavesACounterBelowWhatWasSeenAlone()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var conversationId = await SeedConversationAsync(factory, tenantId, Guid.CreateVersion7(), "573001234567");
+        await ExecuteAsync(connectionString, "UPDATE messaging.conversations SET unread_count = 1 WHERE id = @c", ("c", conversationId));
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IConversationRepository>();
+
+        Assert.Null(await repository.MarkRepliedAsync(tenantId, conversationId, 2, Ct));
+        Assert.Equal(1, await ScalarAsync<int>(connectionString, "SELECT unread_count FROM messaging.conversations WHERE id = @c", ("c", conversationId)));
+    }
+
+    [Fact]
+    public async Task MarkRepliedWithNothingSeenNeverTouchesTheRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var conversationId = await SeedConversationAsync(factory, tenantId, Guid.CreateVersion7(), "573001234567");
+        await ExecuteAsync(connectionString, "UPDATE messaging.conversations SET unread_count = 2 WHERE id = @c", ("c", conversationId));
+        var versionBefore = await ScalarAsync<long>(connectionString, "SELECT version FROM messaging.conversations WHERE id = @c", ("c", conversationId));
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IConversationRepository>();
+
+        Assert.Null(await repository.MarkRepliedAsync(tenantId, conversationId, 0, Ct));
+        Assert.Equal(2, await ScalarAsync<int>(connectionString, "SELECT unread_count FROM messaging.conversations WHERE id = @c", ("c", conversationId)));
+        Assert.Equal(versionBefore, await ScalarAsync<long>(connectionString, "SELECT version FROM messaging.conversations WHERE id = @c", ("c", conversationId)));
+    }
+
     // El Down de AddBsuidAssignmentAndEvents deja wa_id como lo creó InitialMessaging: NOT NULL y sin DEFAULT.
     // Un DEFAULT '' que el esquema original nunca tuvo dejaría entrar una conversación sin teléfono en silencio.
     [Fact]

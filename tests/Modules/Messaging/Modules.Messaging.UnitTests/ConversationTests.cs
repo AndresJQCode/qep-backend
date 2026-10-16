@@ -42,6 +42,17 @@ public sealed class ConversationTests
         Assert.Equal(MessagingErrorCodes.AlreadyResolved, error.Code);
     }
 
+    // Spec 2026-10-16 §3.2: resolver es la última palabra del asesor; la marca no sobrevive.
+    [Fact]
+    public void ResolveClearsTheUnreadCounter()
+    {
+        var conversation = Conversation.ForTests(Open(), unreadCount: 3, lastInboundAt: Now);
+
+        conversation.Resolve(Now.AddMinutes(1));
+
+        Assert.Equal(0, conversation.UnreadCount);
+    }
+
     [Fact]
     public void ResolveAndReopenBumpTheVersionAndRejectANoOp()
     {

@@ -86,7 +86,7 @@ public sealed class SendAudioMessageApiTests
     }
 
     private static int MetaCalls(FakeMetaGraphHandler meta) =>
-        meta.Requests.Count(request => request.Uri!.AbsolutePath.StartsWith("/v24.0/111/", StringComparison.Ordinal));
+        meta.Requests.Count(request => request.Uri!.AbsolutePath.StartsWith("/v24.0/111/", StringComparison.Ordinal) && !IsReadReceipt(request));
 
     private static MultipartFormDataContent VoiceForm(Guid? clientId, HttpContent file, string? replyTo = null)
     {
@@ -141,7 +141,7 @@ public sealed class SendAudioMessageApiTests
         Assert.Equal($"Bearer {SentinelMetaAccessToken}", upload.Authorization);
         Assert.Contains("voice.ogg", upload.Body, StringComparison.Ordinal);
         Assert.Contains("audio/ogg", upload.Body, StringComparison.Ordinal);
-        var send = Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath == "/v24.0/111/messages");
+        var send = Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath == "/v24.0/111/messages" && !IsReadReceipt(request));
         Assert.Contains("\"audio\":{\"id\":\"media.out\",\"voice\":true}", send.Body, StringComparison.Ordinal);
         Assert.Contains($"\"biz_opaque_callback_data\":\"qep:{id}\"", send.Body, StringComparison.Ordinal);
 

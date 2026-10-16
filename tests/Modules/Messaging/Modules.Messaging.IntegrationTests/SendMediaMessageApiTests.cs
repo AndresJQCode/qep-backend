@@ -97,7 +97,7 @@ public sealed class SendMediaMessageApiTests
     }
 
     private static int MetaCalls(FakeMetaGraphHandler meta) =>
-        meta.Requests.Count(request => request.Uri!.AbsolutePath.StartsWith("/v24.0/111/", StringComparison.Ordinal));
+        meta.Requests.Count(request => request.Uri!.AbsolutePath.StartsWith("/v24.0/111/", StringComparison.Ordinal) && !IsReadReceipt(request));
 
     /// <summary>Deja el archivo en el staging con la clave que reconstruye el handler y devuelve su <c>uploadId</c>.</summary>
     private static Guid Stage(Fixture f, string fileName, byte[] bytes)
@@ -204,7 +204,7 @@ public sealed class SendMediaMessageApiTests
         var upload = Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath == "/v24.0/111/media");
         Assert.Equal($"Bearer {SentinelMetaAccessToken}", upload.Authorization);
         Assert.Contains("application/pdf", upload.Body, StringComparison.Ordinal);
-        var send = Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath == "/v24.0/111/messages");
+        var send = Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath == "/v24.0/111/messages" && !IsReadReceipt(request));
         Assert.Contains("\"filename\":\"contrato.pdf\"", send.Body, StringComparison.Ordinal);
         Assert.Contains("\"caption\":\"Te adjunto el contrato\"", send.Body, StringComparison.Ordinal);
         Assert.DoesNotContain("context", send.Body, StringComparison.Ordinal);
@@ -236,7 +236,7 @@ public sealed class SendMediaMessageApiTests
         Assert.Equal("Image", message.GetProperty("kind").GetString());
         var media = message.GetProperty("media");
         Assert.Equal(("image/jpeg", "foto.jpg", JsonValueKind.Null), (media.GetProperty("mimeType").GetString(), media.GetProperty("fileName").GetString(), media.GetProperty("caption").ValueKind));
-        var send = Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath == "/v24.0/111/messages");
+        var send = Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath == "/v24.0/111/messages" && !IsReadReceipt(request));
         Assert.Contains("\"image\":{\"id\":\"media.out\"", send.Body, StringComparison.Ordinal);
         Assert.Contains("\"context\":{\"message_id\":\"w1\"}", send.Body, StringComparison.Ordinal);
         Assert.Equal(quoted, message.GetProperty("replyTo").GetProperty("id").GetGuid());

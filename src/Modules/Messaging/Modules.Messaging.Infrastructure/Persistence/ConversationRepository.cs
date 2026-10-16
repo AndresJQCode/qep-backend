@@ -31,6 +31,33 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
         return new ReadReceiptTarget(row.ConnectionId, row.LastInboundWamid, row.LastInboundAt, channel, row.UserId);
     }
 
+    public async Task<RepliedTarget?> MarkRepliedAsync(Guid tenantId, Guid conversationId, int seen, CancellationToken cancellationToken)
+    {
+        if (seen <= 0)
+        {
+            return null;
+        }
+
+        // Spec 2026-10-16 §3.1: resta lo que el asesor vio, no lo pone en 0: un entrante que llegó durante el envío
+        // sobrevive. Sin version ni updated_at a propósito: el envío nunca los sube (Fix 1, hallazgo 1) y bumpearlos
+        // aquí le haría perder la concurrencia optimista a quien edita la conversación en paralelo.
+        var rows = await dbContext.Database.SqlQuery<RepliedRow>(
+            $"""
+            UPDATE messaging.conversations
+               SET unread_count = unread_count - {seen}
+             WHERE id = {conversationId} AND tenant_id = {tenantId} AND unread_count >= {seen}
+            RETURNING connection_id AS "ConnectionId", last_inbound_wamid AS "LastInboundWamid", last_inbound_at AS "LastInboundAt", channel AS "Channel", user_id AS "UserId", unread_count AS "UnreadCount"
+            """).ToListAsync(cancellationToken);
+        if (rows.Count != 1)
+        {
+            return null;
+        }
+
+        var row = rows[0];
+        var channel = Enum.TryParse<ConversationChannel>(row.Channel, out var parsed) ? parsed : ConversationChannel.WhatsApp;
+        return new RepliedTarget(new ReadReceiptTarget(row.ConnectionId, row.LastInboundWamid, row.LastInboundAt, channel, row.UserId), row.UnreadCount);
+    }
+
     public async Task<bool> MarkUnreadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         // Spec 2026-10-14 §3.2: una sentencia, como el read. El 1 es el mismo número que dejaría un entrante nuevo,
@@ -121,6 +148,8 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
 
         return AutoAssignOutcome.AssignedToOther;
     }
+
+    private sealed record RepliedRow(Guid ConnectionId, string? LastInboundWamid, DateTimeOffset? LastInboundAt, string Channel, string? UserId, int UnreadCount);
 
     private sealed record ReadRow(Guid ConnectionId, string? LastInboundWamid, DateTimeOffset? LastInboundAt, string Channel, string? UserId);
 }

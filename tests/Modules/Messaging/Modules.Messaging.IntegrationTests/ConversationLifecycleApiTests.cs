@@ -8,7 +8,9 @@ namespace Modules.Messaging.IntegrationTests;
 /// <summary>Spec 2026-10-09 §8.4 y §8.5: read deja unreadCount en 0 y manda el acuse a Meta (best effort,
 /// una sola vez, sólo con conexión Active); resolve/reopen con If-Match (428/412), sus 422, auditoría en
 /// la misma transacción; y la versión que sube la ingesta hace chocar un resolve viejo. Spec 2026-10-14: unread
-/// es el espejo del read, sube el contador a 1 sólo desde 0 y nunca habla con Meta.</summary>
+/// es el espejo del read, sube el contador a 1 sólo desde 0 y nunca habla con Meta. Spec 2026-10-16 §3.2 y §3.3:
+/// <c>/read</c> ya no lo dispara abrir el hilo sino el botón «Marcar como leída»; responder y resolver también
+/// quitan la marca y mandan el acuse, por <see cref="ReadReceipts"/>.</summary>
 public sealed class ConversationLifecycleApiTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -253,6 +255,76 @@ public sealed class ConversationLifecycleApiTests
         Assert.Equal("messaging.conversation.already_open", (await ProblemAsync(openAgain)).Code);
         Assert.Equal("messaging.conversation.reopened,messaging.conversation.resolved", await ScalarAsync<string>(f.ConnectionString,
             "SELECT string_agg(action, ',' ORDER BY action) FROM audit.entries WHERE source = 'messaging' AND resource_type = 'conversation' AND resource_id = @id", ("id", f.ConversationId.ToString())));
+    }
+
+    private static async Task<JsonElement> ResolveAsync(Fixture f)
+    {
+        var response = await SendAsync(f.Client, HttpMethod.Post, $"{ConversationUrl(f.Tenant.TenantId, f.ConversationId)}/resolve", ifMatch: $"\"{f.Version}\"");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+    }
+
+    // Spec 2026-10-16 §3.2: resolver con no leídos quita la marca en la misma transacción y acusa el último entrante, una vez.
+    [Fact]
+    public async Task ResolvingClearsTheMarkAndAcknowledgesOnce()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, """{"success":true}""");
+
+        var summary = await ResolveAsync(f);
+
+        Assert.Equal(0, summary.GetProperty("unreadCount").GetInt32());
+        Assert.Equal(f.Version + 1, summary.GetProperty("version").GetInt64());
+        var ack = Assert.Single(f.Factory.MetaHandler.Requests, IsReadReceipt);
+        Assert.Contains("\"message_id\":\"wamid.in\"", ack.Body, StringComparison.Ordinal);
+    }
+
+    // El acuse es best effort (§3.2): si Meta lo rechaza, resolver sigue siendo 200 y la marca ya se quitó.
+    [Fact]
+    public async Task AFailingReceiptStillAnswersTheResolveAs200()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.InternalServerError, FakeMetaGraphHandler.GraphError(2));
+
+        var summary = await ResolveAsync(f);
+
+        Assert.Equal(0, summary.GetProperty("unreadCount").GetInt32());
+        Assert.Single(f.Factory.MetaHandler.Requests, IsReadReceipt);
+    }
+
+    [Fact]
+    public async Task ResolvingWithNothingUnreadSendsNoReceipt()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET unread_count = 0");
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, """{"success":true}""");
+
+        var summary = await ResolveAsync(f);
+
+        Assert.Equal(0, summary.GetProperty("unreadCount").GetInt32());
+        Assert.DoesNotContain(f.Factory.MetaHandler.Requests, IsReadReceipt);
+    }
+
+    // Fuera de la ventana de 30 días Meta ya no acepta el acuse: la marca se quita igual, sin llamada.
+    [Fact]
+    public async Task ResolvingAnOldConversationClearsWithoutAReceipt()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET last_inbound_at = now() - interval '31 days'");
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, """{"success":true}""");
+
+        var summary = await ResolveAsync(f);
+
+        Assert.Equal(0, summary.GetProperty("unreadCount").GetInt32());
+        Assert.DoesNotContain(f.Factory.MetaHandler.Requests, IsReadReceipt);
     }
 
     // §7.5: la ingesta sube version; un resolve con la versión vieja es 412.

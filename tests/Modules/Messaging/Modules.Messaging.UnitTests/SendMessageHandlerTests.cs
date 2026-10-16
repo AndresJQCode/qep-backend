@@ -51,6 +51,42 @@ public sealed class SendMessageHandlerTests
         Assert.Empty(bed.Repository.AutoAssigned);
     }
 
+    // Spec 2026-10-16 §3.1: Meta ya aceptó; si la resta falla, el envío sigue siendo un 201 Sent, el aviso sale igual y no hay acuse.
+    [Fact]
+    public async Task AFailedUnreadClearDoesNotTurnASentReplyIntoAnError()
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
+        bed.Meta.NextSend = new SendResult(SendOutcome.Sent, "wamid.out", null, null);
+        bed.Repository.RepliedFailure = new InvalidOperationException("la base no responde");
+
+        var message = await bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "hola"), Ct);
+
+        Assert.Equal("Sent", message.Status);
+        Assert.Equal("committed-sent:wamid.out", Assert.Single(bed.Outbound.Claims).Outcome);
+        Assert.Single(bed.Repository.Replied);
+        Assert.NotEmpty(bed.Notifier.Events);
+        Assert.Empty(bed.Meta.ReadReceipts);
+    }
+
+    // Spec 2026-10-16 §3.1: seen es el unread_count de la fila cargada, y el acuse sale sólo con el contador en 0.
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(1, 0)]
+    public async Task ASentReplySubtractsWhatWasSeenAndAcknowledgesOnlyAtZero(int remaining, int receipts)
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1) with { UnreadCount = 3 };
+        bed.Conversations.Rows[0] = conversation;
+        bed.Meta.NextSend = new SendResult(SendOutcome.Sent, "wamid.out", null, null);
+        bed.Repository.NextReplied = new RepliedTarget(new ReadReceiptTarget(bed.ConnectionId, "wamid.in", bed.Now.AddHours(-1)), remaining);
+
+        await bed.SendHandler().HandleAsync(new SendMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, "hola"), Ct);
+
+        Assert.Equal((conversation.Id, 3), Assert.Single(bed.Repository.Replied));
+        Assert.Equal(receipts, bed.Meta.ReadReceipts.Count);
+    }
+
     // Dos requests en vuelo con el mismo clientId: al segundo lo resuelve el reclamo (FOR UPDATE), no el paso 2.
     [Fact]
     public async Task AnInFlightClientIdIsResolvedByTheClaimWithoutCallingMeta()

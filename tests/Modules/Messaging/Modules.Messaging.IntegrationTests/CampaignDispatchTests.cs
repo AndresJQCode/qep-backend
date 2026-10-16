@@ -146,6 +146,29 @@ public sealed class CampaignDispatchTests
         Assert.Equal(2, MetaSends(f.Pod.MetaHandler));
     }
 
+    /// <summary>Spec 2026-10-16 §3.1: una campaña sale por el despachador, no por <c>OutboundGuards.SettleAsync</c>, así que no es «responder»:
+    /// ni resta el contador de la conversación del destinatario ni manda acuse de leído.</summary>
+    [Fact]
+    public async Task ACampaignNeverTouchesTheUnreadMark()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Ruiz", "300 111 2222"));
+        using var anonymous = f.Host.CreateClient();
+        await PostWebhookAsync(anonymous, MetaPayloads.InboundText("111", "573001112222", "w1", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 60, "hola"));
+        await DrainDeliveriesAsync(f.Host);
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET unread_count = 2");
+        await LaunchAsync(f, Input(f, [.. customers]));
+
+        await DrainCampaignsAsync(f.Host);
+
+        Assert.Equal("Sent", await RecipientStatusAsync(f, "Ana Ruiz"));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
+        Assert.Equal(2, await ScalarAsync<int>(f.ConnectionString, "SELECT unread_count FROM messaging.conversations"));
+        Assert.DoesNotContain(f.Pod.MetaHandler.Requests, IsReadReceipt);
+    }
+
     [Fact]
     public async Task AnUtilityTemplateReachesWhoOptedOutOfPromotions()
     {
