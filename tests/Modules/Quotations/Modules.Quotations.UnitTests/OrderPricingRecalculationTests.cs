@@ -35,7 +35,7 @@ public sealed class OrderPricingRecalculationTests
         var order = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001",
             new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, false),
-            QuotationParties.Empty, BillingAccount,
+            QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             [
                 new OrderLineInput(gone, 2m, 10_000m, 10m, 19, new QuotationProductSnapshot("OLD", "Viejo")),
                 new OrderLineInput(kept, 10m, 10_000m, 0m, 19),

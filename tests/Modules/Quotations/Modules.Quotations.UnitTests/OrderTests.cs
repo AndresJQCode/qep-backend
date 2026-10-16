@@ -33,7 +33,7 @@ public sealed class OrderTests
         OrderHeader? header = null) =>
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001", header ?? Header(), QuotationParties.Empty, Account,
-            lines ?? [Line()], paymentStatus, notes, ConvertedBy,
+            ShippingDetails.None, lines ?? [Line()], paymentStatus, notes, ConvertedBy,
             proofs ?? [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)], Now);
 
     [Fact]
@@ -90,7 +90,7 @@ public sealed class OrderTests
             Order.CreateManual(
                 OrderId.New(), TenantId, "PED-2026-0001", Header(),
                 new QuotationParties(null, new QuotationPartyDetails { Name = "Bodega" }), Account,
-                [Line()], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now));
+                ShippingDetails.None, [Line()], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now));
 
         Assert.Equal("order.shipping.party_incomplete", error.Code);
     }
@@ -112,7 +112,7 @@ public sealed class OrderTests
                         CityId = Guid.CreateVersion7(),
                     },
                     null, BillingWithRetention: false, BillingVatSurplus: false),
-                Account, [Line()], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now));
+                Account, ShippingDetails.None, [Line()], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now));
 
         Assert.Equal("order.billing.identification_required", error.Code);
     }
@@ -156,7 +156,7 @@ public sealed class OrderTests
     public void CreateManualRequiresTheBillingAccount()
     {
         Assert.Throws<ArgumentNullException>(() => Order.CreateManual(
-            OrderId.New(), TenantId, "PED-2026-0001", Header(), QuotationParties.Empty, null!, [Line()],
+            OrderId.New(), TenantId, "PED-2026-0001", Header(), QuotationParties.Empty, null!, ShippingDetails.None, [Line()],
             OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now));
     }
 
@@ -175,7 +175,7 @@ public sealed class OrderTests
 
         var order = Order.Preview(
             OrderId.New(), TenantId, "PREVIEW", header, QuotationParties.Empty, billingAccount: null,
-            [Line(quantity: 2m, unitPrice: 11_900m)], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now);
+            ShippingDetails.None, [Line(quantity: 2m, unitPrice: 11_900m)], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now);
 
         Assert.Null(order.BillingAccount);
         Assert.Equal(("USD", OrderSource.Manual), (order.Currency, order.Source));
@@ -190,7 +190,7 @@ public sealed class OrderTests
         var account = Account with { Currency = "USD" };
 
         var order = Order.Preview(
-            OrderId.New(), TenantId, "PREVIEW", Header(), QuotationParties.Empty, account, [Line()],
+            OrderId.New(), TenantId, "PREVIEW", Header(), QuotationParties.Empty, account, ShippingDetails.None, [Line()],
             OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now);
 
         Assert.Equal("USD", order.Currency);
@@ -373,7 +373,7 @@ public sealed class OrderTests
     {
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Order.CreateManual(
-                OrderId.New(), TenantId, number, Header(), QuotationParties.Empty, Account, [Line()],
+                OrderId.New(), TenantId, number, Header(), QuotationParties.Empty, Account, ShippingDetails.None, [Line()],
                 OrderPaymentStatus.FullPaymentReceived, null, ConvertedBy,
                 [new OrderPaymentProofInput(Guid.CreateVersion7(), 1m)], Now));
 

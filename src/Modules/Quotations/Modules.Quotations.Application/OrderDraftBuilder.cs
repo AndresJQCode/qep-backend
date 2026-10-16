@@ -48,7 +48,8 @@ public sealed class OrderDraftBuilder(
                 "order.billing.account_required", "An order needs a billing account.");
         var (header, parties, lines) = await PriceAsync(input, customer, account.Currency, cancellationToken);
         var order = Order.CreateManual(
-            OrderId.New(), input.TenantId, orderNumber, header, parties, account, lines,
+            OrderId.New(), input.TenantId, orderNumber, header, parties, account,
+            ShippingDetails.None, lines,
             input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now);
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, input.TenantId, order, now, cancellationToken);
@@ -68,7 +69,8 @@ public sealed class OrderDraftBuilder(
             ?? Currencies.Normalize(await tenantDefaultCurrency.GetAsync(input.TenantId, cancellationToken));
         var (header, parties, lines) = await PriceAsync(input, customer, currency, cancellationToken);
         var order = Order.Preview(
-            OrderId.New(), input.TenantId, PreviewOrderNumber, header, parties, account, lines,
+            OrderId.New(), input.TenantId, PreviewOrderNumber, header, parties, account,
+            ShippingDetails.None, lines,
             input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now);
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, input.TenantId, order, now, cancellationToken);

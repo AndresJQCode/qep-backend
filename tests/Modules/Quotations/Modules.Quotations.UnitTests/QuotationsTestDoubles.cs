@@ -1039,6 +1039,7 @@ internal static class OrderBuilders
             new OrderHeader(clientId ?? Guid.CreateVersion7(), advisorId, "COP", null, IsRetail: false, null, false, false),
             QuotationParties.Empty,
             BillingAccount,
+            ShippingDetails.None,
             [new OrderLineInput(Guid.CreateVersion7(), 1m, 119_000m, 0m, 19)],
             paymentStatus,
             notes: null,

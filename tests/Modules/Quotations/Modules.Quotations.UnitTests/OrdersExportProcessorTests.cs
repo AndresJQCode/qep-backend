@@ -1889,6 +1889,7 @@ public sealed class OrdersExportProcessorTests
             new OrderHeader(ClientId, AdvisorId, "COP", paymentMethod, IsRetail: false, null, customerWithRetention, false),
             parties ?? QuotationParties.Empty,
             billingAccount ?? DefaultBillingAccount,
+            ShippingDetails.None,
             (items ?? DefaultItems)
                 .Select(item => new OrderLineInput(
                     item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage))

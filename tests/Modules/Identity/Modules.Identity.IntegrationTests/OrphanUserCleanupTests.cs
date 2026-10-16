@@ -822,6 +822,7 @@ public sealed class OrphanUserCleanupTests
                 AccountNumber = "7542",
                 Currency = "COP",
             },
+            ShippingDetails.None,
             [new OrderLineInput(Guid.CreateVersion7(), 1m, 119_000m, 0m, 19)],
             OrderPaymentStatus.PaymentPending,
             notes: null,

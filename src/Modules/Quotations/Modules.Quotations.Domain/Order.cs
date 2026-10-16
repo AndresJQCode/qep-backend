@@ -14,8 +14,9 @@ namespace Modules.Quotations.Domain;
 /// <see cref="ConvertedAt"/> y <see cref="ConvertedBy"/> conservan su nombre para un pedido manual o
 /// externo: significan «creado el / por» (plan 2026-10-15, P3).
 ///
-/// Nunca tiene PDF ni envío propio (US-17): el único documento que el cliente recibe es la
-/// cotización original.
+/// Nunca tiene PDF ni se le manda al cliente (US-17): el único documento que el cliente recibe es la
+/// cotización original. La entrega por envío (transportadora, valor, contraentrega) sí la tiene
+/// (spec 2026-10-17 flete): ver <see cref="ShippingDetails"/>.
 /// </summary>
 public sealed class Order
 {
@@ -162,6 +163,25 @@ public sealed class Order
     /// <summary>Lo facturado por los productos, sin el envío.</summary>
     public decimal ProductsTotal => Subtotal + TaxAmount;
 
+    /// <summary>Misma regla que <see cref="Quotation.CarrierId"/>.</summary>
+    public Guid? CarrierId { get; private set; }
+
+    public string? CarrierName { get; private set; }
+
+    public FreightChargeMode? FreightChargeMode { get; private set; }
+
+    public decimal FreightAmount { get; private set; }
+
+    public int FreightTaxPercentage { get; private set; }
+
+    /// <summary>El pedido se cobra contraentrega (spec 2026-10-17 flete §6): nace
+    /// <see cref="OrderPaymentStatus.PaymentPending"/> y el giro se registra con un comprobante.</summary>
+    public bool CashOnDelivery { get; private set; }
+
+    /// <summary>Los seis campos del envío juntos, como <see cref="Quotation.ShippingDetails"/>.</summary>
+    public ShippingDetails ShippingDetails =>
+        new(CarrierId, CarrierName, FreightChargeMode, FreightAmount, FreightTaxPercentage, CashOnDelivery);
+
     public OrderStatus Status { get; private set; }
 
     public OrderPaymentStatus PaymentStatus { get; private set; }
@@ -265,6 +285,10 @@ public sealed class Order
         var order = new Order(
             id, tenantId, orderNumber, OrderSource.Quotation, quotation.Id, null, header, parties,
             quotation.BillingAccount, paymentStatus, JoinNotes(quotation.Notes, notes), convertedBy, occurredAt);
+        // Copia tal cual, incluida la tasa: la cotización ya validó el envío al fijarlo, y el pedido nace con
+        // sus mismos totales.
+        order.AssignShipping(quotation.ShippingDetails);
+        order.EnsureCashOnDeliveryIsPending();
         foreach (var item in quotation.Items.OrderBy(item => item.Position))
         {
             var copy = OrderItem.Create(
@@ -292,6 +316,7 @@ public sealed class Order
         OrderHeader header,
         QuotationParties parties,
         QuotationBillingAccount billingAccount,
+        ShippingDetails shipping,
         IReadOnlyCollection<OrderLineInput> lines,
         OrderPaymentStatus paymentStatus,
         string? notes,
@@ -301,7 +326,7 @@ public sealed class Order
     {
         ArgumentNullException.ThrowIfNull(billingAccount);
         return Build(
-            id, tenantId, orderNumber, OrderSource.Manual, null, header, parties, billingAccount, lines,
+            id, tenantId, orderNumber, OrderSource.Manual, null, header, parties, billingAccount, shipping, lines,
             paymentStatus, notes, createdBy, proofs, occurredAt);
     }
 
@@ -320,6 +345,7 @@ public sealed class Order
         OrderHeader header,
         QuotationParties parties,
         QuotationBillingAccount? billingAccount,
+        ShippingDetails shipping,
         IReadOnlyCollection<OrderLineInput> lines,
         OrderPaymentStatus paymentStatus,
         string? notes,
@@ -327,7 +353,7 @@ public sealed class Order
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
         DateTimeOffset occurredAt) =>
         Build(
-            id, tenantId, orderNumber, OrderSource.Manual, null, header, parties, billingAccount, lines,
+            id, tenantId, orderNumber, OrderSource.Manual, null, header, parties, billingAccount, shipping, lines,
             paymentStatus, notes, createdBy, proofs, occurredAt);
 
     /// <summary>Un pedido que trae una integración (Shopify y las que vengan). La elegibilidad del cliente
@@ -363,9 +389,11 @@ public sealed class Order
         }
 
         ArgumentNullException.ThrowIfNull(billingAccount);
+        // Un pedido externo nace sin envío (spec 2026-10-17 flete §5.4): el envío del borrador externo lo
+        // agrega el spec de Shopify.
         return Build(
-            id, tenantId, orderNumber, source, externalReference, header, parties, billingAccount, lines,
-            paymentStatus, notes, createdBy, proofs, occurredAt);
+            id, tenantId, orderNumber, source, externalReference, header, parties, billingAccount,
+            ShippingDetails.None, lines, paymentStatus, notes, createdBy, proofs, occurredAt);
     }
 
     private static Order Build(
@@ -377,6 +405,7 @@ public sealed class Order
         OrderHeader header,
         QuotationParties parties,
         QuotationBillingAccount? billingAccount,
+        ShippingDetails shipping,
         IReadOnlyCollection<OrderLineInput> lines,
         OrderPaymentStatus paymentStatus,
         string? notes,
@@ -385,9 +414,12 @@ public sealed class Order
         DateTimeOffset occurredAt)
     {
         ArgumentNullException.ThrowIfNull(header);
+        ArgumentNullException.ThrowIfNull(shipping);
         var order = new Order(
             id, tenantId, orderNumber, source, null, externalReference, header, parties, billingAccount,
             paymentStatus, notes, createdBy, occurredAt);
+        order.AssignShipping(shipping.Validated(order.IsStorePickup, order.Currency, "order.order"));
+        order.EnsureCashOnDeliveryIsPending();
         foreach (var line in lines)
         {
             order.AddItemCore(
@@ -539,6 +571,51 @@ public sealed class Order
         GlobalScaleFloor = floor;
         Touch(updatedBy, occurredAt);
     }
+
+    /// <summary>
+    /// Cambia el envío de un pedido pendiente (spec 2026-10-17 flete §5.4). No cambia recoger o enviar: el
+    /// pedido no edita sus partes. Prender la contraentrega exige un pago que todavía no empezó —sin
+    /// comprobantes y <see cref="OrderPaymentStatus.PaymentPending"/>— (D-F14); ya prendida, se conserva aunque
+    /// llegue el comprobante del giro.
+    /// </summary>
+    public void SetShipping(ShippingDetails shipping, MemberId updatedBy, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(shipping);
+        EnsurePending("The shipping can only change while the order is pending.");
+        var validated = shipping.Validated(IsStorePickup, Currency, "order.order");
+        if (validated.CashOnDelivery && !CashOnDelivery
+            && (_paymentProofs.Count > 0 || PaymentStatus != OrderPaymentStatus.PaymentPending))
+        {
+            throw CashOnDeliveryPendingOnly();
+        }
+
+        AssignShipping(validated);
+        Touch(updatedBy, occurredAt);
+    }
+
+    private void AssignShipping(ShippingDetails shipping)
+    {
+        CarrierId = shipping.CarrierId;
+        CarrierName = shipping.CarrierName;
+        FreightChargeMode = shipping.ChargeMode;
+        FreightAmount = shipping.FreightAmount;
+        FreightTaxPercentage = shipping.FreightTaxPercentage;
+        CashOnDelivery = shipping.CashOnDelivery;
+    }
+
+    // Spec §6: un pedido contraentrega se cobra en la puerta, así que nace sin pago registrado.
+    private void EnsureCashOnDeliveryIsPending()
+    {
+        if (CashOnDelivery && PaymentStatus != OrderPaymentStatus.PaymentPending)
+        {
+            throw CashOnDeliveryPendingOnly();
+        }
+    }
+
+    private static QuotationsDomainException CashOnDeliveryPendingOnly() =>
+        new(
+            "order.order.cash_on_delivery_pending_only",
+            "A cash on delivery order cannot have a payment registered yet.");
 
     public void ApplyGroupDiscounts(
         IReadOnlyDictionary<OrderItemId, QuotationItemDiscount> discounts,
@@ -879,7 +956,11 @@ public sealed class Order
 
     private void RecalculateTotals()
     {
-        var totals = DocumentTotals.Compute(_items.Select(item => item.Amounts), FreightAmounts.Zero, AppliesVatSurplus, AppliesRetention);
+        var totals = DocumentTotals.Compute(
+            _items.Select(item => item.Amounts),
+            FreightAmounts.For(FreightChargeMode, FreightAmount, FreightTaxPercentage, Currency),
+            AppliesVatSurplus,
+            AppliesRetention);
         Subtotal = totals.Subtotal;
         DiscountAmount = totals.DiscountAmount;
         TaxAmount = totals.TaxAmount;

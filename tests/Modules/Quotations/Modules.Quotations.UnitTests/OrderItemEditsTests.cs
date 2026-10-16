@@ -28,7 +28,7 @@ public sealed class OrderItemEditsTests
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001",
             new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, false),
-            QuotationParties.Empty, BillingAccount,
+            QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             lines.Select(line => new OrderLineInput(line.ProductId, line.Quantity, line.UnitPrice, 0m, 0, line.Product)).ToArray(),
             OrderPaymentStatus.PaymentPending, null, UpdatedBy, [], Now);
 

@@ -302,6 +302,7 @@ public sealed class ListOrdersHandlerTests
                 AccountNumber = "7542",
                 Currency = "COP",
             },
+            ShippingDetails.None,
             [new OrderLineInput(Guid.CreateVersion7(), 2m, total / 2m, 0m, 19)],
             OrderPaymentStatus.PaymentPending,
             notes: null,

@@ -188,6 +188,31 @@ public sealed class Quotation
     /// <summary>Lo facturado por los productos, sin el envío.</summary>
     public decimal ProductsTotal => Subtotal + TaxAmount;
 
+    /// <summary>La transportadora elegida. Sin FK a <c>carriers</c>: la cotización no depende de que la
+    /// transportadora siga igual (spec 2026-10-17 flete §5.1).</summary>
+    public Guid? CarrierId { get; private set; }
+
+    /// <summary>Foto del nombre de la transportadora al elegirla: es lo que se muestra, se exporta y se imprime.</summary>
+    public string? CarrierName { get; private set; }
+
+    /// <summary>Cómo se cobra el envío. Null = sin envío registrado.</summary>
+    public FreightChargeMode? FreightChargeMode { get; private set; }
+
+    /// <summary>El valor del envío con IVA incluido, como lo escribió el asesor. Sólo suma al total con
+    /// <see cref="Domain.FreightChargeMode.Charged"/>.</summary>
+    public decimal FreightAmount { get; private set; }
+
+    /// <summary>Foto de la tasa del envío al fijar el valor; 0 fuera de COP.</summary>
+    public int FreightTaxPercentage { get; private set; }
+
+    /// <summary>Si el pedido que salga de esta cotización se cobra contraentrega (spec §6).</summary>
+    public bool CashOnDelivery { get; private set; }
+
+    /// <summary>Los seis campos del envío juntos. Se llama así, y no <c>Shipping</c>, porque ese nombre ya
+    /// es la parte de entrega (<see cref="Shipping"/>).</summary>
+    public ShippingDetails ShippingDetails =>
+        new(CarrierId, CarrierName, FreightChargeMode, FreightAmount, FreightTaxPercentage, CashOnDelivery);
+
     public string? Notes { get; private set; }
 
     public MemberId CreatedBy { get; private set; }
@@ -429,6 +454,31 @@ public sealed class Quotation
     }
 
     /// <summary>
+    /// Fija la entrega por envío (spec 2026-10-17 flete §5.2). Valida contra la recogida y la moneda que la
+    /// cotización ya tiene, así que el handler lo llama <b>después</b> de <see cref="UpdateDetails"/>; cuando
+    /// la entrega pasa a recogida, le manda <see cref="ShippingDetails.None"/>. <see cref="UpdateDetails"/>
+    /// no valida el envío a propósito: si lo hiciera, pasar a recogida con un envío guardado fallaría antes
+    /// de que se pudiera limpiar.
+    /// </summary>
+    public void SetShipping(ShippingDetails shipping, MemberId updatedBy, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(shipping);
+        EnsureEditable();
+        AssignShipping(shipping.Validated(IsStorePickup, Currency, "quotation.quotation"));
+        Touch(updatedBy, occurredAt);
+    }
+
+    private void AssignShipping(ShippingDetails shipping)
+    {
+        CarrierId = shipping.CarrierId;
+        CarrierName = shipping.CarrierName;
+        FreightChargeMode = shipping.ChargeMode;
+        FreightAmount = shipping.FreightAmount;
+        FreightTaxPercentage = shipping.FreightTaxPercentage;
+        CashOnDelivery = shipping.CashOnDelivery;
+    }
+
+    /// <summary>
     /// Las dos condiciones de un piso global, en un solo lugar: lo usan el mutador suelto y el
     /// guardado del encabezado (<see cref="UpdateDetails"/>), y si divergieran el guardado sería
     /// una puerta trasera a la exclusión con detal.
@@ -601,6 +651,13 @@ public sealed class Quotation
         }
 
         Currency = currency;
+
+        // D-F15: el envío no tiene de dónde re-preciarse en la moneda nueva. Se limpian el valor y el modo
+        // para que el asesor lo vuelva a escribir; la transportadora y la contraentrega no dependen de la
+        // moneda y se conservan.
+        FreightChargeMode = null;
+        FreightAmount = 0m;
+        FreightTaxPercentage = 0;
     }
 
     /// <summary>
@@ -1050,7 +1107,7 @@ public sealed class Quotation
     {
         var totals = DocumentTotals.Compute(
             _items.Select(item => new LineAmountsView(item.Subtotal, item.DiscountAmount, item.TaxAmount)),
-            FreightAmounts.Zero,
+            FreightAmounts.For(FreightChargeMode, FreightAmount, FreightTaxPercentage, Currency),
             AppliesVatSurplus,
             AppliesRetention);
         Subtotal = totals.Subtotal;
