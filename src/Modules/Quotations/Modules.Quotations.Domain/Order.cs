@@ -153,6 +153,15 @@ public sealed class Order
 
     public decimal NetTotal { get; private set; }
 
+    /// <summary>Subtotal del envío, sin IVA. Cero salvo que el envío se cobre en el documento.</summary>
+    public decimal FreightSubtotal { get; private set; }
+
+    /// <summary>IVA del envío. Cero con excedente de IVA o fuera de COP.</summary>
+    public decimal FreightTaxAmount { get; private set; }
+
+    /// <summary>Lo facturado por los productos, sin el envío.</summary>
+    public decimal ProductsTotal => Subtotal + TaxAmount;
+
     public OrderStatus Status { get; private set; }
 
     public OrderPaymentStatus PaymentStatus { get; private set; }
@@ -870,7 +879,7 @@ public sealed class Order
 
     private void RecalculateTotals()
     {
-        var totals = DocumentTotals.Compute(_items.Select(item => item.Amounts), AppliesVatSurplus, AppliesRetention);
+        var totals = DocumentTotals.Compute(_items.Select(item => item.Amounts), FreightAmounts.Zero, AppliesVatSurplus, AppliesRetention);
         Subtotal = totals.Subtotal;
         DiscountAmount = totals.DiscountAmount;
         TaxAmount = totals.TaxAmount;
@@ -878,6 +887,8 @@ public sealed class Order
         Total = totals.Total;
         RetentionAmount = totals.RetentionAmount;
         NetTotal = totals.NetTotal;
+        FreightSubtotal = totals.FreightSubtotal;
+        FreightTaxAmount = totals.FreightTaxAmount;
     }
 
     private void AssignParties(QuotationParties parties)

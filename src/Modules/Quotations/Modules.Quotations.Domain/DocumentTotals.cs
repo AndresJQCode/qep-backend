@@ -11,7 +11,8 @@ public readonly record struct LineAmountsView(decimal Subtotal, decimal Discount
 /// Un cliente con excedente de IVA no paga IVA en el documento, cualquiera sea la tasa de cada
 /// línea: el impuesto de cada línea queda intacto, pero el encabezado lo ignora entero. La
 /// retención en la fuente es el 2,5 % de lo facturado sin IVA y resta del neto a cobrar, no del
-/// total: el total sigue siendo lo facturado.
+/// total: el total sigue siendo lo facturado. El IVA del envío sigue la misma regla del excedente, y la retención
+/// se calcula sobre el subtotal de los productos, nunca sobre el envío.
 /// </summary>
 public readonly record struct DocumentTotals(
     decimal Subtotal,
@@ -20,14 +21,22 @@ public readonly record struct DocumentTotals(
     decimal TaxPercentage,
     decimal Total,
     decimal RetentionAmount,
-    decimal NetTotal)
+    decimal NetTotal,
+    decimal FreightSubtotal = 0m,
+    decimal FreightTaxAmount = 0m)
 {
     public const decimal RetentionRate = 0.025m;
+
+    /// <summary>
+    /// Lo que se factura por los productos, sin el envío. El envío viaja en sus propios campos para que
+    /// la pantalla pueda mostrarlo aparte sin restarlo de <see cref="Total"/>.
+    /// </summary>
+    public decimal ProductsTotal => Subtotal + TaxAmount;
 
     public static DocumentTotals Zero { get; } = new(0m, 0m, 0m, 0m, 0m, 0m, 0m);
 
     public static DocumentTotals Compute(
-        IEnumerable<LineAmountsView> lines, bool appliesVatSurplus, bool appliesRetention)
+        IEnumerable<LineAmountsView> lines, FreightAmounts freight, bool appliesVatSurplus, bool appliesRetention)
     {
         var materialized = lines as IReadOnlyCollection<LineAmountsView> ?? lines.ToArray();
         var subtotal = Round(materialized.Sum(line => line.Subtotal));
@@ -35,9 +44,10 @@ public readonly record struct DocumentTotals(
         var rawTax = Round(materialized.Sum(line => line.TaxAmount));
         var tax = appliesVatSurplus ? 0m : rawTax;
         var taxPercentage = subtotal > 0 ? Round(tax / subtotal * 100m) : 0m;
-        var total = subtotal + tax;
+        var freightTax = appliesVatSurplus ? 0m : freight.TaxAmount;
+        var total = subtotal + tax + freight.Subtotal + freightTax;
         var retention = appliesRetention ? Round(subtotal * RetentionRate) : 0m;
-        return new DocumentTotals(subtotal, discount, tax, taxPercentage, total, retention, total - retention);
+        return new DocumentTotals(subtotal, discount, tax, taxPercentage, total, retention, total - retention, freight.Subtotal, freightTax);
     }
 
     private static decimal Round(decimal value) => Math.Round(value, 2, MidpointRounding.AwayFromZero);

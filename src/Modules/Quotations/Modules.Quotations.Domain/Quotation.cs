@@ -179,6 +179,15 @@ public sealed class Quotation
     /// <see cref="Total"/> cuando no hay retención.</summary>
     public decimal NetTotal { get; private set; }
 
+    /// <summary>Subtotal del envío, sin IVA. Cero salvo que el envío se cobre en el documento.</summary>
+    public decimal FreightSubtotal { get; private set; }
+
+    /// <summary>IVA del envío. Cero con excedente de IVA o fuera de COP.</summary>
+    public decimal FreightTaxAmount { get; private set; }
+
+    /// <summary>Lo facturado por los productos, sin el envío.</summary>
+    public decimal ProductsTotal => Subtotal + TaxAmount;
+
     public string? Notes { get; private set; }
 
     public MemberId CreatedBy { get; private set; }
@@ -1041,6 +1050,7 @@ public sealed class Quotation
     {
         var totals = DocumentTotals.Compute(
             _items.Select(item => new LineAmountsView(item.Subtotal, item.DiscountAmount, item.TaxAmount)),
+            FreightAmounts.Zero,
             AppliesVatSurplus,
             AppliesRetention);
         Subtotal = totals.Subtotal;
@@ -1050,6 +1060,8 @@ public sealed class Quotation
         Total = totals.Total;
         RetentionAmount = totals.RetentionAmount;
         NetTotal = totals.NetTotal;
+        FreightSubtotal = totals.FreightSubtotal;
+        FreightTaxAmount = totals.FreightTaxAmount;
     }
 
     private static string NormalizeQuotationNumber(string quotationNumber)
