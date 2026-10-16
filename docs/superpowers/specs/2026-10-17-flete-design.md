@@ -78,6 +78,7 @@ Inventario del 2026-10-17 sobre `develop` (`a748255c`). Q = `src/Modules/Quotati
 | 9 | Shopify | El nombre del método de envío identifica la transportadora y el valor viene del pedido. |
 | 10 | ¿Dónde vive el gestor de tasas de impuesto? | **En Configuración**, dentro de este spec. Sólo cambia la pantalla: la API y los permisos de Catalog quedan iguales. |
 | 11 | ¿Es obligatorio elegir transportadora o envío? | **No.** Ni para enviar la cotización ni para crear o convertir un pedido. |
+| 12 | ¿La contraentrega exige transportadora? | **No.** |
 
 **Pendientes del owner** (el spec trae un valor por defecto, marcado en §13):
 
@@ -192,14 +193,15 @@ recibir envío en este spec (§10).
 - `OnDelivery` → valor ≥ 0, opcional e informativo: **no suma** al total ni lleva IVA en QEP.
 - Transportadora y modo son **independientes y opcionales** (decisión 11): se puede elegir transportadora sin
   registrar envío, o cobrar un envío sin transportadora.
-- `CashOnDelivery` exige enviar con transportadora, porque es ella la que recauda
-  (`…cash_on_delivery_requires_carrier`).
+- `CashOnDelivery` tampoco exige transportadora (decisión 12). Sólo exige enviar: con recogida el cliente paga
+  en la tienda, y la regla de recogida de arriba ya lo rechaza.
 
 **Al elegir o cambiar la transportadora** (el handler la lee del tenant; no en cada guardado si no cambió):
 
 - Debe existir y estar activa (`…carrier_not_available`; otro tenant → 403 por la doble capa).
-- `CashOnDelivery` exige `SupportsCashOnDelivery` de esa transportadora en ese momento
-  (`…cash_on_delivery_not_supported`). Si después la transportadora deja de hacer recaudo, el documento
+- Si hay transportadora, `CashOnDelivery` exige `SupportsCashOnDelivery` de esa transportadora en ese
+  momento (`…cash_on_delivery_not_supported`): elegir una que no recauda es una contradicción que se puede
+  detectar. Sin transportadora no hay nada que comprobar. Si después la transportadora deja de hacer recaudo, el documento
   conserva lo elegido.
 - Un documento que ya tiene una transportadora que se desactivó la conserva al guardarse sin tocarla.
 
@@ -277,7 +279,7 @@ Es una forma de **cobrar el pedido**, no de enviarlo: la transportadora le cobra
 después gira el recaudo. Puede combinarse con cualquier modo de envío; con «al cobro», el cliente paga en la
 puerta el pedido más el flete.
 
-- `CashOnDelivery = true` sólo con envío y transportadora que haga recaudo (§5.2).
+- `CashOnDelivery = true` sólo con envío; con o sin transportadora, pero si la hay, que haga recaudo (§5.2).
 - Un pedido contraentrega nace `PaymentPending` sin comprobantes: ya está permitido (H7). El manual y la
   conversión lo **fuerzan**: con `CashOnDelivery`, un `paymentStatus` distinto de `PaymentPending` es 422
   `order.order.cash_on_delivery_pending_only` (el dinero aún no llegó).
@@ -367,8 +369,8 @@ guarda ese valor en el negocio: un negocio pasa a valer lo facturado con envío.
   sin transportadora; en $ 0 y bloqueado con «Gratis»; opcional con «Al cobro»). Todo es opcional: la
   transportadora tiene «Sin transportadora» y quién paga se puede dejar sin elegir. Sin IVA del envío
   configurado, «Se cobra en el pedido» se deshabilita con un aviso que enlaza a Configuración.
-- **Cobro:** sección «¿Cómo paga el cliente el pedido?»: «Anticipado» o «Contraentrega» (habilitada sólo con
-  envío y transportadora con recaudo). Con contraentrega, el estado de pago del pedido manual queda fijo en
+- **Cobro:** sección «¿Cómo paga el cliente el pedido?»: «Anticipado» o «Contraentrega» (habilitada con
+  «Enviar», con o sin transportadora; deshabilitada si la transportadora elegida no hace recaudo). Con contraentrega, el estado de pago del pedido manual queda fijo en
   pendiente.
 - **Totales** (`quote-totals-summary.tsx`, `order-items-card.tsx`): filas «Envío sin IVA · Coordinadora» e
   «IVA del envío (19 %)», o «Envío · Gratis» / «Envío · Al cobro»; con contraentrega o al cobro, un recuadro
@@ -423,8 +425,8 @@ Se aplica al spec de Shopify cuando éste se apruebe; lo implementa Shopify, no 
   `ExternalNames`; operación del módulo de pedidos con `quotations.order.manage` + `tenancy.settings.update`
   para recordar el nombre).
 - **Contraentrega:** pasarela de pago de contraentrega (el nombre exacto de `gateway` se verifica, V-8) →
-  `CashOnDelivery = true` si la transportadora reconocida hace recaudo; si no, aviso
-  `cash_on_delivery_unmatched` y entra sin la marca.
+  `CashOnDelivery = true`, con o sin transportadora reconocida (es un hecho de la tienda). Si la reconocida
+  no hace recaudo según su configuración, entra igual con la marca y el aviso `cash_on_delivery_unmatched`.
 - `ExternalOrderDraft` gana `Shipping` (`ShippingDetails` sin validar la transportadora contra el estado
   actual de recaudo, que el importador ya resolvió). Hasta entonces el camino externo no recibe envío
   (§5.4).
@@ -447,7 +449,8 @@ columnas nuevas); `QuotationPdfDocumentMapperTests`; validadores de transportado
 repetido → 409/422 con el código por **nombre de índice**, reordenar con ids de más o de menos, IVA del envío
 (tasa inactiva, de otro tenant, quitarla); `/shipping-options` sólo activas; cotización con envío cobrado
 (totales, PDF JSON), gratis, al cobro, recogida que limpia, contraentrega con transportadora sin recaudo
-(422), contraentrega sin transportadora (422), cobrar sin IVA configurado (422), envío cobrado sin
+(422), contraentrega sin transportadora (201), contraentrega con recogida (422), cobrar sin IVA configurado
+(422), envío cobrado sin
 transportadora (201), enviar y convertir sin transportadora ni envío (siguen pasando); conversión con y sin
 envío; pedido
 manual con envío y contraentrega con estado distinto de pendiente (422); edición del envío de un pedido
@@ -483,7 +486,8 @@ completa.
 | D-F1 | «Flete pago» se llama **«Al cobro»** en el producto (`OnDelivery` en el contrato): en el lenguaje de las transportadoras, «pagado» suele significar que paga el remitente | Un texto del diccionario |
 | D-F2 | Una transportadora **no se borra**, se desactiva; los documentos guardan la foto del nombre | Un `DELETE` que sólo borre las nunca usadas |
 | D-F3 | `GET /shipping-options` con `quotations.quotation.read`. Si el plan encuentra un rol con `quotations.order.manage` sin ese permiso, se agrega la ruta gemela bajo pedidos con `quotations.order.read` | Una ruta más |
-| D-F4 | Transportadora y modo de envío son independientes: se puede cobrar un envío sin transportadora (la contraentrega sí la exige) | Exigir transportadora para cobrar envío |
+| D-F4 | Transportadora y modo de envío son independientes: se puede cobrar un envío sin transportadora | Exigir transportadora para cobrar envío |
+| D-F17 | Contraentrega con transportadora que no hace recaudo se rechaza (422); sin transportadora se acepta. Con recogida, también se rechaza | Aceptarla siempre |
 | D-F5 | En un pedido pendiente se edita transportadora, modo, valor y contraentrega, pero no recoger/enviar ni la dirección | Abrir la edición de partes del pedido |
 | D-F6 | La **retención no incluye el envío** (P1) | Una línea en `DocumentTotals` y sus pruebas |
 | D-F7 | El mínimo de compra no cuenta el envío (`ProductsTotal`, §5.3) | Sumarlo: quitar `ProductsTotal` |
@@ -510,6 +514,6 @@ completa.
 
 ## Historial de revisión
 
-- 2026-10-17: decisiones 1–11 tomadas en conversación con el owner (2026-10-16 y 2026-10-17), con mockups en el
+- 2026-10-17: decisiones 1–12 tomadas en conversación con el owner (2026-10-16 y 2026-10-17), con mockups en el
   lienzo «Entrega y flete del pedido» y un inventario del código (§2); spec escrito. Pendientes P1 y P2, la
   lectura del owner y el plan.
