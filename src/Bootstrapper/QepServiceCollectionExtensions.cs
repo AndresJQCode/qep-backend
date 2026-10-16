@@ -521,6 +521,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateQuotationSettingsCommand, QuotationSettingsDto>,
             UpdateQuotationSettingsHandler>();
+        // Transportadoras y el IVA del envío (spec 2026-10-17 §4.3), a mano como el resto.
+        services.AddScoped<IQueryHandler<ListCarriersQuery, CarrierSettingsDto>, ListCarriersHandler>();
+        services.AddScoped<ICommandHandler<CreateCarrierCommand, CarrierDto>, CreateCarrierHandler>();
+        services.AddScoped<ICommandHandler<UpdateCarrierCommand, CarrierDto>, UpdateCarrierHandler>();
+        services.AddScoped<ICommandHandler<SetCarrierActiveCommand, CarrierDto>, SetCarrierActiveHandler>();
+        services.AddScoped<ICommandHandler<ReorderCarriersCommand, CarrierSettingsDto>, ReorderCarriersHandler>();
+        services.AddScoped<ICommandHandler<SetFreightTaxRateCommand, CarrierSettingsDto>, SetFreightTaxRateHandler>();
+        services.AddScoped<IQueryHandler<GetShippingOptionsQuery, ShippingOptionsDto>, GetShippingOptionsHandler>();
         // Reporting. Los ocho van aca por la misma razon que el resto: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
         // recien en runtime con 500 al no encontrar handler.
@@ -807,6 +815,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationResponseComposer, QuotationResponseComposer>();
         services.AddScoped<IOrderResponseComposer, OrderResponseComposer>();
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
+        // La tasa del IVA del envío (spec 2026-10-17 §4.2), sobre el repositorio de tasas de Catalog.
+        services.AddScoped<IQuotationTaxRateLookup, QuotationTaxRateLookup>();
         services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();
         // Los comprobantes de pago públicos (spec 2026-09-15, P3): el publicador que copia al bucket
         // público o el que no hace nada, según Quotations:PaymentProofs:PublicLinks. Se decide al

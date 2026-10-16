@@ -677,6 +677,17 @@ public sealed class FixedQuotationSettingsStore(QuotationSettings? settings = nu
         Settings = settings;
         return Task.CompletedTask;
     }
+
+    public Guid? FreightTaxRateId { get; set; }
+
+    public Task<Guid?> GetFreightTaxRateIdAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(FreightTaxRateId);
+
+    public Task SetFreightTaxRateIdAsync(Guid tenantId, Guid? taxRateId, CancellationToken cancellationToken)
+    {
+        FreightTaxRateId = taxRateId;
+        return Task.CompletedTask;
+    }
 }
 
 /// <summary>Los filtros con que se preguntó por pedidos o se leyó para exportarlos.</summary>

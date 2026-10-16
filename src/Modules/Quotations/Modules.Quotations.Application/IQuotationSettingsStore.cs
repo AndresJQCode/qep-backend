@@ -10,4 +10,13 @@ public interface IQuotationSettingsStore
     /// Must run inside <c>IQuotationsUnitOfWork.BeginTransactionAsync</c>: it locks the tenant's
     /// settings row until that transaction ends, which is what serializes concurrent saves.</summary>
     Task SaveAsync(Guid tenantId, QuotationSettings settings, CancellationToken cancellationToken);
+
+    /// <summary>La tasa de IVA del envío (spec 2026-10-17 §4.2), aparte de <see cref="GetAsync"/> a
+    /// propósito (P2): así el guardado del mínimo de compra no la conoce y no la puede pisar.
+    /// <c>null</c> sin fila o sin tasa.</summary>
+    Task<Guid?> GetFreightTaxRateIdAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Sin fila, la crea con <see cref="QuotationSettings.Default"/>.<c>MinimumUnits</c>. Mismo
+    /// contrato que <see cref="SaveAsync"/>: dentro de la transacción, que bloquea la fila.</summary>
+    Task SetFreightTaxRateIdAsync(Guid tenantId, Guid? taxRateId, CancellationToken cancellationToken);
 }

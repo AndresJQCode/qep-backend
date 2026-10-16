@@ -60,6 +60,8 @@ public static class QuotationsInfrastructureExtensions
         // The tenant's minimum purchase (spec 2026-10-08, D7): read by the recalculation and the
         // response composer, written by PUT /quotations/settings, all on the request's DbContext.
         services.AddScoped<IQuotationSettingsStore, QuotationSettingsStore>();
+        // Las transportadoras del tenant (spec 2026-10-17 §4).
+        services.AddScoped<ICarrierRepository, CarrierRepository>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, QuotationUserReferenceProbe>();
         // Sonda que Storage consulta antes de purgar un comprobante en staging (spec 2026-09-16, D11).
