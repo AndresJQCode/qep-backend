@@ -213,6 +213,9 @@ public sealed partial class Conversation
 
         Status = ConversationStatus.Resolved;
         ResolutionReasonId = reasonId;
+        // Spec 2026-10-16 §3.2: resolver es la última palabra del asesor, así que la marca de no leída no sobrevive. Va aquí y no en el
+        // handler para que viaje en el mismo SaveChanges (y la misma versión) que la resolución; reabrir no la restaura.
+        UnreadCount = 0;
         Touch(now);
     }
 

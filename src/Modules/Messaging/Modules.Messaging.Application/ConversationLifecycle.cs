@@ -143,6 +143,7 @@ public sealed class ResolveConversationHandler(
     IExecutionContext executionContext,
     IClock clock,
     IMessagingNotifier notifier,
+    ReadReceipts receipts,
     IValidator<ResolveConversationCommand> validator)
     : ICommandHandler<ResolveConversationCommand, ConversationSummary>
 {
@@ -157,6 +158,7 @@ public sealed class ResolveConversationHandler(
 
         var now = clock.UtcNow;
         var reason = await ResolutionReasonChoice.ChooseAsync(reasons, command.TenantId, command.ReasonId, command.ReasonName, cancellationToken);
+        var hadUnread = conversation.UnreadCount > 0;
         conversation.Resolve(now, reason?.Id);
         if (reason is { IsNew: true })
         {
@@ -175,6 +177,16 @@ public sealed class ResolveConversationHandler(
         // transacción entera se revierte (el If-Match sigue vigente). El cliente reintenta una vez y el segundo intento lo reutiliza.
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await notifier.ConversationChangedAsync(command.TenantId, conversation.Id, cancellationToken);
+        // Spec 2026-10-16 §3.2: el acuse va después del commit y sólo si había algo sin leer; ReadReceipts no lanza, así que un fallo de
+        // Meta nunca cambia el 200 de la resolución.
+        if (hadUnread)
+        {
+            await receipts.SendAsync(
+                command.TenantId, conversation.Id,
+                new ReadReceiptTarget(conversation.ConnectionId, conversation.LastInboundWamid, conversation.LastInboundAt, conversation.Channel, conversation.UserId),
+                now, cancellationToken);
+        }
+
         return (await summaries.BuildAsync(command.TenantId, [(await queries.FindAsync(command.TenantId, conversation.Id, cancellationToken))!], cancellationToken))[0];
     }
 }

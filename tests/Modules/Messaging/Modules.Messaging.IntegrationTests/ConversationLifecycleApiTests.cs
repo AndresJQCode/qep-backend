@@ -255,6 +255,61 @@ public sealed class ConversationLifecycleApiTests
             "SELECT string_agg(action, ',' ORDER BY action) FROM audit.entries WHERE source = 'messaging' AND resource_type = 'conversation' AND resource_id = @id", ("id", f.ConversationId.ToString())));
     }
 
+    private static async Task<JsonElement> ResolveAsync(Fixture f)
+    {
+        var response = await SendAsync(f.Client, HttpMethod.Post, $"{ConversationUrl(f.Tenant.TenantId, f.ConversationId)}/resolve", ifMatch: $"\"{f.Version}\"");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+    }
+
+    // Spec 2026-10-16 §3.2: resolver con no leídos quita la marca en la misma transacción y acusa el último entrante, una vez.
+    [Fact]
+    public async Task ResolvingClearsTheMarkAndAcknowledgesOnce()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, """{"success":true}""");
+
+        var summary = await ResolveAsync(f);
+
+        Assert.Equal(0, summary.GetProperty("unreadCount").GetInt32());
+        Assert.Equal(f.Version + 1, summary.GetProperty("version").GetInt64());
+        var ack = Assert.Single(f.Factory.MetaHandler.Requests, IsReadReceipt);
+        Assert.Contains("\"message_id\":\"wamid.in\"", ack.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ResolvingWithNothingUnreadSendsNoReceipt()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET unread_count = 0");
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, """{"success":true}""");
+
+        var summary = await ResolveAsync(f);
+
+        Assert.Equal(0, summary.GetProperty("unreadCount").GetInt32());
+        Assert.DoesNotContain(f.Factory.MetaHandler.Requests, IsReadReceipt);
+    }
+
+    // Fuera de la ventana de 30 días Meta ya no acepta el acuse: la marca se quita igual, sin llamada.
+    [Fact]
+    public async Task ResolvingAnOldConversationClearsWithoutAReceipt()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET last_inbound_at = now() - interval '31 days'");
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, """{"success":true}""");
+
+        var summary = await ResolveAsync(f);
+
+        Assert.Equal(0, summary.GetProperty("unreadCount").GetInt32());
+        Assert.DoesNotContain(f.Factory.MetaHandler.Requests, IsReadReceipt);
+    }
+
     // §7.5: la ingesta sube version; un resolve con la versión vieja es 412.
     [Fact]
     public async Task AnInboundThatArrivesAfterLoadingMakesTheResolveConflict()
