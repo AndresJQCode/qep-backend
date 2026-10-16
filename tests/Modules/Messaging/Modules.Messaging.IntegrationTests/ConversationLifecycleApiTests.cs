@@ -8,7 +8,9 @@ namespace Modules.Messaging.IntegrationTests;
 /// <summary>Spec 2026-10-09 §8.4 y §8.5: read deja unreadCount en 0 y manda el acuse a Meta (best effort,
 /// una sola vez, sólo con conexión Active); resolve/reopen con If-Match (428/412), sus 422, auditoría en
 /// la misma transacción; y la versión que sube la ingesta hace chocar un resolve viejo. Spec 2026-10-14: unread
-/// es el espejo del read, sube el contador a 1 sólo desde 0 y nunca habla con Meta.</summary>
+/// es el espejo del read, sube el contador a 1 sólo desde 0 y nunca habla con Meta. Spec 2026-10-16 §3.2 y §3.3:
+/// <c>/read</c> ya no lo dispara abrir el hilo sino el botón «Marcar como leída»; responder y resolver también
+/// quitan la marca y mandan el acuse, por <see cref="ReadReceipts"/>.</summary>
 public sealed class ConversationLifecycleApiTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;

@@ -1,6 +1,5 @@
 using BuildingBlocks.Application;
 using FluentValidation;
-using Microsoft.Extensions.Logging;
 using Modules.Messaging.Domain;
 using Modules.Tenancy.Application;
 
@@ -38,8 +37,9 @@ public sealed class ResolveConversationValidator : AbstractValidator<ResolveConv
 public sealed record ReopenConversationCommand(Guid TenantId, Guid ConversationId, long ExpectedVersion) : ICommand<ConversationSummary>;
 
 /// <summary>§8.4: commit primero, por un UPDATE atómico sin token de concurrencia (un entrante que sube
-/// <c>version</c> en medio no lo convierte en 412); después el acuse a Meta, best effort (5 s), sólo si había
-/// no leídos, hay último entrante de menos de 30 días y la conexión está Active. Siempre 204.</summary>
+/// <c>version</c> en medio no lo convierte en 412); después el acuse a Meta por <see cref="ReadReceipts"/>, best effort,
+/// sólo si había no leídos. Spec 2026-10-16 §3.3: este handler es el del botón «Marcar como leída» de la barra del
+/// hilo; abrir la conversación ya no lo llama. Siempre 204.</summary>
 public sealed class MarkConversationReadHandler(
     IConversationRepository repository,
     ReadReceipts readReceipts,

@@ -1,5 +1,7 @@
 # Mensajería: marcar una conversación como no leída
 
+> Parcialmente sustituido por `2026-10-16-mensajeria-leida-al-responder-design.md`.
+
 **Fecha:** 2026-10-14
 **Módulos:** Messaging (Application, Infrastructure, Api), Bootstrapper (registro del handler).
 Sin migración, sin permisos nuevos, sin códigos de error nuevos.
