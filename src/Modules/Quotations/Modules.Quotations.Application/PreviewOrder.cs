@@ -53,7 +53,7 @@ public sealed class PreviewOrderHandler(
                 query.TenantId, query.ClientId, advisorId, query.PaymentMethod, query.Notes, query.IsRetail,
                 query.GlobalScaleFloor, query.Parties, query.BillingAccount, query.Items,
                 Enum.Parse<OrderPaymentStatus>(query.PaymentStatus, ignoreCase: true), proofs,
-                OrderSource.Manual, ExternalReference: null, AllowIncompleteCustomer: false),
+                AllowIncompleteCustomer: false),
             now,
             cancellationToken);
 

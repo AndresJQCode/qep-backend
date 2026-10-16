@@ -36,7 +36,6 @@ public sealed class Order
     {
         OrderNumber = string.Empty;
         Currency = string.Empty;
-        BillingAccount = null!;
     }
 
     private Order(

@@ -160,8 +160,7 @@ public sealed class CreateOrderHandler(
                 new OrderDraftInput(
                     command.TenantId, command.ClientId, advisorId, command.PaymentMethod, command.Notes,
                     command.IsRetail, command.GlobalScaleFloor, command.Parties, command.BillingAccount,
-                    command.Items, paymentStatus, proofs, OrderSource.Manual, ExternalReference: null,
-                    AllowIncompleteCustomer: false),
+                    command.Items, paymentStatus, proofs, AllowIncompleteCustomer: false),
                 orderNumber,
                 now,
                 cancellationToken);

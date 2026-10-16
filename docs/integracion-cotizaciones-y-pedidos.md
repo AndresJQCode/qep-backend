@@ -261,12 +261,12 @@ URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a a
 | `quotation.quotation.not_sent` | 422 | `void`/convertir sobre algo que no es `Sent` (void también acepta Draft) |
 | `quotation.quotation.changed_since_sent` | 422 | Convertir una cotización editada después de su último envío: hay que reenviarla primero |
 | `quotation.quotation.pdf_not_found` / `pdf_not_available` / `pdf_not_a_pdf` | 422 | Problema con el `pdfFileId` de `send` |
-| `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea, a la cotización o al pedido (también en `POST /orders`) |
+| `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea, a la cotización o al pedido (también en `POST /orders`, y en `/orders/preview` sin cuenta, contra la moneda por defecto del tenant) |
 | `quotation.item.duplicate_product` | 422 | El producto ya está en la cotización: se cambia la cantidad de su línea, no se agrega otra |
 | `order.order.client_not_found` / `client_inactive` / `client_incomplete` / `client_cuc_missing` | 422 | `POST /orders` (y su `/preview`) con un cliente que no existe en el tenant, inactivo, incompleto o sin CUC |
 | `order.order.items_required` | 422 | `POST /orders` sin líneas |
 | `order.item.duplicate_product` | 422 | El producto ya está en el pedido (`POST /orders`, `PUT /orders/{orderId}`, `POST /orders/{orderId}/items`): se cambia la cantidad de su línea |
-| `order.billing.account_required` | 422 | `POST /orders` sin cuenta de cobro |
+| `order.billing.account_required` | 422 | Pedido de una integración (Shopify) sin cuenta de cobro (`POST /orders` sin ella responde `validation.failed` con `errors.BillingAccount`) |
 | `order.billing.party_incomplete` / `order.shipping.party_incomplete` | 422 | La parte de facturación o de envío del pedido quedó incompleta |
 | `order.billing.identification_required` | 422 | Una parte de facturación con nombre propio sin documento de identidad |
 | `order.billing.tax_profile_required` | 422 | Una parte de facturación propia sin decir si practica retención y si tiene excedente de IVA |
