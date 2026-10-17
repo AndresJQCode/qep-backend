@@ -54,14 +54,15 @@ public sealed class QuotationMinimumPurchaseTests
             QuotationSettings.Default.MinimumTotals);
     }
 
-    // El envío cobrado suma al total del documento, pero no es compra: no ayuda a llegar al mínimo.
-    [Fact]
-    public void FreightDoesNotHelpReachTheMinimum()
+    private static readonly Guid TenantId = Guid.CreateVersion7();
+    private static readonly Guid ClientId = Guid.CreateVersion7();
+
+    private static Quotation QuotationWithChargedFreight()
     {
         var advisor = new MemberId(Guid.CreateVersion7());
         var now = new DateTimeOffset(2026, 10, 17, 12, 0, 0, TimeSpan.Zero);
         var quotation = Quotation.Create(
-            QuotationId.New(), Guid.CreateVersion7(), "QUO-2026-0001", Guid.CreateVersion7(), advisor,
+            QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, advisor,
             new DateOnly(2026, 12, 31), paymentMethod: "Transferencia bancaria", notes: null, QuotationParties.Empty,
             new QuotationBillingAccount
             {
@@ -74,9 +75,40 @@ public sealed class QuotationMinimumPurchaseTests
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 1m, 150_000m, 0m, 19, advisor, now);
         quotation.SetShipping(
             new ShippingDetails(null, null, FreightChargeMode.Charged, 60_000m, 19, false), advisor, now);
-        var settings = QuotationSettings.Create(6, new Dictionary<string, decimal> { ["COP"] = 200_000m });
+        return quotation;
+    }
+
+    private static readonly QuotationSettings Min200 =
+        QuotationSettings.Create(6, new Dictionary<string, decimal> { ["COP"] = 200_000m });
+
+    // El envío cobrado suma al total del documento, pero no es compra: no ayuda a llegar al mínimo.
+    [Fact]
+    public void FreightDoesNotHelpReachTheMinimum()
+    {
+        var quotation = QuotationWithChargedFreight();
 
         Assert.Equal(210_000m, quotation.Total);
-        Assert.False(QuotationMinimumPurchase.IsSatisfiedBy(quotation, settings));
+        Assert.False(QuotationMinimumPurchase.IsSatisfiedBy(quotation, Min200));
+    }
+
+    // Lo que la pantalla pinta: el estado del mínimo tampoco cuenta el envío.
+    [Fact]
+    public async Task TheResponseMinimumStateIgnoresTheFreight()
+    {
+        var quotation = QuotationWithChargedFreight();
+        var composer = new QuotationResponseComposer(
+            new StubQuotationCustomerLookup(new QuotationCustomerRef(
+                ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
+                "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false)),
+            new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
+            new StubQuotationProductLookup(new Dictionary<Guid, QuotationProductRef>()),
+            new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
+            new FixedQuotationSettingsStore(Min200));
+
+        var response = await composer.ComposeAsync(TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(210_000m, response.Total);
+        Assert.False(response.MinimumPurchase.Met);
+        Assert.Equal(50_000m, response.MinimumPurchase.MissingTotal);
     }
 }

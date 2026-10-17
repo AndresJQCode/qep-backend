@@ -10,8 +10,8 @@ namespace Modules.Quotations.Application;
 /// <b>Se mide sobre la cotización completa</b>, no por grupo de escala: dos líneas de productos
 /// distintos suman para alcanzarla igual que suman para alcanzar un tramo.
 ///
-/// <b>Se mide sobre el total de productos ya descontado</b> (<see cref="Quotation.ProductsTotal"/>, sin el envío, que no es compra; lleva el IVA
-/// adentro porque los precios del catálogo ya lo traen), y en **una sola pasada**: se calcula el
+/// <b>Se mide sobre el total de productos ya descontado</b> (<see cref="Quotation.ProductsTotal"/>, sin el
+/// envío, que no es compra; lleva el IVA adentro porque los precios del catálogo ya lo traen), y en **una sola pasada**: se calcula el
 /// descuento, se mira el total resultante, y si no llega se quita el descuento y se termina. No
 /// se vuelve a evaluar. Sin ese corte la regla es circular —quitar el descuento sube el total, que
 /// entonces sí alcanzaría el mínimo, que devuelve el descuento, que vuelve a bajarlo— y no
@@ -37,15 +37,15 @@ internal static class QuotationMinimumPurchase
         IsMet(quotation.Items.Sum(item => item.Quantity), quotation.ProductsTotal, quotation.Currency, settings);
 
     /// <summary>
-    /// The state the frontend paints. Built from units, total and currency only, so it reads the
+    /// The state the frontend paints. Built from units, products total (no freight) and currency only, so it reads the
     /// same in a recalculation and on a stored quotation. <c>MinimumTotal</c>/<c>MissingTotal</c> are
     /// null when the currency has no configured total: the screen says "only by units".
     /// </summary>
     public static QuotationMinimumPurchaseDto DescribeFor(
-        decimal units, decimal total, string currency, QuotationSettings settings)
+        decimal units, decimal productsTotal, string currency, QuotationSettings settings)
     {
         var minimumTotal = settings.MinimumTotalFor(currency);
-        var met = IsMet(units, total, currency, settings);
+        var met = IsMet(units, productsTotal, currency, settings);
 
         return new QuotationMinimumPurchaseDto(
             met,
@@ -55,7 +55,7 @@ internal static class QuotationMinimumPurchase
             minimumTotal,
             // It is an OR: once met, nothing is missing on either branch.
             met ? 0m : settings.MinimumUnits - units,
-            minimumTotal is null ? null : met ? 0m : minimumTotal.Value - total);
+            minimumTotal is null ? null : met ? 0m : minimumTotal.Value - productsTotal);
     }
 
     // Interno y no privado: OrderPricingRecalculation aplica el mismo mínimo al pedido.
