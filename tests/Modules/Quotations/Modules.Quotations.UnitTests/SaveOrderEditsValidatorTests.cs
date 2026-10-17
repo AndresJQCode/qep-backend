@@ -134,4 +134,25 @@ public sealed class SaveOrderEditsValidatorTests
 
         AssertFailsOn(_save.Validate(Command(proofs: proofs)), "Proofs");
     }
+
+    // Spec 2026-10-17 §5.4: el bloque `shipping` de la edición valida su forma con el campo.
+    [Fact]
+    public void TheShippingErrorsCarryTheField()
+    {
+        var shipping = new ShippingRequest(null, "Paid", -1m, false);
+
+        foreach (var result in new[]
+        {
+            _save.Validate(Command() with { Shipping = shipping }),
+            _preview.Validate(Query(OrderEditProofs.None) with { Shipping = shipping }),
+        })
+        {
+            AssertFailsOn(result, "Shipping.FreightAmount");
+            AssertFailsOn(result, "Shipping.FreightChargeMode");
+        }
+    }
+
+    [Fact]
+    public void AcceptsAValidShipping() =>
+        Assert.True(_save.Validate(Command() with { Shipping = new ShippingRequest(null, "Charged", 15000m, true) }).IsValid);
 }

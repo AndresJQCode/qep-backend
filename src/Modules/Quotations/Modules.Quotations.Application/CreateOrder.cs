@@ -17,7 +17,8 @@ public sealed record CreateOrderCommand(
     QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<OrderItemAddition> Items,
     string PaymentStatus,
-    IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs) : ICommand<OrderDetailDto>, IOrderDraft;
+    IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
+    ShippingRequest? Shipping = null) : ICommand<OrderDetailDto>, IOrderDraft;
 
 /// <summary>Lo que comparten crear y previsualizar un pedido: el mismo cuerpo, las mismas reglas.</summary>
 public interface IOrderDraft
@@ -37,6 +38,9 @@ public interface IOrderDraft
     string PaymentStatus { get; }
 
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs { get; }
+
+    /// <summary>La entrega por envío (spec 2026-10-17 §5.4); null es "sin envío".</summary>
+    ShippingRequest? Shipping { get; }
 }
 
 /// <summary>
@@ -92,6 +96,9 @@ public abstract class OrderDraftValidator<TDraft> : AbstractValidator<TDraft>
         RuleFor(draft => draft.Parties!)
             .SetValidator(new QuotationPartiesRequestValidator(requireBillingIdentification))
             .When(draft => draft.Parties is not null);
+        RuleFor(draft => draft.Shipping!)
+            .SetValidator(new ShippingRequestValidator())
+            .When(draft => draft.Shipping is not null);
     }
 }
 
@@ -160,7 +167,7 @@ public sealed class CreateOrderHandler(
                 new OrderDraftInput(
                     command.TenantId, command.ClientId, advisorId, command.PaymentMethod, command.Notes,
                     command.IsRetail, command.GlobalScaleFloor, command.Parties, command.BillingAccount,
-                    command.Items, paymentStatus, proofs, AllowIncompleteCustomer: false),
+                    command.Items, paymentStatus, proofs, AllowIncompleteCustomer: false, command.Shipping),
                 orderNumber,
                 now,
                 cancellationToken);

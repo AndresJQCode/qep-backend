@@ -19,7 +19,8 @@ public sealed record OrderDraftInput(
     IReadOnlyList<OrderItemAddition> Items,
     OrderPaymentStatus PaymentStatus,
     IReadOnlyCollection<OrderPaymentProofInput> Proofs,
-    bool AllowIncompleteCustomer);
+    bool AllowIncompleteCustomer,
+    ShippingRequest? Shipping = null);
 
 /// <summary>
 /// Arma un <see cref="Order"/> manual preciado como lo haría el cotizador: cliente elegible, cuenta de cobro
@@ -33,6 +34,7 @@ public sealed class OrderDraftBuilder(
     IQuotationProductPricingLookup pricingLookup,
     IQuotationProductLookup productLookup,
     IQuotationSettingsStore settingsStore,
+    ShippingResolver shippingResolver,
     ITenantDefaultCurrency tenantDefaultCurrency)
 {
     // El preview no tiene número: el handler lo borra antes de responder.
@@ -47,9 +49,10 @@ public sealed class OrderDraftBuilder(
             ?? throw new QuotationsDomainException(
                 "order.billing.account_required", "An order needs a billing account.");
         var (header, parties, lines) = await PriceAsync(input, customer, account.Currency, cancellationToken);
+        var shipping = await ResolveShippingAsync(input, parties, account.Currency, cancellationToken);
         var order = Order.CreateManual(
             OrderId.New(), input.TenantId, orderNumber, header, parties, account,
-            ShippingDetails.None, lines,
+            shipping, lines,
             input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now);
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, input.TenantId, order, now, cancellationToken);
@@ -68,14 +71,24 @@ public sealed class OrderDraftBuilder(
         var currency = account?.Currency
             ?? Currencies.Normalize(await tenantDefaultCurrency.GetAsync(input.TenantId, cancellationToken));
         var (header, parties, lines) = await PriceAsync(input, customer, currency, cancellationToken);
+        var shipping = await ResolveShippingAsync(input, parties, currency, cancellationToken);
         var order = Order.Preview(
             OrderId.New(), input.TenantId, PreviewOrderNumber, header, parties, account,
-            ShippingDetails.None, lines,
+            shipping, lines,
             input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now);
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, input.TenantId, order, now, cancellationToken);
         return order;
     }
+
+    // El pedido todavía no existe: la recogida y la moneda salen del borrador, las mismas con las que el
+    // agregado va a validar el envío. Sin cuerpo (o con recogida) el resolver devuelve null: sin envío.
+    private async Task<ShippingDetails> ResolveShippingAsync(
+        OrderDraftInput input, QuotationParties parties, string currency, CancellationToken cancellationToken) =>
+        await shippingResolver.ResolveAsync(
+            input.TenantId, input.Shipping, ShippingDetails.None, parties.IsStorePickup, currency, "order.order",
+            cancellationToken)
+        ?? ShippingDetails.None;
 
     // El cliente se valida antes que la cuenta, el mismo orden de errores que antes de separar guardar y
     // previsualizar.

@@ -120,6 +120,9 @@ public static class OrderResponses
             order.PaymentProofs
                 .Select(proof => new OrderPaymentProofResponse(
                     proof.Id, proof.FileId, proof.Amount, proof.UploadedAt, proof.PaidOn))
-                .ToArray());
+                .ToArray(),
+            ShippingResponse.From(order.Shipping),
+            order.FreightSubtotal,
+            order.FreightTaxAmount);
     }
 }

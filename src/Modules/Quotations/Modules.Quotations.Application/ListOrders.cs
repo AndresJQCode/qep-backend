@@ -41,7 +41,9 @@ public sealed record OrderListItemDto(
     string Currency,
     decimal Total,
     string Source,
-    string? ExternalReference);
+    string? ExternalReference,
+    /// <summary>La entrega por envío, misma forma que en el detalle (ver <see cref="ShippingDto"/>).</summary>
+    ShippingDto Shipping);
 
 public sealed record OrderPage(
     IReadOnlyList<OrderListItemDto> Items,

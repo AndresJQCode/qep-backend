@@ -78,4 +78,25 @@ public sealed class CreateOrderValidatorTests
         Assert.Contains(saved.Errors, error => error.PropertyName == "Parties.Billing.IdentificationNumber");
         Assert.True(previewed.IsValid);
     }
+
+    // Spec 2026-10-17 §5.4: el envío del pedido manual trae sus errores de forma con el campo, igual que la
+    // cotización, en crear y en el cálculo previo.
+    [Fact]
+    public void TheShippingErrorsCarryTheField()
+    {
+        var shipping = new ShippingRequest(null, "Paid", 10.555m, false);
+        var command = Valid() with { Shipping = shipping };
+
+        var saved = new CreateOrderValidator().Validate(command);
+        var previewed = new PreviewOrderValidator().Validate(new PreviewOrderQuery(
+            command.TenantId, command.ClientId, command.PaymentMethod, command.Notes, command.IsRetail,
+            command.GlobalScaleFloor, command.Parties, command.BillingAccount, command.Items, command.PaymentStatus,
+            command.PaymentProofs, shipping));
+
+        foreach (var result in new[] { saved, previewed })
+        {
+            Assert.Contains(result.Errors, error => error.PropertyName == "Shipping.FreightAmount");
+            Assert.Contains(result.Errors, error => error.PropertyName == "Shipping.FreightChargeMode");
+        }
+    }
 }

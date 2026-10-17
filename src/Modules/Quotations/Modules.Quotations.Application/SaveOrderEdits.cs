@@ -18,7 +18,8 @@ public sealed record SaveOrderEditsCommand(
     OrderEditProofs Proofs,
     string? Notes,
     int? GlobalScaleFloor,
-    bool IsRetail) : ICommand<OrderDetailDto>, IOrderEdits;
+    bool IsRetail,
+    ShippingRequest? Shipping = null) : ICommand<OrderDetailDto>, IOrderEdits;
 
 public sealed class SaveOrderEditsValidator : OrderEditsValidator<SaveOrderEditsCommand>
 {
@@ -40,6 +41,7 @@ public sealed class SaveOrderEditsHandler(
     IQuotationFileLookup fileLookup,
     IPaymentProofPublisher paymentProofPublisher,
     IOrderPaymentProofEventPublisher paymentProofEvents,
+    ShippingResolver shippingResolver,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
@@ -160,8 +162,22 @@ public sealed class SaveOrderEditsHandler(
                 order.SetGlobalScaleFloor(command.GlobalScaleFloor, updatedBy, now);
             }
 
+            // El envío con la moneda y la recogida del pedido, que no cambian después de creado (P5). Antes de
+            // RecalculatePaymentStatus, más abajo: un envío cobrado sube el neto que los comprobantes cubren.
+            var shippingBefore = order.ShippingDetails;
+            var shipping = await shippingResolver.ResolveAsync(
+                command.TenantId, command.Shipping, shippingBefore, order.IsStorePickup, order.Currency,
+                "order.order", cancellationToken);
+            var shippingChanged = shipping is not null && shipping != shippingBefore;
+            var shippingSummary = shippingChanged ? OrderChangeSummary.ShippingChanged(shippingBefore, shipping!) : null;
+            if (shippingChanged)
+            {
+                order.SetShipping(shipping!, updatedBy, now);
+            }
+
             var proofsChanged = removedProofIds.Length > 0 || corrections.Count > 0 || attachedInputs.Length > 0;
-            if (itemEdits.Count == 0 && !proofsChanged && !notesChanged && !floorChanged && !retailChanged)
+            if (itemEdits.Count == 0 && !proofsChanged && !notesChanged && !floorChanged && !retailChanged
+                && !shippingChanged)
             {
                 // Nada cambió: ni versión nueva ni historial. El cliente recibe lo que ya tenía.
                 return await OrderDetails.LoadAsync(
@@ -193,6 +209,15 @@ public sealed class SaveOrderEditsHandler(
                 auditPublisher.Publish(
                     command.TenantId, executionContext.SubjectId, "quotation.order.global_scale_changed",
                     order.Id.ToString(), "success", now);
+            }
+
+            // PartiesChanged: el envío es la entrega del pedido, y el pedido no edita sus partes (H5). Un cambio
+            // que sólo mueve la tasa no tiene texto y no deja fila.
+            if (shippingSummary is not null)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PartiesChanged, updatedBy,
+                    shippingSummary, now));
             }
 
             if (notesChanged)

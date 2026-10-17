@@ -14,7 +14,8 @@ public sealed record PreviewOrderEditsQuery(
     OrderEditProofs Proofs,
     string? Notes,
     int? GlobalScaleFloor,
-    bool IsRetail) : IQuery<OrderDetailDto>, IOrderEdits;
+    bool IsRetail,
+    ShippingRequest? Shipping = null) : IQuery<OrderDetailDto>, IOrderEdits;
 
 public sealed class PreviewOrderEditsValidator : OrderEditsValidator<PreviewOrderEditsQuery>
 {
@@ -30,6 +31,7 @@ public sealed class PreviewOrderEditsHandler(
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
     IQuotationCustomerLookup customerLookup,
+    ShippingResolver shippingResolver,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
@@ -96,6 +98,15 @@ public sealed class PreviewOrderEditsHandler(
         if (order.GlobalScaleFloor != query.GlobalScaleFloor)
         {
             order.SetGlobalScaleFloor(query.GlobalScaleFloor, updatedBy, now);
+        }
+
+        // Mismo orden que el guardado: el envío antes de recalcular el estado de pago.
+        var shipping = await shippingResolver.ResolveAsync(
+            query.TenantId, query.Shipping, order.ShippingDetails, order.IsStorePickup, order.Currency,
+            "order.order", cancellationToken);
+        if (shipping is not null && shipping != order.ShippingDetails)
+        {
+            order.SetShipping(shipping, updatedBy, now);
         }
 
         await OrderPricingRecalculation.ApplyAsync(

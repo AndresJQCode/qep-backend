@@ -30,6 +30,17 @@ public static class OrderChangeSummary
 
     public static string NotesChanged() => "Editó las notas.";
 
+    /// <summary>El cambio de envío de un pedido pendiente (spec 2026-10-17 §5.4), con los textos de la
+    /// cotización. <c>null</c> si nada de lo que se cuenta cambió.</summary>
+    public static string? ShippingChanged(ShippingDetails before, ShippingDetails after)
+    {
+        ArgumentNullException.ThrowIfNull(before);
+        ArgumentNullException.ThrowIfNull(after);
+        var changes = new List<string>(4);
+        QuotationChangeSummary.AppendFreight(changes, before, after);
+        return changes.Count == 0 ? null : Trim($"Editó {string.Join(", ", changes)}.");
+    }
+
     public static string Approved() => "Aprobado.";
 
     public static string Cancelled(string reason) => Trim($"Anulado: {reason}");

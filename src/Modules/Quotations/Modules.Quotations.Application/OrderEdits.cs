@@ -41,6 +41,12 @@ public interface IOrderEdits
     /// persiste al guardar sólo si cambió.
     /// </summary>
     bool IsRetail { get; }
+
+    /// <summary>
+    /// El envío del pedido pendiente (spec 2026-10-17 §5.4). <b>Null es "no lo toques"</b>, como en la
+    /// cotización: un frontend viejo no lo borra. El pedido no cambia recoger o enviar.
+    /// </summary>
+    ShippingRequest? Shipping { get; }
 }
 
 /// <summary>
@@ -90,6 +96,10 @@ public abstract class OrderEditsValidator<TEdits> : AbstractValidator<TEdits>
                     .Where(update => update.NewFileId is not null)
                     .Select(update => update.NewFileId!.Value))))
             .WithMessage("The same file cannot be attached more than once in a request.");
+
+        RuleFor(edits => edits.Shipping!)
+            .SetValidator(new ShippingRequestValidator())
+            .When(edits => edits.Shipping is not null);
 
         // Las notas no tienen tope (plan 2026-10-15, P2): heredan las de la cotización.
     }

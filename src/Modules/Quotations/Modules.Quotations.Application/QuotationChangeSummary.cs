@@ -205,7 +205,7 @@ public static class QuotationChangeSummary
         // sería ruido.
         if (!after.IsStorePickup)
         {
-            AppendFreight(changes, before, after);
+            AppendFreight(changes, before.Freight, after.Freight);
         }
 
         if (before.BillingAccount != after.BillingAccount)
@@ -230,8 +230,8 @@ public static class QuotationChangeSummary
     // Spec 2026-10-17 §5.4: transportadora, modo, valor y contraentrega. El valor se dice porque es la
     // noticia, como la cantidad de una línea; cambiar a gratis o quitar el modo ya lleva el valor a 0 y no
     // se repite.
-    private static void AppendFreight(
-        List<string> changes, QuotationHeaderSnapshot before, QuotationHeaderSnapshot after)
+    // Interno porque el historial del pedido cuenta el mismo cambio con los mismos textos (OrderChangeSummary).
+    internal static void AppendFreight(List<string> changes, ShippingDetails before, ShippingDetails after)
     {
         if (before.CarrierId != after.CarrierId)
         {
@@ -240,10 +240,10 @@ public static class QuotationChangeSummary
                 : $"transportadora ({after.CarrierName})");
         }
 
-        var modeChanged = before.FreightChargeMode != after.FreightChargeMode;
+        var modeChanged = before.ChargeMode != after.ChargeMode;
         if (modeChanged)
         {
-            changes.Add(after.FreightChargeMode is { } mode
+            changes.Add(after.ChargeMode is { } mode
                 ? $"cobro del envío ({ChargeModeLabel(mode)})"
                 : "quitó el cobro del envío");
         }
@@ -335,6 +335,10 @@ public sealed record QuotationHeaderSnapshot(
     decimal FreightAmount = 0m,
     bool CashOnDelivery = false)
 {
+    /// <summary>Lo que el historial compara del envío. La tasa no va: no es una elección de quien edita.</summary>
+    internal ShippingDetails Freight =>
+        new(CarrierId, CarrierName, FreightChargeMode, FreightAmount, 0, CashOnDelivery);
+
     public static QuotationHeaderSnapshot Of(Quotation quotation) => new(
         quotation.ValidUntil,
         quotation.PaymentMethod,

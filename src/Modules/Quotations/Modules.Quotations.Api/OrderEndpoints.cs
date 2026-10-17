@@ -225,7 +225,8 @@ public static class OrderEndpoints
         order.Currency,
         order.Total,
         order.Source,
-        order.ExternalReference);
+        order.ExternalReference,
+        ShippingResponse.From(order.Shipping));
 
     private static async Task<IResult> GetOrderAsync(
         Guid tenantId,
@@ -301,7 +302,7 @@ public static class OrderEndpoints
             new CreateOrderCommand(
                 tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
                 request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
-                request.PaymentStatus, request.PaymentProofs),
+                request.PaymentStatus, request.PaymentProofs, request.Shipping),
             cancellationToken);
         return Results.Created(
             $"/api/v1/tenants/{tenantId}/orders/{detail.Order.Id}",
@@ -319,7 +320,7 @@ public static class OrderEndpoints
             new PreviewOrderQuery(
                 tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
                 request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
-                request.PaymentStatus, request.PaymentProofs),
+                request.PaymentStatus, request.PaymentProofs, request.Shipping),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
@@ -366,7 +367,7 @@ public static class OrderEndpoints
         var detail = await dispatcher.SendAsync(
             new SaveOrderEditsCommand(
                 tenantId, orderId, expectedVersion, items, proofs, request.Notes, request.GlobalScaleFloor,
-                request.IsRetail),
+                request.IsRetail, request.Shipping),
             cancellationToken);
         httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
@@ -383,7 +384,8 @@ public static class OrderEndpoints
         var (items, proofs) = ToEdits(request);
         var detail = await dispatcher.QueryAsync(
             new PreviewOrderEditsQuery(
-                tenantId, orderId, items, proofs, request.Notes, request.GlobalScaleFloor, request.IsRetail),
+                tenantId, orderId, items, proofs, request.Notes, request.GlobalScaleFloor, request.IsRetail,
+                request.Shipping),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }

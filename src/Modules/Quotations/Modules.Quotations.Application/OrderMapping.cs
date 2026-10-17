@@ -50,7 +50,24 @@ internal static class OrderMapping
         order.CreatedAt,
         order.UpdatedAt,
         order.Version,
-        order.PaymentProofs.Select(ToDto).ToArray());
+        order.PaymentProofs.Select(ToDto).ToArray(),
+        order.ShippingDtoOf(),
+        order.FreightSubtotal,
+        order.FreightTaxAmount);
+
+    /// <summary>La entrega por envío con forma fija, también en recogida: gemelo de
+    /// <see cref="QuotationMapping.ShippingDtoOf"/>.</summary>
+    public static ShippingDto ShippingDtoOf(this Order order) => new(
+        order.IsStorePickup,
+        order.CarrierId is { } carrierId
+            ? new ShippingCarrierDto(carrierId, order.CarrierName ?? string.Empty)
+            : null,
+        order.FreightChargeMode?.ToString(),
+        order.FreightAmount,
+        order.FreightTaxPercentage,
+        order.FreightSubtotal,
+        order.FreightTaxAmount,
+        order.CashOnDelivery);
 
     public static OrderListItemDto ToListItemDto(
         this Order order, string? quotationNumber, string? clientName, string? advisorName) => new(
@@ -69,7 +86,8 @@ internal static class OrderMapping
         order.Currency,
         order.Total,
         order.Source.ToString(),
-        order.ExternalReference);
+        order.ExternalReference,
+        order.ShippingDtoOf());
 
     public static OrderHistoryEntryDto ToDto(this OrderHistoryEntry entry) => new(
         entry.Id.Value,

@@ -59,7 +59,14 @@ public sealed record OrderDto(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     long Version,
-    IReadOnlyCollection<OrderPaymentProofDto> PaymentProofs);
+    IReadOnlyCollection<OrderPaymentProofDto> PaymentProofs,
+    /// <summary>La entrega por envío, con forma fija también en recogida. Ver <see cref="ShippingDto"/>.</summary>
+    ShippingDto Shipping,
+    /// <summary>Envío sin IVA que suma a <c>Total</c>; 0 salvo <c>Charged</c>. <c>Subtotal</c> y
+    /// <c>TaxAmount</c> siguen siendo sólo productos (spec 2026-10-17 §5.3).</summary>
+    decimal FreightSubtotal,
+    /// <summary>IVA del envío que suma a <c>Total</c>; 0 con excedente de IVA o fuera de COP.</summary>
+    decimal FreightTaxAmount);
 
 /// <summary>El detalle: el pedido, el número de la cotización de origen (si la hay) y su historial.
 /// Ya no viaja la cotización entera (spec 2026-10-15 §6.2).</summary>
@@ -90,7 +97,10 @@ public sealed record CreateOrderRequest(
     QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<OrderEditItemRequest> Items,
     string PaymentStatus,
-    IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs);
+    IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
+    /// <summary>La entrega por envío; null es "sin envío". Ver <see cref="ShippingRequest"/>. Con
+    /// <c>CashOnDelivery</c>, el <c>PaymentStatus</c> tiene que ser <c>PaymentPending</c> (spec 2026-10-17 §6).</summary>
+    ShippingRequest? Shipping = null);
 
 public sealed record ConvertQuotationToOrderRequest(
     string PaymentStatus,
@@ -125,7 +135,10 @@ public sealed record SaveOrderEditsRequest(
     OrderEditProofsRequest? Proofs,
     string? Notes,
     int? GlobalScaleFloor = null,
-    bool IsRetail = false);
+    bool IsRetail = false,
+    /// <summary>El envío del pedido pendiente (spec 2026-10-17 §5.4). <b>Ausente deja el guardado</b>: un
+    /// frontend viejo no lo borra. No cambia recoger o enviar, que el pedido no edita.</summary>
+    ShippingRequest? Shipping = null);
 
 public sealed record OrderPaymentProofResponse(
     Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt, DateOnly? PaidOn);
@@ -176,7 +189,14 @@ public sealed record OrderResponse(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     long Version,
-    IReadOnlyCollection<OrderPaymentProofResponse> PaymentProofs);
+    IReadOnlyCollection<OrderPaymentProofResponse> PaymentProofs,
+    /// <summary>La entrega por envío. El motivo BFF de su forma está en <see cref="ShippingDto"/>.</summary>
+    ShippingResponse Shipping,
+    /// <summary>Envío sin IVA que suma a <c>Total</c>. Un total que no cierra se explica con un campo:
+    /// <c>Subtotal + TaxAmount + FreightSubtotal + FreightTaxAmount = Total</c> (spec 2026-10-17 §5.3).</summary>
+    decimal FreightSubtotal,
+    /// <summary>IVA del envío que suma a <c>Total</c>.</summary>
+    decimal FreightTaxAmount);
 
 /// <summary>Fila de la lista de pedidos. <c>QuotationId</c> y <c>QuotationNumber</c> son opcionales
 /// desde el spec 2026-10-15: un pedido manual o externo no tiene cotización. <c>Source</c> y
@@ -198,7 +218,10 @@ public sealed record OrderListItemResponse(
     string Currency,
     decimal Total,
     string Source,
-    string? ExternalReference);
+    string? ExternalReference,
+    /// <summary>La entrega por envío de la fila, misma forma que en el detalle (con el subtotal y el IVA del
+    /// envío adentro): la grilla muestra transportadora y contraentrega sin pedir el pedido entero.</summary>
+    ShippingResponse Shipping);
 
 public sealed record SourceQuotationResponse(Guid Id, string QuotationNumber);
 
