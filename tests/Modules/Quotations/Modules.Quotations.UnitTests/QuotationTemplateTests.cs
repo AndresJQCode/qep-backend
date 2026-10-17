@@ -152,6 +152,32 @@ public sealed partial class QuotationTemplateTests
     public async Task TheTemplateCompilesWithAFinalConsumerBilling() =>
         await AssertCompilesAsync(Minimal() with { Billing = FinalConsumerBilling() });
 
+    // Un envío cobrado sin IVA (USD, o cliente con excedente de IVA) no imprime «IVA del envío: 0»: el
+    // renglón sobra y, con excedente, contradiría el «excedente de IVA» del renglón de productos.
+    [Fact]
+    public async Task TheTemplateHidesTheFreightTaxRowWhenItIsZero()
+    {
+        var (source, _, _) = await CapturedRequestAsync(Minimal() with
+        {
+            FreightChargeMode = "Charged",
+            FreightAmount = 20m,
+            FreightSubtotal = 20m,
+        });
+
+        Assert.Contains("if data.freightTaxAmount > 0", source, StringComparison.Ordinal);
+    }
+
+    // Y esa rama compila: cobrado en USD, sin IVA del envío.
+    [Fact]
+    public async Task TheTemplateCompilesWithAChargedFreightWithoutTax() =>
+        await AssertCompilesAsync(Minimal() with
+        {
+            CarrierName = "Coordinadora",
+            FreightChargeMode = "Charged",
+            FreightAmount = 20m,
+            FreightSubtotal = 20m,
+        });
+
     private static QuotationPdfParty FinalConsumerBilling() => new(
         false,
         FinalConsumer.Name,

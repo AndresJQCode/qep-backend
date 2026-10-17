@@ -390,15 +390,22 @@
 // explica por qué no hay cobro. Con `OnDelivery` el valor, si lo hay, es informativo.
 #let nombre-envio = if data.carrierName == none { "" } else { " (" + data.carrierName + ")" }
 
+//
+// El renglón del IVA del envío se oculta en cero: en USD no hay IVA y con excedente de IVA tampoco se
+// cobra, así que un «IVA del envío: 0» sobra y, con excedente, contradiría la marca del IVA de arriba.
 #let filas-envio = if data.freightChargeMode == "Charged" {
-  (
-    ("Envío" + nombre-envio + ":", moneda + importe(data.freightSubtotal), 0),
-    (
-      "IVA del envío (" + str(data.freightTaxPercentage) + " %):",
-      moneda + importe(data.freightTaxAmount),
-      0,
-    ),
-  )
+  let base = (("Envío" + nombre-envio + ":", moneda + importe(data.freightSubtotal), 0),)
+  if data.freightTaxAmount > 0 {
+    base + (
+      (
+        "IVA del envío (" + str(data.freightTaxPercentage) + " %):",
+        moneda + importe(data.freightTaxAmount),
+        0,
+      ),
+    )
+  } else {
+    base
+  }
 } else if data.freightChargeMode == "Free" {
   (("Envío" + nombre-envio + ": Gratis", "", 0),)
 } else if data.freightChargeMode == "OnDelivery" {
