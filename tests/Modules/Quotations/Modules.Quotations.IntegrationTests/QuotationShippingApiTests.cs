@@ -185,6 +185,46 @@ public sealed class QuotationShippingApiTests
         Assert.Contains(history!.Items, entry => entry.Details?.Contains("transportadora (Coordinadora)", StringComparison.Ordinal) == true);
     }
 
+    // D-F15 (R15): el valor del envío no tiene de dónde re-preciarse en la moneda nueva, y el formulario
+    // reenvía el `shipping` que tenía en pantalla. Si el guardado cambia la moneda, ese valor viejo no se
+    // aplica: el modo y el valor quedan limpios para que el asesor los vuelva a escribir si quiere cobrar.
+    [Fact]
+    public async Task ChangingCurrencyClearsTheFreightEvenIfTheBodyResendsIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
+        using var _ = client;
+        var carrierId = await PrepareFreightAsync(client, tenantId);
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, prices: new Dictionary<string, decimal> { ["COP"] = 100_000m, ["USD"] = 25m });
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var shipping = new ShippingRequest(carrierId, "Charged", 15000m, false);
+        using var charged = await PutAsync(client, tenantId, quotation, RequestFor(quotation, productId, shipping));
+        var withFreight = await ReadQuotationAsync(charged);
+        Assert.Equal(115_000m, withFreight.Total);
+
+        var usd = await CreateCompanyWithBankAccountAsync(client, tenantId, currency: "USD");
+        using var switched = await PutAsync(
+            client, tenantId, withFreight,
+            RequestFor(withFreight, productId, shipping) with
+            {
+                BillingAccount = new QuotationBillingAccountRequest(usd.CompanyId, usd.BankName, usd.AccountNumber, usd.Currency),
+            });
+        var inUsd = await ReadQuotationAsync(switched);
+
+        Assert.Equal("USD", inUsd.Currency);
+        Assert.Null(inUsd.Shipping.ChargeMode);
+        Assert.Equal(0m, inUsd.Shipping.FreightAmount);
+        Assert.Equal(0m, inUsd.FreightSubtotal);
+        Assert.Equal(25m, inUsd.Total);
+        Assert.Equal(carrierId, inUsd.Shipping.Carrier?.Id);
+        var stored = await GetQuotationAsync(client, tenantId, quotation.Id);
+        Assert.Null(stored.Shipping.ChargeMode);
+        Assert.Equal(25m, stored.Total);
+    }
+
     [Fact]
     public async Task PreviewComputesTheFreight()
     {

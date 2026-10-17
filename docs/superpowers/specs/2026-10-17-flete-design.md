@@ -254,8 +254,10 @@ lugares que hoy leen `Total` para el mínimo: `App/QuotationMinimumPurchase.cs:3
 
 **Cambio de moneda** (D-F15). Cambiar la cuenta de cobro puede cambiar la moneda y re-precia las líneas desde
 el catálogo (`Dom/Quotation.cs:567-600`); el envío no tiene de dónde re-preciarse. Si la moneda cambia, el
-agregado **limpia el valor y el modo** del envío (conserva la transportadora y la contraentrega): el asesor lo
-vuelve a escribir, y enviar la cotización lo vuelve a exigir. El frontend avisa al cambiar la cuenta.
+agregado **limpia el valor y el modo** del envío (conserva la transportadora y la contraentrega): si el asesor
+quiere cobrar el envío, lo vuelve a escribir; nada lo exige (decisión 11). Un guardado que cambia la moneda y
+reenvía el `shipping` de la pantalla no lo restaura: del cuerpo se aplican sólo la transportadora y la
+contraentrega (R15). El frontend avisa al cambiar la cuenta.
 
 ### 5.4 Edición
 

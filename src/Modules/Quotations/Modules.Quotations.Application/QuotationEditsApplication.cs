@@ -52,7 +52,8 @@ internal static class QuotationEditsApplication
         // (UpdateQuotation.cs:69-79), así una línea sin precio en la moneda nueva corta el guardado
         // completo en vez de dejar la cotización con dos monedas adentro.
         var currency = quotation.CurrencyFor(billingAccount);
-        var repricing = currency == quotation.Currency
+        var changesCurrency = currency != quotation.Currency;
+        var repricing = !changesCurrency
             ? null
             : await QuotationProductPricingResolver.ResolveManyAsync(
                 pricingLookup,
@@ -81,8 +82,16 @@ internal static class QuotationEditsApplication
             now);
         // El envío después del encabezado: valida contra la recogida y la moneda que acaban de quedar, y
         // antes de la foto de después, para que el historial cuente el cambio de transportadora o de valor.
+        //
+        // D-F15 (R15): si el guardado cambia la moneda, el formulario igual reenvía el `shipping` que tenía en
+        // pantalla, con el valor en la moneda vieja. Aplicarlo deshacería la limpieza de ApplyBillingAccount
+        // (15.000 COP pasarían a ser 15.000 USD). Se descartan el modo y el valor del cuerpo; la transportadora
+        // y la contraentrega no dependen de la moneda y sí se aplican.
+        var shippingRequest = changesCurrency && edits.Shipping is { } requested
+            ? requested with { FreightChargeMode = null, FreightAmount = 0m }
+            : edits.Shipping;
         var shipping = await shippingResolver.ResolveAsync(
-            tenantId, edits.Shipping, quotation.ShippingDetails, quotation.IsStorePickup, quotation.Currency,
+            tenantId, shippingRequest, quotation.ShippingDetails, quotation.IsStorePickup, quotation.Currency,
             "quotation.quotation", cancellationToken);
         if (shipping is not null)
         {
