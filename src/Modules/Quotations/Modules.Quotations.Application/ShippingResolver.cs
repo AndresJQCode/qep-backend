@@ -80,8 +80,12 @@ public sealed class ShippingResolver(
             if (chosen is not null || turnedOnNow)
             {
                 var carrier = chosen
-                    ?? await carriers.FindAsync(tenantId, new CarrierId(collectingId), cancellationToken);
-                if (carrier is null || !carrier.SupportsCashOnDelivery)
+                    ?? await carriers.FindAsync(tenantId, new CarrierId(collectingId), cancellationToken)
+                    // La guardada ya no se encuentra: no se puede afirmar que recaude.
+                    ?? throw new QuotationsDomainException(
+                        $"{errorPrefix}.carrier_not_available",
+                        "The carrier does not exist or is no longer active.");
+                if (!carrier.SupportsCashOnDelivery)
                 {
                     throw new QuotationsDomainException(
                         $"{errorPrefix}.cash_on_delivery_not_supported",
@@ -91,7 +95,7 @@ public sealed class ShippingResolver(
         }
 
         // 5. El valor y la tasa.
-        var mode = QuotationMapping.ToFreightChargeMode(request.FreightChargeMode);
+        var mode = QuotationMapping.ToFreightChargeMode(request.FreightChargeMode, errorPrefix);
         var amount = mode == FreightChargeMode.Free ? 0m : request.FreightAmount;
         var taxPercentage = 0;
         // Con valor 0 el dominio responde freight_amount_required, que es la causa real: leer la tasa antes

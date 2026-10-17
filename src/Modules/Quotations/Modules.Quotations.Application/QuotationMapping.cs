@@ -121,10 +121,26 @@ internal static class QuotationMapping
         item.ProductCode,
         item.ProductName);
 
-    /// <summary>El modo tal como viaja (nombre del enum) al enum del dominio. El validador ya rechazó un nombre
-    /// que no existe, así que acá sólo se traduce.</summary>
-    public static FreightChargeMode? ToFreightChargeMode(string? mode) =>
-        mode is null ? null : Enum.Parse<FreightChargeMode>(mode);
+    /// <summary>El modo tal como viaja (nombre exacto del enum) al enum del dominio. El validador ya rechaza un
+    /// nombre que no existe con el campo en <c>errors</c>; esto es el respaldo para quien llegue sin pasar por
+    /// él: un 422 con código y no un 500. Ni números ni otra capitalización: el contrato son los tres nombres.</summary>
+    public static FreightChargeMode? ToFreightChargeMode(string? mode, string errorPrefix)
+    {
+        if (mode is null)
+        {
+            return null;
+        }
+
+        if (Enum.GetNames<FreightChargeMode>().Contains(mode, StringComparer.Ordinal)
+            && Enum.TryParse<FreightChargeMode>(mode, ignoreCase: false, out var parsed))
+        {
+            return parsed;
+        }
+
+        throw new QuotationsDomainException(
+            $"{errorPrefix}.freight_charge_mode_invalid",
+            $"'{mode}' is not a valid freight charge mode.");
+    }
 
     public static QuotationParties ToDomain(this QuotationPartiesRequest? request) =>
         request is null

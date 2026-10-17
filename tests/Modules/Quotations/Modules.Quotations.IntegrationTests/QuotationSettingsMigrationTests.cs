@@ -50,6 +50,10 @@ public sealed class QuotationSettingsMigrationTests
         Assert.Equal("6|COP=500000.00,USD=200.00",
             (string?)await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
 
+        // De vuelta a la última migración antes de usar la API: el modelo de hoy necesita las columnas de las
+        // migraciones posteriores (AddFreight, por ejemplo), y sin ellas el POST de abajo da 500.
+        await migrator.MigrateAsync(null, TestContext.Current.CancellationToken);
+
         // And the gate of that tenant behaves as before the deploy: two COP units of 300.000 with
         // their 10% (540.000) pass by the 500.000 total, exactly as the old constant did.
         var clientId = await CreateActiveCustomerAsync(client, tenantId);

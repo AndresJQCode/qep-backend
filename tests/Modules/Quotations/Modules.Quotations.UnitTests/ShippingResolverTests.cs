@@ -236,4 +236,34 @@ public sealed class ShippingResolverTests
         Assert.Equal(FreightChargeMode.Free, resolved.ChargeMode);
         Assert.Equal(0m, resolved.FreightAmount);
     }
+
+    // Con la transportadora sin cambiar y la contraentrega prendida ahora se relee la transportadora; si ya no
+    // está, el motivo es que no está disponible, no que no recaude.
+    [Fact]
+    public async Task TurningCashOnDeliveryOnWithAMissingCarrierSaysItIsNotAvailable()
+    {
+        var (resolver, _) = Resolver();
+        var missingId = Guid.CreateVersion7();
+        var current = new ShippingDetails(missingId, "Coordinadora", null, 0m, 0, false);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            ResolveAsync(resolver, new ShippingRequest(missingId, null, 0m, true), current));
+
+        Assert.Equal("quotation.quotation.carrier_not_available", error.Code);
+    }
+
+    // Quien llame sin pasar por el validador recibe un 422 con código, no un 500 de Enum.Parse.
+    [Theory]
+    [InlineData("Paid")]
+    [InlineData("charged")]
+    [InlineData("0")]
+    public async Task AnUnknownChargeModeIsADomainError(string mode)
+    {
+        var (resolver, _) = Resolver();
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            ResolveAsync(resolver, new ShippingRequest(null, mode, 0m, false)));
+
+        Assert.Equal("quotation.quotation.freight_charge_mode_invalid", error.Code);
+    }
 }
