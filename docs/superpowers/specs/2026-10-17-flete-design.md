@@ -153,6 +153,33 @@ Los permisos son los mismos de la otra configuración de Quotations (H13): no ha
 FluentValidation para crear y editar (texto libre: nombre y nombres externos). Revalidación de tenant y
 permiso en el handler, 403 nunca 404 para un id de otro tenant (regla del repo).
 
+### 4.4 Quién paga el envío, por tenant (2026-10-18)
+
+Decisión del owner del 2026-10-18: cada tenant activa o desactiva las opciones de «¿Quién paga el envío?».
+Las tres (`Charged`, `OnDelivery`, `Free`) nacen **activas** en todos los tenants, los de hoy y los nuevos, y
+ninguna queda preseleccionada.
+
+- **Dónde vive:** junto al IVA del envío, en la configuración de Quotations del tenant
+  (`IQuotationSettingsStore`, como la tasa en P2), con su propia operación para que el `PUT` del mínimo de compra
+  no la pise. Sin fila o sin valor = las tres activas.
+- **API:** `CarrierSettingsResponse` y `ShippingOptionsResponse` ganan
+  `freightChargeModes: [{ mode: 'Charged' | 'OnDelivery' | 'Free', isEnabled: bool }]`, **siempre las tres, en ese
+  orden**, aunque estén apagadas (las colecciones de tamaño fijo viajan completas: la pantalla no conoce el enum
+  para dibujar la que falte). `PUT /carriers/freight-charge-modes` con `tenancy.settings.update`, cuerpo
+  `{ enabledModes: string[] }` (vacío está permitido; un modo desconocido es 422 de validación) →
+  `CarrierSettingsResponse`. Se audita como `quotations.freight_charge_modes.updated`.
+- **Regla al elegir o cambiar el modo** (handler, como la transportadora en §5.2): un modo apagado se rechaza
+  con `…freight_charge_mode_disabled` (422). Quitarlo (`null`) siempre se puede. Un documento que ya tiene un
+  modo que después se apagó lo **conserva** al guardarse sin tocarlo, igual que una transportadora desactivada.
+- **No aplica** a la conversión (copia lo que la cotización ya tiene), ni al camino externo (Shopify): el modo de
+  un pedido de la tienda es un hecho de la tienda, como el cliente incompleto.
+- **Frontend:** Configuración › Transportadoras gana la sección «¿Quién paga el envío?» con un interruptor por
+  opción y su detalle. El cotizador, el pedido manual y la edición del pedido muestran sólo las activas, más la
+  guardada si está apagada (marcada como desactivada en Configuración, sin poder volver a elegirla). Con las tres
+  apagadas no se pregunta quién paga ni el valor; la transportadora y la contraentrega siguen.
+- **Pruebas:** dominio/handler del rechazo y de la conservación; integración del `PUT` y de las dos lecturas
+  (las tres siempre presentes); frontend de la sección y de los formularios con una opción apagada.
+
 ## 5. Entrega y cobro en la cotización y el pedido
 
 ### 5.1 Campos nuevos
@@ -495,6 +522,7 @@ completa.
 | D-F5 | En un pedido pendiente se edita transportadora, modo, valor y contraentrega, pero no recoger/enviar ni la dirección | Abrir la edición de partes del pedido |
 | D-F6 | La **retención no incluye el envío** (P1) | Una línea en `DocumentTotals` y sus pruebas |
 | D-F7 | El mínimo de compra no cuenta el envío (`ProductsTotal`, §5.3) | Sumarlo: quitar `ProductsTotal` |
+| D-F18 | «Quién paga» apagado en Configuración no afecta a Shopify ni a la conversión; un documento conserva el modo apagado si no lo cambia; con las tres apagadas tampoco se pide el valor (§4.4) | Validar también la conversión o exigir al menos una activa |
 | D-F8 | Un pedido sin transportadora sigue exportando «Coordinadora» en `Transportadora` | Vacío |
 | D-F9 | El giro del recaudo contraentrega se registra con un comprobante, como cualquier pago (P2) | Un flujo de liquidación por transportadora |
 | D-F10 | De las cinco columnas nuevas del Excel, sólo `Valor Flete` nace visible | `DefaultVisible` |
@@ -541,3 +569,6 @@ completa.
   modo y el valor del `shipping` del cuerpo (D-F15); R16 crear o convertir con contraentrega rechaza los
   comprobantes aunque el pago siga pendiente (D-F14). La plantilla Typst compila con `QuotationTemplateTests`
   (typst 0.15.1), y el renglón «IVA del envío» se oculta cuando vale cero. El frontend va en su propio plan.
+- 2026-10-18: §4.4 «Quién paga el envío, por tenant», por decisión del owner (las tres activas por defecto, sin
+  preselección). Las notas de una conversión dejan de concatenarse: el pedido lleva la nota que manda la pantalla,
+  que arranca con la de la cotización (fuera de este spec, `fix/notas-un-campo`).
