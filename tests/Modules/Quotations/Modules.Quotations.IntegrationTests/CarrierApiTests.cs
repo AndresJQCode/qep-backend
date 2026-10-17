@@ -268,6 +268,101 @@ public sealed class CarrierApiTests
         Assert.Equal(19, options.FreightTaxRate!.Percentage);
     }
 
+    // Spec §4.4: las tres nacen activas y viajan siempre, en el mismo orden, en las dos lecturas.
+    [Fact]
+    public async Task FreightChargeModesStartEnabledAndCanBeTurnedOff()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerId, admin) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = admin;
+        using var advisor = CreateClient(factory, ownerId.ToString(), tenantId.ToString(), QuotationRead);
+
+        Assert.Equal(AllEnabled, (await GetSettingsAsync(admin, tenantId)).FreightChargeModes);
+        Assert.Equal(AllEnabled, (await GetShippingOptionsAsync(advisor, tenantId)).FreightChargeModes);
+
+        using var put = await PutFreightChargeModesAsync(admin, tenantId, ["Free", "Charged"]);
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        FreightChargeModePayload[] withoutOnDelivery =
+            [new("Charged", true), new("OnDelivery", false), new("Free", true)];
+        var body = await put.Content.ReadFromJsonAsync<CarrierSettingsPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal(withoutOnDelivery, body!.FreightChargeModes);
+        Assert.Equal(withoutOnDelivery, (await GetSettingsAsync(admin, tenantId)).FreightChargeModes);
+        Assert.Equal(withoutOnDelivery, (await GetShippingOptionsAsync(advisor, tenantId)).FreightChargeModes);
+
+        // Vacío está permitido: con las tres apagadas no se pregunta quién paga, pero las tres siguen viajando.
+        using var none = await PutFreightChargeModesAsync(admin, tenantId, []);
+        none.EnsureSuccessStatusCode();
+        var allOff = (await GetShippingOptionsAsync(advisor, tenantId)).FreightChargeModes;
+        Assert.Equal(["Charged", "OnDelivery", "Free"], allOff.Select(mode => mode.Mode));
+        Assert.All(allOff, mode => Assert.False(mode.IsEnabled));
+
+        // El mínimo de compra y la tasa viven en la misma fila y no la pisan.
+        using var minimum = await admin.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/quotations/settings",
+            new { minimumUnits = 10, minimumTotals = new Dictionary<string, decimal> { ["COP"] = 1m } },
+            TestContext.Current.CancellationToken);
+        minimum.EnsureSuccessStatusCode();
+        using var rate = await PutFreightTaxRateAsync(admin, tenantId, null);
+        rate.EnsureSuccessStatusCode();
+        Assert.All((await GetSettingsAsync(admin, tenantId)).FreightChargeModes, mode => Assert.False(mode.IsEnabled));
+    }
+
+    [Fact]
+    public async Task AnUnknownFreightChargeModeIsAFieldError()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+
+        using var response = await PutFreightChargeModesAsync(client, tenantId, ["Charged", "Gratis"]);
+
+        await AssertCodeAsync(response, HttpStatusCode.UnprocessableEntity, "validation.failed");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("EnabledModes[1]", out var modeErrors));
+        Assert.NotEmpty(modeErrors.EnumerateArray());
+        Assert.Equal(AllEnabled, (await GetSettingsAsync(client, tenantId)).FreightChargeModes);
+    }
+
+    [Fact]
+    public async Task FreightChargeModesOfAnotherTenantAre403()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (_, _, ownerA) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = ownerA;
+        var (tenantB, _, ownerB) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var __ = ownerB;
+
+        using var response = await PutFreightChargeModesAsync(ownerA, tenantB, []);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(AllEnabled, (await GetSettingsAsync(ownerB, tenantB)).FreightChargeModes);
+    }
+
+    // Se audita con el tenant como recurso, como la tasa; repetir lo mismo no deja rastro.
+    [Fact]
+    public async Task FreightChargeModesAreAuditedOnlyWhenTheyChange()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+
+        using var same = await PutFreightChargeModesAsync(client, tenantId, ["Charged", "OnDelivery", "Free"]);
+        same.EnsureSuccessStatusCode();
+        using var changed = await PutFreightChargeModesAsync(client, tenantId, ["Charged"]);
+        changed.EnsureSuccessStatusCode();
+        using var again = await PutFreightChargeModesAsync(client, tenantId, ["Charged", "Charged"]);
+        again.EnsureSuccessStatusCode();
+
+        var audits = await AuditsAsync(factory);
+        Assert.Equal(
+            [("quotations.freight_charge_modes.updated", tenantId.ToString())],
+            audits.Where(audit => audit.Action == "quotations.freight_charge_modes.updated"));
+    }
+
     // P2: el PUT del mínimo de compra no conoce la tasa del envío, así que no puede pisarla.
     [Fact]
     public async Task SavingMinimumPurchaseKeepsTheFreightTaxRate()
@@ -400,6 +495,18 @@ public sealed class CarrierApiTests
         client.PutAsJsonAsync(
             $"{CarriersUrl(tenantId)}/freight-tax-rate", new { taxRateId }, TestContext.Current.CancellationToken);
 
+    private static Task<HttpResponseMessage> PutFreightChargeModesAsync(
+        HttpClient client, Guid tenantId, string[] enabledModes) =>
+        client.PutAsJsonAsync(
+            $"{CarriersUrl(tenantId)}/freight-charge-modes", new { enabledModes }, TestContext.Current.CancellationToken);
+
+    private static async Task<ShippingOptionsPayload> GetShippingOptionsAsync(HttpClient client, Guid tenantId) =>
+        (await client.GetFromJsonAsync<ShippingOptionsPayload>(
+            $"/api/v1/tenants/{tenantId}/shipping-options", TestContext.Current.CancellationToken))!;
+
+    private static readonly FreightChargeModePayload[] AllEnabled =
+        [new("Charged", true), new("OnDelivery", true), new("Free", true)];
+
     private static async Task<CarrierSettingsPayload> GetSettingsAsync(HttpClient client, Guid tenantId) =>
         (await client.GetFromJsonAsync<CarrierSettingsPayload>(CarriersUrl(tenantId), TestContext.Current.CancellationToken))!;
 
@@ -416,9 +523,13 @@ public sealed class CarrierApiTests
 
     private sealed record FreightTaxRatePayload(Guid Id, string Name, int Percentage, bool IsActive);
 
-    private sealed record CarrierSettingsPayload(FreightTaxRatePayload? FreightTaxRate, CarrierPayload[] Carriers);
+    private sealed record FreightChargeModePayload(string Mode, bool IsEnabled);
+
+    private sealed record CarrierSettingsPayload(
+        FreightTaxRatePayload? FreightTaxRate, CarrierPayload[] Carriers, FreightChargeModePayload[] FreightChargeModes);
 
     private sealed record ShippingCarrierPayload(Guid Id, string Name, bool SupportsCashOnDelivery);
 
-    private sealed record ShippingOptionsPayload(ShippingCarrierPayload[] Carriers, FreightTaxRatePayload? FreightTaxRate);
+    private sealed record ShippingOptionsPayload(
+        ShippingCarrierPayload[] Carriers, FreightTaxRatePayload? FreightTaxRate, FreightChargeModePayload[] FreightChargeModes);
 }

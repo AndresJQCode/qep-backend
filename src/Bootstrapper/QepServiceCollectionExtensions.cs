@@ -528,6 +528,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<SetCarrierActiveCommand, CarrierDto>, SetCarrierActiveHandler>();
         services.AddScoped<ICommandHandler<ReorderCarriersCommand, CarrierSettingsDto>, ReorderCarriersHandler>();
         services.AddScoped<ICommandHandler<SetFreightTaxRateCommand, CarrierSettingsDto>, SetFreightTaxRateHandler>();
+        services.AddScoped<ICommandHandler<SetFreightChargeModesCommand, CarrierSettingsDto>, SetFreightChargeModesHandler>();
         services.AddScoped<IQueryHandler<GetShippingOptionsQuery, ShippingOptionsDto>, GetShippingOptionsHandler>();
         // Reporting. Los ocho van aca por la misma razon que el resto: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla

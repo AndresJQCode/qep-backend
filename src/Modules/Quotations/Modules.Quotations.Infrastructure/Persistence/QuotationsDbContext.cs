@@ -890,11 +890,22 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     {
         var settings = modelBuilder.Entity<TenantQuotationSettingsRow>();
         settings.ToTable("tenant_quotation_settings", "quotations", table =>
-            table.HasCheckConstraint("CK_tenant_quotation_settings_minimum_units", "minimum_units >= 1"));
+        {
+            table.HasCheckConstraint("CK_tenant_quotation_settings_minimum_units", "minimum_units >= 1");
+            // Sólo nombres del enum, como CK_quotations_freight_charge_mode: lo que no los cumpla es un bug.
+            table.HasCheckConstraint(
+                "CK_tenant_quotation_settings_disabled_freight_charge_modes",
+                "disabled_freight_charge_modes <@ ARRAY['Charged', 'OnDelivery', 'Free']::text[]");
+        });
         settings.HasKey(value => value.TenantId);
         settings.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
         settings.Property(value => value.MinimumUnits).HasColumnName("minimum_units");
         settings.Property(value => value.FreightTaxRateId).HasColumnName("freight_tax_rate_id");
+        settings.Property(value => value.DisabledFreightChargeModes)
+            .HasColumnName("disabled_freight_charge_modes")
+            .HasColumnType("text[]")
+            .HasDefaultValueSql("'{}'::text[]")
+            .IsRequired();
 
         var totals = modelBuilder.Entity<TenantMinimumTotalRow>();
         totals.ToTable("tenant_minimum_totals", "quotations", table =>

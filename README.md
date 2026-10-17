@@ -1187,13 +1187,14 @@ contraentrega.
 
 | Método | Ruta | Qué hace |
 | --- | --- | --- |
-| `GET` | `/carriers` | La tasa del IVA del envío y **todas** las transportadoras, activas e inactivas, en orden |
+| `GET` | `/carriers` | La tasa del IVA del envío, **todas** las transportadoras, activas e inactivas, en orden, y `freightChargeModes` |
 | `POST` | `/carriers` | Crea una (`name`, `externalNames`, `supportsCashOnDelivery`); responde 201 con `ETag` |
 | `PUT` | `/carriers/{carrierId}` | Edita; exige `If-Match` con la `version` cargada (428 sin él, 412 si cambió) |
 | `POST` | `/carriers/{carrierId}/activate` y `/deactivate` | Prende o apaga |
 | `PUT` | `/carriers/order` | Reordena con la lista completa de ids (`carrierIds`) |
 | `PUT` | `/carriers/freight-tax-rate` | Fija la tasa del IVA del envío (`taxRateId`); con `taxRateId: null` la quita |
-| `GET` | `/shipping-options` | Para el cotizador y el pedido (permiso de leer cotizaciones): sólo las activas y la tasa |
+| `PUT` | `/carriers/freight-charge-modes` | Las opciones de «¿Quién paga el envío?» que quedan activas (`enabledModes`); responde como `GET /carriers` |
+| `GET` | `/shipping-options` | Para el cotizador y el pedido (permiso de leer cotizaciones): sólo las activas, la tasa y `freightChargeModes` |
 
 - **Las transportadoras no se borran, se desactivan.** Un documento guarda la foto del nombre al elegirla y
   no pierde lo que ya eligió si la transportadora se apaga después; una desactivada no se puede elegir en
@@ -1205,9 +1206,21 @@ contraentrega.
   **activa** (`quotations.freight_tax_rate.inactive`, o `.not_found` si no es del tenant). Vive aparte de
   `PUT /quotations/settings` para que guardar el mínimo de compra no pueda pisarla. La pantalla de tasas de
   impuesto se mueve de Catálogo a **Configuración** (cambio de `qep-frontend`; la API de tasas no cambió).
-- Mutar una transportadora o la tasa deja fila de auditoría en la misma transacción
+- **Quién paga el envío se activa por tenant** (§4.4). `freightChargeModes` viaja en `GET /carriers` y en
+  `GET /shipping-options` como `[{ mode, isEnabled }]`, **siempre las tres** (`Charged`, `OnDelivery`,
+  `Free`, en ese orden) aunque estén apagadas. Las tres nacen activas: sin fila o sin tocar, todas. Se fija
+  con `PUT /carriers/freight-charge-modes` y `{ "enabledModes": ["Charged", "Free"] }`; las que no vienen se
+  apagan, la lista vacía las apaga todas, un nombre repetido se tolera y uno desconocido es `422
+  validation.failed` con `errors["EnabledModes[i]"]` (sin `enabledModes` también, en `errors["EnabledModes"]`).
+  Elegir o cambiar a un modo apagado al crear, guardar o previsualizar responde
+  `…freight_charge_mode_disabled`; el documento que ya lo tenía lo conserva mientras no lo cambie, y
+  quitarlo (`null`) siempre se puede. No aplica a la conversión (copia lo de la cotización) ni a Shopify. Se
+  guardan las apagadas en `tenant_quotation_settings.disabled_freight_charge_modes`, aparte del mínimo de
+  compra, como la tasa.
+- Mutar una transportadora, la tasa o quién paga el envío deja fila de auditoría en la misma transacción
   (`quotations.carrier.created|updated|activated|deactivated|reordered`,
-  `quotations.freight_tax_rate.updated`).
+  `quotations.freight_tax_rate.updated`, `quotations.freight_charge_modes.updated`); repetir lo que ya
+  estaba no audita.
 
 **El objeto `shipping`.** Los cuerpos de crear, guardar y previsualizar cotización y pedido aceptan
 `shipping: { carrierId, freightChargeMode, freightAmount, cashOnDelivery }`, y las respuestas devuelven

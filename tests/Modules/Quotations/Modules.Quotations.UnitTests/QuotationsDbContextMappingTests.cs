@@ -528,6 +528,27 @@ public sealed class QuotationsDbContextMappingTests
         Assert.True(property.IsNullable);
     }
 
+    // Spec §4.4: se guardan las apagadas, así que una fila sin tocar (y las de antes de la migración) tiene las
+    // tres activas. El CHECK impide guardar un nombre que el enum no conoce.
+    [Fact]
+    public void TheSettingsRowMapsTheDisabledFreightChargeModesAsARequiredTextArray()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var entity = model.FindEntityType(typeof(TenantQuotationSettingsRow))!;
+
+        var property = entity.FindProperty(nameof(TenantQuotationSettingsRow.DisabledFreightChargeModes))!;
+
+        Assert.Equal("disabled_freight_charge_modes", property.GetColumnName());
+        Assert.False(property.IsNullable);
+        Assert.Equal("text[]", property.GetColumnType());
+        Assert.Equal("'{}'::text[]", property.GetDefaultValueSql());
+        Assert.Contains(
+            entity.GetCheckConstraints(),
+            check => check.Name == "CK_tenant_quotation_settings_disabled_freight_charge_modes"
+                && check.Sql.Contains("'Charged'") && check.Sql.Contains("'OnDelivery'") && check.Sql.Contains("'Free'"));
+    }
+
     /// <summary>
     /// El modelo y el último snapshot describen la misma base. Renombrar un tipo CLR sin tocar
     /// tablas, columnas ni índices no pide migración (plan 2026-09-14, Task 1), y una migración

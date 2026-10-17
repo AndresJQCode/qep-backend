@@ -11,4 +11,9 @@ internal sealed class TenantQuotationSettingsRow
     /// <summary>La tasa de IVA del envío (spec 2026-10-17): un <c>tax_rates.id</c> de Tenancy, sin FK
     /// porque cruza módulos. Nula hasta que el tenant la elige.</summary>
     public Guid? FreightTaxRateId { get; set; }
+
+    /// <summary>Las opciones de «¿Quién paga el envío?» que el tenant apagó (spec 2026-10-17 §4.4), por nombre del
+    /// enum. Se guardan las apagadas y no las activas para que «sin tocar» sea la lista vacía: las filas de antes
+    /// de la migración y las que crea <c>LockRowAsync</c> nacen con las tres activas sin escribir nada.</summary>
+    public string[] DisabledFreightChargeModes { get; set; } = [];
 }

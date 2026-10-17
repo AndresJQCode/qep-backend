@@ -5,7 +5,8 @@ namespace Modules.Quotations.Application;
 
 /// <summary>
 /// Resuelve contra el tenant lo que el dominio no puede saber del envío (spec 2026-10-17 §5.2, P3): que la
-/// transportadora exista, esté activa y haga recaudo, y cuál es la tasa del IVA del envío. La coherencia
+/// transportadora exista, esté activa y haga recaudo, que el modo de cobro esté activo en el tenant (§4.4), y
+/// cuál es la tasa del IVA del envío. La coherencia
 /// (recogida, montos, <c>Free</c>, <c>Charged</c>) la valida el agregado en <c>SetShipping</c>.
 ///
 /// Lo comparten la cotización y el pedido; <c>errorPrefix</c> es <c>quotation.quotation</c> u
@@ -20,8 +21,9 @@ public sealed class ShippingResolver(
     /// <summary>
     /// El envío que hay que fijar, o <c>null</c> para no tocarlo. Reglas, en orden:
     /// recogida limpia todo; sin cuerpo no se toca (P4); la transportadora se lee sólo si cambió; la
-    /// contraentrega se comprueba sólo si la transportadora es nueva o se prende ahora; y la tasa se lee sólo
-    /// si el envío cobrado en COP cambió de modo o de valor.
+    /// contraentrega se comprueba sólo si la transportadora es nueva o se prende ahora; el modo se compara con
+    /// los activos del tenant sólo si cambió; y la tasa se lee sólo si el envío cobrado en COP cambió de modo o
+    /// de valor.
     /// </summary>
     public async Task<ShippingDetails?> ResolveAsync(
         Guid tenantId,
@@ -94,8 +96,21 @@ public sealed class ShippingResolver(
             }
         }
 
-        // 5. El valor y la tasa.
+        // 5. El modo: uno que el tenant apagó no se puede elegir (spec §4.4). Como la transportadora, sólo al
+        // elegirlo o cambiarlo: el documento que ya lo tenía lo conserva, y quitarlo (null) siempre se puede.
         var mode = QuotationMapping.ToFreightChargeMode(request.FreightChargeMode, errorPrefix);
+        if (mode is { } chosenMode && chosenMode != current.ChargeMode)
+        {
+            var enabled = await settingsStore.GetEnabledFreightChargeModesAsync(tenantId, cancellationToken);
+            if (!enabled.Contains(chosenMode))
+            {
+                throw new QuotationsDomainException(
+                    $"{errorPrefix}.freight_charge_mode_disabled",
+                    $"The freight charge mode '{chosenMode}' is disabled for this tenant.");
+            }
+        }
+
+        // 6. El valor y la tasa.
         var amount = mode == FreightChargeMode.Free ? 0m : request.FreightAmount;
         var taxPercentage = 0;
         // Con valor 0 el dominio responde freight_amount_required, que es la causa real: leer la tasa antes

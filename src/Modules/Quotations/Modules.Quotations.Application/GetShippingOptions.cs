@@ -27,6 +27,7 @@ public sealed class GetShippingOptionsHandler(
                 .Where(carrier => carrier.IsActive)
                 .Select(carrier => new ShippingCarrierOptionDto(
                     carrier.Id.Value, carrier.Name, carrier.SupportsCashOnDelivery))],
-            await CarrierMapping.FreightTaxRateAsync(store, taxRates, query.TenantId, cancellationToken));
+            await CarrierMapping.FreightTaxRateAsync(store, taxRates, query.TenantId, cancellationToken),
+            await CarrierMapping.FreightChargeModesAsync(store, query.TenantId, cancellationToken));
     }
 }

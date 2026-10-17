@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Modules.Quotations.Application;
+using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Infrastructure.Persistence;
 
@@ -38,8 +39,8 @@ internal sealed class QuotationSettingsStore(QuotationsDbContext dbContext) : IQ
     public async Task SaveAsync(Guid tenantId, QuotationSettings settings, CancellationToken cancellationToken)
     {
         var row = await LockRowAsync(tenantId, settings.MinimumUnits, nameof(SaveAsync), cancellationToken);
-        // Only the minimum units: the freight tax rate lives on the same row but is not part of this
-        // document (P2), so it stays as it was.
+        // Only the minimum units: the freight tax rate and the freight charge modes live on the same row
+        // but are not part of this document (P2, §4.4), so they stay as they were.
         row.MinimumUnits = settings.MinimumUnits;
 
         var stored = await dbContext.TenantMinimumTotals
@@ -83,6 +84,32 @@ internal sealed class QuotationSettingsStore(QuotationsDbContext dbContext) : IQ
         row.FreightTaxRateId = taxRateId;
     }
 
+    // Sin fila, las tres (spec §4.4). Un nombre guardado que el enum ya no conozca no apaga nada: el CHECK no
+    // lo deja entrar, y si algún día un modo desaparece, ignorarlo es lo que no rompe la lectura.
+    public async Task<IReadOnlySet<FreightChargeMode>> GetEnabledFreightChargeModesAsync(
+        Guid tenantId, CancellationToken cancellationToken)
+    {
+        var disabled = await dbContext.TenantQuotationSettings
+            .AsNoTracking()
+            .Where(settings => settings.TenantId == tenantId)
+            .Select(settings => settings.DisabledFreightChargeModes)
+            .SingleOrDefaultAsync(cancellationToken) ?? [];
+        return Enum.GetValues<FreightChargeMode>()
+            .Where(mode => !disabled.Contains(mode.ToString(), StringComparer.Ordinal))
+            .ToHashSet();
+    }
+
+    // Mismo bloqueo que la tasa. Se guardan las apagadas, en el orden del enum para que la columna sea estable.
+    public async Task SetEnabledFreightChargeModesAsync(
+        Guid tenantId, IReadOnlySet<FreightChargeMode> enabledModes, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(enabledModes);
+        var row = await LockRowAsync(
+            tenantId, QuotationSettings.Default.MinimumUnits, nameof(SetEnabledFreightChargeModesAsync), cancellationToken);
+        row.DisabledFreightChargeModes =
+            [.. Enum.GetValues<FreightChargeMode>().Where(mode => !enabledModes.Contains(mode)).Select(mode => mode.ToString())];
+    }
+
     // The parent row is created if missing (ON CONFLICT waits for, then yields to, a concurrent
     // first save) and locked FOR UPDATE until the caller's transaction ends.
     private async Task<TenantQuotationSettingsRow> LockRowAsync(
@@ -108,7 +135,8 @@ internal sealed class QuotationSettingsStore(QuotationsDbContext dbContext) : IQ
         return (await dbContext.TenantQuotationSettings
             .FromSql(
                 $"""
-                SELECT tenant_id, minimum_units, freight_tax_rate_id FROM quotations.tenant_quotation_settings
+                SELECT tenant_id, minimum_units, freight_tax_rate_id, disabled_freight_charge_modes
+                FROM quotations.tenant_quotation_settings
                 WHERE tenant_id = {tenantId}
                 FOR UPDATE
                 """)

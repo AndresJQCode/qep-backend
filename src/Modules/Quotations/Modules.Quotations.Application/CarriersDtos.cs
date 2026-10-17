@@ -16,15 +16,34 @@ public sealed record CarrierDto(
 /// da <c>freight_tax_rate_missing</c>, spec §4.2).</summary>
 public sealed record FreightTaxRateDto(Guid Id, string Name, int Percentage, bool IsActive);
 
+/// <summary>Una opción de «¿Quién paga el envío?» y si el tenant la tiene activa (spec §4.4). <c>Mode</c> viaja
+/// con el nombre del enum (<c>Charged</c>, <c>OnDelivery</c>, <c>Free</c>): el texto lo pone el frontend.</summary>
+public sealed record FreightChargeModeDto(string Mode, bool IsEnabled);
+
 /// <summary>BFF (spec §4.3): la tasa del envío y **todas** las transportadoras, activas e inactivas,
 /// en orden. Una sola llamada pinta la pantalla entera, y reordenar o cambiar la tasa devuelve lo
-/// mismo, que es lo que la pantalla repinta.</summary>
-public sealed record CarrierSettingsDto(FreightTaxRateDto? FreightTaxRate, IReadOnlyList<CarrierDto> Carriers);
+/// mismo, que es lo que la pantalla repinta.
+///
+/// <c>FreightChargeModes</c> trae **siempre las tres**, en el orden <c>Charged</c>, <c>OnDelivery</c>,
+/// <c>Free</c>, aunque estén apagadas (§4.4): es una colección de tamaño fijo, y si la apagada faltara la
+/// pantalla tendría que conocer el enum del backend para dibujar su interruptor. No la "simplifiques" a la
+/// lista de las activas.</summary>
+public sealed record CarrierSettingsDto(
+    FreightTaxRateDto? FreightTaxRate,
+    IReadOnlyList<CarrierDto> Carriers,
+    IReadOnlyList<FreightChargeModeDto> FreightChargeModes);
 
 /// <summary>Lo que el cotizador y el pedido necesitan para dibujar la entrega (spec §4.3): sólo las
-/// activas, en orden, y la tasa con la que se calcula el IVA del envío.</summary>
+/// activas, en orden, y la tasa con la que se calcula el IVA del envío.
+///
+/// <c>FreightChargeModes</c> trae las tres, apagadas incluidas, por la misma razón que en
+/// <see cref="CarrierSettingsDto"/>: el formulario muestra las activas más la que el documento ya tiene
+/// guardada aunque esté apagada (marcada como desactivada), y para eso tiene que saber que existe y que está
+/// apagada, no inferirlo de su ausencia.</summary>
 public sealed record ShippingOptionsDto(
-    IReadOnlyList<ShippingCarrierOptionDto> Carriers, FreightTaxRateDto? FreightTaxRate);
+    IReadOnlyList<ShippingCarrierOptionDto> Carriers,
+    FreightTaxRateDto? FreightTaxRate,
+    IReadOnlyList<FreightChargeModeDto> FreightChargeModes);
 
 public sealed record ShippingCarrierOptionDto(Guid Id, string Name, bool SupportsCashOnDelivery);
 
@@ -70,6 +89,16 @@ internal static class CarrierMapping
         var list = await carriers.ListAsync(tenantId, cancellationToken);
         return new CarrierSettingsDto(
             await FreightTaxRateAsync(store, taxRates, tenantId, cancellationToken),
-            [.. list.Select(ToDto)]);
+            [.. list.Select(ToDto)],
+            await FreightChargeModesAsync(store, tenantId, cancellationToken));
+    }
+
+    /// <summary>Las tres, en el orden del enum (<c>Charged</c>, <c>OnDelivery</c>, <c>Free</c>), cada una con
+    /// si está activa.</summary>
+    public static async Task<IReadOnlyList<FreightChargeModeDto>> FreightChargeModesAsync(
+        IQuotationSettingsStore store, Guid tenantId, CancellationToken cancellationToken)
+    {
+        var enabled = await store.GetEnabledFreightChargeModesAsync(tenantId, cancellationToken);
+        return [.. Enum.GetValues<FreightChargeMode>().Select(mode => new FreightChargeModeDto(mode.ToString(), enabled.Contains(mode)))];
     }
 }

@@ -1,3 +1,5 @@
+using Modules.Quotations.Domain;
+
 namespace Modules.Quotations.Application;
 
 public interface IQuotationSettingsStore
@@ -19,4 +21,13 @@ public interface IQuotationSettingsStore
     /// <summary>Sin fila, la crea con <see cref="QuotationSettings.Default"/>.<c>MinimumUnits</c>. Mismo
     /// contrato que <see cref="SaveAsync"/>: dentro de la transacción, que bloquea la fila.</summary>
     Task SetFreightTaxRateIdAsync(Guid tenantId, Guid? taxRateId, CancellationToken cancellationToken);
+
+    /// <summary>Las opciones de «¿Quién paga el envío?» que el tenant tiene activas (spec 2026-10-17 §4.4),
+    /// aparte de <see cref="GetAsync"/> por lo mismo que la tasa (P2). Sin fila, las tres.</summary>
+    Task<IReadOnlySet<FreightChargeMode>> GetEnabledFreightChargeModesAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Mismo contrato que <see cref="SetFreightTaxRateIdAsync"/>: dentro de la transacción, que
+    /// bloquea la fila, y sin fila la crea con el mínimo de compra por defecto.</summary>
+    Task SetEnabledFreightChargeModesAsync(
+        Guid tenantId, IReadOnlySet<FreightChargeMode> enabledModes, CancellationToken cancellationToken);
 }

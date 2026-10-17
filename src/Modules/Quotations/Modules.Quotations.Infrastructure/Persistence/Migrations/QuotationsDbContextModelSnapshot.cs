@@ -1290,6 +1290,13 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
+                    b.PrimitiveCollection<string[]>("DisabledFreightChargeModes")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasColumnName("disabled_freight_charge_modes")
+                        .HasDefaultValueSql("'{}'::text[]");
+
                     b.Property<Guid?>("FreightTaxRateId")
                         .HasColumnType("uuid")
                         .HasColumnName("freight_tax_rate_id");
@@ -1302,6 +1309,8 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
 
                     b.ToTable("tenant_quotation_settings", "quotations", t =>
                         {
+                            t.HasCheckConstraint("CK_tenant_quotation_settings_disabled_freight_charge_modes", "disabled_freight_charge_modes <@ ARRAY['Charged', 'OnDelivery', 'Free']::text[]");
+
                             t.HasCheckConstraint("CK_tenant_quotation_settings_minimum_units", "minimum_units >= 1");
                         });
                 });

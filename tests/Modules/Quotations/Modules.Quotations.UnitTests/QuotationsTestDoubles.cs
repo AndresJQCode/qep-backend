@@ -691,6 +691,27 @@ public sealed class FixedQuotationSettingsStore(QuotationSettings? settings = nu
         FreightTaxRateId = taxRateId;
         return Task.CompletedTask;
     }
+
+    /// <summary>Las tres activas, como un tenant que nunca las tocó (spec §4.4).</summary>
+    public IReadOnlySet<FreightChargeMode> EnabledFreightChargeModes { get; set; } =
+        new HashSet<FreightChargeMode>(Enum.GetValues<FreightChargeMode>());
+
+    /// <summary>Cuántas veces se leyeron: un guardado que no cambia el modo no tiene por qué leerlas.</summary>
+    public int FreightChargeModeReads { get; private set; }
+
+    public Task<IReadOnlySet<FreightChargeMode>> GetEnabledFreightChargeModesAsync(
+        Guid tenantId, CancellationToken cancellationToken)
+    {
+        FreightChargeModeReads++;
+        return Task.FromResult(EnabledFreightChargeModes);
+    }
+
+    public Task SetEnabledFreightChargeModesAsync(
+        Guid tenantId, IReadOnlySet<FreightChargeMode> enabledModes, CancellationToken cancellationToken)
+    {
+        EnabledFreightChargeModes = enabledModes;
+        return Task.CompletedTask;
+    }
 }
 
 /// <summary>Los filtros con que se preguntó por pedidos o se leyó para exportarlos.</summary>
