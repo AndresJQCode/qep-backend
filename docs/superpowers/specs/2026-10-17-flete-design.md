@@ -537,6 +537,7 @@ completa.
   pago: Contraentrega» en lugar de la forma de pago escrita; R12 y R13 `OrdersExportLayout.Effective` agrega
   oculta la columna nueva del catálogo cuyo encabezado choca con una visible (la hoja sembrada conserva su fija
   «valor flete», vacía, hasta que el operador la cambie por la del catálogo), y un `PUT` parcial que omite la del
-  catálogo y agrega una fija con su encabezado pasa a aceptarse. Pendiente: la compilación de la plantilla Typst
-  del PDF no se pudo verificar (typst no estaba instalado); falta correr `QuotationTemplateTests` o renderizar con
-  qcode-pdf. El frontend va en su propio plan.
+  catálogo y agrega una fija con su encabezado pasa a aceptarse; R15 un guardado que cambia la moneda descarta el
+  modo y el valor del `shipping` del cuerpo (D-F15); R16 crear o convertir con contraentrega rechaza los
+  comprobantes aunque el pago siga pendiente (D-F14). La plantilla Typst compila con `QuotationTemplateTests`
+  (typst 0.15.1), y el renglón «IVA del envío» se oculta cuando vale cero. El frontend va en su propio plan.

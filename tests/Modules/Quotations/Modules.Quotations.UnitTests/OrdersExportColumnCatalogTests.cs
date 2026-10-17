@@ -4,7 +4,7 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// El catálogo del Excel de pedidos (spec 2026-09-24): las 49 columnas de hoy, con la llave estable
+/// El catálogo del Excel de pedidos (spec 2026-09-24): las 54 columnas de hoy, con la llave estable
 /// con la que el tenant las homologa. Su orden es el orden del archivo sin layout guardado, así que
 /// se fija contra la lista del processor y no al revés.
 /// </summary>

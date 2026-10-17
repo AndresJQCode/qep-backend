@@ -1192,7 +1192,7 @@ contraentrega.
 | `PUT` | `/carriers/{carrierId}` | Edita; exige `If-Match` con la `version` cargada (428 sin él, 412 si cambió) |
 | `POST` | `/carriers/{carrierId}/activate` y `/deactivate` | Prende o apaga |
 | `PUT` | `/carriers/order` | Reordena con la lista completa de ids (`carrierIds`) |
-| `PUT` | `/carriers/freight-tax-rate` | Fija la tasa del IVA del envío (`taxRateId`) |
+| `PUT` | `/carriers/freight-tax-rate` | Fija la tasa del IVA del envío (`taxRateId`); con `taxRateId: null` la quita |
 | `GET` | `/shipping-options` | Para el cotizador y el pedido (permiso de leer cotizaciones): sólo las activas y la tasa |
 
 - **Las transportadoras no se borran, se desactivan.** Un documento guarda la foto del nombre al elegirla y
@@ -1305,7 +1305,7 @@ Con el spec de flete (2026-10-17) `Transportadora` deja de ser fija: sale el nom
 elegida en el pedido (la foto), `Coordinadora` si no eligió ninguna y `Recoger en tienda` en recogida. Y
 el catálogo gana **cinco columnas** al final: `Valor Flete` (`freight_amount`, visible), `Flete sin IVA`
 (`freight_without_tax`), `IVA Flete` (`freight_tax`), `Pago Flete` (`freight_charge_mode`: `Cobrado`,
-`Gratis` o `Al cobro`) y `Contraentrega` (`cash_on_delivery`: `Sí` o `No`), las tres últimas **ocultas**.
+`Gratis` o `Al cobro`) y `Contraentrega` (`cash_on_delivery`: `Sí` o `No`), las cuatro últimas **ocultas**.
 `Valor Flete` sale vacío en recogida, sin modo y con `Al cobro` (ese dinero se le paga a la
 transportadora, no es del documento), y `0` con `Gratis`. **Regla de choque:** `OrdersExportLayout.Effective`
 nunca deja dos columnas visibles con el mismo encabezado; una columna nueva del catálogo cuyo encabezado

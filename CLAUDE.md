@@ -339,10 +339,10 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **Una prueba de migración que baja a una versión vieja tiene que volver a la última antes de llamar a la
   API.** El modelo de hoy pide las columnas de las migraciones posteriores (`AddFreight`); sin
   `MigrateAsync(null)` al final, el `POST` de la prueba da 500 (`QuotationSettingsMigrationTests`).
-- **`OrdersExportLayout.Effective` oculta una columna nueva del catálogo cuyo encabezado choca con una visible**
-  del layout guardado (misma comparación que `header_duplicated`), y no falla. La hoja sembrada «MIGRACION 1»
-  tiene su fija «valor flete» vacía, así que `Valor Flete` del catálogo nace oculta ahí. Al agregar una columna
-  al catálogo, revisa los encabezados de las fijas de la semilla.
+- **Al agregar una columna al catálogo del Excel de pedidos, revisa los encabezados de las fijas de la semilla.**
+  Una columna nueva cuyo encabezado choca con una visible del layout guardado nace oculta en silencio, sin
+  error: la regla de choque está en
+  [README § Columnas del Excel de pedidos](README.md#columnas-del-excel-de-pedidos-por-tenant-homologación).
 
 ## Verificación
 

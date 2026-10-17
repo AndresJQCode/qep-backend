@@ -6,8 +6,8 @@ namespace Modules.Quotations.Application;
 /// Una columna del layout efectivo (spec 2026-09-24, "Application y API"). <c>DefaultHeader</c>,
 /// <c>DefaultPosition</c> y <c>DefaultVisible</c> viajan por columna (regla BFF del repo): la
 /// pantalla los necesita como placeholder del input, para "restaurar" una sola y para "restaurar
-/// todo" sin conocer el catálogo. <c>DefaultPosition</c> es 1-based (1..46 desde el ajuste
-/// 2026-10-03), como la columna # de la tabla del spec: es la posición que la pantalla muestra.
+/// todo" sin conocer el catálogo. <c>DefaultPosition</c> es 1-based (1..54 desde el spec de
+/// flete, 2026-10-17), como la columna # de la tabla del spec: es la posición que la pantalla muestra.
 /// <c>DefaultVisible</c> (ajuste 2026-10-02) existe porque ya no toda columna nace visible
 /// —"coordinadora_city", las "payment_method_N" y el desglose del flete nacen ocultas—, y
 /// sin él "restaurar" la prendería: la pantalla tendría que saber de memoria cuáles son. Una llave
