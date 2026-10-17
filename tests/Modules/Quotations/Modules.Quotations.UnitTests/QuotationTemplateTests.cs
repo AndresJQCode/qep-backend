@@ -394,7 +394,14 @@ public sealed partial class QuotationTemplateTests
         RetentionAmount: 32271.43m,
         NetTotal: 1503848.57m,
         CustomerVatSurplus: false,
-        Logo: null);
+        Logo: null,
+        CarrierName: "Servientrega",
+        FreightChargeMode: "Charged",
+        FreightAmount: 15000m,
+        FreightTaxPercentage: 19,
+        FreightSubtotal: 12605.04m,
+        FreightTaxAmount: 2394.96m,
+        CashOnDelivery: true);
 
     private static QuotationPdfDocument Minimal() => new(
         QuotationNumber: "QUO-2026-0002",

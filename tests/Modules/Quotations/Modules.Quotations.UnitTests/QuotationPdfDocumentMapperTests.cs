@@ -278,6 +278,43 @@ public sealed class QuotationPdfDocumentMapperTests
     }
 
     [Fact]
+    public void MapsTheShippingFields()
+    {
+        var response = Response() with
+        {
+            Shipping = new ShippingResponse(
+                false, new ShippingCarrierResponse(Guid.CreateVersion7(), "Servientrega"), "Charged",
+                15000m, 19, 12605.04m, 2394.96m, true),
+            FreightSubtotal = 12605.04m,
+            FreightTaxAmount = 2394.96m,
+        };
+
+        var document = Map(response);
+
+        Assert.Equal("Servientrega", document.CarrierName);
+        Assert.Equal("Charged", document.FreightChargeMode);
+        Assert.Equal(15000m, document.FreightAmount);
+        Assert.Equal(19, document.FreightTaxPercentage);
+        Assert.Equal(12605.04m, document.FreightSubtotal);
+        Assert.Equal(2394.96m, document.FreightTaxAmount);
+        Assert.True(document.CashOnDelivery);
+    }
+
+    [Fact]
+    public void MapsNoShippingAsNullsAndZeros()
+    {
+        var document = Map(Response());
+
+        Assert.Null(document.CarrierName);
+        Assert.Null(document.FreightChargeMode);
+        Assert.Equal(0m, document.FreightAmount);
+        Assert.Equal(0, document.FreightTaxPercentage);
+        Assert.Equal(0m, document.FreightSubtotal);
+        Assert.Equal(0m, document.FreightTaxAmount);
+        Assert.False(document.CashOnDelivery);
+    }
+
+    [Fact]
     public void MapsTheLogoWhenPresent()
     {
         var logo = new QuotationPdfLogo("logo.png", [0x89, 0x50, 0x4E, 0x47]);

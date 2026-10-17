@@ -68,7 +68,20 @@ public sealed record QuotationPdfDocument(
     /// <summary>El logo del tenant, o null sin logo — el request a qcode-pdf no cambia de forma
     /// en ese caso (spec 2026-09-19). `Content` lleva [JsonIgnore]: viaja sólo como asset
     /// (`QCodePdfRenderer`), nunca duplicado en base64 dentro de `data`.</summary>
-    QuotationPdfLogo? Logo);
+    QuotationPdfLogo? Logo,
+    /// <summary>Nombre de la transportadora; null sin envío o sin transportadora elegida.</summary>
+    string? CarrierName = null,
+    /// <summary>Nombre del modo (<c>Charged</c>, <c>Free</c>, <c>OnDelivery</c>) o null sin envío. La
+    /// plantilla decide qué renglón imprime según este valor: el mapeo no arma textos.</summary>
+    string? FreightChargeMode = null,
+    /// <summary>El valor bruto digitado (IVA adentro). Con <c>OnDelivery</c> es sólo informativo.</summary>
+    decimal FreightAmount = 0m,
+    int FreightTaxPercentage = 0,
+    /// <summary>La base del envío sin IVA; 0 salvo en <c>Charged</c>.</summary>
+    decimal FreightSubtotal = 0m,
+    decimal FreightTaxAmount = 0m,
+    /// <summary>Pago contra entrega: la plantilla imprime «Forma de pago: Contraentrega».</summary>
+    bool CashOnDelivery = false);
 
 /// <summary>Una parte del documento: a quién se le factura, o a quién se le entrega.</summary>
 /// <param name="SameAsCustomer">

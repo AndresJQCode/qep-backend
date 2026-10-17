@@ -54,7 +54,14 @@ public static class QuotationPdfDocumentMapper
             quotation.RetentionAmount,
             quotation.NetTotal,
             quotation.CustomerVatSurplus,
-            logo);
+            logo,
+            quotation.Shipping.Carrier?.Name,
+            quotation.Shipping.ChargeMode,
+            quotation.Shipping.FreightAmount,
+            quotation.Shipping.FreightTaxPercentage,
+            quotation.FreightSubtotal,
+            quotation.FreightTaxAmount,
+            quotation.Shipping.CashOnDelivery);
     }
 
     /// <summary>

@@ -218,7 +218,7 @@
 
 // El recuadro de condiciones de pago va arriba y no al pie, como en la referencia: es lo que el
 // comprador necesita antes de decidir, no una nota final.
-#if data.paymentMethod != none or data.billingAccount != none [
+#if data.paymentMethod != none or data.billingAccount != none or data.cashOnDelivery [
   #block(
     breakable: false,
     width: 100%,
@@ -227,6 +227,9 @@
   )[
     #par(leading: 0.6em)[
       #if data.paymentMethod != none [#renglon("Forma de pago", data.paymentMethod) \ ]
+      // Contraentrega: el cliente paga al recibir, no por transferencia. Va como su propio renglón
+      // porque puede convivir con una forma de pago escrita a mano.
+      #if data.cashOnDelivery [#renglon("Forma de pago", "Contraentrega") \ ]
       #if data.billingAccount != none [
         #renglon("Cuenta para el pago", data.billingAccount.companyName) \
         #data.billingAccount.bankName \
@@ -269,7 +272,7 @@
   #if valor.location != "" [\ #valor.location]
 ]
 
-#if data.isStorePickup or not data.billing.sameAsCustomer or not data.shipping.sameAsCustomer [
+#if data.isStorePickup or data.carrierName != none or not data.billing.sameAsCustomer or not data.shipping.sameAsCustomer [
   #grid(
     columns: (1fr, 1fr),
     column-gutter: 10mm,
@@ -294,6 +297,10 @@
       } else {
         parte(data.shipping)
       }
+      // La transportadora no existe con recogida en tienda (el dominio la limpia).
+      #if not data.isStorePickup and data.carrierName != none [
+        \ #renglon("Transportadora", data.carrierName)
+      ]
     ],
   )
   #v(14pt)
@@ -375,6 +382,34 @@
 // de cero se leería como si ya estuviera descontada del total de arriba, que es falso.
 #let hay-retencion = data.retentionAmount > 0
 
+// Envío: el IVA del envío va en su propio renglón y el IVA de productos sigue siendo `taxAmount`.
+// `Charged` suma (base + IVA); `Free` y `OnDelivery` no suman nada al total: el renglón sólo
+// explica por qué no hay cobro. Con `OnDelivery` el valor, si lo hay, es informativo.
+#let nombre-envio = if data.carrierName == none { "" } else { " (" + data.carrierName + ")" }
+
+#let filas-envio = if data.freightChargeMode == "Charged" {
+  (
+    ("Envío" + nombre-envio + ":", moneda + importe(data.freightSubtotal), 0),
+    (
+      "IVA del envío (" + str(data.freightTaxPercentage) + " %):",
+      moneda + importe(data.freightTaxAmount),
+      0,
+    ),
+  )
+} else if data.freightChargeMode == "Free" {
+  (("Envío" + nombre-envio + ": Gratis", "", 0),)
+} else if data.freightChargeMode == "OnDelivery" {
+  (
+    (
+      "Envío" + nombre-envio + ": al cobro, lo paga el cliente a la transportadora",
+      if data.freightAmount > 0 { moneda + importe(data.freightAmount) } else { "" },
+      0,
+    ),
+  )
+} else {
+  ()
+}
+
 #let renglones = {
   let filas = (
     ("Valor antes de IVA:", moneda + importe(data.subtotal), 0),
@@ -383,6 +418,7 @@
       moneda + importe(data.taxAmount),
       0,
     ),
+    ..filas-envio,
     (
       "Retención en la fuente:",
       (if hay-retencion { "-" + moneda } else { moneda }) + importe(data.retentionAmount),
