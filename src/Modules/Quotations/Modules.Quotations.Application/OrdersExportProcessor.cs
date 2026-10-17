@@ -231,7 +231,29 @@ public sealed class OrdersExportProcessor(
         var codAsesor = AdvisorCodeCell(order, context.Advisors);
         // "Transportadora" (spec 2026-10-05): sólo depende de la recogida. Las demás columnas de
         // entrega no cambian con ella (decisión del owner): sin parte de envío caen al cliente.
-        var transportadora = order.IsStorePickup ? StorePickupCarrier : DefaultCarrier;
+        // Spec 2026-10-17 flete (D-F8): la transportadora real del pedido; sin ella, "Coordinadora".
+        var transportadora = order.IsStorePickup
+            ? StorePickupCarrier
+            : string.IsNullOrWhiteSpace(order.CarrierName) ? DefaultCarrier : order.CarrierName;
+        // Flete: con recogida o sin modo no hay valor ni modo. Al cobro deja vacío "Valor Flete" porque
+        // el monto se paga a la transportadora y no es del documento; los desgloses salen en 0.
+        var freightMode = order.IsStorePickup ? null : order.FreightChargeMode;
+        var fleteValor = freightMode switch
+        {
+            FreightChargeMode.Charged => ExportCell.OfNumber(order.FreightAmount),
+            FreightChargeMode.Free => ExportCell.OfNumber(0m),
+            _ => ExportCell.OfText(string.Empty),
+        };
+        var fleteSinIva = ExportCell.OfNumber(order.FreightSubtotal);
+        var fleteIva = ExportCell.OfNumber(order.FreightTaxAmount);
+        var fleteModo = ExportCell.OfText(freightMode switch
+        {
+            FreightChargeMode.Charged => "Cobrado",
+            FreightChargeMode.Free => "Gratis",
+            FreightChargeMode.OnDelivery => "Al cobro",
+            _ => string.Empty,
+        });
+        var contraentrega = ExportCell.OfText(order.CashOnDelivery ? "Sí" : "No");
         var banco = order.BillingAccount.BankName;
         var cuenta = order.BillingAccount.AccountNumber;
         var bancoYCuenta = BankAndAccount(banco, cuenta);
@@ -280,6 +302,11 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(transportadora),
                 ExportCell.OfNumber(order.Total),
                 ExportCell.OfNumber(order.RetentionAmount),
+                fleteValor,
+                fleteSinIva,
+                fleteIva,
+                fleteModo,
+                contraentrega,
             ];
         }
     }

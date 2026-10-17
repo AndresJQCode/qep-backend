@@ -81,7 +81,7 @@ public sealed class OrdersExportProcessorTests
                 "V. Comprobante 5", "URL Comprobante 5",
                 "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
                 "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa", "Total facturado",
-                "Retencion",
+                "Retencion", "Valor Flete",
             ],
             writer.Columns.Select(column => column.Header));
     }
@@ -765,6 +765,110 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(writer.Columns.Count, Assert.Single(writer.Rows).Count);
     }
 
+    // Spec 2026-10-17 flete §7 (D-F8): la transportadora sale del pedido; sin ella, "Coordinadora".
+    [Fact]
+    public async Task CarrierColumnUsesTheOrdersCarrier()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var shipping = new ShippingDetails(null, "Servientrega", FreightChargeMode.Charged, 15_000m, 19, false);
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", shipping: shipping)),
+                writer,
+                layouts: CarrierVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("Servientrega"), Assert.Single(writer.Rows)[0]);
+    }
+
+    [Fact]
+    public async Task CarrierColumnFallsBackToCoordinadoraWithoutCarrier()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var shipping = new ShippingDetails(null, null, FreightChargeMode.Free, 0m, 0, false);
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", shipping: shipping)),
+                writer,
+                layouts: CarrierVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("Coordinadora"), Assert.Single(writer.Rows)[0]);
+    }
+
+    private static readonly string[] FreightKeys =
+        ["freight_amount", "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery"];
+
+    private static async Task<IReadOnlyList<ExportCell>> FreightCellsAsync(Order order)
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var layouts = StoredLayout(
+            [.. FreightKeys.Select(key => OrdersExportColumnSetting.Catalog(key, key, visible: true))]);
+
+        await NewProcessor(new StubOrderListRepository(order), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        return Assert.Single(writer.Rows).Take(5).ToArray();
+    }
+
+    [Fact]
+    public async Task FreightColumnsForAChargedFreight()
+    {
+        var cells = await FreightCellsAsync(NewRow(
+            "PED-2026-0001",
+            shipping: new ShippingDetails(null, "Servientrega", FreightChargeMode.Charged, 15_000m, 19, false)));
+
+        Assert.Equal(
+            [ExportCell.OfNumber(15_000m), ExportCell.OfNumber(12_605.04m), ExportCell.OfNumber(2_394.96m),
+                ExportCell.OfText("Cobrado"), ExportCell.OfText("No")],
+            cells);
+    }
+
+    [Fact]
+    public async Task FreightColumnsForAFreeFreight()
+    {
+        var cells = await FreightCellsAsync(NewRow(
+            "PED-2026-0001",
+            shipping: new ShippingDetails(null, "Servientrega", FreightChargeMode.Free, 0m, 0, false)));
+
+        Assert.Equal(
+            [ExportCell.OfNumber(0m), ExportCell.OfNumber(0m), ExportCell.OfNumber(0m),
+                ExportCell.OfText("Gratis"), ExportCell.OfText("No")],
+            cells);
+    }
+
+    [Fact]
+    public async Task FreightColumnsForAnOnDeliveryFreight()
+    {
+        var cells = await FreightCellsAsync(NewRow(
+            "PED-2026-0001",
+            shipping: new ShippingDetails(null, "Servientrega", FreightChargeMode.OnDelivery, 0m, 0, false)));
+
+        Assert.Equal(
+            [ExportCell.OfText(string.Empty), ExportCell.OfNumber(0m), ExportCell.OfNumber(0m),
+                ExportCell.OfText("Al cobro"), ExportCell.OfText("No")],
+            cells);
+    }
+
+    [Fact]
+    public async Task FreightColumnsAreEmptyForAStorePickup()
+    {
+        var cells = await FreightCellsAsync(NewRow("PED-2026-0001", parties: StorePickup));
+
+        Assert.Equal(ExportCell.OfText(string.Empty), cells[0]);
+        Assert.Equal(ExportCell.OfText(string.Empty), cells[3]);
+    }
+
+    [Fact]
+    public async Task CashOnDeliveryColumnSaysSi()
+    {
+        var cells = await FreightCellsAsync(NewRow(
+            "PED-2026-0001",
+            shipping: new ShippingDetails(null, "Servientrega", FreightChargeMode.Free, 0m, 0, true)));
+
+        Assert.Equal(ExportCell.OfText("Sí"), cells[4]);
+    }
+
     private static readonly QuotationParties StorePickup = new(Billing: null, Shipping: null, IsStorePickup: true);
 
     // La columna nueva va oculta al final del efectivo: un layout que la pide visible la pone donde
@@ -1224,8 +1328,8 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(new ExportColumn("Total facturado", 18), writer.Columns[^2]);
-        Assert.Equal(ExportCell.OfNumber(row.Total), Assert.Single(writer.Rows)[^2]);
+        Assert.Equal(new ExportColumn("Total facturado", 18), writer.Columns[^3]);
+        Assert.Equal(ExportCell.OfNumber(row.Total), Assert.Single(writer.Rows)[^3]);
     }
 
     // Ajuste 2026-10-06: "Retencion" es Quotation.RetentionAmount, la misma en cada línea del pedido,
@@ -1253,7 +1357,7 @@ public sealed class OrdersExportProcessorTests
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal(new ExportColumn("Retencion", 16), writer.Columns[RetencionIndex]);
-        Assert.Equal(RetencionIndex, writer.Columns.Count - 1);
+        Assert.Equal(RetencionIndex, writer.Columns.Count - 2); // "Valor Flete" va detrás.
         Assert.Equal(2, writer.Rows.Count);
         Assert.All(writer.Rows, cells =>
         {
@@ -1290,8 +1394,8 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(new ExportColumn("Retencion", 16), writer.Columns[^1]);
-        Assert.Equal(ExportCell.OfNumber(row.RetentionAmount), Assert.Single(writer.Rows)[^1]);
+        Assert.Equal(new ExportColumn("Retencion", 16), writer.Columns[^2]);
+        Assert.Equal(ExportCell.OfNumber(row.RetentionAmount), Assert.Single(writer.Rows)[^2]);
     }
 
     // Sin comprobantes la celda queda vacía, igual que "V. Comprobante N" sin comprobante: vacío
@@ -1621,11 +1725,11 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(41, writer.Columns.Count);
+        Assert.Equal(42, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Correo", 30), writer.Columns[0]);
         Assert.Equal(new ExportColumn("Pedido", 18), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Cod. Producto", 18), writer.Columns[2]);
-        Assert.Equal("Retencion", writer.Columns[^1].Header);
+        Assert.Equal("Retencion", writer.Columns[^2].Header);
         Assert.DoesNotContain(writer.Columns, column => column.Header == "EMPRESA");
         var cells = Assert.Single(writer.Rows);
         Assert.Equal(writer.Columns.Count, cells.Count);
@@ -1656,7 +1760,7 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(44, writer.Columns.Count);
+        Assert.Equal(45, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Tipo Doc", OrdersExportLayoutProjection.FixedColumnWidth), writer.Columns[0]);
         Assert.Equal(new ExportColumn("EMPRESA", 30), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Bodega", 18), writer.Columns[2]);
@@ -1875,7 +1979,8 @@ public sealed class OrdersExportProcessorTests
         // La fecha de pago de cada comprobante, por índice contra `proofs`; null o ausente deja el
         // comprobante sin fecha, como uno anterior al campo (2026-10-08).
         IReadOnlyList<DateOnly?>? paidOn = null,
-        string? orderNotes = null)
+        string? orderNotes = null,
+        ShippingDetails? shipping = null)
     {
         var occurredAt = at ?? Now;
         var proofInputs = (proofs ?? [.. (publicKeys ?? []).Select(publicKey => (10_000m, publicKey))])
@@ -1889,7 +1994,7 @@ public sealed class OrdersExportProcessorTests
             new OrderHeader(ClientId, AdvisorId, "COP", paymentMethod, IsRetail: false, null, customerWithRetention, false),
             parties ?? QuotationParties.Empty,
             billingAccount ?? DefaultBillingAccount,
-            ShippingDetails.None,
+            shipping ?? ShippingDetails.None,
             (items ?? DefaultItems)
                 .Select(item => new OrderLineInput(
                     item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage))

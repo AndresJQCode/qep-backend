@@ -178,7 +178,7 @@ public sealed class OrderExportApiTests
                 "V. Comprobante 5", "URL Comprobante 5",
                 "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
                 "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa", "Total facturado",
-                "Retencion",
+                "Retencion", "Valor Flete",
             ],
             sheet.Rows[0]);
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[14]));
@@ -454,7 +454,7 @@ public sealed class OrderExportApiTests
         // (ajuste 2026-10-02), las cinco "Forma de pago N" (ajuste 2026-10-03) y "Transportadora"
         // (ajuste 2026-10-05), que nacen ocultas y el PUT devuelve tal como las recibió del GET.
         // "Total facturado" (ajuste 2026-10-05) y "Retencion" (ajuste 2026-10-06) nacen visibles.
-        Assert.Equal(42, header.Count);
+        Assert.Equal(43, header.Count); // + "Valor Flete" (flete, 2026-10-17), visible por defecto.
         Assert.Equal("Tipo Doc", header[0]);
         Assert.Equal("Correo", header[1]);
         Assert.Equal("Cod. Producto", header[2]);
@@ -463,8 +463,9 @@ public sealed class OrderExportApiTests
         Assert.DoesNotContain("Email", header);
         Assert.DoesNotContain("Ciudad Coordinadora", header);
         Assert.DoesNotContain("Forma de pago 1", header);
-        Assert.Equal("Total facturado", header[^2]);
-        Assert.Equal("Retencion", header[^1]);
+        Assert.Equal("Total facturado", header[^3]);
+        Assert.Equal("Retencion", header[^2]);
+        Assert.Equal("Valor Flete", header[^1]);
         var row = sheet.Rows[1];
         Assert.Equal(header.Count, row.Count);
         Assert.Equal("FV", row[0]);
@@ -547,7 +548,7 @@ public sealed class OrderExportApiTests
 
         var headers = sheet.Rows[0].ToList();
         var column = headers.IndexOf("Total facturado");
-        Assert.Equal(headers.Count - 2, column);
+        Assert.Equal(headers.Count - 3, column); // Detrás van "Retencion" y "Valor Flete".
         var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
             $"{OrdersUrl(tenantId)}/{order.Id}", TestContext.Current.CancellationToken);
         Assert.True(detail!.Order.Total > 0m);
@@ -571,7 +572,7 @@ public sealed class OrderExportApiTests
 
         var headers = sheet.Rows[0].ToList();
         var column = headers.IndexOf("Retencion");
-        Assert.Equal(headers.Count - 1, column);
+        Assert.Equal(headers.Count - 2, column); // "Valor Flete" va detrás.
         var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
             $"{OrdersUrl(tenantId)}/{order.Id}", TestContext.Current.CancellationToken);
         Assert.True(detail!.Order.RetentionAmount > 0m);

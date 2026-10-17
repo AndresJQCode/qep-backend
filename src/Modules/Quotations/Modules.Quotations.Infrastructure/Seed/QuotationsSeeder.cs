@@ -178,6 +178,10 @@ public static class QuotationsSeeder
         // Nacen ocultas y Effective las completaría así, pero la lista las nombra igual: que la hoja
         // diga en un solo lugar todo lo que no usa.
         .. Enumerable.Range(3, OrdersExportColumnCatalog.PaymentDateColumns - 2).Select(number => $"payment_method_{number}"),
+        // Spec 2026-10-17 flete: "Valor Flete" nace visible en el catálogo, pero la hoja ya tiene su
+        // fija "valor flete" para el ERP y dos visibles no pueden compartir encabezado. Se oculta acá:
+        // el ERP del tenant no la espera, y quien la quiera la prende desde la pantalla de columnas.
+        "freight_amount",
     ];
 
     /// <summary>

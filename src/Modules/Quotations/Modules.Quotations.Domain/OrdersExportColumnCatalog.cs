@@ -111,6 +111,14 @@ public static class OrdersExportColumnCatalog
         // 0, no vacía: el dominio la deja en 0 y ese 0 dice la verdad. Visible por defecto, mismo
         // criterio que "order_total": Effective la agrega al final de todo layout guardado.
         new("retention_amount", "Retencion", 16),
+        // Spec 2026-10-17 flete §7 (D-F10): el flete del pedido, al final como toda columna nueva.
+        // "Valor Flete" es visible; el desglose, el modo de pago del flete y la contraentrega salen
+        // ocultos para que ningún Excel que ya existe cambie más de una columna.
+        new("freight_amount", "Valor Flete", 16),
+        new("freight_without_tax", "Flete sin IVA", 16, DefaultVisible: false),
+        new("freight_tax", "IVA Flete", 16, DefaultVisible: false),
+        new("freight_charge_mode", "Pago Flete", 16, DefaultVisible: false),
+        new("cash_on_delivery", "Contraentrega", 16, DefaultVisible: false),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.
