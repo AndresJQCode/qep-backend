@@ -69,7 +69,7 @@ public sealed partial class QuotationTemplateTests
     }
 
     // El caso completo ejercita todas las ramas que dibujan algo: descuento por linea, retencion,
-    // cuenta de cobro, partes con datos propios y observaciones.
+    // cuenta de cobro y partes con datos propios.
     [Fact]
     public async Task TheTemplateCompilesWithACompleteDocument() =>
         await AssertCompilesAsync(Complete());
@@ -406,7 +406,6 @@ public sealed partial class QuotationTemplateTests
             "Ferretería Andina S.A.S.", "900.123.456-7", "Carrera 7 #71-52, Bogotá", "6015550100",
             "Bancolombia", "123-456789-01", "COP"),
         PaymentMethod: "Transferencia bancaria a 30 días",
-        Notes: "Los precios no incluyen transporte hasta la bodega del cliente.",
         Items:
         [
             new QuotationPdfLine("BRONCEADOR RITUAL DEL SOL", 12m, 35900m, 15m, 30515m, 366180m),
@@ -446,7 +445,6 @@ public sealed partial class QuotationTemplateTests
         Decimals: 2,
         BillingAccount: null,
         PaymentMethod: null,
-        Notes: null,
         Items: [new QuotationPdfLine("Tornillo hexagonal 3/8", 100m, 15.5m, 0m, 15.5m, 1550m)],
         Subtotal: 1302.52m,
         DiscountAmount: 0m,

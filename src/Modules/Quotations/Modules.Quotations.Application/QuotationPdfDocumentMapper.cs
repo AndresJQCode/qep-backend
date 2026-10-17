@@ -44,7 +44,6 @@ public static class QuotationPdfDocumentMapper
             currency.Decimals,
             BillingAccountFor(quotation),
             quotation.PaymentMethod,
-            quotation.Notes,
             [.. quotation.Items.Select(LineFor)],
             quotation.Subtotal,
             quotation.DiscountAmount,

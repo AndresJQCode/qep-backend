@@ -23,6 +23,9 @@ public sealed class QuotationPdfDocumentMapperTests
         new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero),
         TimeZoneInfo.FindSystemTimeZoneById("America/Bogota"));
 
+    // Las mismas opciones con las que QCodePdfRenderer serializa `data`.
+    private static readonly System.Text.Json.JsonSerializerOptions PayloadFormat = new(System.Text.Json.JsonSerializerDefaults.Web);
+
     private static QuotationPdfDocument Map(QuotationResponse quotation, QuotationPdfLogo? logo = null) =>
         QuotationPdfDocumentMapper.From(quotation, Calendar, logo);
 
@@ -349,6 +352,20 @@ public sealed class QuotationPdfDocumentMapperTests
         true,
         DateTimeOffset.UtcNow,
         []);
+
+    // Decisión del owner (2026-10-17): las observaciones se quedan en la cotización y en el Excel
+    // de pedidos, pero el PDF que recibe el cliente ya no las imprime. Se comprueba sobre el JSON
+    // que viaja a qcode-pdf, que es lo único que la plantilla puede dibujar.
+    [Fact]
+    public void ThePayloadSentToThePdfServiceCarriesNoNotes()
+    {
+        var document = Map(Response() with { Notes = "Los precios no incluyen transporte." });
+
+        var json = System.Text.Json.JsonSerializer.Serialize(document, PayloadFormat);
+
+        Assert.DoesNotContain("\"notes\"", json);
+        Assert.DoesNotContain("transporte", json);
+    }
 
     private static QuotationResponse Response() => new(
         Guid.CreateVersion7(),

@@ -33,7 +33,6 @@ public sealed class QCodePdfRendererTests
         Decimals: 0,
         BillingAccount: null,
         PaymentMethod: "Transferencia",
-        Notes: null,
         Items:
         [
             new QuotationPdfLine("Tornillo hexagonal 3/8", 100m, 1500m, 0m, 1500m, 150000m),

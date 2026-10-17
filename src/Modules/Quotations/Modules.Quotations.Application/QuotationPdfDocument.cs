@@ -43,7 +43,6 @@ public sealed record QuotationPdfDocument(
     /// eligió cuenta: el documento sale igual, sin ese pie.</summary>
     QuotationPdfBillingAccount? BillingAccount,
     string? PaymentMethod,
-    string? Notes,
     IReadOnlyList<QuotationPdfLine> Items,
     /// <summary>La base sin IVA de todo el documento. El precio de los productos viene con el
     /// impuesto adentro, así que esto es <b>menos</b> que la suma de las líneas, no más.</summary>
