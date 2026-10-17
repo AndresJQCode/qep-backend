@@ -226,10 +226,13 @@
     inset: 10pt,
   )[
     #par(leading: 0.6em)[
-      #if data.paymentMethod != none [#renglon("Forma de pago", data.paymentMethod) \ ]
-      // Contraentrega: el cliente paga al recibir, no por transferencia. Va como su propio renglón
-      // porque puede convivir con una forma de pago escrita a mano.
-      #if data.cashOnDelivery [#renglon("Forma de pago", "Contraentrega") \ ]
+      // Contraentrega reemplaza a la forma de pago escrita a mano (spec §7): el cliente paga al
+      // recibir, así que un segundo «Forma de pago:» se contradiría.
+      #if data.cashOnDelivery [
+        #renglon("Forma de pago", "Contraentrega") \
+      ] else if data.paymentMethod != none [
+        #renglon("Forma de pago", data.paymentMethod) \
+      ]
       #if data.billingAccount != none [
         #renglon("Cuenta para el pago", data.billingAccount.companyName) \
         #data.billingAccount.bankName \
