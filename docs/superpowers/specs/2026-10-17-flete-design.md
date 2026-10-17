@@ -180,6 +180,26 @@ ninguna queda preseleccionada.
 - **Pruebas:** dominio/handler del rechazo y de la conservación; integración del `PUT` y de las dos lecturas
   (las tres siempre presentes); frontend de la sección y de los formularios con una opción apagada.
 
+#### 4.4.1 Opción por defecto (2026-10-18)
+
+Pedido del owner del 2026-10-18: el tenant elige una opción por defecto de quién paga (o ninguna, que es el valor
+inicial).
+
+- **Dato:** `defaultFreightChargeMode`, `null` o un modo **activo**. Vive junto a los modos activos y se fija con la
+  misma operación: `PUT /carriers/freight-charge-modes` gana `defaultMode` (opcional). Omitido conserva el actual;
+  `null` lo quita; un modo que no está entre `enabledModes` es 422 de validación en `errors["DefaultMode"]`. Si se
+  apaga el modo que era el por defecto, el por defecto queda en `null` en el mismo guardado (y se audita en el
+  mismo evento).
+- **Lecturas:** `CarrierSettingsResponse` y `ShippingOptionsResponse` ganan `defaultFreightChargeMode`.
+- **Dónde se aplica (sólo frontend; el backend no rellena nada):** en el cotizador, el pedido manual y la edición
+  del pedido, el formulario arranca con el por defecto cuando el documento envía (no es recogida) y todavía no
+  tiene quién paga: al elegir «Enviar», y al abrir un documento que envía sin modo guardado. No pisa un modo ya
+  elegido ni uno que el asesor quitó con «Quitar» en esa misma edición.
+- **«Se cobra en el pedido» sin valor:** como `Charged` exige valor > 0 (§5.2), un `Charged` sin valor **no viaja**
+  en el cuerpo (se manda `freightChargeMode: null`) y la pantalla lo marca con «Escribe el valor del envío; sin
+  valor queda sin definir.». Vale también cuando el asesor lo elige a mano: así la vista previa nunca se bloquea por
+  un valor que todavía no se escribió.
+
 ## 5. Entrega y cobro en la cotización y el pedido
 
 ### 5.1 Campos nuevos
@@ -523,6 +543,7 @@ completa.
 | D-F6 | La **retención no incluye el envío** (P1) | Una línea en `DocumentTotals` y sus pruebas |
 | D-F7 | El mínimo de compra no cuenta el envío (`ProductsTotal`, §5.3) | Sumarlo: quitar `ProductsTotal` |
 | D-F18 | «Quién paga» apagado en Configuración no afecta a Shopify ni a la conversión; un documento conserva el modo apagado si no lo cambia; con las tres apagadas tampoco se pide el valor (§4.4) | Validar también la conversión o exigir al menos una activa |
+| D-F19 | La opción por defecto la aplica el formulario, no el backend; y un «Se cobra en el pedido» sin valor viaja como sin definir en lugar de dar 422 (§4.4.1) | Que el backend rellene el modo al crear, o volver al 422 |
 | D-F8 | Un pedido sin transportadora sigue exportando «Coordinadora» en `Transportadora` | Vacío |
 | D-F9 | El giro del recaudo contraentrega se registra con un comprobante, como cualquier pago (P2) | Un flujo de liquidación por transportadora |
 | D-F10 | De las cinco columnas nuevas del Excel, sólo `Valor Flete` nace visible | `DefaultVisible` |
@@ -572,3 +593,4 @@ completa.
 - 2026-10-18: §4.4 «Quién paga el envío, por tenant», por decisión del owner (las tres activas por defecto, sin
   preselección). Las notas de una conversión dejan de concatenarse: el pedido lleva la nota que manda la pantalla,
   que arranca con la de la cotización (fuera de este spec, `fix/notas-un-campo`).
+- 2026-10-18: §4.4.1 opción por defecto de quién paga (pedido del owner); D-F19.
