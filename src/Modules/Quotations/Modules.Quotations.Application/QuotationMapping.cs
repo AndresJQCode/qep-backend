@@ -41,8 +41,24 @@ internal static class QuotationMapping
         quotation.CanBeConvertedToOrder,
         quotation.Items.Select(ToDto).ToArray(),
         quotation.Version,
+        quotation.ShippingDtoOf(),
+        quotation.FreightSubtotal,
+        quotation.FreightTaxAmount,
         quotation.GlobalScaleFloor,
         quotation.IsRetail);
+
+    /// <summary>La entrega por envío con forma fija, también en recogida (spec 2026-10-17 §7).</summary>
+    public static ShippingDto ShippingDtoOf(this Quotation quotation) => new(
+        quotation.IsStorePickup,
+        quotation.CarrierId is { } carrierId
+            ? new ShippingCarrierDto(carrierId, quotation.CarrierName ?? string.Empty)
+            : null,
+        quotation.FreightChargeMode?.ToString(),
+        quotation.FreightAmount,
+        quotation.FreightTaxPercentage,
+        quotation.FreightSubtotal,
+        quotation.FreightTaxAmount,
+        quotation.CashOnDelivery);
 
     private static QuotationBillingAccountDto? ToDto(QuotationBillingAccount? account) =>
         account is null
@@ -86,7 +102,8 @@ internal static class QuotationMapping
         quotation.CanBeSent,
         hasItems && quotation.ValidUntil is not null && quotation.BillingAccount is not null,
         order?.Id.Value,
-        order?.Status.ToString());
+        order?.Status.ToString(),
+        quotation.ShippingDtoOf());
 
     private static QuotationItemDto ToDto(QuotationItem item) => new(
         item.Id.Value,
@@ -103,6 +120,11 @@ internal static class QuotationMapping
         item.DiscountOrigin.ToString(),
         item.ProductCode,
         item.ProductName);
+
+    /// <summary>El modo tal como viaja (nombre del enum) al enum del dominio. El validador ya rechazó un nombre
+    /// que no existe, así que acá sólo se traduce.</summary>
+    public static FreightChargeMode? ToFreightChargeMode(string? mode) =>
+        mode is null ? null : Enum.Parse<FreightChargeMode>(mode);
 
     public static QuotationParties ToDomain(this QuotationPartiesRequest? request) =>
         request is null

@@ -30,6 +30,7 @@ internal static class QuotationEditsApplication
         IQuotationCompanyLookup companyLookup,
         IQuotationProductPricingLookup pricingLookup,
         IQuotationSettingsStore settingsStore,
+        ShippingResolver shippingResolver,
         MemberId updatedBy,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -78,6 +79,16 @@ internal static class QuotationEditsApplication
             edits.GlobalScaleFloor,
             updatedBy,
             now);
+        // El envío después del encabezado: valida contra la recogida y la moneda que acaban de quedar, y
+        // antes de la foto de después, para que el historial cuente el cambio de transportadora o de valor.
+        var shipping = await shippingResolver.ResolveAsync(
+            tenantId, edits.Shipping, quotation.ShippingDetails, quotation.IsStorePickup, quotation.Currency,
+            "quotation.quotation", cancellationToken);
+        if (shipping is not null)
+        {
+            quotation.SetShipping(shipping, updatedBy, now);
+        }
+
         var headerSummary = QuotationChangeSummary.HeaderChanged(
             before, QuotationHeaderSnapshot.Of(quotation));
 

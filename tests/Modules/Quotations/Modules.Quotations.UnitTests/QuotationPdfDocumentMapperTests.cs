@@ -401,5 +401,9 @@ public sealed class QuotationPdfDocumentMapperTests
         // edicion, no del documento.
         null,
         false,
-        []);
+        [],
+        // Sin envío registrado: el PDF del envío lo cubre su propia tarea.
+        new ShippingResponse(false, null, null, 0m, 0, 0m, 0m, false),
+        0m,
+        0m);
 }

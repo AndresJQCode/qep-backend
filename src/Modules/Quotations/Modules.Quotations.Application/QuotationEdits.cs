@@ -49,6 +49,12 @@ public interface IQuotationEdits : IQuotationHeaderEdits
     /// rechaza con <c>quotation.retail.floor_not_allowed</c>.
     /// </summary>
     bool IsRetail { get; }
+
+    /// <summary>
+    /// La entrega por envío (spec 2026-10-17 §5.4). A diferencia del resto del encabezado, <b>null es "no lo
+    /// toques"</b>: un frontend viejo no lo borra. Pasar a recoger en tienda lo limpia igual (P4).
+    /// </summary>
+    ShippingRequest? Shipping { get; }
 }
 
 /// <summary>
@@ -130,6 +136,10 @@ public abstract class QuotationEditsValidator<TEdits> : AbstractValidator<TEdits
         RuleFor(edits => edits.Parties!)
             .SetValidator(new QuotationPartiesRequestValidator(requireBillingIdentification))
             .When(edits => edits.Parties is not null);
+
+        RuleFor(edits => edits.Shipping!)
+            .SetValidator(new ShippingRequestValidator())
+            .When(edits => edits.Shipping is not null);
 
         RuleForEach(edits => edits.Items).ChildRules(item =>
         {

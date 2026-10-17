@@ -201,6 +201,13 @@ public static class QuotationChangeSummary
             AppendParty(changes, "envío", before.Shipping, after.Shipping);
         }
 
+        // Pasar a recoger en tienda limpia el envío, y la fila de arriba ya lo dice: contarlo campo por campo
+        // sería ruido.
+        if (!after.IsStorePickup)
+        {
+            AppendFreight(changes, before, after);
+        }
+
         if (before.BillingAccount != after.BillingAccount)
         {
             changes.Add(after.BillingAccount is null
@@ -219,6 +226,53 @@ public static class QuotationChangeSummary
 
         return changes.Count == 0 ? null : Trim($"Editó {string.Join(", ", changes)}.");
     }
+
+    // Spec 2026-10-17 §5.4: transportadora, modo, valor y contraentrega. El valor se dice porque es la
+    // noticia, como la cantidad de una línea; cambiar a gratis o quitar el modo ya lleva el valor a 0 y no
+    // se repite.
+    private static void AppendFreight(
+        List<string> changes, QuotationHeaderSnapshot before, QuotationHeaderSnapshot after)
+    {
+        if (before.CarrierId != after.CarrierId)
+        {
+            changes.Add(after.CarrierId is null
+                ? "quitó la transportadora"
+                : $"transportadora ({after.CarrierName})");
+        }
+
+        var modeChanged = before.FreightChargeMode != after.FreightChargeMode;
+        if (modeChanged)
+        {
+            changes.Add(after.FreightChargeMode is { } mode
+                ? $"cobro del envío ({ChargeModeLabel(mode)})"
+                : "quitó el cobro del envío");
+        }
+
+        if (before.FreightAmount != after.FreightAmount)
+        {
+            if (after.FreightAmount != 0)
+            {
+                changes.Add($"valor del envío ({Number(after.FreightAmount)})");
+            }
+            else if (!modeChanged)
+            {
+                changes.Add("quitó el valor del envío");
+            }
+        }
+
+        if (before.CashOnDelivery != after.CashOnDelivery)
+        {
+            changes.Add(after.CashOnDelivery ? "contraentrega" : "quitó la contraentrega");
+        }
+    }
+
+    private static string ChargeModeLabel(FreightChargeMode mode) => mode switch
+    {
+        FreightChargeMode.Charged => "cobrado",
+        FreightChargeMode.OnDelivery => "al cobro",
+        FreightChargeMode.Free => "gratis",
+        _ => mode.ToString(),
+    };
 
     private static void AppendParty(
         List<string> changes, string label, string? before, string? after)
@@ -274,7 +328,12 @@ public sealed record QuotationHeaderSnapshot(
     bool? BillingWithRetention,
     bool? BillingVatSurplus,
     int? GlobalScaleFloor = null,
-    bool IsRetail = false)
+    bool IsRetail = false,
+    Guid? CarrierId = null,
+    string? CarrierName = null,
+    FreightChargeMode? FreightChargeMode = null,
+    decimal FreightAmount = 0m,
+    bool CashOnDelivery = false)
 {
     public static QuotationHeaderSnapshot Of(Quotation quotation) => new(
         quotation.ValidUntil,
@@ -292,7 +351,12 @@ public sealed record QuotationHeaderSnapshot(
         quotation.PartyWithRetention,
         quotation.PartyVatSurplus,
         quotation.GlobalScaleFloor,
-        quotation.IsRetail);
+        quotation.IsRetail,
+        quotation.CarrierId,
+        quotation.CarrierName,
+        quotation.FreightChargeMode,
+        quotation.FreightAmount,
+        quotation.CashOnDelivery);
 
     private static string? Describe(QuotationParty? party) =>
         party is null

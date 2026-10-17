@@ -207,4 +207,47 @@ public sealed class QuotationChangeSummaryTests
             "Quitó el detal: las líneas vuelven a su descuento por escala.",
             QuotationChangeSummary.RetailChanged(false));
     }
+
+    // Spec 2026-10-17 §5.4: el historial registra el cambio de transportadora, de modo, de valor y de
+    // contraentrega. El valor se dice porque es la noticia, como la cantidad de una línea.
+    [Fact]
+    public void ReportsCarrierModeAmountAndCashOnDeliveryChanges()
+    {
+        var carrierId = Guid.CreateVersion7();
+        var without = Snapshot(null, isStorePickup: false);
+        var with = without with
+        {
+            CarrierId = carrierId,
+            CarrierName = "Coordinadora",
+            FreightChargeMode = FreightChargeMode.Charged,
+            FreightAmount = 15000m,
+            CashOnDelivery = true,
+        };
+
+        Assert.Equal(
+            "Editó transportadora (Coordinadora), cobro del envío (cobrado), valor del envío (15000), contraentrega.",
+            QuotationChangeSummary.HeaderChanged(without, with));
+        Assert.Equal(
+            "Editó quitó la transportadora, quitó el cobro del envío, quitó la contraentrega.",
+            QuotationChangeSummary.HeaderChanged(with, without));
+        Assert.Equal(
+            "Editó valor del envío (18000).",
+            QuotationChangeSummary.HeaderChanged(with, with with { FreightAmount = 18000m }));
+    }
+
+    // Pasar a recoger en tienda limpia el envío: la fila lo dice una vez, no campo por campo.
+    [Fact]
+    public void SwitchingToPickupDoesNotListTheClearedShipping()
+    {
+        var before = Snapshot(null, isStorePickup: false) with
+        {
+            CarrierId = Guid.CreateVersion7(),
+            CarrierName = "Coordinadora",
+            FreightChargeMode = FreightChargeMode.Free,
+        };
+
+        var summary = QuotationChangeSummary.HeaderChanged(before, Snapshot(null, isStorePickup: true));
+
+        Assert.Equal("Editó envío (recoger en tienda).", summary);
+    }
 }

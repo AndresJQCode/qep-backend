@@ -12,7 +12,8 @@ public sealed record CreateQuotationCommand(
     string? PaymentMethod,
     string? Notes,
     QuotationPartiesRequest? Parties,
-    QuotationBillingAccountRequest? BillingAccount) : ICommand<QuotationDto>;
+    QuotationBillingAccountRequest? BillingAccount,
+    ShippingRequest? Shipping = null) : ICommand<QuotationDto>;
 
 public sealed class CreateQuotationValidator : AbstractValidator<CreateQuotationCommand>
 {
@@ -25,6 +26,9 @@ public sealed class CreateQuotationValidator : AbstractValidator<CreateQuotation
         RuleFor(command => command.Parties!)
             .SetValidator(new QuotationPartiesRequestValidator(requireBillingIdentification: true))
             .When(command => command.Parties is not null);
+        RuleFor(command => command.Shipping!)
+            .SetValidator(new ShippingRequestValidator())
+            .When(command => command.Shipping is not null);
     }
 }
 
@@ -36,6 +40,7 @@ public sealed class CreateQuotationHandler(
     IQuotationCompanyLookup companyLookup,
     IQuotationNumberGenerator numberGenerator,
     IDocumentNumberingFormatLookup numberingFormats,
+    ShippingResolver shippingResolver,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     ITenantClock tenantClock,
@@ -102,6 +107,16 @@ public sealed class CreateQuotationHandler(
             customer.VatSurplus,
             advisorId,
             now);
+
+        // Después de crear y no como argumento de Create: el envío valida contra la recogida y la moneda
+        // que el agregado ya resolvió, igual que al guardar.
+        var shipping = await shippingResolver.ResolveAsync(
+            command.TenantId, command.Shipping, quotation.ShippingDetails, quotation.IsStorePickup,
+            quotation.Currency, "quotation.quotation", cancellationToken);
+        if (shipping is not null)
+        {
+            quotation.SetShipping(shipping, advisorId, now);
+        }
 
         repository.Add(quotation);
         repository.AddHistoryEntry(QuotationHistoryEntry.Create(

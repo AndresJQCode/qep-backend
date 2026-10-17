@@ -817,6 +817,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
         // La tasa del IVA del envío (spec 2026-10-17 §4.2), sobre el repositorio de tasas de Catalog.
         services.AddScoped<IQuotationTaxRateLookup, QuotationTaxRateLookup>();
+        // Lo que el dominio no puede saber del envío (transportadora activa, recaudo, tasa del tenant):
+        // lo usan crear, guardar y previsualizar la cotización y el pedido.
+        services.AddScoped<ShippingResolver>();
         services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();
         // Los comprobantes de pago públicos (spec 2026-09-15, P3): el publicador que copia al bucket
         // público o el que no hace nada, según Quotations:PaymentProofs:PublicLinks. Se decide al

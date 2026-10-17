@@ -640,7 +640,10 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             quotation.IsRetail,
             // El stub no mira el catalogo, asi que no puede resolver los pisos disponibles. El
             // composer real los llena; esto solo ejerce que el PDF se regenere.
-            []));
+            [],
+            ShippingResponse.From(quotation.Shipping),
+            quotation.FreightSubtotal,
+            quotation.FreightTaxAmount));
 
     // The DTO no longer carries the minimum purchase (plan decision A13): the stub computes it the
     // way the real composer does, against the defaults a tenant without settings reads.
@@ -1076,4 +1079,39 @@ internal sealed class RecordingQuotationLifecycleEventPublisher : IQuotationLife
     // El pedido puede no tener cotización (spec 2026-10-15): la clave es el pedido.
     public void PublishOrderCancelled(Order order, DateTimeOffset occurredAt) =>
         Published.Add(("cancelled", order.Id.Value, 0m, string.Empty));
+}
+
+/// <summary>Las transportadoras sembradas, y cuántas veces se buscó una: <c>ShippingResolver</c> no
+/// tiene que leer el repositorio cuando la transportadora no cambió.</summary>
+internal sealed class StubCarrierRepository(params Carrier[] carriers) : ICarrierRepository
+{
+    public int FindCalls { get; private set; }
+
+    public Task<IReadOnlyList<Carrier>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Carrier>>(
+            carriers.Where(carrier => carrier.TenantId == tenantId).OrderBy(carrier => carrier.SortOrder).ToArray());
+
+    public Task<Carrier?> FindAsync(Guid tenantId, CarrierId id, CancellationToken cancellationToken)
+    {
+        FindCalls++;
+        return Task.FromResult(carriers.FirstOrDefault(carrier => carrier.TenantId == tenantId && carrier.Id == id));
+    }
+
+    public void Add(Carrier carrier) => throw new NotSupportedException();
+}
+
+/// <summary>Una tasa de Catalog en memoria. Con <paramref name="failIfCalled"/> la lectura hace fallar la
+/// prueba: así se comprueba que un guardado sin cambios en el envío no vuelve a leer la tasa.</summary>
+internal sealed class StubQuotationTaxRateLookup(QuotationTaxRateRef? rate, bool failIfCalled = false)
+    : IQuotationTaxRateLookup
+{
+    public Task<QuotationTaxRateRef?> FindAsync(Guid tenantId, Guid taxRateId, CancellationToken cancellationToken)
+    {
+        if (failIfCalled)
+        {
+            throw new InvalidOperationException("The tax rate lookup must not be called.");
+        }
+
+        return Task.FromResult(rate is not null && rate.Id == taxRateId ? rate : null);
+    }
 }

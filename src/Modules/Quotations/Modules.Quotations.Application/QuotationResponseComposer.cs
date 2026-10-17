@@ -100,7 +100,10 @@ public sealed class QuotationResponseComposer(
             quotation.Version,
             quotation.GlobalScaleFloor,
             quotation.IsRetail,
-            AvailableFloors(quotation, products));
+            AvailableFloors(quotation, products),
+            ShippingResponse.From(quotation.Shipping),
+            quotation.FreightSubtotal,
+            quotation.FreightTaxAmount);
     }
 
     // Un cliente que no resuelve deja la cotización sin bloque de cliente en vez de tirar la

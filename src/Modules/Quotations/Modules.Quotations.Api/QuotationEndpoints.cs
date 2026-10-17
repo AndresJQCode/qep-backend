@@ -255,7 +255,8 @@ public static class QuotationEndpoints
                 request.PaymentMethod,
                 request.Notes,
                 request.Parties,
-                request.BillingAccount),
+                request.BillingAccount,
+                request.Shipping),
             cancellationToken);
 
         return Results.Created(
@@ -289,7 +290,7 @@ public static class QuotationEndpoints
                 request.Notes,
                 request.Parties,
                 request.BillingAccount,
-                ToItems(request), request.GlobalScaleFloor, request.IsRetail),
+                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping),
             cancellationToken);
 
         httpContext.Response.Headers.ETag = $"\"{quotation.Version}\"";
@@ -313,7 +314,7 @@ public static class QuotationEndpoints
                 request.Notes,
                 request.Parties,
                 request.BillingAccount,
-                ToItems(request), request.GlobalScaleFloor, request.IsRetail),
+                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
@@ -487,6 +488,7 @@ public static class QuotationEndpoints
         quotation.CanBeSent,
         quotation.IsComplete,
         quotation.OrderId,
-        quotation.OrderStatus);
+        quotation.OrderStatus,
+        ShippingResponse.From(quotation.Shipping));
 
 }

@@ -40,6 +40,8 @@ public sealed class CreateQuotationHandlerTests
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
             new SequentialQuotationNumberGenerator(),
             new DefaultNumberingFormats(),
+            new ShippingResolver(
+                new StubCarrierRepository(), new StubQuotationTaxRateLookup(null), new FixedQuotationSettingsStore()),
             new StubMembershipDirectory(MembershipId),
             new StubExecutionContext(SubjectId, TenantId),
             new FixedTenantClock(Now),

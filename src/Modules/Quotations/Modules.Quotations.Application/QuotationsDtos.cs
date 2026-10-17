@@ -101,6 +101,13 @@ public sealed record QuotationDto(
     /// (<c>Quotation.Version</c>) y no salía de la aplicación: sin ella la pantalla no tiene con
     /// qué probar que está guardando sobre lo que leyó. Va al final por ser aditiva.</summary>
     long Version,
+    /// <summary>La entrega por envío, con forma fija también en recogida. Ver <see cref="ShippingDto"/>.</summary>
+    ShippingDto Shipping,
+    /// <summary>Envío sin IVA que suma a <c>Total</c>; 0 salvo <c>Charged</c>. Junto a <c>Subtotal</c> y
+    /// <c>TaxAmount</c>, que siguen siendo sólo productos, explica el total (spec 2026-10-17 §5.3).</summary>
+    decimal FreightSubtotal,
+    /// <summary>IVA del envío que suma a <c>Total</c>; 0 con excedente de IVA o fuera de COP.</summary>
+    decimal FreightTaxAmount,
     /// <summary>El piso de escala global elegido, o null. Ver
     /// <c>Quotation.GlobalScaleFloor</c>. Con default para no tocar las construcciones que ya
     /// existen: solo QuotationMapping.ToDto lo llena.</summary>
@@ -241,7 +248,81 @@ public sealed record CreateQuotationRequest(
     string? PaymentMethod,
     string? Notes,
     QuotationPartiesRequest? Parties,
-    QuotationBillingAccountRequest? BillingAccount);
+    QuotationBillingAccountRequest? BillingAccount,
+    /// <summary>La entrega por envío; null es "sin envío". Ver <see cref="ShippingRequest"/>.</summary>
+    ShippingRequest? Shipping = null);
+
+/// <summary>
+/// La entrega por envío de una cotización tal como la pide el editor (spec 2026-10-17 §5.1). Viaja aparte de
+/// <see cref="QuotationPartiesRequest"/> porque ese record también lo usa el borrador de un pedido externo, que
+/// no recibe envío en este spec.
+///
+/// <b>Null en el cuerpo es "no lo toques"</b>, a diferencia del resto del encabezado: un frontend que todavía no
+/// lo manda no borra el envío guardado. La excepción es pasar a recoger en tienda, que lo limpia igual.
+/// </summary>
+/// <param name="CarrierId">La transportadora del tenant, o null para ninguna. Independiente del modo.</param>
+/// <param name="FreightChargeMode">El nombre del enum: <c>Charged</c>, <c>OnDelivery</c> o <c>Free</c>; null es
+/// "sin envío registrado".</param>
+/// <param name="FreightAmount">El valor con IVA incluido. Con <c>Free</c> se ignora y queda en 0.</param>
+/// <param name="CashOnDelivery">Si el pedido se cobra contraentrega. No exige transportadora.</param>
+public sealed record ShippingRequest(
+    Guid? CarrierId,
+    string? FreightChargeMode,
+    decimal FreightAmount,
+    bool CashOnDelivery);
+
+/// <summary>
+/// La entrega por envío de un documento, con forma fija también en recogida (spec 2026-10-17 §7).
+///
+/// BFF: la pantalla dibuja la tarjeta de entrega y la fila de totales sin recalcular nada. Por eso viajan
+/// resueltos el nombre de la transportadora (la foto, no el de hoy), el subtotal y el IVA del envío, y
+/// <see cref="IsStorePickup"/> repetido acá aunque ya esté en el documento: la tarjeta lee un solo objeto.
+/// </summary>
+/// <param name="Carrier">Null en recogida, sin transportadora y en documentos anteriores al envío.</param>
+/// <param name="ChargeMode">El nombre del enum (<c>Charged</c>, <c>OnDelivery</c>, <c>Free</c>): el diccionario
+/// lo tiene el frontend. Null es "sin envío registrado".</param>
+/// <param name="FreightAmount">El valor con IVA incluido que escribió el asesor; con <c>OnDelivery</c> es
+/// informativo y no suma.</param>
+/// <param name="FreightTaxPercentage">La foto de la tasa del envío al fijar el valor; 0 fuera de COP.</param>
+public sealed record ShippingDto(
+    bool IsStorePickup,
+    ShippingCarrierDto? Carrier,
+    string? ChargeMode,
+    decimal FreightAmount,
+    int FreightTaxPercentage,
+    decimal FreightSubtotal,
+    decimal FreightTaxAmount,
+    bool CashOnDelivery);
+
+/// <summary>La transportadora elegida: el id y la foto del nombre al elegirla.</summary>
+public sealed record ShippingCarrierDto(Guid Id, string Name);
+
+/// <summary>Gemelo HTTP de <see cref="ShippingDto"/> —mismos campos, mismo significado— por la regla de este
+/// archivo: ningún <c>*Response</c> referencia un <c>*Dto</c> (ver <see cref="QuotationMinimumPurchaseResponse"/>).
+/// El motivo BFF de su forma está en <see cref="ShippingDto"/>.</summary>
+public sealed record ShippingResponse(
+    bool IsStorePickup,
+    ShippingCarrierResponse? Carrier,
+    string? ChargeMode,
+    decimal FreightAmount,
+    int FreightTaxPercentage,
+    decimal FreightSubtotal,
+    decimal FreightTaxAmount,
+    bool CashOnDelivery)
+{
+    /// <summary>Copia campo por campo. Pública porque la fila del listado se arma en el proyecto Api.</summary>
+    public static ShippingResponse From(ShippingDto shipping) => new(
+        shipping.IsStorePickup,
+        shipping.Carrier is { } carrier ? new ShippingCarrierResponse(carrier.Id, carrier.Name) : null,
+        shipping.ChargeMode,
+        shipping.FreightAmount,
+        shipping.FreightTaxPercentage,
+        shipping.FreightSubtotal,
+        shipping.FreightTaxAmount,
+        shipping.CashOnDelivery);
+}
+
+public sealed record ShippingCarrierResponse(Guid Id, string Name);
 
 /// <summary>
 /// US-2 (revisada): cambiar el cliente de una cotización editable. Endpoint propio y no un campo
@@ -292,7 +373,10 @@ public sealed record SaveQuotationRequest(
     /// <summary>Cotización detal: con true ninguna línea recibe descuento. Ausente se lee como
     /// false, mismo criterio que el piso. Se aplica antes que el piso: true con un piso no nulo
     /// en el mismo cuerpo es 422 quotation.retail.floor_not_allowed.</summary>
-    bool IsRetail = false);
+    bool IsRetail = false,
+    /// <summary>La entrega por envío. <b>Ausente deja la guardada</b> (un frontend viejo no la borra), salvo
+    /// que la entrega pase a recoger en tienda: entonces se limpia. Ver <see cref="ShippingRequest"/>.</summary>
+    ShippingRequest? Shipping = null);
 
 /// <summary>US-12: el PDF ya se subió a Storage (flujo de carga firmada ya existente) antes de
 /// esta llamada; acá sólo se referencia el archivo resultante.</summary>
@@ -451,7 +535,15 @@ public sealed record QuotationResponse(
     /// las escalas de los productos que esta cotizacion tiene cargados, ordenados ascendente.
     /// **Completo incluso vacio** — una coleccion que desaparece obliga a la pantalla a
     /// reconstruirla desde las escalas linea por linea.</summary>
-    IReadOnlyCollection<int> AvailableGlobalScaleFloors);
+    IReadOnlyCollection<int> AvailableGlobalScaleFloors,
+    /// <summary>La entrega por envío, con forma fija también en recogida. El motivo BFF está en
+    /// <see cref="ShippingDto"/>.</summary>
+    ShippingResponse Shipping,
+    /// <summary>Envío sin IVA que suma a <c>Total</c>. Un total que no cierra se explica con un campo:
+    /// <c>Subtotal + TaxAmount + FreightSubtotal + FreightTaxAmount = Total</c> (spec 2026-10-17 §5.3).</summary>
+    decimal FreightSubtotal,
+    /// <summary>IVA del envío que suma a <c>Total</c>.</summary>
+    decimal FreightTaxAmount);
 
 /// <summary>
 /// La compra mínima tal como viaja por HTTP. Es un gemelo de
@@ -529,7 +621,10 @@ public sealed record QuotationListItemResponse(
     /// <summary>El pedido que salió de esta cotización. <c>null</c> es "sin convertir".</summary>
     Guid? OrderId,
     /// <summary><c>Pending</c> o <c>Approved</c>; <c>null</c> sin pedido.</summary>
-    string? OrderStatus);
+    string? OrderStatus,
+    /// <summary>La entrega por envío de la fila, misma forma que en el detalle: la grilla muestra
+    /// transportadora y contraentrega sin pedir la cotización entera.</summary>
+    ShippingResponse Shipping);
 
 /// <summary>El sobre del historial. Colección envuelta y no un array desnudo, mismo criterio que
 /// el resto de las colecciones de la API.</summary>

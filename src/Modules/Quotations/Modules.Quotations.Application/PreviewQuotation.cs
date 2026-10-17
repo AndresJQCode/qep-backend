@@ -20,7 +20,8 @@ public sealed record PreviewQuotationQuery(
     QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<QuotationItemAddition> Items,
     int? GlobalScaleFloor,
-    bool IsRetail) : IQuery<QuotationDto>, IQuotationEdits;
+    bool IsRetail,
+    ShippingRequest? Shipping = null) : IQuery<QuotationDto>, IQuotationEdits;
 
 /// <summary>Las mismas reglas que el guardado salvo el documento de la facturación, que el cálculo
 /// previo no exige: corre mientras la persona escribe (ver <c>Quotation.EnsureBillingIdentified</c>).</summary>
@@ -42,6 +43,7 @@ public sealed class PreviewQuotationHandler(
     IQuotationCompanyLookup companyLookup,
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
+    ShippingResolver shippingResolver,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
@@ -71,7 +73,7 @@ public sealed class PreviewQuotationHandler(
 
         await QuotationEditsApplication.ApplyAsync(
             quotation, query, query.TenantId, customerLookup, companyLookup, pricingLookup, settingsStore,
-            updatedBy, clock.UtcNow, cancellationToken);
+            shippingResolver, updatedBy, clock.UtcNow, cancellationToken);
 
         return quotation.ToDto() with { Version = storedVersion };
     }
