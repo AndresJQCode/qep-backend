@@ -244,8 +244,9 @@ public sealed class Order
 
     /// <summary>Copia independiente de la cotización (spec §4.4): la cotización ya pasó por
     /// <c>EnsureConvertibleToOrder</c> y <c>ConvertToOrder</c>; acá no se vuelve a validar su estado.
-    /// Las notas del pedido heredan las de la cotización y, si el cuerpo trae las suyas, van detrás
-    /// separadas por una línea en blanco (plan P2).</summary>
+    /// Las notas del pedido son un solo campo, nunca una concatenación: <paramref name="notes"/> nulo hereda
+    /// las de la cotización; con texto, lo reemplaza; vacío o en blanco deja el pedido sin notas (el usuario
+    /// borró el texto precargado).</summary>
     public static Order FromQuotation(
         OrderId id,
         Guid tenantId,
@@ -284,7 +285,7 @@ public sealed class Order
             quotation.PartyVatSurplus);
         var order = new Order(
             id, tenantId, orderNumber, OrderSource.Quotation, quotation.Id, null, header, parties,
-            quotation.BillingAccount, paymentStatus, JoinNotes(quotation.Notes, notes), convertedBy, occurredAt);
+            quotation.BillingAccount, paymentStatus, notes is null ? quotation.Notes : notes, convertedBy, occurredAt);
         // Copia tal cual, incluida la tasa: la cotización ya validó el envío al fijarlo, y el pedido nace con
         // sus mismos totales.
         order.AssignShipping(quotation.ShippingDetails);
@@ -1011,19 +1012,6 @@ public sealed class Order
                 "order.global_scale.floor_invalid",
                 "The global scale floor must be a positive unit count.");
         }
-    }
-
-    private static string? JoinNotes(string? quotationNotes, string? orderNotes)
-    {
-        var first = string.IsNullOrWhiteSpace(quotationNotes) ? null : quotationNotes.Trim();
-        var second = string.IsNullOrWhiteSpace(orderNotes) ? null : orderNotes.Trim();
-        return (first, second) switch
-        {
-            (null, null) => null,
-            (not null, null) => first,
-            (null, not null) => second,
-            _ => first + "\n\n" + second,
-        };
     }
 
     private static string NormalizeOrderNumber(string orderNumber)
