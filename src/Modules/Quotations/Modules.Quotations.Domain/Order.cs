@@ -285,7 +285,7 @@ public sealed class Order
             quotation.PartyVatSurplus);
         var order = new Order(
             id, tenantId, orderNumber, OrderSource.Quotation, quotation.Id, null, header, parties,
-            quotation.BillingAccount, paymentStatus, notes is null ? quotation.Notes : notes, convertedBy, occurredAt);
+            quotation.BillingAccount, paymentStatus, notes ?? quotation.Notes, convertedBy, occurredAt);
         // Copia tal cual, incluida la tasa: la cotización ya validó el envío al fijarlo, y el pedido nace con
         // sus mismos totales.
         order.AssignShipping(quotation.ShippingDetails);

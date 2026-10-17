@@ -23,7 +23,8 @@ public sealed class ConvertQuotationToOrderValidator : AbstractValidator<Convert
             .Must(status => ValidPaymentStatuses.Contains(status, StringComparer.OrdinalIgnoreCase))
             .WithMessage(
                 $"PaymentStatus must be one of: {string.Join(", ", ValidPaymentStatuses)}.");
-        // Las notas del pedido no tienen tope (plan 2026-10-15, P2): `Notes` nulo hereda las de la cotización; ver Order.FromQuotation.
+        // Las notas del pedido no tienen tope (plan 2026-10-15, P2). `Notes` nulo hereda las de la
+        // cotización; ver Order.FromQuotation.
         RuleForEach(command => command.PaymentProofs).SetValidator(new OrderPaymentProofRequestValidator());
 
         // Revisión final (I2): un archivo, un adjunto (D16). Dos veces el mismo archivo tendría dos copias
