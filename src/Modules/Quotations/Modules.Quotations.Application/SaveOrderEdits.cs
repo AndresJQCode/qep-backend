@@ -169,10 +169,12 @@ public sealed class SaveOrderEditsHandler(
                 command.TenantId, command.Shipping, shippingBefore, order.IsStorePickup, order.Currency,
                 "order.order", cancellationToken);
             var shippingChanged = shipping is not null && shipping != shippingBefore;
-            var shippingSummary = shippingChanged ? OrderChangeSummary.ShippingChanged(shippingBefore, shipping!) : null;
+            string? shippingSummary = null;
             if (shippingChanged)
             {
                 order.SetShipping(shipping!, updatedBy, now);
+                // Contra lo que quedó en el agregado (ya validado), no contra lo que trajo el resolver.
+                shippingSummary = OrderChangeSummary.ShippingChanged(shippingBefore, order.ShippingDetails);
             }
 
             var proofsChanged = removedProofIds.Length > 0 || corrections.Count > 0 || attachedInputs.Length > 0;
@@ -211,13 +213,20 @@ public sealed class SaveOrderEditsHandler(
                     order.Id.ToString(), "success", now);
             }
 
-            // PartiesChanged: el envío es la entrega del pedido, y el pedido no edita sus partes (H5). Un cambio
-            // que sólo mueve la tasa no tiene texto y no deja fila.
-            if (shippingSummary is not null)
+            if (shippingChanged)
             {
-                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
-                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PartiesChanged, updatedBy,
-                    shippingSummary, now));
+                // PartiesChanged: el envío es la entrega del pedido, y el pedido no edita sus partes (H5). Un
+                // cambio que sólo mueve la tasa no tiene texto y no deja fila, pero sí se audita.
+                if (shippingSummary is not null)
+                {
+                    orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                        OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PartiesChanged, updatedBy,
+                        shippingSummary, now));
+                }
+
+                auditPublisher.Publish(
+                    command.TenantId, executionContext.SubjectId, "quotation.order.shipping_changed",
+                    order.Id.ToString(), "success", now);
             }
 
             if (notesChanged)

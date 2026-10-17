@@ -205,6 +205,7 @@ public sealed class OrderShippingApiTests
         Assert.Contains("transportadora (Coordinadora)", entry.Details, StringComparison.Ordinal);
         Assert.Contains("cobro del envío (cobrado)", entry.Details, StringComparison.Ordinal);
         Assert.Contains("valor del envío (15000)", entry.Details, StringComparison.Ordinal);
+        Assert.Single(await ShippingAuditsAsync(factory));
 
         // Sin `shipping`, como un frontend viejo: el envío queda como estaba y no se escribe historial.
         using var unchanged = await PutEditsAsync(client, tenantId, saved.Order, EditsFor(pending, shipping: null));
@@ -212,6 +213,7 @@ public sealed class OrderShippingApiTests
         Assert.Equal("Charged", kept.Shipping.ChargeMode);
         Assert.Equal(saved.Order.Version, kept.Version);
         Assert.Single((await GetDetailAsync(client, tenantId, pending.Order.Id)).History, entry => entry.EventType == "PartiesChanged");
+        Assert.Single(await ShippingAuditsAsync(factory));
     }
 
     [Fact]
@@ -358,6 +360,17 @@ public sealed class OrderShippingApiTests
         Assert.NotNull(detail);
         return detail;
     }
+
+    // Misma lectura que OrderEditsApiTests.ActionOf: el payload del evento de auditoría lleva la acción en `action`.
+    private static async Task<string[]> ShippingAuditsAsync(QepApiFactory factory) =>
+        (await OutboxMessagesAsync(factory, "platform.audit.recorded.v1"))
+            .Select(message =>
+            {
+                using var payload = JsonDocument.Parse(message.PayloadJson);
+                return payload.RootElement.GetProperty("action").GetString()!;
+            })
+            .Where(action => action == "quotation.order.shipping_changed")
+            .ToArray();
 
     private static async Task AssertCodeAsync(HttpResponseMessage response, string code)
     {
