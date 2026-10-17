@@ -91,6 +91,36 @@ public sealed class OrderShippingTests
         Assert.Equal("order.order.cash_on_delivery_pending_only", error.Code);
     }
 
+    // R16: la misma regla que SetShipping (D-F14). Pendiente de pago pero con un comprobante ya es un pago
+    // registrado, y un pedido contraentrega se cobra en la puerta.
+    [Fact]
+    public void CreateManualWithCashOnDeliveryRejectsProofsEvenWhilePending()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() => NewOrder(
+            new ShippingDetails(null, null, null, 0m, 0, true),
+            OrderPaymentStatus.PaymentPending,
+            [new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m)]));
+
+        Assert.Equal("order.order.cash_on_delivery_pending_only", error.Code);
+    }
+
+    [Fact]
+    public void FromQuotationWithCashOnDeliveryRejectsProofsEvenWhilePending()
+    {
+        var quotation = Quotation.Create(
+            QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 11, 1), null, null,
+            QuotationParties.Empty, Account, "COP", customerWithRetention: false, customerVatSurplus: false, Advisor, Now);
+        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
+        quotation.SetShipping(new ShippingDetails(null, null, null, 0m, 0, true), Advisor, Now);
+        quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>());
+
+        var error = Assert.Throws<QuotationsDomainException>(() => Order.FromQuotation(
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, OrderPaymentStatus.PaymentPending, null, Advisor,
+            [new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m)], Now));
+
+        Assert.Equal("order.order.cash_on_delivery_pending_only", error.Code);
+    }
+
     [Fact]
     public void CreateManualRejectsShippingOnPickup()
     {

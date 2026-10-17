@@ -284,8 +284,9 @@ puerta el pedido más el flete.
 
 - `CashOnDelivery = true` sólo con envío; con o sin transportadora, pero si la hay, que haga recaudo (§5.2).
 - Un pedido contraentrega nace `PaymentPending` sin comprobantes: ya está permitido (H7). El manual y la
-  conversión lo **fuerzan**: con `CashOnDelivery`, un `paymentStatus` distinto de `PaymentPending` es 422
-  `order.order.cash_on_delivery_pending_only` (el dinero aún no llegó).
+  conversión lo **fuerzan**: con `CashOnDelivery`, un `paymentStatus` distinto de `PaymentPending` o algún
+  comprobante, aunque el estado sea pendiente, es 422 `order.order.cash_on_delivery_pending_only` (el dinero
+  aún no llegó; la misma regla que prenderla en un pedido, R16).
 - El giro se registra con un comprobante, como cualquier pago (P2, D-F9); `RecalculatePaymentStatus` lo
   lleva a pagado contra `NetTotal`.
 - `PaymentMethod` (texto libre) no se toca: `CashOnDelivery` es el dato estructurado. El PDF y la lista
@@ -500,7 +501,7 @@ completa.
 | D-F11 | Una sola tasa de IVA para el envío, del tenant, no por transportadora | Un campo por transportadora |
 | D-F12 | El IVA del envío se muestra en su propia fila y se mantiene fuera de `TaxAmount`, que sigue siendo de productos | Unificar y cambiar reportes |
 | D-F13 | Un envío `Charged` exige valor > 0; $ 0 es `Free` | Permitir `Charged` en 0 |
-| D-F14 | `CashOnDelivery` fuerza `PaymentPending` al crear o convertir, y no se prende en un pedido con comprobantes o ya pagado | Dejarlo a criterio del usuario |
+| D-F14 | `CashOnDelivery` fuerza `PaymentPending` sin comprobantes al crear o convertir, y no se prende en un pedido con comprobantes o ya pagado | Dejarlo a criterio del usuario |
 | D-F15 | Si la moneda del documento cambia, el valor y el modo del envío se limpian y se vuelven a escribir | Convertir con una tasa de cambio |
 | D-F16 | Nombres y nombres externos de transportadoras comparten un solo índice único por tenant, inactivas incluidas | Dos índices |
 

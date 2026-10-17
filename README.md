@@ -1225,8 +1225,9 @@ contraentrega.
   (`freightTaxPercentage`): cambiarla después no re-precia documentos ya cotizados.
 - Los totales suman el envío en campos propios y el mínimo de compra **no** lo cuenta. El PDF imprime la
   transportadora, el envío y su IVA; los resúmenes de Reporting lo explican dentro del total.
-- **Contraentrega.** Convertir copia el envío tal cual. Prenderla en un pedido exige que no tenga
-  comprobantes y que el pago siga en `PaymentPending` (`order.order.cash_on_delivery_pending_only`), y si
+- **Contraentrega.** Convertir copia el envío tal cual. Crear o convertir un pedido con contraentrega, o
+  prenderla en uno, exige que no tenga comprobantes y que el pago siga en `PaymentPending`
+  (`order.order.cash_on_delivery_pending_only`), y si
   hay transportadora elegida, que recaude (`cash_on_delivery_not_supported`). Con contraentrega, el PDF
   imprime «Forma de pago: Contraentrega» en lugar de la forma de pago escrita.
 - Cambiar el envío de un pedido pendiente se audita como `quotation.order.shipping_changed`.

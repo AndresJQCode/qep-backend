@@ -107,6 +107,14 @@ public sealed class OrderShippingApiTests
 
         await AssertCodeAsync(response, "order.order.cash_on_delivery_pending_only");
 
+        // R16: pendiente pero con un comprobante tampoco, la misma regla que el cambio de envío (D-F14).
+        using var pendingWithProof = await client.PostAsJsonAsync(
+            OrdersUrl(tenantId),
+            request with { PaymentStatus = "PaymentPending" },
+            TestContext.Current.CancellationToken);
+
+        await AssertCodeAsync(pendingWithProof, "order.order.cash_on_delivery_pending_only");
+
         // Pendiente sí: la transportadora cobra en la puerta.
         using var pending = await client.PostAsJsonAsync(
             OrdersUrl(tenantId),

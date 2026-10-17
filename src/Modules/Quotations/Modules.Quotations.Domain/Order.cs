@@ -288,7 +288,7 @@ public sealed class Order
         // Copia tal cual, incluida la tasa: la cotización ya validó el envío al fijarlo, y el pedido nace con
         // sus mismos totales.
         order.AssignShipping(quotation.ShippingDetails);
-        order.EnsureCashOnDeliveryIsPending();
+        order.EnsureCashOnDeliveryIsPending(proofs);
         foreach (var item in quotation.Items.OrderBy(item => item.Position))
         {
             var copy = OrderItem.Create(
@@ -419,7 +419,7 @@ public sealed class Order
             id, tenantId, orderNumber, source, null, externalReference, header, parties, billingAccount,
             paymentStatus, notes, createdBy, occurredAt);
         order.AssignShipping(shipping.Validated(order.IsStorePickup, order.Currency, "order.order"));
-        order.EnsureCashOnDeliveryIsPending();
+        order.EnsureCashOnDeliveryIsPending(proofs);
         foreach (var line in lines)
         {
             order.AddItemCore(
@@ -603,10 +603,11 @@ public sealed class Order
         CashOnDelivery = shipping.CashOnDelivery;
     }
 
-    // Spec §6: un pedido contraentrega se cobra en la puerta, así que nace sin pago registrado.
-    private void EnsureCashOnDeliveryIsPending()
+    // Spec §6: un pedido contraentrega se cobra en la puerta, así que nace sin pago registrado: ni otro estado
+    // de pago ni comprobantes, aunque el estado sea pendiente. Es la misma regla que SetShipping (D-F14, R16).
+    private void EnsureCashOnDeliveryIsPending(IReadOnlyCollection<OrderPaymentProofInput> proofs)
     {
-        if (CashOnDelivery && PaymentStatus != OrderPaymentStatus.PaymentPending)
+        if (CashOnDelivery && (proofs.Count > 0 || PaymentStatus != OrderPaymentStatus.PaymentPending))
         {
             throw CashOnDeliveryPendingOnly();
         }
