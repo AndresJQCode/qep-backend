@@ -16,10 +16,13 @@ public sealed class ReorderCarriersHandler(
     IQuotationTaxRateLookup taxRates,
     ITenantModules tenantModules,
     IQuotationsUnitOfWork unitOfWork,
+    IQuotationAuditPublisher auditPublisher,
     IExecutionContext executionContext,
     IClock clock)
     : ICommandHandler<ReorderCarriersCommand, CarrierSettingsDto>
 {
+    public const string AuditAction = "quotations.carrier.reordered";
+
     public async Task<CarrierSettingsDto> HandleAsync(ReorderCarriersCommand command, CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, TenancyPermissions.SettingsUpdate);
@@ -37,16 +40,26 @@ public sealed class ReorderCarriersHandler(
         }
 
         var now = clock.UtcNow;
+        var moved = false;
         for (var position = 0; position < ids.Count; position++)
         {
             var carrier = byId[ids[position]];
             if (carrier.SortOrder != position)
             {
                 carrier.MoveTo(position, now);
+                moved = true;
             }
         }
 
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        // El mismo orden no es un cambio: no se guarda ni se audita.
+        if (moved)
+        {
+            // El recurso es el tenant: el orden es de la lista entera, no de una transportadora.
+            auditPublisher.Publish(
+                command.TenantId, executionContext.SubjectId, AuditAction, command.TenantId.ToString(), "success", now);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+
         return await CarrierMapping.SettingsAsync(carriers, store, taxRates, command.TenantId, cancellationToken);
     }
 }

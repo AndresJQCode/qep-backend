@@ -12,10 +12,15 @@ public sealed class SetCarrierActiveHandler(
     ICarrierRepository carriers,
     ITenantModules tenantModules,
     IQuotationsUnitOfWork unitOfWork,
+    IQuotationAuditPublisher auditPublisher,
     IExecutionContext executionContext,
     IClock clock)
     : ICommandHandler<SetCarrierActiveCommand, CarrierDto>
 {
+    public const string ActivatedAuditAction = "quotations.carrier.activated";
+
+    public const string DeactivatedAuditAction = "quotations.carrier.deactivated";
+
     public async Task<CarrierDto> HandleAsync(SetCarrierActiveCommand command, CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, TenancyPermissions.SettingsUpdate);
@@ -24,20 +29,29 @@ public sealed class SetCarrierActiveHandler(
 
         var carrier = await carriers.FindAsync(command.TenantId, new CarrierId(command.CarrierId), cancellationToken)
             ?? throw CarrierNotFound.For(command.CarrierId);
-        // Ya en el estado pedido: no hay cambio que guardar ni versión que subir.
+        // Ya en el estado pedido: no hay cambio que guardar, ni versión que subir, ni nada que auditar.
         if (carrier.IsActive == command.IsActive)
         {
             return CarrierMapping.ToDto(carrier);
         }
 
+        var now = clock.UtcNow;
         if (command.IsActive)
         {
-            carrier.Activate(clock.UtcNow);
+            carrier.Activate(now);
         }
         else
         {
-            carrier.Deactivate(clock.UtcNow);
+            carrier.Deactivate(now);
         }
+
+        auditPublisher.Publish(
+            command.TenantId,
+            executionContext.SubjectId,
+            command.IsActive ? ActivatedAuditAction : DeactivatedAuditAction,
+            carrier.Id.ToString(),
+            "success",
+            now);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return CarrierMapping.ToDto(carrier);

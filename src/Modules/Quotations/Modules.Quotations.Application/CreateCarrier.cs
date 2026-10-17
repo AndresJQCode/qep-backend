@@ -58,11 +58,14 @@ public sealed class CreateCarrierHandler(
     ICarrierRepository carriers,
     ITenantModules tenantModules,
     IQuotationsUnitOfWork unitOfWork,
+    IQuotationAuditPublisher auditPublisher,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<CreateCarrierCommand> validator)
     : ICommandHandler<CreateCarrierCommand, CarrierDto>
 {
+    public const string AuditAction = "quotations.carrier.created";
+
     public async Task<CarrierDto> HandleAsync(CreateCarrierCommand command, CancellationToken cancellationToken)
     {
         // Autorizar antes de validar: a otro tenant no se le devuelve el mapa de campos.
@@ -73,6 +76,7 @@ public sealed class CreateCarrierHandler(
 
         var existing = await carriers.ListAsync(command.TenantId, cancellationToken);
         var sortOrder = existing.Count == 0 ? 0 : existing.Max(carrier => carrier.SortOrder) + 1;
+        var now = clock.UtcNow;
         var carrier = Carrier.Create(
             CarrierId.New(),
             command.TenantId,
@@ -80,8 +84,11 @@ public sealed class CreateCarrierHandler(
             CarrierTextRules.Clean(command.ExternalNames),
             command.SupportsCashOnDelivery,
             sortOrder,
-            clock.UtcNow);
+            now);
         carriers.Add(carrier);
+        // Por outbox, en la misma transacción que la transportadora (como el resto de la configuración).
+        auditPublisher.Publish(
+            command.TenantId, executionContext.SubjectId, AuditAction, carrier.Id.ToString(), "success", now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return CarrierMapping.ToDto(carrier);

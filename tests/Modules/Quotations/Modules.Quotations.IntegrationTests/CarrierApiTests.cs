@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Modules.Quotations.Infrastructure.Persistence;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -13,6 +14,7 @@ public sealed class CarrierApiTests
     private const string QuotationRead = "quotations.quotation.read";
     private const string TaxRateRead = "catalog.tax_rate.read";
     private const string TaxRateManage = "catalog.tax_rate.manage";
+    private const string AuditEvent = "platform.audit.recorded.v1";
 
     private static string CarriersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/carriers";
 
@@ -287,6 +289,80 @@ public sealed class CarrierApiTests
 
         Assert.Equal(iva, (await GetSettingsAsync(client, tenantId)).FreightTaxRate!.Id);
     }
+
+    // R6: cada mutación se audita por outbox con la transportadora como recurso; las que no cambian
+    // nada (activar una activa) no dejan rastro.
+    [Fact]
+    public async Task CarrierMutationsAreAudited()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+
+        var carrier = await CreateCarrierAsync(client, tenantId, "Coordinadora", [], true);
+        using var updated = await PutCarrierAsync(client, tenantId, carrier.Id, carrier.Version, "Coordinadora S.A.", []);
+        updated.EnsureSuccessStatusCode();
+        await PostActionAsync(client, tenantId, carrier.Id, "activate");
+        await PostActionAsync(client, tenantId, carrier.Id, "deactivate");
+        await PostActionAsync(client, tenantId, carrier.Id, "deactivate");
+        await PostActionAsync(client, tenantId, carrier.Id, "activate");
+
+        var audits = await AuditsAsync(factory);
+        Assert.Equal(
+            [
+                ("quotations.carrier.created", carrier.Id.ToString()),
+                ("quotations.carrier.updated", carrier.Id.ToString()),
+                ("quotations.carrier.deactivated", carrier.Id.ToString()),
+                ("quotations.carrier.activated", carrier.Id.ToString()),
+            ],
+            audits.Where(audit => audit.Action.StartsWith("quotations.carrier.", StringComparison.Ordinal)));
+    }
+
+    // R6: reordenar y fijar la tasa auditan con el tenant como recurso; un orden igual no.
+    [Fact]
+    public async Task ReorderAndFreightTaxRateAreAudited()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, SettingsRead, SettingsUpdate, TaxRateRead, TaxRateManage);
+        using var _ = client;
+        var a = await CreateCarrierAsync(client, tenantId, "A", [], true);
+        var b = await CreateCarrierAsync(client, tenantId, "B", [], true);
+        var iva = await CreateTaxRateAsync(client, tenantId, "IVA 19", 19);
+
+        using var same = await PutOrderAsync(client, tenantId, [a.Id, b.Id]);
+        same.EnsureSuccessStatusCode();
+        using var swapped = await PutOrderAsync(client, tenantId, [b.Id, a.Id]);
+        swapped.EnsureSuccessStatusCode();
+        using var set = await PutFreightTaxRateAsync(client, tenantId, iva);
+        set.EnsureSuccessStatusCode();
+
+        var audits = await AuditsAsync(factory);
+        Assert.Equal(
+            [("quotations.carrier.reordered", tenantId.ToString())],
+            audits.Where(audit => audit.Action == "quotations.carrier.reordered"));
+        Assert.Equal(
+            [("quotations.freight_tax_rate.updated", tenantId.ToString())],
+            audits.Where(audit => audit.Action == "quotations.freight_tax_rate.updated"));
+    }
+
+    private static async Task PostActionAsync(HttpClient client, Guid tenantId, Guid carrierId, string action)
+    {
+        using var response = await client.PostAsync(
+            $"{CarriersUrl(tenantId)}/{carrierId}/{action}", content: null, TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task<List<(string Action, string ResourceId)>> AuditsAsync(QepApiFactory factory) =>
+        [.. (await OutboxMessagesAsync(factory, AuditEvent)).Select(message =>
+        {
+            using var payload = JsonDocument.Parse(message.PayloadJson);
+            return (
+                payload.RootElement.GetProperty("action").GetString()!,
+                payload.RootElement.GetProperty("resourceId").GetString()!);
+        })];
 
     private static async Task<CarrierPayload> CreateCarrierAsync(
         HttpClient client, Guid tenantId, string name, string[] externalNames, bool supportsCashOnDelivery)

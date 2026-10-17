@@ -32,11 +32,14 @@ public sealed class UpdateCarrierHandler(
     ICarrierRepository carriers,
     ITenantModules tenantModules,
     IQuotationsUnitOfWork unitOfWork,
+    IQuotationAuditPublisher auditPublisher,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<UpdateCarrierCommand> validator)
     : ICommandHandler<UpdateCarrierCommand, CarrierDto>
 {
+    public const string AuditAction = "quotations.carrier.updated";
+
     public async Task<CarrierDto> HandleAsync(UpdateCarrierCommand command, CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, TenancyPermissions.SettingsUpdate);
@@ -53,11 +56,14 @@ public sealed class UpdateCarrierHandler(
                 "The carrier changed after it was loaded.");
         }
 
+        var now = clock.UtcNow;
         carrier.Update(
             command.Name ?? string.Empty,
             CarrierTextRules.Clean(command.ExternalNames),
             command.SupportsCashOnDelivery,
-            clock.UtcNow);
+            now);
+        auditPublisher.Publish(
+            command.TenantId, executionContext.SubjectId, AuditAction, carrier.Id.ToString(), "success", now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return CarrierMapping.ToDto(carrier);

@@ -19,9 +19,13 @@ public sealed class SetFreightTaxRateHandler(
     IQuotationTaxRateLookup taxRates,
     ITenantModules tenantModules,
     IQuotationsUnitOfWork unitOfWork,
-    IExecutionContext executionContext)
+    IQuotationAuditPublisher auditPublisher,
+    IExecutionContext executionContext,
+    IClock clock)
     : ICommandHandler<SetFreightTaxRateCommand, CarrierSettingsDto>
 {
+    public const string AuditAction = "quotations.freight_tax_rate.updated";
+
     public async Task<CarrierSettingsDto> HandleAsync(SetFreightTaxRateCommand command, CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, TenancyPermissions.SettingsUpdate);
@@ -43,9 +47,19 @@ public sealed class SetFreightTaxRateHandler(
         }
 
         // El store bloquea la fila del tenant hasta el commit, como el guardado del mínimo de compra.
-        await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
+        // La misma tasa no es un cambio: no se guarda ni se audita.
+        if (await store.GetFreightTaxRateIdAsync(command.TenantId, cancellationToken) != command.TaxRateId)
         {
+            await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
             await store.SetFreightTaxRateIdAsync(command.TenantId, command.TaxRateId, cancellationToken);
+            // El recurso es el tenant: la tasa es parte de su configuración.
+            auditPublisher.Publish(
+                command.TenantId,
+                executionContext.SubjectId,
+                AuditAction,
+                command.TenantId.ToString(),
+                "success",
+                clock.UtcNow);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }

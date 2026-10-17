@@ -12,6 +12,9 @@ internal sealed class CarrierRepository(QuotationsDbContext dbContext) : ICarrie
         await dbContext.Carriers
             .Where(carrier => carrier.TenantId == tenantId)
             .OrderBy(carrier => carrier.SortOrder)
+            // Desempate determinista: dos con el mismo lugar (una carrera entre altas) salen siempre igual.
+            .ThenBy(carrier => carrier.CreatedAt)
+            .ThenBy(carrier => carrier.Id)
             .ToListAsync(cancellationToken);
 
     public Task<Carrier?> FindAsync(Guid tenantId, CarrierId id, CancellationToken cancellationToken) =>
