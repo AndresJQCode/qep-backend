@@ -23,6 +23,28 @@ public sealed class OrderShippingApiTests
 
     private static string QuotationUrl(Guid tenantId, Guid quotationId) => $"{QuotationsUrl(tenantId)}/{quotationId}";
 
+    /// <summary>Spec 2026-10-17 §8: el contrato del evento no gana campos. El <c>total</c> de
+    /// <c>order.created.v1</c> es el del pedido, que ya incluye el envío cobrado; Pipeline lo lee por nombre.</summary>
+    [Fact]
+    public async Task TheOrderCreatedEventTotalIncludesTheChargedFreight()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
+        using var _ = client;
+        var carrierId = await PrepareFreightAsync(client, tenantId);
+        var request = await ManualRequestAsync(client, tenantId, new ShippingRequest(carrierId, "Charged", 15000m, false));
+
+        using var response = await client.PostAsJsonAsync(OrdersUrl(tenantId), request, TestContext.Current.CancellationToken);
+
+        var order = (await ReadDetailAsync(response, HttpStatusCode.Created)).Order;
+        var created = Assert.Single(await OutboxMessagesAsync(factory, "quotations.order.created.v1"));
+        using var payload = JsonDocument.Parse(created.PayloadJson);
+        Assert.Equal(order.Total, payload.RootElement.GetProperty("total").GetDecimal());
+        Assert.Equal(115_000m, order.Total);
+        Assert.False(payload.RootElement.TryGetProperty("freightSubtotal", out var extra));
+    }
+
     [Fact]
     public async Task CreatesAManualOrderWithFreight()
     {

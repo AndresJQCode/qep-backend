@@ -79,6 +79,8 @@ internal sealed class OrdersReportSource(
                 Count = group.Count(),
                 Subtotal = group.Sum(row => row.Subtotal),
                 TaxAmount = group.Sum(row => row.TaxAmount),
+                FreightSubtotal = group.Sum(row => row.FreightSubtotal),
+                FreightTaxAmount = group.Sum(row => row.FreightTaxAmount),
                 Total = group.Sum(row => row.Total),
             })
             .ToListAsync(cancellationToken);
@@ -88,11 +90,13 @@ internal sealed class OrdersReportSource(
         var orderCount = byCurrency.Sum(row => row.Count);
         if (orderCount == 0)
         {
-            return new OrdersReportAggregate(0, [], [], [], [], [], []);
+            return new OrdersReportAggregate(0, [], [], [], [], [], [], [], []);
         }
 
         var subtotals = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.Subtotal)));
         var taxAmounts = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.TaxAmount)));
+        var freightSubtotals = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.FreightSubtotal)));
+        var freightTaxAmounts = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.FreightTaxAmount)));
         var totals = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.Total)));
 
         // La serie mensual va en el mes del tenant (spec 2026-09-17, punto 5): el pedido de las 20:00
@@ -247,7 +251,7 @@ internal sealed class OrdersReportSource(
         }
 
         return new OrdersReportAggregate(
-            orderCount, subtotals, taxAmounts, totals, monthly, byAdvisor, byClient);
+            orderCount, subtotals, taxAmounts, freightSubtotals, freightTaxAmounts, totals, monthly, byAdvisor, byClient);
     }
 
     /// <summary>
@@ -317,6 +321,8 @@ internal sealed class OrdersReportSource(
                 row.Currency,
                 row.Subtotal,
                 row.TaxAmount,
+                row.FreightSubtotal,
+                row.FreightTaxAmount,
                 row.Total));
     }
 
@@ -368,6 +374,8 @@ internal sealed class OrdersReportSource(
                     row.Currency,
                     row.Subtotal,
                     row.TaxAmount,
+                    row.FreightSubtotal,
+                    row.FreightTaxAmount,
                     row.Total);
             })
             .ToArray();
@@ -400,5 +408,7 @@ internal sealed class OrdersReportSource(
         string Currency,
         decimal Subtotal,
         decimal TaxAmount,
+        decimal FreightSubtotal,
+        decimal FreightTaxAmount,
         decimal Total);
 }

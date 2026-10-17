@@ -445,7 +445,8 @@ internal static class ReportingApiHarness
         Guid clientId,
         Guid productId,
         DateOnly? validUntil = null,
-        string currency = "COP")
+        string currency = "COP",
+        ShippingRequest? shipping = null)
     {
         // Sin cuenta de cobro la cotización se envía igual, pero convertirla en pedido devuelve 422
         // `quotation.billing.account_required`: toda prueba del reporte de pedidos se caería en
@@ -461,7 +462,8 @@ internal static class ReportingApiHarness
                 null,
                 null,
                 new QuotationBillingAccountRequest(
-                    billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency)),
+                    billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
+                shipping),
             TestContext.Current.CancellationToken);
         created.EnsureSuccessStatusCode();
         var quotation = await created.Content.ReadFromJsonAsync<QuotationResponse>(
@@ -519,6 +521,35 @@ internal static class ReportingApiHarness
             TestContext.Current.CancellationToken);
         Assert.NotNull(body);
         return (body.Id, bankName, accountNumber, currency);
+    }
+
+    /// <summary>Los permisos extra que pide fijar la tasa del IVA del envío: crear la tasa en Catalog
+    /// y guardarla en los ajustes del tenant.</summary>
+    public static readonly string[] FreightSetupPermissions =
+    [
+        CatalogPermissions.TaxRateRead,
+        CatalogPermissions.TaxRateManage,
+        "tenancy.settings.read",
+        "tenancy.settings.update",
+    ];
+
+    /// <summary>Fija el IVA del envío en 19 %, que es lo que hace falta para que un envío
+    /// <c>Charged</c> en COP se parta en subtotal e IVA.</summary>
+    public static async Task ConfigureFreightTaxAsync(HttpClient client, Guid tenantId)
+    {
+        var created = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/tax-rates",
+            new { name = "IVA 19", percentage = 19 },
+            TestContext.Current.CancellationToken);
+        created.EnsureSuccessStatusCode();
+        using var body = JsonDocument.Parse(
+            await created.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var rateId = body.RootElement.GetProperty("id").GetGuid();
+        var rate = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/carriers/freight-tax-rate",
+            new { taxRateId = rateId },
+            TestContext.Current.CancellationToken);
+        rate.EnsureSuccessStatusCode();
     }
 
     public static async Task<OrderResponse> ConvertToOrderAsync(

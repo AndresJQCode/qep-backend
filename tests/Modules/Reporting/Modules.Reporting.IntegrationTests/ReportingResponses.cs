@@ -26,6 +26,8 @@ internal sealed record OrdersReportItem(
     string Currency,
     decimal Subtotal,
     decimal TaxAmount,
+    decimal FreightSubtotal,
+    decimal FreightTaxAmount,
     decimal Total);
 
 internal sealed record QuotationsReportItem(
@@ -42,6 +44,8 @@ internal sealed record QuotationsReportItem(
     string Currency,
     decimal Subtotal,
     decimal TaxAmount,
+    decimal FreightSubtotal,
+    decimal FreightTaxAmount,
     decimal Total);
 
 internal sealed record PriceChangeReportItem(
@@ -85,6 +89,8 @@ internal sealed record OrdersReportSummary(
     int OrderCount,
     IReadOnlyList<MoneyAmount> Subtotals,
     IReadOnlyList<MoneyAmount> TaxAmounts,
+    IReadOnlyList<MoneyAmount> FreightSubtotals,
+    IReadOnlyList<MoneyAmount> FreightTaxAmounts,
     IReadOnlyList<MoneyAmount> Totals,
     IReadOnlyList<ReportMonthlyPoint> Monthly,
     IReadOnlyList<ReportRankEntry> ByAdvisor,
@@ -113,6 +119,8 @@ internal sealed record QuotationsReportSummary(
     int QuotationCount,
     IReadOnlyList<MoneyAmount> Subtotals,
     IReadOnlyList<MoneyAmount> TaxAmounts,
+    IReadOnlyList<MoneyAmount> FreightSubtotals,
+    IReadOnlyList<MoneyAmount> FreightTaxAmounts,
     IReadOnlyList<MoneyAmount> Totals,
     IReadOnlyList<ReportMonthlyPoint> Monthly,
     IReadOnlyList<ReportStatusSlice> ByStatus,

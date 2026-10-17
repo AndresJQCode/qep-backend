@@ -31,8 +31,14 @@ public sealed record OrdersReportItemDto(
     string PaymentStatus,
     /// <summary>The quotation's currency: every amount of this row is in it.</summary>
     string Currency,
+    /// <summary>Sólo productos: el envío no está acá sino en los dos campos siguientes.</summary>
     decimal Subtotal,
     decimal TaxAmount,
+    /// <summary>El envío cobrado sin IVA, o 0. <c>Total</c> ya lo incluye: se explica con un campo y no con
+    /// una omisión, así la fila cierra (<c>Subtotal + TaxAmount + FreightSubtotal + FreightTaxAmount = Total</c>)
+    /// sin que la pantalla sepa del envío (spec 2026-10-17 §7).</summary>
+    decimal FreightSubtotal,
+    decimal FreightTaxAmount,
     decimal Total);
 
 /// <summary>
@@ -55,8 +61,14 @@ public sealed record QuotationsReportItemDto(
     string Status,
     /// <summary>The quotation's currency: every amount of this row is in it.</summary>
     string Currency,
+    /// <summary>Sólo productos: el envío no está acá sino en los dos campos siguientes.</summary>
     decimal Subtotal,
     decimal TaxAmount,
+    /// <summary>El envío cobrado sin IVA, o 0. <c>Total</c> ya lo incluye: se explica con un campo y no con
+    /// una omisión, así la fila cierra (<c>Subtotal + TaxAmount + FreightSubtotal + FreightTaxAmount = Total</c>)
+    /// sin que la pantalla sepa del envío (spec 2026-10-17 §7).</summary>
+    decimal FreightSubtotal,
+    decimal FreightTaxAmount,
     decimal Total);
 
 /// <summary>

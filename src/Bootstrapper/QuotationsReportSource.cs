@@ -62,6 +62,8 @@ internal sealed class QuotationsReportSource(
                 Count = group.Count(),
                 Subtotal = group.Sum(quotation => quotation.Subtotal),
                 TaxAmount = group.Sum(quotation => quotation.TaxAmount),
+                FreightSubtotal = group.Sum(quotation => quotation.FreightSubtotal),
+                FreightTaxAmount = group.Sum(quotation => quotation.FreightTaxAmount),
                 Total = group.Sum(quotation => quotation.Total),
             })
             .ToListAsync(cancellationToken);
@@ -70,7 +72,7 @@ internal sealed class QuotationsReportSource(
         if (quotationCount == 0)
         {
             return new QuotationsReportAggregate(
-                0, [], [], [], [], EmptyStatusSlices(), [], EmptyValidity(), []);
+                0, [], [], [], [], [], [], EmptyStatusSlices(), [], EmptyValidity(), []);
         }
 
         var totals = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.Total)));
@@ -88,6 +90,8 @@ internal sealed class QuotationsReportSource(
             quotationCount,
             ReportMoney.From(byCurrency.Select(row => (row.Currency, row.Subtotal))),
             ReportMoney.From(byCurrency.Select(row => (row.Currency, row.TaxAmount))),
+            ReportMoney.From(byCurrency.Select(row => (row.Currency, row.FreightSubtotal))),
+            ReportMoney.From(byCurrency.Select(row => (row.Currency, row.FreightTaxAmount))),
             totals,
             monthly,
             byStatus,
@@ -463,6 +467,8 @@ internal sealed class QuotationsReportSource(
                 quotation.Currency,
                 quotation.Subtotal,
                 quotation.TaxAmount,
+                quotation.FreightSubtotal,
+                quotation.FreightTaxAmount,
                 quotation.Total));
 
     private async Task<IReadOnlyList<QuotationsReportItemDto>> ToDtosAsync(
@@ -498,6 +504,8 @@ internal sealed class QuotationsReportSource(
                     row.Currency,
                     row.Subtotal,
                     row.TaxAmount,
+                    row.FreightSubtotal,
+                    row.FreightTaxAmount,
                     row.Total);
             })
             .ToArray();
@@ -525,5 +533,7 @@ internal sealed class QuotationsReportSource(
         string Currency,
         decimal Subtotal,
         decimal TaxAmount,
+        decimal FreightSubtotal,
+        decimal FreightTaxAmount,
         decimal Total);
 }

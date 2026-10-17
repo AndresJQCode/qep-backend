@@ -23,11 +23,17 @@ namespace Modules.Reporting.Application;
 /// <para>Subtotals, TaxAmounts and Totals carry one amount per currency with quotations in the
 /// window (spec, Reports). The counts stay single numbers: a quotation is one quotation in any
 /// currency.</para>
+/// <para>Freight: <c>Total</c> ya incluye el envío cobrado, mientras que <c>Subtotal</c> y <c>TaxAmount</c>
+/// son sólo de los productos. El envío viaja en <c>FreightSubtotals</c> y <c>FreightTaxAmounts</c> (una
+/// cifra por moneda) para que el panel cierre <c>subtotal + IVA + envío + IVA del envío = total</c> sin
+/// restar nada: un total que no cierra se explica con un campo, no con una omisión (spec 2026-10-17 §7).</para>
 /// </summary>
 public sealed record QuotationsReportSummaryDto(
     int QuotationCount,
     IReadOnlyList<ReportMoneyDto> Subtotals,
     IReadOnlyList<ReportMoneyDto> TaxAmounts,
+    IReadOnlyList<ReportMoneyDto> FreightSubtotals,
+    IReadOnlyList<ReportMoneyDto> FreightTaxAmounts,
     IReadOnlyList<ReportMoneyDto> Totals,
     IReadOnlyList<ReportMonthlyPointDto> Monthly,
     IReadOnlyList<ReportStatusSliceDto> ByStatus,
@@ -114,6 +120,8 @@ public sealed record QuotationsReportAggregate(
     int QuotationCount,
     IReadOnlyList<ReportMoneyDto> Subtotals,
     IReadOnlyList<ReportMoneyDto> TaxAmounts,
+    IReadOnlyList<ReportMoneyDto> FreightSubtotals,
+    IReadOnlyList<ReportMoneyDto> FreightTaxAmounts,
     IReadOnlyList<ReportMoneyDto> Totals,
     IReadOnlyList<ReportMonthlyPointDto> Monthly,
     IReadOnlyList<ReportStatusSliceDto> ByStatus,
@@ -172,6 +180,8 @@ public sealed class GetQuotationsReportSummaryHandler(
             current.QuotationCount,
             current.Subtotals,
             current.TaxAmounts,
+            current.FreightSubtotals,
+            current.FreightTaxAmounts,
             current.Totals,
             current.Monthly,
             current.ByStatus,

@@ -53,6 +53,8 @@ public sealed class GetOrdersReportSummaryHandler(
             current.OrderCount,
             current.Subtotals,
             current.TaxAmounts,
+            current.FreightSubtotals,
+            current.FreightTaxAmounts,
             current.Totals,
             current.Monthly,
             current.ByAdvisor,

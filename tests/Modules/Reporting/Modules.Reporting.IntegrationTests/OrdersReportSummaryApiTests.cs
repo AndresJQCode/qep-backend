@@ -360,4 +360,43 @@ public sealed class OrdersReportSummaryApiTests
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
+
+    /// <summary>
+    /// Spec 2026-10-17 §7. El total ya incluye el envío cobrado; el resumen y la fila del listado
+    /// llevan el subtotal y el IVA del envío por separado, así que
+    /// <c>subtotal + IVA + subtotal del envío + IVA del envío</c> cierra con el total.
+    /// </summary>
+    [Fact]
+    public async Task SummaryClosesWithFreight()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, [.. ManagerPermissions, .. FreightSetupPermissions]);
+        using var client = tenant.Client;
+        await ConfigureFreightTaxAsync(client, tenant.TenantId);
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId,
+            shipping: new ShippingRequest(null, "Charged", 15000m, false));
+        await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
+
+        var summary = await client.GetFromJsonAsync<OrdersReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary", TestContext.Current.CancellationToken);
+        var page = await client.GetFromJsonAsync<ReportPageDto<OrdersReportItem>>(
+            $"{ReportsUrl(tenant.TenantId)}/orders", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal([new MoneyAmount("COP", 12605.04m)], summary.FreightSubtotals);
+        Assert.Equal([new MoneyAmount("COP", 2394.96m)], summary.FreightTaxAmounts);
+        Assert.Equal(
+            summary.Totals.Single().Amount,
+            summary.Subtotals.Single().Amount + summary.TaxAmounts.Single().Amount
+                + summary.FreightSubtotals.Single().Amount + summary.FreightTaxAmounts.Single().Amount);
+
+        var row = Assert.Single(page!.Items);
+        Assert.Equal(12605.04m, row.FreightSubtotal);
+        Assert.Equal(2394.96m, row.FreightTaxAmount);
+        Assert.Equal(row.Total, row.Subtotal + row.TaxAmount + row.FreightSubtotal + row.FreightTaxAmount);
+    }
 }

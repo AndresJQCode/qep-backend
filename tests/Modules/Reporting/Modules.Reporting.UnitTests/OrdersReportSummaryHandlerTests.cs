@@ -203,6 +203,6 @@ public sealed class OrdersReportSummaryHandlerTests
     private static OrdersReportAggregate Aggregate(int orderCount = 0, decimal total = 0m)
     {
         IReadOnlyList<ReportMoneyDto> totals = total == 0m ? [] : [new ReportMoneyDto("COP", total)];
-        return new(orderCount, totals, [], totals, [], [], []);
+        return new(orderCount, totals, [], [], [], totals, [], [], []);
     }
 }

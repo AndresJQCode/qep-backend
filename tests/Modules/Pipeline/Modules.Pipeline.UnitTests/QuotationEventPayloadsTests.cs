@@ -80,4 +80,17 @@ public sealed class QuotationEventPayloadsTests
 
         Assert.Equal(((Guid?)null, "Manual"), (fact!.QuotationId, fact.Source));
     }
+
+    /// <summary>Spec 2026-10-17 §8: el envío no agrega campos al contrato. El <c>total</c> del <c>order.created.v1</c> ya
+    /// incluye el envío cobrado (100000 de productos + 15000 de envío), y Pipeline lo guarda tal cual en la foto del pedido.
+    /// Que Quotations escriba ese total está probado en <c>OrderShippingApiTests</c>.</summary>
+    [Fact]
+    public void TotalIncludesTheChargedFreight()
+    {
+        var json = $$"""{"tenantId":"{{TenantId}}","orderId":"{{OrderId}}","orderNumber":"PED-0004","clientId":"{{ClientId}}","advisorMemberId":"{{AdvisorId}}","total":115000.00,"currency":"COP","source":"Manual","quotationId":null,"occurredAt":"2026-10-17T15:00:00+00:00"}""";
+
+        Assert.True(QuotationEventPayloads.TryReadOrderCreated(json, out var fact));
+
+        Assert.Equal(115000.00m, fact!.Total);
+    }
 }
