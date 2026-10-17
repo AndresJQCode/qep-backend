@@ -1175,6 +1175,65 @@ La regla vive en `QuotationItemProductLabel` (cotización y PDF) y en su espejo 
 de la respuesta no cambió: `items[].productCode` y `items[].productName` siguen ahí; lo que cambia
 es de dónde salen. Portada y escalas de la línea siguen siendo las de hoy.
 
+### Transportadoras, envío y contraentrega
+
+Spec 2026-10-17 (`docs/superpowers/specs/2026-10-17-flete-design.md`). Una cotización y un pedido pueden
+llevar la transportadora, el valor del envío y la marca de contraentrega. **Nada de eso es obligatorio**:
+ni para enviar la cotización, ni para crear o convertir un pedido, ni la transportadora para la
+contraentrega.
+
+**Transportadoras** (`CarrierEndpoints`, bajo `/api/v1/tenants/{tenantId}`; lectura con
+`TenancyPermissions.SettingsRead`, escritura con `TenancyPermissions.SettingsUpdate`):
+
+| Método | Ruta | Qué hace |
+| --- | --- | --- |
+| `GET` | `/carriers` | La tasa del IVA del envío y **todas** las transportadoras, activas e inactivas, en orden |
+| `POST` | `/carriers` | Crea una (`name`, `externalNames`, `supportsCashOnDelivery`); responde 201 con `ETag` |
+| `PUT` | `/carriers/{carrierId}` | Edita; exige `If-Match` con la `version` cargada (428 sin él, 412 si cambió) |
+| `POST` | `/carriers/{carrierId}/activate` y `/deactivate` | Prende o apaga |
+| `PUT` | `/carriers/order` | Reordena con la lista completa de ids (`carrierIds`) |
+| `PUT` | `/carriers/freight-tax-rate` | Fija la tasa del IVA del envío (`taxRateId`) |
+| `GET` | `/shipping-options` | Para el cotizador y el pedido (permiso de leer cotizaciones): sólo las activas y la tasa |
+
+- **Las transportadoras no se borran, se desactivan.** Un documento guarda la foto del nombre al elegirla y
+  no pierde lo que ya eligió si la transportadora se apaga después; una desactivada no se puede elegir en
+  un guardado nuevo.
+- **El nombre y los nombres externos (`externalNames`, cómo la llama el ERP) comparten un solo índice
+  único por tenant**, normalizado y **con las inactivas incluidas**. Un choque responde
+  `quotations.carrier.name_taken`.
+- **El IVA del envío** es una tasa de Catalog que el tenant elige una sola vez. Sólo se acepta una tasa
+  **activa** (`quotations.freight_tax_rate.inactive`, o `.not_found` si no es del tenant). Vive aparte de
+  `PUT /quotations/settings` para que guardar el mínimo de compra no pueda pisarla. La pantalla de tasas de
+  impuesto se mueve de Catálogo a **Configuración** (cambio de `qep-frontend`; la API de tasas no cambió).
+- Mutar una transportadora o la tasa deja fila de auditoría en la misma transacción
+  (`quotations.carrier.created|updated|activated|deactivated|reordered`,
+  `quotations.freight_tax_rate.updated`).
+
+**El objeto `shipping`.** Los cuerpos de crear, guardar y previsualizar cotización y pedido aceptan
+`shipping: { carrierId, freightChargeMode, freightAmount, cashOnDelivery }`, y las respuestas devuelven
+`shipping` con forma fija, también en recogida:
+`{ isStorePickup, carrier: { id, name } | null, chargeMode, freightAmount, freightTaxPercentage, freightSubtotal, freightTaxAmount, cashOnDelivery }`.
+- `freightChargeMode` viaja con el nombre del enum: `Charged` (se cobra al cliente y suma al total),
+  `OnDelivery` (lo paga el cliente a la transportadora: el valor es informativo y **no suma**) o `Free`
+  (valor 0). `null` es «sin envío registrado».
+- `freightAmount` es el valor **con IVA incluido**. El backend lo desglosa con el mismo redondeo de una
+  línea: $ 15.000 al 19 % da `freightSubtotal` 12.605,04 y `freightTaxAmount` 2.394,96. Fuera de COP el IVA
+  no se discrimina y la tasa queda en 0.
+- **`shipping` ausente en un guardado deja el envío como estaba**, salvo que la entrega pase a recogida
+  en tienda: ahí se limpia. Una recogida que sí trae envío responde `shipping_not_allowed_on_pickup`.
+- La tasa del IVA del envío se toma de la configuración del tenant al fijar el valor y se guarda como foto
+  (`freightTaxPercentage`): cambiarla después no re-precia documentos ya cotizados.
+- Los totales suman el envío en campos propios y el mínimo de compra **no** lo cuenta. El PDF imprime la
+  transportadora, el envío y su IVA; los resúmenes de Reporting lo explican dentro del total.
+- **Contraentrega.** Convertir copia el envío tal cual. Prenderla en un pedido exige que no tenga
+  comprobantes y que el pago siga en `PaymentPending` (`order.order.cash_on_delivery_pending_only`), y si
+  hay transportadora elegida, que recaude (`cash_on_delivery_not_supported`). Con contraentrega, el PDF
+  imprime «Forma de pago: Contraentrega» en lugar de la forma de pago escrita.
+- Cambiar el envío de un pedido pendiente se audita como `quotation.order.shipping_changed`.
+
+Los códigos de error nuevos, con lo que los corrige:
+[guía de integración § Códigos de error](docs/integracion-cotizaciones-y-pedidos.md#códigos-de-error-propios-del-módulo).
+
 ### Columnas del Excel de pedidos por tenant (homologación)
 
 Cada ERP importa por encabezado con su propia plantilla, así que el tenant puede renombrar,
@@ -1240,6 +1299,22 @@ pedido es de recogida (`Order.IsStorePickup`) y `Coordinadora` en cualquier otro
 texto. Los dos textos son contrato del ERP del tenant. La recogida no cambia ninguna otra columna:
 `Direccion`, `Ciudad` y `Telefono` siguen cayendo a los datos del cliente sin parte de envío propia.
 También **nace oculta**, por la misma razón que `coordinadora_city`.
+
+Con el spec de flete (2026-10-17) `Transportadora` deja de ser fija: sale el nombre de la transportadora
+elegida en el pedido (la foto), `Coordinadora` si no eligió ninguna y `Recoger en tienda` en recogida. Y
+el catálogo gana **cinco columnas** al final: `Valor Flete` (`freight_amount`, visible), `Flete sin IVA`
+(`freight_without_tax`), `IVA Flete` (`freight_tax`), `Pago Flete` (`freight_charge_mode`: `Cobrado`,
+`Gratis` o `Al cobro`) y `Contraentrega` (`cash_on_delivery`: `Sí` o `No`), las tres últimas **ocultas**.
+`Valor Flete` sale vacío en recogida, sin modo y con `Al cobro` (ese dinero se le paga a la
+transportadora, no es del documento), y `0` con `Gratis`. **Regla de choque:** `OrdersExportLayout.Effective`
+nunca deja dos columnas visibles con el mismo encabezado; una columna nueva del catálogo cuyo encabezado
+coincide con el de una visible del layout guardado se agrega **oculta**. Consecuencia: un `PUT` parcial que
+omite la columna del catálogo y agrega una fija visible con su encabezado se acepta, con la del catálogo
+oculta (el frontend siempre manda la lista completa).
+
+**Aviso para operadores:** la hoja sembrada «MIGRACION 1» conserva su columna fija `valor flete`, vacía, y
+por eso `Valor Flete` del catálogo queda oculta en ella. Para que el ERP reciba el valor real, en
+Configuración › Excel de pedidos cambia la fija por la columna del catálogo «Valor Flete».
 
 La semilla (`Seed:Enabled`) le crea al tenant sembrado el layout de la hoja de importación de su
 ERP, «MIGRACION 1»: 47 columnas visibles, 20 de ellas fijas. Su «Nit» es el de la empresa de

@@ -106,6 +106,26 @@ type CreateQuotationRequest = {
 };
 // UpdateQuotationRequest: mismos campos, sin clientId (no se puede cambiar el cliente de una cotización)
 
+// Spec 2026-10-17 (flete): lo acepta también el cuerpo de crear/guardar/previsualizar cotización y pedido,
+// como `shipping`. Ausente = "no lo toques" (en recogida en tienda se limpia). Nada es obligatorio.
+type ShippingRequest = {
+  carrierId: string | null;
+  freightChargeMode: "Charged" | "OnDelivery" | "Free" | null;
+  freightAmount: number;            // con IVA incluido; entero en COP
+  cashOnDelivery: boolean;
+};
+// Las respuestas devuelven `shipping` siempre, también en recogida:
+type ShippingResponse = {
+  isStorePickup: boolean;
+  carrier: { id: string; name: string } | null;   // el nombre es la foto al elegirla
+  chargeMode: "Charged" | "OnDelivery" | "Free" | null;
+  freightAmount: number;
+  freightTaxPercentage: number;     // foto de la tasa; 0 fuera de COP
+  freightSubtotal: number;
+  freightTaxAmount: number;
+  cashOnDelivery: boolean;
+};
+
 type AddQuotationItemRequest = { productId: string; quantity: number };
 type UpdateQuotationItemRequest = { quantity: number };
 
@@ -286,6 +306,22 @@ URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a a
 | `order.payment_proof.file_not_found` / `file_not_available` / `file_type_not_allowed` / `file_too_large` | 422 | Problema con un comprobante nuevo |
 | `order.payment_proof.amount_invalid` | 422 | Un comprobante (nuevo o corregido en `updatedProofs`) con monto ≤ 0 |
 | `order.payment_proof.not_found` | 422 | `updatedProofs` referencia un `proofId` que no es de este pedido |
+| `quotations.carrier.not_found` | 404 | El `carrierId` de la ruta no existe en este tenant (`PUT /carriers/{carrierId}`, `activate`, `deactivate`) |
+| `quotations.carrier.name_required` / `name_too_long` | 422 | El nombre de la transportadora llegó vacío o pasa de 60 caracteres. Escríbelo de nuevo, más corto si hace falta |
+| `quotations.carrier.name_taken` | 422 | Otra transportadora del tenant —activa **o inactiva**— ya usa ese nombre o alguno de los externos, comparados sin mayúsculas ni tildes. Cambia el nombre, o reactiva la que ya existe |
+| `quotations.carrier.too_many_external_names` / `external_name_too_long` / `external_name_duplicated` | 422 | Los nombres externos (cómo llama el ERP a la transportadora) pasan de 20, algún nombre pasa de 120 caracteres, o hay dos iguales o vacíos. Depura la lista |
+| `quotations.carrier.order_mismatch` | 422 | `PUT /carriers/order` sin la lista completa de ids: el orden se manda entero, con todas las transportadoras del tenant, activas e inactivas. Recarga `GET /carriers` y reenvía |
+| `quotations.freight_tax_rate.not_found` | 422 | `PUT /carriers/freight-tax-rate` con una tasa que no es de este tenant. Elige una de las del catálogo |
+| `quotations.freight_tax_rate.inactive` | 422 | La tasa elegida para el IVA del envío está desactivada en Catálogo. Elige una activa |
+| `quotation.quotation.shipping_not_allowed_on_pickup` / `order.order.shipping_not_allowed_on_pickup` | 422 | La entrega es recoger en tienda y el cuerpo trae transportadora, valor de envío o contraentrega. Quítalos, o cambia la entrega a envío |
+| `quotation.quotation.freight_amount_invalid` / `order.order.freight_amount_invalid` | 422 | El valor del envío es negativo, o en COP trae decimales. Escribe pesos enteros y positivos |
+| `quotation.quotation.freight_amount_required` / `order.order.freight_amount_required` | 422 | `Charged` con valor 0. Escribe el valor, o elige `Free` si el envío no se cobra |
+| `quotation.quotation.freight_amount_not_allowed` / `order.order.freight_amount_not_allowed` | 422 | Un valor mayor que 0 con `Free` o sin modo de envío. Pon el modo (`Charged` u `OnDelivery`), o deja el valor en 0 |
+| `quotation.quotation.freight_charge_mode_invalid` / `order.order.freight_charge_mode_invalid` | 422 | `freightChargeMode` no es `Charged`, `OnDelivery` ni `Free`: ni otra capitalización ni números |
+| `quotation.quotation.carrier_not_available` / `order.order.carrier_not_available` | 422 | La transportadora no existe en el tenant o está inactiva. Recarga `GET /shipping-options` y elige una de la lista. Una transportadora que el documento ya tenía y se apagó después no da este error mientras no la cambies |
+| `quotation.quotation.cash_on_delivery_not_supported` / `order.order.cash_on_delivery_not_supported` | 422 | Contraentrega con una transportadora que no recauda (`supportsCashOnDelivery: false`). Elige otra, o quita la contraentrega |
+| `order.order.cash_on_delivery_pending_only` | 422 | Prender la contraentrega en un pedido que ya tiene comprobantes o cuyo pago no está en `PaymentPending`. Sólo se cobra contra entrega lo que todavía no se ha pagado |
+| `quotation.quotation.freight_tax_rate_missing` / `order.order.freight_tax_rate_missing` | 422 | Cobrar un envío en COP (`Charged` con valor) cuando el tenant no tiene tasa de IVA del envío, o la que tenía está desactivada. Un administrador la fija en Configuración › Transportadoras |
 | `validation.failed` | 422 | Errores de campo, viene con `errors` |
 
 ---

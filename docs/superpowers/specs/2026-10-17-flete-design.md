@@ -519,3 +519,21 @@ completa.
   lienzo «Entrega y flete del pedido» y un inventario del código (§2); spec escrito. Pendientes P1 y P2, la
   lectura del owner y el plan.
 - 2026-10-17: aprobado por el owner. P1 y P2 quedan con su valor por defecto hasta que diga otra cosa.
+- 2026-10-17: implementación del backend (plan `docs/superpowers/plans/2026-10-17-flete-backend.md`, 12 tareas).
+  Decisiones del plan: P1 el IVA del envío se calcula como una línea (`VatIncludedLine.Compute(1, monto, 0,
+  tasa, moneda)`; $ 15.000 al 19 % da 12.605,04 + 2.394,96); P2 la tasa vive en `IQuotationSettingsStore`
+  (`Get/SetFreightTaxRateIdAsync`) y no en `QuotationSettings`, para que el `PUT` del mínimo no la pise; P3 lo que
+  el dominio no puede verificar (transportadora activa, recaudo, tasa del tenant) va en `ShippingResolver` y la
+  coherencia en el dominio; P4 `shipping` ausente deja el envío, salvo recogida, que lo limpia; P5 el pedido no
+  cambia de moneda, así que D-F15 sólo existe en `Quotation`. Resoluciones en curso: R1 la coherencia de recogida
+  se valida en `SetShipping` y en las fábricas del pedido, no en `UpdateDetails`; R3 la propiedad calculada se
+  llama `ShippingDetails` porque `Shipping` ya es la parte de entrega; R4 prender contraentrega en un pedido se
+  rechaza con comprobantes o con pago distinto de `PaymentPending` (manda §5.4); R6, R8 y R10 las mutaciones de
+  transportadoras y de la tasa se auditan (`quotations.carrier.*`, `quotations.freight_tax_rate.updated`) y el cambio
+  de envío de un pedido como `quotation.order.shipping_changed`; R11 con contraentrega el PDF imprime «Forma de
+  pago: Contraentrega» en lugar de la forma de pago escrita; R12 y R13 `OrdersExportLayout.Effective` agrega
+  oculta la columna nueva del catálogo cuyo encabezado choca con una visible (la hoja sembrada conserva su fija
+  «valor flete», vacía, hasta que el operador la cambie por la del catálogo), y un `PUT` parcial que omite la del
+  catálogo y agrega una fija con su encabezado pasa a aceptarse. Pendiente: la compilación de la plantilla Typst
+  del PDF no se pudo verificar (typst no estaba instalado); falta correr `QuotationTemplateTests` o renderizar con
+  qcode-pdf. El frontend va en su propio plan.

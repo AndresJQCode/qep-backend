@@ -332,6 +332,17 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   del triage se cierra con el índice único `IX_triage_decisions_conversation_inbound`, que
   `PipelineUnitOfWork` traduce a `pipeline.triage.already_decided` **por nombre de índice**: no la muevas a una
   comprobación previa en el handler, que dejaría dos negocios.
+- **Un `FromSql` crudo debe listar todas las columnas mapeadas de la entidad.** El `SELECT … FOR UPDATE` de
+  `QuotationSettingsStore` no se puede componer (EF lo envolvería en una subconsulta), así que EF no completa
+  las columnas que falten: al agregar `freight_tax_rate_id` a `tenant_quotation_settings`, guardar el mínimo de
+  compra dio 500 hasta que se sumó al `SELECT`. Al extender una tabla, busca los `FromSql` que la leen.
+- **Una prueba de migración que baja a una versión vieja tiene que volver a la última antes de llamar a la
+  API.** El modelo de hoy pide las columnas de las migraciones posteriores (`AddFreight`); sin
+  `MigrateAsync(null)` al final, el `POST` de la prueba da 500 (`QuotationSettingsMigrationTests`).
+- **`OrdersExportLayout.Effective` oculta una columna nueva del catálogo cuyo encabezado choca con una visible**
+  del layout guardado (misma comparación que `header_duplicated`), y no falla. La hoja sembrada «MIGRACION 1»
+  tiene su fija «valor flete» vacía, así que `Valor Flete` del catálogo nace oculta ahí. Al agregar una columna
+  al catálogo, revisa los encabezados de las fijas de la semilla.
 
 ## Verificación
 
