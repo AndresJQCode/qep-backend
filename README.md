@@ -1372,8 +1372,8 @@ encabezado, sin distinguir mayúsculas), `all_hidden`, `too_many_fixed_columns` 
 `PUT` con el catálogo en su orden, nombres y visibilidad por defecto, sin fijas.
 
 `Observaciones` (`notes`) sale de las notas del pedido (`Order.Notes`, spec 2026-10-15), sin tope de
-largo. Al convertir, el pedido hereda las notas de la cotización y, si al convertir se escribieron
-otras, van detrás separadas por una línea en blanco.
+largo. Al convertir, las notas del pedido son un solo campo, nunca una concatenación: el `notes` del
+cuerpo la reemplaza tal cual, `null` (o ausente) hereda las de la cotización y `""` la deja sin notas.
 
 Un layout guardado se aplica en la siguiente exportación de pedidos; el de cotizaciones no cambia.
 

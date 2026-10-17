@@ -316,8 +316,9 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `IExternalOrderWriter` (acepta cliente incompleto); el manual exige cliente completo con CUC. Los eventos
   `quotations.order.created.v1` y `order.cancelled.v1` llevan `source` y `quotationId` nullable: Pipeline los lee
   por nombre y guarda la foto en `pipeline.deal_orders` (un `order.created` **con** cotización no hace nada: ya
-  actuó el `converted`). `Observaciones` del Excel sale de `Order.Notes`, que al convertir hereda las de la
-  cotización. Un `INSERT` a mano en `quotations.orders` (siembras, pruebas) tiene que llenar las columnas propias
+  actuó el `converted`). `Observaciones` del Excel sale de `Order.Notes`, que es un solo campo al
+  convertir (el `notes` del cuerpo la reemplaza; `null` hereda las de la cotización; `""` la deja vacía; nunca se
+  concatenan). Un `INSERT` a mano en `quotations.orders` (siembras, pruebas) tiene que llenar las columnas propias
   y copiar `order_items`/`order_parties`: son `NOT NULL` desde `AddOrderOwnData`.
 - **El embudo de un tenant nace en su primer acceso, no al prender el módulo.** Tenancy no publica nada al
   activar una capacidad; `PipelineProvisioner` crea el embudo con `INSERT … ON CONFLICT (tenant_id) DO NOTHING`.

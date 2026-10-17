@@ -30,6 +30,33 @@ public sealed class OrderApiTests
     private static string OrderItemsUrl(Guid tenantId, Guid orderId) =>
         $"{OrderByIdUrl(tenantId, orderId)}/items";
 
+    // Decisión del owner 2026-10-18: las notas del pedido son un solo campo. `notes` ausente o null hereda las
+    // de la cotización; con texto las reemplaza; "" las borra. Se manda JSON crudo para fijar qué viaja.
+    [Theory]
+    [InlineData("""{"paymentStatus":"PaymentPending","paymentProofs":[]}""", "Nota de la cotización")]
+    [InlineData("""{"paymentStatus":"PaymentPending","notes":null,"paymentProofs":[]}""", "Nota de la cotización")]
+    [InlineData("""{"paymentStatus":"PaymentPending","notes":"Nota del pedido","paymentProofs":[]}""", "Nota del pedido")]
+    [InlineData("""{"paymentStatus":"PaymentPending","notes":"","paymentProofs":[]}""", null)]
+    public async Task ConvertingKeepsASingleNotesField(string body, string? expected)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenantId, clientId, productId, notes: "Nota de la cotización");
+
+        using var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+        var response = await client.PostAsync(
+            OrderUrl(tenantId, quotation.Id), content, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var order = await ReadOrderAsync(response);
+        Assert.Equal(expected, order.Notes);
+    }
+
     // Spec 2026-10-15 §4.4: convertir copia la cotización al pedido y la deja congelada.
     [Fact]
     public async Task ConvertingCopiesTheQuotationAndFreezesIt()

@@ -637,7 +637,8 @@ internal static class QuotationsApiHarness
         Guid clientId,
         Guid productId,
         string? paymentMethod = "Transferencia",
-        QuotationPartiesRequest? parties = null)
+        QuotationPartiesRequest? parties = null,
+        string? notes = null)
     {
         // Los tres datos que `Quotation.EnsureComplete` exige para enviar (f656ec9): productos,
         // vigencia y cuenta de cobro. La vigencia la pone `CreateQuotationAsync`; las otras dos,
@@ -657,7 +658,8 @@ internal static class QuotationsApiHarness
             paymentMethod: paymentMethod,
             // Null es el caso normal: factura y entrega a los datos del cliente. Una prueba que
             // necesita recogida en tienda (spec 2026-10-05) la pide acá.
-            parties: parties);
+            parties: parties,
+            notes: notes);
         await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
             new AddQuotationItemRequest(productId, 1m),
@@ -686,7 +688,8 @@ internal static class QuotationsApiHarness
         DateOnly? validUntil = null,
         QuotationBillingAccountRequest? billingAccount = null,
         string? paymentMethod = null,
-        QuotationPartiesRequest? parties = null)
+        QuotationPartiesRequest? parties = null,
+        string? notes = null)
     {
         var response = await client.PostAsJsonAsync(
             QuotationsUrl(tenantId),
@@ -694,7 +697,7 @@ internal static class QuotationsApiHarness
                 clientId,
                 validUntil ?? TodayInBogota().AddDays(30),
                 paymentMethod,
-                null,
+                notes,
                 parties,
                 billingAccount),
             TestContext.Current.CancellationToken);

@@ -312,6 +312,46 @@ public sealed class OrderTests
     [Fact]
     public void FromQuotationCopiesHeaderPartiesAndLinesAndMatchesItsTotals()
     {
+        var quotation = ConvertedQuotation();
+
+        var order = Order.FromQuotation(
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, OrderPaymentStatus.PaymentPending, "Pago verificado",
+            ConvertedBy, [], Now);
+
+        Assert.Equal((OrderSource.Quotation, (QuotationId?)quotation.Id), (order.Source, order.QuotationId));
+        Assert.Equal((quotation.Subtotal, quotation.TaxAmount, quotation.Total, quotation.RetentionAmount, quotation.NetTotal),
+            (order.Subtotal, order.TaxAmount, order.Total, order.RetentionAmount, order.NetTotal));
+        Assert.Equal("Pago verificado", order.Notes);
+        var item = Assert.Single(order.Items);
+        Assert.Equal(("ABC", 10m, 5m), (item.ProductCode, item.Quantity, item.DiscountPercentage));
+        Assert.Equal("Bodega", order.Shipping!.Name);
+        Assert.True(order.AppliesRetention);
+    }
+
+    [Fact]
+    public void FromQuotationInheritsTheQuotationNotesWhenTheRequestOmitsThem()
+    {
+        var order = Order.FromQuotation(
+            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(), OrderPaymentStatus.PaymentPending, null,
+            ConvertedBy, [], Now);
+
+        Assert.Equal("Entregar en portería", order.Notes);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void FromQuotationWithEmptyNotesLeavesTheOrderWithoutNotes(string notes)
+    {
+        var order = Order.FromQuotation(
+            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(), OrderPaymentStatus.PaymentPending, notes,
+            ConvertedBy, [], Now);
+
+        Assert.Null(order.Notes);
+    }
+
+    private static Quotation ConvertedQuotation()
+    {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 11, 1), "Transferencia",
             "Entregar en portería",
@@ -331,18 +371,7 @@ public sealed class OrderTests
             [quotation.Items.Single().ProductId] = new("ABC", "Aceite"),
         });
 
-        var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation, OrderPaymentStatus.PaymentPending, "Pago verificado",
-            ConvertedBy, [], Now);
-
-        Assert.Equal((OrderSource.Quotation, (QuotationId?)quotation.Id), (order.Source, order.QuotationId));
-        Assert.Equal((quotation.Subtotal, quotation.TaxAmount, quotation.Total, quotation.RetentionAmount, quotation.NetTotal),
-            (order.Subtotal, order.TaxAmount, order.Total, order.RetentionAmount, order.NetTotal));
-        Assert.Equal("Entregar en portería\n\nPago verificado", order.Notes);
-        var item = Assert.Single(order.Items);
-        Assert.Equal(("ABC", 10m, 5m), (item.ProductCode, item.Quantity, item.DiscountPercentage));
-        Assert.Equal("Bodega", order.Shipping!.Name);
-        Assert.True(order.AppliesRetention);
+        return quotation;
     }
 
     [Fact]
