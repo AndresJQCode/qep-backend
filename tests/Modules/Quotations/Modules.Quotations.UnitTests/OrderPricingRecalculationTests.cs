@@ -52,6 +52,27 @@ public sealed class OrderPricingRecalculationTests
                 order.Items.Single(item => item.ProductId == kept).DiscountPercentage));
     }
 
+    // El envío cobrado suma al total del pedido, pero no es compra: no habilita el piso global de escala.
+    [Fact]
+    public async Task FreightDoesNotEnableTheGlobalFloor()
+    {
+        var productId = Guid.CreateVersion7();
+        var order = Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0002",
+            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, false),
+            QuotationParties.Empty, BillingAccount, ShippingDetails.None,
+            [new OrderLineInput(productId, 1m, 150_000m, 5m, 19)],
+            OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now);
+        order.SetShipping(new ShippingDetails(null, null, FreightChargeMode.Charged, 60_000m, 19, false), AdvisorId, Now);
+        var settings = QuotationSettings.Create(6, new Dictionary<string, decimal> { ["COP"] = 200_000m });
+
+        await OrderPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(Product(productId)), new FixedQuotationSettingsStore(settings), TenantId, order,
+            Now.AddDays(1), TestContext.Current.CancellationToken);
+
+        Assert.Equal(0m, order.Items.Single().DiscountPercentage);
+    }
+
     private sealed class StubPricingLookup(params QuotationProductPricingRef[] products) : IQuotationProductPricingLookup
     {
         private readonly Dictionary<Guid, QuotationProductPricingRef> _products = products.ToDictionary(product => product.Id);

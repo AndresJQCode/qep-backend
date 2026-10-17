@@ -10,7 +10,7 @@ namespace Modules.Quotations.Application;
 /// <b>Se mide sobre la cotización completa</b>, no por grupo de escala: dos líneas de productos
 /// distintos suman para alcanzarla igual que suman para alcanzar un tramo.
 ///
-/// <b>Se mide sobre el total ya descontado</b> (<see cref="Quotation.Total"/>, que lleva el IVA
+/// <b>Se mide sobre el total de productos ya descontado</b> (<see cref="Quotation.ProductsTotal"/>, sin el envío, que no es compra; lleva el IVA
 /// adentro porque los precios del catálogo ya lo traen), y en **una sola pasada**: se calcula el
 /// descuento, se mira el total resultante, y si no llega se quita el descuento y se termina. No
 /// se vuelve a evaluar. Sin ese corte la regla es circular —quitar el descuento sube el total, que
@@ -34,7 +34,7 @@ internal static class QuotationMinimumPurchase
     /// discount. Called after applying them, never before: the total that decides is the one after.
     /// </summary>
     public static bool IsSatisfiedBy(Quotation quotation, QuotationSettings settings) =>
-        IsMet(quotation.Items.Sum(item => item.Quantity), quotation.Total, quotation.Currency, settings);
+        IsMet(quotation.Items.Sum(item => item.Quantity), quotation.ProductsTotal, quotation.Currency, settings);
 
     /// <summary>
     /// The state the frontend paints. Built from units, total and currency only, so it reads the

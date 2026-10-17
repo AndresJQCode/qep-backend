@@ -48,7 +48,7 @@ internal static class OrderPricingRecalculation
 
         var discounts = Apply(order, lines, scalesByProduct, order.GlobalScaleFloor, occurredAt);
         var settings = await settingsStore.GetAsync(tenantId, cancellationToken);
-        if (QuotationMinimumPurchase.IsMet(order.Items.Sum(item => item.Quantity), order.Total, order.Currency, settings))
+        if (QuotationMinimumPurchase.IsMet(order.Items.Sum(item => item.Quantity), order.ProductsTotal, order.Currency, settings))
         {
             return;
         }
@@ -56,7 +56,7 @@ internal static class OrderPricingRecalculation
         if (order.GlobalScaleFloor is not null)
         {
             discounts = Apply(order, lines, scalesByProduct, globalFloor: null, occurredAt);
-            if (QuotationMinimumPurchase.IsMet(order.Items.Sum(item => item.Quantity), order.Total, order.Currency, settings))
+            if (QuotationMinimumPurchase.IsMet(order.Items.Sum(item => item.Quantity), order.ProductsTotal, order.Currency, settings))
             {
                 return;
             }

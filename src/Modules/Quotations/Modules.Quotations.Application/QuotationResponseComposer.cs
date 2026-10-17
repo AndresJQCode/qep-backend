@@ -93,7 +93,7 @@ public sealed class QuotationResponseComposer(
             quotation.HasChangesSinceSent,
             quotation.CanBeConvertedToOrder,
             ToMinimumPurchaseResponse(QuotationMinimumPurchase.DescribeFor(
-                quotation.Items.Sum(item => item.Quantity), quotation.Total, quotation.Currency, settings)),
+                quotation.Items.Sum(item => item.Quantity), quotation.Subtotal + quotation.TaxAmount, quotation.Currency, settings)),
             quotation.Items
                 .Select(item => ToItemResponse(item, products, quotation.GlobalScaleFloor))
                 .ToArray(),

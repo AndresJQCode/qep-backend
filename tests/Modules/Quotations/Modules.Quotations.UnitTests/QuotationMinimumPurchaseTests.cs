@@ -1,4 +1,5 @@
 using Modules.Quotations.Application;
+using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
 
@@ -51,5 +52,31 @@ public sealed class QuotationMinimumPurchaseTests
         Assert.Equal(
             new Dictionary<string, decimal> { ["COP"] = 500_000m, ["USD"] = 200m },
             QuotationSettings.Default.MinimumTotals);
+    }
+
+    // El envío cobrado suma al total del documento, pero no es compra: no ayuda a llegar al mínimo.
+    [Fact]
+    public void FreightDoesNotHelpReachTheMinimum()
+    {
+        var advisor = new MemberId(Guid.CreateVersion7());
+        var now = new DateTimeOffset(2026, 10, 17, 12, 0, 0, TimeSpan.Zero);
+        var quotation = Quotation.Create(
+            QuotationId.New(), Guid.CreateVersion7(), "QUO-2026-0001", Guid.CreateVersion7(), advisor,
+            new DateOnly(2026, 12, 31), paymentMethod: "Transferencia bancaria", notes: null, QuotationParties.Empty,
+            new QuotationBillingAccount
+            {
+                CompanyId = Guid.CreateVersion7(),
+                BankName = "Bancolombia",
+                AccountNumber = "12345678",
+                Currency = "COP"
+            },
+            "COP", customerWithRetention: false, customerVatSurplus: false, advisor, now);
+        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 1m, 150_000m, 0m, 19, advisor, now);
+        quotation.SetShipping(
+            new ShippingDetails(null, null, FreightChargeMode.Charged, 60_000m, 19, false), advisor, now);
+        var settings = QuotationSettings.Create(6, new Dictionary<string, decimal> { ["COP"] = 200_000m });
+
+        Assert.Equal(210_000m, quotation.Total);
+        Assert.False(QuotationMinimumPurchase.IsSatisfiedBy(quotation, settings));
     }
 }
