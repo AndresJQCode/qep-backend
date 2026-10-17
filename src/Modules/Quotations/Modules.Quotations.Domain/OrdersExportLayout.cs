@@ -236,12 +236,22 @@ public sealed class OrdersExportLayout
         var known = catalog.Select(column => column.Key).ToHashSet(StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var effective = new List<OrdersExportColumnSetting>(stored.Count + catalog.Count);
+        // Los encabezados visibles ya emitidos, con el mismo comparador que Validate: una columna nueva
+        // del catálogo cuyo encabezado choca con uno visible (la fija "valor flete" de la hoja del ERP
+        // contra "Valor Flete") se completa oculta, porque dos visibles iguales se pisan en el ERP y el
+        // GET devolvería un layout que su propio PUT rechaza con header_duplicated.
+        var visibleHeaders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var column in stored)
         {
             if (column.Kind == OrdersExportColumnKind.Fixed)
             {
                 effective.Add(column);
+                if (column.Visible)
+                {
+                    visibleHeaders.Add(column.Header);
+                }
+
                 continue;
             }
 
@@ -249,6 +259,10 @@ public sealed class OrdersExportLayout
             {
                 seen.Add(key);
                 effective.Add(column);
+                if (column.Visible)
+                {
+                    visibleHeaders.Add(column.Header);
+                }
             }
         }
 
@@ -256,7 +270,8 @@ public sealed class OrdersExportLayout
         {
             if (seen.Add(column.Key))
             {
-                effective.Add(OrdersExportColumnSetting.Catalog(column.Key, column.DefaultHeader, column.DefaultVisible));
+                var visible = column.DefaultVisible && visibleHeaders.Add(column.DefaultHeader);
+                effective.Add(OrdersExportColumnSetting.Catalog(column.Key, column.DefaultHeader, visible));
             }
         }
 

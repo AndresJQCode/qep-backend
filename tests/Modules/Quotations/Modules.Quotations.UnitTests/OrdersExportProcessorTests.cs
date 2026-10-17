@@ -850,13 +850,20 @@ public sealed class OrdersExportProcessorTests
             cells);
     }
 
+    // Recogida: el dominio no deja que un pedido de recogida lleve flete, transportadora ni contraentrega
+    // (spec §5.2, lo rechaza), así que el pedido llega sin envío: valor y modo vacíos, desglose en 0 y
+    // sin contraentrega.
     [Fact]
     public async Task FreightColumnsAreEmptyForAStorePickup()
     {
-        var cells = await FreightCellsAsync(NewRow("PED-2026-0001", parties: StorePickup));
+        var cells = await FreightCellsAsync(NewRow(
+            "PED-2026-0001",
+            parties: StorePickup));
 
-        Assert.Equal(ExportCell.OfText(string.Empty), cells[0]);
-        Assert.Equal(ExportCell.OfText(string.Empty), cells[3]);
+        Assert.Equal(
+            [ExportCell.OfText(string.Empty), ExportCell.OfNumber(0m), ExportCell.OfNumber(0m),
+                ExportCell.OfText(string.Empty), ExportCell.OfText("No")],
+            cells);
     }
 
     [Fact]
@@ -1334,7 +1341,7 @@ public sealed class OrdersExportProcessorTests
 
     // Ajuste 2026-10-06: "Retencion" es Quotation.RetentionAmount, la misma en cada línea del pedido,
     // detrás de "Total facturado". Con las dos el ERP cuadra lo facturado contra lo que de verdad se
-    // cobra: NetTotal = Total − RetentionAmount. Visible por defecto, la última del archivo sin
+    // cobra: NetTotal = Total − RetentionAmount. Visible por defecto, penúltima del archivo sin
     // layout guardado.
     private const int RetencionIndex = 41;
 
@@ -1777,7 +1784,7 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(5m, writer.Rows[1][4].Number);
     }
 
-    // Una fija oculta no viaja: ni columna ni celda. Hay 42 columnas, como sin layout.
+    // Una fija oculta no viaja: ni columna ni celda. Hay 43 columnas, como sin layout.
     [Fact]
     public async Task AHiddenFixedColumnIsNotWritten()
     {

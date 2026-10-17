@@ -9,7 +9,7 @@ namespace Modules.Quotations.Application;
 /// todo" sin conocer el catálogo. <c>DefaultPosition</c> es 1-based (1..46 desde el ajuste
 /// 2026-10-03), como la columna # de la tabla del spec: es la posición que la pantalla muestra.
 /// <c>DefaultVisible</c> (ajuste 2026-10-02) existe porque ya no toda columna nace visible
-/// —"coordinadora_city" y las "payment_method_N" nacen ocultas—, y
+/// —"coordinadora_city", las "payment_method_N" y el desglose del flete nacen ocultas—, y
 /// sin él "restaurar" la prendería: la pantalla tendría que saber de memoria cuáles son. Una llave
 /// repetida (ajuste 2026-09-25) trae los mismos tres defectos en cada entrada. Nulos en una fija,
 /// que no tiene defecto; <c>Value</c> nulo en una del catálogo.

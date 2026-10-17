@@ -450,11 +450,12 @@ public sealed class OrderExportApiTests
         var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
             $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
         var header = sheet.Rows[0];
-        // 49 del catálogo + 1 fija − 8 ocultas: EMPRESA, que oculta el PUT, y "Ciudad Coordinadora"
-        // (ajuste 2026-10-02), las cinco "Forma de pago N" (ajuste 2026-10-03) y "Transportadora"
-        // (ajuste 2026-10-05), que nacen ocultas y el PUT devuelve tal como las recibió del GET.
-        // "Total facturado" (ajuste 2026-10-05) y "Retencion" (ajuste 2026-10-06) nacen visibles.
-        Assert.Equal(43, header.Count); // + "Valor Flete" (flete, 2026-10-17), visible por defecto.
+        // 54 del catálogo + 1 fija − 12 ocultas: EMPRESA, que oculta el PUT, y "Ciudad Coordinadora"
+        // (ajuste 2026-10-02), las cinco "Forma de pago N" (ajuste 2026-10-03), "Transportadora"
+        // (ajuste 2026-10-05) y cuatro del flete (2026-10-17: sin IVA, IVA, modo y contraentrega), que
+        // nacen ocultas y el PUT devuelve tal como las recibió del GET. "Total facturado" (ajuste
+        // 2026-10-05), "Retencion" (ajuste 2026-10-06) y "Valor Flete" (2026-10-17) nacen visibles.
+        Assert.Equal(43, header.Count);
         Assert.Equal("Tipo Doc", header[0]);
         Assert.Equal("Correo", header[1]);
         Assert.Equal("Cod. Producto", header[2]);
@@ -556,7 +557,7 @@ public sealed class OrderExportApiTests
         Assert.True(sheet.NumericCells[1][column]);
     }
 
-    // Ajuste 2026-10-06, de punta a punta: "Retencion" sale por defecto, última, con la retención
+    // Ajuste 2026-10-06, de punta a punta: "Retencion" sale por defecto, antes de "Valor Flete", con la retención
     // de la cotización tal como la lee la base —lo mismo que muestra el detalle del pedido—, como
     // número. Con ella y "Total facturado" el ERP cuadra lo facturado contra lo que se cobra.
     [Fact]
@@ -578,6 +579,35 @@ public sealed class OrderExportApiTests
         Assert.True(detail!.Order.RetentionAmount > 0m);
         Assert.Equal(detail.Order.RetentionAmount, decimal.Parse(sheet.Rows[1][column], CultureInfo.InvariantCulture));
         Assert.True(sheet.NumericCells[1][column]);
+    }
+
+    // Spec 2026-10-17 flete §7: un pedido con transportadora y envío cobrado sale con "Transportadora" y
+    // "Valor Flete" leídos de la base, no de la cotización.
+    [Fact]
+    public async Task AChargedFreightComesOutWithTheCarrierAndTheFreightValue()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var order = await CreateOrderAsync(client, factory, tenantId);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+            var stored = await dbContext.Orders.SingleAsync(row => row.TenantId == tenantId, TestContext.Current.CancellationToken);
+            stored.SetShipping(
+                new ShippingDetails(null, "Servientrega", FreightChargeMode.Charged, 15_000m, 19, false),
+                stored.AdvisorId,
+                DateTimeOffset.UtcNow);
+            await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var sheet = await ExportOrdersSheetAsync(client, factory, tenantId);
+
+        var headers = sheet.Rows[0].ToList();
+        Assert.Equal("Valor Flete", headers[^1]);
+        Assert.Equal(15_000m, decimal.Parse(sheet.Rows[1][^1], CultureInfo.InvariantCulture));
+        Assert.True(sheet.NumericCells[1][^1]);
     }
 
     // El GET trae "coordinadora_city" oculta, al final; el PUT la devuelve visible y en su lugar.

@@ -41,7 +41,8 @@ public sealed class OrdersExportLayoutApiTests
         Assert.All(layout.Columns, column => Assert.Equal("Catalog", column.Kind));
         // Sin fila, cada columna sale como nace: todas visibles menos "coordinadora_city"
         // (ajuste 2026-10-02), las "payment_method_N" (ajuste 2026-10-03) y "carrier" (ajuste
-        // 2026-10-05), que nacen ocultas y lo dicen en defaultVisible.
+        // 2026-10-05) y las cuatro del flete salvo "freight_amount" (2026-10-17), que nacen ocultas y
+        // lo dicen en defaultVisible.
         Assert.All(layout.Columns, column => Assert.Equal(column.DefaultVisible, column.Visible));
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, true), layout.Columns[0]);
         Assert.Equal(new ColumnPayload("Catalog", "email", "Email", 19, true, "Email", null, true), layout.Columns[18]);
@@ -455,8 +456,8 @@ public sealed class OrdersExportLayoutApiTests
             ["coordinadora_city", "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5", "carrier", "order_total", "retention_amount",
                 "freight_amount", "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery"],
             layout.Columns.TakeLast(14).Select(column => column.Key));
-        // Las siete primeras nacen ocultas; "order_total" (ajuste 2026-10-05) y "retention_amount"
-        // (ajuste 2026-10-06) nacen visibles.
+        // Las siete primeras nacen ocultas; "order_total" (ajuste 2026-10-05), "retention_amount"
+        // (ajuste 2026-10-06) y "freight_amount" (2026-10-17) nacen visibles.
         Assert.All(layout.Columns.TakeLast(14).Take(7), column => Assert.False(column.Visible));
         // Y "freight_amount" (flete, 2026-10-17) nace visible; el resto del flete, oculto.
         Assert.All(layout.Columns.TakeLast(7).Take(3), column => Assert.True(column.Visible));
