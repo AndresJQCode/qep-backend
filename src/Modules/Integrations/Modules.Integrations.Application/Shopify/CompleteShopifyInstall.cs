@@ -76,8 +76,8 @@ public sealed class CompleteShopifyInstallValidator : AbstractValidator<Complete
 /// la app configurada, <c>hmac_invalid</c>, como el inicio B) → dominio → fila por <c>state</c>, de la misma tienda y con
 /// el mismo <c>redirect_uri</c> (si no, <c>install_not_found</c>: no se revela que el <c>state</c> existe para otra) → ya
 /// canjeada = <c>install_not_found</c>, vencida = <c>install_expired</c> → llave de cifrado disponible (503 antes de
-/// gastar el <c>code</c>) → reclamo de la fila con un <c>UPDATE</c> condicionado que consume el <c>state</c> (ruling S9;
-/// el perdedor, <c>install_not_found</c>) → canje → scopes → lectura de la tienda → token cifrado con AAD
+/// gastar el <c>code</c>) → reclamo de la fila con un <c>UPDATE</c> condicionado que consume el <c>state</c> antes de
+/// llamar a Shopify (el perdedor, <c>install_not_found</c>) → canje → scopes → lectura de la tienda → token cifrado con AAD
 /// <c>installId</c> + <c>accessToken</c> → canje guardado sobre la fila reclamada → ruta existente.
 /// </summary>
 public sealed class CompleteShopifyInstallHandler(
@@ -117,7 +117,7 @@ public sealed class CompleteShopifyInstallHandler(
             throw ShopifyInstallErrors.InstallNotFound();
         }
 
-        // Un solo instante por request (minor 1 de la revisión): la vigencia se decide al reclamar, y la fila reclamada se
+        // Un solo instante por request: la vigencia se decide al reclamar, y la fila reclamada se
         // canjea aunque los 15 minutos se cumplan mientras Shopify responde. Ya no la puede usar nadie más y Shopify ya
         // gastó el code; vencerla ahí sería un 500 o un install_expired sin salida.
         var now = clock.UtcNow;
@@ -128,7 +128,7 @@ public sealed class CompleteShopifyInstallHandler(
 
         SecretProtectionGuard.EnsureAvailable(protector);
 
-        // Ruling S9: el state se consume antes de llamar a Shopify. El que pierde la carrera recibe lo mismo que un state ya
+        // El state se consume antes de llamar a Shopify. El que pierde la carrera recibe lo mismo que un state ya
         // consumido y no gasta el code otra vez (RFC 6749 §4.1.2: un code canjeado dos veces puede revocar el primer token).
         var state = install.State;
         install.Claim(ShopifyInstall.ClaimedStatePrefix + Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(ClaimBytes)), now);
@@ -211,7 +211,7 @@ public sealed class CompleteShopifyInstallHandler(
     }
 
     // La ruta es cross-tenant a propósito: la tienda puede estar enlazada a un tenant que no es de quien instala, y la
-    // pantalla tiene que poder decirlo (Review Focus 3). Una conexión borrada no deja ruta.
+    // pantalla tiene que poder decirlo. Una conexión borrada no deja ruta.
     private async Task<LinkedTenantResponse?> LinkedTenantAsync(string shopDomain, CancellationToken cancellationToken)
     {
         var route = await routes.FindAsync(IntegrationProviders.Shopify.Key, shopDomain, cancellationToken);

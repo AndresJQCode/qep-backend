@@ -13,7 +13,7 @@ namespace Modules.Integrations.UnitTests;
 /// <summary>
 /// Spec 2026-10-15 §4.3 paso 4, el canje: HMAC del callback, fila por <c>state</c> (un solo uso), misma tienda y mismo
 /// <c>redirect_uri</c>, canje del <c>code</c>, scopes completos, lectura de la tienda y token cifrado con AAD
-/// <c>installId</c> + <c>accessToken</c>; la fila pasa a vencer a los 7 días. Review Focus 5: el segundo canje del mismo
+/// <c>installId</c> + <c>accessToken</c>; la fila pasa a vencer a los 7 días. El segundo canje del mismo
 /// <c>state</c> es <c>install_not_found</c> sin volver a llamar a Shopify.
 /// </summary>
 public sealed class CompleteShopifyInstallHandlerTests
@@ -303,7 +303,7 @@ public sealed class CompleteShopifyInstallHandlerTests
         Assert.Single(bed.Installs.Added);
     }
 
-    // Ruling S9: los dos clics leyeron la fila sin token; el reclamo del state, antes de llamar a Shopify, deja pasar a uno
+    // Los dos clics leyeron la fila sin token; el reclamo del state, antes de llamar a Shopify, deja pasar a uno
     // solo. El que pierde recibe lo mismo que un state ya consumido y no gasta el code.
     [Fact]
     public async Task CompleteLosingTheClaimThrowsInstallNotFoundWithoutCallingShopify()
@@ -319,7 +319,7 @@ public sealed class CompleteShopifyInstallHandlerTests
         Assert.Empty(bed.Installs.Exchanged);
     }
 
-    // Minor 1 de la revisión: la fila vigente al reclamarla puede vencer mientras Shopify responde (hasta 20 s). El reclamo
+    // La fila vigente al reclamarla puede vencer mientras Shopify responde (hasta 20 s). El reclamo
     // ya la consumió y Shopify ya gastó el code: el canje termina, con un solo instante por request, y nunca es 500.
     [Fact]
     public async Task CompleteRowExpiringDuringTheShopifyCallsStillCompletes()

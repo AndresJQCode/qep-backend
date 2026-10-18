@@ -6,7 +6,8 @@ namespace Modules.Shopify.Application;
 /// <summary>
 /// Spec 2026-10-15 §6.2.2 paso 6: las pasarelas de pago de Shopify que significan contraentrega. Se comparan normalizadas igual
 /// que los nombres de transportadora (<c>CarrierName.Normalize</c> de Quotations: sin mayúsculas, tildes ni espacios repetidos);
-/// Shopify no referencia Quotations, así que la regla está copiada acá y la amarra <c>ShopifyShippingMapperTests</c>. Los valores
+/// Shopify no referencia Quotations, así que la regla está copiada acá y la amarra <c>ShopifyNormalizationParityTests</c> en
+/// <c>Bootstrapper.UnitTests</c>, que ve los dos módulos y compara las dos funciones con los mismos textos. Los valores
 /// son los iniciales del spec, a confirmar con un pedido contraentrega real (V-8).
 /// </summary>
 public static class ShopifyCashOnDeliveryGateways

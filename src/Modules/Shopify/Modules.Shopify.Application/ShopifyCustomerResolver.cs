@@ -121,8 +121,8 @@ public sealed class ShopifyCustomerResolver(
     /// <summary>
     /// §6.2.1 paso 5: la ciudad DIVIPOLA de la dirección de envío, sólo en Colombia. Primero por el código del departamento
     /// (<see cref="ColombiaProvinceCodes"/>) y, si no da, por el nombre de <c>province</c>. Geography compara sin tildes ni
-    /// mayúsculas (<c>NameMatching.Normalize</c>), así que «MEDELLÍN» y «medellin» son la misma. Público para que la parte de envío
-    /// del pedido (tarea 14) use la misma regla.
+    /// mayúsculas (<c>NameMatching.Normalize</c>), así que «MEDELLÍN» y «medellin» son la misma. Público porque la dirección de envío
+    /// del pedido (<see cref="ShopifyOrderImporter"/>) usa la misma regla.
     /// </summary>
     public async Task<ShopifyCityRef?> ResolveCityAsync(ShopifyAddress? address, CancellationToken cancellationToken)
     {

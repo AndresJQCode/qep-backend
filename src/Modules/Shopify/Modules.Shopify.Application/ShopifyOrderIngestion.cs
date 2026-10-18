@@ -5,8 +5,8 @@ using Modules.Shopify.Domain;
 namespace Modules.Shopify.Application;
 
 /// <summary>
-/// Spec 2026-10-15 §5.4 y §5.2 paso 4: el upsert del espejo y el intento de importación de un pedido ya normalizado. Lo usa el
-/// webhook y está pensado para que la conciliación (tarea 15) pase por el mismo camino.
+/// Spec 2026-10-15 §5.4 y §5.2 paso 4: el upsert del espejo y el intento de importación de un pedido ya normalizado. Es el único
+/// camino: lo usan el webhook, la conciliación y el reintento manual.
 /// <list type="bullet">
 /// <item>La tienda nace vacía en el primer contacto (§6.1), aunque la conexión no esté operativa.</item>
 /// <item>El espejo se actualiza siempre; la importación, sólo si la conexión es operativa y la fila sigue <c>Waiting</c>. Un snapshot
@@ -18,7 +18,7 @@ namespace Modules.Shopify.Application;
 /// <see cref="MaxConcurrencyAttempts"/> veces; si sigue chocando, lanza y la entrega vuelve con su lease.</item>
 /// </list>
 /// Los cambios de pago y cancelación sobre una fila que ya existía (§6.3) van a <see cref="IShopifyOrderChangeReaction"/> con el
-/// estado anterior capturado antes de <c>ApplySnapshot</c>, y antes del guardado que persiste el snapshot (Ruling S14).
+/// estado anterior capturado antes de <c>ApplySnapshot</c>, y antes del guardado que persiste el snapshot.
 /// </summary>
 public sealed class ShopifyOrderIngestion(
     IShopifyStoreRepository stores,
@@ -76,12 +76,12 @@ public sealed class ShopifyOrderIngestion(
         var store = await stores.FindAsync(connection.TenantId, connection.ConnectionId, cancellationToken);
         if (store is null)
         {
-            // D-S4 (ruling S25): la ventana de la conciliación arranca en el enlace, no en este primer webhook.
+            // D-S4: la ventana de la conciliación arranca en el enlace, no en este primer webhook.
             store = ShopifyStoreSupport.NewStore(connection, clock.UtcNow);
             await ShopifyStoreSupport.AddNewAsync(stores, store, cancellationToken);
         }
 
-        // Ruling S16: el dominio queda en la tienda para que shop/redact la encuentre aunque la conexión se borre.
+        // El dominio queda en la tienda para que shop/redact la encuentre aunque la conexión se borre.
         if (!string.IsNullOrWhiteSpace(connection.ShopDomain)
             && !string.Equals(store.ShopDomain, connection.ShopDomain.Trim().ToLowerInvariant(), StringComparison.Ordinal))
         {
@@ -100,13 +100,13 @@ public sealed class ShopifyOrderIngestion(
         }
         else
         {
-            // Ruling S14: ApplySnapshot pisa FinancialStatus y CancelledAt; lo que §6.3 compara se lee antes.
+            // ApplySnapshot pisa FinancialStatus y CancelledAt; lo que §6.3 compara se lee antes.
             previous = ShopifyMirrorState.Of(row);
             var existing = row;
             applied = Guarded(() => existing.ApplySnapshot(payload, snapshot.UpdatedAt, header));
         }
 
-        // Ruling S14: la reacción va antes del guardado, en la misma unidad de trabajo. Si falla no se guarda el snapshot, la
+        // La reacción va antes del guardado, en la misma unidad de trabajo. Si falla no se guarda el snapshot, la
         // entrega vuelve con su lease y el reintento ve el mismo estado anterior: el cambio no se pierde.
         if (applied && previous is not null)
         {

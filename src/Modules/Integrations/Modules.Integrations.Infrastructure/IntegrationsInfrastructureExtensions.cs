@@ -117,7 +117,7 @@ public static class IntegrationsInfrastructureExtensions
         // Singleton: sus dependencias lo son, y el probador (singleton, como el registro de probadores) lo usa.
         services.AddSingleton<IShopifyAdminGateway, ShopifyAdminGateway>();
         services.AddSingleton<IProviderConnectionTester, ShopifyConnectionTester>();
-        // §9: las instalaciones vencidas se barren cada hora, con margen para el canje en vuelo (ruling S9).
+        // §9: las instalaciones vencidas se barren cada hora, con margen para el canje en vuelo.
         services.AddHostedService<ShopifyInstallSweeper>();
 
         return services;

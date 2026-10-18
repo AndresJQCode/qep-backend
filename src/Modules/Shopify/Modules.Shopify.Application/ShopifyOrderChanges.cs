@@ -4,7 +4,7 @@ using Modules.Shopify.Domain;
 namespace Modules.Shopify.Application;
 
 /// <summary>
-/// Spec 2026-10-15 §6.3 (ruling S17): pago y cancelación de un pedido de Shopify que ya estaba en el espejo. La ingesta la llama
+/// Spec 2026-10-15 §6.3: pago y cancelación de un pedido de Shopify que ya estaba en el espejo. La ingesta la llama
 /// con el estado anterior de la fila, antes del guardado que persiste el snapshot; lo que escribe en la fila
 /// (<c>last_error</c>, <c>MarkCancelled</c>, <c>MarkIgnored</c>) entra en ese mismo commit.
 /// <list type="bullet">
@@ -13,14 +13,14 @@ namespace Modules.Shopify.Application;
 /// anular a mano. Otro rechazo: queda importada con el código en <c>last_error</c> (decisión pendiente del owner).</item>
 /// <item><b>Importada con otro <c>financial_status</c></b> (también si la anulación del mismo aviso se rechazó): se sincroniza el pago; un rechazo (<c>not_pending</c>,
 /// <c>payment_has_proofs</c>) va a <c>last_error</c>; <c>refunded</c>, <c>partially_refunded</c> y <c>voided</c> no dejan
-/// rastro (ruling S19).</item>
+/// rastro.</item>
 /// <item><b>En espera y cancelada:</b> <c>Ignored</c>, salvo que el pedido ya exista en QEP con su clave externa (el worker cayó
 /// entre crearlo y marcar la fila): entonces se marca importada, con los avisos que se pueden saber sin reimportar, y se anula
 /// como cualquier otra. Si la tienda está sin configurar, no hay asesor a cuyo nombre anular: la fila sigue en espera con
 /// <c>store_not_configured</c>.</item>
 /// <item><b><c>last_error</c>:</b> uno solo por aviso, con los códigos rechazados unidos por <c>"; "</c>; si lo intentado salió
 /// bien, se borra el que hubiera.</item>
-/// <item><b><c>Cancelled</c> e <c>Ignored</c></b> son terminales (ruling S13): nada.</item>
+/// <item><b><c>Cancelled</c> e <c>Ignored</c></b> son terminales: nada.</item>
 /// </list>
 /// <para><b>Idempotente.</b> Se repite en el bucle de concurrencia de la ingesta (hasta
 /// <see cref="ShopifyOrderIngestion.MaxConcurrencyAttempts"/> veces por entrega) y cuando el guardado del espejo falla después de
@@ -81,7 +81,7 @@ public sealed class ShopifyOrderChanges(IShopifyOrderWriter orders, IShopifyCust
     }
 
     /// <summary>Anula si Shopify canceló; si la anulación no cerró la fila (rechazo <c>Ignored</c>) o no hubo cancelación, sincroniza
-    /// el pago cuando cambió. Ronda 1, minor 2: <c>ApplySnapshot</c> ya movió el pago en la fila, así que un pago que no se
+    /// el pago cuando cambió. Aunque la anulación se rechace, el pago se sincroniza: <c>ApplySnapshot</c> ya movió el pago en la fila, así que un pago que no se
     /// sincroniza en este aviso no se vuelve a ver nunca.</summary>
     private async Task ImportedAsync(
         ShopifyStore store, ShopifyOrderMirror row, ShopifyMirrorState previous, ShopifyOrderSnapshot snapshot, Effect effect, CancellationToken cancellationToken)
@@ -159,7 +159,7 @@ public sealed class ShopifyOrderChanges(IShopifyOrderWriter orders, IShopifyCust
                 effect.Succeeded = true;
                 break;
             default:
-                // Tarea 12: cualquier otro rechazo queda ignorado y auditado; qué hacer con él lo decide el owner.
+                // Cualquier otro rechazo de Quotations queda en last_error y la fila sigue importada; qué hacer con él lo decide el owner.
                 effect.Errors.Add(outcome.Code ?? outcome.Kind.ToString());
                 break;
         }
@@ -179,7 +179,7 @@ public sealed class ShopifyOrderChanges(IShopifyOrderWriter orders, IShopifyCust
                 effect.Succeeded = true;
                 break;
             default:
-                // Unchanged (refunded, partially_refunded, voided): no cambia nada, ni siquiera el error que ya había (S19).
+                // Unchanged (refunded, partially_refunded, voided): no cambia nada, ni siquiera el error que ya había.
                 break;
         }
     }

@@ -157,7 +157,7 @@ public sealed class ShopifyAdminGatewayTests : IDisposable
         Assert.Equal(ShopifyGatewayFailure.Invalid, error.Kind);
     }
 
-    // Minor (b) de la tarea 6: lo que no cabe en la columna se rechaza acá con un error tipado, no con un 500 de la base.
+    // Lo que no cabe en la columna se rechaza acá con un error tipado, no con un 500 de la base.
     [Fact]
     public async Task ExchangeWithScopesLongerThanTheColumnIsInvalid()
     {

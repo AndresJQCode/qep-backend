@@ -11,7 +11,7 @@ namespace Modules.Integrations.UnitTests;
 /// <summary>
 /// Spec 2026-10-15 §4.3 paso 6, el enlace: permiso y módulo <c>shopify</c> en el tenant elegido (doble capa), la
 /// instalación del mismo tenant si vino de A (<c>install_tenant_mismatch</c>), canjeada y vigente; tope y nombre; reenlace
-/// del mismo tenant o <c>shop_already_linked</c> con el nombre del otro (Review Focus 3); webhooks que falten, y si
+/// del mismo tenant o <c>shop_already_linked</c> con el nombre del otro; webhooks que falten, y si
 /// Shopify los rechaza la conexión queda <c>NeedsAttention</c> con <c>webhooks_not_registered</c>; la fila de instalación
 /// se borra y se audita la variante.
 /// </summary>
@@ -373,7 +373,7 @@ public sealed class LinkShopifyStoreHandlerTests
             && entry.ChangedFields.Contains(ShopifyFieldKeys.AccessToken));
     }
 
-    // Ruling S11: §4.1 dice que el reenlace «la reactiva con el token nuevo»; una conexión pausada también vuelve a Active.
+    // §4.1 dice que el reenlace «la reactiva con el token nuevo»; una conexión pausada también vuelve a Active.
     [Fact]
     public async Task LinkSameTenantRelinkOverPausedReactivates()
     {
@@ -430,7 +430,7 @@ public sealed class LinkShopifyStoreHandlerTests
 
         Assert.Equal(IntegrationsErrorCodes.ShopifyShopAlreadyLinked, error.Code);
         Assert.Contains("Distribuidora Andina", error.Message, StringComparison.Ordinal);
-        // Review Focus 3: el nombre y nada más; ni el id del tenant ni el de la conexión.
+        // El nombre y nada más; ni el id del tenant ni el de la conexión.
         Assert.DoesNotContain(otherTenant.ToString(), error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(bed.Gateway.Calls);
         Assert.Empty(bed.Integrations.Repository.Connections);

@@ -81,7 +81,7 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
         store.Ignore(value => value.IsConfigured);
         store.Property(value => value.ShopDomain).HasColumnName("shop_domain").HasMaxLength(ShopifyStore.ShopDomainMaxLength);
         store.HasIndex(value => value.TenantId).HasDatabaseName("IX_stores_tenant");
-        // Ruling S16: shop/redact busca la tienda por dominio, sin tenant y sin la ruta de Integrations.
+        // shop/redact busca la tienda por dominio, sin tenant y sin la ruta de Integrations.
         store.HasIndex(value => value.ShopDomain).HasDatabaseName("IX_shopify_stores_shop_domain");
     }
 

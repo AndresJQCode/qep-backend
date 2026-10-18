@@ -23,7 +23,7 @@ public sealed record ReceiveShopifyWebhookCommand(
 
 /// <summary>
 /// Qué pasó con una entrega de firma válida. <see cref="DiscardReason"/> no nulo es un descarte <b>determinista</b>: reintentar el
-/// mismo cuerpo con las mismas cabeceras da lo mismo, así que se responde 200 (§12) y el endpoint lo deja en el log (Ruling S15).
+/// mismo cuerpo con las mismas cabeceras da lo mismo, así que se responde 200 (§12) y el endpoint lo deja en el log.
 /// Un fallo transitorio no es un recibo: sale como excepción y responde no-2xx para que Shopify reintente.
 /// </summary>
 public sealed record ShopifyWebhookReceipt(bool IsEnqueued, bool IsDuplicate, string? DiscardReason)
@@ -49,7 +49,7 @@ public sealed record ShopifyWebhookReceipt(bool IsEnqueued, bool IsDuplicate, st
 }
 
 /// <summary>
-/// 401 antes de tocar la base (§12). Con la firma válida, o encola, o descarta con un motivo determinista (Ruling S15). Lo que lanza
+/// 401 antes de tocar la base (§12). Con la firma válida, o encola, o descarta con un motivo determinista. Lo que lanza
 /// <see cref="IShopifyWebhookDeliveries.EnqueueAsync"/> (la base caída) sale como excepción y el webhook responde no-2xx.
 /// </summary>
 public sealed class ReceiveShopifyWebhookHandler(IShopifyAppSecret appSecret, IShopifyWebhookDeliveries deliveries, IClock clock)
@@ -130,7 +130,7 @@ public sealed class ReceiveShopifyWebhookHandler(IShopifyAppSecret appSecret, IS
         }
     }
 
-    /// <summary>Minor 5: la cabecera del dominio no va firmada y el cuerpo sí. Los avisos de cumplimiento traen <c>shop_domain</c> y
+    /// <summary>La cabecera del dominio no va firmada y el cuerpo sí: por eso se cruza con el dominio que trae el cuerpo, cuando lo trae. Los avisos de cumplimiento traen <c>shop_domain</c> y
     /// <c>app/uninstalled</c> trae <c>myshopify_domain</c>; los pedidos no traen ninguno y pasan sin cruce.</summary>
     private static string? PayloadShopDomain(byte[] body)
     {

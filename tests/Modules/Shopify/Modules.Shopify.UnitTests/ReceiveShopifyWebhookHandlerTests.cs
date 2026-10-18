@@ -5,7 +5,7 @@ using Modules.Shopify.Application;
 
 namespace Modules.Shopify.UnitTests;
 
-/// <summary>Spec 2026-10-15 §5.1 y §12, rulings S15: con la firma válida, lo que no se puede encolar se descarta sólo si es
+/// <summary>Spec 2026-10-15 §5.1 y §12: con la firma válida, lo que no se puede encolar se descarta sólo si es
 /// determinista (reintentar el mismo cuerpo da lo mismo) y con su motivo, para que el endpoint lo deje en el log. La cabecera del
 /// dominio no va firmada: cuando el cuerpo trae el dominio, tienen que coincidir.</summary>
 public sealed class ReceiveShopifyWebhookHandlerTests
@@ -66,7 +66,7 @@ public sealed class ReceiveShopifyWebhookHandlerTests
         Assert.Empty(queue.Enqueued);
     }
 
-    // Minor 4: JsonDocument acepta "\u0000" y el jsonb de Postgres no; sin esto el INSERT da 500 y Shopify reintenta 48 horas.
+    // JsonDocument acepta "\u0000" y el jsonb de Postgres no; sin esto el INSERT da 500 y Shopify reintenta 48 horas.
     [Theory]
     [InlineData("""{"note":"hola\u0000mundo"}""")]
     [InlineData("""{"a\u0000b":1}""")]
@@ -93,7 +93,7 @@ public sealed class ReceiveShopifyWebhookHandlerTests
         Assert.Single(queue.Enqueued);
     }
 
-    // Minor 5: el cuerpo va firmado y la cabecera no. Un cuerpo de cumplimiento reenviado con el dominio de otra tienda se descarta.
+    // El cuerpo va firmado y la cabecera no. Un cuerpo de cumplimiento reenviado con el dominio de otra tienda se descarta.
     [Theory]
     [InlineData("""{"shop_id":1,"shop_domain":"otra-tienda.myshopify.com"}""")]
     [InlineData("""{"id":1,"myshopify_domain":"otra-tienda.myshopify.com"}""")]

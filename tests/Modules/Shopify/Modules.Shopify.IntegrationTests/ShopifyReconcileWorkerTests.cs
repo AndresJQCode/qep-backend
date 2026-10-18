@@ -83,7 +83,7 @@ public sealed class ShopifyReconcileWorkerTests
             connectionString, "SELECT count(*) FROM shopify.orders WHERE tenant_id = @t", ("t", tenantB)));
     }
 
-    // Ronda 2 de la revisión: un pedido nuevo cuya cabecera el dominio no guarda no tiene fila del espejo y la ventana avanza; el
+    // Un pedido nuevo cuya cabecera el dominio no guarda no tiene fila del espejo y la ventana avanza; el
     // único rastro es el log. Tiene que salir con tenant, conexión, pedido y motivo, sin nada del comprador, y el resumen de la
     // corrida tiene que contarlo.
     [Fact]

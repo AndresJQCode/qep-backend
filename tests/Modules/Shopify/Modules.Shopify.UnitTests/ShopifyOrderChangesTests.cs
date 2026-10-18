@@ -5,7 +5,7 @@ using static Modules.Shopify.UnitTests.ImporterWorld;
 namespace Modules.Shopify.UnitTests;
 
 /// <summary>
-/// Spec 2026-10-15 §6.3 sobre el punto de enganche de la ingesta (ruling S17): <see cref="ShopifyOrderChange"/> trae la fila con
+/// Spec 2026-10-15 §6.3 sobre el punto de enganche de la ingesta: <see cref="ShopifyOrderChange"/> trae la fila con
 /// el snapshot nuevo ya aplicado y su estado anterior. La reacción tiene que ser idempotente: se repite dentro del bucle de
 /// concurrencia de la ingesta (hasta tres veces por entrega) y cuando el guardado del espejo falla después de que ya actuó en
 /// Quotations. Cada repetición se simula como la vería la ingesta: la fila releída de la base, igual que antes del intento.
@@ -89,7 +89,7 @@ public sealed class ShopifyOrderChangesTests
         Assert.Equal((ShopifyImportState.Imported, code), (row.ImportState, row.LastError));
     }
 
-    // Ruling S19: refunded, partially_refunded y voided no cambian nada, ni siquiera last_error.
+    // refunded, partially_refunded y voided no cambian nada, ni siquiera last_error.
     [Fact]
     public async Task SyncUnchangedLeavesNoTrace()
     {
@@ -158,8 +158,8 @@ public sealed class ShopifyOrderChangesTests
         Assert.Equal((ShopifyImportState.Cancelled, """{"reason":"invoiced_before_cancel"}"""), (row.ImportState, row.WaitDetail));
     }
 
-    // Tarea 12: cualquier otro rechazo de la anulación queda Ignored (decisión pendiente del owner) y se audita en last_error;
-    // la fila sigue importada.
+    // Cualquier otro rechazo de la anulación (resultado Ignored; qué hacer con él lo decide el owner) se anota en last_error y la
+    // fila sigue importada.
     [Fact]
     public async Task CancelIgnoredRecordsLastErrorAndStaysImported()
     {
@@ -202,9 +202,9 @@ public sealed class ShopifyOrderChangesTests
             (ShopifyImportState.Cancelled, (string?)null, (string?)null), (row.ImportState, row.WaitDetail, row.LastError)));
     }
 
-    // ---- Ronda 1 ----
+    // ---- Anulación y pago en el mismo aviso, last_error y avisos de la puesta al día ----
 
-    // Minor 2: cancelado y pagado en el mismo aviso, con la anulación rechazada. ApplySnapshot ya movió el pago en la fila, así
+    // Cancelado y pagado en el mismo aviso, con la anulación rechazada. ApplySnapshot ya movió el pago en la fila, así
     // que si no se sincroniza ahora no se sincroniza nunca: el pedido sigue vivo en QEP y su pago tiene que seguir a Shopify.
     [Fact]
     public async Task CancelIgnoredInTheSameNoticeStillSyncsThePayment()
@@ -231,7 +231,7 @@ public sealed class ShopifyOrderChangesTests
         Assert.Equal("order.order.not_found; order.order.payment_has_proofs", row.LastError);
     }
 
-    // Minor 3: una anulación que primero se rechazó y después sale bien no deja la fila Cancelled con el error viejo.
+    // Una anulación que primero se rechazó y después sale bien no deja la fila Cancelled con el error viejo.
     [Fact]
     public async Task CancelThatSucceedsAfterARejectionClearsTheLastError()
     {
@@ -256,7 +256,7 @@ public sealed class ShopifyOrderChangesTests
         Assert.Null(row.LastError);
     }
 
-    // Ruling S19: un reembolso no cambia nada, tampoco el error que ya había.
+    // Un reembolso no cambia nada, tampoco el error que ya había.
     [Fact]
     public async Task SyncUnchangedKeepsAPreviousLastError()
     {
@@ -270,7 +270,7 @@ public sealed class ShopifyOrderChangesTests
         Assert.Equal("order.order.not_found", row.LastError);
     }
 
-    // Minor 4: la fila en espera que se pone al día con el pedido que ya estaba en QEP conserva los avisos que se pueden saber sin
+    // La fila en espera que se pone al día con el pedido que ya estaba en QEP conserva los avisos que se pueden saber sin
     // volver a importar: el cliente incompleto (con el documento que vino) y la diferencia de totales.
     [Fact]
     public async Task WaitingCatchUpKeepsTheWarningsThatApply()
@@ -317,7 +317,7 @@ public sealed class ShopifyOrderChangesTests
         Assert.Empty(world.Writer.Cancels);
     }
 
-    // Hueco de la tarea 13: el worker cayó entre crear el pedido en QEP y marcar la fila, que siguió Waiting. Ignorarla dejaría
+    // El worker cayó entre crear el pedido en QEP y marcar la fila, que siguió Waiting. Ignorarla dejaría
     // vivo el pedido de QEP de un pedido que Shopify canceló: se trata como importada y se anula.
     [Fact]
     public async Task WaitingCancelledWithTheOrderAlreadyInQepCancelsIt()
@@ -378,7 +378,7 @@ public sealed class ShopifyOrderChangesTests
         Assert.Equal(ShopifyImportState.Waiting, row.ImportState);
     }
 
-    // Ruling S13: Cancelled e Ignored son terminales; ningún aviso posterior los mueve ni llama a Quotations.
+    // Cancelled e Ignored son terminales; ningún aviso posterior los mueve ni llama a Quotations.
     [Theory]
     [InlineData(ShopifyImportState.Cancelled)]
     [InlineData(ShopifyImportState.Ignored)]

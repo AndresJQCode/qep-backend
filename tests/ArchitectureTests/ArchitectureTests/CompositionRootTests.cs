@@ -380,7 +380,7 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
-    /// Ruling S18 (spec de Shopify §5.2): el webhook de Shopify encola y el worker procesa. Sin el worker registrado, o con un
+    /// Spec de Shopify §5.2: el webhook de Shopify encola y el worker procesa. Sin el worker registrado, o con un
     /// puerto del importador sin adaptador, el webhook responde 200 y nadie procesa nunca, sin error en ningún lado. Esto arma
     /// el contenedor con <c>ValidateOnBuild</c> —lo mismo que hace el host en Development— y resuelve el worker y el importador.
     /// </summary>
@@ -401,10 +401,10 @@ public sealed class CompositionRootTests
             service => service.GetType().FullName == "Modules.Shopify.Infrastructure.Workers.ShopifyWebhookDeliveryWorker");
         using var scope = provider.CreateScope();
         Assert.IsType<ShopifyOrderImporter>(scope.ServiceProvider.GetRequiredService<IShopifyOrderImporter>());
-        // Ruling S14/S17: la reacción de §6.3 de la tarea 14 reemplaza la vacía. Sin ella, pagos y cancelaciones de Shopify sobre
+        // La reacción de §6.3 (ShopifyOrderChanges) reemplaza la vacía. Sin ella, pagos y cancelaciones de Shopify sobre
         // pedidos importados se guardan en el espejo y nunca llegan a Quotations.
         Assert.IsType<ShopifyOrderChanges>(scope.ServiceProvider.GetRequiredService<IShopifyOrderChangeReaction>());
-        // Spec §5.3 (tarea 15): el cron de la conciliación y «Sincronizar ahora». Sin el worker, lo que el webhook pierde (abandonado
+        // Spec §5.3: el cron de la conciliación y «Sincronizar ahora». Sin el worker, lo que el webhook pierde (abandonado
         // a los 8 intentos o descartado con 200) y los Waiting no se recuperan nunca, sin error en ningún lado.
         Assert.Contains(
             provider.GetServices<IHostedService>(),

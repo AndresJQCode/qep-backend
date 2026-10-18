@@ -27,7 +27,7 @@ public sealed class LinkShopifyStoreValidator : AbstractValidator<LinkShopifySto
 }
 
 /// <summary>
-/// El enlace de una tienda al tenant elegido, en este orden (ruling S6: <see cref="IShopifyInstallRepository"/> no recibe
+/// El enlace de una tienda al tenant elegido, en este orden (<see cref="IShopifyInstallRepository"/> no recibe
 /// tenant, así que toda la autorización vive aquí; <c>GET /installs/{id}</c> lo lee cualquier autenticado con el id):
 /// <list type="number">
 /// <item>tenant y <c>integrations.connection.manage</c> (doble capa) → módulo <c>shopify</c> activo → app configurada;</item>
@@ -35,7 +35,7 @@ public sealed class LinkShopifyStoreValidator : AbstractValidator<LinkShopifySto
 /// <item>la instalación: desconocida o sin canjear = <c>install_not_found</c>; iniciada desde otro tenant (A) =
 /// <c>install_tenant_mismatch</c> (403); vencida, o con un token que ya no descifra = <c>install_expired</c>;</item>
 /// <item>la ruta <c>("shopify", shopDomain)</c>: de otro tenant = <c>shop_already_linked</c> con su nombre; del mismo,
-/// reenlace de esa conexión (sin tope, token nuevo, <c>Active</c> aunque estuviera pausada: ruling S11, §4.1 «la
+/// reenlace de esa conexión (sin tope, token nuevo, <c>Active</c> aunque estuviera pausada: §4.1 «la
 /// reactiva»);</item>
 /// <item>conexión nueva: tope de 20 y nombre no repetido;</item>
 /// <item>webhooks que falten (<see cref="ShopifyWebhookRegistration"/>); si Shopify falla, la conexión se guarda igual en
@@ -102,7 +102,7 @@ public sealed class LinkShopifyStoreHandler(
         }
 
         // El dominio es el external_id de la ruta (varchar(64)): uno más largo sería un 500 de la base, no un 422. El inicio
-        // ya lo acota; esto lo repite donde se escribe (arrastre de la revisión de la tarea 5).
+        // ya lo acota; esto lo repite donde se escribe.
         var shopDomain = install.ShopDomain;
         if (shopDomain.Length > IntegrationConnectionRoute.ExternalIdMaxLength
             || !ShopifyShopDomain.TryNormalize(shopDomain, out var normalized)
@@ -160,7 +160,7 @@ public sealed class LinkShopifyStoreHandler(
         if (existing is not null)
         {
             // §4.1: reenlace tras desinstalar. Mismo id, token nuevo; verified saca de NeedsAttention. Una pausada también
-            // vuelve a Active (ruling S11: «la reactiva»), con su auditoría de resume: reinstalar es pedir que funcione.
+            // vuelve a Active (§4.1: «la reactiva»), con su auditoría de resume: reinstalar es pedir que funcione.
             wasActive = existing.Status == ConnectionStatus.Active;
             var changed = existing.Update(provider, name, fields, secrets, protector.Protect, now, verified: true);
             connection = existing;
@@ -200,7 +200,7 @@ public sealed class LinkShopifyStoreHandler(
     }
 
     /// <summary>La conexión del mismo tenant para esa tienda, o <c>null</c> si no hay ruta. La ruta es cross-tenant a
-    /// propósito: si es de otro, la tienda está tomada y el error dice por quién (Review Focus 3: el nombre, nada más).</summary>
+    /// propósito: si es de otro, la tienda está tomada y el error dice por quién (el nombre, nada más).</summary>
     private async Task<IntegrationConnection?> FindRelinkAsync(Guid tenantId, string shopDomain, CancellationToken cancellationToken)
     {
         var route = await routes.FindAsync(IntegrationProviders.Shopify.Key, shopDomain, cancellationToken);

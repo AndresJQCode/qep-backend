@@ -9,14 +9,14 @@ namespace Modules.Shopify.Application;
 /// <list type="number">
 /// <item>La tienda por su dominio. Sin ruta → <c>unknown_shop</c>, sin efecto. El webhook ya respondió 200: no revela si la tienda
 /// existe (§12).</item>
-/// <item><c>app/uninstalled</c> → la conexión queda <c>NeedsAttention</c> con <c>app_uninstalled</c> (adaptador de la tarea 12).</item>
+/// <item><c>app/uninstalled</c> → la conexión queda <c>NeedsAttention</c> con <c>app_uninstalled</c> (por <see cref="IShopifyConnectionHealth"/>, con adaptador en Bootstrapper).</item>
 /// <item>Cumplimiento: <c>customers/data_request</c> y <c>customers/redact</c> sólo se auditan (D-S9), con el dominio, el id del
 /// cliente en Shopify y los ids de pedidos, nunca su email ni su teléfono; <c>shop/redact</c> borra el espejo y las entregas de la
-/// tienda (no la tienda, la conexión, ni los pedidos o clientes de QEP), resuelta por su dominio y no por la ruta (Ruling S16).</item>
+/// tienda (no la tienda, la conexión, ni los pedidos o clientes de QEP), resuelta por su dominio y no por la ruta.</item>
 /// <item><c>orders/*</c> → <see cref="ShopifyOrderIngestion"/>: espejo siempre, importación si la conexión es operativa.</item>
 /// </list>
 /// Un payload ilegible o una cabecera que el dominio no guarda (<see cref="ShopifyPayloadException"/>) cierra la entrega con
-/// <c>last_error</c>: reintentar el mismo cuerpo da lo mismo (Review Focus 2). Cualquier otra excepción sale y la entrega vuelve
+/// <c>last_error</c>: reintentar el mismo cuerpo da lo mismo. Cualquier otra excepción sale y la entrega vuelve
 /// con su lease.
 /// </summary>
 public sealed class ShopifyWebhookDeliveryProcessor(
@@ -80,10 +80,10 @@ public sealed class ShopifyWebhookDeliveryProcessor(
     }
 
     /// <summary>
-    /// Ruling S16 y §5.5: <c>shop/redact</c> borra el espejo y las entregas de la tienda resolviéndola por su dominio en
+    /// §5.5: <c>shop/redact</c> borra el espejo y las entregas de la tienda resolviéndola por su dominio en
     /// <c>shopify.stores</c>, no por la ruta de Integrations: 48 horas después de desinstalar la conexión pudo borrarse y su ruta con
     /// ella. La tienda y la conexión quedan como estén. Excepción: si la ruta actual apunta a una conexión operativa, la tienda se
-    /// reinstaló (Review Focus 3) y lo de esa conexión no se toca, ni las entregas, que podrían ser suyas; las tiendas viejas del
+    /// reinstaló y lo de esa conexión no se toca, ni las entregas, que podrían ser suyas; las tiendas viejas del
     /// mismo dominio sí se borran.
     /// </summary>
     private async Task RedactShopAsync(ShopifyWebhookDelivery delivery, CancellationToken cancellationToken)

@@ -119,7 +119,7 @@ public sealed class ShopifyWebhookApiTests
         Assert.Contains("X-Qep-Client", await tenantRoute.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
     }
 
-    // Ruling S15: un descarte determinista (sin X-Shopify-Webhook-Id) responde 200 —reintentar da lo mismo— pero deja un aviso en
+    // Un descarte determinista (sin X-Shopify-Webhook-Id) responde 200 —reintentar da lo mismo— pero deja un aviso en
     // el log, con el motivo y sin el cuerpo.
     [Fact]
     public async Task WebhookSignedButNotEnqueueableReturns200NoRowAndWarns()
@@ -139,7 +139,7 @@ public sealed class ShopifyWebhookApiTests
         Assert.DoesNotContain(logs.Entries, entry => entry.Message.Contains(SecretMarker, StringComparison.Ordinal));
     }
 
-    // Ruling S15: un fallo al encolar (la base) responde no-2xx para que Shopify reintente, también con su aviso sin el cuerpo.
+    // Un fallo al encolar (la base) responde no-2xx para que Shopify reintente, también con su aviso sin el cuerpo.
     [Fact]
     public async Task WebhookEnqueueFailureReturnsNon2xxAndWarns()
     {
@@ -165,7 +165,7 @@ public sealed class ShopifyWebhookApiTests
         Assert.DoesNotContain(logs.Entries, entry => entry.Message.Contains(SecretMarker, StringComparison.Ordinal));
     }
 
-    // Minor 4: "\u0000" pasa JsonDocument y lo rechaza el jsonb. Antes, 500 y 48 horas de reintentos; ahora, descarte determinista.
+    // "\u0000" pasa JsonDocument y lo rechaza el jsonb. Antes, 500 y 48 horas de reintentos; ahora, descarte determinista.
     [Fact]
     public async Task WebhookBodyWithANulEscapeReturns200NoRow()
     {
@@ -181,7 +181,7 @@ public sealed class ShopifyWebhookApiTests
         Assert.Equal(0L, await CountDeliveriesAsync(connectionString));
     }
 
-    // Minor 5: la cabecera del dominio no va firmada; un cuerpo firmado de una tienda reenviado con la cabecera de otra no entra.
+    // La cabecera del dominio no va firmada; un cuerpo firmado de una tienda reenviado con la cabecera de otra no entra.
     [Fact]
     public async Task WebhookShopDomainMismatchReturns200NoRow()
     {

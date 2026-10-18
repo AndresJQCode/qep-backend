@@ -414,7 +414,7 @@ public sealed class OrderShippingApiTests
         $"{OrderByIdUrl(tenantId, orderId)}/carrier-recognition";
 
     /// <summary>Un pedido de Shopify pendiente con envío cobrado de 15.000 COP y un título que ninguna
-    /// transportadora reconoció, sembrado por el puerto de integraciones como lo hará el importador.</summary>
+    /// transportadora reconoció, sembrado por el puerto de integraciones como lo hace el importador de Shopify.</summary>
     private static async Task<Guid> ExternalOrderWithTitleAsync(
         QepApiFactory factory, HttpClient client, Guid tenantId, Guid ownerUserId, string title)
     {

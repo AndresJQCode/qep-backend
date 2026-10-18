@@ -72,7 +72,7 @@ public sealed class ListShopifyOrdersHandler(
             .Select(state => ShopifyOrderFilters.TryParseState(state, out var parsed) ? parsed : throw new InvalidOperationException("Validated above."))
             .Distinct()
             .ToArray();
-        // Ruling S28 (BFF): sin state, la bandeja muestra lo que espera; pero «con avisos» sin state no filtra por estado, para
+        // BFF: sin state, la bandeja muestra lo que espera; pero «con avisos» sin state no filtra por estado, para
         // que la lista cierre con summary.withWarnings (que cuenta en cualquier estado) sin que la pantalla conozca el enum. Un
         // state explícito se respeta siempre.
         var withWarnings = query.WithWarnings == true;
@@ -88,7 +88,7 @@ public sealed class ListShopifyOrdersHandler(
 }
 
 /// <summary>§7: los cuatro contadores de la bandeja en una consulta. «Hoy» es el día del tenant cortado por
-/// <see cref="TenantCalendar"/> (ruling S26), como los resúmenes de Reporting: medianoche en su huso, en UTC, con el horario de
+/// <see cref="TenantCalendar"/>, como los resúmenes de Reporting: medianoche en su huso, en UTC, con el horario de
 /// verano resuelto, y <c>tenancy.tenant.not_found</c> si el tenant no tiene huso (nunca un corte en UTC en silencio).</summary>
 public sealed class GetShopifyOrdersSummaryHandler(
     IExecutionContext executionContext,
@@ -209,7 +209,7 @@ public sealed class ShopifyOrderRowMapper(IShopifyTenantConnections connections,
 /// <summary>
 /// §6.4: el reintento manual corre la importación en el request por el mismo camino que el webhook y la conciliación
 /// (<see cref="ShopifyOrderIngestion.ApplyAsync"/> con el snapshot que guardó el espejo), así que §6.3 y la captura del estado
-/// anterior (ruling S14) se respetan igual, y la ingesta relee y reintenta si pierde la carrera (<c>concurrency.conflict</c>).
+/// anterior se respetan igual, y la ingesta relee y reintenta si pierde la carrera (<c>concurrency.conflict</c>).
 /// <list type="bullet">
 /// <item>Fila inexistente en el tenant → 404 <c>shopify.order.not_found</c> (el tenant de la ruta ya se validó: el 404 no confirma
 /// nada de otro tenant). Fila que no está <c>Waiting</c> → 422 <c>shopify.order.not_waiting</c>: <c>Imported</c>, <c>Cancelled</c>

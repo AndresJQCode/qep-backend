@@ -14,7 +14,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="FluentValidation" />
-    <!-- Ronda 2 de la tarea 15: ReconcileStore deja en el log el pedido que salta (sin fila del espejo es su único rastro). -->
+    <!-- ReconcileStore deja en el log el pedido que salta (sin fila del espejo es su único rastro). -->
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 </Project>

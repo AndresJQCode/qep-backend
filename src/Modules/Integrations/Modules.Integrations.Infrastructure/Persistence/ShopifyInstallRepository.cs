@@ -20,7 +20,7 @@ internal sealed class ShopifyInstallRepository(IntegrationsDbContext dbContext) 
         dbContext.ShopifyInstalls.AsNoTracking().SingleOrDefaultAsync(install => install.Id == installId, cancellationToken);
 
     // Una sola sentencia: la condición sobre el state anterior es la que deja ganar a un solo reclamo, antes de que nadie
-    // llame a Shopify (ruling S9). Sin transacción abierta durante las llamadas: el reclamo ya es atómico.
+    // llame a Shopify. Sin transacción abierta durante las llamadas: el reclamo ya es atómico.
     public async Task<bool> TryClaimAsync(ShopifyInstall install, string state, CancellationToken cancellationToken)
     {
         if (!install.IsClaimed)

@@ -55,7 +55,7 @@ public sealed class ConnectionsApiTests
         Assert.Contains("qep-integrations", request.UserAgent, StringComparison.Ordinal);
 
         var catalog = await client.GetFromJsonAsync<IntegrationsCatalogResponse>(CatalogUrl(tenant.TenantId), Ct);
-        // shopify también sale (módulo de fábrica y app fijada en el harness, task 5); zenvia es la que cuenta.
+        // shopify también sale (módulo de fábrica y app fijada en el harness); zenvia es la que cuenta.
         Assert.Equal(1, Assert.Single(catalog!.Providers, provider => provider.Key == "zenvia").ConnectionCount);
         var list = await client.GetFromJsonAsync<ConnectionsResponse>(ConnectionsUrl(tenant.TenantId), Ct);
         Assert.Equal(created.Id, Assert.Single(list!.Items).Id);

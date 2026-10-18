@@ -62,7 +62,7 @@ internal static class ShopifyFlow
 /// <summary>
 /// Spec 2026-10-15 §4.3 paso 6 y §7 por HTTP: el enlace crea la conexión, la ruta y los webhooks contra
 /// <see cref="FakeShopifyHandler"/>, borra la instalación y audita; revalida permiso, módulo y tenant (403); la misma
-/// tienda en otro tenant es 422 <c>shop_already_linked</c> con el nombre de ese tenant (Review Focus 3).
+/// tienda en otro tenant es 422 <c>shop_already_linked</c> con el nombre de ese tenant.
 /// </summary>
 public sealed class ShopifyLinkApiTests
 {
@@ -169,7 +169,7 @@ public sealed class ShopifyLinkApiTests
         Assert.Equal(1, await CountInstallsAsync(connectionString));
     }
 
-    // Ruling S6: GET /installs/{id} lo lee cualquiera con el id, así que el enlace revalida permiso, tenant, módulo y origen.
+    // GET /installs/{id} lo lee cualquiera con el id, así que el enlace revalida permiso, tenant, módulo y origen.
     [Fact]
     public async Task LinkRevalidatesPermissionTenantModuleAndOrigin()
     {
@@ -274,7 +274,7 @@ public sealed class ShopifyLinkApiTests
             ("id", first.Id)));
     }
 
-    // Ruling S12 por HTTP: una tienda pausada cuyo resume no logra registrar los webhooks responde
+    // Por HTTP: una tienda pausada cuyo resume no logra registrar los webhooks responde
     // integrations.shopify.webhooks_not_registered, no credentials_rejected con el token marcado.
     [Fact]
     public async Task ResumeWithWebhooksRejectedAnswersWebhooksNotRegistered()
@@ -307,7 +307,7 @@ public sealed class ShopifyLinkApiTests
             ("id", linked.Id)));
     }
 
-    // Minor 1 (S12): dos enlaces de la misma tienda que pasan la lectura de la ruta a la vez. Si el ganador es del mismo
+    // Dos enlaces de la misma tienda que pasan la lectura de la ruta a la vez. Si el ganador es del mismo
     // tenant (doble clic), el perdedor no puede leer «otro tenant»: es concurrency.conflict, choque por la ruta o por el
     // nombre. Si es de otro tenant, shop_already_linked.
     [Theory]

@@ -79,7 +79,7 @@ public sealed class OrderParsersTests
         },
     };
 
-    // Review Focus 2: un cuerpo con firma válida y campos nulos no puede tumbar el worker; el importador decide después
+    // Un cuerpo con firma válida y campos nulos no puede tumbar el worker; el importador decide después
     // (product_unmatched por la línea sin SKU, cliente incompleto por el comprador sin cuenta).
     [Theory]
     [MemberData(nameof(WithoutCustomerAndNullSku))]
@@ -145,7 +145,7 @@ public sealed class OrderParsersTests
     };
 
     // Sin id, nombre o fecha de actualización no hay fila del espejo que ubicar ni orden entre snapshots (§5.4): falla de payload
-    // tipada, que la tarea 11 marca como procesada con error en vez de reintentar.
+    // tipada, que el procesador de entregas marca como procesada con error en vez de reintentar.
     [Theory]
     [MemberData(nameof(MissingRequired))]
     public void ParseWithoutRequiredFieldThrowsPayloadException(string format, string field, string json)
@@ -163,7 +163,7 @@ public sealed class OrderParsersTests
         Assert.Throws<ShopifyPayloadException>(() => Parse(format, json));
     }
 
-    // Decisión de la tarea 10: el parser no recorta ni valida anchos. Deja el valor tal cual y la cabecera la valida el dominio
+    // El parser no recorta ni valida anchos. Deja el valor tal cual y la cabecera la valida el dominio
     // (ShopifyOrderMirror.Validated), que es el dueño de las constantes; el ArgumentException que tira es el fallo permanente.
     [Fact]
     public void ParseOverlongNameKeepsItAndTheDomainRejectsTheHeader()

@@ -11,7 +11,7 @@ using static Modules.Shopify.IntegrationTests.ShopifyApiHarness;
 namespace Modules.Shopify.IntegrationTests;
 
 /// <summary>
-/// Spec 2026-10-15 §6.4 y §7 (tarea 16): la bandeja de pedidos de punta a punta contra Postgres: la lista con sus filtros, el
+/// Spec 2026-10-15 §6.4 y §7: la bandeja de pedidos de punta a punta contra Postgres: la lista con sus filtros, el
 /// resumen, el reintento por el camino real de la ingesta y del importador, y «Marcar como revisado».
 /// </summary>
 public sealed class ShopifyInboxApiTests
@@ -238,7 +238,7 @@ public sealed class ShopifyInboxApiTests
         Assert.Equal(ShopifyErrorCodes.OrderNoWarnings, await CodeAsync(noWarnings));
     }
 
-    // Ruling S26: «hoy» es el día del tenant (America/Bogota), no el de UTC. Con el reloj fijo a las 07:00 del 19 en Bogotá, lo
+    // «hoy» es el día del tenant (America/Bogota), no el de UTC. Con el reloj fijo a las 07:00 del 19 en Bogotá, lo
     // importado a las 23:30 del 18 (04:30Z del 19) no es de hoy y lo de las 00:30 del 19 (05:30Z) sí. Cortar en UTC contaría los
     // dos (o ninguno, después de las 19:00 de Bogotá).
     [Fact]
@@ -266,7 +266,7 @@ public sealed class ShopifyInboxApiTests
         Assert.Equal(1, body!["importedToday"]!.GetValue<int>());
     }
 
-    // Ruling S28: con withWarnings=true y sin state la lista no filtra por estado, para que cierre con summary.withWarnings sin
+    // Con withWarnings=true y sin state la lista no filtra por estado, para que cierre con summary.withWarnings sin
     // que la pantalla conozca el enum; con state, se respeta.
     [Fact]
     public async Task OrdersWithWarningsWithoutStateIgnoresTheDefaultState()
@@ -289,7 +289,7 @@ public sealed class ShopifyInboxApiTests
         Assert.Equal(0, cancelledOnly!["total"]!.GetValue<int>());
     }
 
-    // Minor 4 de la revisión: sin tope, (page - 1) * pageSize da la vuelta a un OFFSET negativo y Postgres responde 500.
+    // Sin tope, (page - 1) * pageSize da la vuelta a un OFFSET negativo y Postgres responde 500.
     [Fact]
     public async Task OrdersPageBeyondTheCapReturns422()
     {

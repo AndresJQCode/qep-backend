@@ -177,7 +177,7 @@ internal sealed class ShopifyReconcileLeases(ShopifyDbContext dbContext) : IShop
         return taken.Count == 1 ? taken[0] : null;
     }
 
-    // Minor 5 de la revisión: sólo si el lease sigue siendo el que esta corrida tomó. Si venció y otra corrida lo tomó, es suyo.
+    // Sólo si el lease sigue siendo el que esta corrida tomó. Si venció y otra corrida lo tomó, es suyo.
     public Task ReleaseAsync(Guid tenantId, Guid connectionId, DateTimeOffset leaseUntil, CancellationToken cancellationToken) =>
         dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""

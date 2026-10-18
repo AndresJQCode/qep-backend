@@ -4,7 +4,7 @@ using Modules.Shopify.Application;
 namespace Bootstrapper.UnitTests;
 
 /// <summary>
-/// Ruling S22: Shopify no referencia Quotations, así que <see cref="ShopifyCashOnDeliveryGateways.Normalize"/> es una copia de
+/// Shopify no referencia Quotations, así que <see cref="ShopifyCashOnDeliveryGateways.Normalize"/> es una copia de
 /// <see cref="CarrierName.Normalize"/> (spec 2026-10-15 §6.2.2 paso 6: las pasarelas se normalizan «igual que los nombres de
 /// transportadora»). Este proyecto ve los dos módulos: si Quotations cambia el algoritmo, esta prueba se rompe en vez de que la
 /// contraentrega diverja en silencio.

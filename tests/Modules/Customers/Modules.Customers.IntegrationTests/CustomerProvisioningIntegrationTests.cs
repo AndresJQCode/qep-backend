@@ -102,7 +102,7 @@ public sealed class CustomerProvisioningIntegrationTests
             + $"AND payload->>'resourceId' = '{created.Id}' AND payload->>'actorType' = 'Integration'"));
     }
 
-    // Fix 1 de la Task 4: perder la carrera del documento no deja la fila perdedora (ni su outbox) Added en el scope. Sin el
+    // Perder la carrera del documento no deja la fila perdedora (ni su outbox) Added en el scope. Sin el
     // Clear del unit of work, el siguiente SaveChanges del mismo scope la reintenta y vuelve a dar identification_taken.
     [Fact]
     public async Task CreateCompleteLostRaceLeavesTheScopeUsable()

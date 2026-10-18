@@ -151,7 +151,7 @@ internal sealed partial class ShopifyGraphQlClient(
         }
         catch (ShopifyPayloadException exception)
         {
-            // El mismo fallo permanente que un webhook ilegible (ruling S24): no frena la página, y vuelve con su id y su motivo
+            // El mismo fallo permanente que un webhook ilegible: no frena la página, y vuelve con su id y su motivo
             // para que la conciliación lo anote en el espejo y lo cuente. Sin id numérico no hay fila que anotar, pero se cuenta.
             var reason = exception.Field.Length == 0
                 ? $"{ShopifyDeliveryResult.InvalidPayloadPrefix}: {exception.Message}"
@@ -162,7 +162,7 @@ internal sealed partial class ShopifyGraphQlClient(
     }
 
     /// <summary>
-    /// Las páginas siguientes de <paramref name="field"/>, hasta la última (minor 6 de la revisión): sin tope, porque un pedido con
+    /// Las páginas siguientes de <paramref name="field"/>, hasta la última, sin tope, porque un pedido con
     /// líneas de menos entraría con otro total y sólo avisaría <c>total_difference</c>. Lo que protege de un bucle sin fin es que
     /// el cursor tiene que avanzar: uno que se repite, o una página «siguiente» sin cursor, es una respuesta rota (<c>Unavailable</c>,
     /// la corrida no mueve la ventana). <c>false</c> si el pedido desapareció a mitad de camino.
@@ -201,7 +201,7 @@ internal sealed partial class ShopifyGraphQlClient(
         return true;
     }
 
-    // Minor 4: un tipo inesperado donde se espera texto o booleano es una respuesta inusable (503 en el sync), no un
+    // Un tipo inesperado donde se espera texto o booleano es una respuesta inusable (503 en el sync), no un
     // InvalidOperationException sin clasificar (500).
     private string? Text(JsonNode? node, string operation, string detail) => node switch
     {
@@ -259,7 +259,7 @@ internal sealed partial class ShopifyGraphQlClient(
         {
             case HttpStatusCode.TooManyRequests:
                 throw Fail(operation, ShopifyOrdersSourceFailure.Throttled, (int)status, "http_429", retryAfter);
-            // §5.3 (ruling S24): sólo 401 y 402 son credencial rechazada. Un 403 cae abajo, a Unavailable.
+            // §5.3: sólo 401 y 402 son credencial rechazada. Un 403 cae abajo, a Unavailable.
             case HttpStatusCode.Unauthorized or HttpStatusCode.PaymentRequired:
                 throw Fail(operation, ShopifyOrdersSourceFailure.Rejected, (int)status, "http");
             case < HttpStatusCode.OK or >= HttpStatusCode.MultipleChoices:
@@ -280,7 +280,7 @@ internal sealed partial class ShopifyGraphQlClient(
         if (root?["errors"] is JsonArray { Count: > 0 } errors)
         {
             // ACCESS_DENIED es de alcance (p. ej. sin la aprobación de datos protegidos, V-3), no de credencial: Unavailable con su
-            // código en el log, sin reportar la conexión, que apagaría también el webhook (ruling S24).
+            // código en el log, sin reportar la conexión, que apagaría también el webhook.
             var code = errors[0]?["extensions"]?["code"] is JsonValue value && value.TryGetValue(out string? text) ? text : "unknown";
             throw code switch
             {

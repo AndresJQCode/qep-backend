@@ -10,7 +10,7 @@ using static Modules.Shopify.IntegrationTests.ShopifyApiHarness;
 namespace Modules.Shopify.IntegrationTests;
 
 /// <summary>
-/// Spec 2026-10-15 §6.1 y §7 (tarea 16): la lista de tiendas y la configuración de cada una de punta a punta, con el host entero
+/// Spec 2026-10-15 §6.1 y §7: la lista de tiendas y la configuración de cada una de punta a punta, con el host entero
 /// (políticas, <c>If-Match</c>, el mapeo de errores de <c>ApiExceptionHandler</c> y los adaptadores reales de Integrations,
 /// Tenancy, Companies y Customers) contra Postgres.
 /// </summary>
@@ -119,7 +119,7 @@ public sealed class ShopifyStoresApiTests
                 ("c", world.ConnectionId)));
     }
 
-    // Ruling S27: el PUT deja shopify.store.updated en audit.entries en la misma transacción; el que pierde con 412 no deja nada.
+    // El PUT deja shopify.store.updated en audit.entries en la misma transacción; el que pierde con 412 no deja nada.
     [Fact]
     public async Task StoresPutRecordsAuditAndAStalePutDoesNot()
     {
@@ -133,7 +133,7 @@ public sealed class ShopifyStoresApiTests
         var stale = await PutAsync(client, world.TenantId, world.ConnectionId, Body(world, documentAttributeKey: "Cédula"), "\"1\"");
 
         Assert.Equal((HttpStatusCode.OK, HttpStatusCode.PreconditionFailed), (saved.StatusCode, stale.StatusCode));
-        // Ruling S29: sólo los nombres de los campos (la forma de tenancy.settings.updated); el número de cuenta no queda en audit.
+        // Sólo los nombres de los campos (la forma de tenancy.settings.updated); el número de cuenta no queda en audit.
         Assert.Equal(
             $"1|{world.Tenant.OwnerUserId}|{world.ConnectionId}|true|false",
             await ScalarAsync<string>(
@@ -148,7 +148,7 @@ public sealed class ShopifyStoresApiTests
                 ("account", world.Company.AccountNumber)));
     }
 
-    // §6.1 y ruling S25: si el PUT es el primer contacto, crea la tienda con el dominio de la conexión y la ventana de la
+    // §6.1: si el PUT es el primer contacto, crea la tienda con el dominio de la conexión y la ventana de la
     // conciliación en el instante del enlace (la creación de la conexión), no en «ahora».
     [Fact]
     public async Task StoresPutWithoutStoreCreatesItWithShopDomainAndLinkedAt()

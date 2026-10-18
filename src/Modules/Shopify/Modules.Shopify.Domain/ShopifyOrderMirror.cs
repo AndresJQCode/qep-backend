@@ -120,7 +120,7 @@ public sealed class ShopifyOrderMirror
     }
 
     /// <summary>§6.2: la primera precondición que falló. Cuenta como intento (§6.4: sin tope). Sólo sobre una fila en espera:
-    /// <c>Imported</c> no vuelve, y <c>Cancelled</c> e <c>Ignored</c> son terminales (Ruling S13).</summary>
+    /// <c>Imported</c> no vuelve, y <c>Cancelled</c> e <c>Ignored</c> son terminales.</summary>
     public void MarkWaiting(string reason, string? detailJson, DateTimeOffset attemptedAt)
     {
         if (!ShopifyWaitReasons.IsKnown(reason))

@@ -25,11 +25,11 @@ public static class ShopifyErrorCodes
     public const string StoreSyncInProgress = "shopify.store.sync_in_progress";
 
     /// <summary>§5.3: la conexión no está operativa (pausada, <c>NeedsAttention</c>, sin token) o Shopify acaba de rechazar su
-    /// credencial (401/402) y quedó reportada. 422. No está en la tabla de §7.1: a ratificar (tarea 15).</summary>
+    /// credencial (401/402) y quedó reportada. 422. No está en la tabla de §7.1: a ratificar.</summary>
     public const string StoreNotOperational = "shopify.store.not_operational";
 
     /// <summary>§5.3: Shopify no respondió (red, 5xx) o siguió en <c>THROTTLED</c> tres veces seguidas; la ventana no se movió y la
-    /// próxima corrida lo vuelve a intentar. 503. No está en la tabla de §7.1: a ratificar (tarea 15).</summary>
+    /// próxima corrida lo vuelve a intentar. 503. No está en la tabla de §7.1: a ratificar.</summary>
     public const string StoreSyncUnavailable = "shopify.store.sync_unavailable";
 
     /// <summary>§6.1 y §7.1: el asesor de la tienda no es una membresía activa del tenant. 422.</summary>

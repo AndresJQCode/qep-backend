@@ -103,7 +103,7 @@ public sealed class ShopifyAdaptersTests
 
         Assert.False(result.IsRejected);
         Assert.True(result.AlreadyExisted);
-        // El cliente del pedido que ya existía, no el del borrador (revisión de la tarea 13, minor 4).
+        // El cliente del pedido que ya existía, no el del borrador: pueden diferir si el anotado de un intento anterior se perdió.
         Assert.NotEqual(draft.ClientId, result.ClientId);
         Assert.Equal(existingClient, result.ClientId);
         Assert.Equal("PED-7", result.OrderNumber);
@@ -373,7 +373,7 @@ public sealed class ShopifyAdaptersTests
         Assert.Equal([(TenantId, orderId, advisor, "Cancelado en Shopify: customer")], writer.Cancelled);
     }
 
-    // Arrastre de la tarea 2: IExternalOrderWriter descarta TODO el tracker de Quotations ante la carrera de la clave
+    // IExternalOrderWriter descarta TODO el tracker de Quotations ante la carrera de la clave
     // externa. Cada llamada corre en su propio scope, así que nada que el llamador tenga pendiente en Quotations se pierde.
     [Fact]
     public async Task OrderWriterRunsEachCallInItsOwnScope()
@@ -515,7 +515,7 @@ public sealed class ShopifyAdaptersTests
         Assert.Equal(operational ? ConnectionWorld.Token : null, found.AccessToken);
     }
 
-    // D-S4 (ruling S25): el instante del enlace es la creación de la conexión, en los tres caminos del directorio.
+    // D-S4: el instante del enlace es la creación de la conexión, en los tres caminos del directorio.
     [Fact]
     public async Task ConnectionDirectoryCarriesTheLinkInstant()
     {
@@ -681,7 +681,7 @@ public sealed class ShopifyAdaptersTests
 
     // ---- Conexiones del tenant (§7 GET /stores) ----
 
-    // Minor 6 de la revisión: una conexión sin dominio guardado da shopDomain null, igual que ShopifyStoreDto; nunca "".
+    // Una conexión sin dominio guardado da shopDomain null, igual que ShopifyStoreDto; nunca "".
     [Fact]
     public async Task TenantConnectionsWithoutShopDomainGiveNull()
     {

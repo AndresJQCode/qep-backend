@@ -45,7 +45,7 @@ public sealed class ReconcileStoreTests
         Assert.Equal((TenantId, "mi-tienda.myshopify.com"), (store.TenantId, store.ShopDomain));
     }
 
-    // D-S4 y §5.3 (ruling S25): la tienda que se ve por primera vez arranca su ventana en el enlace, no en «ahora». Un pedido
+    // D-S4 y §5.3: la tienda que se ve por primera vez arranca su ventana en el enlace, no en «ahora». Un pedido
     // hecho entre el enlace y el primer contacto, cuyo webhook se perdió, entra igual.
     [Fact]
     public async Task ReconcileStoreSeenForTheFirstTimeStartsFromTheLink()
@@ -73,7 +73,7 @@ public sealed class ReconcileStoreTests
         Assert.Equal(Now.AddMinutes(-40), Assert.Single(world.Database.Stores.Values).LastReconciledAt);
     }
 
-    // Ruling S24: un fallo permanente (una cabecera que el dominio no guarda) es como en el webhook: la fila queda con last_error,
+    // Un fallo permanente (una cabecera que el dominio no guarda) es como en el webhook: la fila queda con last_error,
     // el pedido se cuenta como saltado y la ventana avanza. Si la congelara, el mismo pedido la clavaría para siempre.
     [Fact]
     public async Task ReconcilePermanentFailureRecordsLastErrorAndMovesTheWindow()
@@ -100,7 +100,7 @@ public sealed class ReconcileStoreTests
         Assert.Empty(world.Database.Orders);
         Assert.Equal([Now], world.Leases.Reconciled);
         Assert.Equal((0, 1), (result.Failed, result.Skipped));
-        // Ronda 2: sin fila del espejo, el único rastro es el log, con tenant, conexión, pedido y motivo; nada del comprador.
+        // Sin fila del espejo, el único rastro es el log, con tenant, conexión, pedido y motivo; nada del comprador.
         var warning = Assert.Single(world.Logs.Warnings);
         Assert.Contains(TenantId.ToString(), warning, StringComparison.Ordinal);
         Assert.Contains(ConnectionId.ToString(), warning, StringComparison.Ordinal);
@@ -126,7 +126,7 @@ public sealed class ReconcileStoreTests
         AssertNoBuyerData(warning);
     }
 
-    // Ronda 2, minor: un pedido que el cliente no supo leer y cuyo GID no es numérico también se cuenta y deja su log.
+    // Un pedido que el cliente no supo leer y cuyo GID no es numérico también se cuenta y deja su log.
     [Fact]
     public async Task ReconcileUnreadableOrderWithoutANumericIdIsCountedAndLogged()
     {
@@ -300,7 +300,7 @@ public sealed class ReconcileStoreTests
         Assert.Equal([Now], world.Leases.Reconciled);
         Assert.Equal(1, world.Leases.Released);
         Assert.Equal([(TenantId, ConnectionId, ReconcileStore.LeaseDuration)], world.Leases.Acquired);
-        // Suelta el lease que tomó, no el que haya en la fila (minor 5).
+        // Suelta el lease que tomó, no el que haya en la fila.
         Assert.Equal([FakeReconcileLeases.Token], world.Leases.ReleasedTokens);
     }
 

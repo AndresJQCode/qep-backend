@@ -10,7 +10,7 @@ namespace Bootstrapper;
 /// Spec 2026-10-15 §6.2.3 y §6.3: Shopify → Quotations por <see cref="IExternalOrderWriter"/>, el único camino para crear un pedido
 /// sin sesión HTTP (H4). Traduce los tipos propios de Shopify y los rechazos del pedido a resultados que el importador guarda en
 /// el espejo.
-/// <para><b>Cada llamada resuelve el escritor en un scope propio</b> (arrastre de la tarea 2): ante la carrera de la clave externa,
+/// <para><b>Cada llamada resuelve el escritor en un scope propio</b>: ante la carrera de la clave externa,
 /// <c>ExternalOrderService</c> llama a <c>IQuotationsUnitOfWork.DiscardPendingChanges()</c>, que limpia todo el tracker de
 /// <c>QuotationsDbContext</c>. En el scope del llamador ese tracker puede tener lo que haya leído o dejado pendiente otro
 /// adaptador; en uno nuevo no hay nada que perder.</para>

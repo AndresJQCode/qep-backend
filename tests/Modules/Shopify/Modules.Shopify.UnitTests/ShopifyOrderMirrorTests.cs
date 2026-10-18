@@ -151,7 +151,7 @@ public sealed class ShopifyOrderMirrorTests
         return row;
     }
 
-    // Ruling S13 (§5.4, §6.3): Cancelled e Ignored son terminales.
+    // §5.4 y §6.3: Cancelled e Ignored son terminales.
     [Fact]
     public void CancelledCannotGoBackToWaiting()
     {
@@ -203,7 +203,7 @@ public sealed class ShopifyOrderMirrorTests
         Assert.Equal((ShopifyImportState.Cancelled, """{"v":3}""", "refunded"), (row.ImportState, row.Payload, row.FinancialStatus));
     }
 
-    // Minor 3: la bandeja de «Ignorados» no muestra un motivo de espera que ya no aplica.
+    // La bandeja de «Ignorados» no muestra un motivo de espera que ya no aplica.
     [Fact]
     public void MarkIgnoredClearsTheWait()
     {
@@ -215,7 +215,7 @@ public sealed class ShopifyOrderMirrorTests
         Assert.Equal((ShopifyImportState.Ignored, (string?)null, (string?)null), (row.ImportState, row.WaitReason, row.WaitDetail));
     }
 
-    // Important 2: la versión es el token de concurrencia de shopify.orders; cada cambio la sube.
+    // La versión es el token de concurrencia de shopify.orders; cada cambio la sube.
     [Fact]
     public void VersionAdvancesOnEveryChange()
     {
@@ -242,7 +242,7 @@ public sealed class ShopifyOrderMirrorTests
         Assert.Equal(2L, ignored.Version);
     }
 
-    // Minor 1: la cabecera que llega de Shopify se acota en el dominio; un valor fuera de los anchos de la columna es un payload
+    // La cabecera que llega de Shopify se acota en el dominio; un valor fuera de los anchos de la columna es un payload
     // inválido que el worker registra y no reintenta, nunca un 22001 de Postgres.
     [Theory]
     [InlineData(65, "pending", "COP")]
@@ -334,7 +334,7 @@ public sealed class ShopifyOrderMirrorTests
     [InlineData("   ")]
     public void RecordLastErrorRequiresAText(string error) =>
         Assert.Throws<ArgumentException>(() => ImportedRow(null).RecordLastError(error));
-    // Ronda 1, minor 3: la operación que sale bien después de un rechazo limpia el error viejo; sin error, no hay cambio.
+    // La operación que sale bien después de un rechazo limpia el error viejo; sin error, no hay cambio.
     [Fact]
     public void ClearLastErrorRemovesItAndBumpsTheVersion()
     {

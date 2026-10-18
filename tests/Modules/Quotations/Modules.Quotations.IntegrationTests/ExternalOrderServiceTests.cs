@@ -213,7 +213,7 @@ public sealed class ExternalOrderServiceTests
         Assert.Equal(1, await CountShopifyOrdersAsync(setup));
     }
 
-    // Arrastre de la tarea 2, determinista: la búsqueda previa no ve el pedido que ya existe (como si la otra llamada hubiera
+    // La carrera de la clave externa, determinista: la búsqueda previa no ve el pedido que ya existe (como si la otra llamada hubiera
     // guardado justo después), así que el alta choca con IX_orders_tenant_external_key. El servicio descarta lo pendiente, relee
     // y devuelve el ganador, y la transacción deshecha devuelve el consecutivo: el próximo pedido no deja hueco.
     [Fact]

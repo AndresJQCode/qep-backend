@@ -294,7 +294,7 @@ public sealed class ShopifySyncApiTests
         Assert.Null(await leases.TryAcquireAsync(tenantId, Guid.CreateVersion7(), TimeSpan.FromMinutes(30), Ct));
     }
 
-    // Minor 5: una corrida que tardó más que su lease no suelta el de la corrida que lo tomó después.
+    // Una corrida que tardó más que su lease no suelta el de la corrida que lo tomó después.
     [Fact]
     public async Task ReleaseDoesNotFreeTheLeaseOfAnotherRun()
     {
@@ -324,7 +324,7 @@ public sealed class ShopifySyncApiTests
             connectionString, "SELECT count(*) FROM shopify.stores WHERE connection_id = @c AND reconcile_lease_until > now()", ("c", connectionId)));
     }
 
-    // D-S4 (ruling S25): la tienda que nunca recibió nada nace, en su primera sincronización, con la ventana en el enlace (la
+    // D-S4: la tienda que nunca recibió nada nace, en su primera sincronización, con la ventana en el enlace (la
     // creación de la conexión) y no en «ahora».
     [Fact]
     public async Task SyncFirstContactStartsTheWindowAtTheLink()

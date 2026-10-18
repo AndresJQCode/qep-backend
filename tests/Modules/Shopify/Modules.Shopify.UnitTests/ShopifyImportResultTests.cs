@@ -6,7 +6,7 @@ namespace Modules.Shopify.UnitTests;
 
 /// <summary>
 /// Spec 2026-10-15 §6.2.2 a §6.2.4: lo que el importador hace con el envío, la dirección y el resultado del alta. Lo que ya
-/// cubre la tarea 13 (precio, descuento, <c>paymentMethod</c>, notas, <c>Rejected</c> y <c>AlreadyExisted</c>) está en
+/// se prueba del borrador (precio, descuento, <c>paymentMethod</c>, notas, <c>Rejected</c> y <c>AlreadyExisted</c>) está en
 /// <see cref="ShopifyPreconditionsTests"/> y no se repite acá.
 /// </summary>
 public sealed class ShopifyImportResultTests
@@ -134,7 +134,7 @@ public sealed class ShopifyImportResultTests
         Assert.Equal((ShopifyImportState.Imported, "order.order.payment_has_proofs"), (row.ImportState, row.LastError));
     }
 
-    // Ruling S17 con AlreadyExisted: la sincronización del pago que la 13 ya hace tampoco se pierde en silencio si Quotations la
+    // Con AlreadyExisted: la sincronización del pago que el importador hace después tampoco se pierde en silencio si Quotations la
     // rechaza.
     [Fact]
     public async Task AlreadyExistedSyncIgnoredRecordsLastError()
@@ -184,7 +184,7 @@ public sealed class ShopifyImportResultTests
         Assert.Empty(world.Writer.Creates);
     }
 
-    // Ronda 1, minor 5: un envío negativo llega al pedido (con la tasa del tenant) para que su regla lo rechace con código, en
+    // Un envío negativo llega al pedido (con la tasa del tenant) para que su regla lo rechace con código, en
     // vez de esconderse como Free; la fila queda order_rejected y la bandeja lo muestra.
     [Fact]
     public async Task NegativeShippingIsRejectedByTheOrderRules()

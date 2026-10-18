@@ -141,11 +141,11 @@ internal static class ShopifyApiHarness
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
-            // Ruling S18: el host registra el worker de entregas y el de la conciliación. En las pruebas no corre solo: la que lo necesita lo corre a mano
+            // El host registra el worker de entregas y el de la conciliación. En las pruebas no corre solo: la que lo necesita lo corre a mano
             // (DrainAsync) y decide cuándo, así que uno en segundo plano reclamaría la misma entrega a la vez.
             builder.ConfigureTestServices(services =>
             {
-                // La conciliación (tarea 15) tampoco: la prueba que la necesita la corre a mano (RunOnceAsync).
+                // La conciliación tampoco: la prueba que la necesita la corre a mano (RunOnceAsync).
                 foreach (var worker in services
                     .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
                         && (descriptor.ImplementationType == typeof(ShopifyWebhookDeliveryWorker)
@@ -183,7 +183,7 @@ internal static class ShopifyApiHarness
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:CampaignPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:PurgeIntervalHours", "24");
-            // Fuera de Production, sin el par de la app el proveedor shopify sale del catálogo (tarea 5); se fija para que las
+            // Fuera de Production, sin el par de la app el proveedor shopify sale del catálogo; se fija para que las
             // pruebas del módulo vean el mismo catálogo que producción.
             builder.UseSetting("Shopify:App:ClientId", "shopify-test-client");
             builder.UseSetting("Shopify:App:ClientSecret", WebhookSecret);
@@ -310,7 +310,7 @@ internal static class ShopifyApiHarness
 
     /// <summary>
     /// La conexión y la ruta de una tienda, creadas por los servicios de Integrations (repositorio, rutas, cifrado y unidad de
-    /// trabajo) como las deja el enlace de la tarea 8, sin pasar por el OAuth: el token es un sentinela.
+    /// trabajo) como las deja <c>LinkShopifyStore</c>, sin pasar por el OAuth: el token es un sentinela.
     /// </summary>
     public static async Task<Guid> LinkStoreAsync(
         WebApplicationFactory<Program> factory, Guid tenantId, Guid createdBy, string shop = Shop, string accessToken = "shpat_sentinel_token")
@@ -510,8 +510,8 @@ internal sealed class RecordingLoggerProvider : Microsoft.Extensions.Logging.ILo
 
 /// <summary>
 /// El tenant de una tienda lista para importar: <c>shopify</c> prendido, la tienda enlazada (conexión y ruta), un asesor activo, la
-/// empresa con cuenta COP, una clasificación, la tasa del envío y los productos de los SKU de los fixtures. Lo usan desde esta tarea
-/// las pruebas del worker y desde la 17 las del flujo de punta a punta.
+/// empresa con cuenta COP, una clasificación, la tasa del envío y los productos de los SKU de los fixtures. Lo usan las pruebas del
+/// worker y las del flujo de punta a punta.
 /// </summary>
 internal sealed record ShopifyWorld(
     ShopifyApiHarness.RegisteredTenant Tenant,
@@ -541,7 +541,7 @@ internal sealed record ShopifyWorld(
     }
 
     /// <summary>§6.1: la tienda configurada (asesor, cuenta de cobro COP, clasificación y las claves por defecto), como la deja el
-    /// <c>PUT</c> de la tarea 16.</summary>
+    /// <c>PUT</c> de la tienda.</summary>
     public async Task ConfigureStoreAsync(ShopifyApiHarness.QepApiFactory factory)
     {
         await using var scope = factory.Services.CreateAsyncScope();

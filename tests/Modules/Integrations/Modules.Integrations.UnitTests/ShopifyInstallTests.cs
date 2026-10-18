@@ -117,7 +117,7 @@ public sealed class ShopifyInstallTests
         Assert.Equal(ShopifyInstall.ShopNameMaxLength, install.ShopName!.Length);
     }
 
-    // Ruling S9: el reclamo reemplaza el state de Shopify por uno con prefijo, una sola vez y sólo mientras esté vigente.
+    // El reclamo reemplaza el state de Shopify por uno con prefijo, una sola vez y sólo mientras esté vigente.
     [Fact]
     public void ClaimReplacesTheStateOnceWhileExchangeable()
     {

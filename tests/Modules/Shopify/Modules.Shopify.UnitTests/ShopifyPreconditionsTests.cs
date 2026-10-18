@@ -8,7 +8,7 @@ namespace Modules.Shopify.UnitTests;
 /// Spec 2026-10-15 §6.2: las precondiciones en su orden. La primera que falla deja la fila <c>Waiting</c> con su motivo y su
 /// <c>wait_detail</c> y no se evalúa nada más (cada prueba deja rota también la siguiente, para que se vea quién gana). Los
 /// pedidos de prueba y los cancelados antes de importarse se ignoran sin mirar la tienda (§5.4). El resultado del alta (§6.2.4)
-/// lo cubre la tarea 14; acá sólo lo que el importador decide antes y alrededor de llamar al escritor.
+/// lo cubre <see cref="ShopifyImportResultTests"/>; acá sólo lo que el importador decide antes y alrededor de llamar al escritor.
 /// </summary>
 public sealed class ShopifyPreconditionsTests
 {
@@ -225,7 +225,7 @@ public sealed class ShopifyPreconditionsTests
     {
         var world = new ImporterWorld();
         world.Writer.Result = _ => ShopifyOrderWriteResult.Rejected("order.item.quantity_invalid");
-        // Línea con cantidad 0 (un payload sin quantity, tarea 10): no se importa en silencio; la regla del pedido la rechaza y
+        // Línea con cantidad 0 (un payload sin quantity): no se importa en silencio; la regla del pedido la rechaza y
         // la fila queda en espera con el código.
         var snapshot = Order(lines: [new ShopifyLine("CAM-001", 0m, 119_000m, 0m)]);
         var row = world.RowFor(snapshot);
@@ -236,7 +236,7 @@ public sealed class ShopifyPreconditionsTests
         Assert.NotNull(row.QepCustomerId);
     }
 
-    // S17: el reintento después de un conflicto en el segundo guardado de la ingesta, o de una caída entre crear el pedido y marcar
+    // El reintento después de un conflicto en el segundo guardado de la ingesta, o de una caída entre crear el pedido y marcar
     // la fila. Quotations devuelve el pedido que ya existe con esa clave; es un éxito, y el pago que Shopify trae ahora se
     // sincroniza porque el pedido nació con el estado de antes (D-S26).
     [Fact]
@@ -268,7 +268,7 @@ public sealed class ShopifyPreconditionsTests
     }
 
     // Lo que el adaptador propaga (RequestConcurrencyException, order.order.number_taken, base caída) no se vuelve espera ni
-    // ignorado: la fila no cambia y la entrega reintenta (ruling S17).
+    // ignorado: la fila no cambia y la entrega reintenta.
     [Fact]
     public async Task WriterFailureIsPropagatedWithoutMarkingTheRow()
     {
@@ -297,8 +297,7 @@ public sealed class ShopifyPreconditionsTests
         Assert.Empty(world.Writer.Creates);
     }
 
-    // ---- Ruling S21: lo que la 13 adelantó del borrador (§6.2.2 y §6.2.3). El código ya existía cuando se escribieron: nacen
-    // en verde y así quedan registradas en el reporte. ----
+    // ---- El borrador del pedido (§6.2.2 y §6.2.3) ----
 
     // §6.2.2 (H3): sin impuestos incluidos, en COP se le suma al precio el IVA del producto de QEP (D-S3).
     [Fact]
@@ -392,9 +391,9 @@ public sealed class ShopifyPreconditionsTests
         Assert.Empty(world.Writer.Syncs);
     }
 
-    // ---- Ronda 1 de la revisión ----
+    // ---- Cliente y tenant del intento ----
 
-    // Minor 4: si el pedido ya existía, la fila apunta al cliente de ESE pedido, no al que este intento encontró o creó (pueden
+    // Si el pedido ya existía, la fila apunta al cliente de ESE pedido, no al que este intento encontró o creó (pueden
     // diferir si el anotado de un intento anterior se perdió).
     [Fact]
     public async Task AlreadyExistedRecordsTheCustomerOfTheExistingOrder()
@@ -411,7 +410,7 @@ public sealed class ShopifyPreconditionsTests
         Assert.Equal(((Guid?)existingClient, (Guid?)existingOrder), (row.QepCustomerId, row.QepOrderId));
     }
 
-    // Minor 3: las búsquedas van con el tenant de la fila y el alta y el borrador con el de la tienda; un llamador que mezcle una
+    // Las búsquedas van con el tenant de la fila y el alta y el borrador con el de la tienda; un llamador que mezcle una
     // tienda y una fila de tenants o conexiones distintos es un error de programación, no un pedido en espera.
     [Fact]
     public async Task StoreOfAnotherTenantIsAProgrammingError()

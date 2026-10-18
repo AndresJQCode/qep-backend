@@ -16,7 +16,7 @@ public interface IShopifyOrdersSource
 }
 
 /// <summary>Una página de pedidos; <see cref="NextCursor"/> nulo en la última. <see cref="Skipped"/> son los pedidos que Shopify
-/// devolvió y el parser no supo leer (fallo permanente, ruling S24): la conciliación los anota en el espejo y los cuenta, para que
+/// devolvió y el parser no supo leer (fallo permanente, como en el webhook): la conciliación los anota en el espejo y los cuenta, para que
 /// no desaparezcan.</summary>
 public sealed record ShopifyOrdersPage(IReadOnlyList<ShopifyOrderSnapshot> Orders, string? NextCursor)
 {
@@ -33,7 +33,7 @@ public enum ShopifyOrdersSourceFailure
     /// <summary><c>THROTTLED</c> en el cuerpo o HTTP 429: se reintenta después de <see cref="ShopifyOrdersSourceException.RetryAfter"/>.</summary>
     Throttled,
 
-    /// <summary>401 o 402 (tienda congelada), y sólo esos (§5.3, ruling S24): la credencial ya no sirve; la conexión se reporta.</summary>
+    /// <summary>401 o 402 (tienda congelada), y sólo esos (§5.3): la credencial ya no sirve; la conexión se reporta.</summary>
     Rejected,
 
     /// <summary>Red, tiempo agotado, 403, 5xx, <c>ACCESS_DENIED</c> (de alcance: p. ej. sin la aprobación de datos protegidos) o

@@ -58,7 +58,7 @@ public sealed class ShopifyGraphQlClientTests
         Assert.Equal(TimeSpan.FromSeconds(3), error.RetryAfter);
     }
 
-    // §5.3: sólo 401 y 402 son credencial rechazada (ruling S24).
+    // §5.3: sólo 401 y 402 son credencial rechazada.
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.PaymentRequired)]
@@ -73,7 +73,7 @@ public sealed class ShopifyGraphQlClientTests
         Assert.DoesNotContain("Invalid API key", error.ToString(), StringComparison.Ordinal);
     }
 
-    // Ruling S24: ACCESS_DENIED es de alcance (p. ej. falta la aprobación de datos protegidos del cliente, V-3) y un 403 no se sabe
+    // ACCESS_DENIED es de alcance (p. ej. falta la aprobación de datos protegidos del cliente, V-3) y un 403 no se sabe
     // qué significa sin Shopify real: ninguno de los dos marca la conexión NeedsAttention, que apagaría también el webhook.
     [Fact]
     public async Task Status403AndAccessDeniedMapToUnavailable()
@@ -90,7 +90,7 @@ public sealed class ShopifyGraphQlClientTests
         Assert.All(errors, error => Assert.Equal(ShopifyOrdersSourceFailure.Unavailable, error.Failure));
     }
 
-    // Minor 4: un tipo inesperado en la respuesta (un id numérico, un booleano como texto) es una respuesta inusable, no un 500.
+    // Un tipo inesperado en la respuesta (un id numérico, un booleano como texto) es una respuesta inusable, no un 500.
     [Theory]
     [InlineData("""{"data":{"orders":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":123}]}}}""")]
     [InlineData("""{"data":{"orders":{"pageInfo":{"hasNextPage":"yes","endCursor":null},"nodes":[]}}}""")]
@@ -215,13 +215,13 @@ public sealed class ShopifyGraphQlClientTests
         var page = await bed.Client.FetchUpdatedSinceAsync(Connection, Since, cursor: null, Ct);
 
         Assert.Equal(5550000000001L, Assert.Single(page.Orders).OrderId);
-        // El ilegible no desaparece (ruling S24): vuelve con su id y su motivo para que la conciliación lo anote. El borrado no.
-        // Ronda 2: el de GID no numérico también vuelve, sin id, para que se cuente.
+        // El ilegible no desaparece: vuelve con su id y su motivo para que la conciliación lo anote. El borrado no.
+        // El de GID no numérico también vuelve, sin id, para que se cuente.
         Assert.Equal([1L, null], page.Skipped.Select(order => order.OrderId));
         Assert.All(page.Skipped, order => Assert.StartsWith("invalid_payload", order.Reason, StringComparison.Ordinal));
     }
 
-    // Minor 6: un pedido con muchas líneas se pagina hasta el final, sin tope: uno truncado entraría con menos productos y sin
+    // Un pedido con muchas líneas se pagina hasta el final, sin tope: uno truncado entraría con menos productos y sin
     // aviso. 101 páginas extra (más que el tope de 100 que había) → 102 líneas.
     [Fact]
     public async Task FetchMergesEveryLinePageOfAVeryLongOrder()
@@ -396,7 +396,7 @@ public sealed class ShopifyGraphQlClientTests
 }
 
 /// <summary>
-/// Spec 2026-10-15 §5.3 y lo que dejó dicho la tarea 10: un campo que la consulta no pide llega como 0, <c>false</c> o
+/// Spec 2026-10-15 §5.3 y la regla de los parsers: un campo que la consulta no pide llega como 0, <c>false</c> o
 /// <c>null</c> sin error. Esta prueba arma una respuesta con <b>exactamente</b> los campos que pide la consulta real del cliente
 /// (<see cref="ShopifyGraphQlClient.OrderQuery"/>), la pasa por <see cref="GraphQlOrderParser"/> y exige que no quede ningún
 /// campo del snapshot vacío. Si alguien quita un campo de la consulta, o el parser empieza a leer uno que la consulta no pide, se

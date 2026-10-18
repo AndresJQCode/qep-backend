@@ -16,8 +16,8 @@ public interface IShopifyStoreRepository
     /// (no espera al commit) y sube la versión de cada fila; repetirla no cambia nada. Devuelve cuántas filas pasaron.</summary>
     Task<int> AdoptWaitingOrdersAsync(Guid tenantId, Guid connectionId, string shopDomain, CancellationToken cancellationToken);
 
-    /// <summary>Ruling S16: <c>shop/redact</c> encuentra la tienda por su dominio aunque la conexión y su ruta se hayan borrado.
-    /// Sin <c>tenantId</c> a propósito (como S6): el webhook no sabe de qué tenant es la tienda. Puede devolver más de una si la
+    /// <summary>§5.5: <c>shop/redact</c> encuentra la tienda por su dominio aunque la conexión y su ruta se hayan borrado.
+    /// Sin <c>tenantId</c> a propósito: el webhook no sabe de qué tenant es la tienda. Puede devolver más de una si la
     /// tienda se enlazó a otro tenant después.</summary>
     Task<IReadOnlyList<ShopifyStore>> FindByShopDomainAsync(string shopDomain, CancellationToken cancellationToken);
 
@@ -60,8 +60,8 @@ public interface IShopifyOrderMirrorRepository
     Task<IReadOnlyDictionary<Guid, int>> CountWaitingByConnectionAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
-/// <summary>El filtro de la bandeja (§7). <see cref="States"/> vacío es cualquier estado (ruling S28: «con avisos» sin
-/// <c>state</c>); el handler pone <c>Waiting</c> cuando no hay <c>state</c> ni <c>withWarnings</c>. <see cref="WithWarnings"/>
+/// <summary>El filtro de la bandeja (§7). <see cref="States"/> vacío es cualquier estado («con avisos» sin
+/// <c>state</c>, BFF: así la lista cierra con <c>summary.withWarnings</c>); el handler pone <c>Waiting</c> cuando no hay <c>state</c> ni <c>withWarnings</c>. <see cref="WithWarnings"/>
 /// deja sólo las filas con avisos <b>sin revisar</b>.</summary>
 public sealed record ShopifyOrderFilter(IReadOnlyCollection<ShopifyImportState> States, Guid? ConnectionId, bool WithWarnings);
 

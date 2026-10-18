@@ -236,7 +236,7 @@ public sealed class LifecycleHandlersTests
         Assert.Equal("integrations.connection-needs-attention.v1", Assert.Single(bed.Events.Published).EventName);
     }
 
-    // Ruling S12: que Shopify no registre los webhooks no es una credencial mala. El resume responde su propio código, sin
+    // Que Shopify no registre los webhooks no es una credencial mala. El resume responde su propio código, sin
     // marcar el token en errors, y la conexión queda NeedsAttention con webhooks_not_registered.
     [Fact]
     public async Task ResumeWithWebhooksNotRegisteredAnswersItsOwnCodeWithoutMarkingTheToken()

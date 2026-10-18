@@ -11,7 +11,7 @@ namespace Modules.Shopify.Infrastructure.Workers;
 /// Spec 2026-10-15 §5.2, copia de <c>WebhookDeliveryWorker</c> de Messaging (H15): toma lotes de <see cref="BatchSize"/>, reclama
 /// cada entrega con un <c>UPDATE</c> que se commitea solo (un solo ganador entre réplicas) y la procesa en su propio scope. Lo que
 /// el procesador devuelve se cierra en el acto, con su <c>ignored_reason</c> o su <c>last_error</c>: así termina un payload que
-/// no se puede leer, en el primer intento (Review Focus 2). Lo que lanza deja el reclamo vivo y vuelve al vencer el lease, que
+/// no se puede leer, en el primer intento. Lo que lanza deja el reclamo vivo y vuelve al vencer el lease, que
 /// crece por intento; a los <see cref="MaxAttempts"/> se cierra con <c>last_error</c>.
 /// </summary>
 internal sealed partial class ShopifyWebhookDeliveryWorker(

@@ -9,7 +9,7 @@ using Modules.Tenancy.Domain;
 namespace Modules.Shopify.UnitTests;
 
 /// <summary>
-/// Spec 2026-10-15 §6.1, §6.4 y §7 (tarea 16): el <c>PUT</c> de la tienda, el reintento manual y «Marcar como revisado», con
+/// Spec 2026-10-15 §6.1, §6.4 y §7: el <c>PUT</c> de la tienda, el reintento manual y «Marcar como revisado», con
 /// los puertos en memoria. Lo que depende de la base (filtros de la lista, conteos del resumen, el token de concurrencia) va en
 /// las pruebas de integración.
 /// </summary>
@@ -138,7 +138,7 @@ public sealed class ShopifyStoreHandlersTests
             (dto.Version, dto.IsConfigured, dto.AdvisorName, dto.BillingCompanyName, dto.ClassificationName));
     }
 
-    // §6.1 y ruling S25: la tienda nace en el primer contacto; si ese contacto es el PUT, nace con el dominio de la conexión y la
+    // §6.1: la tienda nace en el primer contacto; si ese contacto es el PUT, nace con el dominio de la conexión y la
     // ventana de la conciliación en el instante del enlace, no en «ahora».
     [Fact]
     public async Task PutWithoutStoreCreatesItWithShopDomainAndLinkedAt()
@@ -302,7 +302,7 @@ public sealed class ShopifyStoreHandlersTests
         Assert.Null(row.WarningsReviewedAt);
     }
 
-    // Ruling S26: «hoy» es el día del tenant cortado por TenantCalendar, y el instante viaja en UTC (Npgsql no manda a
+    // «hoy» es el día del tenant cortado por TenantCalendar, y el instante viaja en UTC (Npgsql no manda a
     // timestamptz un offset distinto de cero). 23:30 del 18 en Bogotá es el 19 en UTC: el día sigue siendo el 18.
     [Fact]
     public async Task SummaryStartsTodayAtTheTenantMidnightInUtc()
@@ -329,7 +329,7 @@ public sealed class ShopifyStoreHandlersTests
         Assert.Equal(calendar.StartOfDayUtc(calendar.Today), world.Mirrors.LastImportedSince);
     }
 
-    // Ruling S27 y S29: el PUT audita shopify.store.updated en la misma transacción, con los nombres de lo que cambió; uno
+    // El PUT audita shopify.store.updated en la misma transacción, con los nombres de lo que cambió; uno
     // rechazado (412) no deja nada.
     [Fact]
     public async Task PutRecordsStoreUpdatedAuditAndARejectedPutDoesNot()
@@ -345,7 +345,7 @@ public sealed class ShopifyStoreHandlersTests
             ("shopify.store.updated", StoreHandlersWorld.TenantId, StoreHandlersWorld.SubjectId, AuditActorType.Human, StoreHandlersWorld.ConnectionId.ToString()),
             (entry.Action, entry.TenantId, entry.ActorId, entry.ActorType, entry.ResourceId));
         Assert.Empty(world.Database.PendingAudit);
-        // Ruling S29: como tenancy.settings.updated, sólo el arreglo con los nombres de lo que cambió; ningún valor (el número de
+        // Como tenancy.settings.updated, sólo el arreglo con los nombres de lo que cambió; ningún valor (el número de
         // cuenta no entra a la auditoría). Las claves por defecto no cambiaron y no aparecen.
         Assert.Equal(
             """["advisorMembershipId","billingCompanyId","billingBankName","billingAccountNumber","billingCurrency"]""",
@@ -353,7 +353,7 @@ public sealed class ShopifyStoreHandlersTests
         Assert.DoesNotContain("123-456", entry.Fields, StringComparison.Ordinal);
     }
 
-    // Minor 5 de la revisión: un payload del espejo que no se lee es un fallo permanente, como en la ingesta: queda en last_error
+    // Un payload del espejo que no se lee es un fallo permanente, como en la ingesta: queda en last_error
     // y la fila vuelve, sin 500 y sin llamar al importador.
     [Fact]
     public async Task RetryWithUnreadablePayloadRecordsLastErrorWithout500()

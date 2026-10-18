@@ -6,7 +6,7 @@ namespace Modules.Shopify.UnitTests;
 
 /// <summary>Spec 2026-10-15 §5.1 y §12: la firma del cuerpo del webhook (<c>X-Shopify-Hmac-Sha256</c>, HMAC-SHA256 de los bytes
 /// crudos en base64). Es la copia de <c>ShopifyHmac.VerifyBody</c> de Integrations, que Shopify no puede referenciar
-/// (ShopifyLayerTests), con los mismos vectores de la tarea 6: si una copia cambia, la otra prueba lo dice.</summary>
+/// (ShopifyLayerTests), con los mismos vectores que <c>ShopifyHmacTests</c> de Integrations: si una copia cambia, la otra prueba lo dice.</summary>
 public sealed class ShopifyBodySignatureTests
 {
     private const string DocsSecret = "hush";

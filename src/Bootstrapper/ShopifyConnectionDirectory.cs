@@ -86,7 +86,7 @@ internal sealed class ShopifyConnectionDirectory(
             ?? string.Empty;
         var shopId = connection.Fields.GetValueOrDefault(ShopifyFieldKeys.ShopId) ?? string.Empty;
         var token = await OperationalTokenAsync(route, cancellationToken);
-        // D-S4 (ruling S25): el enlace crea la conexión (LinkShopifyStore), así que su CreatedAt es el instante del enlace.
+        // D-S4: el enlace crea la conexión (LinkShopifyStore), así que su CreatedAt es el instante del enlace.
         return new ShopifyConnectionRef(route.TenantId, route.ConnectionId, shopId, domain, token is not null, token)
         {
             LinkedAt = connection.CreatedAt,

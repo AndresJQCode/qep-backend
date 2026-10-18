@@ -141,7 +141,7 @@ public sealed class ShopifyPersistenceTests
         Assert.Null(await mirrors.FindSeenCustomerIdAsync(tenantId, connectionId, 7_002L, Ct));
     }
 
-    // §6.1: lo que el PUT de la tienda (tarea 16) guarda vuelve igual, cuenta de cobro incluida.
+    // §6.1: lo que el PUT de la tienda guarda vuelve igual, cuenta de cobro incluida.
     [Fact]
     public async Task ConfiguredStoreRoundTrips()
     {
@@ -208,7 +208,7 @@ public sealed class ShopifyPersistenceTests
         Assert.Equal("concurrency.conflict", error.Code);
     }
 
-    // Important 2 de la revisión: el worker de webhooks y el reintento manual cargan la misma fila a la vez. El primero la importa;
+    // El worker de webhooks y el reintento manual cargan la misma fila a la vez. El primero la importa;
     // el segundo, que la leyó en espera, no puede devolverla a Waiting: su SaveChanges choca con la versión.
     [Fact]
     public async Task TwoWritersOnTheSameRowTheSecondIsAConcurrencyConflict()

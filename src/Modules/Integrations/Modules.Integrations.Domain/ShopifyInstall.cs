@@ -23,7 +23,7 @@ public sealed class ShopifyInstall
 
     public const int ScopesMaxLength = 512;
 
-    /// <summary>Ruling S9: el <c>state</c> de una fila reclamada para el canje. El punto no es base64url, así que ningún
+    /// <summary>El <c>state</c> de una fila reclamada para el canje. El punto no es base64url, así que ningún
     /// <c>state</c> emitido por el inicio puede chocar con uno reclamado.</summary>
     public const string ClaimedStatePrefix = "claimed.";
 
@@ -113,7 +113,7 @@ public sealed class ShopifyInstall
     public bool IsClaimed => State.StartsWith(ClaimedStatePrefix, StringComparison.Ordinal);
 
     /// <summary>
-    /// Ruling S9: el canje reclama la fila <b>antes</b> de llamar a Shopify, reemplazando el <c>state</c> por
+    /// El canje reclama la fila <b>antes</b> de llamar a Shopify, reemplazando el <c>state</c> por
     /// <paramref name="claimState"/> (aleatorio, con <see cref="ClaimedStatePrefix"/>). Es lo que lo vuelve de un solo uso:
     /// otro request con el mismo <c>state</c> ya no encuentra la fila, aunque Shopify falle después. El repositorio lo
     /// guarda con un <c>UPDATE</c> condicionado al <c>state</c> anterior.

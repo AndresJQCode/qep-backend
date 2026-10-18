@@ -26,7 +26,7 @@ namespace Modules.Shopify.Application;
 /// que falla (Shopify caído, <c>THROTTLED</c> tres veces, un pedido que no se pudo aplicar) no mueve la ventana: la siguiente
 /// vuelve a traer todo desde el mismo punto, y el upsert es idempotente.</para>
 /// <para>Un pedido que falla no frena a los demás: lo que dejó pendiente en la unidad de trabajo se descarta para que el guardado
-/// del siguiente no lo confirme (Ruling S14: un snapshot no se guarda sin su reacción).</para>
+/// del siguiente no lo confirme: un snapshot no se guarda sin su reacción de §6.3.</para>
 /// </summary>
 public sealed partial class ReconcileStore(
     IShopifyOrdersSource source,
@@ -131,7 +131,7 @@ public sealed partial class ReconcileStore(
         }
         finally
         {
-            // Sin el token del llamador: una corrida cancelada también suelta su lease. Sólo el suyo (minor 5).
+            // Sin el token del llamador: una corrida cancelada también suelta su lease. Sólo el suyo: si venció y otra corrida lo tomó, es de ella.
             await leases.ReleaseAsync(connection.TenantId, connection.ConnectionId, lease, CancellationToken.None);
         }
     }
@@ -147,7 +147,7 @@ public sealed partial class ReconcileStore(
                 return existing;
             }
 
-            // D-S4 (ruling S25): la ventana arranca en el enlace, no en el primer contacto.
+            // D-S4: la ventana arranca en el enlace, no en el primer contacto.
             var store = ShopifyStoreSupport.NewStore(connection, now);
             await ShopifyStoreSupport.AddNewAsync(stores, store, cancellationToken);
             try
@@ -209,7 +209,7 @@ public sealed partial class ReconcileStore(
         }
         catch (ShopifyPayloadException exception)
         {
-            // Ruling S24, la regla del webhook: un fallo permanente (una cabecera que el dominio no guarda) se cierra con last_error
+            // La misma regla del webhook: un fallo permanente (una cabecera que el dominio no guarda) se cierra con last_error
             // y no frena la ventana. Reintentarlo da lo mismo, y congelarla clavaría la tienda en este pedido para siempre.
             unitOfWork.DiscardPendingChanges();
             run.States.Remove(snapshot.OrderId);
@@ -235,7 +235,7 @@ public sealed partial class ReconcileStore(
         ShopifyConnectionRef connection, long? orderId, string reason, Run run, CancellationToken cancellationToken)
     {
         run.Skipped++;
-        // Ronda 2: sin fila del espejo (pedido nuevo con la cabecera rota, o un GID no numérico) éste es el único rastro, porque la
+        // Sin fila del espejo (pedido nuevo con la cabecera rota, o un GID no numérico) éste es el único rastro, porque la
         // ventana avanza. Sólo tenant, conexión, id y motivo: el motivo es el texto fijo de la excepción del parser o del dominio,
         // que nombra el campo y nunca su valor; nada del comprador ni del cuerpo.
         LogSkipped(logger, orderId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown", connection.ConnectionId, connection.TenantId, reason);

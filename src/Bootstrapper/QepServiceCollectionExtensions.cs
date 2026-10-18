@@ -769,7 +769,7 @@ public static class QepServiceCollectionExtensions
         // §5.3: «Sincronizar ahora» (quotations.order.manage, política ya registrada por Quotations) y la versión de la Admin API
         // de la conciliación, la misma Shopify:App:ApiVersion que usa Integrations para el enlace.
         services.AddScoped<ICommandHandler<SyncShopifyStoreCommand, ShopifySyncResult>, SyncShopifyStoreHandler>();
-        // §6.1 y §7 (tarea 16): la configuración de la tienda (integrations.connection.read|manage) y la bandeja
+        // §6.1 y §7: la configuración de la tienda (integrations.connection.read|manage) y la bandeja
         // (quotations.order.read|manage); las cuatro políticas ya las registran Integrations y Quotations, sin permisos nuevos.
         services.AddScoped<IQueryHandler<ListShopifyStoresQuery, IReadOnlyList<ShopifyStoreSummaryDto>>, ListShopifyStoresHandler>();
         services.AddScoped<IQueryHandler<GetShopifyStoreQuery, ShopifyStoreDto>, GetShopifyStoreHandler>();
@@ -783,7 +783,7 @@ public static class QepServiceCollectionExtensions
         services.AddSingleton<IShopifyApiVersion, ShopifyApiVersion>();
         // §5.2 y §6.2: los puertos de Shopify hacia Integrations, Customers, Catalog, Geography, Quotations, Companies y
         // Tenancy/Identity (ShopifyPorts.cs). Shopify no referencia ninguno de esos módulos: el composition root los une. El
-        // escritor de pedidos abre un scope propio por llamada (DiscardPendingChanges de Quotations, tarea 2).
+        // escritor de pedidos abre un scope propio por llamada (DiscardPendingChanges de Quotations).
         services.AddScoped<IShopifyConnectionDirectory, ShopifyConnectionDirectory>();
         services.AddScoped<IShopifyConnectionHealth, ShopifyConnectionHealth>();
         services.AddScoped<IShopifyCustomerDirectory, ShopifyCustomerDirectory>();
@@ -796,12 +796,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IShopifyOrderNumbers, ShopifyOrderNumbers>();
         services.AddScoped<IShopifyTenantConnections, ShopifyTenantConnections>();
         services.AddScoped<IShopifyStoreReferences, ShopifyStoreReferences>();
-        // §6.2 y ruling S18: el importador y, con él, el procesador de entregas y su worker. Sin estas tres líneas el webhook
+        // §6.2: el importador y, con él, el procesador de entregas y su worker. Sin estas tres líneas el webhook
         // responde 200, encola y nadie procesa nunca; CompositionRootTests arma el contenedor con ValidateOnBuild y resuelve el
         // worker para que eso no pase en silencio.
         services.AddScoped<ShopifyCustomerResolver>();
         services.AddScoped<IShopifyOrderImporter, ShopifyOrderImporter>();
-        // §6.3 (ruling S17): pago y cancelación de los pedidos ya importados. Va antes de AddShopifyWebhookProcessing, que sólo
+        // §6.3: pago y cancelación de los pedidos ya importados. Va antes de AddShopifyWebhookProcessing, que sólo
         // registra la reacción vacía si nadie registró otra (TryAdd).
         services.AddScoped<IShopifyOrderChangeReaction, ShopifyOrderChanges>();
         services.AddShopifyWebhookProcessing();

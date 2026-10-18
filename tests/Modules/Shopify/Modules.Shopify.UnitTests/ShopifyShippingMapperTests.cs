@@ -84,9 +84,9 @@ public sealed class ShopifyShippingMapperTests
         Assert.Null(result.WaitReason);
     }
 
-    // Ronda 1, minor 5: un valor negativo es un dato malo de Shopify, no un envío gratis. No se corrige ni se esconde como Free:
+    // Un valor negativo es un dato malo de Shopify, no un envío gratis. No se corrige ni se esconde como Free:
     // va como Charged con su valor y la regla del pedido lo rechaza (order.order.freight_amount_invalid, H21), así que la fila
-    // queda order_rejected con ese código a la vista, como una línea con cantidad 0 (tarea 13).
+    // queda order_rejected con ese código a la vista, como una línea con cantidad 0.
     [Theory]
     [InlineData(true, "-5000", "-5000")]
     [InlineData(false, "-10000", "-11900")]
@@ -120,7 +120,7 @@ public sealed class ShopifyShippingMapperTests
         Assert.Equal(("Charged", 11_900m, 19), (result.Draft.ChargeMode, result.Draft.FreightAmount, result.Draft.FreightTaxPercentage));
     }
 
-    // Review Focus 4 (H21): el dominio exige pesos enteros en COP; se redondea AwayFromZero en vez de dejar que el pedido lance
+    // H21: el dominio exige pesos enteros en COP; se redondea AwayFromZero en vez de dejar que el pedido lance
     // freight_amount_invalid.
     [Theory]
     [InlineData(true, "15000.50", "15001")]

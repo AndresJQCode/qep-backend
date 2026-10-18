@@ -165,9 +165,9 @@ public sealed class GetShopifyStoreHandler(
 /// (<c>shopify.store.advisor_not_member</c>), la cuenta de cobro en la empresa con esa moneda
 /// (<c>shopify.store.billing_account_not_found</c>) y la clasificación del tenant (<c>shopify.store.classification_not_found</c>).
 /// Si la tienda todavía no existe, este <c>PUT</c> es el primer contacto y la crea (§6.1) con el dominio de la conexión y la
-/// ventana de la conciliación en el enlace (ruling S25); una tienda nueva vale versión 1, la misma que daría el <c>GET</c>. Guardar
+/// ventana de la conciliación en el enlace; una tienda nueva vale versión 1, la misma que daría el <c>GET</c>. Guardar
 /// sube la versión (<see cref="ShopifyStore.Configure"/>), que es además el token de concurrencia de la fila, y audita
-/// <c>shopify.store.updated</c> en la misma transacción (ruling S27).
+/// <c>shopify.store.updated</c> en la misma transacción.
 /// </summary>
 public sealed class UpdateShopifyStoreHandler(
     IExecutionContext executionContext,
@@ -202,7 +202,7 @@ public sealed class UpdateShopifyStoreHandler(
         var updatedBy = await memberships.FindActiveMembershipIdAsync(executionContext.SubjectId, command.TenantId, cancellationToken)
             ?? throw ShopifyAuthorization.Denied();
 
-        var before = AuditedFields(store);
+        var before = ComparedFields(store);
         store.Configure(
             command.AdvisorMembershipId,
             billing,
@@ -217,7 +217,7 @@ public sealed class UpdateShopifyStoreHandler(
             await ShopifyStoreSupport.AddNewAsync(stores, store, cancellationToken);
         }
 
-        // Ruling S27: en la misma unidad de trabajo que la tienda; si el guardado pierde con 412, no queda auditoría.
+        // En la misma unidad de trabajo que la tienda; si el guardado pierde con 412, no queda auditoría.
         auditRecorder.Record(
             command.TenantId,
             executionContext.SubjectId,
@@ -225,14 +225,15 @@ public sealed class UpdateShopifyStoreHandler(
             ShopifyAuditActions.StoreUpdated,
             ShopifyAuditActions.ConnectionResourceType,
             store.ConnectionId.ToString(),
-            ChangesJson(before, AuditedFields(store)),
+            ChangedFieldNamesJson(before, ComparedFields(store)),
             clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return await ShopifyStoreSupport.ToDtoAsync(store, members, references, cancellationToken);
     }
 
-    // Lo que el formulario edita, con los nombres de los campos del cuerpo; los valores sólo se comparan, no se auditan (S29).
-    private static Dictionary<string, string?> AuditedFields(ShopifyStore store) => new(StringComparer.Ordinal)
+    // Lo que el formulario edita, con los nombres de los campos del cuerpo. Los valores sólo sirven para comparar el antes y el
+    // después: a la auditoría llegan los nombres de los que cambiaron, nunca los valores (el número de cuenta no se audita).
+    private static Dictionary<string, string?> ComparedFields(ShopifyStore store) => new(StringComparer.Ordinal)
     {
         ["advisorMembershipId"] = store.AdvisorMembershipId?.ToString(),
         ["billingCompanyId"] = store.Billing?.CompanyId.ToString(),
@@ -245,10 +246,10 @@ public sealed class UpdateShopifyStoreHandler(
         ["defaultIdentificationType"] = store.DefaultIdentificationType,
     };
 
-    /// <summary>Ruling S29: la forma de <c>tenancy.settings.updated</c>, un arreglo JSON con los nombres de los campos que
-    /// cambiaron, en el orden del formulario. Ningún valor: el número de cuenta no entra a la auditoría. Un <c>PUT</c> que no
+    /// <summary>El detalle de <c>shopify.store.updated</c>, con la misma forma que <c>tenancy.settings.updated</c>: un arreglo JSON
+    /// con los <b>nombres</b> de los campos que cambiaron, en el orden del formulario, sin ningún valor. Un <c>PUT</c> que no
     /// cambia nada audita <c>[]</c>.</summary>
-    private static string ChangesJson(Dictionary<string, string?> before, Dictionary<string, string?> after) =>
+    private static string ChangedFieldNamesJson(Dictionary<string, string?> before, Dictionary<string, string?> after) =>
         JsonSerializer.Serialize(
             after
                 .Where(pair => !string.Equals(before.GetValueOrDefault(pair.Key), pair.Value, StringComparison.Ordinal))

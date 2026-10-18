@@ -24,7 +24,7 @@ public sealed class ShopifyStore
 
     public Guid TenantId { get; private set; }
 
-    /// <summary>Ruling S16: el dominio <c>*.myshopify.com</c> en minúsculas, anotado en el primer contacto del webhook. Con él
+    /// <summary>El dominio <c>*.myshopify.com</c> en minúsculas, anotado en el primer contacto del webhook. Con él
     /// <c>shop/redact</c> encuentra la tienda aunque la conexión de Integrations y su ruta ya no existan (§5.5). Nulo en una
     /// tienda que todavía no recibió nada.</summary>
     public string? ShopDomain { get; private set; }
@@ -74,7 +74,7 @@ public sealed class ShopifyStore
     }
 
     /// <summary>
-    /// §6.1 y §7: la tienda configurada de una vez, como la guarda el <c>PUT</c> (tarea 16). Lo que depende de otros módulos (que
+    /// §6.1 y §7: la tienda configurada de una vez, como la guarda el <c>PUT</c>. Lo que depende de otros módulos (que
     /// el asesor sea miembro activo, que la cuenta exista en la empresa, que la clasificación sea del tenant, que el tipo de
     /// documento sea uno de los de Customers) lo valida el handler antes de llamar; acá sólo la forma y los anchos de las columnas.
     /// Sube <see cref="Version"/>: es el <c>If-Match</c> del <c>PUT</c>.

@@ -70,7 +70,7 @@ public static partial class ShopifyWebhookEndpoints
         }
         catch (Exception exception) when (exception is not RequestUnauthorizedException and not OperationCanceledException)
         {
-            // Ruling S15: un fallo al encolar responde no-2xx (lo mapea ApiExceptionHandler) para que Shopify reintente; queda el
+            // Un fallo al encolar responde no-2xx (lo mapea ApiExceptionHandler) para que Shopify reintente; queda el
             // aviso con las cabeceras y el tamaño, nunca el cuerpo.
             LogEnqueueFailed(logger, exception.GetType().Name, command.Topic, command.ShopDomain, command.WebhookId, read.Body.Length);
             throw;
@@ -78,7 +78,7 @@ public static partial class ShopifyWebhookEndpoints
 
         if (receipt.DiscardReason is { } reason)
         {
-            // Ruling S15: descarte determinista con 200 (§12), pero con rastro: un aviso de cumplimiento perdido acá no lo recupera
+            // Descarte determinista con 200 (§12), pero con rastro: un aviso de cumplimiento perdido acá no lo recupera
             // la conciliación.
             LogDiscarded(logger, reason, command.Topic, command.ShopDomain, command.WebhookId, read.Body.Length);
         }

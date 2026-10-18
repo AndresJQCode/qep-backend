@@ -7,8 +7,8 @@ using Modules.Shopify.Application;
 
 namespace Modules.Shopify.Api;
 
-/// <summary>Las rutas de la tienda y de la bandeja (spec 2026-10-15 §7) bajo <c>/api/v1/tenants/{tenantId:guid}/shopify</c>. La
-/// tarea 15 trae «Sincronizar ahora»; la 16, la configuración de la tienda y la bandeja. Cada ruta lleva su política y el handler
+/// <summary>Las rutas de la tienda y de la bandeja (spec 2026-10-15 §7) bajo <c>/api/v1/tenants/{tenantId:guid}/shopify</c>: la
+/// configuración de la tienda, la bandeja y «Sincronizar ahora». Cada ruta lleva su política y el handler
 /// revalida tenant, permiso y módulo (403, nunca 404).</summary>
 public static class ShopifyEndpoints
 {

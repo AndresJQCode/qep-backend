@@ -61,7 +61,7 @@ internal sealed class FakeOrderImporter : IShopifyOrderImporter
     }
 }
 
-/// <summary>La reacción de §6.3 (tarea 14) vista desde la ingesta: anota cada cambio y cuántos guardados había cuando llegó, y
+/// <summary>La reacción de §6.3 vista desde la ingesta: anota cada cambio y cuántos guardados había cuando llegó, y
 /// puede fallar las primeras <see cref="FailuresLeft"/> veces.</summary>
 internal sealed class FakeOrderChangeReaction(FakeUnitOfWork unitOfWork) : IShopifyOrderChangeReaction
 {

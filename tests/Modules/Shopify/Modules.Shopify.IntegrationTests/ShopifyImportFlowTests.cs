@@ -211,7 +211,7 @@ public sealed class ShopifyImportFlowTests
                 """));
     }
 
-    // Review Focus 1: la fila del espejo se perdió (borrada a mano, o el worker cayó entre crear el pedido y guardarla). El mismo
+    // La fila del espejo se perdió (borrada a mano, o el worker cayó entre crear el pedido y guardarla). El mismo
     // pedido vuelve a llegar: la clave externa lo frena y la fila nueva apunta al pedido que ya existía.
     [Fact]
     public async Task ReimportAfterMirrorRowDeletedDoesNotDuplicateOrder()

@@ -27,7 +27,7 @@ public sealed record ShopifyWebhookDelivery(long Id, string Topic, string ShopDo
 
 /// <summary>
 /// Cómo se cierra una entrega procesada: sin efecto con su motivo (<see cref="IgnoredReason"/>, §5.2), o con el fallo permanente
-/// que el worker no reintenta (<see cref="LastError"/>, Review Focus 2). Lo que no se cierra así lanza, y vuelve con el lease.
+/// que el worker no reintenta (<see cref="LastError"/>). Lo que no se cierra así lanza, y vuelve con el lease.
 /// </summary>
 public sealed record ShopifyDeliveryResult(string? IgnoredReason, string? LastError)
 {

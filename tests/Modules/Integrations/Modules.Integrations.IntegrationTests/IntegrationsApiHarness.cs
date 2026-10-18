@@ -52,8 +52,8 @@ internal static class IntegrationsApiHarness
 
     public const string ZenviaBaseUrl = "https://zenvia.test";
 
-    /// <summary>Spec 2026-10-15 §4.2: la app de Shopify, fijada y nunca heredada. Con el par, shopify es visible (D-M3,
-    /// task 5); el secreto es centinela, como los de Meta.</summary>
+    /// <summary>Spec 2026-10-15 §4.2: la app de Shopify, fijada y nunca heredada. Con el par, shopify es visible (D-M3);
+    /// el secreto es centinela, como los de Meta.</summary>
     public const string ShopifyClientId = "shopify-client-id-test";
 
     public const string SentinelShopifyClientSecret = "shopify-client-secret-SENTINEL-8a7b6c";
@@ -246,7 +246,7 @@ internal static class IntegrationsApiHarness
             builder.UseSetting("Meta:Instagram:GraphApiVersion", "v24.0");
             builder.UseSetting("Meta:Instagram:AllowedRedirectOrigins:0", "https://qep.qcode.co");
             builder.UseSetting("Meta:Instagram:AllowedRedirectOrigins:1", "http://localhost:3002");
-            // Spec 2026-10-15 §4.2: sin ClientId y ClientSecret, fuera de Production, shopify no aparece (task 5).
+            // Spec 2026-10-15 §4.2: sin ClientId y ClientSecret, fuera de Production, shopify no aparece.
             builder.UseSetting("Shopify:App:ClientId", ShopifyClientId);
             builder.UseSetting("Shopify:App:ClientSecret", SentinelShopifyClientSecret);
             builder.UseSetting("Shopify:App:AllowedRedirectOrigins:0", "https://qep.qcode.co");

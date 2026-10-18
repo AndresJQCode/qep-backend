@@ -331,7 +331,7 @@ public sealed class ShopifyInstallApiTests
         Assert.Equal("integrations.shopify.install_not_found", (await ProblemAsync(pending)).Code);
     }
 
-    // Review Focus 5 por HTTP: el doble clic del callback. El segundo no llama a Shopify ni toca la fila.
+    // Por HTTP: el doble clic del callback. El segundo no llama a Shopify ni toca la fila.
     [Fact]
     public async Task CompleteSameStateTwiceReturns404AndExchangesOnce()
     {
@@ -354,7 +354,7 @@ public sealed class ShopifyInstallApiTests
         Assert.Equal(1, await CountInstallsAsync(connectionString));
     }
 
-    // Ruling S9: dos complete del mismo state a la vez. Shopify tarda en canjear, así que los dos leen la fila sin token; el
+    // Dos complete del mismo state a la vez. Shopify tarda en canjear, así que los dos leen la fila sin token; el
     // reclamo del state antes de llamar a Shopify deja pasar a uno solo, y el otro recibe install_not_found sin gastar el
     // code otra vez (RFC 6749 §4.1.2: un code canjeado dos veces puede revocar el token del primero).
     [Fact]
@@ -440,7 +440,7 @@ public sealed class ShopifyInstallApiTests
             connectionString, "SELECT count(*) FROM integrations.shopify_installs WHERE access_token_protected IS NULL AND shop_id IS NULL"));
     }
 
-    // Ruling S4: el canje lo llama el SPA con fetch —Shopify sólo redirige el navegador a /shopify/callback, una página del
+    // El canje lo llama el SPA con fetch —Shopify sólo redirige el navegador a /shopify/callback, una página del
     // SPA— y el SPA manda X-Qep-Client siempre, así que no entra en la lista de exentos. Con el stub apagado: sin el
     // header, 403 de CSRF; con él, pasa sin sesión.
     [Fact]

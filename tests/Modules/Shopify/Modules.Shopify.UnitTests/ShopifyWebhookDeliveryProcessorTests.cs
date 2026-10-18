@@ -13,7 +13,7 @@ using Modules.Shopify.Infrastructure.Workers;
 namespace Modules.Shopify.UnitTests;
 
 /// <summary>Spec 2026-10-15 §5.2, §5.4 y §5.5: qué hace el worker con cada entrega. Lo que no se puede reintentar con provecho (un
-/// payload que el parser no lee o una cabecera que el dominio no guarda, Review Focus 2) termina procesado con <c>last_error</c>;
+/// payload que el parser no lee o una cabecera que el dominio no guarda) termina procesado con <c>last_error</c>;
 /// perder la carrera con la conciliación o el reintento manual relee la fila y vuelve a aplicar, sin marcar nada como fallido.</summary>
 public sealed class ShopifyWebhookDeliveryProcessorTests
 {
@@ -271,7 +271,7 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
         Assert.Equal(ShopifyOrderIngestion.MaxConcurrencyAttempts, world.UnitOfWork.Saves);
     }
 
-    // Ruling S14: la reacción de §6.3 ve el estado anterior (ApplySnapshot pisa FinancialStatus y CancelledAt) y corre antes del
+    // La reacción de §6.3 ve el estado anterior (ApplySnapshot pisa FinancialStatus y CancelledAt) y corre antes del
     // guardado que persiste el snapshot: snapshot y reacción entran juntos o no entra ninguno.
     [Fact]
     public async Task OrdersTopicExistingRowReactsWithThePreviousStateBeforeSaving()
@@ -334,7 +334,7 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
         Assert.Equal(Shop, world.Database.Stores[ConnectionId].ShopDomain);
     }
 
-    // Ruling S16 / §5.5: shop/redact llega 48 horas después de desinstalar. Si la conexión se borró, la ruta de Integrations cayó
+    // §5.5: shop/redact llega 48 horas después de desinstalar. Si la conexión se borró, la ruta de Integrations cayó
     // con ella; el módulo encuentra la tienda por su dominio y borra igual.
     [Fact]
     public async Task ShopRedactWithTheConnectionDeletedStillDeletesByDomain()
@@ -373,7 +373,7 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
         Assert.Equal(ShopifyIgnoredReasons.UnsupportedTopic, result.IgnoredReason);
     }
 
-    // Review Focus 2: firma válida y JSON inesperado. El worker no la deja reintentando: la cierra en el primer intento con
+    // Firma válida y JSON inesperado. El worker no la deja reintentando: la cierra en el primer intento con
     // last_error, y el resto de la cola sigue.
     [Fact]
     public async Task WorkerMalformedPayloadMarksProcessedWithError()

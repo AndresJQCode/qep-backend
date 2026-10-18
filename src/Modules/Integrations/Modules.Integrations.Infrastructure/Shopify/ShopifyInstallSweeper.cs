@@ -12,7 +12,7 @@ namespace Modules.Integrations.Infrastructure.Shopify;
 /// Spec 2026-10-15 §9: borra las filas de <c>integrations.shopify_installs</c> vencidas (15 minutos sin canje, 7 días sin
 /// enlace), al arrancar y cada <see cref="Interval"/>. Un solo <c>DELETE</c> por corrida, sin cargar filas.
 /// <para>
-/// <b>La excepción es la fila reclamada y sin token</b> (<c>state = 'claimed.…'</c>, ruling S9): un canje que ganó el
+/// <b>La excepción es la fila reclamada y sin token</b> (<c>state = 'claimed.…'</c>: el canje reclama la fila antes de llamar a Shopify): un canje que ganó el
 /// reclamo justo antes del minuto 15 sigue hablando con Shopify después de <c>expires_at</c>, y su
 /// <c>TryCompleteExchangeAsync</c> necesita la fila. Borrarla en ese momento le dejaría a la persona un
 /// <c>install_not_found</c> con el <c>code</c> ya gastado. A esa fila se le da <see cref="ClaimedGrace"/> de más: después

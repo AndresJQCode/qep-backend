@@ -46,7 +46,7 @@ public sealed class ShopifyWebhookWorkerTests
         Assert.Single(ports.Importer.Calls);
     }
 
-    // Ruling S18 de punta a punta, sin dobles: el host registra el importador y sus adaptadores. Un pedido firmado de una tienda
+    // De punta a punta, sin dobles: el host registra el importador y sus adaptadores. Un pedido firmado de una tienda
     // configurada entra como pedido de Shopify en Quotations, con su clave externa, y el comprador nace completo (documento del
     // atributo, clasificación de la tienda y Medellín por ANT) y queda anotado en la fila.
     [Fact]
@@ -63,8 +63,8 @@ public sealed class ShopifyWebhookWorkerTests
         await DrainAsync(factory);
 
         Assert.Equal("1|none|none", await DeliveryAsync(connectionString, "wh-real"));
-        // Tarea 14: el envío de 19 000 (Servientrega, impuestos incluidos, IVA del envío del tenant) entra con el pedido, así que
-        // los totales cuadran: total_difference pasa de 19 000 (sólo líneas, tarea 13) a 0. La transportadora no existe en el
+        // §6.2.2: el envío de 19 000 (Servientrega, impuestos incluidos, IVA del envío del tenant) entra con el pedido, así que
+        // los totales cuadran: total_difference pasa de 19 000 (sólo líneas) a 0. La transportadora no existe en el
         // tenant de la prueba, así que el pedido entra sin ella, con el título para «reconocer este nombre» y su aviso.
         Assert.Equal(
             "Imported|0.00",
@@ -244,7 +244,7 @@ public sealed class ShopifyWebhookWorkerTests
         Assert.Equal(1L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM shopify.stores"));
     }
 
-    // Ruling S14 contra Postgres: la reacción de §6.3 falla una vez. El snapshot no se guardó sin ella, así que la entrega vuelve
+    // Contra Postgres: la reacción de §6.3 falla una vez. El snapshot no se guardó sin ella, así que la entrega vuelve
     // con su lease, la fila sigue con el estado anterior y el reintento vuelve a ver el cambio.
     [Fact]
     public async Task WorkerFailedReactionIsSeenAgainOnRetry()
@@ -278,7 +278,7 @@ public sealed class ShopifyWebhookWorkerTests
         Assert.Equal(["paid", "paid"], ports.Reaction.Previous.Select(state => state.FinancialStatus));
     }
 
-    // Ruling S16 contra Postgres: la conexión se borró y la ruta cayó en cascada; shop/redact encuentra la tienda por su dominio.
+    // Contra Postgres: la conexión se borró y la ruta cayó en cascada; shop/redact encuentra la tienda por su dominio.
     [Fact]
     public async Task WorkerShopRedactWithTheConnectionDeletedDeletesByDomain()
     {

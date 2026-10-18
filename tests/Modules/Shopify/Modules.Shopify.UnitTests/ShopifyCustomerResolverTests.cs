@@ -155,7 +155,7 @@ public sealed class ShopifyCustomerResolverTests
         Assert.Empty(world.Geography.Requests);
     }
 
-    // Arrastre de la tarea 4: un comprador con documento pero sin correo no pasa las reglas del POST de clientes; el alta cae a
+    // Un comprador con documento pero sin correo no pasa las reglas del POST de clientes; el alta cae a
     // incompleta y el pedido sigue.
     [Fact]
     public async Task DocumentWithoutEmailFallsBackToIncomplete()
@@ -218,7 +218,7 @@ public sealed class ShopifyCustomerResolverTests
         Assert.Null(row.Warnings);
     }
 
-    // Minor 2 de la revisión: Shopify acepta 255 + 255 en el nombre y Customers guarda 160 (Customer.NameMaxLength). Sin recortar
+    // Shopify acepta 255 + 255 en el nombre y Customers guarda 160 (Customer.NameMaxLength). Sin recortar
     // acá, el POST de clientes lo rechaza por validación y un comprador con todo para ficha completa nace incompleto.
     [Fact]
     public async Task LongNameIsCutToTheCustomerColumnAndStillCreatesComplete()

@@ -4,7 +4,7 @@ namespace Modules.Shopify.Application;
 
 /// <summary>
 /// Spec 2026-10-15 §5.2: la conexión de Integrations que corresponde a una tienda, por su dominio (<c>connection_routes</c>). Puerto
-/// del módulo con adaptador en Bootstrapper (tarea 12): Shopify no referencia Integrations (ShopifyLayerTests).
+/// del módulo con adaptador en Bootstrapper: Shopify no referencia Integrations (ShopifyLayerTests).
 /// </summary>
 public interface IShopifyConnectionDirectory
 {
@@ -32,7 +32,7 @@ public interface IShopifyConnectionDirectory
 public sealed record ShopifyConnectionRef(
     Guid TenantId, Guid ConnectionId, string ShopId, string ShopDomain, bool IsOperational, string? AccessToken)
 {
-    /// <summary>D-S4 y §5.3 (ruling S25): el instante del enlace (la creación de la conexión). La tienda que el módulo ve por
+    /// <summary>D-S4 y §5.3: el instante del enlace (la creación de la conexión). La tienda que el módulo ve por
     /// primera vez arranca ahí su ventana de conciliación, para que un pedido hecho entre el enlace y el primer contacto entre
     /// aunque su webhook se pierda. Nulo si el adaptador no lo sabe: entonces, «ahora».</summary>
     public DateTimeOffset? LinkedAt { get; init; }
@@ -42,7 +42,7 @@ public sealed record ShopifyConnectionRef(
 }
 
 /// <summary>Spec 2026-10-15 §5.2 y §5.3: avisarle a Integrations que la tienda dejó de responder. Adaptador en Bootstrapper sobre
-/// <c>IConnectionHealthReporter</c> (tarea 12): <see cref="ReportUninstalledAsync"/> con <c>app_uninstalled</c>,
+/// <c>IConnectionHealthReporter</c>: <see cref="ReportUninstalledAsync"/> con <c>app_uninstalled</c>,
 /// <see cref="ReportRejectedAsync"/> con <c>credentials_rejected</c>.</summary>
 public interface IShopifyConnectionHealth
 {
@@ -52,12 +52,12 @@ public interface IShopifyConnectionHealth
 }
 
 /// <summary>
-/// Spec 2026-10-15 §6.2: el intento de importar una fila en espera. Lo implementa <see cref="ShopifyOrderImporter"/> (tarea 13);
+/// Spec 2026-10-15 §6.2: el intento de importar una fila en espera. Lo implementa <see cref="ShopifyOrderImporter"/>;
 /// acá está el contrato para que el webhook, la conciliación y el reintento manual lo llamen igual. Evalúa y escribe la fila; el
 /// commit final es del llamador. La única escritura que confirma por su cuenta es el cliente anotado en la fila antes del pedido
 /// (D-S24).
 /// <para><paramref name="connection"/> va porque la clave externa del pedido es <c>"{shopId}:{shopifyOrderId}"</c> (D-S23) y la
-/// tienda no guarda el <c>shopId</c>; el reintento manual (tarea 16) la obtiene con
+/// tienda no guarda el <c>shopId</c>; el reintento manual la obtiene con
 /// <see cref="IShopifyConnectionDirectory.FindByShopDomainAsync"/> y el <c>ShopDomain</c> de la tienda.</para>
 /// </summary>
 public interface IShopifyOrderImporter
@@ -70,8 +70,7 @@ public interface IShopifyOrderImporter
         CancellationToken cancellationToken);
 }
 
-/// <summary>Cómo quedó la fila después del intento. La tarea 13 puede ampliarlo; la conciliación (tarea 15) cuenta por
-/// <see cref="State"/>.</summary>
+/// <summary>Cómo quedó la fila después del intento.</summary>
 public sealed record ShopifyImportOutcome(ShopifyImportState State);
 
 /// <summary>Lo que §6.3 compara de una fila: el estado de importación, el pago y la cancelación.</summary>
@@ -90,8 +89,9 @@ public sealed record ShopifyOrderChange(
     ShopifyConnectionRef Connection, ShopifyStore Store, ShopifyOrderMirror Row, ShopifyMirrorState Previous, ShopifyOrderSnapshot Snapshot);
 
 /// <summary>
-/// Ruling S14 y spec §6.3: la reacción a un cambio de pago o cancelación sobre una fila que ya existía. La implementa la tarea 14
-/// (<c>ShopifyOrderChanges</c>); hasta entonces el registro por defecto es <see cref="NoShopifyOrderChangeReaction"/>.
+/// Spec §6.3: la reacción a un cambio de pago o cancelación sobre una fila que ya existía. La implementa
+/// <c>ShopifyOrderChanges</c>, que Bootstrapper registra antes de <c>AddShopifyWebhookProcessing</c>: su <c>TryAdd</c> sólo deja
+/// <see cref="NoShopifyOrderChangeReaction"/> si nadie registró otra (lo amarra <c>CompositionRootTests</c>).
 /// <para>Corre <b>antes</b> del guardado que persiste el snapshot, en la misma unidad de trabajo: lo que escriba en la fila (p. ej.
 /// <c>last_error</c>, <c>MarkCancelled</c>) entra en el mismo commit que el snapshot, y si lanza no se guarda nada, la entrega
 /// vuelve con su lease y el reintento ve el mismo estado anterior. Por eso tiene que ser idempotente con lo que ya hizo afuera
@@ -102,7 +102,8 @@ public interface IShopifyOrderChangeReaction
     Task ReactAsync(ShopifyOrderChange change, CancellationToken cancellationToken);
 }
 
-/// <summary>La reacción vacía mientras la tarea 14 no registre la suya.</summary>
+/// <summary>La reacción vacía, el registro por defecto de <c>AddShopifyWebhookProcessing</c>. En el host la reemplaza
+/// <c>ShopifyOrderChanges</c>.</summary>
 public sealed class NoShopifyOrderChangeReaction : IShopifyOrderChangeReaction
 {
     public Task ReactAsync(ShopifyOrderChange change, CancellationToken cancellationToken) => Task.CompletedTask;
@@ -141,7 +142,7 @@ public sealed class ShopifyCustomerNotCompletableException : Exception
 }
 
 /// <summary>
-/// Spec 2026-10-15 §6.2.1: buscar y dar de alta compradores en Customers. Adaptador en Bootstrapper (tarea 12) sobre
+/// Spec 2026-10-15 §6.2.1: buscar y dar de alta compradores en Customers. Adaptador en Bootstrapper sobre
 /// <c>ICustomerRepository</c> e <c>ICustomerProvisioning</c>. Todo método recibe <c>tenantId</c> y sólo ve ese tenant.
 /// </summary>
 public interface IShopifyCustomerDirectory
@@ -339,8 +340,8 @@ public sealed record ShopifyOrderOutcome(ShopifyOrderOutcomeKind Kind, string? C
 /// <para><b>Qué se traduce y qué se propaga.</b> Sólo los rechazos deterministas de una regla del pedido se vuelven resultado
 /// (<see cref="ShopifyOrderWriteResult.Rejected"/>, <see cref="ShopifyOrderOutcome"/>). <c>RequestConcurrencyException</c>,
 /// <c>order.order.number_taken</c> (otra alta tomó el consecutivo a la vez) y cualquier otro error transitorio (base, red,
-/// cancelación) <b>se propagan</b> sin traducir: el llamador no guarda la fila y la entrega o la conciliación reintentan
-/// (ruling S17). Por eso quien llame tiene que ser idempotente con lo que ya pasó en Quotations: el alta lo es por
+/// cancelación) <b>se propagan</b> sin traducir: el llamador no guarda la fila y la entrega o la conciliación reintentan.
+/// Por eso quien llame tiene que ser idempotente con lo que ya pasó en Quotations: el alta lo es por
 /// <c>ExternalKey</c>, y una sincronización o una anulación repetidas dan <see cref="ShopifyOrderOutcome.Applied"/> o
 /// <see cref="ShopifyOrderOutcome.AlreadyCancelled"/>.</para>
 /// </summary>

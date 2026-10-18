@@ -7,7 +7,7 @@ using static Modules.Integrations.IntegrationTests.IntegrationsApiHarness;
 namespace Modules.Integrations.IntegrationTests;
 
 /// <summary>
-/// Spec 2026-10-15 §9: el barrido borra las instalaciones vencidas, sin canje o sin enlace. Ruling S9: la fila reclamada y
+/// Spec 2026-10-15 §9: el barrido borra las instalaciones vencidas, sin canje o sin enlace. La fila reclamada y
 /// sin token (<c>claimed.…</c>) es un canje en vuelo y no se toca hasta <see cref="ShopifyInstallSweeper.ClaimedGrace"/>
 /// después de vencer.
 /// </summary>

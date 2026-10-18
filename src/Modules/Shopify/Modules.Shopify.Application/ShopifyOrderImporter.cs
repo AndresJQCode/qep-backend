@@ -20,8 +20,8 @@ namespace Modules.Shopify.Application;
 /// envío (<see cref="ShopifyShippingMapper"/>) y su parte de envío, y con contraentrega se sincroniza el pago (D-S26).</item>
 /// </list>
 /// <para><b>Qué no se atrapa.</b> Lo que propaga el escritor (<c>RequestConcurrencyException</c>, <c>order.order.number_taken</c>,
-/// base o red caídas) sale tal cual: la fila no cambia, el llamador no guarda y la entrega o la conciliación reintentan (ruling
-/// S17). Un <see cref="ArgumentException"/> del adaptador (p. ej. el <c>ArgumentOutOfRangeException</c> de un modo de envío que no
+/// base o red caídas) sale tal cual: la fila no cambia, el llamador no guarda y la entrega o la conciliación reintentan.
+/// Un <see cref="ArgumentException"/> del adaptador (p. ej. el <c>ArgumentOutOfRangeException</c> de un modo de envío que no
 /// es <c>Charged</c> ni <c>Free</c>) es un error de programación del importador, no un dato de la tienda: también sale tal cual,
 /// fuera del <c>Guarded</c> de la ingesta, así que el worker lo reintenta y lo deja en su log en cada intento, y al agotarlos cierra
 /// la entrega con el tipo y el mensaje en <c>last_error</c>. Volverlo <c>Waiting</c> o <c>ShopifyPayloadException</c> lo
@@ -174,7 +174,7 @@ public sealed class ShopifyOrderImporter(
             return Wait(row, ShopifyWaitReasons.OrderRejected, new { code = result.RejectedCode }, now);
         }
 
-        // S17: el pedido ya existía con esa clave (el worker cayó entre crearlo y marcar la fila, o el segundo guardado de la
+        // El pedido ya existía con esa clave (el worker cayó entre crearlo y marcar la fila, o el segundo guardado de la
         // ingesta perdió la carrera). Es un éxito; lo que no se repite es el estado de pago, que nació con el del intento anterior
         // y Shopify pudo haber cambiado desde entonces. D-S26: un pedido contraentrega nace pendiente aunque Shopify ya lo dé por
         // pagado (H5), así que se sincroniza justo después de crearlo. Sincronizar con el mismo estado no hace nada.
@@ -307,7 +307,7 @@ public sealed class ShopifyOrderImporter(
     /// <summary>
     /// §6.2.3: el borrador del pedido, con el envío ya resuelto (§6.2.2) y la parte de envío si la dirección quedó completa. Una
     /// dirección que no quedó completa va cruda a las notas, para que nadie tenga que abrir Shopify para despachar.
-    /// <para>Una línea con cantidad 0 (un payload sin <c>quantity</c>, tarea 10) no se filtra ni se corrige acá: la regla del
+    /// <para>Una línea con cantidad 0 (un payload sin <c>quantity</c>) no se filtra ni se corrige acá: la regla del
     /// pedido la rechaza (<c>order.item.quantity_invalid</c>) y la fila queda <c>order_rejected</c> con ese código, a la vista. Un
     /// precio 0 sí entra: en Shopify es un regalo legítimo, y si en cambio era un precio ausente, el total de Shopify no cuadra con
     /// el de QEP y lo delata <c>total_difference</c>.</para>

@@ -24,7 +24,7 @@ public sealed class ShopifyStoreTests
         Assert.Equal(((DateTimeOffset?)LinkedAt, 1L, LinkedAt), (store.LastReconciledAt, store.Version, store.UpdatedAt));
     }
 
-    // Ruling S16: shop/redact llega 48 horas después de desinstalar, cuando la ruta de Integrations pudo haberse borrado con la
+    // shop/redact llega 48 horas después de desinstalar, cuando la ruta de Integrations pudo haberse borrado con la
     // conexión; la tienda guarda su dominio para que el módulo la encuentre sin Integrations.
     [Fact]
     public void RecordShopDomainNormalizesAndDoesNotTouchTheVersion()
@@ -56,7 +56,7 @@ public sealed class ShopifyStoreTests
         Assert.Throws<ArgumentException>(() => store.RecordShopDomain(new string('a', ShopifyStore.ShopDomainMaxLength + 1)));
     }
 
-    // §6.1 y §7: el PUT de la tienda (tarea 16) la llena entera; la versión es su If-Match, así que sube.
+    // §6.1 y §7: el PUT de la tienda la llena entera; la versión es su If-Match, así que sube.
     [Fact]
     public void ConfigureFillsTheStoreAndBumpsTheVersion()
     {
