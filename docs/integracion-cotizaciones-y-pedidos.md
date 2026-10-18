@@ -63,7 +63,8 @@ Todo lo que cuelga de `/quotations/{id}/items...` sigue siendo de la cotización
 |---|---|---|---|
 | `GET` | `/quotations` | — (query: `clientId`, `advisorId`, `status`, `createdFrom`, `createdTo`, `page`, `pageSize`) | Paginado, sin líneas |
 | `GET` | `/quotations/{id}` | — | Con líneas |
-| `POST` | `/quotations` | `CreateQuotationRequest` | 201, arranca en `Draft` |
+| `POST` | `/quotations` | `CreateQuotationRequest` (con `items`, `globalScaleFloor`, `isRetail` opcionales) | 201, arranca en `Draft` con las líneas que traiga |
+| `POST` | `/quotations/preview` | `CreateQuotationRequest` | 200 `QuotationResponse` calculado **sin persistir** y sin gastar número: `id` vacío, `quotationNumber: ""`, `version: 0`. La vigencia ausente vuelve resuelta |
 | `PATCH` | `/quotations/{id}` | `UpdateQuotationRequest` | Reemplaza el encabezado entero (no PATCH parcial pese al verbo) |
 | `POST` | `/quotations/{id}/items` | `AddQuotationItemRequest` | Descuento se calcula solo por escala del producto |
 | `PUT` | `/quotations/{id}/items/{itemId}` | `UpdateQuotationItemRequest` | Re-resuelve el descuento para la nueva cantidad |
@@ -275,14 +276,15 @@ URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a a
 
 | `code` | HTTP | Qué pasó |
 |---|---|---|
-| `quotation.quotation.client_not_found` / `client_inactive` / `client_cuc_missing` | 422 | Cliente inválido al crear o al convertir |
+| `quotation.quotation.client_not_found` / `client_incomplete` / `client_inactive` / `client_cuc_missing` | 422 | Cliente inválido al crear (también en `/quotations/preview`) o al convertir |
 | `quotation.quotation.not_editable` | 422 | La cotización no está en `Draft`/`Sent` |
 | `quotation.quotation.not_draft` | 422 | `send` sobre algo que no es `Draft` |
 | `quotation.quotation.not_sent` | 422 | `void`/convertir sobre algo que no es `Sent` (void también acepta Draft) |
 | `quotation.quotation.changed_since_sent` | 422 | Convertir una cotización editada después de su último envío: hay que reenviarla primero |
 | `quotation.quotation.pdf_not_found` / `pdf_not_available` / `pdf_not_a_pdf` | 422 | Problema con el `pdfFileId` de `send` |
-| `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea, a la cotización o al pedido (también en `POST /orders`, y en `/orders/preview` sin cuenta, contra la moneda por defecto del tenant) |
-| `quotation.item.duplicate_product` | 422 | El producto ya está en la cotización: se cambia la cantidad de su línea, no se agrega otra |
+| `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea, a la cotización o al pedido (también en `POST /quotations` y `/quotations/preview` con `items`, en `POST /orders`, y en `/orders/preview` sin cuenta, contra la moneda por defecto del tenant) |
+| `quotation.item.duplicate_product` | 422 | El producto ya está en la cotización: se cambia la cantidad de su línea, no se agrega otra (en `POST /quotations` y `/quotations/preview`, una línea repetida en `items` llega antes como `validation.failed` con `errors.Items`) |
+| `quotation.retail.floor_not_allowed` | 422 | Cotización detal con piso de escala global en el mismo cuerpo (`POST /quotations`, `/quotations/preview`, `PUT /quotations/{id}` y su `/preview`) |
 | `order.order.client_not_found` / `client_inactive` / `client_incomplete` / `client_cuc_missing` | 422 | `POST /orders` (y su `/preview`) con un cliente que no existe en el tenant, inactivo, incompleto o sin CUC |
 | `order.order.items_required` | 422 | `POST /orders` sin líneas |
 | `order.item.duplicate_product` | 422 | El producto ya está en el pedido (`POST /orders`, `PUT /orders/{orderId}`, `POST /orders/{orderId}/items`): se cambia la cantidad de su línea |

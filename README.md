@@ -1102,6 +1102,51 @@ dentro de `parties[]` (rol `Billing`):
 - El PDF lo imprime debajo del nombre en «Facturar a», y el Excel de pedidos lo lleva en
   `Documento de identidad` (ver abajo).
 
+### Cotización en un paso: crear y calcular sin id
+
+Desde el spec 2026-10-18 (`docs/superpowers/specs/2026-10-18-layout-documentos-design.md` §7) «Nueva cotización»
+pinta el documento entero antes de que exista y lo crea de una vez. Son dos rutas bajo
+`/api/v1/tenants/{tenantId}`, las dos con el permiso `quotations.quotation.manage` (el de siempre, sin permiso
+nuevo) y el mismo cuerpo, `CreateQuotationRequest`:
+
+| Método y ruta | Respuesta |
+| --- | --- |
+| `POST /quotations` | `201` + `Location` + `QuotationResponse`, en `Draft` con las líneas que traiga |
+| `POST /quotations/preview` | `200` + `QuotationResponse` calculado **sin persistir**: `id` vacío (`00000000-…`), `quotationNumber: ""`, `version: 0` |
+
+```json
+{
+  "clientId": "…",
+  "validUntil": null,
+  "paymentMethod": null,
+  "notes": "…",
+  "parties": { "billing": null, "shipping": { … }, "billingUsesBusinessName": false, "isStorePickup": false, "billsToFinalConsumer": false },
+  "billingAccount": { "companyId": "…", "bankName": "…", "accountNumber": "…", "currency": "COP" },
+  "shipping": { … },
+  "items": [ { "productId": "…", "quantity": 2 } ],
+  "globalScaleFloor": null,
+  "isRetail": false
+}
+```
+
+- `items`, `globalScaleFloor` e `isRetail` son **opcionales**. Ausentes dan lo de antes: `{ clientId }` sigue
+  creando un borrador vacío, en `version` 1 y con una sola fila `Created` en el historial. `items` lleva producto y
+  cantidad, como el guardado; precio, escala, descuentos y tasa los resuelve el backend.
+- Las reglas y los códigos son los del guardado (`PUT /quotations/{id}`): línea repetida, cantidad ≤ 0 o producto
+  vacío dan `422 validation.failed` con `errors`; detal con piso, `quotation.retail.floor_not_allowed`; un producto
+  que no existe en el tenant, `quotation.item.product_not_found`; un modo de flete apagado,
+  `quotation.quotation.freight_charge_mode_disabled`. La elegibilidad del cliente (`client_not_found`,
+  `client_incomplete`, `client_cuc_missing`, `client_inactive`, en ese orden) aplica en las dos rutas. No se exigen
+  líneas: eso lo pide la pantalla.
+- **El cálculo previo no gasta número ni escribe nada**: ni consecutivo, ni historial, ni auditoría, ni outbox. Tampoco
+  exige el documento de la facturación, porque corre mientras la persona escribe; crear sí lo exige.
+- La vigencia ausente vuelve **resuelta** en las dos rutas: hoy del tenant + 15 días, la fecha que va a quedar.
+- Crear con líneas corre en una transacción con el consecutivo: un 422 de una línea no gasta número. Deja lo mismo que
+  crear y después guardar en el editor, sin la fila del encabezado: una fila `Created` y una `Edited` por línea en el
+  historial, y `quotation.quotation.created` más un `quotation.quotation.item_added` por línea en la auditoría.
+- **Despliegue: el backend va antes que el frontend** (D-L7). Un frontend nuevo contra un backend viejo crea
+  cotizaciones sin líneas y sin error: el backend viejo ignora `items` y `/preview` le responde 405.
+
 ### Pedidos: datos propios y pedido manual
 
 Desde el spec 2026-10-15 (`docs/superpowers/specs/2026-10-15-pedidos-sin-cotizacion-design.md`) un
