@@ -36,6 +36,11 @@ public interface IOrderRepository
     Task<Order?> FindByIdAsync(
         Guid tenantId, OrderId orderId, CancellationToken cancellationToken);
 
+    /// <summary>El número (<c>PED-…</c>) de estos pedidos, en una sola consulta: lo usa la bandeja de Shopify para mostrarlo en
+    /// cada fila importada de una página (spec 2026-10-15 §7). Un id que no es del tenant no aparece.</summary>
+    Task<IReadOnlyDictionary<OrderId, string>> FindOrderNumbersAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken);
+
     /// <summary>El pedido externo con esta clave de idempotencia (spec de Shopify D-S23), o null. La clave es
     /// única por <c>(tenant, source)</c>: la misma clave en otra plataforma es otro pedido.</summary>
     Task<Order?> FindByExternalKeyAsync(

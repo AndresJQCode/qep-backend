@@ -15,6 +15,9 @@ internal sealed class ShopifyStoreRepository(ShopifyDbContext dbContext) : IShop
 
     public async Task<IReadOnlyList<ShopifyStore>> FindByShopDomainAsync(string shopDomain, CancellationToken cancellationToken) =>
         await dbContext.Stores.AsNoTracking().Where(store => store.ShopDomain == shopDomain).ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<ShopifyStore>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        await dbContext.Stores.AsNoTracking().Where(store => store.TenantId == tenantId).ToListAsync(cancellationToken);
 }
 
 internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) : IShopifyOrderMirrorRepository
@@ -56,6 +59,76 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
             .Take(limit)
             .Select(row => new ShopifyWaitingOrder(row.ShopifyOrderId, row.Payload))
             .ToListAsync(cancellationToken);
+
+    public Task<ShopifyOrderMirror?> FindByIdAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
+        dbContext.Orders.SingleOrDefaultAsync(row => row.TenantId == tenantId && row.Id == id, cancellationToken);
+
+    // Por estado y más recientes primero: IX_shopify_orders_tenant_state_created (tenant_id, import_state, shopify_created_at DESC).
+    public async Task<(IReadOnlyList<ShopifyOrderMirror> Items, int Total)> SearchAsync(
+        Guid tenantId, ShopifyOrderFilter filter, int page, int pageSize, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+        var states = filter.States.ToArray();
+        var query = dbContext.Orders.AsNoTracking().Where(row => row.TenantId == tenantId && states.Contains(row.ImportState));
+        if (filter.ConnectionId is { } connectionId)
+        {
+            query = query.Where(row => row.ConnectionId == connectionId);
+        }
+
+        if (filter.WithWarnings)
+        {
+            // Una fila sin avisos guarda warnings NULL (MarkImported nunca guarda un arreglo vacío).
+            query = query.Where(row => row.Warnings != null && row.WarningsReviewedAt == null);
+        }
+
+        var total = await query.CountAsync(cancellationToken);
+        var items = await query
+            .OrderByDescending(row => row.ShopifyCreatedAt)
+            .ThenByDescending(row => row.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+        return (items, total);
+    }
+
+    // Una sola pasada con FILTER. wait_detail es jsonb: ->> lee la razón de invoiced_before_cancel (ShopifyOrderChanges).
+    public async Task<ShopifyOrderCounts> CountAsync(Guid tenantId, DateTimeOffset importedSince, CancellationToken cancellationToken)
+    {
+        // Npgsql sólo manda a timestamptz un DateTimeOffset en UTC; el comienzo del día llega con el huso del tenant (-05:00).
+        var since = importedSince.ToUniversalTime();
+        var rows = await dbContext.Database.SqlQuery<CountsRow>(
+            $"""
+            SELECT
+              count(*) FILTER (WHERE import_state = 'Waiting')::int AS "Waiting",
+              count(*) FILTER (WHERE warnings IS NOT NULL AND warnings_reviewed_at IS NULL)::int AS "WithWarnings",
+              count(*) FILTER (WHERE import_state = 'Cancelled' AND wait_detail ->> 'reason' = 'invoiced_before_cancel')::int AS "CancelledAfterInvoice",
+              count(*) FILTER (WHERE imported_at >= {since})::int AS "ImportedToday"
+            FROM shopify.orders
+            WHERE tenant_id = {tenantId}
+            """).ToListAsync(cancellationToken);
+        var counts = rows.Single();
+        return new ShopifyOrderCounts(counts.Waiting, counts.WithWarnings, counts.CancelledAfterInvoice, counts.ImportedToday);
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, int>> CountWaitingByConnectionAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        await dbContext.Orders
+            .AsNoTracking()
+            .Where(row => row.TenantId == tenantId && row.ImportState == ShopifyImportState.Waiting)
+            .GroupBy(row => row.ConnectionId)
+            .Select(group => new { ConnectionId = group.Key, Count = group.Count() })
+            .ToDictionaryAsync(group => group.ConnectionId, group => group.Count, cancellationToken);
+
+    // El resultado de SqlQuery: EF lo llena por nombre de columna.
+    private sealed class CountsRow
+    {
+        public int Waiting { get; init; }
+
+        public int WithWarnings { get; init; }
+
+        public int CancelledAfterInvoice { get; init; }
+
+        public int ImportedToday { get; init; }
+    }
 }
 
 /// <summary>

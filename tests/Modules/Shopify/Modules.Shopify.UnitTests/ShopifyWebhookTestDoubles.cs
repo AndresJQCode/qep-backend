@@ -115,6 +115,9 @@ internal sealed class FakeStoreRepository(FakeShopifyDatabase database) : IShopi
     public Task<IReadOnlyList<ShopifyStore>> FindByShopDomainAsync(string shopDomain, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<ShopifyStore>>(
             [.. database.Stores.Values.Where(store => string.Equals(store.ShopDomain, shopDomain, StringComparison.Ordinal))]);
+
+    public Task<IReadOnlyList<ShopifyStore>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyStore>>([.. database.Stores.Values.Where(store => store.TenantId == tenantId)]);
 }
 
 internal sealed class FakeOrderMirrorRepository(FakeShopifyDatabase database) : IShopifyOrderMirrorRepository
@@ -155,6 +158,22 @@ internal sealed class FakeOrderMirrorRepository(FakeShopifyDatabase database) : 
                 .ThenBy(row => row.Id)
                 .Take(limit)
                 .Select(row => new ShopifyWaitingOrder(row.ShopifyOrderId, row.Payload))]);
+
+    public Task<ShopifyOrderMirror?> FindByIdAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
+        Task.FromResult(
+            database.Orders.Values.FirstOrDefault(row => row.TenantId == tenantId && row.Id == id)
+            ?? database.PendingOrders.FirstOrDefault(row => row.TenantId == tenantId && row.Id == id));
+
+    // Los filtros y los conteos son SQL: se prueban contra Postgres (ShopifyInboxApiTests), no acá.
+    public Task<(IReadOnlyList<ShopifyOrderMirror> Items, int Total)> SearchAsync(
+        Guid tenantId, ShopifyOrderFilter filter, int page, int pageSize, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<ShopifyOrderCounts> CountAsync(Guid tenantId, DateTimeOffset importedSince, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyDictionary<Guid, int>> CountWaitingByConnectionAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 internal sealed class FakeWebhookDeliveries(FakeShopifyDatabase database) : IShopifyWebhookDeliveries

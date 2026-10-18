@@ -59,6 +59,22 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         return orders.ToDictionary(order => order.QuotationId!.Value.Value);
     }
 
+    public async Task<IReadOnlyDictionary<OrderId, string>> FindOrderNumbersAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken)
+    {
+        if (orderIds.Count == 0)
+        {
+            return new Dictionary<OrderId, string>();
+        }
+
+        var ids = orderIds.ToArray();
+        return await dbContext.Orders
+            .AsNoTracking()
+            .Where(order => order.TenantId == tenantId && ids.Contains(order.Id))
+            .Select(order => new { order.Id, order.OrderNumber })
+            .ToDictionaryAsync(order => order.Id, order => order.OrderNumber, cancellationToken);
+    }
+
     public Task<Order?> FindByIdAsync(
         Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
         WithAggregate(dbContext.Orders)

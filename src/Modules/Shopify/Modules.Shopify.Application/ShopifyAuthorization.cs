@@ -12,6 +12,15 @@ namespace Modules.Shopify.Application;
 /// </summary>
 public static class ShopifyPermissions
 {
+    /// <summary><c>IntegrationsPermissions.ConnectionRead</c>: ver las tiendas y su configuración es ver integraciones.</summary>
+    public const string ConnectionRead = "integrations.connection.read";
+
+    /// <summary><c>IntegrationsPermissions.ConnectionManage</c>: configurar la tienda es administrar integraciones.</summary>
+    public const string ConnectionManage = "integrations.connection.manage";
+
+    /// <summary><c>OrdersPermissions.OrderRead</c> de Quotations: la lista y el resumen de la bandeja.</summary>
+    public const string OrderRead = "quotations.order.read";
+
     /// <summary><c>OrdersPermissions.OrderManage</c> de Quotations: la bandeja y «Sincronizar ahora» son gestión de pedidos.</summary>
     public const string OrderManage = "quotations.order.manage";
 }

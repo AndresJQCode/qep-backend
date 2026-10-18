@@ -782,6 +782,10 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
                 .Where(row => row.QuotationId is { } quotationId && quotationIds.Contains(quotationId))
                 .ToDictionary(row => row.QuotationId!.Value.Value, row => row));
 
+    public Task<IReadOnlyDictionary<OrderId, string>> FindOrderNumbersAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<(IReadOnlyList<Order> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,

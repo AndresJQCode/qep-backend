@@ -13,6 +13,9 @@ public interface IShopifyStoreRepository
     /// Sin <c>tenantId</c> a propósito (como S6): el webhook no sabe de qué tenant es la tienda. Puede devolver más de una si la
     /// tienda se enlazó a otro tenant después.</summary>
     Task<IReadOnlyList<ShopifyStore>> FindByShopDomainAsync(string shopDomain, CancellationToken cancellationToken);
+
+    /// <summary>§7 <c>GET /stores</c>: las tiendas del tenant, sin tracking.</summary>
+    Task<IReadOnlyList<ShopifyStore>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
 /// <summary>El espejo de pedidos (§5.4). Todo método recibe <c>tenantId</c>.</summary>
@@ -33,7 +36,29 @@ public interface IShopifyOrderMirrorRepository
     /// <summary>§5.3 y §6.4: las filas <c>Waiting</c> de la tienda, los pedidos más viejos primero (<c>shopify_created_at</c>, luego
     /// el id), hasta <paramref name="limit"/>. Sin tracking: la conciliación las vuelve a pasar por la ingesta, que las relee.</summary>
     Task<IReadOnlyList<ShopifyWaitingOrder>> ListWaitingAsync(Guid tenantId, Guid connectionId, int limit, CancellationToken cancellationToken);
+
+    /// <summary>§7: una fila por su id, con tracking (el reintento y «Marcar como revisado» la escriben).</summary>
+    Task<ShopifyOrderMirror?> FindByIdAsync(Guid tenantId, Guid id, CancellationToken cancellationToken);
+
+    /// <summary>§7 <c>GET /orders</c>: la página del espejo, los pedidos más recientes primero (<c>shopify_created_at</c> y luego
+    /// el id, descendentes), sin tracking, y el total del filtro.</summary>
+    Task<(IReadOnlyList<ShopifyOrderMirror> Items, int Total)> SearchAsync(
+        Guid tenantId, ShopifyOrderFilter filter, int page, int pageSize, CancellationToken cancellationToken);
+
+    /// <summary>§7 <c>GET /orders/summary</c>: los cuatro contadores en una consulta. <paramref name="importedSince"/> es el
+    /// comienzo del día de hoy en el huso del tenant.</summary>
+    Task<ShopifyOrderCounts> CountAsync(Guid tenantId, DateTimeOffset importedSince, CancellationToken cancellationToken);
+
+    /// <summary>§7 <c>GET /stores</c>: las filas <c>Waiting</c> de cada tienda del tenant; una tienda sin ninguna no aparece.</summary>
+    Task<IReadOnlyDictionary<Guid, int>> CountWaitingByConnectionAsync(Guid tenantId, CancellationToken cancellationToken);
 }
+
+/// <summary>El filtro de la bandeja (§7). <see cref="States"/> nunca va vacío: sin <c>state</c>, el handler pone <c>Waiting</c>.
+/// <see cref="WithWarnings"/> deja sólo las filas con avisos <b>sin revisar</b>.</summary>
+public sealed record ShopifyOrderFilter(IReadOnlyCollection<ShopifyImportState> States, Guid? ConnectionId, bool WithWarnings);
+
+/// <summary>Los contadores del resumen (§7), como los arma la base.</summary>
+public sealed record ShopifyOrderCounts(int Waiting, int WithWarnings, int CancelledAfterInvoice, int ImportedToday);
 
 /// <summary>Una fila en espera como la reintenta la conciliación: el pedido y su último snapshot normalizado (§5.4).</summary>
 public sealed record ShopifyWaitingOrder(long ShopifyOrderId, string Payload);

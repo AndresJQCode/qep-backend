@@ -382,3 +382,32 @@ public interface IShopifyBillingAccounts
     Task<ShopifyBillingAccountRef?> FindAsync(
         Guid tenantId, Guid companyId, string bank, string number, CancellationToken cancellationToken);
 }
+
+/// <summary>Spec 2026-10-15 §7: el número <c>PED-…</c> de los pedidos de QEP que la bandeja muestra en cada fila importada.
+/// Adaptador en Bootstrapper (<c>ShopifyOrderNumbers</c>) sobre <c>IOrderRepository</c>, con una sola consulta por página.</summary>
+public interface IShopifyOrderNumbers
+{
+    /// <summary>Sólo los pedidos de <paramref name="tenantId"/>; uno que no existe (o es de otro tenant) no aparece.</summary>
+    Task<IReadOnlyDictionary<Guid, string>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken);
+}
+
+/// <summary>Una conexión de Shopify del tenant como la lista la pantalla de tiendas (§7): <see cref="Status"/> es el nombre del
+/// estado de Integrations (<c>Active</c>, <c>Paused</c>, <c>NeedsAttention</c>), tal cual.</summary>
+public sealed record ShopifyConnectionSummary(Guid ConnectionId, string Name, string ShopDomain, string Status);
+
+/// <summary>Spec 2026-10-15 §7 <c>GET /stores</c>: las conexiones de Shopify del tenant, en cualquier estado. Adaptador en
+/// Bootstrapper sobre <c>IIntegrationConnectionRepository</c>: Shopify no referencia Integrations.</summary>
+public interface IShopifyTenantConnections
+{
+    Task<IReadOnlyList<ShopifyConnectionSummary>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-10-15 §6.1 y §7: la empresa de la cuenta de cobro y la clasificación por defecto de la tienda, por sus
+/// nombres. Un nombre <c>null</c> es que no existe en ese tenant: el <c>PUT</c> lo responde
+/// <c>shopify.store.classification_not_found</c>. Adaptador en Bootstrapper sobre Companies y Customers.</summary>
+public interface IShopifyStoreReferences
+{
+    Task<string?> CompanyNameAsync(Guid tenantId, Guid companyId, CancellationToken cancellationToken);
+
+    Task<string?> ClassificationNameAsync(Guid tenantId, Guid classificationId, CancellationToken cancellationToken);
+}

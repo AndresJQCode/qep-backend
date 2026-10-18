@@ -32,6 +32,21 @@ public static class ShopifyErrorCodes
     /// próxima corrida lo vuelve a intentar. 503. No está en la tabla de §7.1: a ratificar (tarea 15).</summary>
     public const string StoreSyncUnavailable = "shopify.store.sync_unavailable";
 
+    /// <summary>§6.1 y §7.1: el asesor de la tienda no es una membresía activa del tenant. 422.</summary>
+    public const string StoreAdvisorNotMember = "shopify.store.advisor_not_member";
+
+    /// <summary>§6.1 y §7.1: la cuenta de cobro no existe en esa empresa del tenant (banco, número y moneda). 422.</summary>
+    public const string StoreBillingAccountNotFound = "shopify.store.billing_account_not_found";
+
+    /// <summary>§7.1: la clasificación por defecto no es del tenant. 422.</summary>
+    public const string StoreClassificationNotFound = "shopify.store.classification_not_found";
+
+    /// <summary>§7.1: la fila del espejo no existe en el tenant. 404 (el tenant de la ruta ya se validó contra el activo).</summary>
+    public const string OrderNotFound = "shopify.order.not_found";
+
+    /// <summary>§6.4 y §7.1: reintentar una fila que no está <c>Waiting</c>. 422.</summary>
+    public const string OrderNotWaiting = "shopify.order.not_waiting";
+
     /// <summary>D-S31: «Marcar como revisado» sobre una fila sin avisos.</summary>
     public const string OrderNoWarnings = "shopify.order.no_warnings";
 
