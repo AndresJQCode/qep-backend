@@ -334,6 +334,37 @@ public sealed class ShopifyOrderChangesTests
             (row.ImportState, row.QepOrderId, row.QepCustomerId, row.TotalDifference));
     }
 
+    // La anulación va a nombre del asesor de la tienda. Si la tienda está sin configurar (se borró la conexión y se volvió a
+    // enlazar, D-S23) y el pedido ya está en QEP, la fila espera con store_not_configured: ni se marca importada ni se lanza. Es
+    // la segunda llegada de un aviso, la que ya no pasa por el importador; lanzar dejaba la entrega reintentando y congelaba la
+    // ventana de la conciliación.
+    [Fact]
+    public async Task WaitingCancelledWithTheOrderInQepAndAnUnconfiguredStoreWaitsStoreNotConfigured()
+    {
+        var world = new ImporterWorld { Store = ShopifyStore.Create(ConnectionId, TenantId, Now) };
+        world.Writer.ByExternalKey[$"{ShopId}:{Order().OrderId}"] =
+            ShopifyOrderWriteResult.Written(OrderId, "PED-0042", 100_000m, alreadyExisted: true, ClientId);
+
+        var row = await ReactAsync(world, StoredRow(ShopifyImportState.Waiting), Order(cancelledAt: CancelledAt));
+
+        Assert.Equal(
+            (ShopifyImportState.Waiting, ShopifyWaitReasons.StoreNotConfigured, (Guid?)null),
+            (row.ImportState, row.WaitReason, row.QepOrderId));
+        Assert.Empty(world.Writer.Cancels);
+    }
+
+    // Con la tienda sin configurar y el pedido fuera de QEP, el cancelado se ignora como cualquier otro: no hay nada que anular.
+    [Fact]
+    public async Task WaitingCancelledWithoutTheOrderAndAnUnconfiguredStoreIsIgnored()
+    {
+        var world = new ImporterWorld { Store = ShopifyStore.Create(ConnectionId, TenantId, Now) };
+
+        var row = await ReactAsync(world, StoredRow(ShopifyImportState.Waiting), Order(cancelledAt: CancelledAt));
+
+        Assert.Equal(ShopifyImportState.Ignored, row.ImportState);
+        Assert.Empty(world.Writer.Cancels);
+    }
+
     // Un cambio de pago sobre una fila en espera no toca Quotations: el pedido todavía no existe y nacerá con el estado nuevo.
     [Fact]
     public async Task WaitingNewFinancialStatusDoesNothing()

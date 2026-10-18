@@ -16,7 +16,8 @@ namespace Modules.Shopify.Application;
 /// rastro (ruling S19).</item>
 /// <item><b>En espera y cancelada:</b> <c>Ignored</c>, salvo que el pedido ya exista en QEP con su clave externa (el worker cayó
 /// entre crearlo y marcar la fila): entonces se marca importada, con los avisos que se pueden saber sin reimportar, y se anula
-/// como cualquier otra.</item>
+/// como cualquier otra. Si la tienda está sin configurar, no hay asesor a cuyo nombre anular: la fila sigue en espera con
+/// <c>store_not_configured</c>.</item>
 /// <item><b><c>last_error</c>:</b> uno solo por aviso, con los códigos rechazados unidos por <c>"; "</c>; si lo intentado salió
 /// bien, se borra el que hubiera.</item>
 /// <item><b><c>Cancelled</c> e <c>Ignored</c></b> son terminales (ruling S13): nada.</item>
@@ -109,6 +110,16 @@ public sealed class ShopifyOrderChanges(IShopifyOrderWriter orders, IShopifyCust
         if (existing is null)
         {
             row.MarkIgnored();
+            return false;
+        }
+
+        // La anulación va a nombre del asesor de la tienda. Sin él (la conexión se borró y se volvió a enlazar, D-S23: la tienda
+        // nueva nace sin configurar y el pedido viejo ya está en QEP) la fila espera con store_not_configured como cualquier otra,
+        // y la retoman la conciliación o el reintento cuando se configure. Lanzar dejaba la entrega reintentando y la ventana de
+        // la conciliación congelada.
+        if (store.AdvisorMembershipId is null)
+        {
+            row.MarkWaiting(ShopifyWaitReasons.StoreNotConfigured, null, clock.UtcNow);
             return false;
         }
 

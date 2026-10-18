@@ -90,16 +90,10 @@ public sealed class ShopifyOrderImporter(
 
         // Un cancelado puede tener ya su pedido en QEP aunque la fila sea nueva (el espejo se borró, o el worker cayó entre crear
         // el pedido y guardar la fila). Ignorarlo sin mirar dejaría ese pedido vivo: la reacción de §6.3 consulta la clave
-        // externa y, si existe, pone la fila al día y lo anula; si no, la ignora.
+        // externa y, si existe, pone la fila al día y lo anula; si no, la ignora. Con la tienda sin configurar, la propia reacción
+        // deja la fila en espera con store_not_configured.
         if (snapshot.CancelledAt is not null)
         {
-            // La anulación va a nombre del asesor de la tienda: sin él, espera como cualquier otra fila. Pasa al volver a
-            // enlazar una tienda borrada (D-S23): la tienda nueva nace vacía y el pedido viejo ya está en QEP.
-            if (store.AdvisorMembershipId is null)
-            {
-                return Wait(row, ShopifyWaitReasons.StoreNotConfigured, null, clock.UtcNow);
-            }
-
             await changes.ReactAsync(
                 new ShopifyOrderChange(connection, store, row, ShopifyMirrorState.Of(row), snapshot), cancellationToken);
             return new ShopifyImportOutcome(row.ImportState);

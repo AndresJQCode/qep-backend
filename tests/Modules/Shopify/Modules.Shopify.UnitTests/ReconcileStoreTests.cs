@@ -347,6 +347,27 @@ public sealed class ReconcileStoreTests
         Assert.Equal((2, 1), (result.Fetched, result.Failed));
     }
 
+    // La tienda de una conexión que se borró y se volvió a enlazar nace sin configurar, y el pedido viejo ya está en QEP. Si llega
+    // cancelado sobre una fila en espera, la reacción no puede anularlo sin el asesor: la fila espera con store_not_configured y
+    // la ventana avanza. Antes la reacción lanzaba, la corrida fallaba y la ventana quedaba congelada mientras la tienda siguiera
+    // sin configurar.
+    [Fact]
+    public async Task ReconcileCancelledWaitingOrderWithAnUnconfiguredStoreMovesTheWindow()
+    {
+        var world = new World(realReaction: true).WithStore(LastReconciled).WithWaiting(1, Now.AddDays(-1));
+        world.Writer.ByExternalKey["954889:1"] =
+            ShopifyOrderWriteResult.Written(Guid.CreateVersion7(), "PED-0042", 100_000m, alreadyExisted: true, Guid.CreateVersion7());
+        world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(1) with { CancelledAt = Now.AddMinutes(-3) }], null));
+
+        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+
+        Assert.Equal([Now], world.Leases.Reconciled);
+        Assert.Equal((0, 1), (result.Failed, result.Waiting));
+        var row = world.Database.Orders[(ConnectionId, 1L)];
+        Assert.Equal((ShopifyImportState.Waiting, ShopifyWaitReasons.StoreNotConfigured), (row.ImportState, row.WaitReason));
+        Assert.Empty(world.Writer.Cancels);
+    }
+
     [Fact]
     public async Task ReconcileCountsTheFinalStateOfEveryOrderItTouched()
     {
@@ -384,13 +405,17 @@ public sealed class ReconcileStoreTests
 
     private sealed class World
     {
-        public World()
+        /// <param name="realReaction">Con <c>true</c>, la ingesta usa la reacción de §6.3 de verdad, sobre <see cref="Writer"/>,
+        /// en vez del doble que sólo anota.</param>
+        public World(bool realReaction = false)
         {
             UnitOfWork = new FakeUnitOfWork(Database);
             Reaction = new FakeOrderChangeReaction(UnitOfWork);
+            Writer = new FakeOrderWriter(UnitOfWork);
             var stores = new FakeStoreRepository(Database);
             var mirrors = new FakeOrderMirrorRepository(Database);
-            Ingestion = new ShopifyOrderIngestion(stores, mirrors, Importer, Reaction, UnitOfWork, Clock);
+            IShopifyOrderChangeReaction reaction = realReaction ? new ShopifyOrderChanges(Writer, new FakeCustomerDirectory(), Clock) : Reaction;
+            Ingestion = new ShopifyOrderIngestion(stores, mirrors, Importer, reaction, UnitOfWork, Clock);
             Leases = new FakeReconcileLeases(Database);
             Reconcile = new ReconcileStore(Source, Ingestion, stores, mirrors, Leases, Health, UnitOfWork, Clock, Time, Logs);
         }
@@ -414,6 +439,8 @@ public sealed class ReconcileStoreTests
         public FakeUnitOfWork UnitOfWork { get; }
 
         public FakeOrderChangeReaction Reaction { get; }
+
+        public FakeOrderWriter Writer { get; }
 
         public ReconcileStore Reconcile { get; }
 
