@@ -11,7 +11,9 @@ namespace Modules.Shopify.Application;
 /// falle. Sólo evalúa y escribe la fila; el commit final es del llamador (la ingesta, la conciliación o el reintento manual). La
 /// única escritura que confirma por su cuenta es el cliente anotado en la fila antes del pedido (D-S24).
 /// <list type="number">
-/// <item>Un pedido de prueba o cancelado antes de importarse se ignora sin mirar la tienda (§5.4).</item>
+/// <item>Un pedido de prueba se ignora sin mirar la tienda (§5.4). Uno cancelado antes de importarse también, salvo que el
+/// pedido ya exista en QEP con su clave externa (se borró el espejo, o el worker cayó antes de guardar la fila): entonces lo
+/// resuelve la reacción de §6.3 (<see cref="IShopifyOrderChangeReaction"/>), que pone la fila al día y lo anula.</item>
 /// <item>Precondiciones en el orden de §6.2: tienda configurada, asesor activo, cuenta de cobro, moneda, cliente encontrado
 /// activo, productos y, con un envío cobrado en COP, el IVA del envío del tenant (<c>freight_tax_rate_missing</c>).</item>
 /// <item>Recién entonces se crea el cliente que no apareció, se anota en la fila y se guarda; después se escribe el pedido con su
@@ -32,6 +34,7 @@ public sealed class ShopifyOrderImporter(
     IShopifyProductLookup products,
     IShopifyShippingLookup shipping,
     IShopifyOrderWriter orders,
+    IShopifyOrderChangeReaction changes,
     IShopifyUnitOfWork unitOfWork,
     IClock clock) : IShopifyOrderImporter
 {
@@ -79,9 +82,19 @@ public sealed class ShopifyOrderImporter(
         }
 
         // §5.4: QEP no trae pedidos de prueba ni los cancelados antes de importarse. Se guardan para la bandeja, con filtro.
-        if (snapshot.Test || snapshot.CancelledAt is not null)
+        if (snapshot.Test)
         {
             row.MarkIgnored();
+            return new ShopifyImportOutcome(row.ImportState);
+        }
+
+        // Un cancelado puede tener ya su pedido en QEP aunque la fila sea nueva (el espejo se borró, o el worker cayó entre crear
+        // el pedido y guardar la fila). Ignorarlo sin mirar dejaría ese pedido vivo: la reacción de §6.3 consulta la clave
+        // externa y, si existe, pone la fila al día y lo anula; si no, la ignora.
+        if (snapshot.CancelledAt is not null)
+        {
+            await changes.ReactAsync(
+                new ShopifyOrderChange(connection, store, row, ShopifyMirrorState.Of(row), snapshot), cancellationToken);
             return new ShopifyImportOutcome(row.ImportState);
         }
 

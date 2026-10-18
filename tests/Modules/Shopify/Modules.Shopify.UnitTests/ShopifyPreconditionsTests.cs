@@ -153,6 +153,28 @@ public sealed class ShopifyPreconditionsTests
         Assert.Equal(ShopifyImportState.Ignored, row.ImportState);
         Assert.Empty(world.Customers.Log);
         Assert.Empty(world.Writer.Creates);
+        Assert.Equal([(TenantId, $"{ShopId}:{snapshot.OrderId}")], world.Writer.KeyLookups);
+    }
+
+    // Hueco de la tarea 14: la fila es nueva (se borró el espejo, o el worker cayó antes de guardarla) pero el pedido ya existe en
+    // QEP con su clave externa. Llega cancelado: no puede quedar ignorado con el pedido vivo. Se pone al día y se anula, como la
+    // reacción de §6.3 con una fila en espera.
+    [Fact]
+    public async Task CancelledNewRowWithTheOrderAlreadyInQepCancelsIt()
+    {
+        var world = new ImporterWorld();
+        var snapshot = Order(cancelledAt: Now.AddMinutes(-5));
+        var row = world.RowFor(snapshot);
+        var existing = ShopifyOrderWriteResult.Written(Guid.CreateVersion7(), "PED-0007", 119_000m, alreadyExisted: true, Guid.CreateVersion7());
+        world.Writer.ByExternalKey[$"{ShopId}:{snapshot.OrderId}"] = existing;
+
+        var outcome = await world.ImportAsync(row, snapshot);
+
+        Assert.Equal(ShopifyImportState.Cancelled, outcome.State);
+        Assert.Equal((ShopifyImportState.Cancelled, existing.OrderId), (row.ImportState, row.QepOrderId));
+        var cancel = Assert.Single(world.Writer.Cancels);
+        Assert.Equal((TenantId, existing.OrderId, AdvisorId, "Cancelado en Shopify: customer"), cancel);
+        Assert.Empty(world.Writer.Creates);
     }
 
     [Fact]

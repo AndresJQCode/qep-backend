@@ -308,7 +308,7 @@ internal sealed class ImporterWorld
     public ShopifyCustomerResolver Resolver => new(Customers, Mirrors, Geography);
 
     public ShopifyOrderImporter Importer =>
-        new(Members, Billing, Resolver, Products, Shipping, Writer, UnitOfWork, new FakeClock(Now));
+        new(Members, Billing, Resolver, Products, Shipping, Writer, new ShopifyOrderChanges(Writer, Customers, new FakeClock(Now)), UnitOfWork, new FakeClock(Now));
 
     /// <summary>La fila en espera, ya guardada, para un snapshot.</summary>
     public ShopifyOrderMirror RowFor(ShopifyOrderSnapshot snapshot)
