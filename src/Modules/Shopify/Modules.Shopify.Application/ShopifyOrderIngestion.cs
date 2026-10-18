@@ -77,8 +77,8 @@ public sealed class ShopifyOrderIngestion(
         if (store is null)
         {
             // D-S4 (ruling S25): la ventana de la conciliación arranca en el enlace, no en este primer webhook.
-            store = ShopifyStore.Create(connection.ConnectionId, connection.TenantId, connection.LinkedAt ?? clock.UtcNow);
-            stores.Add(store);
+            store = ShopifyStoreSupport.NewStore(connection, clock.UtcNow);
+            await ShopifyStoreSupport.AddNewAsync(stores, store, cancellationToken);
         }
 
         // Ruling S16: el dominio queda en la tienda para que shop/redact la encuentre aunque la conexión se borre.

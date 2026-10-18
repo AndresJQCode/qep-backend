@@ -9,6 +9,13 @@ public interface IShopifyStoreRepository
 
     void Add(ShopifyStore store);
 
+    /// <summary>Al nacer la tienda de una conexión, pasa a <paramref name="connectionId"/> las filas <c>Waiting</c> del espejo del
+    /// mismo tenant cuyas tiendas tienen el mismo <paramref name="shopDomain"/> y otra conexión: las que dejó una conexión que se
+    /// borró antes de volver a enlazar la tienda (D-S23). Así la conciliación y el reintento, que trabajan con la conexión actual,
+    /// las retoman. Las filas terminales no se tocan, ni una cuyo pedido ya tenga fila en la conexión nueva. Escribe en el acto
+    /// (no espera al commit) y sube la versión de cada fila; repetirla no cambia nada. Devuelve cuántas filas pasaron.</summary>
+    Task<int> AdoptWaitingOrdersAsync(Guid tenantId, Guid connectionId, string shopDomain, CancellationToken cancellationToken);
+
     /// <summary>Ruling S16: <c>shop/redact</c> encuentra la tienda por su dominio aunque la conexión y su ruta se hayan borrado.
     /// Sin <c>tenantId</c> a propósito (como S6): el webhook no sabe de qué tenant es la tienda. Puede devolver más de una si la
     /// tienda se enlazó a otro tenant después.</summary>

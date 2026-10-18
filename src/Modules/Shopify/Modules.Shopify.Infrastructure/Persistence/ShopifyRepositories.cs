@@ -13,6 +13,28 @@ internal sealed class ShopifyStoreRepository(ShopifyDbContext dbContext) : IShop
 
     public void Add(ShopifyStore store) => dbContext.Stores.Add(store);
 
+    // Un solo UPDATE: las conexiones viejas salen de shopify.stores (el dominio queda en la tienda aunque la conexión se borre) y
+    // el NOT EXISTS evita chocar con IX_shopify_orders_connection_order si el pedido ya tiene fila en la conexión nueva.
+    public Task<int> AdoptWaitingOrdersAsync(Guid tenantId, Guid connectionId, string shopDomain, CancellationToken cancellationToken)
+    {
+        var previousConnections = dbContext.Stores
+            .Where(store => store.TenantId == tenantId && store.ShopDomain == shopDomain && store.ConnectionId != connectionId)
+            .Select(store => store.ConnectionId);
+        var alreadyThere = dbContext.Orders
+            .Where(row => row.TenantId == tenantId && row.ConnectionId == connectionId)
+            .Select(row => row.ShopifyOrderId);
+        return dbContext.Orders
+            .Where(row => row.TenantId == tenantId
+                && row.ImportState == ShopifyImportState.Waiting
+                && previousConnections.Contains(row.ConnectionId)
+                && !alreadyThere.Contains(row.ShopifyOrderId))
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(row => row.ConnectionId, connectionId)
+                    .SetProperty(row => row.Version, row => row.Version + 1),
+                cancellationToken);
+    }
+
     public async Task<IReadOnlyList<ShopifyStore>> FindByShopDomainAsync(string shopDomain, CancellationToken cancellationToken) =>
         await dbContext.Stores.AsNoTracking().Where(store => store.ShopDomain == shopDomain).ToListAsync(cancellationToken);
 

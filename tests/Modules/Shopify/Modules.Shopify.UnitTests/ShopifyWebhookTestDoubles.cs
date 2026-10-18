@@ -89,6 +89,8 @@ internal sealed class FakeShopifyDatabase
 
     public List<ShopifyStore> PendingStores { get; } = [];
 
+    public List<(Guid TenantId, Guid ConnectionId, string ShopDomain)> Adoptions { get; } = [];
+
     public Dictionary<(Guid ConnectionId, long OrderId), ShopifyOrderMirror> Orders { get; } = [];
 
     public List<ShopifyOrderMirror> PendingOrders { get; } = [];
@@ -111,6 +113,15 @@ internal sealed class FakeStoreRepository(FakeShopifyDatabase database) : IShopi
                 : database.PendingStores.FirstOrDefault(pending => pending.ConnectionId == connectionId && pending.TenantId == tenantId));
 
     public void Add(ShopifyStore store) => database.PendingStores.Add(store);
+
+    /// <summary>Las reasignaciones pedidas; la de verdad (un <c>UPDATE</c>) la prueba la integración.</summary>
+    public List<(Guid TenantId, Guid ConnectionId, string ShopDomain)> Adoptions => database.Adoptions;
+
+    public Task<int> AdoptWaitingOrdersAsync(Guid tenantId, Guid connectionId, string shopDomain, CancellationToken cancellationToken)
+    {
+        database.Adoptions.Add((tenantId, connectionId, shopDomain));
+        return Task.FromResult(0);
+    }
 
     public Task<IReadOnlyList<ShopifyStore>> FindByShopDomainAsync(string shopDomain, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<ShopifyStore>>(

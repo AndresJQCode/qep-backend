@@ -141,8 +141,8 @@ public sealed class GetShopifyStoreHandler(
     {
         try
         {
-            var created = ShopifyStoreSupport.NewStore(connection, clock);
-            stores.Add(created);
+            var created = ShopifyStoreSupport.NewStore(connection, clock.UtcNow);
+            await ShopifyStoreSupport.AddNewAsync(stores, created, cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             return created;
         }
@@ -192,7 +192,7 @@ public sealed class UpdateShopifyStoreHandler(
 
         var store = await stores.FindAsync(command.TenantId, command.ConnectionId, cancellationToken);
         var isNew = store is null;
-        store ??= ShopifyStoreSupport.NewStore(connection, clock);
+        store ??= ShopifyStoreSupport.NewStore(connection, clock.UtcNow);
         if (store.Version != command.ExpectedVersion)
         {
             throw new RequestConcurrencyException("concurrency.conflict", "The Shopify store changed after it was loaded.");
@@ -214,7 +214,7 @@ public sealed class UpdateShopifyStoreHandler(
             clock.UtcNow);
         if (isNew)
         {
-            stores.Add(store);
+            await ShopifyStoreSupport.AddNewAsync(stores, store, cancellationToken);
         }
 
         // Ruling S27: en la misma unidad de trabajo que la tienda; si el guardado pierde con 412, no queda auditoría.
@@ -304,16 +304,35 @@ internal static class ShopifyStoreSupport
             : throw ShopifyAuthorization.Denied();
     }
 
-    /// <summary>§6.1 y ruling S25: la tienda vacía del primer contacto, con el dominio de la conexión y la ventana en el enlace.</summary>
-    public static ShopifyStore NewStore(ShopifyConnectionRef connection, IClock clock)
+    /// <summary>§6.1: la tienda vacía del primer contacto, con el dominio de la conexión y la ventana de la conciliación en el
+    /// enlace (D-S4), no en el primer contacto. <paramref name="now"/> es el respaldo si la conexión no trae la fecha del enlace.
+    /// No la agrega: eso es <see cref="AddNewAsync"/>.</summary>
+    public static ShopifyStore NewStore(ShopifyConnectionRef connection, DateTimeOffset now)
     {
-        var store = ShopifyStore.Create(connection.ConnectionId, connection.TenantId, connection.LinkedAt ?? clock.UtcNow);
+        var store = ShopifyStore.Create(connection.ConnectionId, connection.TenantId, connection.LinkedAt ?? now);
         if (!string.IsNullOrWhiteSpace(connection.ShopDomain))
         {
             store.RecordShopDomain(connection.ShopDomain);
         }
 
         return store;
+    }
+
+    /// <summary>
+    /// El único lugar donde nace una tienda (el <c>GET</c> y el <c>PUT</c> de la tienda, la ingesta y la conciliación): la agrega
+    /// y le pasa las filas <c>Waiting</c> que dejó otra conexión del mismo tenant y dominio
+    /// (<see cref="IShopifyStoreRepository.AdoptWaitingOrdersAsync"/>). Sin eso, borrar la conexión y volver a enlazar la tienda
+    /// (D-S23) dejaba esas filas para siempre: el reintento resuelve la conexión nueva y daba <c>not_operational</c>, y la
+    /// conciliación sólo reintenta las de su conexión. La reasignación escribe en el acto; si el guardado de la tienda pierde, la
+    /// repite quien la cree y no cambia nada.
+    /// </summary>
+    public static async Task AddNewAsync(IShopifyStoreRepository stores, ShopifyStore store, CancellationToken cancellationToken)
+    {
+        stores.Add(store);
+        if (store.ShopDomain is { } shopDomain)
+        {
+            await stores.AdoptWaitingOrdersAsync(store.TenantId, store.ConnectionId, shopDomain, cancellationToken);
+        }
     }
 
     public static async Task<ShopifyStoreDto> ToDtoAsync(

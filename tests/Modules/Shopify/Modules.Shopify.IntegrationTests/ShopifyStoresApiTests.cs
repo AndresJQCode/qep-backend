@@ -174,6 +174,39 @@ public sealed class ShopifyStoresApiTests
                 ("c", world.ConnectionId)));
     }
 
+    // Borrar la conexión y volver a enlazar la tienda (D-S23) deja las filas del espejo con la conexión vieja: el reintento resuelve
+    // la conexión nueva y daba not_operational, y la conciliación sólo reintenta las de su conexión. Cuando nace la tienda de la
+    // conexión nueva, las filas Waiting del mismo tenant y dominio pasan a ella. Las terminales y las de otro tenant no se tocan.
+    [Fact]
+    public async Task StoresPutOfARelinkedStoreAdoptsTheWaitingRowsOfTheOldConnection()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        var (oldConnection, otherTenant, otherConnection) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+        await ShopifyInboxSeed.StoreAsync(factory, world.TenantId, oldConnection, Shop);
+        await ShopifyInboxSeed.StoreAsync(factory, otherTenant, otherConnection, Shop);
+        var waiting = await ShopifyInboxSeed.WaitingAsync(factory, world.TenantId, oldConnection, 5_550_000_000_201L);
+        var ignored = await ShopifyInboxSeed.IgnoredAsync(factory, world.TenantId, oldConnection, 5_550_000_000_202L);
+        var foreign = await ShopifyInboxSeed.WaitingAsync(factory, otherTenant, otherConnection, 5_550_000_000_203L);
+        using var client = CreateClient(
+            factory, world.Tenant.OwnerUserId, world.TenantId, IntegrationsPermissions.ConnectionRead, IntegrationsPermissions.ConnectionManage);
+
+        var response = await PutAsync(client, world.TenantId, world.ConnectionId, Body(world), "\"1\"");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            (world.ConnectionId, oldConnection, otherConnection),
+            (await ConnectionOfAsync(connectionString, waiting), await ConnectionOfAsync(connectionString, ignored),
+                await ConnectionOfAsync(connectionString, foreign)));
+        var stores = await client.GetFromJsonAsync<JsonArray>(StoresRoute(world.TenantId), Ct);
+        Assert.Equal(1, Assert.Single(stores!)!["waitingCount"]!.GetValue<int>());
+    }
+
+    private static Task<Guid> ConnectionOfAsync(string connectionString, Guid rowId) =>
+        ScalarAsync<Guid>(connectionString, "SELECT connection_id FROM shopify.orders WHERE id = @id", ("id", rowId));
+
     [Fact]
     public async Task StoresPutEmptyAttributeKeyReturns422WithErrors()
     {
@@ -318,6 +351,16 @@ internal static class ShopifyInboxSeed
         var parser = scope.ServiceProvider.GetRequiredService<IShopifyOrderPayloadParser>();
         var snapshot = parser.ParseRest(System.Text.Encoding.UTF8.GetString(OrderFixture(fixture)));
         return snapshot with { OrderId = orderId };
+    }
+
+    /// <summary>Una tienda vacía con su dominio, como la deja el primer contacto de una conexión que después se borró.</summary>
+    public static async Task StoreAsync(QepApiFactory factory, Guid tenantId, Guid connectionId, string shopDomain)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var store = ShopifyStore.Create(connectionId, tenantId, DateTimeOffset.UtcNow.AddDays(-30));
+        store.RecordShopDomain(shopDomain);
+        scope.ServiceProvider.GetRequiredService<IShopifyStoreRepository>().Add(store);
+        await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     public static Task<Guid> WaitingAsync(QepApiFactory factory, Guid tenantId, Guid connectionId, long orderId) =>

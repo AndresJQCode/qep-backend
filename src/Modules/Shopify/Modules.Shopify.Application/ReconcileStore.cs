@@ -148,13 +148,8 @@ public sealed partial class ReconcileStore(
             }
 
             // D-S4 (ruling S25): la ventana arranca en el enlace, no en el primer contacto.
-            var store = ShopifyStore.Create(connection.ConnectionId, connection.TenantId, connection.LinkedAt ?? now);
-            if (!string.IsNullOrWhiteSpace(connection.ShopDomain))
-            {
-                store.RecordShopDomain(connection.ShopDomain);
-            }
-
-            stores.Add(store);
+            var store = ShopifyStoreSupport.NewStore(connection, now);
+            await ShopifyStoreSupport.AddNewAsync(stores, store, cancellationToken);
             try
             {
                 await unitOfWork.SaveChangesAsync(cancellationToken);
