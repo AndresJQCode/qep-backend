@@ -3,9 +3,11 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Integrations.Application;
+using Modules.Integrations.Application.Shopify;
 using Modules.Integrations.Infrastructure.Meta;
 using Modules.Integrations.Infrastructure.Persistence;
 using Modules.Integrations.Infrastructure.SecretProtection;
+using Modules.Integrations.Infrastructure.Shopify;
 using Modules.Integrations.Infrastructure.Verification;
 using Modules.Integrations.Infrastructure.Zenvia;
 
@@ -96,6 +98,15 @@ public static class IntegrationsInfrastructureExtensions
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<MetaInstagramOptions>, MetaInstagramOptionsValidator>();
         services.AddSingleton<IInstagramAppSettings, InstagramAppSettings>();
+
+        // Spec 2026-10-15 §4.2: la app de Shopify de toda la plataforma. En Production ValidateOnStart exige el par de la
+        // app, la URL del webhook y un origen de retorno (sin ellos el pod entra en crash-loop, a propósito, como con
+        // Meta); fuera, el módulo arranca sin ellos y D-M3 saca a shopify del catálogo.
+        services.AddOptions<ShopifyAppOptions>()
+            .Bind(configuration.GetSection(ShopifyAppOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<ShopifyAppOptions>, ShopifyAppOptionsValidator>();
+        services.AddSingleton<IShopifyAppSettings, ShopifyAppSettings>();
 
         return services;
     }

@@ -83,6 +83,31 @@ public sealed class IntegrationsPersistenceTests
         Assert.Equal("CK_connections_provider_key", error.ConstraintName);
     }
 
+    // Spec 2026-10-15 §4.1 (D10): el proveedor nuevo entra con la migración AddShopifyProvider que amplía el CHECK.
+    [Fact]
+    public async Task TheProviderKeyCheckAcceptsShopify()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        _ = factory.Services;
+        var id = Guid.CreateVersion7();
+
+        await ExecuteAsync(
+            database.GetConnectionString(),
+            """
+            INSERT INTO integrations.connections (id, tenant_id, provider_key, name, status, fields, created_at, created_by, updated_at, version)
+            VALUES (@id, @tenantId, 'shopify', 'Tienda', 'Active', '{}'::jsonb, now(), @memberId, now(), 1)
+            """,
+            ("id", id),
+            ("tenantId", Guid.CreateVersion7()),
+            ("memberId", Guid.CreateVersion7()));
+
+        Assert.Equal(1L, await ScalarAsync<long>(
+            database.GetConnectionString(),
+            "SELECT count(*) FROM integrations.connections WHERE id = @id AND provider_key = 'shopify'",
+            ("id", id)));
+    }
+
     [Fact]
     public async Task TheStatusCheckRejectsAnUnknownStatus()
     {

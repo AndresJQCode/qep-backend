@@ -36,11 +36,26 @@ public static class InstagramFieldKeys
     public const string AccessToken = "accessToken";
 }
 
+/// <summary>Spec 2026-10-15 §4.1. <see cref="ShopDomain"/> y <see cref="ShopName"/> son de sólo lectura para la pantalla
+/// (los escribe el enlace y el probador refresca el nombre); <see cref="ShopId"/>, <see cref="Scopes"/>,
+/// <see cref="WebhookSubscriptionIds"/> y <see cref="AccessToken"/> son internos. <see cref="Scopes"/> y
+/// <see cref="WebhookSubscriptionIds"/> viajan separados por coma; los ids de las suscripciones los escribe y los repone
+/// Integrations (enlace y probador, D-S19).</summary>
+public static class ShopifyFieldKeys
+{
+    public const string ShopDomain = "shopDomain";
+    public const string ShopName = "shopName";
+    public const string ShopId = "shopId";
+    public const string Scopes = "scopes";
+    public const string WebhookSubscriptionIds = "webhookSubscriptionIds";
+    public const string AccessToken = "accessToken";
+}
+
 /// <summary>
 /// La lista cerrada de proveedores, como <see cref="TenantModuleKeys.All"/> (spec 2026-10-08,
 /// «Catálogo»). Cada proveedor entra con el spec de su consumidor, porque sin módulo consumidor nunca
 /// sería visible (decisión 4): Zenvia con <c>quotations</c>, WhatsApp Business (Meta) con
-/// <c>messaging</c> (spec 2026-10-09).
+/// <c>messaging</c> (spec 2026-10-09), Shopify con <c>shopify</c> (spec 2026-10-15).
 /// </summary>
 public static class IntegrationProviders
 {
@@ -152,7 +167,46 @@ public static class IntegrationProviders
         maxConnections: 5,
         onboarding: ProviderOnboarding.InstagramLogin);
 
-    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram];
+    /// <summary>Spec 2026-10-15 §4.1: una tienda Shopify, conectada por OAuth. Lo consume el módulo <c>shopify</c>; tope
+    /// <see cref="DefaultMaxConnections"/> por tenant. El dominio es el <c>*.myshopify.com</c> que devuelve Shopify y es la
+    /// clave de la ruta del webhook. El token offline de la Admin API es un secreto interno que nunca escribe una
+    /// persona.</summary>
+    public static readonly IntegrationProvider Shopify = new(
+        "shopify",
+        "Shopify",
+        IntegrationCategory.Commerce,
+        [TenantModuleKeys.Shopify],
+        [
+            new FieldDefinition(
+                // El tope es el de la ruta: el dominio es su external_id, y uno más largo no se podría enrutar.
+                ShopifyFieldKeys.ShopDomain, "Dominio de la tienda", FieldKind.Text,
+                required: false, maxLength: IntegrationConnectionRoute.ExternalIdMaxLength, pattern: null,
+                invalidMessage: "El dominio que devolvió Shopify no tiene una forma válida."),
+            new FieldDefinition(
+                ShopifyFieldKeys.ShopName, "Nombre de la tienda", FieldKind.Text,
+                required: false, maxLength: 255, pattern: null,
+                invalidMessage: "El nombre que devolvió Shopify no tiene una forma válida."),
+            new FieldDefinition(
+                ShopifyFieldKeys.ShopId, "Id de la tienda en Shopify", FieldKind.Text,
+                required: false, maxLength: 64, pattern: @"^[0-9]{1,64}\z",
+                invalidMessage: "El id de la tienda tiene que ser numérico.", isInternal: true),
+            new FieldDefinition(
+                ShopifyFieldKeys.Scopes, "Permisos concedidos", FieldKind.Text,
+                required: false, maxLength: 1024, pattern: null,
+                invalidMessage: "Los permisos que devolvió Shopify no tienen una forma válida.", isInternal: true),
+            new FieldDefinition(
+                ShopifyFieldKeys.WebhookSubscriptionIds, "Suscripciones de webhooks", FieldKind.Text,
+                required: false, maxLength: 2048, pattern: null,
+                invalidMessage: "Las suscripciones que devolvió Shopify no tienen una forma válida.", isInternal: true),
+            new FieldDefinition(
+                ShopifyFieldKeys.AccessToken, "Token de acceso", FieldKind.Secret,
+                required: false, maxLength: 2048, pattern: null,
+                invalidMessage: "El token que devolvió Shopify no tiene una forma válida.", isInternal: true),
+        ],
+        DefaultMaxConnections,
+        onboarding: ProviderOnboarding.ShopifyOAuth);
+
+    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram, Shopify];
 
     /// <summary>Ordinal, como el <c>CHECK</c>: <c>"Zenvia"</c> no es <c>"zenvia"</c>.</summary>
     public static IntegrationProvider? Find(string? key) =>

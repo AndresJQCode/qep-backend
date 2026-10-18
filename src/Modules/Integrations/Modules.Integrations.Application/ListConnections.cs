@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Modules.Integrations.Application.Shopify;
 using Modules.Tenancy.Application;
 
 namespace Modules.Integrations.Application;
@@ -15,6 +16,7 @@ public sealed class ListConnectionsHandler(
     ITenantModules tenantModules,
     IMetaAppSettings metaApp,
     IInstagramAppSettings instagramApp,
+    IShopifyAppSettings shopifyApp,
     ISecretProtector protector,
     IConnectionAuthorNames authorNames,
     IExecutionContext executionContext)
@@ -24,7 +26,7 @@ public sealed class ListConnectionsHandler(
     {
         IntegrationsAuthorization.EnsureAuthorized(executionContext, query.TenantId, IntegrationsPermissions.ConnectionRead);
 
-        var visible = (await ProviderVisibility.VisibleAsync(catalog, tenantModules, metaApp, instagramApp, query.TenantId, cancellationToken))
+        var visible = (await ProviderVisibility.VisibleAsync(catalog, tenantModules, metaApp, instagramApp, shopifyApp, query.TenantId, cancellationToken))
             .ToDictionary(provider => provider.Key, StringComparer.Ordinal);
         var connections = (await repository.ListAsync(query.TenantId, cancellationToken))
             .Where(connection => visible.ContainsKey(connection.ProviderKey))

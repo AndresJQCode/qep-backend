@@ -5,6 +5,7 @@ using BuildingBlocks.Application;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Modules.Integrations.Application;
+using Modules.Integrations.Application.Shopify;
 using Modules.Integrations.Domain;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
@@ -53,6 +54,29 @@ internal sealed class FakeMembershipDirectory : IMembershipDirectory
 internal sealed class FakeClock(DateTimeOffset utcNow) : IClock
 {
     public DateTimeOffset UtcNow { get; set; } = utcNow;
+}
+
+/// <summary>La app de Shopify (spec 2026-10-15 §4.2): configurada por defecto, con los valores públicos de las pruebas.</summary>
+internal sealed class FakeShopifyAppSettings : IShopifyAppSettings
+{
+    public bool Configured { get; set; } = true;
+
+    public bool IsConfigured => Configured;
+
+    public string? ClientId => Configured ? "shopify-client-id-unit" : null;
+
+    public string? ClientSecret => Configured ? "shopify-client-secret-SENTINEL-unit" : null;
+
+    public string ApiVersion => "2026-10";
+
+    public IReadOnlyList<string> Scopes { get; set; } = ["read_orders", "read_customers"];
+
+    public Uri? WebhookCallbackUrl { get; set; } = new("https://qep-api.qcode.co/api/webhooks/shopify");
+
+    public List<string> AllowedOrigins { get; } = ["https://qep.qcode.co", "http://localhost:3002"];
+
+    public bool IsRedirectAllowed(Uri redirectUri) =>
+        AllowedOrigins.Contains(redirectUri.GetLeftPart(UriPartial.Authority), StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>La app de Meta (D-M3): configurada por defecto, con los valores públicos de las pruebas.</summary>
@@ -231,11 +255,13 @@ internal sealed partial class IntegrationsTestBed
 
     public FakeMetaAppSettings MetaApp { get; } = new();
 
+    public FakeShopifyAppSettings ShopifyApp { get; } = new();
+
     public GetIntegrationsCatalogHandler CatalogHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, Modules, MetaApp, InstagramApp, context ?? Context());
+        new(Catalog, Repository, Modules, MetaApp, InstagramApp, ShopifyApp, context ?? Context());
 
     public ListConnectionsHandler ListHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, Modules, MetaApp, InstagramApp, Protector, AuthorNames, context ?? Context());
+        new(Catalog, Repository, Modules, MetaApp, InstagramApp, ShopifyApp, Protector, AuthorNames, context ?? Context());
 
     /// <summary>Una conexión de Meta ya creada por Embedded Signup: los campos los escribió el backend.</summary>
     public IntegrationConnection SeedWhatsAppCloud(string name = "Ventas")

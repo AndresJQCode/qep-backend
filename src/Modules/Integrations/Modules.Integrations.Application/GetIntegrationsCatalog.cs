@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Modules.Integrations.Application.Shopify;
 using Modules.Tenancy.Application;
 
 namespace Modules.Integrations.Application;
@@ -12,6 +13,7 @@ public sealed class GetIntegrationsCatalogHandler(
     ITenantModules tenantModules,
     IMetaAppSettings metaApp,
     IInstagramAppSettings instagramApp,
+    IShopifyAppSettings shopifyApp,
     IExecutionContext executionContext)
     : IQueryHandler<GetIntegrationsCatalogQuery, IntegrationsCatalogResponse>
 {
@@ -20,7 +22,7 @@ public sealed class GetIntegrationsCatalogHandler(
     {
         IntegrationsAuthorization.EnsureAuthorized(executionContext, query.TenantId, IntegrationsPermissions.ConnectionRead);
 
-        var visible = await ProviderVisibility.VisibleAsync(catalog, tenantModules, metaApp, instagramApp, query.TenantId, cancellationToken);
+        var visible = await ProviderVisibility.VisibleAsync(catalog, tenantModules, metaApp, instagramApp, shopifyApp, query.TenantId, cancellationToken);
         var connections = await repository.ListAsync(query.TenantId, cancellationToken);
 
         return new IntegrationsCatalogResponse(visible

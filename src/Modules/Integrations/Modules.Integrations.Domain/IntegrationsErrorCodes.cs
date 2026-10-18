@@ -51,4 +51,10 @@ public static class ConnectionFailureCodes
     public const string TokenExpired = "token_expired";
     public const string NumberUnregistered = "number_unregistered";
     public const string AccountDisabled = "account_disabled";
+
+    // Spec 2026-10-15 §4.1 y §4.3.
+    /// <summary>La tienda desinstaló la app (<c>app/uninstalled</c>): el token ya no sirve hasta reenlazar.</summary>
+    public const string AppUninstalled = "app_uninstalled";
+    /// <summary>Shopify no aceptó registrar los webhooks; el probador lo reintenta.</summary>
+    public const string WebhooksNotRegistered = "webhooks_not_registered";
 }

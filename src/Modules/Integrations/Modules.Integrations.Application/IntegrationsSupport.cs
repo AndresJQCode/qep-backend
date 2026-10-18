@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Modules.Integrations.Application.Shopify;
 using Modules.Integrations.Domain;
 using Modules.Tenancy.Application;
 
@@ -40,6 +41,7 @@ internal static class ProviderVisibility
         ITenantModules tenantModules,
         IMetaAppSettings metaApp,
         IInstagramAppSettings instagramApp,
+        IShopifyAppSettings shopifyApp,
         Guid tenantId,
         CancellationToken cancellationToken)
     {
@@ -47,11 +49,12 @@ internal static class ProviderVisibility
         return catalog.All
             .Where(provider => provider.IsVisibleFor(modules))
             // D-M3: sin la app de Meta configurada (sólo fuera de Production) no hay cómo conectar. Mismo criterio
-            // con el caso de uso Instagram (spec 2026-10-14 §6.1).
+            // con el caso de uso Instagram (spec 2026-10-14 §6.1) y con la app de Shopify (spec 2026-10-15 §4.2).
             .Where(provider => provider.Onboarding switch
             {
                 ProviderOnboarding.MetaEmbeddedSignup => metaApp.IsConfigured,
                 ProviderOnboarding.InstagramLogin => instagramApp.IsConfigured,
+                ProviderOnboarding.ShopifyOAuth => shopifyApp.IsConfigured,
                 _ => true,
             })
             .ToArray();
@@ -113,6 +116,9 @@ internal static class ConnectionMapping
                     new ProviderOnboardingResponse(
                         nameof(ProviderOnboarding.InstagramLogin), instagramApp.AppId, null, instagramApp.GraphApiVersion,
                         InstagramLogin.AuthorizeUrl, InstagramLogin.RequiredScopes),
+                // Spec 2026-10-15 §4.3: sin authorizeUrl. La arma el inicio de la instalación, porque lleva el dominio de
+                // la tienda, el state y el redirect_uri de cada intento; aquí no hay nada fijo que mandar.
+                ProviderOnboarding.ShopifyOAuth => new ProviderOnboardingResponse(nameof(ProviderOnboarding.ShopifyOAuth), null, null, null),
                 _ => new ProviderOnboardingResponse(nameof(ProviderOnboarding.Form), null, null, null),
             });
 

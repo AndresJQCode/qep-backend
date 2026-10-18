@@ -17,7 +17,7 @@ namespace Modules.Integrations.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.11")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -161,7 +161,7 @@ namespace Modules.Integrations.Infrastructure.Persistence.Migrations
 
                     b.ToTable("connections", "integrations", t =>
                         {
-                            t.HasCheckConstraint("CK_connections_provider_key", "provider_key IN ('zenvia','whatsapp-cloud','instagram')");
+                            t.HasCheckConstraint("CK_connections_provider_key", "provider_key IN ('zenvia','whatsapp-cloud','instagram','shopify')");
 
                             t.HasCheckConstraint("CK_connections_status", "status IN ('Active','Paused','NeedsAttention')");
                         });

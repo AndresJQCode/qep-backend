@@ -24,7 +24,9 @@ public sealed record ProviderResponse(
 /// popup); el secreto nunca sale. Con <c>Kind = "Form"</c> lo demás va ausente, para que la forma sea
 /// exactamente <c>{ "kind": "Form" }</c>. Con <c>InstagramLogin</c> (spec 2026-10-14 §5.1) viajan
 /// <c>appId</c> (el del caso de uso Instagram, no el de la app), <c>authorizeUrl</c> y <c>scopes</c>: el SPA arma
-/// la URL de autorización con ellos y su propio <c>redirect_uri</c>.</summary>
+/// la URL de autorización con ellos y su propio <c>redirect_uri</c>. Con <c>ShopifyOAuth</c> (spec 2026-10-15 §4.3) la
+/// forma es <c>{ "kind": "ShopifyOAuth" }</c>: la URL depende de la tienda y del <c>state</c>, así que la devuelve el
+/// inicio de la instalación y no el catálogo.</summary>
 public sealed record ProviderOnboardingResponse(
     string Kind,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? AppId,

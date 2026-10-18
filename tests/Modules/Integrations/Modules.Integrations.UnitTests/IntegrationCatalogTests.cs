@@ -38,7 +38,9 @@ public sealed class IntegrationCatalogTests
         Assert.True(provider.FindField("registrationPin")!.IsSecret);
         Assert.Equal(@"^[0-9]{6}\z", provider.FindField("registrationPin")!.Pattern!.ToString());
         Assert.Null(provider.FindField("displayPhoneNumber")!.Pattern);
-        Assert.Equal([IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud, IntegrationProviders.Instagram], IntegrationProviders.All);
+        Assert.Equal(
+            [IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud, IntegrationProviders.Instagram, IntegrationProviders.Shopify],
+            IntegrationProviders.All);
         Assert.Equal(ProviderOnboarding.Form, IntegrationProviders.Zenvia.Onboarding);
     }
 
@@ -67,6 +69,54 @@ public sealed class IntegrationCatalogTests
         Assert.Equal(2048, provider.FindField("accessToken")!.MaxLength);
         Assert.False(IntegrationProviders.Zenvia.IsBackendOwned);
         Assert.True(IntegrationProviders.WhatsAppCloud.IsBackendOwned);
+    }
+
+    // Spec 2026-10-15 §4.1: la fila literal de Shopify. Lo consume el módulo shopify, se conecta por OAuth y todos los
+    // campos los escribe el backend (shopDomain y shopName se ven; shopId, scopes, webhookSubscriptionIds y el token no).
+    [Fact]
+    public void ShopifyIsInTheCatalogWithItsFieldsAndOnboarding()
+    {
+        var provider = IntegrationProviders.Shopify;
+
+        Assert.Equal("shopify", provider.Key);
+        Assert.Equal("Shopify", provider.DisplayName);
+        Assert.Equal(IntegrationCategory.Commerce, provider.Category);
+        Assert.Equal([TenantModuleKeys.Shopify], provider.ConsumingModules);
+        Assert.Equal(IntegrationProviders.DefaultMaxConnections, provider.MaxConnections);
+        Assert.Equal(ProviderOnboarding.ShopifyOAuth, provider.Onboarding);
+        Assert.Equal(
+            [ShopifyFieldKeys.ShopDomain, ShopifyFieldKeys.ShopName, ShopifyFieldKeys.ShopId, ShopifyFieldKeys.Scopes, ShopifyFieldKeys.WebhookSubscriptionIds, ShopifyFieldKeys.AccessToken],
+            provider.Fields.Select(field => field.Key));
+        Assert.Equal(["shopDomain", "shopName", "shopId", "scopes", "webhookSubscriptionIds", "accessToken"], provider.Fields.Select(field => field.Key));
+        Assert.Equal(["shopDomain", "shopName"], provider.CatalogFields.Select(field => field.Key));
+        Assert.Equal(["accessToken"], provider.SecretFields.Select(field => field.Key));
+        Assert.True(provider.FindField("accessToken")!.Internal);
+        Assert.Same(provider, IntegrationProviders.Parse("shopify"));
+        Assert.Equal("app_uninstalled", ConnectionFailureCodes.AppUninstalled);
+        Assert.Equal("webhooks_not_registered", ConnectionFailureCodes.WebhooksNotRegistered);
+    }
+
+    [Fact]
+    public void ShopifyIsVisibleOnlyWithShopifyModule()
+    {
+        Assert.True(IntegrationProviders.Shopify.IsVisibleFor(TenantModuleSet.FromStored(TenantModuleKeys.All)));
+        Assert.False(IntegrationProviders.Shopify.IsVisibleFor(
+            TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Shopify]))));
+        // shopify depende de orders: contratado sin orders no está efectivo.
+        Assert.False(IntegrationProviders.Shopify.IsVisibleFor(
+            TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Orders]))));
+        Assert.False(IntegrationProviders.Shopify.IsVisibleFor(TenantModuleSet.FromStored([TenantModuleKeys.Quotations, TenantModuleKeys.Messaging])));
+    }
+
+    // La tienda la elige Shopify en la autorización: el formulario no crea ni edita más que el nombre.
+    [Fact]
+    public void ShopifyAllFieldsAreBackendOwned()
+    {
+        Assert.True(IntegrationProviders.Shopify.IsBackendOwned);
+        Assert.All(IntegrationProviders.Shopify.Fields, field => Assert.False(field.Required));
+        Assert.All(
+            IntegrationProviders.Shopify.Fields.Where(field => field.Key is not ("shopDomain" or "shopName")),
+            field => Assert.True(field.Internal));
     }
 
     // Meta devuelve el número formateado: "+57 300 123 4567" tiene que pasar tal cual.

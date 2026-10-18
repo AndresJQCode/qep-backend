@@ -56,7 +56,7 @@ public sealed class ReadHandlersTests
 
         var catalog = await bed.CatalogHandler().HandleAsync(new GetIntegrationsCatalogQuery(bed.TenantId), Ct);
 
-        Assert.Equal(["zenvia", "whatsapp-cloud", "instagram"], catalog.Providers.Select(provider => provider.Key));
+        Assert.Equal(["zenvia", "whatsapp-cloud", "instagram", "shopify"], catalog.Providers.Select(provider => provider.Key));
     }
 
     // Spec §5.2: cada proveedor trae onboarding; los campos internos no salen del catálogo.
@@ -101,6 +101,34 @@ public sealed class ReadHandlersTests
         var catalog = await bed.CatalogHandler().HandleAsync(new GetIntegrationsCatalogQuery(bed.TenantId), Ct);
 
         Assert.DoesNotContain(catalog.Providers, provider => provider.Key == "whatsapp-cloud");
+    }
+
+    // Spec 2026-10-15 §4.3: con ShopifyOAuth sólo viaja el kind. La URL de autorización la arma el inicio A, porque
+    // lleva el dominio de la tienda, el state y el redirect_uri de cada intento: no hay nada fijo que mandar acá.
+    [Fact]
+    public async Task AShopifyOAuthOnboardingSerializesAsKindOnly()
+    {
+        var bed = new IntegrationsTestBed();
+
+        var catalog = await bed.CatalogHandler().HandleAsync(new GetIntegrationsCatalogQuery(bed.TenantId), Ct);
+
+        var shopify = Assert.Single(catalog.Providers, provider => provider.Key == "shopify");
+        Assert.Equal("Commerce", shopify.Category);
+        Assert.Equal(["shopDomain", "shopName"], shopify.Fields.Select(field => field.Key));
+        Assert.Equal("{\"kind\":\"ShopifyOAuth\"}", JsonSerializer.Serialize(shopify.Onboarding, JsonSerializerOptions.Web));
+    }
+
+    // D-M3 aplicado a Shopify: sin el par de la app (sólo fuera de producción) no hay cómo instalar, así que no sale.
+    [Fact]
+    public async Task WithoutShopifyAppShopifyIsNotInTheCatalog()
+    {
+        var bed = new IntegrationsTestBed();
+        bed.ShopifyApp.Configured = false;
+
+        var catalog = await bed.CatalogHandler().HandleAsync(new GetIntegrationsCatalogQuery(bed.TenantId), Ct);
+
+        Assert.DoesNotContain(catalog.Providers, provider => provider.Key == "shopify");
+        Assert.Contains(catalog.Providers, provider => provider.Key == "zenvia");
     }
 
     [Fact]
