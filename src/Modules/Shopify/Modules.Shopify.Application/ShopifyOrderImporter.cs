@@ -93,6 +93,13 @@ public sealed class ShopifyOrderImporter(
         // externa y, si existe, pone la fila al día y lo anula; si no, la ignora.
         if (snapshot.CancelledAt is not null)
         {
+            // La anulación va a nombre del asesor de la tienda: sin él, espera como cualquier otra fila. Pasa al volver a
+            // enlazar una tienda borrada (D-S23): la tienda nueva nace vacía y el pedido viejo ya está en QEP.
+            if (store.AdvisorMembershipId is null)
+            {
+                return Wait(row, ShopifyWaitReasons.StoreNotConfigured, null, clock.UtcNow);
+            }
+
             await changes.ReactAsync(
                 new ShopifyOrderChange(connection, store, row, ShopifyMirrorState.Of(row), snapshot), cancellationToken);
             return new ShopifyImportOutcome(row.ImportState);

@@ -156,7 +156,7 @@ public sealed class ShopifyPreconditionsTests
         Assert.Equal([(TenantId, $"{ShopId}:{snapshot.OrderId}")], world.Writer.KeyLookups);
     }
 
-    // Hueco de la tarea 14: la fila es nueva (se borró el espejo, o el worker cayó antes de guardarla) pero el pedido ya existe en
+    // La fila es nueva (se borró el espejo, o el worker cayó antes de guardarla) pero el pedido ya existe en
     // QEP con su clave externa. Llega cancelado: no puede quedar ignorado con el pedido vivo. Se pone al día y se anula, como la
     // reacción de §6.3 con una fila en espera.
     [Fact]
@@ -175,6 +175,24 @@ public sealed class ShopifyPreconditionsTests
         var cancel = Assert.Single(world.Writer.Cancels);
         Assert.Equal((TenantId, existing.OrderId, AdvisorId, "Cancelado en Shopify: customer"), cancel);
         Assert.Empty(world.Writer.Creates);
+    }
+
+    // El mismo caso con la tienda sin configurar (la conexión se borró y se volvió a enlazar, D-S23): la anulación necesita el
+    // asesor de la tienda. Sin él la fila espera con store_not_configured, como cualquier otra, en vez de lanzar y dejar la
+    // entrega reintentando y la ventana de la conciliación frenada.
+    [Fact]
+    public async Task CancelledNewRowWithAnUnconfiguredStoreWaitsStoreNotConfigured()
+    {
+        var world = new ImporterWorld { Store = ShopifyStore.Create(ConnectionId, TenantId, Now) };
+        var snapshot = Order(cancelledAt: Now.AddMinutes(-5));
+        var row = world.RowFor(snapshot);
+        world.Writer.ByExternalKey[$"{ShopId}:{snapshot.OrderId}"] =
+            ShopifyOrderWriteResult.Written(Guid.CreateVersion7(), "PED-0007", 119_000m, alreadyExisted: true, Guid.CreateVersion7());
+
+        var outcome = await world.ImportAsync(row, snapshot);
+
+        AssertWaiting(row, outcome, ShopifyWaitReasons.StoreNotConfigured, null);
+        Assert.Empty(world.Writer.Cancels);
     }
 
     [Fact]
