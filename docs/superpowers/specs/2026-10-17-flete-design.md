@@ -192,9 +192,13 @@ inicial).
   mismo evento).
 - **Lecturas:** `CarrierSettingsResponse` y `ShippingOptionsResponse` ganan `defaultFreightChargeMode`.
 - **Dónde se aplica (sólo frontend; el backend no rellena nada):** en el cotizador, el pedido manual y la edición
-  del pedido, el formulario arranca con el por defecto cuando el documento envía (no es recogida) y todavía no
-  tiene quién paga: al elegir «Enviar», y al abrir un documento que envía sin modo guardado. No pisa un modo ya
-  elegido ni uno que el asesor quitó con «Quitar» en esa misma edición.
+  del pedido, el formulario pone el por defecto cuando el documento envía (no es recogida) y todavía no tiene
+  quién paga, en tres momentos: al pasar de recoger a «Enviar», al empezar un pedido manual y al abrir una
+  cotización que todavía no tiene líneas guardadas. No se aplica al abrir una cotización con líneas ni un pedido
+  existente (lo dejaría con cambios sin haberlo tocado), así que la edición del pedido sólo recibe la regla de
+  abajo. El por defecto aplicado cuenta como punto de partida: no deja el documento con cambios ni dispara el
+  aviso al salir. No pisa un modo ya elegido ni uno que el asesor quitó con «Quitar» en esa edición; «Quitar»
+  sobrevive al guardado y sólo «Descartar cambios» lo olvida.
 - **«Se cobra en el pedido» sin valor:** como `Charged` exige valor > 0 (§5.2), un `Charged` sin valor **no viaja**
   en el cuerpo (se manda `freightChargeMode: null`) y la pantalla lo marca con «Escribe el valor del envío; sin
   valor queda sin definir.». Vale también cuando el asesor lo elige a mano: así la vista previa nunca se bloquea por
