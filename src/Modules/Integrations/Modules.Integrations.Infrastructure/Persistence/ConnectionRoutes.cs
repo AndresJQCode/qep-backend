@@ -16,6 +16,10 @@ internal sealed class ConnectionRoutes(IntegrationsDbContext dbContext) : IConne
         await Query(route => route.ProviderKey == providerKey && route.AccountId == accountId)
             .ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<ConnectionRoute>> ListByProviderAsync(string providerKey, CancellationToken cancellationToken) =>
+        await Query(route => route.ProviderKey == providerKey)
+            .ToListAsync(cancellationToken);
+
     // El filtro va sobre la ruta, antes del join: EF no traduce un Where sobre los miembros de una tupla
     // o de un record posicional armado en el resultSelector.
     private IQueryable<ConnectionRoute> Query(Expression<Func<IntegrationConnectionRoute, bool>> filter) =>

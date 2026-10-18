@@ -83,4 +83,33 @@ public sealed class ConnectionRoutesApiTests
             [(paused, "Soporte", ConnectionStatus.Paused), (active, "Ventas", ConnectionStatus.Active)],
             listing.Select(entry => (entry.Id, entry.Name, entry.Status)));
     }
+
+    // Spec 2026-10-15 §5.3: la conciliación recorre las tiendas de todos los tenants. Cross-tenant a propósito, con el estado de
+    // cada conexión, y sólo del proveedor pedido.
+    [Fact]
+    public async Task ListByProviderReturnsTheRoutesOfEveryTenantWithTheirStatus()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var firstTenant = Guid.CreateVersion7();
+        var secondTenant = Guid.CreateVersion7();
+        var first = await SeedWhatsAppConnectionAsync(factory, firstTenant, "Ventas", "111", "222");
+        var second = await SeedWhatsAppConnectionAsync(factory, secondTenant, "Otro", "333", "444");
+        using (var scope = factory.Services.CreateScope())
+        {
+            var repository = scope.ServiceProvider.GetRequiredService<IIntegrationConnectionRepository>();
+            (await repository.FindAsync(secondTenant, second, Ct))!.Pause(DateTimeOffset.UtcNow);
+            await scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var read = factory.Services.CreateScope();
+        var routes = read.ServiceProvider.GetRequiredService<IConnectionRoutes>();
+        var listed = await routes.ListByProviderAsync("whatsapp-cloud", Ct);
+
+        Assert.Equal(
+            new[] { (firstTenant, first, ConnectionStatus.Active), (secondTenant, second, ConnectionStatus.Paused) }
+                .OrderBy(entry => entry.Item2),
+            listed.Select(entry => (entry.TenantId, entry.ConnectionId, entry.Status)).OrderBy(entry => entry.ConnectionId));
+        Assert.Empty(await routes.ListByProviderAsync("shopify", Ct));
+    }
 }

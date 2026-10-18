@@ -19,6 +19,9 @@ internal sealed class FakeConnectionDirectory : IShopifyConnectionDirectory
 
     public Task<ShopifyConnectionRef?> FindByShopDomainAsync(string shopDomain, CancellationToken cancellationToken) =>
         Task.FromResult(Connections.GetValueOrDefault(shopDomain));
+
+    public Task<IReadOnlyList<ShopifyConnectionRef>> ListOperationalAsync(CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 internal sealed class FakeConnectionHealth : IShopifyConnectionHealth

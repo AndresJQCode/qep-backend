@@ -250,6 +250,9 @@ public sealed class ShopifyWebhookWorkerTests
 
         public Task<ShopifyConnectionRef?> FindByShopDomainAsync(string shopDomain, CancellationToken cancellationToken) =>
             Task.FromResult(Connections.GetValueOrDefault(shopDomain));
+
+        public Task<IReadOnlyList<ShopifyConnectionRef>> ListOperationalAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FakeHealth : IShopifyConnectionHealth

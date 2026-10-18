@@ -449,6 +449,9 @@ internal sealed class FakeConnectionRoutes : IConnectionRoutes
 
     public Task<IReadOnlyList<ConnectionRoute>> FindByAccountAsync(string providerKey, string accountId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<ConnectionRoute>>([]);
+
+    public Task<IReadOnlyList<ConnectionRoute>> ListByProviderAsync(string providerKey, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 /// <summary>Sólo el nombre: es lo único que la instalación lee de un tenant.</summary>

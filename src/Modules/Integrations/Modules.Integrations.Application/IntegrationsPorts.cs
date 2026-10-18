@@ -63,11 +63,15 @@ public sealed record ConnectionRoute(Guid TenantId, Guid ConnectionId, Connectio
 
 /// <summary>
 /// Cross-tenant a propósito: el webhook no sabe de qué tenant es el número hasta resolver la ruta. Lo
-/// usa sólo el adaptador de Messaging en Bootstrapper. <c>null</c> = número desconocido o conexión borrada.
+/// usan sólo los adaptadores de Messaging y Shopify en Bootstrapper. <c>null</c> = número desconocido o conexión borrada.
 /// </summary>
 public interface IConnectionRoutes
 {
     Task<ConnectionRoute?> FindAsync(string providerKey, string externalId, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<ConnectionRoute>> FindByAccountAsync(string providerKey, string accountId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-15 §5.3: las rutas del proveedor en todos los tenants, con el estado de cada conexión, para la
+    /// conciliación de Shopify. El llamador filtra por estado y por módulo.</summary>
+    Task<IReadOnlyList<ConnectionRoute>> ListByProviderAsync(string providerKey, CancellationToken cancellationToken);
 }

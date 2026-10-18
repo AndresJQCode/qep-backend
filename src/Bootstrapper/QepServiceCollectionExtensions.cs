@@ -764,10 +764,22 @@ public static class QepServiceCollectionExtensions
         // conexiones, clientes, productos, ciudades y pedidos entran por adaptadores que se registran más abajo.
         services.AddShopifyInfrastructure(configuration);
         // §5.1: el webhook firmado. La firma usa el client secret de la app de Integrations por un puerto propio; el procesador y
-        // el worker (AddShopifyWebhookProcessing/AddShopifyWebhookWorker) se suman cuando sus puertos tengan adaptador (tareas 12
-        // y 13): hasta entonces las entregas quedan encoladas.
+        // el worker (AddShopifyWebhookProcessing/AddShopifyWebhookWorker) se suman cuando exista el importador (tarea 13, ruling
+        // S18): hasta entonces las entregas quedan encoladas.
         services.AddSingleton<IShopifyAppSecret, ShopifyAppSecret>();
         services.AddScoped<ICommandHandler<ReceiveShopifyWebhookCommand, ShopifyWebhookReceipt>, ReceiveShopifyWebhookHandler>();
+        // §5.2 y §6.2: los puertos de Shopify hacia Integrations, Customers, Catalog, Geography, Quotations, Companies y
+        // Tenancy/Identity (ShopifyPorts.cs). Shopify no referencia ninguno de esos módulos: el composition root los une. El
+        // escritor de pedidos abre un scope propio por llamada (DiscardPendingChanges de Quotations, tarea 2).
+        services.AddScoped<IShopifyConnectionDirectory, ShopifyConnectionDirectory>();
+        services.AddScoped<IShopifyConnectionHealth, ShopifyConnectionHealth>();
+        services.AddScoped<IShopifyCustomerDirectory, ShopifyCustomerDirectory>();
+        services.AddScoped<IShopifyProductLookup, ShopifyProductLookup>();
+        services.AddScoped<IShopifyGeographyLookup, ShopifyGeographyLookup>();
+        services.AddScoped<IShopifyShippingLookup, ShopifyShippingLookup>();
+        services.AddScoped<IShopifyOrderWriter, ShopifyOrderWriter>();
+        services.AddScoped<IShopifyMemberDirectory, ShopifyMemberDirectory>();
+        services.AddScoped<IShopifyBillingAccounts, ShopifyBillingAccounts>();
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
