@@ -1,0 +1,131 @@
+{
+  "_source": "synthetic, replace per V-9",
+  "id": 5550000000010,
+  "admin_graphql_api_id": "gid://shopify/Order/5550000000010",
+  "name": "#1010",
+  "email": "laura.gomez@example.com",
+  "phone": "+573001112233",
+  "created_at": "2026-10-01T10:00:00-05:00",
+  "updated_at": "2026-10-01T10:05:30-05:00",
+  "cancelled_at": "2026-10-02T09:00:00-05:00",
+  "cancel_reason": "customer",
+  "financial_status": "voided",
+  "currency": "COP",
+  "presentment_currency": "COP",
+  "total_price": "119000.00",
+  "total_price_set": {
+    "shop_money": {
+      "amount": "119000.00",
+      "currency_code": "COP"
+    },
+    "presentment_money": {
+      "amount": "119000.00",
+      "currency_code": "COP"
+    }
+  },
+  "taxes_included": true,
+  "test": false,
+  "note": "El cliente pidió cancelar por WhatsApp",
+  "payment_gateway_names": [
+    "Mercado Pago"
+  ],
+  "customer": {
+    "id": 7770000000001,
+    "first_name": "Laura",
+    "last_name": "Gómez",
+    "email": "laura.gomez@example.com",
+    "phone": "+573001112233"
+  },
+  "shipping_address": {
+    "first_name": "Laura",
+    "last_name": "Gómez",
+    "name": "Laura Gómez",
+    "address1": "Calle 10 # 43-20",
+    "address2": "Apto 301",
+    "city": "Medellín",
+    "province": "Antioquia",
+    "province_code": "ANT",
+    "country": "Colombia",
+    "country_code": "CO",
+    "zip": null,
+    "phone": "+573001112233"
+  },
+  "note_attributes": [
+    {
+      "name": "documento",
+      "value": "1036000111"
+    },
+    {
+      "name": "tipo_documento",
+      "value": "CC"
+    }
+  ],
+  "line_items": [
+    {
+      "id": 9000,
+      "sku": "CAM-001",
+      "quantity": 2,
+      "price": "50000.00",
+      "price_set": {
+        "shop_money": {
+          "amount": "50000.00",
+          "currency_code": "COP"
+        },
+        "presentment_money": {
+          "amount": "50000.00",
+          "currency_code": "COP"
+        }
+      },
+      "total_discount": "0.00",
+      "discount_allocations": []
+    }
+  ],
+  "shipping_lines": [
+    {
+      "id": 8000,
+      "code": "standard",
+      "title": "Servientrega",
+      "source": "shopify",
+      "price": "19000.00",
+      "price_set": {
+        "shop_money": {
+          "amount": "19000.00",
+          "currency_code": "COP"
+        },
+        "presentment_money": {
+          "amount": "19000.00",
+          "currency_code": "COP"
+        }
+      },
+      "discounted_price": "19000.00",
+      "discounted_price_set": {
+        "shop_money": {
+          "amount": "19000.00",
+          "currency_code": "COP"
+        },
+        "presentment_money": {
+          "amount": "19000.00",
+          "currency_code": "COP"
+        }
+      },
+      "tax_lines": [
+        {
+          "price": "3033.61",
+          "price_set": {
+            "shop_money": {
+              "amount": "3033.61",
+              "currency_code": "COP"
+            },
+            "presentment_money": {
+              "amount": "3033.61",
+              "currency_code": "COP"
+            }
+          },
+          "rate": 0.19,
+          "title": "IVA"
+        }
+      ],
+      "is_removed": false
+    }
+  ]
+}
