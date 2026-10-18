@@ -896,6 +896,11 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             table.HasCheckConstraint(
                 "CK_tenant_quotation_settings_disabled_freight_charge_modes",
                 "disabled_freight_charge_modes <@ ARRAY['Charged', 'OnDelivery', 'Free']::text[]");
+            // §4.4.1: el por defecto es un nombre del enum y nunca uno de los apagados de la misma fila.
+            table.HasCheckConstraint(
+                "CK_tenant_quotation_settings_default_freight_charge_mode",
+                "default_freight_charge_mode IS NULL OR (default_freight_charge_mode IN ('Charged', 'OnDelivery', 'Free') "
+                + "AND NOT default_freight_charge_mode = ANY (disabled_freight_charge_modes))");
         });
         settings.HasKey(value => value.TenantId);
         settings.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
@@ -906,6 +911,9 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnType("text[]")
             .HasDefaultValueSql("'{}'::text[]")
             .IsRequired();
+        settings.Property(value => value.DefaultFreightChargeMode)
+            .HasColumnName("default_freight_charge_mode")
+            .HasMaxLength(16);
 
         var totals = modelBuilder.Entity<TenantMinimumTotalRow>();
         totals.ToTable("tenant_minimum_totals", "quotations", table =>

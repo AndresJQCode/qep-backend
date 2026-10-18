@@ -99,6 +99,122 @@ public sealed class SetFreightChargeModesTests
             handler.HandleAsync(new SetFreightChargeModesCommand(TenantId, ["Paid"]), TestContext.Current.CancellationToken));
     }
 
+    // §4.4.1: el por defecto es null o uno de los activos del mismo cuerpo.
+    [Theory]
+    [InlineData("Free")]
+    [InlineData(null)]
+    public void ADefaultModeAmongTheEnabledOnesOrNullIsValid(string? defaultMode)
+    {
+        var command = new SetFreightChargeModesCommand(
+            TenantId, ["Charged", "Free"], SetsDefaultMode: true, DefaultMode: defaultMode);
+
+        Assert.True(_validator.Validate(command).IsValid);
+    }
+
+    [Theory]
+    [InlineData("OnDelivery")]
+    [InlineData("free")]
+    [InlineData("Gratis")]
+    public void ADefaultModeThatIsNotEnabledIsAFieldError(string defaultMode)
+    {
+        var command = new SetFreightChargeModesCommand(
+            TenantId, ["Charged", "Free"], SetsDefaultMode: true, DefaultMode: defaultMode);
+
+        var error = Assert.Single(_validator.Validate(command).Errors);
+        Assert.Equal("DefaultMode", error.PropertyName);
+    }
+
+    [Fact]
+    public async Task SetsTheDefaultModeAndReturnsIt()
+    {
+        var (handler, store, audit) = Handler();
+
+        var settings = await handler.HandleAsync(
+            new SetFreightChargeModesCommand(
+                TenantId, ["Charged", "OnDelivery", "Free"], SetsDefaultMode: true, DefaultMode: "OnDelivery"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(FreightChargeMode.OnDelivery, store.DefaultFreightChargeMode);
+        Assert.Equal("OnDelivery", settings.DefaultFreightChargeMode);
+        Assert.Equal([SetFreightChargeModesHandler.AuditAction], audit.Actions);
+    }
+
+    [Fact]
+    public async Task ANullDefaultModeClearsIt()
+    {
+        var (handler, store, audit) = Handler();
+        store.DefaultFreightChargeMode = FreightChargeMode.Free;
+
+        var settings = await handler.HandleAsync(
+            new SetFreightChargeModesCommand(
+                TenantId, ["Charged", "OnDelivery", "Free"], SetsDefaultMode: true, DefaultMode: null),
+            TestContext.Current.CancellationToken);
+
+        Assert.Null(store.DefaultFreightChargeMode);
+        Assert.Null(settings.DefaultFreightChargeMode);
+        Assert.Equal([SetFreightChargeModesHandler.AuditAction], audit.Actions);
+    }
+
+    // Omitido no es null: conserva el que había. Con los mismos modos no hay nada que guardar ni auditar.
+    [Fact]
+    public async Task AnOmittedDefaultModeKeepsTheCurrentOne()
+    {
+        var (handler, store, audit) = Handler();
+        store.DefaultFreightChargeMode = FreightChargeMode.Free;
+
+        var settings = await handler.HandleAsync(
+            new SetFreightChargeModesCommand(TenantId, ["Charged", "OnDelivery", "Free"]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(FreightChargeMode.Free, store.DefaultFreightChargeMode);
+        Assert.Equal("Free", settings.DefaultFreightChargeMode);
+        Assert.Empty(audit.Actions);
+    }
+
+    [Fact]
+    public async Task AnOmittedDefaultModeSurvivesTurningOffAnotherMode()
+    {
+        var (handler, store, audit) = Handler();
+        store.DefaultFreightChargeMode = FreightChargeMode.Free;
+
+        await handler.HandleAsync(
+            new SetFreightChargeModesCommand(TenantId, ["Free"]), TestContext.Current.CancellationToken);
+
+        Assert.Equal(FreightChargeMode.Free, store.DefaultFreightChargeMode);
+        Assert.Equal([SetFreightChargeModesHandler.AuditAction], audit.Actions);
+    }
+
+    // Apagar el que era el por defecto lo quita en el mismo guardado y en el mismo evento de auditoría.
+    [Fact]
+    public async Task TurningOffTheDefaultModeClearsIt()
+    {
+        var (handler, store, audit) = Handler();
+        store.DefaultFreightChargeMode = FreightChargeMode.Free;
+
+        var settings = await handler.HandleAsync(
+            new SetFreightChargeModesCommand(TenantId, ["Charged"]), TestContext.Current.CancellationToken);
+
+        Assert.Equal([FreightChargeMode.Charged], store.EnabledFreightChargeModes);
+        Assert.Null(store.DefaultFreightChargeMode);
+        Assert.Null(settings.DefaultFreightChargeMode);
+        Assert.Equal([SetFreightChargeModesHandler.AuditAction], audit.Actions);
+    }
+
+    [Fact]
+    public async Task TheSameModesAndDefaultAreNotAudited()
+    {
+        var (handler, store, audit) = Handler();
+        store.DefaultFreightChargeMode = FreightChargeMode.Charged;
+
+        await handler.HandleAsync(
+            new SetFreightChargeModesCommand(
+                TenantId, ["Free", "OnDelivery", "Charged"], SetsDefaultMode: true, DefaultMode: "Charged"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(FreightChargeMode.Charged, store.DefaultFreightChargeMode);
+        Assert.Empty(audit.Actions);
+    }
+
     private static (SetFreightChargeModesHandler Handler, FixedQuotationSettingsStore Store, RecordingQuotationAuditPublisher Audit)
         Handler(IExecutionContext? executionContext = null)
     {

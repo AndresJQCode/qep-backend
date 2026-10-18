@@ -16,4 +16,8 @@ internal sealed class TenantQuotationSettingsRow
     /// enum. Se guardan las apagadas y no las activas para que «sin tocar» sea la lista vacía: las filas de antes
     /// de la migración y las que crea <c>LockRowAsync</c> nacen con las tres activas sin escribir nada.</summary>
     public string[] DisabledFreightChargeModes { get; set; } = [];
+
+    /// <summary>La opción de quién paga que el formulario elige por defecto (spec 2026-10-17 §4.4.1), por nombre
+    /// del enum. Nula hasta que el tenant la elige; el CHECK impide que sea una de las apagadas.</summary>
+    public string? DefaultFreightChargeMode { get; set; }
 }

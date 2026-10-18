@@ -1193,8 +1193,8 @@ contraentrega.
 | `POST` | `/carriers/{carrierId}/activate` y `/deactivate` | Prende o apaga |
 | `PUT` | `/carriers/order` | Reordena con la lista completa de ids (`carrierIds`) |
 | `PUT` | `/carriers/freight-tax-rate` | Fija la tasa del IVA del envío (`taxRateId`); con `taxRateId: null` la quita |
-| `PUT` | `/carriers/freight-charge-modes` | Las opciones de «¿Quién paga el envío?» que quedan activas (`enabledModes`); responde como `GET /carriers` |
-| `GET` | `/shipping-options` | Para el cotizador y el pedido (permiso de leer cotizaciones): sólo las activas, la tasa y `freightChargeModes` |
+| `PUT` | `/carriers/freight-charge-modes` | Las opciones de «¿Quién paga el envío?» que quedan activas (`enabledModes`) y la por defecto (`defaultMode`, opcional); responde como `GET /carriers` |
+| `GET` | `/shipping-options` | Para el cotizador y el pedido (permiso de leer cotizaciones): sólo las activas, la tasa, `freightChargeModes` y `defaultFreightChargeMode` |
 
 - **Las transportadoras no se borran, se desactivan.** Un documento guarda la foto del nombre al elegirla y
   no pierde lo que ya eligió si la transportadora se apaga después; una desactivada no se puede elegir en
@@ -1217,6 +1217,15 @@ contraentrega.
   quitarlo (`null`) siempre se puede. No aplica a la conversión (copia lo de la cotización) ni a Shopify. Se
   guardan las apagadas en `tenant_quotation_settings.disabled_freight_charge_modes`, aparte del mínimo de
   compra, como la tasa.
+- **La opción por defecto de quién paga** (§4.4.1). `defaultFreightChargeMode` viaja en `GET /carriers` y en
+  `GET /shipping-options`: `null` (el valor inicial) o el nombre de una opción **activa**. Se fija en el mismo
+  `PUT /carriers/freight-charge-modes` con `defaultMode`, que tiene tres estados: **omitido** conserva el
+  actual, `null` lo quita y un nombre lo fija — `{ "enabledModes": ["Charged", "Free"], "defaultMode": "Free" }`.
+  Un nombre que no está en `enabledModes` (o desconocido) es `422 validation.failed` con `errors["DefaultMode"]`.
+  Apagar la opción que era la por defecto la quita en el mismo guardado y el mismo evento de auditoría. Lo
+  aplica **el formulario**, no el backend (D-F19): ningún documento recibe el modo por defecto al crearse.
+  Vive en `tenant_quotation_settings.default_freight_charge_mode`, con un `CHECK` que impide que sea una de las
+  apagadas.
 - Mutar una transportadora, la tasa o quién paga el envío deja fila de auditoría en la misma transacción
   (`quotations.carrier.created|updated|activated|deactivated|reordered`,
   `quotations.freight_tax_rate.updated`, `quotations.freight_charge_modes.updated`); repetir lo que ya

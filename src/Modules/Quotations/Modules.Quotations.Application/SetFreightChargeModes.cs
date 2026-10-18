@@ -6,8 +6,16 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 /// <summary>Las opciones de «¿Quién paga el envío?» que quedan activas (spec §4.4); las que no vienen se
-/// apagan. Vacía las apaga todas. Nullable para que sea el validador el que marque el campo que falta.</summary>
-public sealed record SetFreightChargeModesCommand(Guid TenantId, IReadOnlyList<string?>? EnabledModes)
+/// apagan. Vacía las apaga todas. Nullable para que sea el validador el que marque el campo que falta.
+///
+/// El por defecto (§4.4.1) distingue «no lo toques» de «quítalo»: con <paramref name="SetsDefaultMode"/> en
+/// <c>false</c> se conserva el actual (salvo que se apague, que lo quita); en <c>true</c>,
+/// <paramref name="DefaultMode"/> es el nuevo, y <c>null</c> lo quita.</summary>
+public sealed record SetFreightChargeModesCommand(
+    Guid TenantId,
+    IReadOnlyList<string?>? EnabledModes,
+    bool SetsDefaultMode = false,
+    string? DefaultMode = null)
     : ICommand<CarrierSettingsDto>;
 
 /// <summary>
@@ -27,6 +35,11 @@ public sealed class SetFreightChargeModesValidator : AbstractValidator<SetFreigh
         RuleForEach(command => command.EnabledModes)
             .Must(mode => mode is not null && ModeNames.Contains(mode, StringComparer.Ordinal))
             .WithMessage($"Each enabled mode must be one of: {string.Join(", ", ModeNames)}.");
+        // Un nombre desconocido tampoco está entre los activos: una sola regla, un solo error en DefaultMode.
+        RuleFor(command => command.DefaultMode)
+            .Must((command, mode) => command.EnabledModes is { } enabled && enabled.Contains(mode, StringComparer.Ordinal))
+            .When(command => command.SetsDefaultMode && command.DefaultMode is not null)
+            .WithMessage("'Default Mode' must be null or one of the enabled modes.");
     }
 }
 
@@ -61,12 +74,23 @@ public sealed class SetFreightChargeModesHandler(
             .Select(mode => Enum.Parse<FreightChargeMode>(mode!, ignoreCase: false))
             .ToHashSet();
 
+        var current = await store.GetFreightChargeModesAsync(command.TenantId, cancellationToken);
+        var defaultMode = command.SetsDefaultMode
+            ? command.DefaultMode is null ? (FreightChargeMode?)null : Enum.Parse<FreightChargeMode>(command.DefaultMode, ignoreCase: false)
+            : current.Default;
+        // Apagar el que era el por defecto lo quita en este mismo guardado (§4.4.1): el por defecto siempre es
+        // uno activo. Si vino en el cuerpo, el validador ya comprobó que está entre los activos.
+        if (defaultMode is { } mode && !enabled.Contains(mode))
+        {
+            defaultMode = null;
+        }
+
         // Lo mismo que ya estaba no es un cambio: no se guarda ni se audita, como la tasa.
-        var current = await store.GetEnabledFreightChargeModesAsync(command.TenantId, cancellationToken);
-        if (!current.SetEquals(enabled))
+        if (!current.Enabled.SetEquals(enabled) || current.Default != defaultMode)
         {
             await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
-            await store.SetEnabledFreightChargeModesAsync(command.TenantId, enabled, cancellationToken);
+            await store.SetFreightChargeModesAsync(
+                command.TenantId, new FreightChargeModeSettings(enabled, defaultMode), cancellationToken);
             // El recurso es el tenant: las opciones son parte de su configuración.
             auditPublisher.Publish(
                 command.TenantId,

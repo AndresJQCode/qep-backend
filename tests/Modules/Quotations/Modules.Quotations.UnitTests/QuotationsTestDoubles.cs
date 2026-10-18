@@ -699,17 +699,20 @@ public sealed class FixedQuotationSettingsStore(QuotationSettings? settings = nu
     /// <summary>Cuántas veces se leyeron: un guardado que no cambia el modo no tiene por qué leerlas.</summary>
     public int FreightChargeModeReads { get; private set; }
 
-    public Task<IReadOnlySet<FreightChargeMode>> GetEnabledFreightChargeModesAsync(
-        Guid tenantId, CancellationToken cancellationToken)
+    /// <summary>Sin por defecto, como un tenant que nunca lo eligió (spec §4.4.1).</summary>
+    public FreightChargeMode? DefaultFreightChargeMode { get; set; }
+
+    public Task<FreightChargeModeSettings> GetFreightChargeModesAsync(Guid tenantId, CancellationToken cancellationToken)
     {
         FreightChargeModeReads++;
-        return Task.FromResult(EnabledFreightChargeModes);
+        return Task.FromResult(new FreightChargeModeSettings(EnabledFreightChargeModes, DefaultFreightChargeMode));
     }
 
-    public Task SetEnabledFreightChargeModesAsync(
-        Guid tenantId, IReadOnlySet<FreightChargeMode> enabledModes, CancellationToken cancellationToken)
+    public Task SetFreightChargeModesAsync(
+        Guid tenantId, FreightChargeModeSettings settings, CancellationToken cancellationToken)
     {
-        EnabledFreightChargeModes = enabledModes;
+        EnabledFreightChargeModes = settings.Enabled;
+        DefaultFreightChargeMode = settings.Default;
         return Task.CompletedTask;
     }
 }

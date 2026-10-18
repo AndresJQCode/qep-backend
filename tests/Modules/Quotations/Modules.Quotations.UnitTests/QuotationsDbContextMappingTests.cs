@@ -549,6 +549,25 @@ public sealed class QuotationsDbContextMappingTests
                 && check.Sql.Contains("'Charged'") && check.Sql.Contains("'OnDelivery'") && check.Sql.Contains("'Free'"));
     }
 
+    // Spec §4.4.1: el por defecto es un nombre del enum o null, y nunca uno de los apagados de la misma fila.
+    [Fact]
+    public void TheSettingsRowMapsTheDefaultFreightChargeModeAsANullableEnabledName()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var entity = model.FindEntityType(typeof(TenantQuotationSettingsRow))!;
+
+        var property = entity.FindProperty(nameof(TenantQuotationSettingsRow.DefaultFreightChargeMode))!;
+
+        Assert.Equal("default_freight_charge_mode", property.GetColumnName());
+        Assert.True(property.IsNullable);
+        Assert.Equal(16, property.GetMaxLength());
+        Assert.Contains(
+            entity.GetCheckConstraints(),
+            check => check.Name == "CK_tenant_quotation_settings_default_freight_charge_mode"
+                && check.Sql.Contains("'Charged'") && check.Sql.Contains("disabled_freight_charge_modes"));
+    }
+
     /// <summary>
     /// El modelo y el último snapshot describen la misma base. Renombrar un tipo CLR sin tocar
     /// tablas, columnas ni índices no pide migración (plan 2026-09-14, Task 1), y una migración

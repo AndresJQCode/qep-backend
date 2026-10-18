@@ -27,11 +27,15 @@ public sealed record FreightChargeModeDto(string Mode, bool IsEnabled);
 /// <c>FreightChargeModes</c> trae **siempre las tres**, en el orden <c>Charged</c>, <c>OnDelivery</c>,
 /// <c>Free</c>, aunque estén apagadas (§4.4): es una colección de tamaño fijo, y si la apagada faltara la
 /// pantalla tendría que conocer el enum del backend para dibujar su interruptor. No la "simplifiques" a la
-/// lista de las activas.</summary>
+/// lista de las activas.
+///
+/// <c>DefaultFreightChargeMode</c> (§4.4.1) es <c>null</c> o el nombre de una de las activas: la que el
+/// formulario elige sola cuando el documento envía y todavía no tiene quién paga.</summary>
 public sealed record CarrierSettingsDto(
     FreightTaxRateDto? FreightTaxRate,
     IReadOnlyList<CarrierDto> Carriers,
-    IReadOnlyList<FreightChargeModeDto> FreightChargeModes);
+    IReadOnlyList<FreightChargeModeDto> FreightChargeModes,
+    string? DefaultFreightChargeMode);
 
 /// <summary>Lo que el cotizador y el pedido necesitan para dibujar la entrega (spec §4.3): sólo las
 /// activas, en orden, y la tasa con la que se calcula el IVA del envío.
@@ -39,11 +43,15 @@ public sealed record CarrierSettingsDto(
 /// <c>FreightChargeModes</c> trae las tres, apagadas incluidas, por la misma razón que en
 /// <see cref="CarrierSettingsDto"/>: el formulario muestra las activas más la que el documento ya tiene
 /// guardada aunque esté apagada (marcada como desactivada), y para eso tiene que saber que existe y que está
-/// apagada, no inferirlo de su ausencia.</summary>
+/// apagada, no inferirlo de su ausencia.
+///
+/// <c>DefaultFreightChargeMode</c> viaja acá porque es el formulario el que lo aplica (D-F19): el backend no
+/// rellena el modo de ningún documento.</summary>
 public sealed record ShippingOptionsDto(
     IReadOnlyList<ShippingCarrierOptionDto> Carriers,
     FreightTaxRateDto? FreightTaxRate,
-    IReadOnlyList<FreightChargeModeDto> FreightChargeModes);
+    IReadOnlyList<FreightChargeModeDto> FreightChargeModes,
+    string? DefaultFreightChargeMode);
 
 public sealed record ShippingCarrierOptionDto(Guid Id, string Name, bool SupportsCashOnDelivery);
 
@@ -87,18 +95,16 @@ internal static class CarrierMapping
         CancellationToken cancellationToken)
     {
         var list = await carriers.ListAsync(tenantId, cancellationToken);
+        var modes = await store.GetFreightChargeModesAsync(tenantId, cancellationToken);
         return new CarrierSettingsDto(
             await FreightTaxRateAsync(store, taxRates, tenantId, cancellationToken),
             [.. list.Select(ToDto)],
-            await FreightChargeModesAsync(store, tenantId, cancellationToken));
+            ToDto(modes),
+            modes.Default?.ToString());
     }
 
     /// <summary>Las tres, en el orden del enum (<c>Charged</c>, <c>OnDelivery</c>, <c>Free</c>), cada una con
     /// si está activa.</summary>
-    public static async Task<IReadOnlyList<FreightChargeModeDto>> FreightChargeModesAsync(
-        IQuotationSettingsStore store, Guid tenantId, CancellationToken cancellationToken)
-    {
-        var enabled = await store.GetEnabledFreightChargeModesAsync(tenantId, cancellationToken);
-        return [.. Enum.GetValues<FreightChargeMode>().Select(mode => new FreightChargeModeDto(mode.ToString(), enabled.Contains(mode)))];
-    }
+    public static IReadOnlyList<FreightChargeModeDto> ToDto(FreightChargeModeSettings modes) =>
+        [.. Enum.GetValues<FreightChargeMode>().Select(mode => new FreightChargeModeDto(mode.ToString(), modes.Enabled.Contains(mode)))];
 }

@@ -84,30 +84,43 @@ internal sealed class QuotationSettingsStore(QuotationsDbContext dbContext) : IQ
         row.FreightTaxRateId = taxRateId;
     }
 
-    // Sin fila, las tres (spec §4.4). Un nombre guardado que el enum ya no conozca no apaga nada: el CHECK no
-    // lo deja entrar, y si algún día un modo desaparece, ignorarlo es lo que no rompe la lectura.
-    public async Task<IReadOnlySet<FreightChargeMode>> GetEnabledFreightChargeModesAsync(
-        Guid tenantId, CancellationToken cancellationToken)
+    // Sin fila, las tres y sin por defecto (spec §4.4 y §4.4.1). Un nombre guardado que el enum ya no conozca no
+    // apaga nada ni queda por defecto: el CHECK no lo deja entrar, y si algún día un modo desaparece, ignorarlo es
+    // lo que no rompe la lectura.
+    public async Task<FreightChargeModeSettings> GetFreightChargeModesAsync(Guid tenantId, CancellationToken cancellationToken)
     {
-        var disabled = await dbContext.TenantQuotationSettings
+        var row = await dbContext.TenantQuotationSettings
             .AsNoTracking()
             .Where(settings => settings.TenantId == tenantId)
-            .Select(settings => settings.DisabledFreightChargeModes)
-            .SingleOrDefaultAsync(cancellationToken) ?? [];
-        return Enum.GetValues<FreightChargeMode>()
-            .Where(mode => !disabled.Contains(mode.ToString(), StringComparer.Ordinal))
+            .Select(settings => new { settings.DisabledFreightChargeModes, settings.DefaultFreightChargeMode })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (row is null)
+        {
+            return FreightChargeModeSettings.Untouched;
+        }
+
+        var enabled = Enum.GetValues<FreightChargeMode>()
+            .Where(mode => !row.DisabledFreightChargeModes.Contains(mode.ToString(), StringComparer.Ordinal))
             .ToHashSet();
+        FreightChargeMode? defaultMode =
+            Enum.TryParse<FreightChargeMode>(row.DefaultFreightChargeMode, ignoreCase: false, out var parsed)
+            && Enum.IsDefined(parsed)
+                ? parsed
+                : null;
+        return new FreightChargeModeSettings(enabled, defaultMode);
     }
 
-    // Mismo bloqueo que la tasa. Se guardan las apagadas, en el orden del enum para que la columna sea estable.
-    public async Task SetEnabledFreightChargeModesAsync(
-        Guid tenantId, IReadOnlySet<FreightChargeMode> enabledModes, CancellationToken cancellationToken)
+    // Mismo bloqueo que la tasa. Se guardan las apagadas, en el orden del enum para que la columna sea estable, y
+    // el por defecto en la misma fila: el CHECK que los cruza se evalúa sobre los dos valores nuevos.
+    public async Task SetFreightChargeModesAsync(
+        Guid tenantId, FreightChargeModeSettings settings, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(enabledModes);
+        ArgumentNullException.ThrowIfNull(settings);
         var row = await LockRowAsync(
-            tenantId, QuotationSettings.Default.MinimumUnits, nameof(SetEnabledFreightChargeModesAsync), cancellationToken);
+            tenantId, QuotationSettings.Default.MinimumUnits, nameof(SetFreightChargeModesAsync), cancellationToken);
         row.DisabledFreightChargeModes =
-            [.. Enum.GetValues<FreightChargeMode>().Where(mode => !enabledModes.Contains(mode)).Select(mode => mode.ToString())];
+            [.. Enum.GetValues<FreightChargeMode>().Where(mode => !settings.Enabled.Contains(mode)).Select(mode => mode.ToString())];
+        row.DefaultFreightChargeMode = settings.Default?.ToString();
     }
 
     // The parent row is created if missing (ON CONFLICT waits for, then yields to, a concurrent
@@ -135,7 +148,8 @@ internal sealed class QuotationSettingsStore(QuotationsDbContext dbContext) : IQ
         return (await dbContext.TenantQuotationSettings
             .FromSql(
                 $"""
-                SELECT tenant_id, minimum_units, freight_tax_rate_id, disabled_freight_charge_modes
+                SELECT tenant_id, minimum_units, freight_tax_rate_id, disabled_freight_charge_modes,
+                       default_freight_charge_mode
                 FROM quotations.tenant_quotation_settings
                 WHERE tenant_id = {tenantId}
                 FOR UPDATE

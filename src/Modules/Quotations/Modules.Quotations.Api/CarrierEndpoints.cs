@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -149,7 +150,8 @@ public static class CarrierEndpoints
     private static async Task<IResult> SetFreightChargeModesAsync(
         Guid tenantId, SetFreightChargeModesRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(ToResponse(await dispatcher.SendAsync(
-            new SetFreightChargeModesCommand(tenantId, request.EnabledModes), cancellationToken)));
+            new SetFreightChargeModesCommand(tenantId, request.EnabledModes, request.SetsDefaultMode, request.DefaultMode),
+            cancellationToken)));
 
     private static async Task<IResult> GetShippingOptionsAsync(
         Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
@@ -159,7 +161,8 @@ public static class CarrierEndpoints
             [.. options.Carriers.Select(carrier => new ShippingCarrierOptionResponse(
                 carrier.Id, carrier.Name, carrier.SupportsCashOnDelivery))],
             ToResponse(options.FreightTaxRate),
-            ToResponse(options.FreightChargeModes)));
+            ToResponse(options.FreightChargeModes),
+            options.DefaultFreightChargeMode));
     }
 
     private static IResult CarrierResult(CarrierDto carrier, HttpContext httpContext)
@@ -184,7 +187,8 @@ public static class CarrierEndpoints
         new(
             ToResponse(settings.FreightTaxRate),
             [.. settings.Carriers.Select(ToResponse)],
-            ToResponse(settings.FreightChargeModes));
+            ToResponse(settings.FreightChargeModes),
+            settings.DefaultFreightChargeMode);
 
     private static FreightChargeModeResponse[] ToResponse(IReadOnlyList<FreightChargeModeDto> modes) =>
         [.. modes.Select(mode => new FreightChargeModeResponse(mode.Mode, mode.IsEnabled))];
@@ -222,9 +226,42 @@ public sealed record ReorderCarriersRequest(IReadOnlyList<Guid>? CarrierIds);
 /// <summary><c>null</c> quita la tasa.</summary>
 public sealed record SetFreightTaxRateRequest(Guid? TaxRateId);
 
-/// <summary>Las opciones de «¿Quién paga el envío?» que quedan activas, por nombre (<c>Charged</c>,
-/// <c>OnDelivery</c>, <c>Free</c>); las que no vienen se apagan. Vacía está permitida. Repetir una no es error.</summary>
-public sealed record SetFreightChargeModesRequest(IReadOnlyList<string?>? EnabledModes);
+/// <summary>
+/// Las opciones de «¿Quién paga el envío?» que quedan activas, por nombre (<c>Charged</c>,
+/// <c>OnDelivery</c>, <c>Free</c>); las que no vienen se apagan. Vacía está permitida. Repetir una no es error.
+///
+/// <c>defaultMode</c> (§4.4.1) tiene tres estados, y el cuerpo es lo único que los distingue: **omitido**
+/// conserva el actual, <c>null</c> lo quita y un nombre lo fija (tiene que estar en <c>enabledModes</c>, o es
+/// 422 con <c>errors.DefaultMode</c>). Es así porque la pantalla de los interruptores no conoce el por defecto
+/// cuando sólo prende o apaga uno, y no tiene por qué mandarlo para no borrarlo.
+///
+/// Por eso es una clase y no un record posicional: System.Text.Json sólo llama el <c>init</c> de
+/// <see cref="DefaultMode"/> cuando la propiedad viene en el JSON (también con <c>null</c>), y ese setter es
+/// el que prende <see cref="SetsDefaultMode"/>. No hay un <c>Optional&lt;T&gt;</c> en el repo, y un campo
+/// <c>hasDefaultMode</c> en el contrato le pasaría al cliente un detalle del servidor. No lo "simplifiques" a
+/// un record: omitido y <c>null</c> llegarían iguales y cada guardado de los interruptores borraría el por
+/// defecto.
+/// </summary>
+public sealed class SetFreightChargeModesRequest
+{
+    private readonly string? _defaultMode;
+
+    public IReadOnlyList<string?>? EnabledModes { get; init; }
+
+    public string? DefaultMode
+    {
+        get => _defaultMode;
+        init
+        {
+            _defaultMode = value;
+            SetsDefaultMode = true;
+        }
+    }
+
+    /// <summary>Si <see cref="DefaultMode"/> vino en el cuerpo. No es parte del contrato.</summary>
+    [JsonIgnore]
+    public bool SetsDefaultMode { get; private init; }
+}
 
 public sealed record CarrierResponse(
     Guid Id,
@@ -244,18 +281,22 @@ public sealed record FreightChargeModeResponse(string Mode, bool IsEnabled);
 /// en orden (spec §4.3). <c>freightTaxRate</c> es <c>null</c> sin tasa asignada. <c>freightChargeModes</c>
 /// trae siempre las tres, en orden <c>Charged</c>, <c>OnDelivery</c>, <c>Free</c>, aunque estén apagadas:
 /// la pantalla dibuja un interruptor por cada una sin conocer el enum (§4.4, regla BFF de colecciones de
-/// tamaño fijo).</summary>
+/// tamaño fijo). <c>defaultFreightChargeMode</c> es <c>null</c> o el nombre de una de las activas (§4.4.1).</summary>
 public sealed record CarrierSettingsResponse(
     FreightTaxRateResponse? FreightTaxRate,
     IReadOnlyList<CarrierResponse> Carriers,
-    IReadOnlyList<FreightChargeModeResponse> FreightChargeModes);
+    IReadOnlyList<FreightChargeModeResponse> FreightChargeModes,
+    string? DefaultFreightChargeMode);
 
 /// <summary>Sólo las transportadoras activas, en orden: lo que el cotizador y el pedido ofrecen. Los modos
 /// de cobro, en cambio, van los tres con su estado: el formulario muestra los activos más el que el documento
-/// ya tenga guardado aunque esté apagado, y para marcarlo como desactivado tiene que recibirlo (§4.4).</summary>
+/// ya tenga guardado aunque esté apagado, y para marcarlo como desactivado tiene que recibirlo (§4.4).
+/// <c>defaultFreightChargeMode</c> es el que el formulario aplica cuando el documento envía y todavía no tiene
+/// quién paga (§4.4.1): lo aplica el formulario, no el backend (D-F19).</summary>
 public sealed record ShippingOptionsResponse(
     IReadOnlyList<ShippingCarrierOptionResponse> Carriers,
     FreightTaxRateResponse? FreightTaxRate,
-    IReadOnlyList<FreightChargeModeResponse> FreightChargeModes);
+    IReadOnlyList<FreightChargeModeResponse> FreightChargeModes,
+    string? DefaultFreightChargeMode);
 
 public sealed record ShippingCarrierOptionResponse(Guid Id, string Name, bool SupportsCashOnDelivery);

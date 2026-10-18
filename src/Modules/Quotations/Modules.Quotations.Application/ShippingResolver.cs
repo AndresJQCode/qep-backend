@@ -101,8 +101,8 @@ public sealed class ShippingResolver(
         var mode = QuotationMapping.ToFreightChargeMode(request.FreightChargeMode, errorPrefix);
         if (mode is { } chosenMode && chosenMode != current.ChargeMode)
         {
-            var enabled = await settingsStore.GetEnabledFreightChargeModesAsync(tenantId, cancellationToken);
-            if (!enabled.Contains(chosenMode))
+            var modes = await settingsStore.GetFreightChargeModesAsync(tenantId, cancellationToken);
+            if (!modes.Enabled.Contains(chosenMode))
             {
                 throw new QuotationsDomainException(
                     $"{errorPrefix}.freight_charge_mode_disabled",
