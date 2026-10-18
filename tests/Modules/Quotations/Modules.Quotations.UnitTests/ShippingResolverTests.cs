@@ -21,15 +21,34 @@ public sealed class ShippingResolverTests
         Carrier[]? carriers = null,
         QuotationTaxRateRef? rate = null,
         bool taxRateMustNotBeRead = false,
-        bool configureRate = true)
+        bool configureRate = true,
+        FreightChargeMode[]? enabledModes = null)
+    {
+        var (resolver, repository, _) = ResolverWithSettings(
+            carriers, rate, taxRateMustNotBeRead, configureRate, enabledModes);
+        return (resolver, repository);
+    }
+
+    private static (ShippingResolver Resolver, StubCarrierRepository Carriers, FixedQuotationSettingsStore Settings)
+        ResolverWithSettings(
+            Carrier[]? carriers = null,
+            QuotationTaxRateRef? rate = null,
+            bool taxRateMustNotBeRead = false,
+            bool configureRate = true,
+            FreightChargeMode[]? enabledModes = null)
     {
         var repository = new StubCarrierRepository(carriers ?? []);
         var settings = new FixedQuotationSettingsStore
         {
             FreightTaxRateId = configureRate ? rate?.Id : null,
         };
+        if (enabledModes is not null)
+        {
+            settings.EnabledFreightChargeModes = enabledModes.ToHashSet();
+        }
+
         var lookup = new StubQuotationTaxRateLookup(rate, failIfCalled: taxRateMustNotBeRead);
-        return (new ShippingResolver(repository, lookup, settings), repository);
+        return (new ShippingResolver(repository, lookup, settings), repository, settings);
     }
 
     private static Task<ShippingDetails?> ResolveAsync(
@@ -265,5 +284,75 @@ public sealed class ShippingResolverTests
             ResolveAsync(resolver, new ShippingRequest(null, mode, 0m, false)));
 
         Assert.Equal("quotation.quotation.freight_charge_mode_invalid", error.Code);
+    }
+
+    // Spec §4.4: elegir un modo que el tenant apagó se rechaza, con el prefijo del documento.
+    [Theory]
+    [InlineData("quotation.quotation")]
+    [InlineData("order.order")]
+    public async Task RejectsADisabledModeWhenChosen(string prefix)
+    {
+        var (resolver, _) = Resolver(enabledModes: [FreightChargeMode.Charged, FreightChargeMode.OnDelivery]);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            resolver.ResolveAsync(
+                TenantId, new ShippingRequest(null, "Free", 0m, false), ShippingDetails.None, false, "COP", prefix,
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal($"{prefix}.freight_charge_mode_disabled", error.Code);
+    }
+
+    [Fact]
+    public async Task RejectsChangingToADisabledMode()
+    {
+        var (resolver, _) = Resolver(enabledModes: [FreightChargeMode.Free]);
+        var current = new ShippingDetails(null, null, FreightChargeMode.Free, 0m, 0, false);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            ResolveAsync(resolver, new ShippingRequest(null, "OnDelivery", 20000m, false), current));
+
+        Assert.Equal("quotation.quotation.freight_charge_mode_disabled", error.Code);
+    }
+
+    // Como la transportadora desactivada: un documento conserva el modo que ya tenía aunque el tenant lo apague
+    // después, y el guardado que no lo cambia ni siquiera lee la configuración. Cambiar el valor no es cambiar
+    // el modo.
+    [Fact]
+    public async Task KeepsADisabledModeWhenItDidNotChange()
+    {
+        var (resolver, _, settings) = ResolverWithSettings(enabledModes: []);
+        var current = new ShippingDetails(null, null, FreightChargeMode.OnDelivery, 20000m, 0, false);
+
+        var resolved = await ResolveAsync(resolver, new ShippingRequest(null, "OnDelivery", 25000m, false), current);
+
+        Assert.NotNull(resolved);
+        Assert.Equal(FreightChargeMode.OnDelivery, resolved.ChargeMode);
+        Assert.Equal(25000m, resolved.FreightAmount);
+        Assert.Equal(0, settings.FreightChargeModeReads);
+    }
+
+    // Quitar el modo siempre se puede, aunque estén las tres apagadas.
+    [Fact]
+    public async Task ClearingTheModeIsAlwaysAllowed()
+    {
+        var (resolver, _) = Resolver(enabledModes: []);
+        var current = new ShippingDetails(null, null, FreightChargeMode.Free, 0m, 0, false);
+
+        var resolved = await ResolveAsync(resolver, new ShippingRequest(null, null, 0m, false), current);
+
+        Assert.NotNull(resolved);
+        Assert.Null(resolved.ChargeMode);
+    }
+
+    [Fact]
+    public async Task AnEnabledModeIsAccepted()
+    {
+        var (resolver, _, settings) = ResolverWithSettings(enabledModes: [FreightChargeMode.Free]);
+
+        var resolved = await ResolveAsync(resolver, new ShippingRequest(null, "Free", 0m, false));
+
+        Assert.NotNull(resolved);
+        Assert.Equal(FreightChargeMode.Free, resolved.ChargeMode);
+        Assert.Equal(1, settings.FreightChargeModeReads);
     }
 }

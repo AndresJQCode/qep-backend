@@ -890,11 +890,30 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     {
         var settings = modelBuilder.Entity<TenantQuotationSettingsRow>();
         settings.ToTable("tenant_quotation_settings", "quotations", table =>
-            table.HasCheckConstraint("CK_tenant_quotation_settings_minimum_units", "minimum_units >= 1"));
+        {
+            table.HasCheckConstraint("CK_tenant_quotation_settings_minimum_units", "minimum_units >= 1");
+            // Sólo nombres del enum, como CK_quotations_freight_charge_mode: lo que no los cumpla es un bug.
+            table.HasCheckConstraint(
+                "CK_tenant_quotation_settings_disabled_freight_charge_modes",
+                "disabled_freight_charge_modes <@ ARRAY['Charged', 'OnDelivery', 'Free']::text[]");
+            // §4.4.1: el por defecto es un nombre del enum y nunca uno de los apagados de la misma fila.
+            table.HasCheckConstraint(
+                "CK_tenant_quotation_settings_default_freight_charge_mode",
+                "default_freight_charge_mode IS NULL OR (default_freight_charge_mode IN ('Charged', 'OnDelivery', 'Free') "
+                + "AND NOT default_freight_charge_mode = ANY (disabled_freight_charge_modes))");
+        });
         settings.HasKey(value => value.TenantId);
         settings.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
         settings.Property(value => value.MinimumUnits).HasColumnName("minimum_units");
         settings.Property(value => value.FreightTaxRateId).HasColumnName("freight_tax_rate_id");
+        settings.Property(value => value.DisabledFreightChargeModes)
+            .HasColumnName("disabled_freight_charge_modes")
+            .HasColumnType("text[]")
+            .HasDefaultValueSql("'{}'::text[]")
+            .IsRequired();
+        settings.Property(value => value.DefaultFreightChargeMode)
+            .HasColumnName("default_freight_charge_mode")
+            .HasMaxLength(16);
 
         var totals = modelBuilder.Entity<TenantMinimumTotalRow>();
         totals.ToTable("tenant_minimum_totals", "quotations", table =>

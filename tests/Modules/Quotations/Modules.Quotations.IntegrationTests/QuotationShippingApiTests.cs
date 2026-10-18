@@ -287,6 +287,62 @@ public sealed class QuotationShippingApiTests
         Assert.NotEmpty(modeErrors.EnumerateArray());
     }
 
+    // Spec §4.4: un modo apagado no se puede elegir ni al crear ni al cambiar, pero la cotización que ya lo tenía
+    // lo conserva al guardarse sin tocarlo, y quitarlo siempre se puede.
+    [Fact]
+    public async Task ADisabledFreightChargeModeIsRejectedWhenChosenAndKeptWhenUnchanged()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
+        using var _ = client;
+        var carrierId = await PrepareFreightAsync(client, tenantId);
+        var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
+        using var charged = await PutAsync(
+            client, tenantId, quotation, RequestFor(quotation, productId, new ShippingRequest(carrierId, "Charged", 15000m, false)));
+        var withFreight = await ReadQuotationAsync(charged);
+
+        await SetFreightChargeModesAsync(client, tenantId, "OnDelivery");
+
+        using var created = await client.PostAsJsonAsync(
+            QuotationsUrl(tenantId),
+            new CreateQuotationRequest(
+                await CreateActiveCustomerAsync(client, tenantId), TodayInBogota().AddDays(30), null, null, null, null,
+                new ShippingRequest(null, "Free", 0m, false)),
+            TestContext.Current.CancellationToken);
+        await AssertCodeAsync(created, "quotation.quotation.freight_charge_mode_disabled");
+
+        using var kept = await PutAsync(
+            client, tenantId, withFreight,
+            RequestFor(withFreight, productId, new ShippingRequest(carrierId, "Charged", 20000m, false)) with { Notes = "Otro valor" });
+        var stillCharged = await ReadQuotationAsync(kept);
+        Assert.Equal("Charged", stillCharged.Shipping.ChargeMode);
+        Assert.Equal(20000m, stillCharged.Shipping.FreightAmount);
+
+        using var changed = await PutAsync(
+            client, tenantId, stillCharged, RequestFor(stillCharged, productId, new ShippingRequest(carrierId, "Free", 0m, false)));
+        await AssertCodeAsync(changed, "quotation.quotation.freight_charge_mode_disabled");
+
+        using var preview = await client.PostAsJsonAsync(
+            $"{QuotationUrl(tenantId, quotation.Id)}/preview",
+            RequestFor(stillCharged, productId, new ShippingRequest(carrierId, "Free", 0m, false)),
+            TestContext.Current.CancellationToken);
+        await AssertCodeAsync(preview, "quotation.quotation.freight_charge_mode_disabled");
+
+        using var cleared = await PutAsync(
+            client, tenantId, stillCharged, RequestFor(stillCharged, productId, new ShippingRequest(carrierId, null, 0m, false)));
+        Assert.Null((await ReadQuotationAsync(cleared)).Shipping.ChargeMode);
+    }
+
+    private static async Task SetFreightChargeModesAsync(HttpClient client, Guid tenantId, params string[] enabledModes)
+    {
+        using var response = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/carriers/freight-charge-modes",
+            new { enabledModes },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
     /// <summary>La tasa del 19 % como IVA del envío y la transportadora «Coordinadora», que hace recaudo.</summary>
     private static async Task<Guid> PrepareFreightAsync(HttpClient client, Guid tenantId)
     {

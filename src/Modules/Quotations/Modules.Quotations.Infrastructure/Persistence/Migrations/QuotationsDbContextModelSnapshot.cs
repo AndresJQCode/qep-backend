@@ -1290,6 +1290,18 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
+                    b.Property<string>("DefaultFreightChargeMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("default_freight_charge_mode");
+
+                    b.PrimitiveCollection<string[]>("DisabledFreightChargeModes")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasColumnName("disabled_freight_charge_modes")
+                        .HasDefaultValueSql("'{}'::text[]");
+
                     b.Property<Guid?>("FreightTaxRateId")
                         .HasColumnType("uuid")
                         .HasColumnName("freight_tax_rate_id");
@@ -1302,6 +1314,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
 
                     b.ToTable("tenant_quotation_settings", "quotations", t =>
                         {
+                            t.HasCheckConstraint("CK_tenant_quotation_settings_default_freight_charge_mode", "default_freight_charge_mode IS NULL OR (default_freight_charge_mode IN ('Charged', 'OnDelivery', 'Free') AND NOT default_freight_charge_mode = ANY (disabled_freight_charge_modes))");
+
+                            t.HasCheckConstraint("CK_tenant_quotation_settings_disabled_freight_charge_modes", "disabled_freight_charge_modes <@ ARRAY['Charged', 'OnDelivery', 'Free']::text[]");
+
                             t.HasCheckConstraint("CK_tenant_quotation_settings_minimum_units", "minimum_units >= 1");
                         });
                 });

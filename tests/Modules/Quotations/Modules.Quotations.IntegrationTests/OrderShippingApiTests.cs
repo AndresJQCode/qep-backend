@@ -267,6 +267,69 @@ public sealed class OrderShippingApiTests
         Assert.False(order.Shipping.CashOnDelivery);
     }
 
+    // Spec §4.4: el pedido manual y su cálculo previo no pueden elegir un modo apagado.
+    [Fact]
+    public async Task AManualOrderCannotChooseADisabledFreightChargeMode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
+        using var _ = client;
+        var carrierId = await PrepareFreightAsync(client, tenantId);
+        await SetFreightChargeModesAsync(client, tenantId, "Charged", "Free");
+        var request = await ManualRequestAsync(client, tenantId, new ShippingRequest(carrierId, "OnDelivery", 20000m, false));
+
+        using var response = await client.PostAsJsonAsync(OrdersUrl(tenantId), request, TestContext.Current.CancellationToken);
+        using var preview = await client.PostAsJsonAsync(
+            $"{OrdersUrl(tenantId)}/preview", request, TestContext.Current.CancellationToken);
+
+        await AssertCodeAsync(response, "order.order.freight_charge_mode_disabled");
+        await AssertCodeAsync(preview, "order.order.freight_charge_mode_disabled");
+    }
+
+    // D-F18: la conversión copia lo que la cotización ya tiene, aunque el modo se haya apagado después; y la
+    // edición del pedido conserva el modo mientras no lo cambie.
+    [Fact]
+    public async Task ConvertingAndEditingKeepADisabledFreightChargeMode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
+        using var _ = client;
+        var carrierId = await PrepareFreightAsync(client, tenantId);
+        var quotation = await QuotationWithShippingAsync(
+            client, factory, tenantId, new ShippingRequest(carrierId, "Charged", 15000m, false));
+        await SetFreightChargeModesAsync(client, tenantId);
+
+        using var converted = await client.PostAsJsonAsync(
+            $"{QuotationUrl(tenantId, quotation.Id)}/order",
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+
+        var detail = await ReadDetailAsync(converted, HttpStatusCode.Created);
+        Assert.Equal("Charged", detail.Order.Shipping.ChargeMode);
+        Assert.Equal(115_000m, detail.Order.Total);
+
+        using var kept = await PutEditsAsync(
+            client, tenantId, detail.Order, EditsFor(detail, new ShippingRequest(carrierId, "Charged", 20000m, false)));
+        var saved = (await ReadDetailAsync(kept, HttpStatusCode.OK)).Order;
+        Assert.Equal("Charged", saved.Shipping.ChargeMode);
+        Assert.Equal(20000m, saved.Shipping.FreightAmount);
+
+        using var changed = await PutEditsAsync(
+            client, tenantId, saved, EditsFor(detail, new ShippingRequest(carrierId, "Free", 0m, false)));
+        await AssertCodeAsync(changed, "order.order.freight_charge_mode_disabled");
+    }
+
+    private static async Task SetFreightChargeModesAsync(HttpClient client, Guid tenantId, params string[] enabledModes)
+    {
+        using var response = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/carriers/freight-charge-modes",
+            new { enabledModes },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
     /// <summary>La tasa del 19 % como IVA del envío y la transportadora «Coordinadora», que hace recaudo.</summary>
     private static async Task<Guid> PrepareFreightAsync(HttpClient client, Guid tenantId)
     {
