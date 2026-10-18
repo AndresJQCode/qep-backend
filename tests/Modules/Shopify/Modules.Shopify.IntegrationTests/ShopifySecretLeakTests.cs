@@ -118,7 +118,9 @@ public sealed class ShopifySecretLeakTests
             bodies.Select(entry => entry.Call));
 
         var audit = await ScalarAsync<string>(connectionString, "SELECT coalesce(string_agg(e::text, E'\\n'), '') FROM audit.entries e");
-        Assert.NotEmpty(audit);
+        // La auditoría que se revisa incluye la de Shopify: el PUT de la tienda de arriba la escribió.
+        Assert.Equal(1L, await ScalarAsync<long>(
+            connectionString, "SELECT count(*) FROM audit.entries WHERE action = 'shopify.store.updated' AND tenant_id = @t", ("t", world.TenantId)));
         foreach (var secret in new[] { Sentinel, WebhookSecret })
         {
             Assert.DoesNotContain(bodies, entry => entry.Body.Contains(secret, StringComparison.Ordinal));

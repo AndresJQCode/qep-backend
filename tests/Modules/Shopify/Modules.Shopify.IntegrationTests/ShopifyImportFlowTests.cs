@@ -17,7 +17,7 @@ using static Modules.Shopify.IntegrationTests.ShopifyApiHarness;
 namespace Modules.Shopify.IntegrationTests;
 
 /// <summary>
-/// Spec 2026-10-15, tarea 17: el flujo de punta a punta sin dobles en el camino del pedido. Un webhook firmado entra por la ruta
+/// Spec 2026-10-15: el flujo de punta a punta sin dobles en el camino del pedido. Un webhook firmado entra por la ruta
 /// real, el worker de entregas (corrido a mano, <c>DrainAsync</c>) lo lleva al espejo y al importador, y el pedido queda en
 /// Quotations con su cliente, su envío y su evento. Lo que la pantalla hace después (aprobar, facturar, subir comprobantes,
 /// reconocer la transportadora, exportar el Excel) va por las APIs de Quotations, como lo haría el frontend.
@@ -180,7 +180,7 @@ public sealed class ShopifyImportFlowTests
         Assert.Equal(string.Empty, row[Column(header, "Documento")]);
     }
 
-    // Spec 2026-10-15 D-S25 (tarea 3): el título que ninguna transportadora reconoció se reconoce desde el pedido y se recuerda;
+    // Spec 2026-10-15 D-S25: el título que ninguna transportadora reconoció se reconoce desde el pedido y se recuerda;
     // el siguiente pedido con el mismo título entra con la transportadora y sin aviso.
     [Fact]
     public async Task ImportUnrecognizedCarrierThenRecognizeNextOrderMatches()
@@ -227,7 +227,7 @@ public sealed class ShopifyImportFlowTests
         Assert.Equal($"Imported|{orderId}", await flow.ScalarAsync("SELECT import_state || '|' || qep_order_id FROM shopify.orders"));
     }
 
-    // Hueco de la tarea 14: con la fila perdida, el pedido llega cancelado. La fila es nueva, pero el pedido existe en QEP: se anula,
+    // Con la fila perdida, el pedido llega cancelado. La fila es nueva, pero el pedido existe en QEP: se anula,
     // no queda vivo con la fila ignorada.
     [Fact]
     public async Task ReimportAfterMirrorRowDeletedCancelledCancelsTheExistingOrder()

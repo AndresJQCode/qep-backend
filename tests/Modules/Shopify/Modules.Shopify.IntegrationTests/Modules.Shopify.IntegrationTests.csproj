@@ -18,7 +18,7 @@
     <None Include="..\Modules.Shopify.UnitTests\Fixtures\graphql\*.json" Link="Fixtures\graphql\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
-    <!-- El lector del .xlsx de Quotations, para afirmar sobre el Excel de pedidos en el flujo de punta a punta (tarea 17). -->
+    <!-- El lector del .xlsx de Quotations, para afirmar sobre el Excel de pedidos en el flujo de punta a punta. -->
     <Compile Include="..\..\Quotations\Modules.Quotations.IntegrationTests\ExportWorkbookReader.cs" Link="ExportWorkbookReader.cs" />
   </ItemGroup>
   <ItemGroup>

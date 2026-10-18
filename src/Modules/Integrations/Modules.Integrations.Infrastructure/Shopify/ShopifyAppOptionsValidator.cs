@@ -69,7 +69,7 @@ internal sealed partial class ShopifyAppOptionsValidator(IHostEnvironment enviro
         }
         else if (value.Trim().StartsWith(UnresolvedTokenPrefix, StringComparison.Ordinal))
         {
-            // Tarea 17: la variable falta en el grupo Backend-prod y el pipeline dejó el token literal. No vacío, pasaría como
+            // La variable falta en el grupo Backend-prod y el pipeline dejó el token literal. No vacío, pasaría como
             // configurado y el pod arrancaría rechazando la firma de cada webhook. Mismo criterio que DeploymentInfo.Normalize.
             failures.Add($"{ShopifyAppOptions.SectionName}:{key} is an unresolved pipeline token in Production: add its variable to the Backend-prod group.");
         }

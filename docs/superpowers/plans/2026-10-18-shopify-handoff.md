@@ -2,7 +2,7 @@
 
 Lo que tienes que hacer tú para que la integración de pedidos de Shopify (spec
 `docs/superpowers/specs/2026-10-15-integracion-shopify-pedidos-design.md`) funcione con una tienda real, y lo que queda
-por decidir. El backend está completo en `feature/shopify` (plan `2026-10-18-shopify-backend.md`, tareas 1 a 17) y
+por decidir. El backend está completo en `feature/shopify` (plan `2026-10-18-shopify-backend.md`) y
 probado contra fakes y fixtures **sintéticos**: nada de esto habló todavía con Shopify. Las verificaciones V-1 a V-10 de
 §16 son las que cierran esa distancia.
 
@@ -45,8 +45,8 @@ después (no hay teléfono ni correo con qué emparejarlo). Pídelo antes de la 
 
 `azure-pipelines.yml` no las nombra: la plantilla de despliegue reemplaza cada `#{NOMBRE}#` de `k8s/` con la variable del
 grupo que se llame igual. Si una falta, el token llega literal y `ShopifyAppOptionsValidator` deja el pod en crash-loop
-a propósito (tarea 17: antes lo daba por configurado y el pod arrancaba rechazando todas las firmas, el mismo hueco que
-CLAUDE.md describe para Instagram). Para confirmar que el Secret tiene la clave **sin ver su valor**:
+a propósito (desde `f72c7d1b`, 2026-10-18: antes lo daba por configurado y el pod arrancaba rechazando todas las firmas,
+el mismo hueco que CLAUDE.md describe para Instagram). Para confirmar que el Secret tiene la clave **sin ver su valor**:
 
 ```powershell
 kubectl --context contabo-prod -n prod-qep-backend describe secret qep-backend-secret | Select-String -Pattern "Shopify__App__ClientSecret"
@@ -54,11 +54,15 @@ kubectl --context contabo-prod -n prod-qep-backend describe secret qep-backend-s
 
 Tiene que salir una línea con el tamaño en bytes (no `0`). Nunca `get secret -o yaml`, `-o json` ni `custom-columns`.
 
-**Local.** `dotnet user-secrets set` imprime la clave y su valor, así que van con `| Out-Null`, y la verificación cuenta:
+**Local.** `dotnet user-secrets set` imprime la clave y su valor, así que van con `| Out-Null`. Y un secreto escrito en
+la línea de comando queda en el historial de PSReadLine (`ConsoleHost_history.txt`): el client secret se pide con
+`Read-Host -MaskInput` (PowerShell 7) y viaja en una variable que después se borra. La verificación cuenta:
 
 ```powershell
 dotnet user-secrets set "Shopify:App:ClientId" "<client-id-de-la-app>" --project src/Api | Out-Null
-dotnet user-secrets set "Shopify:App:ClientSecret" "<client-secret-de-la-app>" --project src/Api | Out-Null
+$secret = Read-Host -MaskInput "Client secret de Shopify"
+dotnet user-secrets set "Shopify:App:ClientSecret" $secret --project src/Api | Out-Null
+Remove-Variable secret
 dotnet user-secrets list --project src/Api | Select-String -Pattern "Shopify:App" | Measure-Object
 ```
 
@@ -83,8 +87,7 @@ dotnet run --project src/Api
 4. **Inicio B, desde la tienda (V-7):** desinstala, y vuelve a instalar desde el admin de la tienda (o con el enlace de
    instalación). Shopify tiene que abrir `https://qep.qcode.co/shopify/install?shop=…&hmac=…&timestamp=…&host=…`; si la
    pantalla dice «Abre QEP desde tu tienda de Shopify», el HMAC no cuadró: anota los parámetros exactos que trajo la URL
-   (sin el `hmac`) para ajustar `ShopifyHmac`. La tarea 6 dejó sin verificar si Shopify agrega parámetros que no
-   conocemos.
+   (sin el `hmac`) para ajustar `ShopifyHmac`. Nadie verificó todavía si Shopify agrega parámetros que no conocemos.
 5. **Webhooks registrados (V-2):** la conexión tiene que quedar `Active` y con cinco ids de suscripción:
 
    ```sql
@@ -118,11 +121,14 @@ FROM shopify.orders ORDER BY shopify_created_at DESC LIMIT 20;
 
 **V-9: guarda los payloads reales como fixtures.** Los de `tests/Modules/Shopify/Modules.Shopify.UnitTests/Fixtures/rest`
 son armados a mano (`"_source": "synthetic, replace per V-9"`). Del envío cobrado, del gratis por descuento y de la
-recogida, exporta el cuerpo crudo:
+recogida, exporta el cuerpo crudo. Escríbelo dentro del contenedor con `psql -o` y tráelo con `docker cp`: pasarlo por
+la consola de PowerShell (`| Out-File`) decodifica con la página de códigos de la consola y daña las tildes («Gómez»,
+«Bogotá»).
 
 ```powershell
 $sql = "SELECT payload FROM shopify.webhook_deliveries WHERE topic = 'orders/create' ORDER BY received_at DESC LIMIT 1"
-docker exec postgres18 psql -U postgres -d <base> -At -c $sql | Out-File -Encoding utf8 shipping-charged.real.json
+docker exec postgres18 psql -U postgres -d <base> -At -c $sql -o /tmp/shipping-charged.real.json
+docker cp postgres18:/tmp/shipping-charged.real.json .\shipping-charged.real.json
 ```
 
 (en producción, la misma consulta en tu cliente de base). **Antes de commitearlos, cámbiales los datos personales**
@@ -130,7 +136,7 @@ docker exec postgres18 psql -U postgres -d <base> -At -c $sql | Out-File -Encodi
 líneas de envío retiradas con `is_removed` o las omite, y la forma de `discounted_price` y `tax_lines` frente a
 `shippingLines` del GraphQL; si no cuadra, se ajustan los dos parsers.
 
-**De la conciliación (V-5, V-9, tarea 15):** que la consulta `updated_at:>=` con `sortKey: UPDATED_AT` traiga lo
+**De la conciliación (V-5, V-9):** que la consulta `updated_at:>=` con `sortKey: UPDATED_AT` traiga lo
 esperado, la forma real de `THROTTLED` y de `extensions.cost`, el costo de la consulta de un pedido, y si con la versión
 `2026-10` el comprador viene en `defaultEmailAddress`/`defaultPhoneNumber` en vez de `email`/`phone` (deprecados; se ve
 junto con V-3).
@@ -159,8 +165,16 @@ prenderlo la conciliación siguiente importa lo acumulado (`ModuleOffStoresMirro
 ## 8. Decisiones pendientes del owner
 
 Cada una está implementada como dice la columna «Hoy»; si no la ratificas, el costo es lo que dice la última columna.
+La columna «Dónde» da el commit de `feature/shopify` que la introdujo (todos del 2026-10-18), para que puedas leer el
+cambio sin el registro de trabajo de la sesión, que no se versiona.
 
-### Del spec (§15, D-S22 a D-S33, decididas por el escritor del plan)
+### Del spec (§15)
+
+§15 del spec se titula «a ratificar» y trae D-S1 a D-S33. Según su historial, D-S1 a D-S21 ya estaban en el spec que
+aprobaste sección por sección el 2026-10-15 (D-S16 a D-S19 entraron con tus correcciones de ese día, D-S20 con la del
+módulo por defecto y D-S21 con la de pedidos sin cotización, que después quedó resuelta), y el 2026-10-18 pediste
+implementarlo. D-S22 a D-S33 se agregaron ese 2026-10-18, en la reverificación contra el código, **sin ti**: son las que
+quedan por ratificar. Si D-S1 a D-S21 no las das por ratificadas, dilo y entran a esta lista.
 
 | ID | Hoy | Si está mal, cuesta |
 | --- | --- | --- |
@@ -177,88 +191,100 @@ Cada una está implementada como dice la columna «Hoy»; si no la ratificas, el
 | D-S32 | Sin insignia «Creado desde Shopify» en la ficha del cliente | Un campo `origin` en el cliente |
 | D-S33 | Dominio de la tienda hasta 64 caracteres | Ampliar la columna de rutas |
 
-### De la implementación (rulings y líneas «owner» del ledger)
+### De la implementación
 
-| Origen | Hoy | Si está mal, cuesta |
+| Dónde | Hoy | Si está mal, cuesta |
 | --- | --- | --- |
-| Ruling S5 | La frescura del `timestamp` del HMAC de la instalación no se valida; el `state` de un solo uso que vence a 15 minutos acota la repetición | Una comparación con ventana en `ShopifyHmac` |
-| Tarea 7 | `GET /integrations/shopify/installs/{id}` lo lee cualquier autenticado que tenga el id (dominio, nombre, `initiatedTenantId`; el spec lo permite). El enlace sí revalida tenant y permiso | Exigir membresía en el tenant que inició, en `GetShopifyInstall` |
-| Tarea 8 | Cuando la tienda ya está enlazada a otro tenant, su nombre va sólo en `detail`, en una frase en inglés | Un campo propio en el 422 (ver § 9) |
-| Ruling S10 | TDD invertido de la tarea 8, aceptado sin rehacer (§ 10) | Rehacer las pruebas de integración de la tarea 8 |
-| Tarea 11 | `shop/redact` no toca una conexión reinstalada y operativa; un fallo al encolar el webhook responde 500, no 503 | Una condición en el borrado; un status |
-| Tarea 12 | `ShopifyCustomerNotCompletableException` se usa como control de flujo (Customers dice que los datos no alcanzan y el cliente nace incompleto) | Un resultado en el puerto en vez de la excepción |
-| Tarea 12 | Una anulación que Quotations rechaza con algo que no es `already_invoiced` ni `already_cancelled` queda importada con el código en `last_error` | Otra transición o un motivo propio |
-| Ruling S13 | `Cancelled` e `Ignored` son terminales: un pedido ignorado no se puede «des-ignorar» | Una transición nueva |
-| Tarea 13 | Una línea con precio 0 entra (regalo legítimo); si en realidad faltaba el precio, sólo lo delata `total_difference` | Un motivo de espera |
-| Ruling S19 | `refunded`, `partially_refunded` y `voided` no cambian nada ni dejan rastro | Un campo de auditoría |
-| Ruling S20 | Segunda violación de TDD (tarea 13), aceptada sin rehacer (§ 10) | Rehacer dos pruebas |
-| Ruling S23 | `already_cancelled` deja la fila `Cancelled` (si no, un guardado perdido la dejaría `Imported` para siempre); la reacción de pago y cancelación corre también con la conexión `Paused` o `NeedsAttention` | Una condición en la reacción |
-| Tarea 15 | Los `Waiting` se reintentan los 200 más viejos por creación: si hay más de 200 que nunca entran, los nuevos esperan siempre | Ordenar por `last_attempt_at` |
-| Tarea 15 | Un pedido nuevo de la conciliación con cabecera ilegible no tiene fila: sólo queda en el log (con tenant, conexión, pedido y motivo) | Una fila sin snapshot en la bandeja |
-| Tarea 16 | Una cuenta de cobro en otra moneda al guardar la tienda responde `shopify.store.billing_account_not_found` | Un código propio (`billing_currency_mismatch`) |
-| Tarea 16 | `importedToday` del resumen cuenta también las filas que después se cancelaron | Un filtro por estado |
-| Tarea 16 | Una clasificación por defecto inactiva se acepta (como en Customers); los clientes nacen completos con ella | Una validación en el `PUT` |
-| Tarea 16 | Un `PUT` de la tienda sin cambios audita `[]` (Tenancy no audita en ese caso) | Saltar la auditoría sin cambios |
-| Rulings S27 y S29 | El `PUT` de la tienda audita `shopify.store.updated` con los **nombres** de los campos que cambiaron, sin valores | Renombrar la acción |
-| Tarea 17 | Un pedido de prueba (`test = true`) se ignora sin consultar la clave externa; un cancelado sí la consulta | Consultar también en los de prueba |
-| Tarea 17 | En `Production`, un `ClientId` o `ClientSecret` que empieza por `#{` cuenta como ausente | Ninguno, salvo que Shopify emitiera un secreto con ese prefijo |
+| `b8c15816` (instalación) | La frescura del `timestamp` del HMAC de la instalación no se valida: ni el spec ni el plan lo piden. Lo acota el `state` de un solo uso que vence a 15 minutos | Una comparación con ventana en `ShopifyHmac` |
+| `0c6c06ae..383d9b2c` (canje) | `GET /integrations/shopify/installs/{id}` lo lee cualquier autenticado que tenga el id (dominio, nombre, `initiatedTenantId`; el spec lo permite). El enlace sí revalida tenant y permiso | Exigir membresía en el tenant que inició, en `GetShopifyInstall` |
+| `f6be7257..4468d761` (enlace) | Cuando la tienda ya está enlazada a otro tenant, su nombre va sólo en `detail`, en una frase en inglés | Un campo propio en el 422 (§ 9) |
+| `943f5e61..20e7b41d` (espejo) | `Cancelled` e `Ignored` son terminales (spec §5.4 y §6.3): un pedido ignorado no se puede «des-ignorar» | Una transición nueva |
+| `82c4b2d9..f9b98fd1` (webhook) | `shop/redact` no toca una conexión reinstalada y operativa; un fallo al encolar el webhook responde 500, no 503 | Una condición en el borrado; un status |
+| `470373fd..9feb68a4` (escritor de pedidos) | `refunded`, `partially_refunded` y `voided` no cambian nada ni dejan rastro (spec §6.3 «no cambian nada») | Un campo de auditoría |
+| `470373fd..9feb68a4` | `ShopifyCustomerNotCompletableException` se usa como control de flujo (Customers dice que los datos no alcanzan y el cliente nace incompleto) | Un resultado en el puerto en vez de la excepción |
+| `470373fd..9feb68a4` | Una anulación que Quotations rechaza con algo que no es `already_invoiced` ni `already_cancelled` queda importada con el código en `last_error` | Otra transición o un motivo propio |
+| `78b330dc..ee91ab42` (importador) | Una línea con precio 0 entra (regalo legítimo); si en realidad faltaba el precio, sólo lo delata `total_difference` | Un motivo de espera |
+| `efcd1c46..e157d9c2` (cambios posteriores) | `already_cancelled` deja la fila `Cancelled`, no «nada» como dice §6.3: si no, un guardado perdido después de anular la dejaría `Imported` para siempre. Y la reacción de pago y cancelación corre también con la conexión `Paused` o `NeedsAttention` | Una condición en la reacción |
+| `a2bdd3eb..44c935fb` (conciliación) | Los `Waiting` se reintentan los 200 más viejos por creación: si hay más de 200 que nunca entran, los nuevos esperan siempre | Ordenar por `last_attempt_at` |
+| `a2bdd3eb..44c935fb` | Un pedido nuevo de la conciliación con cabecera ilegible no tiene fila: sólo queda en el log (con tenant, conexión, pedido y motivo) | Una fila sin snapshot en la bandeja |
+| `a3e92759..1753b891` (tienda y bandeja) | Una cuenta de cobro en otra moneda al guardar la tienda responde `shopify.store.billing_account_not_found` | Un código propio (`billing_currency_mismatch`) |
+| `a3e92759..1753b891` | `importedToday` del resumen cuenta también las filas que después se cancelaron | Un filtro por estado |
+| `a3e92759..1753b891` | Una clasificación por defecto inactiva se acepta (como en Customers); los clientes nacen completos con ella | Una validación en el `PUT` |
+| `a3e92759..1753b891` | El `PUT` de la tienda audita `shopify.store.updated` con los **nombres** de los campos que cambiaron, sin valores, como `tenancy.settings.updated`; un `PUT` sin cambios audita `[]` (Tenancy no audita en ese caso) | Renombrar la acción; saltar la auditoría sin cambios |
+| `8b58fe9f` | Un pedido de prueba (`test = true`) se ignora sin consultar la clave externa; un cancelado sí la consulta y, si el pedido existe en QEP, lo anula | Consultar también en los de prueba |
+| Arreglo de la revisión (`CancelledNewRowWithAnUnconfiguredStoreWaitsStoreNotConfigured`) | Un cancelado con la tienda sin configurar espera con `store_not_configured`, aunque su pedido no exista en QEP: al configurar la tienda, el reintento lo ignora o lo anula | Ninguno: una fila de más en «En espera» hasta configurar |
+| `f72c7d1b` | En `Production`, un `ClientId` o `ClientSecret` que empieza por `#{` cuenta como ausente | Ninguno, salvo que Shopify emitiera un secreto con ese prefijo |
+| — | Las excepciones a la regla de TDD de § 10 se aceptaron sin rehacer las pruebas | Rehacer las pruebas que lista § 10 |
+| — | `dotnet format --verify-no-changes` de la solución falla en `src/Modules/Quotations/Modules.Quotations.Api/CarrierEndpoints.cs` y `tests/Modules/Messaging/Modules.Messaging.IntegrationTests/ReplyMarksReadApiTests.cs`, que vienen de `develop`, no de esta rama | Arreglarlos en `develop` antes del merge, o el paso de verificación del README falla para todos |
 
 ### Códigos por ratificar (no están en §7.1 del spec)
 
-| Código | Dónde | Hoy |
-| --- | --- | --- |
-| `shopify.store.not_operational` | HTTP 422 | Sincronizar o reintentar con la conexión que no está operativa, o Shopify rechazó las credenciales (401/402) durante la sincronización |
-| `shopify.store.sync_unavailable` | HTTP 503 | Shopify no respondió (red, 5xx, 403/`ACCESS_DENIED` por ruling S24) durante «Sincronizar ahora» |
-| `shopify.webhook.signature_invalid` | HTTP 401 | Firma del webhook ausente o inválida (el spec sólo dice «401»; análogo a `messaging.webhook.signature_invalid`) |
-| `unsupported_topic` | `ignored_reason` de la entrega | Un topic que el worker no atiende |
-| `unknown_shop` | `ignored_reason` de la entrega | Ninguna ruta para ese dominio (el spec lo nombra en §5.2; queda para ratificar con los demás) |
-| `missing_headers`, `header_too_long`, `invalid_json`, `shop_domain_mismatch` | Descarte del webhook: 200 y aviso en el log, sin fila | Cabeceras faltantes o demasiado largas, cuerpo que `jsonb` no acepta, dominio del cuerpo distinto del de la cabecera |
-| `invalid_payload` (prefijo) | `last_error` de la entrega o de la conciliación | Fallo permanente del parser o de la cabecera, con el campo: `invalid_payload:<campo>` |
-| `shopify.compliance.customers_redact` | Acción de auditoría | El spec sólo nombra `shopify.compliance.data_request` |
-| `shopify.store.updated` | Acción de auditoría | Rulings S27 y S29 |
+| Código | Dónde | Hoy | Si está mal, cuesta |
+| --- | --- | --- | --- |
+| `shopify.store.not_operational` | HTTP 422 | Sincronizar o reintentar con la conexión que no está operativa, o Shopify rechazó las credenciales (401/402) durante la sincronización | Renombrar el código y su texto en el frontend |
+| `shopify.store.sync_unavailable` | HTTP 503 | Shopify no respondió durante «Sincronizar ahora» (red, 5xx, o 403/`ACCESS_DENIED`: un 403 es de alcance, por ejemplo V-3 sin aprobar, y no marca la conexión) | Renombrar el código y su texto en el frontend; si un 403 sí es de credenciales, marcar `NeedsAttention` |
+| `shopify.webhook.signature_invalid` | HTTP 401 | Firma del webhook ausente o inválida (el spec sólo dice «401»; análogo a `messaging.webhook.signature_invalid`) | Renombrar el código (nadie lo lee: lo recibe Shopify) |
+| `unsupported_topic` | `ignored_reason` de la entrega | Un topic que el worker no atiende | Renombrar el valor; sólo se ve en la base |
+| `unknown_shop` | `ignored_reason` de la entrega | Ninguna ruta para ese dominio (el spec lo nombra en §5.2; va con los demás) | Renombrar el valor; sólo se ve en la base |
+| `missing_headers`, `header_too_long`, `invalid_json`, `shop_domain_mismatch` | Descarte del webhook: 200 y aviso en el log, sin fila | Cabeceras faltantes o demasiado largas, cuerpo que `jsonb` no acepta, dominio del cuerpo distinto del de la cabecera | Renombrar el texto del log |
+| `invalid_payload` (prefijo) | `last_error` de la entrega o de la conciliación | Fallo permanente del parser o de la cabecera, con el campo: `invalid_payload:<campo>` | Renombrar el prefijo; las filas viejas lo conservan |
+| `shopify.compliance.customers_redact` | Acción de auditoría | El spec sólo nombra `shopify.compliance.data_request` | Renombrar la acción; las entradas viejas conservan el nombre |
+| `shopify.store.updated` | Acción de auditoría | Sigue la convención de los `*.updated` del repo | Renombrar la acción; las entradas viejas conservan el nombre |
 
 ## 9. Contrato para el frontend
 
 Lo que el backend hace y la pantalla tiene que saber. Va también al plan del frontend
 (`qep-frontend/docs/superpowers/plans/2026-10-18-shopify-frontend.md`).
 
-- **`install/complete` lleva `host`** (ruling S7): Shopify lo firma en el callback y el HMAC no cuadra sin él. Reenvíalo
-  tal como llegó en la query. Y lleva `X-Qep-Client: web`: no está exento de CSRF (ruling S8), sólo el inicio B lo está.
+- **`install/complete` lleva `host`** (`0c6c06ae`): Shopify lo firma en el callback y el HMAC no cuadra sin él.
+  Reenvíalo tal como llegó en la query. Y lleva `X-Qep-Client: web`: no está exento de CSRF porque lo llama el SPA; sólo
+  el inicio B, que abre Shopify, está exento.
+- **`GET /integrations/shopify/installs/{id}`** sólo exige sesión; el permiso y el tenant los revalida el enlace.
 - **`integrations.shopify.webhooks_not_registered`** (422 al enlazar): la conexión quedó creada pero `NeedsAttention`.
   Mensaje propio, con «Probar conexión»; no es un fallo de credenciales.
 - **El nombre del otro tenant** en `shop_already_linked` va sólo en `detail`, en una frase en inglés. No lo parsees: si
-  la pantalla lo necesita, pídelo como campo (§ 8, tarea 8). `install/complete` sí trae `linkedTenant { tenantId, name }`.
+  la pantalla lo necesita, pídelo como campo (§ 8). `install/complete` sí trae `linkedTenant { tenantId, name }`.
 - **`last_error`** puede traer varios códigos unidos con `"; "` (anulación y pago rechazados en el mismo aviso).
   Sepáralos antes de traducir.
 - **`detail: null`** en los avisos `shipping_address_unresolved` y `total_difference`: la dirección cruda va en las
   notas del pedido y la diferencia en `totalDifference` de la fila.
 - **`{"skus":[null]}`** en `product_unmatched`: una línea sin SKU entra a la lista como `null`. Muéstrala como «línea sin
   SKU».
-- **`withWarnings=true` sin `state`** no filtra por estado (ruling S28), para que la lista cierre con
-  `summary.withWarnings`. Con `state`, se respeta.
+- **`withWarnings=true` sin `state`** no filtra por estado, para que la lista cierre con `summary.withWarnings` sin que la
+  pantalla conozca el enum. Con `state`, se respeta.
 - **La dirección cruda** que no quedó como parte de envío va en las notas del pedido con el rótulo
   `Dirección de envío de Shopify: ` y el país como código (`CO`).
-- **«Reconocer este nombre»**: `shipping.externalShippingTitle` se conserva después de reconocer (ruling S2); esconde la
-  acción cuando `shipping.carrier` no es `null`. Un título de más de 120 caracteres no se puede recordar
-  (422 `quotations.carrier.external_name_too_long`); hace falta un texto para ese caso.
+- **«Reconocer este nombre»**: `shipping.externalShippingTitle` se conserva después de reconocer, porque es un hecho del
+  pedido; esconde la acción cuando `shipping.carrier` no es `null`. Un título de más de 120 caracteres no se puede
+  recordar (422 `quotations.carrier.external_name_too_long`); hace falta un texto para ese caso.
 - **Códigos nuevos**: `shopify.store.not_operational` (422) y `shopify.store.sync_unavailable` (503) en «Sincronizar
   ahora» y «Reintentar» (§ 8, por ratificar), además de `shopify.store.sync_in_progress` (409) del spec.
+- **`store_not_configured`** también le llega a un pedido cancelado si la tienda no está configurada; «Configurar
+  tienda» lo resuelve como a cualquier otro.
 - **El `PUT` de la tienda** responde 428 sin `If-Match` antes de validar el cuerpo.
 
 ## 10. Violaciones de TDD aceptadas
 
 La regla dura es RED antes que GREEN, con la falla literal. Estas no la cumplieron y se aceptaron sin rehacer:
 
-- **Tarea 8 (ruling S10):** las pruebas de integración se escribieron después del código y el RED se armó desactivando
-  piezas.
-- **Tarea 13 (ruling S20):** el RED del e2e de S18 y el de la semilla de Geography salieron de una mutación, no de
-  código ausente.
-- **Tarea 14:** el e2e `WorkerCancelledInShopifyCancelsTheImportedOrder` se escribió después del código (su RED vino de
-  `ArchitectureTests`), y dos pruebas de Quotations del arrastre de la tarea 2 nacieron verdes.
-- **Tarea 15:** la aserción de `CompositionRootTests.cs:409-412` nació verde.
-- **Tarea 16:** el handler de la lista de tiendas se escribió antes del RED y se apartó para provocarlo; dos aserciones
-  se corrigieron en GREEN sin RED propio.
-- **Tarea 17:** las doce pruebas del flujo y la de fuga de secretos nacieron verdes porque las tareas 1 a 16 ya cubrían
-  ese comportamiento (no se fabricó un RED); la de la fila nueva cancelada con el pedido en QEP
-  (`ReimportAfterMirrorRowDeletedCancelledCancelsTheExistingOrder`) se escribió después del arreglo, cuyo RED fue la
-  prueba unitaria `CancelledNewRowWithTheOrderAlreadyInQepCancelsIt`.
+- **`e1ef53f1` (proveedor y configuración):** el RED de `TheProviderKeyCheckAcceptsShopify` (el CHECK de `provider_key`)
+  no se capturó: la migración se generó antes de la prueba.
+- **`943f5e61` (módulo Shopify):** `ShopifyLayerTests` sólo tuvo RED de compilación, como los demás `<Modulo>LayerTests`:
+  con los ensamblados casi vacíos, las reglas pasan por construcción.
+- **`f6be7257` (enlace):** las pruebas de integración se escribieron después del código, y el RED se armó desactivando
+  las piezas que probaban.
+- **`78b330dc` (importador):** el RED del e2e del importador real en el host y el de la semilla de Geography salieron de
+  una mutación, no de código ausente.
+- **`ee91ab42` (importador, ronda de revisión):** el código que se adelantó del envío y los precios (precio sin
+  impuestos en COP y USD, `PaymentMethod` con unión y recorte a 50 caracteres, `Notes`) se quedó, y sus pruebas nacieron
+  sin RED, porque el código ya existía.
+- **`efcd1c46` (cambios posteriores):** el e2e `WorkerCancelledInShopifyCancelsTheImportedOrder` se escribió después del
+  código (su RED vino de `ArchitectureTests`), y dos pruebas de Quotations que venían del borrador externo nacieron
+  verdes.
+- **`a2bdd3eb` (conciliación):** la aserción de `CompositionRootTests.cs:409-412` nació verde.
+- **`a3e92759` (tienda y bandeja):** el handler de la lista de tiendas se escribió antes del RED y se apartó para
+  provocarlo; dos aserciones se corrigieron en GREEN sin RED propio.
+- **`3bf3a2de` (flujo y fuga):** las doce pruebas del flujo y la de fuga de secretos nacieron verdes porque el
+  comportamiento ya estaba construido (no se fabricó un RED). La de la fila nueva cancelada con el pedido en QEP
+  (`ReimportAfterMirrorRowDeletedCancelledCancelsTheExistingOrder`) se escribió después del arreglo `8b58fe9f`, cuyo RED
+  fue la prueba unitaria `CancelledNewRowWithTheOrderAlreadyInQepCancelsIt`.

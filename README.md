@@ -166,11 +166,13 @@ exportador OTLP), junto con `OTEL_SERVICE_NAME` y, opcionalmente,
 
 Las credenciales de proveedores externos son **secretos por ambiente**: nunca se
 comprometen en `appsettings*.json`. En `Development`/`Local` se cargan desde los
-secretos de usuario de `Api`. Copie los comandos y solo reemplace los valores
-`<...>`; ejecútelos desde este directorio.
+secretos de usuario de `Api`. Copia los comandos y sólo reemplaza los valores
+`<...>`; ejecútalos desde este directorio.
 
-> Verifique con `dotnet user-secrets list --project src/Api`. No agregue estos
-> valores a `appsettings.Development.json`. `SenderEmail` (Infobip) no es secreto
+> Verifica que una clave existe **sin imprimir su valor**: `dotnet user-secrets list` muestra los valores, así que
+> va siempre contando, por ejemplo
+> `dotnet user-secrets list --project src/Api | Select-String -Pattern "Storage:R2:SecretAccessKey" | Measure-Object`
+> (`Count 1`). No agregues estos valores a `appsettings.Development.json`. `SenderEmail` (Infobip) no es secreto
 > y puede ir en configuración normal.
 
 Google (login real, ADR 0014/0015):
@@ -2618,19 +2620,21 @@ prendido, al importador:
 | `Shopify:App:AllowedRedirectOrigins:N` | ConfigMap, `https://qep.qcode.co` | Orígenes del `redirect_uri` (local: `http://localhost:3002`, en `appsettings.Development.json`) |
 | `Shopify:App:WebhookCallbackUrl` | ConfigMap, `https://qep-api.qcode.co/api/webhooks/shopify` | Lo que el enlace registra en cada tienda |
 | `Shopify:Reconcile:IntervalMinutes` | ConfigMap, `10` | Periodo de la conciliación |
-| `Shopify:Webhook:MaxBodyBytes`, `DeliveryPollSeconds` | `appsettings.json` | Tope del cuerpo (413) y sondeo del worker |
+| `Shopify:Webhook:MaxBodyBytes`, `DeliveryPollSeconds` | defaults del código (`ShopifyWebhookOptions`: 1 MiB y 3 s); se pisan por configuración si hace falta | Tope del cuerpo (413) y sondeo del worker |
 
 En `Production`, `ShopifyAppOptionsValidator` exige con `ValidateOnStart` `ClientId`, `ClientSecret`,
 `WebhookCallbackUrl` (https) y al menos un origen; un `ClientId` o `ClientSecret` que llega como `#{…}#` (la variable
 no está en `Backend-prod`) cuenta como ausente. Sin ellas el pod entra en crash-loop, a propósito. Fuera de
 `Production`, sin `ClientId` y `ClientSecret` el proveedor sale del catálogo y el módulo arranca igual.
 
-En local, los dos van por user-secrets. `set` imprime el valor, así que el secreto va con `| Out-Null` y la
-verificación cuenta:
+En local, los dos van por user-secrets. `set` imprime el valor, así que va con `| Out-Null`; el secreto se pide con
+`Read-Host -MaskInput` (PowerShell 7) para que no quede en el historial de PSReadLine, y la verificación cuenta:
 
 ```powershell
 dotnet user-secrets set "Shopify:App:ClientId" "<client-id-de-la-app>" --project src/Api | Out-Null
-dotnet user-secrets set "Shopify:App:ClientSecret" "<client-secret-de-la-app>" --project src/Api | Out-Null
+$secret = Read-Host -MaskInput "Client secret de Shopify"
+dotnet user-secrets set "Shopify:App:ClientSecret" $secret --project src/Api | Out-Null
+Remove-Variable secret
 dotnet user-secrets list --project src/Api | Select-String -Pattern "Shopify:App" | Measure-Object
 ```
 

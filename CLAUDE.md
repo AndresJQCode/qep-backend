@@ -350,7 +350,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   exención esté rota (`ShopifyApiHarness.WithRealAuthentication`, `ShopifyWebhookApiTests.WebhookIsExemptFromCsrf`). El
   webhook se exime por el prefijo `/api/webhooks/` y el inicio B de la instalación por ruta exacta
   (`SignedAnonymousPaths`, duplicada de `IntegrationsEndpoints` y amarrada por `ShopifyInstallApiTests`); `install/complete`
-  **no** está exento: lo llama el SPA con `X-Qep-Client` (ruling S8). Una ruta anónima nueva que firme Shopify va a esa
+  **no** está exento: lo llama el SPA con `X-Qep-Client` (2026-10-18, `0c6c06ae`). Una ruta anónima nueva que firme Shopify va a esa
   lista, con su prueba, o responde 403 sólo en producción.
 - **Un pedido externo repetido lo frena `IX_orders_tenant_external_key`, no la búsqueda previa.** `ExternalOrderService`
   busca por la clave antes de crear, pero el webhook y la conciliación pueden llegar a la vez, y el worker puede caer entre
@@ -359,22 +359,22 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   y el adaptador resuelve releyendo el existente (`AlreadyExisted`). No lo cambies por una comprobación en el handler. La
   clave es `"{shopId}:{shopifyOrderId}"` y no la conexión, para que borrar y volver a enlazar la tienda no duplique; un
   `INSERT` a mano en `quotations.orders` con `source = 'Shopify'` necesita una clave que no exista. Precedente (Review
-  Focus 1): borrar la fila del espejo y recibir el pedido otra vez deja un pedido, y si llega cancelado lo anula —hasta la
-  tarea 17 la fila nueva cancelada quedaba `Ignored` con el pedido vivo (`ReimportAfterMirrorRowDeleted*`).
+  Focus 1 de `docs/superpowers/plans/2026-10-18-shopify-backend.md`): borrar la fila del espejo y recibir el pedido otra vez deja un pedido, y si llega cancelado lo anula —hasta
+  `8b58fe9f` (2026-10-18) la fila nueva cancelada quedaba `Ignored` con el pedido vivo (`ReimportAfterMirrorRowDeleted*`).
 - **Todo cambio de una fila del espejo de Shopify pasa por `ShopifyOrderIngestion.ApplyAsync`.** El webhook, la
   conciliación, «Sincronizar ahora» y el reintento manual llaman al mismo método, que captura el estado anterior antes de
-  `ApplySnapshot` y corre la reacción de pago y cancelación (§6.3) antes del guardado (ruling S14). Llamar al importador o
+  `ApplySnapshot` y corre la reacción de pago y cancelación (§6.3) antes del guardado (2026-10-18, `82c4b2d9..f9b98fd1`, `WorkerFailedReactionIsSeenAgainOnRetry`). Llamar al importador o
   a `ApplySnapshot` directo compila y pasa las pruebas del importador, y pierde en silencio el pago o la cancelación.
 - **`ShopifyLayerTests` prohíbe que el módulo Shopify referencie módulos de negocio:** Application sólo ve Tenancy y Audit.
   La conexión (Integrations), el pedido (Quotations), el cliente (Customers), el producto (Catalog) y la ciudad
   (Geography) entran por los puertos de `ShopifyPorts.cs`, con adaptador en `src/Bootstrapper/Shopify*.cs`. El costo son
   dos copias que se cambian juntas: `ShopifyWebhookTopics` vive en Integrations.Application (los que el enlace registra) y
   en Shopify.Application (los que el worker atiende), y `ShopifyCashOnDeliveryGateways.Normalize` copia
-  `CarrierName.Normalize` con su prueba de paridad en `Bootstrapper.UnitTests` (ruling S22).
+  `CarrierName.Normalize` con su prueba de paridad `ShopifyNormalizationParityTests` en `Bootstrapper.UnitTests` (2026-10-18, `e157d9c2`).
 - **Un token del pipeline sin resolver llega literal, no vacío.** Si la variable no está en el grupo `Backend-prod`, la
   plantilla deja `#{NOMBRE}#` en el ConfigMap o el Secret, y un `Require` que sólo mira `IsNullOrWhiteSpace` lo da por
   configurado: el pod arranca y rechaza cada firma (es el síntoma que la entrada de Instagram atribuye a
-  `META_INSTAGRAM_APP_SECRET`). `ShopifyAppOptionsValidator` trata `#{…}` como ausente en `Production` desde la tarea 17,
+  `META_INSTAGRAM_APP_SECRET`). `ShopifyAppOptionsValidator` trata `#{…}` como ausente en `Production` desde `f72c7d1b` (2026-10-18),
   como `DeploymentInfo.Normalize`; un secreto requerido nuevo lleva la misma regla.
 
 ## Verificación
