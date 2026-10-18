@@ -36,6 +36,10 @@ public static class TemplateParameterRules
                     KeyPrefix + key,
                     $"El valor de «{key}» debe tener de 1 a {MaxValueLength} caracteres, sin saltos de línea ni tabulaciones ni más de {MaxConsecutiveSpaces} espacios seguidos.");
             }
+            else if (!IsValidFor(key, value))
+            {
+                yield return new ValidationFailure(KeyPrefix + key, $"El enlace de «{key}» no puede tener espacios.");
+            }
         }
     }
 
@@ -46,6 +50,11 @@ public static class TemplateParameterRules
         && !value.Contains('\r', StringComparison.Ordinal)
         && !value.Contains('\t', StringComparison.Ordinal)
         && !value.Contains(new string(' ', MaxConsecutiveSpaces + 1), StringComparison.Ordinal);
+
+    /// <summary>El valor del enlace de un botón se pega al final de la URL tal cual: un espacio rompería el enlace en el
+    /// teléfono sin que Meta lo rechace.</summary>
+    public static bool IsValidFor(string key, string? value) =>
+        IsValid(value) && (!TemplateCatalog.IsButtonParameter(key) || !value!.Any(char.IsWhiteSpace));
 }
 
 public sealed record SendTemplateMessageCommand(

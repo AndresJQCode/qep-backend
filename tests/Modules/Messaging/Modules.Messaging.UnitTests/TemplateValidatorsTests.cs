@@ -53,6 +53,16 @@ public sealed class TemplateValidatorsTests
         Assert.Equal(["parameters.first_name"], Keys(new SendTemplateMessageValidator().Validate(Send(ClientId, "hola", "es", Params("first_name", value)))));
 
     [Fact]
+    public void AUrlButtonValueCannotHaveSpacesButABodyValueCan()
+    {
+        var validator = new SendTemplateMessageValidator();
+
+        Assert.Equal(["parameters.button:0"], Keys(validator.Validate(Send(ClientId, "track", "es", Params("button:0", "A 1")))));
+        Assert.True(validator.Validate(Send(ClientId, "track", "es", Params("button:0", "A-1"))).IsValid);
+        Assert.True(validator.Validate(Send(ClientId, "track", "es", Params("1", "A 1"))).IsValid);
+    }
+
+    [Fact]
     public void FourConsecutiveSpacesAndExactly1024CharactersAreValidAndOneMoreIsNot()
     {
         var validator = new SendTemplateMessageValidator();

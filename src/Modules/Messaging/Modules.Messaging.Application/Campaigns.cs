@@ -133,6 +133,12 @@ public abstract class CampaignInputValidator<T> : AbstractValidator<T>
                     TemplateParameterRules.KeyPrefix + key,
                     $"El valor de «{key}» debe tener de 1 a {TemplateParameterRules.MaxValueLength} caracteres, sin saltos de línea ni tabulaciones ni más de {TemplateParameterRules.MaxConsecutiveSpaces} espacios seguidos.");
             }
+            else if (TemplateCatalog.IsButtonParameter(key)
+                && (source != CampaignParameterSource.Text || !TemplateParameterRules.IsValidFor(key, input.Value)))
+            {
+                // El nombre del cliente trae espacios y rompería el enlace: el de un botón sólo es un texto fijo.
+                yield return new ValidationFailure(TemplateParameterRules.KeyPrefix + key, $"El enlace de «{key}» es un texto fijo sin espacios.");
+            }
         }
     }
 
