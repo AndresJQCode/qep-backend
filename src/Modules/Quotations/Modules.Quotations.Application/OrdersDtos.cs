@@ -122,6 +122,11 @@ public sealed record AddOrderItemsRequest(IReadOnlyList<OrderItemAdditionRequest
 
 public sealed record CancelOrderRequest(string? Reason);
 
+/// <summary>«Reconocer este nombre» (spec de Shopify D-S25). Sólo la transportadora y si se recuerda el título:
+/// el título lo pone el pedido (<c>shipping.externalShippingTitle</c>), no la pantalla, así que no se puede
+/// recordar uno distinto del que llegó de la tienda.</summary>
+public sealed record RecognizeOrderCarrierRequest(Guid CarrierId, bool RememberName);
+
 public sealed record OrderEditItemRequest(Guid ProductId, decimal Quantity);
 
 public sealed record OrderEditProofAddRequest(Guid? FileId, decimal Amount, DateOnly? PaidOn = null);

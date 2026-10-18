@@ -84,6 +84,25 @@ public sealed class Carrier
         Touch(occurredAt);
     }
 
+    /// <summary>
+    /// «Reconocer este nombre» (spec de Shopify D-S25): suma un nombre externo con las mismas reglas que
+    /// <see cref="Update"/>. Si el nombre ya es suyo —el propio o uno de sus externos, normalizados— no hace
+    /// nada, ni siquiera sube la versión: reconocer dos veces el mismo título no es un cambio. El choque con
+    /// otra transportadora lo da el índice único al guardar, no el agregado.
+    /// </summary>
+    public void AddExternalName(string name, DateTimeOffset occurredAt)
+    {
+        var normalized = CarrierName.Normalize((name ?? string.Empty).Trim());
+        if (normalized.Length > 0 && _names.Any(entry => entry.NormalizedName == normalized))
+        {
+            return;
+        }
+
+        var (_, cleanExternals) = Validate(Name, [.. ExternalNames, name ?? string.Empty]);
+        _names.Add(new CarrierNameEntry(TenantId, CarrierNameKind.External, cleanExternals[^1]));
+        Touch(occurredAt);
+    }
+
     public void Activate(DateTimeOffset occurredAt)
     {
         IsActive = true;

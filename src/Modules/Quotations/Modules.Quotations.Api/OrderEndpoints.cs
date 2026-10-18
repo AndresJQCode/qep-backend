@@ -70,6 +70,15 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec de Shopify D-S25: con rememberName el handler exige además tenancy.settings.update.
+        collection.MapPost("/{orderId:guid}/carrier-recognition", RecognizeOrderCarrierAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Accepts<RecognizeOrderCarrierRequest>("application/json")
+            .Produces<OrderDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         collection.MapPost("/{orderId:guid}/approve", ApproveOrderAsync)
             .RequireAuthorization(OrdersPermissions.OrderApprove)
             .Produces<OrderResponse>()
@@ -402,6 +411,21 @@ public static class OrderEndpoints
                     .ToArray(),
                 request.Proofs?.Update ?? [],
                 request.Proofs?.RemoveIds ?? []));
+
+    private static async Task<IResult> RecognizeOrderCarrierAsync(
+        Guid tenantId,
+        Guid orderId,
+        RecognizeOrderCarrierRequest request,
+        IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        // Responde el detalle entero, como la edición: la pantalla repinta el envío y el historial sin pedir nada.
+        var detail = await dispatcher.SendAsync(
+            new RecognizeOrderCarrierCommand(tenantId, orderId, request.CarrierId, request.RememberName),
+            cancellationToken);
+        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
+    }
 
     private static async Task<IResult> ApproveOrderAsync(
         Guid tenantId,

@@ -97,4 +97,42 @@ public sealed class CarrierTests
         Assert.Equal(5, carrier.SortOrder);
         Assert.Equal(4, carrier.Version);
     }
+
+    // Spec de Shopify D-S25: «reconocer este nombre» suma el título de la tienda a los externos.
+    [Fact]
+    public void AddExternalNameNewNameAppendsAndBumpsVersion()
+    {
+        var carrier = NewCarrier(external: ["Coordinadora Express"]);
+
+        carrier.AddExternalName("  Envío estándar ", Now.AddHours(1));
+
+        Assert.Equal(["Coordinadora Express", "Envío estándar"], carrier.ExternalNames);
+        Assert.Equal(
+            ["coordinadora", "coordinadora express", "envio estandar"],
+            carrier.Names.Select(n => n.NormalizedName).ToArray());
+        Assert.Equal(2, carrier.Version);
+        Assert.Equal(Now.AddHours(1), carrier.UpdatedAt);
+    }
+
+    [Fact]
+    public void AddExternalNameAlreadyOwnNormalizedIsNoOp()
+    {
+        var carrier = NewCarrier(external: ["Coordinadora Express"]);
+
+        carrier.AddExternalName("COORDINADORA  express", Now.AddHours(1));
+        carrier.AddExternalName(" coordinadora ", Now.AddHours(1));
+
+        Assert.Equal(["Coordinadora Express"], carrier.ExternalNames);
+        Assert.Equal(1, carrier.Version);
+        Assert.Equal(Now, carrier.UpdatedAt);
+    }
+
+    [Fact]
+    public void AddExternalNameTwentyFirstThrows()
+    {
+        var carrier = NewCarrier(external: Enumerable.Range(0, 20).Select(i => $"n{i}").ToList());
+
+        AssertCode("quotations.carrier.too_many_external_names", () => carrier.AddExternalName("Otro", Now));
+        Assert.Equal(20, carrier.ExternalNames.Count);
+    }
 }

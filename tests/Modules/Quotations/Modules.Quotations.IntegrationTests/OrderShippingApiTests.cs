@@ -1,7 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
+using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -16,6 +19,8 @@ public sealed class OrderShippingApiTests
     private const string SettingsUpdate = "tenancy.settings.update";
 
     private static readonly string[] Permissions = [.. ManagerPermissions, SettingsRead, SettingsUpdate];
+
+    private static readonly string[] OtherCarrierExternalNames = ["Envío exprés"];
 
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
@@ -319,6 +324,118 @@ public sealed class OrderShippingApiTests
         using var changed = await PutEditsAsync(
             client, tenantId, saved, EditsFor(detail, new ShippingRequest(carrierId, "Free", 0m, false)));
         await AssertCodeAsync(changed, "order.order.freight_charge_mode_disabled");
+    }
+
+    // Spec de Shopify D-S25: «Reconocer este nombre» fija la transportadora y, al recordar, el título queda en sus
+    // externos, así que el próximo pedido con ese título ya la encuentra.
+    [Fact]
+    public async Task CarrierRecognitionRememberNextLookupMatches()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, Permissions);
+        using var _ = client;
+        var carrierId = await PrepareFreightAsync(client, tenantId);
+        var orderId = await ExternalOrderWithTitleAsync(factory, client, tenantId, ownerUserId, "Envío Coordinadora 24h");
+
+        using var response = await client.PostAsJsonAsync(
+            CarrierRecognitionUrl(tenantId, orderId), new { carrierId, rememberName = true },
+            TestContext.Current.CancellationToken);
+
+        var detail = await ReadDetailAsync(response, HttpStatusCode.OK);
+        Assert.Equal((carrierId, "Coordinadora"), (detail.Order.Shipping.Carrier?.Id, detail.Order.Shipping.Carrier?.Name));
+        Assert.Equal(
+            ("Charged", 15_000m, 19, false),
+            (detail.Order.Shipping.ChargeMode, detail.Order.Shipping.FreightAmount,
+                detail.Order.Shipping.FreightTaxPercentage, detail.Order.Shipping.CashOnDelivery));
+        Assert.Contains(detail.History, entry => entry.EventType == "PartiesChanged");
+        Assert.Equal(["quotation.order.shipping_changed"], await ShippingAuditsAsync(factory));
+
+        using var carriers = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/v1/tenants/{tenantId}/carriers", TestContext.Current.CancellationToken));
+        var coordinadora = carriers.RootElement.GetProperty("carriers").EnumerateArray()
+            .Single(carrier => carrier.GetProperty("id").GetGuid() == carrierId);
+        Assert.Equal(
+            ["Envío Coordinadora 24h"],
+            coordinadora.GetProperty("externalNames").EnumerateArray().Select(name => name.GetString()!).ToArray());
+    }
+
+    // H20: el título ya es de otra transportadora. El índice único lo rechaza y nada de la operación queda: ni la
+    // transportadora del pedido ni el historial.
+    [Fact]
+    public async Task CarrierRecognitionNameOwnedByOtherCarrierReturns422NameTaken()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, Permissions);
+        using var _ = client;
+        var carrierId = await PrepareFreightAsync(client, tenantId);
+        using (var other = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/carriers",
+            new { name = "Servientrega", externalNames = OtherCarrierExternalNames, supportsCashOnDelivery = true },
+            TestContext.Current.CancellationToken))
+        {
+            other.EnsureSuccessStatusCode();
+        }
+
+        var orderId = await ExternalOrderWithTitleAsync(factory, client, tenantId, ownerUserId, "ENVIO  expres");
+
+        using var response = await client.PostAsJsonAsync(
+            CarrierRecognitionUrl(tenantId, orderId), new { carrierId, rememberName = true },
+            TestContext.Current.CancellationToken);
+
+        await AssertCodeAsync(response, "quotations.carrier.name_taken");
+        var detail = await GetDetailAsync(client, tenantId, orderId);
+        Assert.Null(detail.Order.Shipping.Carrier);
+        Assert.DoesNotContain(detail.History, entry => entry.EventType == "PartiesChanged");
+    }
+
+    [Fact]
+    public async Task CarrierRecognitionOtherTenantReturns403()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (_, _, ownerA) = await RegisterTenantAsync(factory, Permissions);
+        using var _ = ownerA;
+        var (tenantB, ownerUserB, ownerB) = await RegisterTenantAsync(factory, Permissions);
+        using var __ = ownerB;
+        var carrierOfB = await PrepareFreightAsync(ownerB, tenantB);
+        var orderOfB = await ExternalOrderWithTitleAsync(factory, ownerB, tenantB, ownerUserB, "Envío Coordinadora 24h");
+
+        using var response = await ownerA.PostAsJsonAsync(
+            CarrierRecognitionUrl(tenantB, orderOfB), new { carrierId = carrierOfB, rememberName = true },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Null((await GetDetailAsync(ownerB, tenantB, orderOfB)).Order.Shipping.Carrier);
+    }
+
+    private static string CarrierRecognitionUrl(Guid tenantId, Guid orderId) =>
+        $"{OrderByIdUrl(tenantId, orderId)}/carrier-recognition";
+
+    /// <summary>Un pedido de Shopify pendiente con envío cobrado de 15.000 COP y un título que ninguna
+    /// transportadora reconoció, sembrado por el puerto de integraciones como lo hará el importador.</summary>
+    private static async Task<Guid> ExternalOrderWithTitleAsync(
+        QepApiFactory factory, HttpClient client, Guid tenantId, Guid ownerUserId, string title)
+    {
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var directory = scope.ServiceProvider.GetRequiredService<IMembershipDirectory>();
+        var advisorId = await directory.FindActiveMembershipIdAsync(ownerUserId, tenantId, TestContext.Current.CancellationToken);
+        Assert.NotNull(advisorId);
+        var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
+        var result = await writer.CreateAsync(
+            new ExternalOrderDraft(
+                tenantId, OrderSource.Shopify, "#3001", clientId, advisorId.Value, null, null, null,
+                new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
+                [new ExternalOrderLine(productId, 2m, 11_900m, 0m, 19)],
+                OrderPaymentStatus.PaymentPending, DateTimeOffset.UtcNow,
+                new ShippingDetails(null, null, FreightChargeMode.Charged, 15_000m, 19, false),
+                $"shop-1:{Guid.CreateVersion7()}", title),
+            TestContext.Current.CancellationToken);
+        return result.OrderId;
     }
 
     private static async Task SetFreightChargeModesAsync(HttpClient client, Guid tenantId, params string[] enabledModes)

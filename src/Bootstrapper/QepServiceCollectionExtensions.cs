@@ -500,6 +500,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<PreviewOrderEditsQuery, OrderDetailDto>,
             PreviewOrderEditsHandler>();
+        // «Reconocer este nombre» (spec de Shopify D-S25); el validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<
+            ICommandHandler<RecognizeOrderCarrierCommand, OrderDetailDto>,
+            RecognizeOrderCarrierHandler>();
         // Pedido manual y su cálculo previo (spec 2026-10-15 §5.2); el armador lo comparten con el
         // servicio de pedidos externos.
         services.AddScoped<OrderDraftBuilder>();
