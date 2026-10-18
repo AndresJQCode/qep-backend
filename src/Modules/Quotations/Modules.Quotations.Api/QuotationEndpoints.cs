@@ -53,6 +53,16 @@ public static class QuotationEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Calcular una cotización nueva sin crearla (spec 2026-10-18 §7): el mismo cuerpo que `POST /`, sin
+        // número, sin escritura. Mismo permiso que crear: es el paso previo de crear.
+        // `/preview` no choca con `/{quotationId:guid}`: la restricción de guid no lo acepta.
+        group.MapPost("/preview", PreviewNewQuotationAsync)
+            .RequireAuthorization(QuotationsPermissions.QuotationManage)
+            .Accepts<CreateQuotationRequest>("application/json")
+            .Produces<QuotationResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // Guardar el editor de una vez: el estado deseado completo —encabezado y líneas— con
         // If-Match de Quotation.Version. Mismo contrato de precondición que PUT /orders/{orderId}:
         // sin If-Match 428, versión vieja 412, y el ETag de la respuesta trae la nueva.
@@ -256,12 +266,37 @@ public static class QuotationEndpoints
                 request.Notes,
                 request.Parties,
                 request.BillingAccount,
-                request.Shipping),
+                request.Shipping,
+                ToItems(request),
+                request.GlobalScaleFloor,
+                request.IsRetail),
             cancellationToken);
 
         return Results.Created(
             $"/api/v1/tenants/{tenantId}/quotations/{quotation.Id}",
             await composer.ComposeAsync(tenantId, quotation, cancellationToken));
+    }
+
+    private static async Task<IResult> PreviewNewQuotationAsync(
+        Guid tenantId,
+        CreateQuotationRequest request,
+        IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var quotation = await dispatcher.QueryAsync(
+            new PreviewNewQuotationQuery(
+                tenantId,
+                request.ClientId,
+                request.ValidUntil,
+                request.PaymentMethod,
+                request.Notes,
+                request.Parties,
+                request.BillingAccount,
+                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping),
+            cancellationToken);
+
+        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
     }
 
     private static async Task<IResult> SaveQuotationAsync(
@@ -323,6 +358,11 @@ public static class QuotationEndpoints
     // Ausente o null equivale a vacía: así el validador y los handlers nunca ven una colección
     // null, y "sin productos" se escribe de una sola forma (OrderEndpoints.cs:370).
     private static QuotationItemAddition[] ToItems(SaveQuotationRequest request) =>
+        (request.Items ?? [])
+            .Select(item => new QuotationItemAddition(item.ProductId, item.Quantity))
+            .ToArray();
+
+    private static QuotationItemAddition[] ToItems(CreateQuotationRequest request) =>
         (request.Items ?? [])
             .Select(item => new QuotationItemAddition(item.ProductId, item.Quantity))
             .ToArray();
