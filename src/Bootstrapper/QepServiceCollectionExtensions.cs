@@ -43,6 +43,7 @@ using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Application;
 using Modules.Reporting.Infrastructure;
+using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
@@ -762,6 +763,11 @@ public static class QepServiceCollectionExtensions
         // Shopify (spec 2026-10-15): el espejo de pedidos de las tiendas. Sólo ve Tenancy (y Audit para su auditoría atómica);
         // conexiones, clientes, productos, ciudades y pedidos entran por adaptadores que se registran más abajo.
         services.AddShopifyInfrastructure(configuration);
+        // §5.1: el webhook firmado. La firma usa el client secret de la app de Integrations por un puerto propio; el procesador y
+        // el worker (AddShopifyWebhookProcessing/AddShopifyWebhookWorker) se suman cuando sus puertos tengan adaptador (tareas 12
+        // y 13): hasta entonces las entregas quedan encoladas.
+        services.AddSingleton<IShopifyAppSecret, ShopifyAppSecret>();
+        services.AddScoped<ICommandHandler<ReceiveShopifyWebhookCommand, bool>, ReceiveShopifyWebhookHandler>();
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los

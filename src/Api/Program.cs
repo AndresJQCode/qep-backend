@@ -36,6 +36,7 @@ using Modules.Pos.Infrastructure;
 using Modules.Quotations.Api;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Api;
+using Modules.Shopify.Api;
 using Modules.Shopify.Infrastructure;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
@@ -187,6 +188,8 @@ app.MapShopifyInstallEndpoints(RateLimiterPolicies.Public);
 app.MapWhatsAppWebhook(RateLimiterPolicies.Webhook);
 // Spec 2026-10-14 §6.2: el webhook de Instagram, con el mismo limitador y la misma exención de CSRF (prefijo /api/webhooks/).
 app.MapInstagramWebhook(RateLimiterPolicies.Webhook);
+// Spec 2026-10-15 §5.1: el webhook de Shopify, con el mismo limitador y la misma exención de CSRF (prefijo /api/webhooks/).
+app.MapShopifyWebhook(RateLimiterPolicies.Webhook);
 app.MapMessagingEndpoints();
 app.MapMessagingHub();
 app.MapPipelineEndpoints();

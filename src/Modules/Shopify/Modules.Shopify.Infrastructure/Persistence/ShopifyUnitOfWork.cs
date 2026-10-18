@@ -38,6 +38,8 @@ internal sealed class ShopifyUnitOfWork(ShopifyDbContext dbContext) : IShopifyUn
         }
     }
 
+    public void DiscardPendingChanges() => dbContext.ChangeTracker.Clear();
+
     private static bool IsUniqueViolation(DbUpdateException exception, string constraintName) =>
         exception.InnerException is PostgresException postgres
         && postgres.SqlState == PostgresErrorCodes.UniqueViolation

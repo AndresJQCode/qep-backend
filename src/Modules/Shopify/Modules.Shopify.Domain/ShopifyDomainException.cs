@@ -23,4 +23,8 @@ public static class ShopifyErrorCodes
 {
     /// <summary>D-S31: «Marcar como revisado» sobre una fila sin avisos.</summary>
     public const string OrderNoWarnings = "shopify.order.no_warnings";
+
+    /// <summary>§5.1: firma <c>X-Shopify-Hmac-Sha256</c> ausente o inválida (401, sin encolar). No está en la tabla de §7.1: es el
+    /// análogo de <c>messaging.webhook.signature_invalid</c>, a ratificar.</summary>
+    public const string WebhookSignatureInvalid = "shopify.webhook.signature_invalid";
 }

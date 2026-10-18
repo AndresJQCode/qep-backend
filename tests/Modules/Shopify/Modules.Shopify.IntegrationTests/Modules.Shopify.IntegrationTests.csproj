@@ -12,6 +12,10 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Los mismos pedidos REST sintéticos de las pruebas unitarias (hasta V-9), para firmarlos y mandarlos al webhook. -->
+    <None Include="..\Modules.Shopify.UnitTests\Fixtures\rest\*.json" Link="Fixtures\rest\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Api\Api.csproj" />
   </ItemGroup>
 </Project>

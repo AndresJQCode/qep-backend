@@ -5,4 +5,8 @@ namespace Modules.Shopify.Application;
 public interface IShopifyUnitOfWork
 {
     Task<int> SaveChangesAsync(CancellationToken cancellationToken);
+
+    /// <summary>Olvida lo cargado y lo pendiente. Tras perder una carrera (<c>concurrency.conflict</c>) la entidad en memoria tiene
+    /// la versión vieja: sin esto, volver a leerla devolvería la misma instancia y el siguiente guardado chocaría otra vez.</summary>
+    void DiscardPendingChanges();
 }
