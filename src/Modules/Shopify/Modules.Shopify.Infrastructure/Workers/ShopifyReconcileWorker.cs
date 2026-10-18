@@ -26,9 +26,9 @@ internal sealed partial class ShopifyReconcileWorker(
     [LoggerMessage(Level = LogLevel.Error, Message = "Shopify reconciliation tick failed.")]
     private static partial void LogTickFailed(ILogger logger, Exception exception);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Shopify store {ConnectionId} of tenant {TenantId} reconciled: {Fetched} fetched, {Imported} imported, {Waiting} waiting, {Cancelled} cancelled, {Ignored} ignored, {Failed} failed ({FirstError}) in {DurationMs} ms.")]
+    [LoggerMessage(Level = LogLevel.Information, Message = "Shopify store {ConnectionId} of tenant {TenantId} reconciled: {Fetched} fetched, {Imported} imported, {Waiting} waiting, {Cancelled} cancelled, {Ignored} ignored, {Skipped} skipped, {Failed} failed ({FirstError}) in {DurationMs} ms.")]
     private static partial void LogReconciled(
-        ILogger logger, Guid connectionId, Guid tenantId, int fetched, int imported, int waiting, int cancelled, int ignored, int failed, string firstError, long durationMs);
+        ILogger logger, Guid connectionId, Guid tenantId, int fetched, int imported, int waiting, int cancelled, int ignored, int skipped, int failed, string firstError, long durationMs);
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "Shopify store {ConnectionId} of tenant {TenantId} skipped: another reconciliation holds its lease.")]
     private static partial void LogSkipped(ILogger logger, Guid connectionId, Guid tenantId);
@@ -81,6 +81,7 @@ internal sealed partial class ShopifyReconcileWorker(
                     result.Waiting,
                     result.Cancelled,
                     result.Ignored,
+                    result.Skipped,
                     result.Failed,
                     result.FirstError ?? "none",
                     result.DurationMs);

@@ -100,6 +100,13 @@ public sealed class ReconcileStoreTests
         Assert.Empty(world.Database.Orders);
         Assert.Equal([Now], world.Leases.Reconciled);
         Assert.Equal((0, 1), (result.Failed, result.Skipped));
+        // Ronda 2: sin fila del espejo, el único rastro es el log, con tenant, conexión, pedido y motivo; nada del comprador.
+        var warning = Assert.Single(world.Logs.Warnings);
+        Assert.Contains(TenantId.ToString(), warning, StringComparison.Ordinal);
+        Assert.Contains(ConnectionId.ToString(), warning, StringComparison.Ordinal);
+        Assert.Contains("order 1 ", warning, StringComparison.Ordinal);
+        Assert.Contains("invalid_payload", warning, StringComparison.Ordinal);
+        AssertNoBuyerData(warning);
     }
 
     // El pedido que el cliente no supo leer no desaparece: si la fila existe queda con su last_error, y se cuenta.
@@ -114,6 +121,32 @@ public sealed class ReconcileStoreTests
         Assert.Equal("invalid_payload: updatedAt", world.Database.Orders[(ConnectionId, 3L)].LastError);
         Assert.Equal([Now], world.Leases.Reconciled);
         Assert.Equal((1, 0, 1), (result.Fetched, result.Failed, result.Skipped));
+        var warning = Assert.Single(world.Logs.Warnings);
+        Assert.Contains("order 3", warning, StringComparison.Ordinal);
+        AssertNoBuyerData(warning);
+    }
+
+    // Ronda 2, minor: un pedido que el cliente no supo leer y cuyo GID no es numérico también se cuenta y deja su log.
+    [Fact]
+    public async Task ReconcileUnreadableOrderWithoutANumericIdIsCountedAndLogged()
+    {
+        var world = new World().WithStore(LastReconciled);
+        world.Source.Pages.Enqueue(new ShopifyOrdersPage([], null) { Skipped = [new ShopifySkippedOrder(null, "invalid_payload: id: The Shopify order payload has no 'id'.")] });
+
+        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+
+        Assert.Equal(1, result.Skipped);
+        Assert.Equal([Now], world.Leases.Reconciled);
+        var warning = Assert.Single(world.Logs.Warnings);
+        Assert.Contains("order unknown", warning, StringComparison.Ordinal);
+    }
+
+    private static void AssertNoBuyerData(string text)
+    {
+        foreach (var buyer in new[] { "Laura", "Gómez", "laura@verde.co", "+573001234567", "portería" })
+        {
+            Assert.DoesNotContain(buyer, text, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -359,7 +392,7 @@ public sealed class ReconcileStoreTests
             var mirrors = new FakeOrderMirrorRepository(Database);
             Ingestion = new ShopifyOrderIngestion(stores, mirrors, Importer, Reaction, UnitOfWork, Clock);
             Leases = new FakeReconcileLeases(Database);
-            Reconcile = new ReconcileStore(Source, Ingestion, stores, mirrors, Leases, Health, UnitOfWork, Clock, Time);
+            Reconcile = new ReconcileStore(Source, Ingestion, stores, mirrors, Leases, Health, UnitOfWork, Clock, Time, Logs);
         }
 
         public FakeShopifyDatabase Database { get; } = new();
@@ -367,6 +400,8 @@ public sealed class ReconcileStoreTests
         public FakeClock Clock { get; } = new(Now);
 
         public FakeTimeProvider Time { get; } = new();
+
+        public RecordingLogger<ReconcileStore> Logs { get; } = new();
 
         public FakeOrdersSource Source { get; } = new();
 
@@ -567,4 +602,26 @@ internal sealed class FakeTimeProvider : TimeProvider
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
+}
+
+/// <summary>Guarda en memoria lo que se loguea, para afirmar sobre los avisos (y que no lleven datos del comprador).</summary>
+internal sealed class RecordingLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
+{
+    public List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries { get; } = [];
+
+    public IEnumerable<string> Warnings =>
+        Entries.Where(entry => entry.Level == Microsoft.Extensions.Logging.LogLevel.Warning).Select(entry => entry.Message);
+
+    public IDisposable? BeginScope<TState>(TState state)
+        where TState : notnull => null;
+
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        Microsoft.Extensions.Logging.LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter) =>
+        Entries.Add((logLevel, formatter(state, exception)));
 }

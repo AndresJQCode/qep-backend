@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging;
 using Modules.Shopify.Domain;
 
 namespace Modules.Shopify.Application;
@@ -27,7 +28,7 @@ namespace Modules.Shopify.Application;
 /// <para>Un pedido que falla no frena a los demás: lo que dejó pendiente en la unidad de trabajo se descarta para que el guardado
 /// del siguiente no lo confirme (Ruling S14: un snapshot no se guarda sin su reacción).</para>
 /// </summary>
-public sealed class ReconcileStore(
+public sealed partial class ReconcileStore(
     IShopifyOrdersSource source,
     ShopifyOrderIngestion ingestion,
     IShopifyStoreRepository stores,
@@ -36,7 +37,8 @@ public sealed class ReconcileStore(
     IShopifyConnectionHealth health,
     IShopifyUnitOfWork unitOfWork,
     IClock clock,
-    TimeProvider time)
+    TimeProvider time,
+    ILogger<ReconcileStore> logger)
 {
     /// <summary>D-S1: 5 minutos de solape con la corrida anterior.</summary>
     public static readonly TimeSpan Overlap = TimeSpan.FromMinutes(5);
@@ -54,6 +56,9 @@ public sealed class ReconcileStore(
     public const int MaxConsecutiveThrottles = 3;
 
     private const string ConcurrencyConflict = "concurrency.conflict";
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Shopify order {OrderId} of store {ConnectionId} (tenant {TenantId}) skipped by the reconciliation: {Reason}")]
+    private static partial void LogSkipped(ILogger logger, string orderId, Guid connectionId, Guid tenantId, string reason);
 
     public async Task<ShopifySyncResult> RunAsync(ShopifyConnectionRef connection, CancellationToken cancellationToken)
     {
@@ -232,13 +237,22 @@ public sealed class ReconcileStore(
     /// importa (otro escritor tocó la fila); cualquier otra falla al guardar sí es transitoria y frena la ventana.
     /// </summary>
     private async Task RecordPermanentFailureAsync(
-        ShopifyConnectionRef connection, long orderId, string reason, Run run, CancellationToken cancellationToken)
+        ShopifyConnectionRef connection, long? orderId, string reason, Run run, CancellationToken cancellationToken)
     {
         run.Skipped++;
-        run.Touched.Add(orderId);
+        // Ronda 2: sin fila del espejo (pedido nuevo con la cabecera rota, o un GID no numérico) éste es el único rastro, porque la
+        // ventana avanza. Sólo tenant, conexión, id y motivo: el motivo es el texto fijo de la excepción del parser o del dominio,
+        // que nombra el campo y nunca su valor; nada del comprador ni del cuerpo.
+        LogSkipped(logger, orderId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown", connection.ConnectionId, connection.TenantId, reason);
+        if (orderId is not { } id)
+        {
+            return;
+        }
+
+        run.Touched.Add(id);
         try
         {
-            if (await mirrors.FindAsync(connection.TenantId, connection.ConnectionId, orderId, cancellationToken) is { } row)
+            if (await mirrors.FindAsync(connection.TenantId, connection.ConnectionId, id, cancellationToken) is { } row)
             {
                 row.RecordLastError(reason);
                 await unitOfWork.SaveChangesAsync(cancellationToken);

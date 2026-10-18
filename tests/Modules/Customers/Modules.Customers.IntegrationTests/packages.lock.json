@@ -1303,6 +1303,7 @@
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
           "FluentValidation": "[12.1.1, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.13, )",
           "Modules.Audit.Domain": "[1.0.0, )",
           "Modules.Shopify.Domain": "[1.0.0, )",
           "Modules.Tenancy.Application": "[1.0.0, )"

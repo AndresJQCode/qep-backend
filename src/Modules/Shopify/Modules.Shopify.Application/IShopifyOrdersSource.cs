@@ -23,9 +23,10 @@ public sealed record ShopifyOrdersPage(IReadOnlyList<ShopifyOrderSnapshot> Order
     public IReadOnlyList<ShopifySkippedOrder> Skipped { get; init; } = [];
 }
 
-/// <summary>Un pedido que no se pudo leer: su id de Shopify y el motivo con el formato del <c>last_error</c> del webhook
+/// <summary>Un pedido que no se pudo leer: su id de Shopify (nulo si el GID no es numérico: sin id no hay fila que anotar, pero se
+/// cuenta igual) y el motivo con el formato del <c>last_error</c> del webhook
 /// (<c>invalid_payload: campo: mensaje</c>).</summary>
-public sealed record ShopifySkippedOrder(long OrderId, string Reason);
+public sealed record ShopifySkippedOrder(long? OrderId, string Reason);
 
 public enum ShopifyOrdersSourceFailure
 {

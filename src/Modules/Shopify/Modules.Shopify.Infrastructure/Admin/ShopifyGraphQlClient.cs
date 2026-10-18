@@ -152,12 +152,12 @@ internal sealed partial class ShopifyGraphQlClient(
         catch (ShopifyPayloadException exception)
         {
             // El mismo fallo permanente que un webhook ilegible (ruling S24): no frena la página, y vuelve con su id y su motivo
-            // para que la conciliación lo anote en el espejo y lo cuente. Sin id numérico no hay fila que anotar: queda el log.
+            // para que la conciliación lo anote en el espejo y lo cuente. Sin id numérico no hay fila que anotar, pero se cuenta.
             var reason = exception.Field.Length == 0
                 ? $"{ShopifyDeliveryResult.InvalidPayloadPrefix}: {exception.Message}"
                 : $"{ShopifyDeliveryResult.InvalidPayloadPrefix}: {exception.Field}: {exception.Message}";
             LogSkipped(logger, gid, exception.Field.Length == 0 ? "invalid_payload" : $"invalid_payload:{exception.Field}");
-            return (null, OrderIdOf(gid) is { } id ? new ShopifySkippedOrder(id, reason) : null);
+            return (null, new ShopifySkippedOrder(OrderIdOf(gid), reason));
         }
     }
 

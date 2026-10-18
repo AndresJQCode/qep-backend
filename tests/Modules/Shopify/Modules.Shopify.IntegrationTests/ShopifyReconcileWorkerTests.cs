@@ -83,6 +83,36 @@ public sealed class ShopifyReconcileWorkerTests
             connectionString, "SELECT count(*) FROM shopify.orders WHERE tenant_id = @t", ("t", tenantB)));
     }
 
+    // Ronda 2 de la revisión: un pedido nuevo cuya cabecera el dominio no guarda no tiene fila del espejo y la ventana avanza; el
+    // único rastro es el log. Tiene que salir con tenant, conexión, pedido y motivo, sin nada del comprador, y el resumen de la
+    // corrida tiene que contarlo.
+    [Fact]
+    public async Task WorkerLogsANewOrderWithAnInvalidHeaderWithoutBuyerData()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var broken = Order(5550000000009);
+        broken["currencyCode"] = "PESOS";
+        var shopify = new FakeShopifyAdmin().WithOrder(ShopA, broken);
+        var logs = new RecordingLoggerProvider();
+        using var factory = shopify.Factory(connectionString, services => services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider>(logs));
+        var (tenantA, connectionA) = await LinkedTenantAsync(factory, connectionString, ShopA, "shpat_token_a");
+
+        await RunOnceAsync(factory);
+
+        Assert.Equal(0L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM shopify.orders"));
+        var warning = Assert.Single(logs.Entries, entry =>
+            entry.Level == Microsoft.Extensions.Logging.LogLevel.Warning && entry.Message.Contains("5550000000009", StringComparison.Ordinal)).Message;
+        Assert.Contains(tenantA.ToString(), warning, StringComparison.Ordinal);
+        Assert.Contains(connectionA.ToString(), warning, StringComparison.Ordinal);
+        Assert.Contains("invalid_payload", warning, StringComparison.Ordinal);
+        Assert.Contains(logs.Entries, entry => entry.Message.Contains("1 skipped", StringComparison.Ordinal));
+        foreach (var buyer in new[] { "laura.gomez@example.com", "Gómez", "+573001112233", "1036000111", "Calle 10", "shpat_token_a" })
+        {
+            Assert.DoesNotContain(logs.Entries, entry => entry.Message.Contains(buyer, StringComparison.Ordinal));
+        }
+    }
+
     private static JsonObject Order(long id)
     {
         var order = GraphQlFixture("taxes-included");

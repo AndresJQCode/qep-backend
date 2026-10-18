@@ -200,13 +200,14 @@ public sealed class ShopifyGraphQlClientTests
         {
             if (body.Contains("orders(", StringComparison.Ordinal))
             {
-                return Json(HttpStatusCode.OK, Page(false, null, "gid://shopify/Order/1", "gid://shopify/Order/2", "gid://shopify/Order/5550000000001"));
+                return Json(HttpStatusCode.OK, Page(false, null, "gid://shopify/Order/1", "gid://shopify/Order/2", "gid://shopify/Order/abc", "gid://shopify/Order/5550000000001"));
             }
 
             return Variable(body, "id") switch
             {
                 "gid://shopify/Order/1" => Json(HttpStatusCode.OK, """{"data":{"order":{"id":"gid://shopify/Order/1","name":"#1","updatedAt":"ayer"}}}"""),
                 "gid://shopify/Order/2" => Json(HttpStatusCode.OK, """{"data":{"order":null}}"""),
+                "gid://shopify/Order/abc" => Json(HttpStatusCode.OK, """{"data":{"order":{"id":"gid://shopify/Order/abc","name":"#3"}}}"""),
                 var id => Json(HttpStatusCode.OK, Detail(id!)),
             };
         });
@@ -215,9 +216,9 @@ public sealed class ShopifyGraphQlClientTests
 
         Assert.Equal(5550000000001L, Assert.Single(page.Orders).OrderId);
         // El ilegible no desaparece (ruling S24): vuelve con su id y su motivo para que la conciliación lo anote. El borrado no.
-        var skipped = Assert.Single(page.Skipped);
-        Assert.Equal(1L, skipped.OrderId);
-        Assert.StartsWith("invalid_payload", skipped.Reason, StringComparison.Ordinal);
+        // Ronda 2: el de GID no numérico también vuelve, sin id, para que se cuente.
+        Assert.Equal([1L, null], page.Skipped.Select(order => order.OrderId));
+        Assert.All(page.Skipped, order => Assert.StartsWith("invalid_payload", order.Reason, StringComparison.Ordinal));
     }
 
     // Minor 6: un pedido con muchas líneas se pagina hasta el final, sin tope: uno truncado entraría con menos productos y sin
