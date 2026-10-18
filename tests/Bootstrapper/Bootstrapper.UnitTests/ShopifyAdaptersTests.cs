@@ -678,4 +678,29 @@ public sealed class ShopifyAdaptersTests
             new ProductDetails { TaxRateId = taxRateId },
             new ProductPricing { Prices = new Dictionary<string, decimal> { ["COP"] = 11_900m } },
             Now);
+
+    // ---- Conexiones del tenant (§7 GET /stores) ----
+
+    // Minor 6 de la revisión: una conexión sin dominio guardado da shopDomain null, igual que ShopifyStoreDto; nunca "".
+    [Fact]
+    public async Task TenantConnectionsWithoutShopDomainGiveNull()
+    {
+        var withDomain = new ConnectionWorld(ConnectionStatus.Active, shopifyEnabled: true).Connection;
+        var withoutDomain = IntegrationConnection.Create(
+            IntegrationProviders.Shopify,
+            withDomain.TenantId,
+            "Sin dominio",
+            new Dictionary<string, string>(StringComparer.Ordinal) { [ShopifyFieldKeys.ShopId] = "1" },
+            new Dictionary<string, string>(StringComparer.Ordinal),
+            (connectionId, fieldKey, plaintext) => new ProtectedSecret("k1", System.Text.Encoding.UTF8.GetBytes(plaintext)),
+            Guid.CreateVersion7(),
+            Now);
+        var adapter = new ShopifyTenantConnections(new FakeConnectionRepository(withDomain, withoutDomain));
+
+        var listed = await adapter.ListAsync(withDomain.TenantId, Ct);
+
+        Assert.Equal(
+            [(withDomain.Id, (string?)ConnectionWorld.Domain, "Active"), (withoutDomain.Id, (string?)null, "Active")],
+            listed.Select(connection => (connection.ConnectionId, (string?)connection.ShopDomain, connection.Status)));
+    }
 }

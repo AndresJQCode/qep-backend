@@ -3,7 +3,6 @@ using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Shopify.Domain;
 using Modules.Tenancy.Application;
-using Modules.Tenancy.Domain;
 
 namespace Modules.Shopify.Application;
 
@@ -23,13 +22,17 @@ public sealed class ListShopifyOrdersValidator : AbstractValidator<ListShopifyOr
     /// <summary>§7: tope 50 por página; también es el tamaño por defecto.</summary>
     public const int MaxPageSize = 50;
 
+    /// <summary>Como <c>OperatorInput.MaxPage</c>: con este tope, <c>(page - 1) * pageSize</c> no da la vuelta a un OFFSET
+    /// negativo con ningún <c>pageSize</c> válido.</summary>
+    public const int MaxPage = int.MaxValue / MaxPageSize;
+
     public ListShopifyOrdersValidator()
     {
         RuleFor(query => query.States)
             .Must(states => states is null || states.All(state => ShopifyOrderFilters.TryParseState(state, out _)))
             .WithMessage($"Each state must be one of {string.Join(", ", Enum.GetNames<ShopifyImportState>())}.")
             .OverridePropertyName("state");
-        RuleFor(query => query.Page).GreaterThanOrEqualTo(1).When(query => query.Page is not null).OverridePropertyName("page");
+        RuleFor(query => query.Page).InclusiveBetween(1, MaxPage).When(query => query.Page is not null).OverridePropertyName("page");
         RuleFor(query => query.PageSize)
             .InclusiveBetween(1, MaxPageSize)
             .When(query => query.PageSize is not null)
@@ -69,8 +72,14 @@ public sealed class ListShopifyOrdersHandler(
             .Select(state => ShopifyOrderFilters.TryParseState(state, out var parsed) ? parsed : throw new InvalidOperationException("Validated above."))
             .Distinct()
             .ToArray();
-        var filter = new ShopifyOrderFilter(
-            states.Length == 0 ? [ShopifyImportState.Waiting] : states, query.ConnectionId, query.WithWarnings == true);
+        // Ruling S28 (BFF): sin state, la bandeja muestra lo que espera; pero «con avisos» sin state no filtra por estado, para
+        // que la lista cierre con summary.withWarnings (que cuenta en cualquier estado) sin que la pantalla conozca el enum. Un
+        // state explícito se respeta siempre.
+        var withWarnings = query.WithWarnings == true;
+        IReadOnlyCollection<ShopifyImportState> filterStates = states.Length > 0 ? states
+            : withWarnings ? []
+            : [ShopifyImportState.Waiting];
+        var filter = new ShopifyOrderFilter(filterStates, query.ConnectionId, withWarnings);
         var page = query.Page ?? 1;
         var pageSize = query.PageSize ?? ListShopifyOrdersValidator.MaxPageSize;
         var (items, total) = await mirrors.SearchAsync(query.TenantId, filter, page, pageSize, cancellationToken);
@@ -78,36 +87,23 @@ public sealed class ListShopifyOrdersHandler(
     }
 }
 
-/// <summary>§7: los cuatro contadores de la bandeja en una consulta. «Hoy» empieza a la medianoche del huso del tenant
-/// (<c>America/Bogota</c> en Colombia), no a la de UTC, que en Colombia cae a las 7 de la noche.</summary>
+/// <summary>§7: los cuatro contadores de la bandeja en una consulta. «Hoy» es el día del tenant cortado por
+/// <see cref="TenantCalendar"/> (ruling S26), como los resúmenes de Reporting: medianoche en su huso, en UTC, con el horario de
+/// verano resuelto, y <c>tenancy.tenant.not_found</c> si el tenant no tiene huso (nunca un corte en UTC en silencio).</summary>
 public sealed class GetShopifyOrdersSummaryHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     IShopifyOrderMirrorRepository mirrors,
-    ITenantDirectory tenants,
-    IClock clock) : IQueryHandler<GetShopifyOrdersSummaryQuery, ShopifyOrdersSummaryDto>
+    ITenantClock tenantClock) : IQueryHandler<GetShopifyOrdersSummaryQuery, ShopifyOrdersSummaryDto>
 {
     public async Task<ShopifyOrdersSummaryDto> HandleAsync(GetShopifyOrdersSummaryQuery query, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
         await ShopifyAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, ShopifyPermissions.OrderRead, cancellationToken);
 
-        var zone = ZoneOf(await tenants.GetTimeZoneAsync(new TenantId(query.TenantId), cancellationToken));
-        var local = TimeZoneInfo.ConvertTime(clock.UtcNow, zone);
-        var midnight = local.Date;
-        var todayStart = new DateTimeOffset(midnight, zone.GetUtcOffset(midnight));
-        var counts = await mirrors.CountAsync(query.TenantId, todayStart, cancellationToken);
+        var calendar = await tenantClock.GetAsync(query.TenantId, cancellationToken);
+        var counts = await mirrors.CountAsync(query.TenantId, calendar.StartOfDayUtc(calendar.Today), cancellationToken);
         return new ShopifyOrdersSummaryDto(counts.Waiting, counts.WithWarnings, counts.CancelledAfterInvoice, counts.ImportedToday);
-    }
-
-    private static TimeZoneInfo ZoneOf(string? id)
-    {
-        if (!string.IsNullOrWhiteSpace(id) && TimeZoneInfo.TryFindSystemTimeZoneById(id, out var zone))
-        {
-            return zone;
-        }
-
-        return TimeZoneInfo.Utc;
     }
 }
 
@@ -221,6 +217,8 @@ public sealed class ShopifyOrderRowMapper(IShopifyTenantConnections connections,
 /// <item>La conexión sale de la ruta del dominio de la tienda (<see cref="IShopifyConnectionDirectory.FindByShopDomainAsync"/>) y
 /// tiene que ser la de la fila, del mismo tenant, y operativa; si no (pausada, sin módulo, reenlazada a otro lado) → 422
 /// <c>shopify.store.not_operational</c>, el mismo código de «Sincronizar ahora», sin tocar la fila.</item>
+/// <item>Un payload del espejo que no se lee (o una cabecera que el dominio no guarda) es un fallo permanente: queda en
+/// <c>last_error</c> con el formato del webhook (<c>invalid_payload: …</c>) y la fila vuelve con 200, sin importar.</item>
 /// <item>Antes de la ingesta se descarta lo cargado: el importador hace un <c>SaveChanges</c> a mitad de camino (D-S24) que
 /// confirmaría cualquier cambio rastreado ajeno al pedido.</item>
 /// </list>
@@ -260,11 +258,33 @@ public sealed class RetryShopifyOrderHandler(
                 ShopifyErrorCodes.StoreNotOperational, "The Shopify store of this order is not operational; the order cannot be retried now.");
         }
 
-        var snapshot = ShopifyOrderIngestion.ReadPayload(row.Payload);
-        unitOfWork.DiscardPendingChanges();
-        var applied = await ingestion.ApplyAsync(connection, snapshot, cancellationToken);
+        ShopifyOrderMirror applied;
+        try
+        {
+            var snapshot = ShopifyOrderIngestion.ReadPayload(row.Payload);
+            unitOfWork.DiscardPendingChanges();
+            applied = await ingestion.ApplyAsync(connection, snapshot, cancellationToken);
+        }
+        catch (Exception exception) when (exception is ShopifyPayloadException or JsonException or NotSupportedException)
+        {
+            // Fallo permanente, como en la ingesta y la conciliación: reintentarlo da lo mismo. Queda en last_error con el formato
+            // del webhook y la fila vuelve para que la bandeja lo muestre; no es un 500 ni un código que §7.1 no tenga.
+            unitOfWork.DiscardPendingChanges();
+            applied = await ShopifyOrderSupport.FindAsync(mirrors, command.TenantId, command.OrderId, cancellationToken);
+            applied.RecordLastError(DescribePayloadFailure(exception));
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+
         return await mapper.MapAsync(applied, cancellationToken);
     }
+
+    private static string DescribePayloadFailure(Exception exception) => exception switch
+    {
+        ShopifyPayloadException { Field.Length: > 0 } payload =>
+            $"{ShopifyDeliveryResult.InvalidPayloadPrefix}: {payload.Field}: {payload.Message}",
+        ShopifyPayloadException payload => $"{ShopifyDeliveryResult.InvalidPayloadPrefix}: {payload.Message}",
+        _ => $"{ShopifyDeliveryResult.InvalidPayloadPrefix}: payload: The mirror payload is not a readable snapshot.",
+    };
 }
 
 /// <summary>

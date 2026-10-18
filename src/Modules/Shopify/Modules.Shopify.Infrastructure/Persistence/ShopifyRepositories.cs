@@ -69,7 +69,12 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
     {
         ArgumentNullException.ThrowIfNull(filter);
         var states = filter.States.ToArray();
-        var query = dbContext.Orders.AsNoTracking().Where(row => row.TenantId == tenantId && states.Contains(row.ImportState));
+        var query = dbContext.Orders.AsNoTracking().Where(row => row.TenantId == tenantId);
+        if (states.Length > 0)
+        {
+            query = query.Where(row => states.Contains(row.ImportState));
+        }
+
         if (filter.ConnectionId is { } connectionId)
         {
             query = query.Where(row => row.ConnectionId == connectionId);
@@ -94,15 +99,13 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
     // Una sola pasada con FILTER. wait_detail es jsonb: ->> lee la razón de invoiced_before_cancel (ShopifyOrderChanges).
     public async Task<ShopifyOrderCounts> CountAsync(Guid tenantId, DateTimeOffset importedSince, CancellationToken cancellationToken)
     {
-        // Npgsql sólo manda a timestamptz un DateTimeOffset en UTC; el comienzo del día llega con el huso del tenant (-05:00).
-        var since = importedSince.ToUniversalTime();
         var rows = await dbContext.Database.SqlQuery<CountsRow>(
             $"""
             SELECT
               count(*) FILTER (WHERE import_state = 'Waiting')::int AS "Waiting",
               count(*) FILTER (WHERE warnings IS NOT NULL AND warnings_reviewed_at IS NULL)::int AS "WithWarnings",
               count(*) FILTER (WHERE import_state = 'Cancelled' AND wait_detail ->> 'reason' = 'invoiced_before_cancel')::int AS "CancelledAfterInvoice",
-              count(*) FILTER (WHERE imported_at >= {since})::int AS "ImportedToday"
+              count(*) FILTER (WHERE imported_at >= {importedSince})::int AS "ImportedToday"
             FROM shopify.orders
             WHERE tenant_id = {tenantId}
             """).ToListAsync(cancellationToken);

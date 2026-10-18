@@ -1,5 +1,7 @@
+using System.Text.Json;
 using BuildingBlocks.Application;
 using FluentValidation;
+using Modules.Audit.Domain;
 using Modules.Shopify.Domain;
 using Modules.Tenancy.Application;
 
@@ -164,7 +166,8 @@ public sealed class GetShopifyStoreHandler(
 /// (<c>shopify.store.billing_account_not_found</c>) y la clasificación del tenant (<c>shopify.store.classification_not_found</c>).
 /// Si la tienda todavía no existe, este <c>PUT</c> es el primer contacto y la crea (§6.1) con el dominio de la conexión y la
 /// ventana de la conciliación en el enlace (ruling S25); una tienda nueva vale versión 1, la misma que daría el <c>GET</c>. Guardar
-/// sube la versión (<see cref="ShopifyStore.Configure"/>), que es además el token de concurrencia de la fila.
+/// sube la versión (<see cref="ShopifyStore.Configure"/>), que es además el token de concurrencia de la fila, y audita
+/// <c>shopify.store.updated</c> en la misma transacción (ruling S27).
 /// </summary>
 public sealed class UpdateShopifyStoreHandler(
     IExecutionContext executionContext,
@@ -176,6 +179,7 @@ public sealed class UpdateShopifyStoreHandler(
     IShopifyStoreReferences references,
     IMembershipDirectory memberships,
     IShopifyUnitOfWork unitOfWork,
+    IShopifyAuditRecorder auditRecorder,
     IClock clock,
     IValidator<UpdateShopifyStoreCommand> validator) : ICommandHandler<UpdateShopifyStoreCommand, ShopifyStoreDto>
 {
@@ -198,6 +202,7 @@ public sealed class UpdateShopifyStoreHandler(
         var updatedBy = await memberships.FindActiveMembershipIdAsync(executionContext.SubjectId, command.TenantId, cancellationToken)
             ?? throw ShopifyAuthorization.Denied();
 
+        var before = AuditedFields(store);
         store.Configure(
             command.AdvisorMembershipId,
             billing,
@@ -212,9 +217,40 @@ public sealed class UpdateShopifyStoreHandler(
             stores.Add(store);
         }
 
+        // Ruling S27: en la misma unidad de trabajo que la tienda; si el guardado pierde con 412, no queda auditoría.
+        auditRecorder.Record(
+            command.TenantId,
+            executionContext.SubjectId,
+            AuditActorType.Human,
+            ShopifyAuditActions.StoreUpdated,
+            ShopifyAuditActions.ConnectionResourceType,
+            store.ConnectionId.ToString(),
+            ChangesJson(before, AuditedFields(store)),
+            clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return await ShopifyStoreSupport.ToDtoAsync(store, members, references, cancellationToken);
     }
+
+    // Lo que el formulario edita, con los nombres de los campos del cuerpo. Ids y textos de configuración: nada secreto (§12).
+    private static Dictionary<string, string?> AuditedFields(ShopifyStore store) => new(StringComparer.Ordinal)
+    {
+        ["advisorMembershipId"] = store.AdvisorMembershipId?.ToString(),
+        ["billingCompanyId"] = store.Billing?.CompanyId.ToString(),
+        ["billingBankName"] = store.Billing?.BankName,
+        ["billingAccountNumber"] = store.Billing?.AccountNumber,
+        ["billingCurrency"] = store.Billing?.Currency,
+        ["defaultClassificationId"] = store.DefaultClassificationId?.ToString(),
+        ["documentAttributeKey"] = store.DocumentAttributeKey,
+        ["documentTypeAttributeKey"] = store.DocumentTypeAttributeKey,
+        ["defaultIdentificationType"] = store.DefaultIdentificationType,
+    };
+
+    /// <summary><c>{ campo: { from, to } }</c> sólo de lo que cambió; un <c>PUT</c> que no cambia nada audita <c>{}</c>.</summary>
+    private static string ChangesJson(Dictionary<string, string?> before, Dictionary<string, string?> after) =>
+        JsonSerializer.Serialize(
+            after
+                .Where(pair => !string.Equals(before.GetValueOrDefault(pair.Key), pair.Value, StringComparison.Ordinal))
+                .ToDictionary(pair => pair.Key, pair => new { from = before.GetValueOrDefault(pair.Key), to = pair.Value }, StringComparer.Ordinal));
 
     // La cuenta se guarda como la tiene Companies (banco y número recortados como allá): es la misma comparación con la que el
     // importador la vuelve a buscar en cada pedido (billing_account_missing). La moneda tiene que ser la de la cuenta: una tienda

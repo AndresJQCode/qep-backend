@@ -392,8 +392,9 @@ public interface IShopifyOrderNumbers
 }
 
 /// <summary>Una conexión de Shopify del tenant como la lista la pantalla de tiendas (§7): <see cref="Status"/> es el nombre del
-/// estado de Integrations (<c>Active</c>, <c>Paused</c>, <c>NeedsAttention</c>), tal cual.</summary>
-public sealed record ShopifyConnectionSummary(Guid ConnectionId, string Name, string ShopDomain, string Status);
+/// estado de Integrations (<c>Active</c>, <c>Paused</c>, <c>NeedsAttention</c>), tal cual. <see cref="ShopDomain"/> es
+/// <c>null</c> si la conexión no lo guardó, nunca <c>""</c>.</summary>
+public sealed record ShopifyConnectionSummary(Guid ConnectionId, string Name, string? ShopDomain, string Status);
 
 /// <summary>Spec 2026-10-15 §7 <c>GET /stores</c>: las conexiones de Shopify del tenant, en cualquier estado. Adaptador en
 /// Bootstrapper sobre <c>IIntegrationConnectionRepository</c>: Shopify no referencia Integrations.</summary>

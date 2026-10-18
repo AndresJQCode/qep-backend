@@ -9,12 +9,12 @@ namespace Modules.Shopify.Application;
 /// (<see cref="IsConfigured"/>, <see cref="WaitingCount"/>, <see cref="LastReconciledAt"/>). <see cref="Status"/> es el nombre del
 /// estado de la conexión (<c>Active</c>, <c>Paused</c>, <c>NeedsAttention</c>); el texto lo tiene el frontend.
 /// <see cref="WaitingCount"/> va en cero, nunca ausente. <see cref="LastReconciledAt"/> es <c>null</c> mientras la tienda no
-/// exista en el módulo.
+/// exista en el módulo. <see cref="ShopDomain"/> es <c>null</c> si no se conoce, igual que en <see cref="ShopifyStoreDto"/>.
 /// </summary>
 public sealed record ShopifyStoreSummaryDto(
     Guid ConnectionId,
     string Name,
-    string ShopDomain,
+    string? ShopDomain,
     string Status,
     bool IsConfigured,
     int WaitingCount,

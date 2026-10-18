@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Quotations.Application;
 using Modules.Shopify.Application;
 using Modules.Shopify.Domain;
@@ -237,10 +238,83 @@ public sealed class ShopifyInboxApiTests
         Assert.Equal(ShopifyErrorCodes.OrderNoWarnings, await CodeAsync(noWarnings));
     }
 
+    // Ruling S26: «hoy» es el día del tenant (America/Bogota), no el de UTC. Con el reloj fijo a las 07:00 del 19 en Bogotá, lo
+    // importado a las 23:30 del 18 (04:30Z del 19) no es de hoy y lo de las 00:30 del 19 (05:30Z) sí. Cortar en UTC contaría los
+    // dos (o ninguno, después de las 19:00 de Bogotá).
+    [Fact]
+    public async Task SummaryCutsTheDayInTheTenantTimeZone()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString)
+        {
+            ConfigureTestServices = services =>
+            {
+                services.RemoveAll<BuildingBlocks.Application.IClock>();
+                services.AddScoped<BuildingBlocks.Application.IClock>(_ => new FixedClock(new DateTimeOffset(2026, 10, 19, 12, 0, 0, TimeSpan.Zero)));
+            },
+        };
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        await ShopifyInboxSeed.ImportedAsync(
+            factory, world.TenantId, world.ConnectionId, 5_550_000_000_271L, null, new DateTimeOffset(2026, 10, 18, 23, 30, 0, TimeSpan.FromHours(-5)).ToUniversalTime());
+        await ShopifyInboxSeed.ImportedAsync(
+            factory, world.TenantId, world.ConnectionId, 5_550_000_000_272L, null, new DateTimeOffset(2026, 10, 19, 0, 30, 0, TimeSpan.FromHours(-5)).ToUniversalTime());
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, OrdersPermissions.OrderRead);
+
+        var body = await client.GetFromJsonAsync<JsonObject>($"{OrdersRoute(world.TenantId)}/summary", Ct);
+
+        Assert.Equal(1, body!["importedToday"]!.GetValue<int>());
+    }
+
+    // Ruling S28: con withWarnings=true y sin state la lista no filtra por estado, para que cierre con summary.withWarnings sin
+    // que la pantalla conozca el enum; con state, se respeta.
+    [Fact]
+    public async Task OrdersWithWarningsWithoutStateIgnoresTheDefaultState()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        var flagged = await ShopifyInboxSeed.ImportedAsync(
+            factory, world.TenantId, world.ConnectionId, 5_550_000_000_281L, """[{"code":"total_difference","detail":null}]""");
+        await ShopifyInboxSeed.WaitingAsync(factory, world.TenantId, world.ConnectionId, 5_550_000_000_282L);
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, OrdersPermissions.OrderRead);
+
+        var all = await client.GetFromJsonAsync<JsonObject>($"{OrdersRoute(world.TenantId)}?withWarnings=true", Ct);
+        var cancelledOnly = await client.GetFromJsonAsync<JsonObject>($"{OrdersRoute(world.TenantId)}?withWarnings=true&state=Cancelled", Ct);
+        var summary = await client.GetFromJsonAsync<JsonObject>($"{OrdersRoute(world.TenantId)}/summary", Ct);
+
+        Assert.Equal(flagged.ToString(), Str(Assert.Single(all!["items"]!.AsArray())!.AsObject(), "id"));
+        Assert.Equal(summary!["withWarnings"]!.GetValue<int>(), all["total"]!.GetValue<int>());
+        Assert.Equal(0, cancelledOnly!["total"]!.GetValue<int>());
+    }
+
+    // Minor 4 de la revisión: sin tope, (page - 1) * pageSize da la vuelta a un OFFSET negativo y Postgres responde 500.
+    [Fact]
+    public async Task OrdersPageBeyondTheCapReturns422()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableShopifyAsync(connectionString, tenant.TenantId);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, OrdersPermissions.OrderRead);
+
+        var response = await client.GetAsync($"{OrdersRoute(tenant.TenantId)}?page={(int.MaxValue / 50) + 1}", Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.NotNull((await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!["errors"]!["page"]);
+    }
+
     private static string OrdersRoute(Guid tenantId) => $"/api/v1/tenants/{tenantId}/shopify/orders";
 
     private static string? Str(JsonObject body, string key) => body[key]?.GetValue<string>();
 
     private static async Task<string?> CodeAsync(HttpResponseMessage response) =>
         (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))?["code"]?.GetValue<string>();
+}
+
+internal sealed class FixedClock(DateTimeOffset now) : BuildingBlocks.Application.IClock
+{
+    public DateTimeOffset UtcNow { get; } = now;
 }

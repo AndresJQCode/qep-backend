@@ -119,6 +119,31 @@ public sealed class ShopifyStoresApiTests
                 ("c", world.ConnectionId)));
     }
 
+    // Ruling S27: el PUT deja shopify.store.updated en audit.entries en la misma transacción; el que pierde con 412 no deja nada.
+    [Fact]
+    public async Task StoresPutRecordsAuditAndAStalePutDoesNot()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, IntegrationsPermissions.ConnectionManage);
+
+        var saved = await PutAsync(client, world.TenantId, world.ConnectionId, Body(world), "\"1\"");
+        var stale = await PutAsync(client, world.TenantId, world.ConnectionId, Body(world, documentAttributeKey: "Cédula"), "\"1\"");
+
+        Assert.Equal((HttpStatusCode.OK, HttpStatusCode.PreconditionFailed), (saved.StatusCode, stale.StatusCode));
+        Assert.Equal(
+            $"1|{world.Tenant.OwnerUserId}|{world.ConnectionId}|{world.AdvisorMembershipId}",
+            await ScalarAsync<string>(
+                connectionString,
+                """
+                SELECT count(*) || '|' || max(actor_id::text) || '|' || max(resource_id) || '|' || max(changed_fields -> 'advisorMembershipId' ->> 'to')
+                FROM audit.entries WHERE action = 'shopify.store.updated' AND tenant_id = @t
+                """,
+                ("t", world.TenantId)));
+    }
+
     // §6.1 y ruling S25: si el PUT es el primer contacto, crea la tienda con el dominio de la conexión y la ventana de la
     // conciliación en el instante del enlace (la creación de la conexión), no en «ahora».
     [Fact]

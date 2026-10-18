@@ -169,8 +169,14 @@ internal sealed class FakeOrderMirrorRepository(FakeShopifyDatabase database) : 
         Guid tenantId, ShopifyOrderFilter filter, int page, int pageSize, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
-    public Task<ShopifyOrderCounts> CountAsync(Guid tenantId, DateTimeOffset importedSince, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+    /// <summary>El comienzo de «hoy» con que el resumen pidió los contadores; los conteos en sí son SQL.</summary>
+    public DateTimeOffset? LastImportedSince { get; private set; }
+
+    public Task<ShopifyOrderCounts> CountAsync(Guid tenantId, DateTimeOffset importedSince, CancellationToken cancellationToken)
+    {
+        LastImportedSince = importedSince;
+        return Task.FromResult(new ShopifyOrderCounts(0, 0, 0, 0));
+    }
 
     public Task<IReadOnlyDictionary<Guid, int>> CountWaitingByConnectionAsync(Guid tenantId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();

@@ -356,7 +356,7 @@ internal sealed class FakeConnectionRepository(params IntegrationConnection[] co
         Task.FromResult(connections.FirstOrDefault(connection => connection.TenantId == tenantId && connection.Id == connectionId));
 
     public Task<IReadOnlyList<IntegrationConnection>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult<IReadOnlyList<IntegrationConnection>>([.. connections.Where(connection => connection.TenantId == tenantId)]);
 
     public Task<int> CountAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
         throw new NotSupportedException();

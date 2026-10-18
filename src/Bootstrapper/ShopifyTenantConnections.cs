@@ -16,7 +16,9 @@ internal sealed class ShopifyTenantConnections(IIntegrationConnectionRepository 
             .Select(connection => new ShopifyConnectionSummary(
                 connection.Id,
                 connection.Name,
-                connection.Fields.GetValueOrDefault(ShopifyFieldKeys.ShopDomain)?.Trim().ToLowerInvariant() ?? string.Empty,
+                connection.Fields.GetValueOrDefault(ShopifyFieldKeys.ShopDomain)?.Trim().ToLowerInvariant() is { Length: > 0 } domain
+                    ? domain
+                    : null,
                 connection.Status.ToString())),
     ];
 }
