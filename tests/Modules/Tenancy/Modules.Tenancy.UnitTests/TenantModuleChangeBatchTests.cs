@@ -102,10 +102,10 @@ public sealed class TenantModuleChangeBatchTests
     public void TheWholeCascadeInOneBatchIsAcceptedInCatalogOrder()
     {
         var plan = TenantModuleChangeBatch.Plan(
-            SignupState(), [new(Orders, Off), new(Customers, Off), new(Quotations, Off)], ChangeReason.Cancellation);
+            SignupState(), [new(Orders, Off), new(Customers, Off), new(Quotations, Off), new(TenantModuleKeys.Shopify, Off)], ChangeReason.Cancellation);
 
         Assert.Equal(
-            [new PlannedModuleChange(Customers, On, Off), new PlannedModuleChange(Quotations, On, Off), new PlannedModuleChange(Orders, On, Off)],
+            [new PlannedModuleChange(Customers, On, Off), new PlannedModuleChange(Quotations, On, Off), new PlannedModuleChange(Orders, On, Off), new PlannedModuleChange(TenantModuleKeys.Shopify, On, Off)],
             plan);
     }
 

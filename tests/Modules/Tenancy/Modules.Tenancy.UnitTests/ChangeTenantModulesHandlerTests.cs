@@ -84,12 +84,13 @@ public sealed class ChangeTenantModulesHandlerTests
         var fixture = new Fixture();
 
         await fixture.SendAsync("cancellation", "No lo usan por ahora",
-            ("orders", "inactive"), ("customers", "inactive"), ("quotations", "inactive"));
+            ("orders", "inactive"), ("customers", "inactive"), ("quotations", "inactive"), ("shopify", "inactive"));
 
         Assert.All(fixture.Modules.Rows.Where(row => row.ModuleKey == TenantModuleKeys.Customers
-                || row.ModuleKey == TenantModuleKeys.Quotations || row.ModuleKey == TenantModuleKeys.Orders),
+                || row.ModuleKey == TenantModuleKeys.Quotations || row.ModuleKey == TenantModuleKeys.Orders
+                || row.ModuleKey == TenantModuleKeys.Shopify),
             row => Assert.Equal((TenantModuleStatus.Inactive, Now), (row.Status, row.StatusChangedAt)));
-        Assert.Equal(3, fixture.Changes.Added.Count);
+        Assert.Equal(4, fixture.Changes.Added.Count);
         Assert.Single(fixture.Changes.Added.Select(change => change.BatchId).Distinct());
         Assert.All(fixture.Changes.Added, change =>
             Assert.Equal(("active", "inactive", ChangeReason.Cancellation, "No lo usan por ahora", fixture.Context.SubjectId),
@@ -98,7 +99,7 @@ public sealed class ChangeTenantModulesHandlerTests
         Assert.Equal((fixture.Target.Id.Value, "tenancy.tenant_modules.changed", "tenant", fixture.Target.Id.Value.ToString()),
             (audit.TenantId, audit.Action, audit.ResourceType, audit.ResourceId));
         Assert.Equal(
-            ["customers:active->inactive", "quotations:active->inactive", "orders:active->inactive", "reason:cancellation"],
+            ["customers:active->inactive", "quotations:active->inactive", "orders:active->inactive", "shopify:active->inactive", "reason:cancellation"],
             audit.ChangedFields);
     }
 

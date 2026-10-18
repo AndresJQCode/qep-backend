@@ -50,12 +50,16 @@ public static class TenantModuleKeys
     /// <see cref="Customers"/> y queda fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Pipeline = TenantModuleKey.Define("pipeline");
 
-    public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline];
+    /// <summary>Spec 2026-10-18 (Shopify), D-S20: pedidos de la tienda Shopify. Último de la lista, depende sólo de
+    /// <see cref="Orders"/> y entra en <see cref="DefaultForNewTenants"/>; sin backfill de tenants existentes.</summary>
+    public static readonly TenantModuleKey Shopify = TenantModuleKey.Define("shopify");
 
-    /// <summary>Los seis de hoy, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el backfill y el signup con el interruptor prendido.</summary>
+    public static readonly IReadOnlyList<TenantModuleKey> All =
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify];
+
+    /// <summary>Los seis base más <c>shopify</c>, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting];
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Shopify];
 
     // POS no depende de customers, ni opcionalmente: el spec de POS quitó la selección de cliente.
     private static readonly Dictionary<TenantModuleKey, TenantModuleKey[]> Dependencies = new()
@@ -65,6 +69,7 @@ public static class TenantModuleKeys
         [Pos] = [Catalog, Companies],
         // Spec 2026-10-13 D30: sin messaging el triage queda vacío; sin quotations no llegan eventos.
         [Pipeline] = [Customers],
+        [Shopify] = [Orders],
     };
 
     public static IReadOnlyList<TenantModuleKey> DependenciesOf(TenantModuleKey key) =>

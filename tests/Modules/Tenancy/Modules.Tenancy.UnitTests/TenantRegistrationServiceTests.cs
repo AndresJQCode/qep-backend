@@ -23,7 +23,7 @@ public sealed class TenantRegistrationServiceTests
             Guid.CreateVersion7(), Data, "trace", TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "shopify"],
             modules.Added.Select(module => module.ModuleKey.Value));
         Assert.All(modules.Added, module =>
         {
@@ -35,6 +35,19 @@ public sealed class TenantRegistrationServiceTests
         Assert.Equal("commit", steps[^1]);
         Assert.Single(steps, step => step == "commit");
         Assert.True(steps.IndexOf("tenant") < steps.IndexOf("module:catalog"));
+    }
+
+    [Fact]
+    public async Task RegisterOwnerTenantGrantsShopify()
+    {
+        var steps = new List<string>();
+        var modules = new RecordingTenantModuleRepository(steps);
+        var service = NewService(steps, modules, new FixedDefaults(TenantModuleKeys.DefaultForNewTenants));
+
+        await service.RegisterOwnerTenantAsync(
+            Guid.CreateVersion7(), Data, "trace", TestContext.Current.CancellationToken);
+
+        Assert.Contains(modules.Added, module => module.ModuleKey.Value == "shopify");
     }
 
     [Fact]

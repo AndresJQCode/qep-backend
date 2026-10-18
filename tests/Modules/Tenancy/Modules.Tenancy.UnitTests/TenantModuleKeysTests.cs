@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -48,11 +48,18 @@ public sealed class TenantModuleKeysTests
 
     // Spec 2026-10-09 §6.2 y spec 2026-10-13 D3: messaging y pipeline son vendibles y se prenden por tenant, como pos.
     [Fact]
-    public void DefaultForNewTenantsIsEverythingButPosMessagingAndPipeline()
+    public void DefaultForNewTenantsAreTheSixBaseModulesPlusShopify()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "shopify"],
             TenantModuleKeys.DefaultForNewTenants.Select(key => key.Value));
+    }
+
+    [Fact]
+    public void ShopifyIsLastAndDependsOnOrders()
+    {
+        Assert.Same(TenantModuleKeys.Shopify, TenantModuleKeys.All[^1]);
+        Assert.Equal([TenantModuleKeys.Orders], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Shopify));
     }
 
     [Fact]

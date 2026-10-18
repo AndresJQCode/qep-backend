@@ -653,7 +653,7 @@ trabajos en vuelo. La SPA lo lee de `GET /api/v1/tenants/{tenantId}/modules` (au
 permiso), que siempre devuelve los nueve con `enabled`, `contracted` y `missingDependencies`, y se
 entera en hasta 5 minutos.
 
-Un tenant del signup nace con los seis sin `pos` mientras `Entitlements:GrantDefaultModulesOnSignup`
+Un tenant del signup nace con los siete sin `pos`, `messaging` ni `pipeline` (los seis base más `shopify`) mientras `Entitlements:GrantDefaultModulesOnSignup`
 esté en `true` (el default), y sin ninguno en `false`. El de la semilla nace con todos los del catálogo. Ni el
 signup ni la semilla escriben historial: el origen queda en `source`.
 
@@ -758,8 +758,8 @@ ser legítimo— y la reparación se hace por slug, después de mirar cada uno:
 # Tenants sin módulos creados en el último día
 docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "SELECT t.id, t.slug, t.created_at FROM tenancy.tenants t WHERE NOT EXISTS (SELECT 1 FROM tenancy.tenant_modules m WHERE m.tenant_id = t.id) AND t.created_at >= now() - interval '1 day' ORDER BY t.created_at;"
 
-# Reparar uno: los seis del signup
-docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source, note) SELECT t.id, m.key, now(), 'manual', 'Alta durante el despliegue de AddTenantModules' FROM tenancy.tenants t CROSS JOIN (VALUES ('catalog'),('customers'),('companies'),('quotations'),('orders'),('reporting')) AS m(key) WHERE t.slug = 'slug-del-tenant' ON CONFLICT (tenant_id, module_key) DO NOTHING;"
+# Reparar uno: los siete del signup
+docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source, note) SELECT t.id, m.key, now(), 'manual', 'Alta durante el despliegue de AddTenantModules' FROM tenancy.tenants t CROSS JOIN (VALUES ('catalog'),('customers'),('companies'),('quotations'),('orders'),('reporting'),('shopify')) AS m(key) WHERE t.slug = 'slug-del-tenant' ON CONFLICT (tenant_id, module_key) DO NOTHING;"
 ```
 
 En producción, las mismas sentencias por el acceso a la base que QCode ya usa para operaciones

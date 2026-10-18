@@ -203,7 +203,7 @@ public sealed class OperatorConsoleApiTests
         var all = await GetOkAsync<TenantPagePayload>(client, Url("tenants"));
         Assert.Equal(2, all.Total);
         Assert.Equal(new SummaryPayload(2, 0, 0), all.Summary);
-        Assert.All(all.Items, item => Assert.Equal((6, 9, "Active", false), (item.ActiveModules, item.TotalModules, item.Status, item.IsOperator)));
+        Assert.All(all.Items, item => Assert.Equal((7, 10, "Active", false), (item.ActiveModules, item.TotalModules, item.Status, item.IsOperator)));
 
         var slug = (await GetOkAsync<DetailPayload>(client, Url($"tenants/{first}"))).Slug;
         var searched = await GetOkAsync<TenantPagePayload>(client, Url($"tenants?search={slug}"));
@@ -399,7 +399,7 @@ public sealed class OperatorConsoleApiTests
         var (tenantId, _) = await RegisterAsync(factory);
         using var first = OperatorClient(factory);
         using var second = OperatorClient(factory);
-        await PostChangesAsync(first, tenantId, "cancellation", null, ("quotations", "inactive"), ("orders", "inactive"));
+        await PostChangesAsync(first, tenantId, "cancellation", null, ("quotations", "inactive"), ("orders", "inactive"), ("shopify", "inactive"));
 
         var responses = await Task.WhenAll(
             first.PostAsJsonAsync(Url($"tenants/{tenantId}/modules/changes"),
@@ -453,7 +453,7 @@ public sealed class OperatorConsoleApiTests
 
         var reactivated = await ReadDetailAsync(await PostStatusAsync(client, tenantId, "\"2\"", "active", "correction"));
         Assert.Equal(("Active", 3L), (reactivated.Status, reactivated.Version));
-        Assert.Equal(6, reactivated.Modules.Count(module => module.Status == "active"));
+        Assert.Equal(7, reactivated.Modules.Count(module => module.Status == "active"));
         Assert.Contains("tenancy.settings.read", await EffectivePermissionsAsync(member, tenantId));
     }
 
@@ -477,14 +477,14 @@ public sealed class OperatorConsoleApiTests
         var (_, actorId) = await RegisterAsync(factory);   // un usuario que existe, para resolver su correo
         using var client = OperatorClient(factory, actorId);
 
-        await PostChangesAsync(client, tenantId, "cancellation", null, ("customers", "inactive"), ("quotations", "inactive"), ("orders", "inactive"));
+        await PostChangesAsync(client, tenantId, "cancellation", null, ("customers", "inactive"), ("quotations", "inactive"), ("orders", "inactive"), ("shopify", "inactive"));
         await PostChangesAsync(client, tenantId, "courtesy", "Prueba de un mes", ("pos", "active"));
         await ReadDetailAsync(await PostStatusAsync(client, tenantId, "\"1\"", "inactive", "nonpayment"));
 
         var all = await GetOkAsync<HistoryPayload>(client, Url($"tenants/{tenantId}/history"));
         Assert.Equal(3, all.Total);
         Assert.Equal(["tenant_status", "module", "module"], all.Items.Select(batch => batch.Kind));
-        Assert.Equal(["customers", "quotations", "orders"], all.Items[2].Changes.Select(change => change.ModuleKey));
+        Assert.Equal(["customers", "quotations", "orders", "shopify"], all.Items[2].Changes.Select(change => change.ModuleKey));
         Assert.NotNull(all.Items[0].ActorEmail);
         Assert.Equal(actorId, all.Items[0].ActorUserId);
 

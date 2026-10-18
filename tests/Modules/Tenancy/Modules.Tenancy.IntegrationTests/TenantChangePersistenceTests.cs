@@ -33,7 +33,7 @@ public sealed class TenantChangePersistenceTests
         await using var read = provider.CreateAsyncScope();
         var stored = await read.ServiceProvider.GetRequiredService<ITenantModuleRepository>()
             .ListByTenantAsync(tenantId, TestContext.Current.CancellationToken);
-        Assert.Equal(6, stored.Count);
+        Assert.Equal(7, stored.Count);
         Assert.Equal(TenantModuleStatus.Inactive, stored.Single(row => row.ModuleKey == TenantModuleKeys.Reporting).Status);
     }
 

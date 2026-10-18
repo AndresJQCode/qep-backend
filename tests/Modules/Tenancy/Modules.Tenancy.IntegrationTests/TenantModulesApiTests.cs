@@ -22,7 +22,7 @@ public sealed class TenantModulesApiTests
     // salen del mismo SaveChangesAsync de TenantRegistrationService, y sin la FK en el modelo el
     // orden no estaría garantizado (23503).
     [Fact]
-    public async Task SignupStoresTheSixDefaultModules()
+    public async Task SignupStoresTheDefaultModules()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -32,7 +32,7 @@ public sealed class TenantModulesApiTests
         Assert.Equal(
             [
                 ("catalog", "signup"), ("companies", "signup"), ("customers", "signup"),
-                ("orders", "signup"), ("quotations", "signup"), ("reporting", "signup"),
+                ("orders", "signup"), ("quotations", "signup"), ("reporting", "signup"), ("shopify", "signup"),
             ],
             await RowsAsync(factory, tenantId));
     }
@@ -102,7 +102,7 @@ public sealed class TenantModulesApiTests
         Assert.Equal(tenantId, modules.TenantId);
         // Spec 2026-10-09 §6.2 y spec 2026-10-13 D3: messaging y pipeline van al final y, como pos, no vienen con el signup.
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify"],
             modules.Modules.Select(module => module.Key));
         Assert.All(modules.Modules.Where(module => module.Key is not ("pos" or "messaging" or "pipeline")), module =>
         {
@@ -148,7 +148,7 @@ public sealed class TenantModulesApiTests
 
         var modules = await ModulesAsync(client, tenantId);
 
-        Assert.Equal(9, modules.Modules.Count);
+        Assert.Equal(10, modules.Modules.Count);
         Assert.All(modules.Modules, module =>
         {
             Assert.True(module.Enabled);
