@@ -45,7 +45,8 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                     warnings_reviewed_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
                     qep_customer_id = table.Column<Guid>(type: "uuid", nullable: true),
                     qep_order_id = table.Column<Guid>(type: "uuid", nullable: true),
-                    total_difference = table.Column<decimal>(type: "numeric(14,2)", precision: 14, scale: 2, nullable: true)
+                    total_difference = table.Column<decimal>(type: "numeric(14,2)", precision: 14, scale: 2, nullable: true),
+                    version = table.Column<long>(type: "bigint", nullable: false)
                 },
                 constraints: table =>
                 {

@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Modules.Shopify.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(ShopifyDbContext))]
-    [Migration("20261018144649_InitialShopify")]
+    [Migration("20261018145925_InitialShopify")]
     partial class InitialShopify
     {
         /// <inheritdoc />
@@ -195,6 +195,11 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         .HasPrecision(14, 2)
                         .HasColumnType("numeric(14,2)")
                         .HasColumnName("total_price");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
 
                     b.Property<string>("WaitDetail")
                         .HasColumnType("jsonb")

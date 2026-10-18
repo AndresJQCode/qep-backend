@@ -120,6 +120,8 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
         order.Property(value => value.QepCustomerId).HasColumnName("qep_customer_id");
         order.Property(value => value.QepOrderId).HasColumnName("qep_order_id");
         order.Property(value => value.TotalDifference).HasColumnName("total_difference").HasPrecision(14, 2);
+        // Webhook, conciliación y reintento manual escriben la misma fila; sin token, el último en guardar pisaría al otro.
+        order.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
 
         order.HasIndex(value => new { value.ConnectionId, value.ShopifyOrderId }).IsUnique().HasDatabaseName(OrderConnectionIndex);
         // La bandeja: por estado, los más recientes primero.

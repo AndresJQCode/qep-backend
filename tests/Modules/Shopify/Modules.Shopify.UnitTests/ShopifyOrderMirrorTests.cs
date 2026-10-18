@@ -137,6 +137,137 @@ public sealed class ShopifyOrderMirrorTests
         Assert.Throws<ArgumentException>(() => row.AttachCustomer(Guid.Empty));
     }
 
+    private static ShopifyOrderMirror CancelledRow()
+    {
+        var row = ImportedRow(null);
+        row.MarkCancelled("""{"reason":"invoiced_before_cancel"}""");
+        return row;
+    }
+
+    private static ShopifyOrderMirror IgnoredRow()
+    {
+        var row = NewRow();
+        row.MarkIgnored();
+        return row;
+    }
+
+    // Ruling S13 (§5.4, §6.3): Cancelled e Ignored son terminales.
+    [Fact]
+    public void CancelledCannotGoBackToWaiting()
+    {
+        var row = CancelledRow();
+
+        Assert.Throws<InvalidOperationException>(() => row.MarkWaiting(ShopifyWaitReasons.ProductUnmatched, null, Updated));
+        Assert.Equal((ShopifyImportState.Cancelled, """{"reason":"invoiced_before_cancel"}"""), (row.ImportState, row.WaitDetail));
+    }
+
+    [Fact]
+    public void CancelledCannotBeIgnored()
+    {
+        var row = CancelledRow();
+
+        Assert.Throws<InvalidOperationException>(row.MarkIgnored);
+        Assert.Equal(ShopifyImportState.Cancelled, row.ImportState);
+    }
+
+    [Fact]
+    public void IgnoredCannotGoBackToWaiting()
+    {
+        var row = IgnoredRow();
+
+        Assert.Throws<InvalidOperationException>(() => row.MarkWaiting(ShopifyWaitReasons.StoreNotConfigured, null, Updated));
+        Assert.Equal(ShopifyImportState.Ignored, row.ImportState);
+    }
+
+    [Fact]
+    public void IgnoredCannotBeImported() =>
+        Assert.Throws<InvalidOperationException>(() => IgnoredRow().MarkImported(Guid.CreateVersion7(), Guid.CreateVersion7(), 0m, null, Updated));
+
+    [Fact]
+    public void IgnoringTwiceIsIdempotent()
+    {
+        var row = IgnoredRow();
+
+        row.MarkIgnored();
+
+        Assert.Equal(ShopifyImportState.Ignored, row.ImportState);
+    }
+
+    [Fact]
+    public void ApplySnapshotOnATerminalRowKeepsTheState()
+    {
+        var row = CancelledRow();
+
+        Assert.True(row.ApplySnapshot("""{"v":3}""", Updated.AddMinutes(9), Header("refunded")));
+
+        Assert.Equal((ShopifyImportState.Cancelled, """{"v":3}""", "refunded"), (row.ImportState, row.Payload, row.FinancialStatus));
+    }
+
+    // Minor 3: la bandeja de «Ignorados» no muestra un motivo de espera que ya no aplica.
+    [Fact]
+    public void MarkIgnoredClearsTheWait()
+    {
+        var row = NewRow();
+        row.MarkWaiting(ShopifyWaitReasons.ProductUnmatched, """{"skus":["SH-400"]}""", Updated);
+
+        row.MarkIgnored();
+
+        Assert.Equal((ShopifyImportState.Ignored, (string?)null, (string?)null), (row.ImportState, row.WaitReason, row.WaitDetail));
+    }
+
+    // Important 2: la versión es el token de concurrencia de shopify.orders; cada cambio la sube.
+    [Fact]
+    public void VersionAdvancesOnEveryChange()
+    {
+        var row = NewRow();
+        Assert.Equal(1L, row.Version);
+
+        row.ApplySnapshot("""{"v":2}""", Updated.AddMinutes(1), Header());
+        Assert.Equal(2L, row.Version);
+        row.ApplySnapshot("""{"v":0}""", Updated, Header());
+        Assert.Equal(2L, row.Version);
+        row.MarkWaiting(ShopifyWaitReasons.ProductUnmatched, null, Updated);
+        Assert.Equal(3L, row.Version);
+        row.AttachCustomer(Guid.CreateVersion7());
+        Assert.Equal(4L, row.Version);
+        row.MarkImported(Guid.CreateVersion7(), Guid.CreateVersion7(), 0m, """["customer_incomplete"]""", Updated);
+        Assert.Equal(5L, row.Version);
+        row.ReviewWarnings(Updated);
+        Assert.Equal(6L, row.Version);
+        row.MarkCancelled(null);
+        Assert.Equal(7L, row.Version);
+
+        var ignored = NewRow();
+        ignored.MarkIgnored();
+        Assert.Equal(2L, ignored.Version);
+    }
+
+    // Minor 1: la cabecera que llega de Shopify se acota en el dominio; un valor fuera de los anchos de la columna es un payload
+    // inválido que el worker registra y no reintenta, nunca un 22001 de Postgres.
+    [Theory]
+    [InlineData(65, "pending", "COP")]
+    [InlineData(10, "a-financial-status-longer-than-32", "COP")]
+    [InlineData(10, "pending", "COPX")]
+    [InlineData(10, "pending", "CO")]
+    [InlineData(0, "pending", "COP")]
+    public void AHeaderOutsideTheColumnWidthsIsRejected(int nameLength, string financialStatus, string currency)
+    {
+        var header = new ShopifyOrderHeader(new string('#', nameLength), null, Created, null, financialStatus, currency, 1m, false);
+
+        Assert.ThrowsAny<ArgumentException>(() => ShopifyOrderMirror.Create(TenantId, ConnectionId, 5_002L, "{}", Updated, header));
+        Assert.ThrowsAny<ArgumentException>(() => NewRow().ApplySnapshot("{}", Updated.AddMinutes(1), header));
+    }
+
+    [Fact]
+    public void AHeaderAtTheColumnWidthsIsAccepted()
+    {
+        var header = new ShopifyOrderHeader(new string('#', 64), null, Created, null, new string('p', 32), "usd", 1m, false);
+
+        var row = ShopifyOrderMirror.Create(TenantId, ConnectionId, 5_002L, "{}", Updated, header);
+
+        Assert.Equal((64, 32, "USD"), (row.OrderName.Length, row.FinancialStatus!.Length, row.Currency));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("[]")]

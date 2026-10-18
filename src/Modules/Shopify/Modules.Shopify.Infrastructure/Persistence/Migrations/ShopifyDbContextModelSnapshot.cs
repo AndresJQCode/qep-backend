@@ -193,6 +193,11 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(14,2)")
                         .HasColumnName("total_price");
 
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
                     b.Property<string>("WaitDetail")
                         .HasColumnType("jsonb")
                         .HasColumnName("wait_detail");

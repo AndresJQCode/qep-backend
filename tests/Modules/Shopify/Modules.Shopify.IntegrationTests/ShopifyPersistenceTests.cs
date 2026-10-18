@@ -135,6 +135,40 @@ public sealed class ShopifyPersistenceTests
         Assert.Equal("concurrency.conflict", error.Code);
     }
 
+    // Important 2 de la revisión: el worker de webhooks y el reintento manual cargan la misma fila a la vez. El primero la importa;
+    // el segundo, que la leyó en espera, no puede devolverla a Waiting: su SaveChanges choca con la versión.
+    [Fact]
+    public async Task TwoWritersOnTheSameRowTheSecondIsAConcurrencyConflict()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var row = NewRow(Guid.CreateVersion7(), Guid.CreateVersion7());
+        using (var seed = factory.Services.CreateScope())
+        {
+            seed.ServiceProvider.GetRequiredService<ShopifyDbContext>().Orders.Add(row);
+            await seed.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var scopeA = factory.Services.CreateScope();
+        using var scopeB = factory.Services.CreateScope();
+        var importing = await scopeA.ServiceProvider.GetRequiredService<ShopifyDbContext>().Orders.SingleAsync(value => value.Id == row.Id, Ct);
+        var retrying = await scopeB.ServiceProvider.GetRequiredService<ShopifyDbContext>().Orders.SingleAsync(value => value.Id == row.Id, Ct);
+
+        importing.MarkImported(Guid.CreateVersion7(), Guid.CreateVersion7(), 0m, null, Now);
+        await scopeA.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+
+        retrying.MarkWaiting(ShopifyWaitReasons.ProductUnmatched, null, Now);
+        var error = await Assert.ThrowsAsync<RequestConcurrencyException>(
+            () => scopeB.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct));
+
+        Assert.Equal("concurrency.conflict", error.Code);
+        Assert.Equal("Imported", await ScalarAsync<string>(
+            connectionString, "SELECT import_state FROM shopify.orders WHERE id = @id", ("id", row.Id)));
+        Assert.Equal(2L, await ScalarAsync<long>(
+            connectionString, "SELECT version FROM shopify.orders WHERE id = @id", ("id", row.Id)));
+    }
+
     // §6.1: la tienda nace al primer contacto, y dos a la vez chocan con la PK.
     [Fact]
     public async Task TheStoreCreatedTwiceAtOnceIsAConcurrencyConflict()
