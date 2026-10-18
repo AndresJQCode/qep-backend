@@ -59,7 +59,7 @@ public sealed class CreateQuotationHandlerTests
         // Con escala desde 10 unidades: sin el detal, 12 unidades llevarían descuento.
         var product = Product(productId, "Vela de soja", 100_000m) with
         {
-            Scales = [new QuotationPriceScaleRef(10, 100, 10m, null, null, [])],
+            Scales = [new QuotationPriceScaleRef(10, 100, 10m, QuotationPriceScaleRestriction.Multiple, 1, [])],
         };
         var handler = Handler(pricing: new StubQuotationProductPricingLookup(product));
 

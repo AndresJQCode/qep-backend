@@ -445,6 +445,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<PreviewQuotationQuery, QuotationDto>,
             PreviewQuotationHandler>();
+        // El cálculo de una cotización nueva sin id (spec 2026-10-18 §7): mismo armado que la creación.
+        services.AddScoped<
+            IQueryHandler<PreviewNewQuotationQuery, QuotationDto>,
+            PreviewNewQuotationHandler>();
         services.AddScoped<
             ICommandHandler<SendQuotationCommand, QuotationDto>,
             SendQuotationHandler>();
