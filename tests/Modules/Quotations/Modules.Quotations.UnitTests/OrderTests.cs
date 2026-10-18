@@ -122,7 +122,7 @@ public sealed class OrderTests
     {
         var order = Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, Account, [Line()],
-            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001");
+            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001", ShippingDetails.None, null, null);
 
         Assert.Equal((OrderSource.Shopify, "#1001"), (order.Source, order.ExternalReference));
     }
@@ -135,7 +135,7 @@ public sealed class OrderTests
     {
         var order = Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, Account, [Line()],
-            OrderPaymentStatus.FullPaymentReceived, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001");
+            OrderPaymentStatus.FullPaymentReceived, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001", ShippingDetails.None, null, null);
 
         Assert.Equal(OrderPaymentStatus.FullPaymentReceived, order.PaymentStatus);
         Assert.Empty(order.PaymentProofs);
@@ -146,7 +146,7 @@ public sealed class OrderTests
     {
         var error = Assert.Throws<QuotationsDomainException>(() => Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, Account, [Line()],
-            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Quotation, "#1"));
+            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Quotation, "#1", ShippingDetails.None, null, null));
 
         Assert.Equal("order.order.source_invalid", error.Code);
     }
@@ -165,7 +165,7 @@ public sealed class OrderTests
     {
         Assert.Throws<ArgumentNullException>(() => Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, null!, [Line()],
-            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001"));
+            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001", ShippingDetails.None, null, null));
     }
 
     [Fact]

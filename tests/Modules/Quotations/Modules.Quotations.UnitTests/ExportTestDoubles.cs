@@ -63,6 +63,10 @@ internal sealed class CountingQuotationsUnitOfWork : IQuotationsUnitOfWork
 
     public Task<IQuotationsTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
         Task.FromResult<IQuotationsTransaction>(new NoOpQuotationsTransaction());
+
+    public void DiscardPendingChanges()
+    {
+    }
 }
 
 internal sealed class RecordingExportEventPublisher : IExportEventPublisher

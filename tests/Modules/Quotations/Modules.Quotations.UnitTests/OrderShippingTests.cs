@@ -189,14 +189,87 @@ public sealed class OrderShippingTests
         Assert.Equal("order.order.not_pending", error.Code);
     }
 
+    private static Order NewExternal(
+        ShippingDetails shipping,
+        OrderPaymentStatus paymentStatus = OrderPaymentStatus.FullPaymentReceived,
+        bool isStorePickup = false,
+        string? externalKey = null,
+        string? externalShippingTitle = null) =>
+        Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0002", Header, new QuotationParties(null, null, IsStorePickup: isStorePickup),
+            Account, [Line], paymentStatus, null, Advisor, [], Now, OrderSource.Shopify, "#1001", shipping, externalKey,
+            externalShippingTitle);
+
     [Fact]
-    public void CreateExternalHasNoShipping()
+    public void CreateExternalWithoutShippingHasNone()
     {
-        var order = Order.CreateExternal(
-            OrderId.New(), TenantId, "PED-2026-0002", Header, QuotationParties.Empty, Account, [Line],
-            OrderPaymentStatus.FullPaymentReceived, null, Advisor, [], Now, OrderSource.Shopify, "#1001");
+        var order = NewExternal(ShippingDetails.None);
 
         Assert.Equal(ShippingDetails.None, order.ShippingDetails);
         Assert.Equal((0m, 0m, 119_000m), (order.FreightSubtotal, order.FreightTaxAmount, order.Total));
+    }
+
+    // Spec de Shopify §6.2 y flete §10: el envío que cobró la tienda entra al pedido con la misma aritmética que
+    // el manual. 15.000 con IVA del 19 % → 12.605,04 + 2.394,96.
+    [Fact]
+    public void CreateExternalWithChargedCopShippingAddsFreightToTotal()
+    {
+        var shipping = new ShippingDetails(null, null, FreightChargeMode.Charged, 15_000m, 19, false);
+
+        var order = NewExternal(shipping);
+
+        Assert.Equal(shipping, order.ShippingDetails);
+        Assert.Equal(12_605.04m, order.FreightSubtotal);
+        Assert.Equal(2_394.96m, order.FreightTaxAmount);
+        Assert.Equal(order.ProductsTotal + 15_000m, order.Total);
+        Assert.Equal(134_000m, order.Total);
+    }
+
+    [Fact]
+    public void CreateExternalCashOnDeliveryWithPaidStatusThrows()
+    {
+        var shipping = new ShippingDetails(null, null, FreightChargeMode.Free, 0m, 19, true);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            NewExternal(shipping, OrderPaymentStatus.FullPaymentReceived));
+
+        Assert.Equal("order.order.cash_on_delivery_pending_only", error.Code);
+    }
+
+    [Fact]
+    public void CreateExternalStorePickupWithShippingThrows()
+    {
+        var shipping = new ShippingDetails(null, null, FreightChargeMode.Charged, 15_000m, 19, false);
+
+        var error = Assert.Throws<QuotationsDomainException>(() => NewExternal(shipping, isStorePickup: true));
+
+        Assert.Equal("order.order.shipping_not_allowed_on_pickup", error.Code);
+    }
+
+    [Fact]
+    public void CreateExternalExternalKeyTooLongThrows()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            NewExternal(ShippingDetails.None, externalKey: new string('k', 129)));
+
+        Assert.Equal("order.order.external_key_too_long", error.Code);
+    }
+
+    [Fact]
+    public void CreateExternalNormalizesExternalKeyAndTruncatesShippingTitle()
+    {
+        var order = NewExternal(
+            ShippingDetails.None, externalKey: "  shop-1:order-9  ", externalShippingTitle: "  " + new string('t', 130) + " ");
+
+        Assert.Equal("shop-1:order-9", order.ExternalKey);
+        Assert.Equal(new string('t', Order.ExternalShippingTitleMaxLength), order.ExternalShippingTitle);
+    }
+
+    [Fact]
+    public void CreateExternalBlankExternalKeyAndTitleAreNull()
+    {
+        var order = NewExternal(ShippingDetails.None, externalKey: "  ", externalShippingTitle: " ");
+
+        Assert.Equal(((string?)null, (string?)null), (order.ExternalKey, order.ExternalShippingTitle));
     }
 }

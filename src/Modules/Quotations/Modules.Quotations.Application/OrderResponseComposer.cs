@@ -121,7 +121,7 @@ public static class OrderResponses
                 .Select(proof => new OrderPaymentProofResponse(
                     proof.Id, proof.FileId, proof.Amount, proof.UploadedAt, proof.PaidOn))
                 .ToArray(),
-            ShippingResponse.From(order.Shipping),
+            OrderShippingResponse.From(order.Shipping, order.ExternalShippingTitle),
             order.FreightSubtotal,
             order.FreightTaxAmount);
     }

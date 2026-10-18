@@ -295,6 +295,35 @@ public sealed class OrdersMigrationTests
             connectionString, $"SELECT filters ? 'OrderNumber' FROM quotations.export_jobs WHERE id = '{OrdersJobId}'"));
     }
 
+    // Spec de Shopify D-S23: los pedidos que ya existían no tienen clave externa ni título de envío, y el índice
+    // único es parcial para que todos esos nulos no choquen entre sí.
+    [Fact]
+    public async Task AddOrderExternalKeyLeavesExistingOrdersWithoutKeyOrTitle()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await using var context = NewContext(connectionString);
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync(LastMigrationBeforeOwnData, TestContext.Current.CancellationToken);
+        await ExecuteAsync(connectionString, QuotationWithLinesSql);
+        await migrator.MigrateAsync(
+            MigrationId(context, "_AddDefaultFreightChargeMode"), TestContext.Current.CancellationToken);
+
+        await migrator.MigrateAsync(MigrationId(context, "_AddOrderExternalKey"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(0L, await ScalarAsync<long>(
+            connectionString,
+            $"SELECT count(*) FROM quotations.orders WHERE id = '{OrderId}' AND (external_key IS NOT NULL OR external_shipping_title IS NOT NULL)"));
+        Assert.Equal(1L, await ScalarAsync<long>(
+            connectionString, $"SELECT count(*) FROM quotations.orders WHERE id = '{OrderId}'"));
+        var definition = await ScalarAsync<string>(
+            connectionString,
+            "SELECT indexdef FROM pg_indexes WHERE schemaname = 'quotations' AND indexname = 'IX_orders_tenant_external_key'");
+        Assert.Contains("UNIQUE", definition, StringComparison.Ordinal);
+        Assert.Contains("(tenant_id, source, external_key)", definition, StringComparison.Ordinal);
+        Assert.Contains("WHERE (external_key IS NOT NULL)", definition, StringComparison.Ordinal);
+    }
+
     private static QuotationsDbContext NewContext(string connectionString) =>
         new(new DbContextOptionsBuilder<QuotationsDbContext>()
             .UseNpgsql(

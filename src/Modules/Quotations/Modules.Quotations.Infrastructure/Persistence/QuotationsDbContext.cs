@@ -482,6 +482,12 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.Property(value => value.ExternalReference)
             .HasColumnName("external_reference")
             .HasMaxLength(Order.ExternalReferenceMaxLength);
+        order.Property(value => value.ExternalKey)
+            .HasColumnName("external_key")
+            .HasMaxLength(Order.ExternalKeyMaxLength);
+        order.Property(value => value.ExternalShippingTitle)
+            .HasColumnName("external_shipping_title")
+            .HasMaxLength(Order.ExternalShippingTitleMaxLength);
         order.Property(value => value.ClientId).HasColumnName("client_id");
         order.Property(value => value.AdvisorId)
             .HasColumnName("advisor_id")
@@ -587,6 +593,12 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.HasIndex(value => new { value.TenantId, value.ClientId }).HasDatabaseName("IX_orders_tenant_client");
         order.HasIndex(value => new { value.TenantId, value.AdvisorId }).HasDatabaseName("IX_orders_tenant_advisor");
         order.HasIndex(value => new { value.TenantId, value.Source }).HasDatabaseName("IX_orders_tenant_source");
+        // Spec de Shopify D-S23: la idempotencia del camino externo. Parcial, para que los pedidos sin clave
+        // (cotización y manuales) no compitan entre sí; QuotationsUnitOfWork lo traduce por nombre.
+        order.HasIndex(value => new { value.TenantId, value.Source, value.ExternalKey })
+            .IsUnique()
+            .HasFilter("external_key IS NOT NULL")
+            .HasDatabaseName("IX_orders_tenant_external_key");
         // La unicidad que promete el numero de pedido. Nombrado a proposito, misma leccion de
         // SDD-CT-06 que IX_quotations_tenant_number.
         order.HasIndex(value => new { value.TenantId, value.OrderNumber })

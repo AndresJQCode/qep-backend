@@ -261,6 +261,10 @@ internal sealed class NoOpQuotationsUnitOfWork : IQuotationsUnitOfWork
 
     public Task<IQuotationsTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
         Task.FromResult<IQuotationsTransaction>(new NoOpQuotationsTransaction());
+
+    public void DiscardPendingChanges()
+    {
+    }
 }
 
 /// <summary>Sin base no hay nada que confirmar ni deshacer: las pruebas unitarias que la piden
@@ -764,6 +768,10 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
     public Task<Order?> FindByIdAsync(
         Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
         Task.FromResult(rows.FirstOrDefault(row => row.Id == orderId));
+
+    public Task<Order?> FindByExternalKeyAsync(
+        Guid tenantId, OrderSource source, string externalKey, CancellationToken cancellationToken) =>
+        Task.FromResult(rows.FirstOrDefault(row => row.Source == source && row.ExternalKey == externalKey));
 
     public Task<IReadOnlyDictionary<Guid, Order>> FindByQuotationIdsAsync(
         Guid tenantId,

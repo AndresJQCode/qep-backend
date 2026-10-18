@@ -27,6 +27,12 @@ public sealed class Order
 
     public const int ExternalReferenceMaxLength = 64;
 
+    /// <summary>La clave de idempotencia del pedido externo (D-S23): id de la tienda más id del pedido.</summary>
+    public const int ExternalKeyMaxLength = 128;
+
+    /// <summary>El nombre del método de envío en la tienda; informativo, así que se trunca sin error.</summary>
+    public const int ExternalShippingTitleMaxLength = 120;
+
     public const int PaymentMethodMaxLength = Quotation.PaymentMethodMaxLength;
 
     private readonly List<OrderPaymentProof> _paymentProofs = [];
@@ -108,6 +114,14 @@ public sealed class Order
     /// <summary>El número del pedido en el sistema de origen (<c>#1001</c> en Shopify). Null en los
     /// pedidos de cotización y manuales.</summary>
     public string? ExternalReference { get; private set; }
+
+    /// <summary>Spec de Shopify D-S23: la clave que hace idempotente el camino externo (por ejemplo, id de la
+    /// tienda más id del pedido). Única por <c>(tenant, source)</c> entre las no nulas; null en los pedidos de
+    /// cotización y manuales.</summary>
+    public string? ExternalKey { get; private set; }
+
+    /// <summary>Cómo llamó la tienda al envío (<c>Envío estándar</c>). Sólo se muestra: no decide nada.</summary>
+    public string? ExternalShippingTitle { get; private set; }
 
     public Guid ClientId { get; private set; }
 
@@ -373,7 +387,10 @@ public sealed class Order
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
         DateTimeOffset occurredAt,
         OrderSource source,
-        string externalReference)
+        string externalReference,
+        ShippingDetails shipping,
+        string? externalKey,
+        string? externalShippingTitle)
     {
         if (source is OrderSource.Quotation or OrderSource.Manual)
         {
@@ -390,11 +407,15 @@ public sealed class Order
         }
 
         ArgumentNullException.ThrowIfNull(billingAccount);
-        // Un pedido externo nace sin envío (spec 2026-10-17 flete §5.4): el envío del borrador externo lo
-        // agrega el spec de Shopify.
-        return Build(
+        var key = NormalizeExternalKey(externalKey);
+        // El envío lo trae la plataforma (flete §10): pasa por las mismas reglas de coherencia que el manual, pero
+        // no se valida contra la transportadora ni contra los modos que el tenant tenga habilitados (D-F18).
+        var order = Build(
             id, tenantId, orderNumber, source, externalReference, header, parties, billingAccount,
-            ShippingDetails.None, lines, paymentStatus, notes, createdBy, proofs, occurredAt);
+            shipping, lines, paymentStatus, notes, createdBy, proofs, occurredAt);
+        order.ExternalKey = key;
+        order.ExternalShippingTitle = NormalizeExternalShippingTitle(externalShippingTitle);
+        return order;
     }
 
     private static Order Build(
@@ -1043,6 +1064,35 @@ public sealed class Order
             ? throw new QuotationsDomainException(
                 "order.order.external_reference_too_long",
                 $"The external reference cannot exceed {ExternalReferenceMaxLength} characters.")
+            : trimmed;
+    }
+
+    private static string? NormalizeExternalKey(string? key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return null;
+        }
+
+        var trimmed = key.Trim();
+        return trimmed.Length > ExternalKeyMaxLength
+            ? throw new QuotationsDomainException(
+                "order.order.external_key_too_long",
+                $"The external key cannot exceed {ExternalKeyMaxLength} characters.")
+            : trimmed;
+    }
+
+    // Es un dato informativo de la tienda: un título largo no debe tumbar la importación del pedido.
+    private static string? NormalizeExternalShippingTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return null;
+        }
+
+        var trimmed = title.Trim();
+        return trimmed.Length > ExternalShippingTitleMaxLength
+            ? trimmed[..ExternalShippingTitleMaxLength].TrimEnd()
             : trimmed;
     }
 

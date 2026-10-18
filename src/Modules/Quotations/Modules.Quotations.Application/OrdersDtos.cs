@@ -66,7 +66,10 @@ public sealed record OrderDto(
     /// <c>TaxAmount</c> siguen siendo sólo productos (spec 2026-10-17 §5.3).</summary>
     decimal FreightSubtotal,
     /// <summary>IVA del envío que suma a <c>Total</c>; 0 con excedente de IVA o fuera de COP.</summary>
-    decimal FreightTaxAmount);
+    decimal FreightTaxAmount,
+    /// <summary>Cómo llamó la tienda al envío (spec de Shopify §6.2.5); null fuera del camino externo. En la
+    /// respuesta viaja dentro de <c>shipping</c> (<see cref="OrderShippingResponse"/>).</summary>
+    string? ExternalShippingTitle);
 
 /// <summary>El detalle: el pedido, el número de la cotización de origen (si la hay) y su historial.
 /// Ya no viaja la cotización entera (spec 2026-10-15 §6.2).</summary>
@@ -140,6 +143,35 @@ public sealed record SaveOrderEditsRequest(
     /// frontend viejo no lo borra. No cambia recoger o enviar, que el pedido no edita.</summary>
     ShippingRequest? Shipping = null);
 
+/// <summary>
+/// El envío del detalle del pedido: los campos de <see cref="ShippingResponse"/> más
+/// <see cref="ExternalShippingTitle"/>, el nombre con el que la tienda llamó al envío cuando QEP no reconoció la
+/// transportadora (spec de Shopify §6.2.5). BFF: viaja dentro de <c>shipping</c> para que la pantalla ofrezca
+/// «Reconocer este nombre» al lado de «Elegir transportadora» sin leer el espejo de Shopify. Es un tipo aparte y
+/// no un campo nuevo de <see cref="ShippingResponse"/> porque las rutas de cotizaciones no cambian, y la fila de
+/// la lista no lo necesita.
+/// </summary>
+public sealed record OrderShippingResponse(
+    bool IsStorePickup,
+    ShippingCarrierResponse? Carrier,
+    string? ChargeMode,
+    decimal FreightAmount,
+    int FreightTaxPercentage,
+    decimal FreightSubtotal,
+    decimal FreightTaxAmount,
+    bool CashOnDelivery,
+    string? ExternalShippingTitle)
+{
+    public static OrderShippingResponse From(ShippingDto shipping, string? externalShippingTitle)
+    {
+        ArgumentNullException.ThrowIfNull(shipping);
+        var common = ShippingResponse.From(shipping);
+        return new(
+            common.IsStorePickup, common.Carrier, common.ChargeMode, common.FreightAmount, common.FreightTaxPercentage,
+            common.FreightSubtotal, common.FreightTaxAmount, common.CashOnDelivery, externalShippingTitle);
+    }
+}
+
 public sealed record OrderPaymentProofResponse(
     Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt, DateOnly? PaidOn);
 
@@ -190,8 +222,9 @@ public sealed record OrderResponse(
     DateTimeOffset UpdatedAt,
     long Version,
     IReadOnlyCollection<OrderPaymentProofResponse> PaymentProofs,
-    /// <summary>La entrega por envío. El motivo BFF de su forma está en <see cref="ShippingDto"/>.</summary>
-    ShippingResponse Shipping,
+    /// <summary>La entrega por envío. El motivo BFF de su forma está en <see cref="ShippingDto"/>; la del pedido
+    /// suma <c>externalShippingTitle</c> (<see cref="OrderShippingResponse"/>).</summary>
+    OrderShippingResponse Shipping,
     /// <summary>Envío sin IVA que suma a <c>Total</c>. Un total que no cierra se explica con un campo:
     /// <c>Subtotal + TaxAmount + FreightSubtotal + FreightTaxAmount = Total</c> (spec 2026-10-17 §5.3).</summary>
     decimal FreightSubtotal,

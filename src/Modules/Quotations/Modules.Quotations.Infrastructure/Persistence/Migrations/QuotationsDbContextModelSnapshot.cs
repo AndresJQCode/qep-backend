@@ -238,10 +238,20 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(14,2)")
                         .HasColumnName("discount_amount");
 
+                    b.Property<string>("ExternalKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("external_key");
+
                     b.Property<string>("ExternalReference")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)")
                         .HasColumnName("external_reference");
+
+                    b.Property<string>("ExternalShippingTitle")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("external_shipping_title");
 
                     b.Property<decimal>("FreightAmount")
                         .ValueGeneratedOnAdd()
@@ -413,6 +423,11 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TenantId", "ConvertedAt", "OrderNumber")
                         .HasDatabaseName("IX_orders_tenant_converted_at_number");
+
+                    b.HasIndex("TenantId", "Source", "ExternalKey")
+                        .IsUnique()
+                        .HasDatabaseName("IX_orders_tenant_external_key")
+                        .HasFilter("external_key IS NOT NULL");
 
                     b.ToTable("orders", "quotations", t =>
                         {

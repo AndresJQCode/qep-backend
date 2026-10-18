@@ -146,7 +146,8 @@ public sealed class QuotationsDbContextMappingTests
         Assert.Equal("PK_orders", order.FindPrimaryKey()!.GetName());
         Assert.Equal(
             ["IX_orders_quotation", "IX_orders_tenant", "IX_orders_tenant_advisor", "IX_orders_tenant_client",
-             "IX_orders_tenant_converted_at_number", "IX_orders_tenant_number", "IX_orders_tenant_source"],
+             "IX_orders_tenant_converted_at_number", "IX_orders_tenant_external_key", "IX_orders_tenant_number",
+             "IX_orders_tenant_source"],
             order.GetIndexes().Select(index => index.GetDatabaseName()!).Order(StringComparer.Ordinal));
         Assert.Equal(
             "FK_orders_quotations_quotation_id",

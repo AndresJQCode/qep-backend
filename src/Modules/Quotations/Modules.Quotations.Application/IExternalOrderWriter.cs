@@ -8,6 +8,12 @@ namespace Modules.Quotations.Application;
 public sealed record ExternalOrderLine(
     Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage);
 
+/// <summary>
+/// El pedido que trae una integración. <see cref="Shipping"/> es el envío que cobró la plataforma (flete §10): no
+/// se valida contra el recaudo actual de la transportadora ni contra los modos de quién paga habilitados en el
+/// tenant (D-F18), porque ya se cobró allá. <see cref="ExternalKey"/> hace idempotente la creación (D-S23): con
+/// la misma clave, la segunda llamada devuelve el pedido que ya existe.
+/// </summary>
 public sealed record ExternalOrderDraft(
     Guid TenantId,
     OrderSource Source,
@@ -20,9 +26,23 @@ public sealed record ExternalOrderDraft(
     QuotationBillingAccountRequest BillingAccount,
     IReadOnlyList<ExternalOrderLine> Lines,
     OrderPaymentStatus PaymentStatus,
-    DateTimeOffset OccurredAt);
+    DateTimeOffset OccurredAt,
+    ShippingDetails? Shipping = null,
+    string? ExternalKey = null,
+    string? ExternalShippingTitle = null);
 
-public sealed record ExternalOrderResult(Guid OrderId, string OrderNumber, decimal Total, decimal NetTotal, string Currency);
+/// <summary><see cref="AlreadyExisted"/> dice que la clave externa ya tenía pedido y no se creó otro: el
+/// consumidor marca su espejo igual, sin volver a publicar nada.</summary>
+public sealed record ExternalOrderResult(
+    Guid OrderId, string OrderNumber, decimal Total, decimal NetTotal, string Currency, bool AlreadyExisted = false);
+
+/// <summary>Los códigos propios del camino externo que cruzan capas.</summary>
+public static class ExternalOrderErrors
+{
+    /// <summary>Lo lanza <c>QuotationsUnitOfWork</c> al chocar con <c>IX_orders_tenant_external_key</c>. No llega a
+    /// HTTP: <see cref="ExternalOrderService"/> lo resuelve devolviendo el pedido que ya existe.</summary>
+    public const string ExternalKeyTaken = "order.order.external_key_taken";
+}
 
 /// <summary>
 /// Spec 2026-10-15 §5.4 y spec de Shopify §6.2: el único camino para crear un pedido sin sesión HTTP.
@@ -60,6 +80,16 @@ public sealed class ExternalOrderService(
     {
         ArgumentNullException.ThrowIfNull(draft);
 
+        // D-S23: con clave, un pedido que ya entró se devuelve tal cual, sin escribir nada. Va antes que todo lo
+        // demás: si el cliente quedó inactivo después, el reintento igual encuentra su pedido.
+        var externalKey = string.IsNullOrWhiteSpace(draft.ExternalKey) ? null : draft.ExternalKey.Trim();
+        if (externalKey is not null
+            && await orderRepository.FindByExternalKeyAsync(
+                draft.TenantId, draft.Source, externalKey, cancellationToken) is { } existing)
+        {
+            return Existing(existing);
+        }
+
         var customer = await customerLookup.FindAsync(draft.TenantId, draft.ClientId, cancellationToken);
         OrderCustomerEligibility.Ensure(customer, draft.TenantId, draft.ClientId, allowIncomplete: true);
         var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
@@ -89,24 +119,51 @@ public sealed class ExternalOrderService(
         var year = calendar.Today.Year;
         var format = await numberingFormats.GetAsync(draft.TenantId, DocumentNumberType.Order, cancellationToken);
         var counterYear = format.IncludeYear ? year : 0;
-        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
-        var sequence = await numberGenerator.NextAsync(draft.TenantId, counterYear, cancellationToken);
-        var orderNumber = DocumentNumberFormatter.Format(format, year, sequence);
-        var order = Order.CreateExternal(
-            OrderId.New(), draft.TenantId, orderNumber, header, draft.Parties.ToDomain(), billingAccount, lines,
-            draft.PaymentStatus, draft.Notes, advisor, [], draft.OccurredAt, draft.Source, draft.ExternalReference);
+        var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var sequence = await numberGenerator.NextAsync(draft.TenantId, counterYear, cancellationToken);
+            var orderNumber = DocumentNumberFormatter.Format(format, year, sequence);
+            var order = Order.CreateExternal(
+                OrderId.New(), draft.TenantId, orderNumber, header, draft.Parties.ToDomain(), billingAccount, lines,
+                draft.PaymentStatus, draft.Notes, advisor, [], draft.OccurredAt, draft.Source, draft.ExternalReference,
+                draft.Shipping ?? ShippingDetails.None, externalKey, draft.ExternalShippingTitle);
 
-        orderRepository.Add(order);
-        orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
-            OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Created, memberId: null,
-            OrderChangeSummary.CreatedFromExternal(draft.Source, draft.ExternalReference), draft.OccurredAt));
-        auditPublisher.PublishByIntegration(
-            draft.TenantId, "quotation.order.created", order.Id.ToString(), "success", draft.OccurredAt);
-        lifecycleEvents.PublishOrderCreated(order, draft.OccurredAt);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return new ExternalOrderResult(order.Id.Value, order.OrderNumber, order.Total, order.NetTotal, order.Currency);
+            orderRepository.Add(order);
+            orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Created, memberId: null,
+                OrderChangeSummary.CreatedFromExternal(draft.Source, draft.ExternalReference), draft.OccurredAt));
+            auditPublisher.PublishByIntegration(
+                draft.TenantId, "quotation.order.created", order.Id.ToString(), "success", draft.OccurredAt);
+            lifecycleEvents.PublishOrderCreated(order, draft.OccurredAt);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return new ExternalOrderResult(order.Id.Value, order.OrderNumber, order.Total, order.NetTotal, order.Currency);
+        }
+        catch (QuotationsDomainException error)
+            when (externalKey is not null && error.Code == ExternalOrderErrors.ExternalKeyTaken)
+        {
+            // Otra llamada con la misma clave guardó primero y el índice cerró la carrera. Se sigue abajo: la
+            // transacción se deshace en el finally (el consecutivo vuelve atrás, sin huecos) antes de leer.
+        }
+        finally
+        {
+            await transaction.DisposeAsync();
+        }
+
+        // Lo que quedó pendiente del intento fallido (el pedido, su historial, el evento y la auditoría) no debe
+        // volver a intentarse en el próximo guardado de este scope.
+        unitOfWork.DiscardPendingChanges();
+        // Sólo se llega acá por el catch, que exige la clave.
+        var winner = await orderRepository.FindByExternalKeyAsync(
+                draft.TenantId, draft.Source, externalKey!, cancellationToken)
+            ?? throw new InvalidOperationException(
+                "The external key was taken, but no committed order carries it.");
+        return Existing(winner);
     }
+
+    private static ExternalOrderResult Existing(Order order) =>
+        new(order.Id.Value, order.OrderNumber, order.Total, order.NetTotal, order.Currency, AlreadyExisted: true);
 
     public async Task SyncPaymentStatusAsync(
         Guid tenantId, Guid orderId, OrderPaymentStatus status, CancellationToken cancellationToken)

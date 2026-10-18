@@ -66,6 +66,13 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                 order => order.TenantId == tenantId && order.Id == orderId,
                 cancellationToken);
 
+    public Task<Order?> FindByExternalKeyAsync(
+        Guid tenantId, OrderSource source, string externalKey, CancellationToken cancellationToken) =>
+        WithAggregate(dbContext.Orders)
+            .SingleOrDefaultAsync(
+                order => order.TenantId == tenantId && order.Source == source && order.ExternalKey == externalKey,
+                cancellationToken);
+
     public async Task<(IReadOnlyList<Order> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,

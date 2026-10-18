@@ -142,6 +142,137 @@ public sealed class ExternalOrderServiceTests
         Assert.Single(await OutboxMessagesAsync(factory, "quotations.order.cancelled.v1"));
     }
 
+    // Spec de Shopify §6.2 y flete §10: el envío que cobró la tienda entra con el pedido y suma al total.
+    [Fact]
+    public async Task CreateAsyncWithShippingPersistsShippingAndTotals()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var shipping = new ShippingDetails(null, null, FreightChargeMode.Charged, 15_000m, 19, false);
+
+        var result = await CreateAsync(factory, Draft(setup, "#2001", shipping: shipping));
+
+        Assert.False(result.AlreadyExisted);
+        Assert.Equal(23_800m + 15_000m, result.Total);
+        var detail = await setup.Client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(setup.TenantId)}/{result.OrderId}", TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        Assert.Equal(
+            ("Charged", 15_000m, 19, false),
+            (detail.Order.Shipping.ChargeMode, detail.Order.Shipping.FreightAmount,
+                detail.Order.Shipping.FreightTaxPercentage, detail.Order.Shipping.CashOnDelivery));
+        Assert.Equal((12_605.04m, 2_394.96m), (detail.Order.FreightSubtotal, detail.Order.FreightTaxAmount));
+        Assert.Equal(38_800m, detail.Order.Total);
+    }
+
+    // D-S23: el webhook y la conciliación, o un reintento tras una caída del worker, mandan el mismo pedido dos
+    // veces. La segunda llamada devuelve el que ya existe y no escribe nada: ni otro evento ni otro historial.
+    [Fact]
+    public async Task CreateAsyncWithSameExternalKeyReturnsExistingOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+
+        var first = await CreateAsync(factory, Draft(setup, "#2002", externalKey: "shop-1:order-2002"));
+        var second = await CreateAsync(factory, Draft(setup, "#2002", externalKey: " shop-1:order-2002 "));
+
+        Assert.False(first.AlreadyExisted);
+        Assert.True(second.AlreadyExisted);
+        Assert.Equal(
+            (first.OrderId, first.OrderNumber, first.Total, first.NetTotal, first.Currency),
+            (second.OrderId, second.OrderNumber, second.Total, second.NetTotal, second.Currency));
+        Assert.Single(await OutboxMessagesAsync(factory, "quotations.order.created.v1"));
+        var detail = await setup.Client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(setup.TenantId)}/{first.OrderId}", TestContext.Current.CancellationToken);
+        Assert.Single(detail!.History);
+        Assert.Equal(1, await CountShopifyOrdersAsync(setup));
+    }
+
+    // La carrera que la búsqueda previa no cierra: las dos llamadas buscan antes de que alguna guarde. La cierra
+    // el índice IX_orders_tenant_external_key, y la que pierde devuelve el pedido de la que ganó.
+    [Fact]
+    public async Task CreateAsyncConcurrentSameExternalKeyCreatesOneOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var draft = Draft(setup, "#2003", externalKey: "shop-1:order-2003");
+
+        var results = await Task.WhenAll(CreateAsync(factory, draft), CreateAsync(factory, draft));
+
+        Assert.Equal(results[0].OrderId, results[1].OrderId);
+        Assert.Single(results, result => result.AlreadyExisted);
+        Assert.Single(await OutboxMessagesAsync(factory, "quotations.order.created.v1"));
+        Assert.Equal(1, await CountShopifyOrdersAsync(setup));
+    }
+
+    // §6.2.5: la pantalla ofrece «Reconocer este nombre» sin leer el espejo de Shopify.
+    [Fact]
+    public async Task GetOrderExposesExternalShippingTitle()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+
+        var withTitle = await CreateAsync(factory, Draft(setup, "#2004", externalShippingTitle: "Envío exprés"));
+        var withoutTitle = await CreateAsync(factory, Draft(setup, "#2005"));
+
+        var detail = await setup.Client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(setup.TenantId)}/{withTitle.OrderId}", TestContext.Current.CancellationToken);
+        Assert.Equal("Envío exprés", detail!.Order.Shipping.ExternalShippingTitle);
+        var plain = await setup.Client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(setup.TenantId)}/{withoutTitle.OrderId}", TestContext.Current.CancellationToken);
+        Assert.Null(plain!.Order.Shipping.ExternalShippingTitle);
+    }
+
+    private sealed record ExternalSetup(
+        Guid TenantId, HttpClient Client, Guid ClientId, Guid ProductId, Guid AdvisorId,
+        QuotationBillingAccountRequest Billing);
+
+    private static async Task<ExternalSetup> ArrangeAsync(QepApiFactory factory)
+    {
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var advisorId = await OwnerMembershipIdAsync(factory, tenantId, ownerUserId);
+        return new ExternalSetup(
+            tenantId, client, clientId, productId, advisorId,
+            new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency));
+    }
+
+    private static ExternalOrderDraft Draft(
+        ExternalSetup setup,
+        string reference,
+        ShippingDetails? shipping = null,
+        string? externalKey = null,
+        string? externalShippingTitle = null) =>
+        new(
+            setup.TenantId, OrderSource.Shopify, reference, setup.ClientId, setup.AdvisorId, null, null, null,
+            setup.Billing, [new ExternalOrderLine(setup.ProductId, 2m, 11_900m, 0m, 19)],
+            OrderPaymentStatus.PaymentPending, DateTimeOffset.UtcNow, shipping, externalKey, externalShippingTitle);
+
+    // Un scope por llamada, como el worker: cada una con su DbContext.
+    private static async Task<ExternalOrderResult> CreateAsync(QepApiFactory factory, ExternalOrderDraft draft)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
+        return await writer.CreateAsync(draft, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<int> CountShopifyOrdersAsync(ExternalSetup setup)
+    {
+        var page = await setup.Client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(setup.TenantId)}?source=Shopify", TestContext.Current.CancellationToken);
+        return page!.Total;
+    }
+
     // La membresía activa del owner, por el puerto de Tenancy: el roster HTTP exige un permiso que
     // ManagerPermissions no concede, y lo que se prueba acá no es ese endpoint.
     private static async Task<Guid> OwnerMembershipIdAsync(QepApiFactory factory, Guid tenantId, Guid ownerUserId)

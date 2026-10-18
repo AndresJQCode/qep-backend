@@ -45,6 +45,12 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
 
     private const string MinimumTotalsKey = "PK_tenant_minimum_totals";
 
+    // La clave de idempotencia del pedido externo (spec de Shopify D-S23). ExternalOrderService busca antes de
+    // crear, pero dos llamadas simultáneas con la misma clave (el webhook y la conciliación) pueden buscar las dos
+    // antes de que alguna guarde: este índice cierra la carrera, y el servicio resuelve el código devolviendo el
+    // pedido que ganó. La prueba es ExternalOrderServiceTests.CreateAsyncConcurrentSameExternalKeyCreatesOneOrder.
+    private const string OrderExternalKeyIndex = "IX_orders_tenant_external_key";
+
     // El nombre de una transportadora, o cualquiera de sus alias, ya es de otra del mismo tenant
     // (spec 2026-10-17). Es la regla de negocio, no una red: la comprobación previa en el handler
     // no cierra la carrera entre dos altas simultáneas, este índice sí.
@@ -64,6 +70,8 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
         // Disponer sin commit hace rollback, y el rollback es lo que suelta el lock del contador.
         public ValueTask DisposeAsync() => transaction.DisposeAsync();
     }
+
+    public void DiscardPendingChanges() => dbContext.ChangeTracker.Clear();
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
@@ -119,6 +127,18 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
             throw new QuotationsDomainException(
                 "order.order.number_taken",
                 "Another order in this tenant already uses that number.");
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(
+                      postgres.ConstraintName,
+                      OrderExternalKeyIndex,
+                      StringComparison.Ordinal))
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.ExternalKeyTaken,
+                "Another order from this source already uses that external key.");
         }
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException postgres &&

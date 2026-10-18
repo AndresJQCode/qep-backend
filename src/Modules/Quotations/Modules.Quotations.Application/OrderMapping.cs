@@ -53,7 +53,8 @@ internal static class OrderMapping
         order.PaymentProofs.Select(ToDto).ToArray(),
         order.ShippingDtoOf(),
         order.FreightSubtotal,
-        order.FreightTaxAmount);
+        order.FreightTaxAmount,
+        order.ExternalShippingTitle);
 
     /// <summary>La entrega por envío con forma fija, también en recogida: gemelo de
     /// <see cref="QuotationMapping.ShippingDtoOf"/>.</summary>
