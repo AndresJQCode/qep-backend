@@ -177,5 +177,12 @@ public interface ICustomerRepository
 
     Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Spec de Shopify 2026-10-15 §6.2.1 paso 2 (H8): el cliente del tenant con ese correo, sin distinguir mayúsculas
+    /// (<c>lower(email) = lower(@email)</c>, sobre <c>IX_customers_tenant_email</c>). El correo no es único: si hay
+    /// varios, el más viejo y luego el id menor, la misma regla que el teléfono (D-M7).
+    /// </summary>
+    Task<CustomerId?> FindIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken);
+
     void Add(Customer customer);
 }

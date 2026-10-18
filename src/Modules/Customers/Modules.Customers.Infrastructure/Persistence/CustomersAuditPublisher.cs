@@ -17,12 +17,30 @@ internal sealed class CustomersAuditPublisher(CustomersDbContext dbContext)
         string action,
         string resourceId,
         string outcome,
+        DateTimeOffset occurredAt) =>
+        Add(tenantId, actorId, "Human", action, resourceId, outcome, occurredAt);
+
+    public void PublishByIntegration(
+        Guid tenantId,
+        string action,
+        string resourceId,
+        string outcome,
+        DateTimeOffset occurredAt) =>
+        Add(tenantId, Guid.Empty, "Integration", action, resourceId, outcome, occurredAt);
+
+    private void Add(
+        Guid tenantId,
+        Guid actorId,
+        string actorType,
+        string action,
+        string resourceId,
+        string outcome,
         DateTimeOffset occurredAt)
     {
         var payload = JsonSerializer.Serialize(new AuditEventPayload(
             tenantId,
             actorId,
-            "Human",
+            actorType,
             action,
             "customer",
             resourceId,

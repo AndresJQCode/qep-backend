@@ -178,7 +178,7 @@ public sealed record CustomerContactInfo
     // hace CustomerWriteRules con EmailAddress(); esta es la red del dominio, que corre igual si
     // alguien construye el agregado sin pasar por el validador. Copiado a proposito de
     // CompanyContactInfo: son dos modulos, y compartirlo los acoplaria por una utilidad.
-    private static bool IsPlausibleEmail(string value)
+    internal static bool IsPlausibleEmail(string value)
     {
         if (value.Any(char.IsWhiteSpace))
         {

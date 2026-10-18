@@ -4,6 +4,8 @@ namespace Modules.Customers.Application;
 /// el origen va en la acción. Las acciones viejas siguen como literales en sus handlers.</summary>
 public static class CustomerAuditActions
 {
+    /// <summary>La misma acción que el alta por HTTP; el origen lo dice el tipo de actor (<c>Integration</c>).</summary>
+    public const string Created = "customers.customer.created";
     public const string CreatedFromMessaging = "customers.customer.created_from_messaging";
     public const string Completed = "customers.customer.completed";
 

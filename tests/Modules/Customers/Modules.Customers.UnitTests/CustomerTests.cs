@@ -921,4 +921,49 @@ public sealed class CustomerTests
         Assert.False(without.RecomputePhoneE164(new StubPhoneNormalizer()));
         Assert.Equal(1, without.Version);
     }
+
+    // Spec de Shopify 2026-10-15 §6.2.1 paso 4: el comprador sin documento nace incompleto. El nombre por defecto
+    // («Cliente de Shopify») lo pone quien llama; el dominio sólo exige que llegue uno.
+    [Fact]
+    public void CreateIncompleteFromExternalSaleNoNameUsesShopifyDefault()
+    {
+        var blank = Assert.Throws<CustomersDomainException>(() => Customer.CreateIncompleteFromExternalSale(
+            CustomerId.New(), TenantId, "   ", null, null, null, Now, new StubPhoneNormalizer()));
+        Assert.Equal("customers.customer.name_required", blank.Code);
+
+        var customer = Customer.CreateIncompleteFromExternalSale(
+            CustomerId.New(), TenantId, " Cliente de Shopify ", " 310 935 2187 ", "  Compras@Verde.CO ", "co", Now,
+            new StubPhoneNormalizer());
+
+        Assert.Equal(CustomerCompleteness.Incomplete, customer.Completeness);
+        Assert.Equal("Cliente de Shopify", customer.Name);
+        Assert.Null(customer.Cuc);
+        Assert.Null(customer.IdentificationType);
+        Assert.Null(customer.IdentificationNumber);
+        Assert.Null(customer.Address);
+        Assert.Null(customer.ClassificationId);
+        Assert.Null(customer.WhatsAppUserId);
+        Assert.Empty(customer.Addresses);
+        Assert.Equal("310 935 2187", customer.Phone);
+        Assert.Equal("+573109352187", customer.PhoneE164);
+        Assert.Equal("compras@verde.co", customer.Email);
+        Assert.Equal("CO", customer.Country);
+        Assert.True(customer.IsActive);
+        Assert.Equal(1, customer.Version);
+    }
+
+    // Un dato que no cabe o no sirve no frena el pedido (decisión del owner: el pedido de Shopify entra igual); se
+    // descarta y la ficha queda para completarla a mano.
+    [Fact]
+    public void CreateIncompleteFromExternalSaleDropsUnusableContactData()
+    {
+        var customer = Customer.CreateIncompleteFromExternalSale(
+            CustomerId.New(), TenantId, "Laura", new string('3', CustomerContactInfo.PhoneMaxLength + 1), "no-es-un-correo",
+            "Colombia", Now, new StubPhoneNormalizer());
+
+        Assert.Null(customer.Phone);
+        Assert.Null(customer.PhoneE164);
+        Assert.Null(customer.Email);
+        Assert.Null(customer.Country);
+    }
 }

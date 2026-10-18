@@ -30,6 +30,10 @@ public sealed class CustomerWhatsAppDirectoryRaceTests
         public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt)
         {
         }
+
+        public void PublishByIntegration(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt)
+        {
+        }
     }
 
     private sealed class TakenUnitOfWork : ICustomersUnitOfWork
@@ -86,6 +90,9 @@ public sealed class CustomerWhatsAppDirectoryRaceTests
         public void Add(Customer customer)
         {
         }
+
+        public Task<CustomerId?> FindIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public Task<IReadOnlyList<CustomerWhatsAppRef>> FindWhatsAppRefsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

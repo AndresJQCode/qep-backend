@@ -33,6 +33,11 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     /// expresión— y <c>CustomersUnitOfWork</c> lo traduce por este nombre a 409 <c>customers.tag.name_taken</c>.</summary>
     public const string TagNameIndex = "IX_tags_tenant_name";
 
+    /// <summary>El de <c>(tenant_id, lower(email))</c> que usa <c>CustomerRepository.FindIdByEmailAsync</c> (spec de Shopify
+    /// 2026-10-15 §9). Va en la migración <c>AddCustomerEmailIndex</c> con SQL —EF no modela índices por expresión— y
+    /// no es único: dos clientes pueden compartir correo, así que no hay violación que traducir.</summary>
+    public const string EmailIndex = "IX_customers_tenant_email";
+
     /// <summary>La clave de <c>customer_tags</c>: dos <c>PUT</c> simultáneos que agregan la misma etiqueta chocan acá.</summary>
     public const string CustomerTagPrimaryKey = "PK_customer_tags";
 

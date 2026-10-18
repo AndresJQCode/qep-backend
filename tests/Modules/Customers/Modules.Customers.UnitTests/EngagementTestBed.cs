@@ -44,6 +44,9 @@ internal static class EngagementTestBed
 
         public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
             Events.Add((tenantId, actorId, action, resourceId));
+
+        public void PublishByIntegration(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+            Events.Add((tenantId, Guid.Empty, action, resourceId));
     }
 
     public sealed class CountingUnitOfWork : ICustomersUnitOfWork
@@ -86,6 +89,9 @@ internal static class EngagementTestBed
             Task.FromResult(Items.SingleOrDefault(item => item.TenantId == tenantId && item.Id == customerId));
 
         public void Add(Customer customer) => Items.Add(customer);
+
+        public Task<CustomerId?> FindIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, IReadOnlyCollection<Guid>? cityIds, bool? isComplete, int page, int pageSize, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

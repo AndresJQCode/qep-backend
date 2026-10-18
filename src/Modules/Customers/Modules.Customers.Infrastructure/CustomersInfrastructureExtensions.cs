@@ -53,6 +53,8 @@ public static class CustomersInfrastructureExtensions
         services.AddScoped<ICustomerWhatsAppDirectory, CustomerWhatsAppDirectory>();
         // Spec 2026-10-14 decisión 10: la ficha incompleta que nace de un DM de Instagram.
         services.AddScoped<ICustomerInstagramDirectory, CustomerInstagramDirectory>();
+        // Spec de Shopify 2026-10-15 §6.2.1: altas de compradores desde una integración, sin persona detrás.
+        services.AddScoped<ICustomerProvisioning, CustomerProvisioning>();
         services.AddHostedService<CustomerPhoneBackfillWorker>();
 
         return services;

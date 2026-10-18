@@ -430,6 +430,58 @@ public sealed class Customer
             UpdatedAt = now,
         };
 
+    /// <summary>
+    /// Spec de Shopify 2026-10-15 §6.2.1 paso 4: el comprador de una venta externa que no trajo lo necesario para una
+    /// ficha completa. Nombre, teléfono, correo y país si vienen; sin documento, domicilio, clasificación, CUC ni libreta.
+    /// Lo crea el sistema (<c>CustomerProvisioning</c>), nunca una persona por HTTP. El nombre por defecto lo decide quien
+    /// llama; acá sólo se exige que llegue.
+    ///
+    /// A diferencia del alta completa, un contacto que no sirve se **descarta** en vez de rechazarse: el owner decidió
+    /// que el pedido de Shopify entra aunque el comprador venga a medias, y un correo mal escrito no puede frenarlo. La
+    /// ficha queda incompleta y quien la complete pone los datos buenos.
+    /// </summary>
+    public static Customer CreateIncompleteFromExternalSale(
+        CustomerId id,
+        Guid tenantId,
+        string name,
+        string? phone,
+        string? email,
+        string? country,
+        DateTimeOffset now,
+        IPhoneNumberNormalizer phoneNormalizer)
+    {
+        ArgumentNullException.ThrowIfNull(phoneNormalizer);
+        var normalizedName = NormalizeName(name);
+        var normalizedPhone = string.IsNullOrWhiteSpace(phone) || phone.Trim().Length > CustomerContactInfo.PhoneMaxLength
+            ? null
+            : phone.Trim();
+        var trimmedEmail = email?.Trim();
+        var normalizedEmail = string.IsNullOrEmpty(trimmedEmail) ||
+                              trimmedEmail.Length > CustomerContactInfo.EmailMaxLength ||
+                              !CustomerContactInfo.IsPlausibleEmail(trimmedEmail)
+            ? null
+            : trimmedEmail.ToLowerInvariant();
+        var trimmedCountry = country?.Trim();
+        var normalizedCountry = trimmedCountry is { Length: CustomerContactInfo.CountryLength } && trimmedCountry.All(char.IsAsciiLetter)
+            ? trimmedCountry.ToUpperInvariant()
+            : null;
+        return new Customer
+        {
+            Id = id,
+            TenantId = tenantId,
+            Name = normalizedName,
+            Phone = normalizedPhone,
+            Email = normalizedEmail,
+            Country = normalizedCountry,
+            PhoneE164 = normalizedPhone is null ? null : phoneNormalizer.ToE164(normalizedPhone, normalizedCountry ?? UnknownRegion),
+            Completeness = CustomerCompleteness.Incomplete,
+            IsActive = true,
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+    }
+
     public static string NormalizeInstagramUserId(string value)
     {
         var trimmed = value?.Trim();

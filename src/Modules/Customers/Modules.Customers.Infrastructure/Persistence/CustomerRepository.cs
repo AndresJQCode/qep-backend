@@ -389,6 +389,29 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
 
     public void Add(Customer customer) => dbContext.Customers.Add(customer);
 
+    // lower() de los dos lados y en SQL: la expresión exacta de IX_customers_tenant_email. Bajarlo en .NET con
+    // ToLowerInvariant podría discrepar de la base con letras como «Ó» y además deja de usar el índice. Mismo criterio
+    // que ResolutionReasonRepository. Sólo el id, así que no aplica la regla de listar todas las columnas del FromSql.
+    public async Task<CustomerId?> FindIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(email);
+        var trimmed = email.Trim();
+        if (trimmed.Length == 0)
+        {
+            return null;
+        }
+
+        var ids = await dbContext.Database
+            .SqlQuery<Guid>($"""
+                SELECT id AS "Value" FROM customers.customers
+                WHERE tenant_id = {tenantId} AND lower(email) = lower({trimmed})
+                ORDER BY created_at, id
+                LIMIT 1
+                """)
+            .ToListAsync(cancellationToken);
+        return ids.Count == 0 ? null : new CustomerId(ids[0]);
+    }
+
     public Task<Customer?> FindByWhatsAppUserIdAsync(Guid tenantId, string whatsAppUserId, CancellationToken cancellationToken) =>
         dbContext.Customers
             .AsNoTracking()
