@@ -231,6 +231,9 @@ No existe fallback local. La validación de arranque exige `AccessKeyId`,
 Las pruebas automatizadas sustituyen `IObjectStorage` por un test double en
 memoria; ese adapter no forma parte de la aplicación.
 
+Shopify (`Shopify:App:ClientId` y `Shopify:App:ClientSecret`, la app de la integración de pedidos): los comandos y
+la verificación están en [§ Integración con Shopify](#integración-con-shopify).
+
 ### `QCODE_PDF_API_KEY` — el MCP de `qcode-pdf`
 
 **La aplicación no lee esta variable.** No es un secreto de usuario como los de arriba: es la
@@ -641,9 +644,9 @@ Los cuerpos van a archivo y se mandan con `-f`: PowerShell rompe las comillas al
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
 fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
-`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging` y `pipeline`; `quotations` exige
-`catalog`, `customers` y `companies`, `orders` exige `quotations` y `pos` exige `catalog` y
-`companies`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas; último de la lista) exige `customers`, no viene con el signup y se prende igual. Sin `messaging`, su triage queda vacío; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline` y `shopify`; `quotations` exige
+`catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
+`companies`, y `shopify` exige `orders`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas; último de la lista) exige `customers`, no viene con el signup y se prende igual. Sin `messaging`, su triage queda vacío; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
@@ -2539,6 +2542,113 @@ de un tenant sin `pipeline` se marca procesado sin efecto: prender el módulo de
 después el frontend del embudo —kanban, panel del chat con triage, ajustes y la sección de negocios en la
 ficha del cliente de la conversación—. Los permisos nuevos exigen reiniciar la API y recargar la sesión.
 Prender `pipeline` al tenant desde la consola de operador; para el triage también hace falta `messaging`.
+
+### Integración con Shopify
+
+Los pedidos de la tienda Shopify del tenant entran solos como pedidos de QEP (spec
+`2026-10-15-integracion-shopify-pedidos-design.md`), con `source = Shopify`, sin cotización y con su cliente, su envío
+y su estado de pago. Módulo `shopify` (depende de `orders`), esquema `shopify` (`stores`, `orders`, el espejo, y
+`webhook_deliveries`), y del lado de Integrations el proveedor `shopify` con onboarding `ShopifyOAuth` y la tabla
+`integrations.shopify_installs`. Sin permisos nuevos: configurar la tienda es `integrations.connection.read|manage`; la
+bandeja y «Sincronizar ahora», `quotations.order.read|manage`. Todo `/shopify/*` revalida el módulo y responde 403
+`tenancy.module_not_enabled` si está apagado.
+
+**Módulo por defecto.** `shopify` está en `DefaultForNewTenants`: un tenant del signup nace con él, para que quien llega
+desde la instalación en Shopify y registra una cuenta nueva enlace la tienda sin esperar a nadie. Los tenants que ya
+existían **no** lo reciben (sin backfill, D-S20): se prende desde la consola de operador, como `pos`.
+
+**Conectar.** Una app pública **no embebida** para toda la plataforma, con dos inicios y un solo final:
+
+1. **Inicio A, desde QEP:** `POST /tenants/{tenantId}/integrations/shopify/install/start { shop, redirectUri }` →
+   `{ authorizeUrl }`. **Inicio B, desde Shopify:** Shopify abre la App URL (`https://qep.qcode.co/shopify/install`)
+   con `shop`, `hmac` y `timestamp`, y el SPA llama al inicio anónimo `POST /integrations/shopify/install/start`, que
+   verifica el HMAC de la query con el client secret.
+2. Shopify vuelve a `/shopify/callback`; el SPA manda `POST /integrations/shopify/install/complete` (anónimo, con
+   `X-Qep-Client`: no está exento de CSRF) con `code`, `shop`, `state`, `hmac`, `timestamp`, `host` y `redirectUri`. El
+   `state` es de un solo uso y vence a los 15 minutos; el token offline queda **cifrado** en la instalación, que vive 7
+   días para que la persona entre, se registre o espere a que le prendan el módulo.
+3. `POST /tenants/{tenantId}/integrations/shopify/link { installId, name? }` crea (o reactiva, si es la misma tienda del
+   mismo tenant) la conexión y su ruta `("shopify", shopDomain)`, y registra en la tienda los cinco webhooks
+   (`orders/create`, `orders/updated`, `orders/paid`, `orders/cancelled`, `app/uninstalled`) en
+   `Shopify:App:WebhookCallbackUrl`. Una tienda ya enlazada a otro tenant da 422 `integrations.shopify.shop_already_linked`;
+   si Shopify rechaza el registro, la conexión queda `NeedsAttention` con `webhooks_not_registered` y el probador lo
+   reintenta. Los tres webhooks de cumplimiento (`customers/data_request`, `customers/redact`, `shop/redact`) no se
+   registran por API: van en la configuración de la app.
+
+**Flujo de un pedido.** `POST /api/webhooks/shopify` (anónimo, limitador `webhook`, cuerpo hasta
+`Shopify:Webhook:MaxBodyBytes`) verifica `X-Shopify-Hmac-Sha256` —HMAC-SHA256 del cuerpo crudo con el client secret, en
+base64— y responde 401 sin firma válida. Con firma válida encola en `shopify.webhook_deliveries` y responde 200 antes de
+procesar; un descarte determinista (cabeceras faltantes, JSON ilegible, `shop_domain` del cuerpo distinto del de la
+cabecera) también responde 200, con un aviso en el log sin el cuerpo, y un fallo al encolar responde 500 para que Shopify
+reintente. `ShopifyWebhookDeliveryWorker` procesa cada `DeliveryPollSeconds` y lleva el pedido al espejo
+`shopify.orders` (un snapshot más viejo que el guardado no pisa nada) y, si la conexión está operativa y el módulo
+prendido, al importador:
+
+- Las precondiciones van en orden y la primera que falla deja la fila `Waiting` con su `wait_reason`
+  (`store_not_configured`, `advisor_inactive`, `billing_account_missing`, `currency_mismatch`, `customer_inactive`,
+  `product_unmatched`, `freight_tax_rate_missing`, `order_rejected`). La tienda se configura con
+  `PUT /tenants/{tenantId}/shopify/stores/{connectionId}` (`If-Match`): asesor, cuenta de cobro, clasificación por
+  defecto y las claves del atributo del documento.
+- El comprador se busca por documento, por el cliente de Shopify ya visto en el espejo, por teléfono y por correo; si no
+  aparece, nace completo (con CUC) cuando hay documento, clasificación, dirección y ciudad, e incompleto si no. El
+  cliente nunca detiene la importación salvo que exista y esté inactivo.
+- El pedido entra por `IExternalOrderWriter` con la clave externa `"{shopId}:{shopifyOrderId}"`: el índice único
+  `IX_orders_tenant_external_key` hace que el mismo pedido dos veces (webhook y conciliación a la vez, o el worker que
+  cae entre crear el pedido y guardar la fila) deje un solo pedido. Lo que entra con algo que revisar lleva `warnings`
+  (`customer_incomplete`, `shipping_address_unresolved`, `total_difference`, `carrier_unrecognized`,
+  `cash_on_delivery_unmatched`); la bandeja los saca de «Con avisos» con «Marcar como revisado».
+- Después de importado, sólo se sincronizan el pago (un pedido `Pending` sin comprobantes; con comprobantes o ya
+  aprobado, el rechazo queda en `last_error`) y la cancelación (se anula en QEP a nombre del asesor; uno ya facturado
+  queda `Cancelled` con `invoiced_before_cancel` para anularlo a mano). Un pedido cancelado que llega sin fila del espejo
+  pero con su pedido en QEP también se anula.
+- `ShopifyReconcileWorker` corre cada `Shopify:Reconcile:IntervalMinutes` por tienda operativa: trae por GraphQL lo
+  actualizado desde la última corrida (5 minutos de solape; la primera, desde el enlace: no se importa historial) y
+  reintenta hasta 200 `Waiting`. Así, crear el producto que faltaba o prender el módulo otra vez surte efecto sin tocar
+  nada más. `POST …/shopify/stores/{connectionId}/sync` hace lo mismo en el request; `POST …/shopify/orders/{id}/retry`,
+  una sola fila.
+
+**Configuración.**
+
+| Clave | Dónde vive en prod | Qué |
+| --- | --- | --- |
+| `Shopify:App:ClientId` | ConfigMap, desde `SHOPIFY_APP_CLIENT_ID` | Client ID de la app en el Dev Dashboard |
+| `Shopify:App:ClientSecret` | Secret, desde la variable **secreta** `SHOPIFY_APP_CLIENT_SECRET` | Firma los webhooks, verifica el HMAC de la instalación y canjea el `code` |
+| `Shopify:App:ApiVersion` | ConfigMap, `2026-10` | Versión de la Admin API (`^\d{4}-(01\|04\|07\|10)$`) |
+| `Shopify:App:Scopes` | ConfigMap, `read_orders,read_customers` | Lo que pide la autorización |
+| `Shopify:App:AllowedRedirectOrigins:N` | ConfigMap, `https://qep.qcode.co` | Orígenes del `redirect_uri` (local: `http://localhost:3002`, en `appsettings.Development.json`) |
+| `Shopify:App:WebhookCallbackUrl` | ConfigMap, `https://qep-api.qcode.co/api/webhooks/shopify` | Lo que el enlace registra en cada tienda |
+| `Shopify:Reconcile:IntervalMinutes` | ConfigMap, `10` | Periodo de la conciliación |
+| `Shopify:Webhook:MaxBodyBytes`, `DeliveryPollSeconds` | `appsettings.json` | Tope del cuerpo (413) y sondeo del worker |
+
+En `Production`, `ShopifyAppOptionsValidator` exige con `ValidateOnStart` `ClientId`, `ClientSecret`,
+`WebhookCallbackUrl` (https) y al menos un origen; un `ClientId` o `ClientSecret` que llega como `#{…}#` (la variable
+no está en `Backend-prod`) cuenta como ausente. Sin ellas el pod entra en crash-loop, a propósito. Fuera de
+`Production`, sin `ClientId` y `ClientSecret` el proveedor sale del catálogo y el módulo arranca igual.
+
+En local, los dos van por user-secrets. `set` imprime el valor, así que el secreto va con `| Out-Null` y la
+verificación cuenta:
+
+```powershell
+dotnet user-secrets set "Shopify:App:ClientId" "<client-id-de-la-app>" --project src/Api | Out-Null
+dotnet user-secrets set "Shopify:App:ClientSecret" "<client-secret-de-la-app>" --project src/Api | Out-Null
+dotnet user-secrets list --project src/Api | Select-String -Pattern "Shopify:App" | Measure-Object
+```
+
+El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entregar webhooks a tu máquina; la conciliación y
+«Sincronizar ahora» traen los pedidos igual. Con túnel, `Shopify:App:WebhookCallbackUrl` es la URL del túnel más
+`/api/webhooks/shopify`.
+
+**Despliegue.**
+
+1. Variables `SHOPIFY_APP_CLIENT_ID` (normal) y `SHOPIFY_APP_CLIENT_SECRET` (**secreta**) en `Backend-prod`. El pipeline
+   no las nombra: la plantilla reemplaza cada `#{…}#` de `k8s/` con la variable del grupo que se llame igual.
+2. Backend, con sus migraciones (`AddShopifyModuleKey` en Tenancy, `AddOrderExternalKey` en Quotations,
+   `AddCustomerEmailIndex` en Customers, `AddShopifyProvider` y `AddShopifyInstalls` en Integrations, `InitialShopify` y
+   `AddStoreShopDomain` en Shopify). Después, el frontend. **Rollback del backend:** el SPA muestra rutas que responden
+   404; nada se corrompe.
+3. La app en el Dev Dashboard de Shopify, la verificación con una tienda de desarrollo y el primer tenant piloto: los
+   pasos y lo que queda por verificar contra Shopify real (V-1 a V-10) están en
+   `docs/superpowers/plans/2026-10-18-shopify-handoff.md`.
 
 ## Verificación
 

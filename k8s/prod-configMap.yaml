@@ -113,6 +113,24 @@ data:
   Meta__Instagram__AppId: "#{META_INSTAGRAM_APP_ID}#"
   Meta__Instagram__GraphApiVersion: "v24.0"
   Meta__Instagram__AllowedRedirectOrigins__0: "https://qep.qcode.co"
+  # Spec 2026-10-15 (Shopify): la app pública no embebida de toda la plataforma. Nada de esto es secreto: el Client ID viaja
+  # en la URL de autorización, y la versión, los scopes, la URL del webhook y el origen del SPA son configuración. El client
+  # secret vive en prod-secret.yaml. ShopifyAppOptionsValidator exige en Production ClientId, ClientSecret,
+  # WebhookCallbackUrl y al menos un origen, con ValidateOnStart: sin una de ellas el pod no arranca, y un token que el
+  # pipeline dejó sin resolver (la variable no está en Backend-prod) cuenta como ausente. ApiVersion y Scopes repiten el
+  # valor por defecto de la imagen a propósito, como Meta__App__GraphApiVersion: subir de versión de la API de Shopify (cada
+  # trimestre) o pedir otro scope es una decisión que no debería exigir otra imagen. Un scope nuevo obliga a cada tienda a
+  # reinstalar. WebhookCallbackUrl es el host de prod-ingress.yaml más la ruta del webhook (ShopifyWebhookEndpoints.Route):
+  # es la dirección que el enlace registra en cada tienda. Cambiarla no borra nada: el próximo enlace o probador registra los
+  # topics en la URL nueva (ShopifyWebhookRegistration compara topic y URL) y las suscripciones de la vieja siguen ahí.
+  Shopify__App__ClientId: "#{SHOPIFY_APP_CLIENT_ID}#"
+  Shopify__App__ApiVersion: "2026-10"
+  Shopify__App__Scopes: "read_orders,read_customers"
+  Shopify__App__WebhookCallbackUrl: "https://qep-api.qcode.co/api/webhooks/shopify"
+  Shopify__App__AllowedRedirectOrigins__0: "https://qep.qcode.co"
+  # Cada cuánto la conciliación trae de Shopify lo que el webhook no entregó y reintenta lo que espera (spec §5.3). Repite el
+  # default de la imagen, como ApiVersion: es el tiempo que tarda en entrar un pedido cuyo producto se acaba de crear.
+  Shopify__Reconcile__IntervalMinutes: "10"
   # Copia pública de cada comprobante de pago nuevo, para que el Excel de pedidos lo enlace (spec
   # 2026-09-15). Literal y no token: no es un secreto ni cambia por despliegue. Exige
   # Storage__R2__PublicBucket y Storage__R2__PublicBaseUrl, de arriba: sin ellos
