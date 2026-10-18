@@ -334,4 +334,27 @@ public sealed class ShopifyOrderMirrorTests
     [InlineData("   ")]
     public void RecordLastErrorRequiresAText(string error) =>
         Assert.Throws<ArgumentException>(() => ImportedRow(null).RecordLastError(error));
+    // Ronda 1, minor 3: la operación que sale bien después de un rechazo limpia el error viejo; sin error, no hay cambio.
+    [Fact]
+    public void ClearLastErrorRemovesItAndBumpsTheVersion()
+    {
+        var row = ImportedRow(null);
+        row.RecordLastError("order.order.not_pending");
+        var version = row.Version;
+
+        row.ClearLastError();
+
+        Assert.Equal(((string?)null, version + 1), (row.LastError, row.Version));
+    }
+
+    [Fact]
+    public void ClearLastErrorWithoutErrorDoesNothing()
+    {
+        var row = ImportedRow(null);
+        var version = row.Version;
+
+        row.ClearLastError();
+
+        Assert.Equal(version, row.Version);
+    }
 }

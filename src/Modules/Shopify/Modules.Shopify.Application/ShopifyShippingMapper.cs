@@ -21,7 +21,7 @@ public sealed record ShopifyShippingResult(
 /// <item>Recogida (un <c>code</c> que empieza por <c>pickup</c>, V-6): sin transportadora, sin flete y sin contraentrega
 /// (D-S28); el dominio rechazaría cualquier envío con recogida.</item>
 /// <item>Sin líneas: envío sin registrar.</item>
-/// <item>Valor = Σ <c>discounted_price</c>. 0 es <c>Free</c>; si no, <c>Charged</c> con el IVA del envío como los productos
+/// <item>Valor = Σ <c>discounted_price</c>. 0 es <c>Free</c> (un negativo no: va como <c>Charged</c> y el pedido lo rechaza); si no, <c>Charged</c> con el IVA del envío como los productos
 /// (D-S3, D-S27) y, en COP, en pesos enteros <c>AwayFromZero</c> (H21). Un <c>Charged</c> en COP sin tasa espera
 /// <c>freight_tax_rate_missing</c>. «Al cobro» nunca sale de la tienda.</item>
 /// <item>Transportadora del título de la primera línea (D-S30); la contraentrega, de las pasarelas, con o sin transportadora.</item>
@@ -55,7 +55,9 @@ public static class ShopifyShippingMapper
         string chargeMode;
         decimal freightAmount;
         int taxPercentage;
-        if (amount <= 0m)
+        // Un valor negativo es un dato malo de Shopify, no un envío gratis: sigue como Charged para que la regla del pedido lo
+        // rechace con su código (order.order.freight_amount_invalid, H21) y la fila quede order_rejected a la vista.
+        if (amount == 0m)
         {
             (chargeMode, freightAmount, taxPercentage) = (Free, 0m, 0);
         }

@@ -84,6 +84,23 @@ public sealed class ShopifyShippingMapperTests
         Assert.Null(result.WaitReason);
     }
 
+    // Ronda 1, minor 5: un valor negativo es un dato malo de Shopify, no un envío gratis. No se corrige ni se esconde como Free:
+    // va como Charged con su valor y la regla del pedido lo rechaza (order.order.freight_amount_invalid, H21), así que la fila
+    // queda order_rejected con ese código a la vista, como una línea con cantidad 0 (tarea 13).
+    [Theory]
+    [InlineData(true, "-5000", "-5000")]
+    [InlineData(false, "-10000", "-11900")]
+    public void NegativeAmountIsNotFreeAndReachesTheOrderRules(bool taxesIncluded, string amount, string expected)
+    {
+        var snapshot = Order(taxesIncluded: taxesIncluded, shippingLines: [Line(decimal.Parse(amount, System.Globalization.CultureInfo.InvariantCulture))]);
+
+        var result = ShopifyShippingMapper.Map(snapshot, "COP", Servientrega, 19);
+
+        Assert.Equal(
+            ("Charged", decimal.Parse(expected, System.Globalization.CultureInfo.InvariantCulture), (string?)null),
+            (result.Draft.ChargeMode, result.Draft.FreightAmount, result.WaitReason));
+    }
+
     // Con impuestos incluidos el valor va tal cual y la tasa del tenant viaja para que el pedido lo descomponga.
     [Fact]
     public void ChargedTaxesIncludedKeepsAmountWithTenantRate()

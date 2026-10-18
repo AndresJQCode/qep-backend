@@ -184,6 +184,26 @@ public sealed class ShopifyImportResultTests
         Assert.Empty(world.Writer.Creates);
     }
 
+    // Ronda 1, minor 5: un envío negativo llega al pedido (con la tasa del tenant) para que su regla lo rechace con código, en
+    // vez de esconderse como Free; la fila queda order_rejected y la bandeja lo muestra.
+    [Fact]
+    public async Task NegativeShippingIsRejectedByTheOrderRules()
+    {
+        var world = WorldWithMedellin();
+        world.Writer.Result = draft => draft.Shipping!.FreightAmount < 0
+            ? ShopifyOrderWriteResult.Rejected("order.order.freight_amount_invalid")
+            : ShopifyOrderWriteResult.Written(Guid.CreateVersion7(), "PED-0011", 119_000m, alreadyExisted: false, draft.ClientId);
+        var snapshot = Order(address: Medellin, shippingLines: [Line(-5_000m)]);
+        var row = world.RowFor(snapshot);
+
+        await world.ImportAsync(row, snapshot);
+
+        Assert.Equal(
+            (ShopifyWaitReasons.OrderRejected, """{"code":"order.order.freight_amount_invalid"}"""),
+            (row.WaitReason, row.WaitDetail));
+        Assert.Equal(1, world.Shipping.RateRequests);
+    }
+
     // product_unmatched va antes que freight_tax_rate_missing (§6.2).
     [Fact]
     public async Task ProductUnmatchedWinsOverFreightTaxRateMissing()

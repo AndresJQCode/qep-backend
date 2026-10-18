@@ -261,7 +261,7 @@ public sealed class ShopifyOrderImporter(
 
         var title = ShopifyShippingMapper.CarrierTitle(snapshot);
         var carrier = title is null ? null : await shipping.MatchCarrierAsync(tenantId, title, cancellationToken);
-        var rate = ShopifyPricing.IsCop(currency) && ShopifyShippingMapper.Amount(snapshot) > 0m
+        var rate = ShopifyPricing.IsCop(currency) && ShopifyShippingMapper.Amount(snapshot) != 0m
             ? await shipping.GetFreightTaxPercentageAsync(tenantId, cancellationToken)
             : null;
         return ShopifyShippingMapper.Map(snapshot, currency, carrier, rate);
@@ -361,7 +361,7 @@ public sealed class ShopifyOrderImporter(
 
     /// <summary>D-S6: la diferencia avisa sólo si supera el 1 % del total de Shopify, en cualquier sentido. Con un total de 0,
     /// cualquier diferencia avisa.</summary>
-    private static bool ExceedsTolerance(decimal difference, decimal shopifyTotal) =>
+    internal static bool ExceedsTolerance(decimal difference, decimal shopifyTotal) =>
         Math.Abs(difference) > Math.Abs(shopifyTotal) * TotalDifferenceTolerance;
 
     /// <summary>15000.00 y 15000 son el mismo valor; el detalle viaja sin los ceros que el parser conserva del texto de
@@ -379,16 +379,16 @@ public sealed class ShopifyOrderImporter(
     /// <c>carrier_unrecognized</c>, el título de Shopify, y <c>cash_on_delivery_unmatched</c>, la transportadora reconocida que
     /// no recauda (§6.2.2). <c>shipping_address_unresolved</c> y <c>total_difference</c> no llevan detalle: la dirección cruda va
     /// en las notas del pedido y la diferencia en <c>total_difference</c> de la fila.</summary>
-    private static string? WarningsJson(
-        ShopifyCustomerRef customer,
+    internal static string? WarningsJson(
+        ShopifyCustomerRef? customer,
         ShopifyBuyerDocument? document,
         bool addressUnresolved,
         bool totalDiffers,
-        ShopifyShippingResult shippingResult,
+        ShopifyShippingResult? shippingResult,
         string? carrierName)
     {
         var warnings = new List<ShopifyImportWarning>();
-        if (!customer.IsComplete)
+        if (customer is { IsComplete: false })
         {
             warnings.Add(new ShopifyImportWarning(
                 ShopifyWarnings.CustomerIncomplete,
@@ -405,12 +405,12 @@ public sealed class ShopifyOrderImporter(
             warnings.Add(new ShopifyImportWarning(ShopifyWarnings.TotalDifference, null));
         }
 
-        if (shippingResult.UnrecognizedTitle is { } title)
+        if (shippingResult?.UnrecognizedTitle is { } title)
         {
             warnings.Add(new ShopifyImportWarning(ShopifyWarnings.CarrierUnrecognized, new { shippingTitle = title }));
         }
 
-        if (shippingResult.CashOnDeliveryUnmatched)
+        if (shippingResult?.CashOnDeliveryUnmatched == true)
         {
             warnings.Add(new ShopifyImportWarning(ShopifyWarnings.CashOnDeliveryUnmatched, new { carrierName }));
         }

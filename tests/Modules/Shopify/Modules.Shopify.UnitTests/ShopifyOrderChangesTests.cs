@@ -16,7 +16,7 @@ public sealed class ShopifyOrderChangesTests
     private static readonly Guid ClientId = Guid.Parse("01900000-0000-7000-8000-0000000000a2");
     private static readonly DateTimeOffset CancelledAt = Now.AddMinutes(-1);
 
-    private static ShopifyOrderChanges Changes(ImporterWorld world) => new(world.Writer, new FakeClock(Now));
+    private static ShopifyOrderChanges Changes(ImporterWorld world) => new(world.Writer, world.Customers, new FakeClock(Now));
 
     /// <summary>La fila como está guardada antes del cambio: importada (o en el estado pedido) con el pago de antes.</summary>
     private static ShopifyOrderMirror StoredRow(ShopifyImportState state, string financialStatus = "pending")
@@ -200,6 +200,106 @@ public sealed class ShopifyOrderChangesTests
         Assert.Equal([OrderId], world.Writer.CancelledOrders);
         Assert.All(attempts, row => Assert.Equal(
             (ShopifyImportState.Cancelled, (string?)null, (string?)null), (row.ImportState, row.WaitDetail, row.LastError)));
+    }
+
+    // ---- Ronda 1 ----
+
+    // Minor 2: cancelado y pagado en el mismo aviso, con la anulación rechazada. ApplySnapshot ya movió el pago en la fila, así
+    // que si no se sincroniza ahora no se sincroniza nunca: el pedido sigue vivo en QEP y su pago tiene que seguir a Shopify.
+    [Fact]
+    public async Task CancelIgnoredInTheSameNoticeStillSyncsThePayment()
+    {
+        var world = new ImporterWorld();
+        world.Writer.CancelOutcome = ShopifyOrderOutcome.Ignored("order.order.not_found");
+
+        var row = await ReactAsync(world, StoredRow(ShopifyImportState.Imported), Order(financialStatus: "paid", cancelledAt: CancelledAt));
+
+        Assert.Equal(["cancel", "sync:paid"], world.Writer.Log);
+        Assert.Equal((ShopifyImportState.Imported, "order.order.not_found"), (row.ImportState, row.LastError));
+    }
+
+    // Si los dos se rechazan, last_error lleva los dos códigos: ninguno tapa al otro.
+    [Fact]
+    public async Task CancelAndSyncBothIgnoredRecordBothCodes()
+    {
+        var world = new ImporterWorld();
+        world.Writer.CancelOutcome = ShopifyOrderOutcome.Ignored("order.order.not_found");
+        world.Writer.SyncOutcome = ShopifyOrderOutcome.Ignored("order.order.payment_has_proofs");
+
+        var row = await ReactAsync(world, StoredRow(ShopifyImportState.Imported), Order(financialStatus: "paid", cancelledAt: CancelledAt));
+
+        Assert.Equal("order.order.not_found; order.order.payment_has_proofs", row.LastError);
+    }
+
+    // Minor 3: una anulación que primero se rechazó y después sale bien no deja la fila Cancelled con el error viejo.
+    [Fact]
+    public async Task CancelThatSucceedsAfterARejectionClearsTheLastError()
+    {
+        var world = new ImporterWorld();
+        var stored = StoredRow(ShopifyImportState.Imported);
+        stored.RecordLastError("order.order.not_found");
+
+        var row = await ReactAsync(world, stored, Order(cancelledAt: CancelledAt));
+
+        Assert.Equal((ShopifyImportState.Cancelled, (string?)null), (row.ImportState, row.LastError));
+    }
+
+    [Fact]
+    public async Task SyncThatSucceedsAfterARejectionClearsTheLastError()
+    {
+        var world = new ImporterWorld();
+        var stored = StoredRow(ShopifyImportState.Imported);
+        stored.RecordLastError("order.order.payment_has_proofs");
+
+        var row = await ReactAsync(world, stored, Order(financialStatus: "paid"));
+
+        Assert.Null(row.LastError);
+    }
+
+    // Ruling S19: un reembolso no cambia nada, tampoco el error que ya había.
+    [Fact]
+    public async Task SyncUnchangedKeepsAPreviousLastError()
+    {
+        var world = new ImporterWorld();
+        world.Writer.SyncOutcome = ShopifyOrderOutcome.Unchanged;
+        var stored = StoredRow(ShopifyImportState.Imported, "paid");
+        stored.RecordLastError("order.order.not_found");
+
+        var row = await ReactAsync(world, stored, Order(financialStatus: "refunded"));
+
+        Assert.Equal("order.order.not_found", row.LastError);
+    }
+
+    // Minor 4: la fila en espera que se pone al día con el pedido que ya estaba en QEP conserva los avisos que se pueden saber sin
+    // volver a importar: el cliente incompleto (con el documento que vino) y la diferencia de totales.
+    [Fact]
+    public async Task WaitingCatchUpKeepsTheWarningsThatApply()
+    {
+        var world = new ImporterWorld();
+        world.Customers.ById[ClientId] = new ShopifyCustomerRef(ClientId, IsComplete: false, IsActive: true);
+        world.Writer.ByExternalKey[$"{ShopId}:{Order().OrderId}"] =
+            ShopifyOrderWriteResult.Written(OrderId, "PED-0042", 100_000m, alreadyExisted: true, ClientId);
+        var attributes = new Dictionary<string, string> { [ShopifyStore.DefaultDocumentAttributeKey] = "1036000111" };
+
+        var row = await ReactAsync(world, StoredRow(ShopifyImportState.Waiting), Order(attributes: attributes, cancelledAt: CancelledAt));
+
+        Assert.Equal(ShopifyImportState.Cancelled, row.ImportState);
+        Assert.Equal(
+            """[{"code":"customer_incomplete","detail":{"document":{"type":"CC","number":"1036000111"}}},{"code":"total_difference","detail":null}]""",
+            row.Warnings);
+    }
+
+    [Fact]
+    public async Task WaitingCatchUpWithACompleteCustomerAndMatchingTotalsHasNoWarnings()
+    {
+        var world = new ImporterWorld();
+        world.Customers.ById[ClientId] = new ShopifyCustomerRef(ClientId, IsComplete: true, IsActive: true);
+        world.Writer.ByExternalKey[$"{ShopId}:{Order().OrderId}"] =
+            ShopifyOrderWriteResult.Written(OrderId, "PED-0042", 119_000m, alreadyExisted: true, ClientId);
+
+        var row = await ReactAsync(world, StoredRow(ShopifyImportState.Waiting), Order(cancelledAt: CancelledAt));
+
+        Assert.Null(row.Warnings);
     }
 
     // ---- Filas en espera y terminales ----

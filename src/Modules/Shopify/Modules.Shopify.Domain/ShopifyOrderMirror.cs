@@ -214,6 +214,19 @@ public sealed class ShopifyOrderMirror
         Touch();
     }
 
+    /// <summary>§6.3: la operación que salió bien después de un rechazo borra el error viejo, para que una fila <c>Cancelled</c> o
+    /// sincronizada no siga mostrando un problema que ya no existe. Sin error no hay cambio ni sube la versión.</summary>
+    public void ClearLastError()
+    {
+        if (LastError is null)
+        {
+            return;
+        }
+
+        LastError = null;
+        Touch();
+    }
+
     /// <summary>D-S31: «Marcar como revisado». Sin avisos no hay nada que revisar; repetirlo conserva la primera revisión.</summary>
     public void ReviewWarnings(DateTimeOffset now)
     {
