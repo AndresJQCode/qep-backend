@@ -250,19 +250,25 @@ public sealed record ShopifyOrderDraft(
     string? ExternalShippingTitle);
 
 /// <summary>Lo que devolvió el alta: el pedido (nuevo o el que ya existía con esa clave, <see cref="AlreadyExisted"/>) o el
-/// código con que una regla del pedido lo rechazó (<c>order_rejected</c>, §6.2.3 paso 5).</summary>
+/// código con que una regla del pedido lo rechazó (<c>order_rejected</c>, §6.2.3 paso 5). <see cref="ClientId"/> es el cliente
+/// del pedido <b>como quedó en Quotations</b>: con <see cref="AlreadyExisted"/> es el del intento que lo creó, que puede no ser el
+/// que este intento encontró, y es el que la fila del espejo tiene que anotar.</summary>
 public sealed record ShopifyOrderWriteResult
 {
-    private ShopifyOrderWriteResult(Guid orderId, string? orderNumber, decimal total, bool alreadyExisted, string? rejectedCode)
+    private ShopifyOrderWriteResult(
+        Guid orderId, string? orderNumber, decimal total, bool alreadyExisted, Guid clientId, string? rejectedCode)
     {
         OrderId = orderId;
         OrderNumber = orderNumber;
         Total = total;
         AlreadyExisted = alreadyExisted;
+        ClientId = clientId;
         RejectedCode = rejectedCode;
     }
 
     public Guid OrderId { get; }
+
+    public Guid ClientId { get; }
 
     public string? OrderNumber { get; }
 
@@ -274,13 +280,16 @@ public sealed record ShopifyOrderWriteResult
 
     public bool IsRejected => RejectedCode is not null;
 
-    public static ShopifyOrderWriteResult Written(Guid orderId, string orderNumber, decimal total, bool alreadyExisted) =>
-        new(orderId, orderNumber, total, alreadyExisted, null);
+    public static ShopifyOrderWriteResult Written(Guid orderId, string orderNumber, decimal total, bool alreadyExisted, Guid clientId)
+    {
+        ArgumentOutOfRangeException.ThrowIfEqual(clientId, Guid.Empty);
+        return new(orderId, orderNumber, total, alreadyExisted, clientId, null);
+    }
 
     public static ShopifyOrderWriteResult Rejected(string code)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(code);
-        return new(Guid.Empty, null, 0m, false, code);
+        return new(Guid.Empty, null, 0m, false, Guid.Empty, code);
     }
 }
 

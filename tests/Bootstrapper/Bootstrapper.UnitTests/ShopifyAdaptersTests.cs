@@ -91,15 +91,21 @@ public sealed class ShopifyAdaptersTests
     [Fact]
     public async Task OrderWriterMapsExternalKeyTakenToExisting()
     {
+        var existingClient = Guid.CreateVersion7();
         var writer = new FakeExternalOrderWriter
         {
-            OnCreate = _ => new ExternalOrderResult(Guid.CreateVersion7(), "PED-7", 134_000m, 112_605m, "COP", AlreadyExisted: true)
+            OnCreate = _ => new ExternalOrderResult(Guid.CreateVersion7(), "PED-7", 134_000m, 112_605m, "COP", existingClient, AlreadyExisted: true)
         };
 
-        var result = await OrderWriter(writer).CreateAsync(Draft(), Ct);
+        var draft = Draft();
+
+        var result = await OrderWriter(writer).CreateAsync(draft, Ct);
 
         Assert.False(result.IsRejected);
         Assert.True(result.AlreadyExisted);
+        // El cliente del pedido que ya existía, no el del borrador (revisión de la tarea 13, minor 4).
+        Assert.NotEqual(draft.ClientId, result.ClientId);
+        Assert.Equal(existingClient, result.ClientId);
         Assert.Equal("PED-7", result.OrderNumber);
         Assert.Equal(134_000m, result.Total);
     }

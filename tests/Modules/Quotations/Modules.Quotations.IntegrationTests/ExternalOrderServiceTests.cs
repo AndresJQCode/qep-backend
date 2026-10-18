@@ -183,8 +183,10 @@ public sealed class ExternalOrderServiceTests
         Assert.False(first.AlreadyExisted);
         Assert.True(second.AlreadyExisted);
         Assert.Equal(
-            (first.OrderId, first.OrderNumber, first.Total, first.NetTotal, first.Currency),
-            (second.OrderId, second.OrderNumber, second.Total, second.NetTotal, second.Currency));
+            (first.OrderId, first.OrderNumber, first.Total, first.NetTotal, first.Currency, first.ClientId),
+            (second.OrderId, second.OrderNumber, second.Total, second.NetTotal, second.Currency, second.ClientId));
+        // El cliente del pedido como quedó guardado: Shopify lo anota en su espejo aunque el reintento haya resuelto otro.
+        Assert.Equal(setup.ClientId, first.ClientId);
         Assert.Single(await OutboxMessagesAsync(factory, "quotations.order.created.v1"));
         var detail = await setup.Client.GetFromJsonAsync<OrderDetailResponse>(
             $"{OrdersUrl(setup.TenantId)}/{first.OrderId}", TestContext.Current.CancellationToken);

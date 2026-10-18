@@ -160,7 +160,7 @@ public sealed class ShopifyPreconditionsTests
     {
         var world = new ImporterWorld();
         var orderId = Guid.CreateVersion7();
-        world.Writer.Result = _ => ShopifyOrderWriteResult.Written(orderId, "PED-0007", 118_500m, alreadyExisted: false);
+        world.Writer.Result = draft => ShopifyOrderWriteResult.Written(orderId, "PED-0007", 118_500m, alreadyExisted: false, draft.ClientId);
         var snapshot = Order(lines: [new ShopifyLine("CAM-001", 2m, 59_500m, 11_900m)]);
         var row = world.RowFor(snapshot);
 
@@ -204,7 +204,7 @@ public sealed class ShopifyPreconditionsTests
     {
         var world = new ImporterWorld();
         var existing = Guid.CreateVersion7();
-        world.Writer.Result = _ => ShopifyOrderWriteResult.Written(existing, "PED-0003", 119_000m, alreadyExisted: true);
+        world.Writer.Result = draft => ShopifyOrderWriteResult.Written(existing, "PED-0003", 119_000m, alreadyExisted: true, draft.ClientId);
         var snapshot = Order(financialStatus: "paid");
         var row = world.RowFor(snapshot);
 
@@ -255,6 +255,144 @@ public sealed class ShopifyPreconditionsTests
         Assert.Equal(ShopifyImportState.Ignored, outcome.State);
         Assert.Empty(world.Customers.Log);
         Assert.Empty(world.Writer.Creates);
+    }
+
+    // ---- Ruling S21: lo que la 13 adelantó del borrador (§6.2.2 y §6.2.3). El código ya existía cuando se escribieron: nacen
+    // en verde y así quedan registradas en el reporte. ----
+
+    // §6.2.2 (H3): sin impuestos incluidos, en COP se le suma al precio el IVA del producto de QEP (D-S3).
+    [Fact]
+    public async Task TaxesExcludedCopGrossesUpWithTheProductRate()
+    {
+        var world = new ImporterWorld();
+        var snapshot = Order(taxesIncluded: false, lines: [new ShopifyLine("CAM-001", 3m, 100_000m, 0m)]);
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        var line = Assert.Single(Assert.Single(world.Writer.Creates).Draft.Lines);
+        Assert.Equal((119_000m, 19, 3m), (line.UnitPrice, line.TaxPercentage, line.Quantity));
+    }
+
+    // §6.2.2 (D-S27): fuera de COP la tasa se fuerza a 0 en el pedido, así que el precio va tal cual aunque no traiga impuestos.
+    [Fact]
+    public async Task TaxesExcludedUsdKeepsThePrice()
+    {
+        var world = new ImporterWorld();
+        world.Billing.Account = new ShopifyBillingAccountRef(CompanyId, "Bancolombia", "123-456", "USD");
+        var snapshot = Order(currency: "USD", taxesIncluded: false, lines: [new ShopifyLine("CAM-001", 1m, 25.50m, 0m)]);
+
+        var outcome = await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        Assert.Equal(ShopifyImportState.Imported, outcome.State);
+        Assert.Equal(25.50m, Assert.Single(Assert.Single(world.Writer.Creates).Draft.Lines).UnitPrice);
+    }
+
+    // §6.2.2: el descuento es Σ discountAllocations sobre originalUnitPrice × quantity, en porcentaje con 4 decimales.
+    [Fact]
+    public async Task DiscountIsAPercentageWithFourDecimals()
+    {
+        var world = new ImporterWorld();
+        var snapshot = Order(lines: [new ShopifyLine("CAM-001", 3m, 33_333m, 10_000m)]);
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        Assert.Equal(10.0001m, Assert.Single(Assert.Single(world.Writer.Creates).Draft.Lines).DiscountPercentage);
+    }
+
+    // §6.2.3 paso 2 (H24): las pasarelas unidas con ", ", sin las vacías, y recortadas a 50.
+    [Fact]
+    public async Task PaymentMethodJoinsTheGatewaysAndCutsAt50()
+    {
+        var world = new ImporterWorld();
+        var snapshot = Order(gateways: [" Mercado Pago ", "  ", "Cash on Delivery (COD)", "Transferencia bancaria Bancolombia"]);
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        var paymentMethod = Assert.Single(world.Writer.Creates).Draft.PaymentMethod;
+        Assert.Equal("Mercado Pago, Cash on Delivery (COD), Transferenci", paymentMethod);
+        Assert.Equal(ShopifyOrderImporter.PaymentMethodMaxLength, paymentMethod!.Length);
+    }
+
+    [Fact]
+    public async Task PaymentMethodWithoutGatewaysIsNull()
+    {
+        var world = new ImporterWorld();
+        var snapshot = Order(gateways: []);
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        Assert.Null(Assert.Single(world.Writer.Creates).Draft.PaymentMethod);
+    }
+
+    // §6.2.3 paso 2: «Shopify #1001» y, en otra línea, la nota del comprador.
+    [Theory]
+    [InlineData("  Dejar en portería  ", "Shopify #1001\nDejar en portería")]
+    [InlineData(null, "Shopify #1001")]
+    [InlineData("   ", "Shopify #1001")]
+    public async Task NotesCarryTheOrderNameAndTheBuyerNote(string? note, string expected)
+    {
+        var world = new ImporterWorld();
+        var snapshot = Order(note: note);
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        Assert.Equal(expected, Assert.Single(world.Writer.Creates).Draft.Notes);
+    }
+
+    [Fact]
+    public async Task AlreadyExistedWithoutFinancialStatusDoesNotSync()
+    {
+        var world = new ImporterWorld();
+        world.Writer.Result = draft => ShopifyOrderWriteResult.Written(Guid.CreateVersion7(), "PED-0003", 119_000m, alreadyExisted: true, draft.ClientId);
+        var snapshot = Order(financialStatus: "");
+
+        var outcome = await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        Assert.Equal(ShopifyImportState.Imported, outcome.State);
+        Assert.Empty(world.Writer.Syncs);
+    }
+
+    // ---- Ronda 1 de la revisión ----
+
+    // Minor 4: si el pedido ya existía, la fila apunta al cliente de ESE pedido, no al que este intento encontró o creó (pueden
+    // diferir si el anotado de un intento anterior se perdió).
+    [Fact]
+    public async Task AlreadyExistedRecordsTheCustomerOfTheExistingOrder()
+    {
+        var world = new ImporterWorld();
+        var existingOrder = Guid.CreateVersion7();
+        var existingClient = Guid.CreateVersion7();
+        world.Writer.Result = _ => ShopifyOrderWriteResult.Written(existingOrder, "PED-0003", 119_000m, alreadyExisted: true, existingClient);
+        var snapshot = Order();
+        var row = world.RowFor(snapshot);
+
+        await world.ImportAsync(row, snapshot);
+
+        Assert.Equal(((Guid?)existingClient, (Guid?)existingOrder), (row.QepCustomerId, row.QepOrderId));
+    }
+
+    // Minor 3: las búsquedas van con el tenant de la fila y el alta y el borrador con el de la tienda; un llamador que mezcle una
+    // tienda y una fila de tenants o conexiones distintos es un error de programación, no un pedido en espera.
+    [Fact]
+    public async Task StoreOfAnotherTenantIsAProgrammingError()
+    {
+        var world = new ImporterWorld { Store = ShopifyStore.Create(ConnectionId, Guid.CreateVersion7(), Now) };
+        var snapshot = Order();
+        var row = world.RowFor(snapshot);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => world.ImportAsync(row, snapshot));
+
+        Assert.Equal((ShopifyImportState.Waiting, 0), (row.ImportState, row.Attempts));
+        Assert.Empty(world.Customers.Log);
+    }
+
+    [Fact]
+    public async Task StoreOfAnotherConnectionIsAProgrammingError()
+    {
+        var world = new ImporterWorld { Store = ShopifyStore.Create(Guid.CreateVersion7(), TenantId, Now) };
+        var snapshot = Order();
+
+        await Assert.ThrowsAsync<ArgumentException>(() => world.ImportAsync(world.RowFor(snapshot), snapshot));
     }
 
     private static void AssertWaiting(ShopifyOrderMirror row, ShopifyImportOutcome outcome, string reason, string? detail)

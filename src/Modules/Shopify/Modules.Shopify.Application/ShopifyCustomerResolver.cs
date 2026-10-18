@@ -23,6 +23,11 @@ public sealed class ShopifyCustomerResolver(
     /// encontrar, y recortarlo daría un documento que no es el del comprador: se trata como si no hubiera venido.</summary>
     public const int DocumentNumberMaxLength = 32;
 
+    /// <summary>El ancho de <c>customers.name</c> (<c>Customer.NameMaxLength</c>). Shopify acepta 255 en el nombre y otros 255
+    /// en el apellido: sin recortar acá, el alta completa no pasa la validación del <c>POST</c> de clientes y un comprador con
+    /// todo para ficha completa nacería incompleto. Se recorta igual que Customers recorta el nombre de un incompleto.</summary>
+    public const int NameMaxLength = 160;
+
     private const string Colombia = "CO";
 
     /// <summary>§6.2.1 paso 1: <c>customAttributes[document_attribute_key]</c> y su tipo, o el tipo por defecto de la tienda si no
@@ -184,7 +189,8 @@ public sealed class ShopifyCustomerResolver(
         var buyer = string.Join(' ', new[] { snapshot.Buyer.FirstName, snapshot.Buyer.LastName }
             .Select(Blank)
             .OfType<string>());
-        return buyer.Length > 0 ? buyer : Blank(snapshot.ShippingAddress?.Name);
+        var name = buyer.Length > 0 ? buyer : Blank(snapshot.ShippingAddress?.Name);
+        return name is null || name.Length <= NameMaxLength ? name : name[..NameMaxLength].TrimEnd();
     }
 
     private static string? PhoneOf(ShopifyOrderSnapshot snapshot) => Blank(snapshot.Buyer.Phone) ?? Blank(snapshot.ShippingAddress?.Phone);

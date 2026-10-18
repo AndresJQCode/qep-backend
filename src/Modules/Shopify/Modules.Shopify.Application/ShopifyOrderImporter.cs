@@ -50,6 +50,16 @@ public sealed class ShopifyOrderImporter(
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(row);
         ArgumentNullException.ThrowIfNull(snapshot);
+        // Las búsquedas van con el tenant de la fila y el alta del cliente y el borrador con el de la tienda: un llamador que
+        // mezcle tienda, fila y conexión de tenants o tiendas distintos escribiría en otro tenant. Es un error de programación,
+        // no un pedido en espera, así que lanza antes de tocar nada.
+        if (store.TenantId != row.TenantId || store.ConnectionId != row.ConnectionId
+            || connection.TenantId != row.TenantId || connection.ConnectionId != row.ConnectionId)
+        {
+            throw new ArgumentException(
+                "The Shopify store, the mirror row and the connection must belong to the same tenant and connection.", nameof(store));
+        }
+
         if (row.ImportState != ShopifyImportState.Waiting)
         {
             return new ShopifyImportOutcome(row.ImportState);
@@ -131,8 +141,10 @@ public sealed class ShopifyOrderImporter(
             await orders.SyncPaymentStatusAsync(tenantId, result.OrderId, snapshot.FinancialStatus, cancellationToken);
         }
 
+        // El cliente del pedido como quedó en Quotations: con AlreadyExisted es el del intento que lo creó, que puede no ser el que
+        // este intento encontró (si su anotado se perdió). La fila tiene que apuntar al mismo cliente que el pedido.
         row.MarkImported(
-            customer.Id,
+            result.ClientId,
             result.OrderId,
             snapshot.TotalPrice - result.Total,
             WarningsJson(customer, ShopifyCustomerResolver.DocumentOf(store, snapshot)),

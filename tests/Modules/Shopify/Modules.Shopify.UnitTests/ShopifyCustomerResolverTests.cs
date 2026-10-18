@@ -218,6 +218,34 @@ public sealed class ShopifyCustomerResolverTests
         Assert.Null(row.Warnings);
     }
 
+    // Minor 2 de la revisión: Shopify acepta 255 + 255 en el nombre y Customers guarda 160 (Customer.NameMaxLength). Sin recortar
+    // acá, el POST de clientes lo rechaza por validación y un comprador con todo para ficha completa nace incompleto.
+    [Fact]
+    public async Task LongNameIsCutToTheCustomerColumnAndStillCreatesComplete()
+    {
+        var world = new ImporterWorld();
+        world.Store = ConfiguredStore(classificationId: ClassificationId);
+        world.Geography.Cities[("ANTIOQUIA", "Medellín")] = new ShopifyCityRef(Guid.CreateVersion7(), Guid.CreateVersion7());
+        var buyer = new ShopifyBuyer(new string('A', 150), new string('B', 150), "laura@verde.co", "+573001234567");
+        var snapshot = Order(attributes: Document, address: Medellin, buyer: buyer);
+
+        var created = await world.Resolver.CreateAsync(world.Store, snapshot, Ct);
+
+        Assert.True(created.IsComplete);
+        Assert.Equal(new string('A', 150) + " " + new string('B', 9), Assert.Single(world.Customers.Completes).Name);
+    }
+
+    [Fact]
+    public async Task LongNameIsCutForAnIncompleteToo()
+    {
+        var world = new ImporterWorld();
+        var snapshot = Order(buyer: new ShopifyBuyer(new string('A', 160), "Gómez", null, null));
+
+        await world.Resolver.CreateAsync(world.Store, snapshot, Ct);
+
+        Assert.Equal(new string('A', 160), Assert.Single(world.Customers.Incompletes).Name);
+    }
+
     [Fact]
     public async Task NoNameIncompleteNamedClienteDeShopify()
     {

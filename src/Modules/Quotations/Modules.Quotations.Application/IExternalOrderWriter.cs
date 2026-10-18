@@ -32,9 +32,10 @@ public sealed record ExternalOrderDraft(
     string? ExternalShippingTitle = null);
 
 /// <summary><see cref="AlreadyExisted"/> dice que la clave externa ya tenía pedido y no se creó otro: el
-/// consumidor marca su espejo igual, sin volver a publicar nada.</summary>
+/// consumidor marca su espejo igual, sin volver a publicar nada. <see cref="ClientId"/> es el cliente del pedido
+/// guardado, que con <see cref="AlreadyExisted"/> puede no ser el del borrador: el espejo anota ése.</summary>
 public sealed record ExternalOrderResult(
-    Guid OrderId, string OrderNumber, decimal Total, decimal NetTotal, string Currency, bool AlreadyExisted = false);
+    Guid OrderId, string OrderNumber, decimal Total, decimal NetTotal, string Currency, Guid ClientId, bool AlreadyExisted = false);
 
 /// <summary>Los códigos propios del camino externo que cruzan capas.</summary>
 public static class ExternalOrderErrors
@@ -138,7 +139,7 @@ public sealed class ExternalOrderService(
             lifecycleEvents.PublishOrderCreated(order, draft.OccurredAt);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return new ExternalOrderResult(order.Id.Value, order.OrderNumber, order.Total, order.NetTotal, order.Currency);
+            return new ExternalOrderResult(order.Id.Value, order.OrderNumber, order.Total, order.NetTotal, order.Currency, order.ClientId);
         }
         catch (QuotationsDomainException error)
             when (externalKey is not null && error.Code == ExternalOrderErrors.ExternalKeyTaken)
@@ -163,7 +164,7 @@ public sealed class ExternalOrderService(
     }
 
     private static ExternalOrderResult Existing(Order order) =>
-        new(order.Id.Value, order.OrderNumber, order.Total, order.NetTotal, order.Currency, AlreadyExisted: true);
+        new(order.Id.Value, order.OrderNumber, order.Total, order.NetTotal, order.Currency, order.ClientId, AlreadyExisted: true);
 
     public async Task SyncPaymentStatusAsync(
         Guid tenantId, Guid orderId, OrderPaymentStatus status, CancellationToken cancellationToken)

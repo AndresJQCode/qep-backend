@@ -147,7 +147,7 @@ internal sealed class FakeOrderWriter(FakeUnitOfWork unitOfWork) : IShopifyOrder
     public List<(Guid TenantId, Guid OrderId, string FinancialStatus)> Syncs { get; } = [];
 
     public Func<ShopifyOrderDraft, ShopifyOrderWriteResult> Result { get; set; } =
-        draft => ShopifyOrderWriteResult.Written(Guid.CreateVersion7(), "PED-0001", 119_000m, alreadyExisted: false);
+        draft => ShopifyOrderWriteResult.Written(Guid.CreateVersion7(), "PED-0001", 119_000m, alreadyExisted: false, draft.ClientId);
 
     public Func<Exception>? OnCreate { get; set; }
 
@@ -256,7 +256,10 @@ internal sealed class ImporterWorld
         DateTimeOffset? cancelledAt = null,
         long? customerId = 7_001L,
         long orderId = 5_550_000_000_001L,
-        string financialStatus = "pending") =>
+        string financialStatus = "pending",
+        bool taxesIncluded = true,
+        string? note = "Dejar en portería",
+        IReadOnlyList<string>? gateways = null) =>
         new(
             orderId,
             "#1001",
@@ -268,10 +271,10 @@ internal sealed class ImporterWorld
             financialStatus,
             currency,
             119_000m,
-            true,
+            taxesIncluded,
             test,
-            "Dejar en portería",
-            ["manual"],
+            note,
+            gateways ?? ["manual"],
             buyer ?? new ShopifyBuyer("Laura", "Gómez", "laura@verde.co", "+573001234567"),
             address,
             attributes ?? new Dictionary<string, string>(),

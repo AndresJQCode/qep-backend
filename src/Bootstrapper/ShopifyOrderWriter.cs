@@ -35,7 +35,7 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
         try
         {
             var result = await writer.CreateAsync(external, cancellationToken);
-            return ShopifyOrderWriteResult.Written(result.OrderId, result.OrderNumber, result.Total, result.AlreadyExisted);
+            return ShopifyOrderWriteResult.Written(result.OrderId, result.OrderNumber, result.Total, result.AlreadyExisted, result.ClientId);
         }
         catch (QuotationsDomainException error) when (error.Code != NumberTaken)
         {

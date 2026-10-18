@@ -130,7 +130,7 @@ internal sealed class FakeExternalOrderWriter : IExternalOrderWriter
         Calls++;
         Created.Add(draft);
         LastResult = OnCreate?.Invoke(draft)
-            ?? new ExternalOrderResult(Guid.CreateVersion7(), "PED-1", 100m, 84m, draft.BillingAccount.Currency);
+            ?? new ExternalOrderResult(Guid.CreateVersion7(), "PED-1", 100m, 84m, draft.BillingAccount.Currency, draft.ClientId);
         return Task.FromResult(LastResult);
     }
 
