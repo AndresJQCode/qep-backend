@@ -221,15 +221,78 @@ public sealed class ShopifyAdaptersTests
     [InlineData("refunded")]
     [InlineData("partially_refunded")]
     [InlineData("voided")]
-    public async Task OrderWriterSyncRefundedOrVoidedIsIgnoredWithoutCalling(string financialStatus)
+    public async Task OrderWriterSyncRefundedOrVoidedIsUnchangedWithoutCodeAndWithoutCalling(string financialStatus)
     {
         var writer = new FakeExternalOrderWriter();
 
         var outcome = await OrderWriter(writer).SyncPaymentStatusAsync(TenantId, Guid.CreateVersion7(), financialStatus, Ct);
 
-        Assert.Equal(ShopifyOrderOutcomeKind.Ignored, outcome.Kind);
-        Assert.Equal(financialStatus, outcome.Code);
-        Assert.Empty(writer.Synced);
+        // Spec §6.3: «no cambian nada». Sin código, así que no hay nada que llevar a last_error.
+        Assert.Equal(ShopifyOrderOutcome.Unchanged, outcome);
+        Assert.Equal(ShopifyOrderOutcomeKind.Unchanged, outcome.Kind);
+        Assert.Null(outcome.Code);
+        Assert.Equal(0, writer.Calls);
+    }
+
+    // «Al cobro» nunca sale de la tienda (§6.2.2 paso 3), y un número o una combinación de banderas no son un modo.
+    [Theory]
+    [InlineData("OnDelivery")]
+    [InlineData("onDelivery")]
+    [InlineData("5")]
+    [InlineData("Charged,Free")]
+    [InlineData("Gratis")]
+    public async Task OrderWriterCreateRejectsAChargeModeTheStoreCannotGive(string chargeMode)
+    {
+        var writer = new FakeExternalOrderWriter();
+        var draft = Draft() with { Shipping = new ShopifyShippingDraft(false, null, null, chargeMode, 0m, 0, false) };
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => OrderWriter(writer).CreateAsync(draft, Ct));
+
+        Assert.Equal(0, writer.Calls);
+    }
+
+    [Theory]
+    [InlineData("Free", FreightChargeMode.Free)]
+    [InlineData("charged", FreightChargeMode.Charged)]
+    public async Task OrderWriterCreateAcceptsChargedAndFree(string chargeMode, FreightChargeMode expected)
+    {
+        var writer = new FakeExternalOrderWriter();
+        var amount = expected == FreightChargeMode.Charged ? 10_000m : 0m;
+        var draft = Draft() with { Shipping = new ShopifyShippingDraft(false, null, null, chargeMode, amount, 19, false) };
+
+        await OrderWriter(writer).CreateAsync(draft, Ct);
+
+        Assert.Equal(expected, Assert.Single(writer.Created).Shipping!.ChargeMode);
+    }
+
+    // El consecutivo lo tomó otra alta a la vez (IX de número, QuotationsUnitOfWork): es transitorio, no una regla del pedido.
+    // Se propaga para que la entrega o la conciliación reintenten, en vez de dejar la fila en order_rejected.
+    [Fact]
+    public async Task OrderWriterCreateNumberTakenPropagates()
+    {
+        var writer = new FakeExternalOrderWriter
+        {
+            OnCreate = _ => throw new QuotationsDomainException("order.order.number_taken", "Taken.")
+        };
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => OrderWriter(writer).CreateAsync(Draft(), Ct));
+
+        Assert.Equal("order.order.number_taken", error.Code);
+    }
+
+    [Fact]
+    public async Task OrderWriterConcurrencyConflictPropagates()
+    {
+        var writer = new FakeExternalOrderWriter
+        {
+            OnSync = () => throw new RequestConcurrencyException("concurrency.conflict", "Conflict."),
+            OnCancel = () => throw new RequestConcurrencyException("concurrency.conflict", "Conflict.")
+        };
+
+        await Assert.ThrowsAsync<RequestConcurrencyException>(
+            () => OrderWriter(writer).SyncPaymentStatusAsync(TenantId, Guid.CreateVersion7(), "paid", Ct));
+        await Assert.ThrowsAsync<RequestConcurrencyException>(
+            () => OrderWriter(writer).CancelAsync(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), "Cancelado en Shopify: other", Ct));
     }
 
     [Theory]

@@ -20,6 +20,9 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
     private const string AlreadyInvoiced = "order.order.already_invoiced";
     private const string AlreadyCancelled = "order.order.already_cancelled";
 
+    // Lo lanza QuotationsUnitOfWork cuando otra alta tomó el mismo consecutivo a la vez: transitorio, se reintenta.
+    private const string NumberTaken = "order.order.number_taken";
+
     // §6.3: un reembolso o una anulación del pago en Shopify no cambian el pedido de QEP.
     private static readonly HashSet<string> NotSynced = new(StringComparer.Ordinal) { "refunded", "partially_refunded", "voided" };
 
@@ -34,7 +37,7 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
             var result = await writer.CreateAsync(external, cancellationToken);
             return ShopifyOrderWriteResult.Written(result.OrderId, result.OrderNumber, result.Total, result.AlreadyExisted);
         }
-        catch (QuotationsDomainException error)
+        catch (QuotationsDomainException error) when (error.Code != NumberTaken)
         {
             return ShopifyOrderWriteResult.Rejected(error.Code);
         }
@@ -52,7 +55,7 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
         var normalized = Normalize(financialStatus);
         if (NotSynced.Contains(normalized))
         {
-            return ShopifyOrderOutcome.Ignored(normalized);
+            return ShopifyOrderOutcome.Unchanged;
         }
 
         await using var scope = scopes.CreateAsyncScope();
@@ -153,11 +156,27 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
         _ => OrderPaymentStatus.PaymentPending,
     };
 
-    private static FreightChargeMode? ToChargeMode(string? chargeMode) =>
-        string.IsNullOrWhiteSpace(chargeMode)
-            ? null
-            : Enum.TryParse<FreightChargeMode>(chargeMode.Trim(), ignoreCase: true, out var mode)
-                ? mode
-                : throw new ArgumentOutOfRangeException(
-                    nameof(chargeMode), chargeMode, "The charge mode is not one of the freight charge modes.");
+    // Sólo Charged y Free por nombre (§6.2.2 paso 3): «al cobro» nunca sale de la tienda, y Enum.TryParse solo aceptaría
+    // también "5" o "Charged,Free". Es un error de programación del importador, no un dato de la tienda.
+    private static FreightChargeMode? ToChargeMode(string? chargeMode)
+    {
+        if (string.IsNullOrWhiteSpace(chargeMode))
+        {
+            return null;
+        }
+
+        var trimmed = chargeMode.Trim();
+        if (string.Equals(trimmed, nameof(FreightChargeMode.Charged), StringComparison.OrdinalIgnoreCase))
+        {
+            return FreightChargeMode.Charged;
+        }
+
+        if (string.Equals(trimmed, nameof(FreightChargeMode.Free), StringComparison.OrdinalIgnoreCase))
+        {
+            return FreightChargeMode.Free;
+        }
+
+        throw new ArgumentOutOfRangeException(
+            nameof(chargeMode), chargeMode, "A store order is either Charged or Free; OnDelivery never comes from the store.");
+    }
 }

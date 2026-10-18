@@ -275,17 +275,21 @@ public sealed record ShopifyOrderWriteResult
 public enum ShopifyOrderOutcomeKind
 {
     Applied,
+    Unchanged,
     Ignored,
     AlreadyInvoiced,
     AlreadyCancelled,
 }
 
-/// <summary>Cómo terminó un cambio posterior (§6.3). <see cref="ShopifyOrderOutcomeKind.Ignored"/> lleva el código que va a
-/// <c>last_error</c> del espejo: el de la regla del pedido (<c>order.order.not_pending</c>, <c>order.order.payment_has_proofs</c>)
-/// o el <c>financial_status</c> que no se sincroniza (<c>refunded</c>, <c>partially_refunded</c>, <c>voided</c>).</summary>
+/// <summary>Cómo terminó un cambio posterior (§6.3). <see cref="ShopifyOrderOutcomeKind.Ignored"/> lleva el código de la regla
+/// del pedido que lo rechazó (<c>order.order.not_pending</c>, <c>order.order.payment_has_proofs</c>), que va a <c>last_error</c>
+/// del espejo. <see cref="ShopifyOrderOutcomeKind.Unchanged"/> es un <c>financial_status</c> que no cambia nada (<c>refunded</c>,
+/// <c>partially_refunded</c>, <c>voided</c>): no lleva código ni deja <c>last_error</c>, y Quotations no se llama.</summary>
 public sealed record ShopifyOrderOutcome(ShopifyOrderOutcomeKind Kind, string? Code)
 {
     public static ShopifyOrderOutcome Applied { get; } = new(ShopifyOrderOutcomeKind.Applied, null);
+
+    public static ShopifyOrderOutcome Unchanged { get; } = new(ShopifyOrderOutcomeKind.Unchanged, null);
 
     public static ShopifyOrderOutcome AlreadyInvoiced { get; } = new(ShopifyOrderOutcomeKind.AlreadyInvoiced, "order.order.already_invoiced");
 
@@ -301,13 +305,21 @@ public sealed record ShopifyOrderOutcome(ShopifyOrderOutcomeKind Kind, string? C
 /// llama a <c>IQuotationsUnitOfWork.DiscardPendingChanges()</c>, que limpia TODO el tracker de Quotations del scope: si el
 /// llamador tuviera algo pendiente ahí, se perdería en silencio. Con un scope propio no hay nada más en ese tracker. Por lo
 /// mismo, cada llamada confirma lo suyo: no se suma a la unidad de trabajo de Shopify del llamador.</para>
+/// <para><b>Qué se traduce y qué se propaga.</b> Sólo los rechazos deterministas de una regla del pedido se vuelven resultado
+/// (<see cref="ShopifyOrderWriteResult.Rejected"/>, <see cref="ShopifyOrderOutcome"/>). <c>RequestConcurrencyException</c>,
+/// <c>order.order.number_taken</c> (otra alta tomó el consecutivo a la vez) y cualquier otro error transitorio (base, red,
+/// cancelación) <b>se propagan</b> sin traducir: el llamador no guarda la fila y la entrega o la conciliación reintentan
+/// (ruling S17). Por eso quien llame tiene que ser idempotente con lo que ya pasó en Quotations: el alta lo es por
+/// <c>ExternalKey</c>, y una sincronización o una anulación repetidas dan <see cref="ShopifyOrderOutcome.Applied"/> o
+/// <see cref="ShopifyOrderOutcome.AlreadyCancelled"/>.</para>
 /// </summary>
 public interface IShopifyOrderWriter
 {
     Task<ShopifyOrderWriteResult> CreateAsync(ShopifyOrderDraft draft, CancellationToken cancellationToken);
 
     /// <summary>Sólo cambia un pedido <c>Pending</c> sin comprobantes; con el mismo estado no hace nada y da
-    /// <see cref="ShopifyOrderOutcome.Applied"/>.</summary>
+    /// <see cref="ShopifyOrderOutcome.Applied"/>. <c>refunded</c>, <c>partially_refunded</c> y <c>voided</c> dan
+    /// <see cref="ShopifyOrderOutcome.Unchanged"/> sin llamar a Quotations.</summary>
     Task<ShopifyOrderOutcome> SyncPaymentStatusAsync(
         Guid tenantId, Guid orderId, string financialStatus, CancellationToken cancellationToken);
 
