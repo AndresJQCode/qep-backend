@@ -242,6 +242,13 @@ public sealed record QuotationPartiesRequest(
     /// <summary>Mismo criterio que <c>BillingWithRetention</c> pero para el excedente de IVA.</summary>
     bool? BillingVatSurplus = null);
 
+/// <summary>
+/// El cuerpo de <c>POST /quotations</c> y de <c>POST /quotations/preview</c> (spec 2026-10-18 §7.2). Crear y calcular
+/// sin id existen para que "Nueva cotización" pinte el documento entero antes de que exista; sin esto la pantalla
+/// tiene que crear un borrador para poder calcularlo. <c>Items</c> es la lista completa de líneas con producto y
+/// cantidad; precio, escala, descuentos y tasa los resuelve el backend. Ausentes, los tres campos dan lo de antes:
+/// sin líneas, sin piso, no detal.
+/// </summary>
 public sealed record CreateQuotationRequest(
     Guid ClientId,
     DateOnly? ValidUntil,
@@ -250,7 +257,14 @@ public sealed record CreateQuotationRequest(
     QuotationPartiesRequest? Parties,
     QuotationBillingAccountRequest? BillingAccount,
     /// <summary>La entrega por envío; null es "sin envío". Ver <see cref="ShippingRequest"/>.</summary>
-    ShippingRequest? Shipping = null);
+    ShippingRequest? Shipping = null,
+    /// <summary>Las líneas con producto y cantidad, igual que en el guardado. Null o ausente es "sin líneas".</summary>
+    IReadOnlyList<QuotationEditItemRequest>? Items = null,
+    /// <summary>El piso de escala global; null es "sin piso".</summary>
+    int? GlobalScaleFloor = null,
+    /// <summary>Cotización detal: ninguna línea recibe descuento. Con un piso no nulo es 422
+    /// <c>quotation.retail.floor_not_allowed</c>.</summary>
+    bool IsRetail = false);
 
 /// <summary>
 /// La entrega por envío de una cotización tal como la pide el editor (spec 2026-10-17 §5.1). Viaja aparte de

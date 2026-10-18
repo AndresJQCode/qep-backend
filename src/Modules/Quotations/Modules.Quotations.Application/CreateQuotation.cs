@@ -5,6 +5,10 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
+/// <summary>
+/// <c>Items</c> es nullable en el record y la propiedad de <see cref="IQuotationEdits"/> es explícita para que los
+/// llamadores posicionales de antes compilen sin tocarse; ausente es "sin líneas" (spec 2026-10-18 §7.2).
+/// </summary>
 public sealed record CreateQuotationCommand(
     Guid TenantId,
     Guid ClientId,
@@ -13,22 +17,22 @@ public sealed record CreateQuotationCommand(
     string? Notes,
     QuotationPartiesRequest? Parties,
     QuotationBillingAccountRequest? BillingAccount,
-    ShippingRequest? Shipping = null) : ICommand<QuotationDto>;
+    ShippingRequest? Shipping = null,
+    IReadOnlyList<QuotationItemAddition>? Items = null,
+    int? GlobalScaleFloor = null,
+    bool IsRetail = false) : ICommand<QuotationDto>, IQuotationEdits
+{
+    IReadOnlyList<QuotationItemAddition> IQuotationEdits.Items => Items ?? [];
+}
 
-public sealed class CreateQuotationValidator : AbstractValidator<CreateQuotationCommand>
+/// <summary>Las reglas del guardado (<see cref="QuotationEditsValidator{TEdits}"/>) más el cliente. Exige el
+/// documento de la facturación, como hacía antes de aceptar líneas: crear es guardar, no calcular.</summary>
+public sealed class CreateQuotationValidator : QuotationEditsValidator<CreateQuotationCommand>
 {
     public CreateQuotationValidator()
+        : base(requireBillingIdentification: true)
     {
         RuleFor(command => command.ClientId).NotEmpty();
-        RuleFor(command => command.PaymentMethod)
-            .MaximumLength(Quotation.PaymentMethodMaxLength)
-            .When(command => command.PaymentMethod is not null);
-        RuleFor(command => command.Parties!)
-            .SetValidator(new QuotationPartiesRequestValidator(requireBillingIdentification: true))
-            .When(command => command.Parties is not null);
-        RuleFor(command => command.Shipping!)
-            .SetValidator(new ShippingRequestValidator())
-            .When(command => command.Shipping is not null);
     }
 }
 
