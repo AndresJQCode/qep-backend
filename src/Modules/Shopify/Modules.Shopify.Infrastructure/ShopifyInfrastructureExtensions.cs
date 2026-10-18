@@ -42,10 +42,10 @@ public static class ShopifyInfrastructureExtensions
 
     /// <summary>
     /// §5.2: el procesador de entregas y el upsert del espejo. Aparte de <see cref="AddShopifyInfrastructure"/> porque dependen de
-    /// puertos que todavía no tienen adaptador —<see cref="IShopifyConnectionDirectory"/> e <see cref="IShopifyConnectionHealth"/>
-    /// (tarea 12), <see cref="IShopifyOrderImporter"/> (tarea 13)— y en Development <c>ValidateOnBuild</c> no deja arrancar un
-    /// servicio registrado con una dependencia sin registrar. Mientras no se llame, el webhook encola y las entregas esperan; nada
-    /// se pierde.
+    /// puertos cuyos adaptadores registra Bootstrapper —<see cref="IShopifyConnectionDirectory"/>, <see cref="IShopifyConnectionHealth"/>
+    /// e <see cref="IShopifyOrderImporter"/>— y en Development <c>ValidateOnBuild</c> no deja arrancar un servicio registrado con una
+    /// dependencia sin registrar. Bootstrapper lo llama después de esos registros (ruling S18); sin él, el webhook encola y nadie
+    /// procesa.
     /// </summary>
     public static IServiceCollection AddShopifyWebhookProcessing(this IServiceCollection services)
     {

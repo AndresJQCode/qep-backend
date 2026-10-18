@@ -55,4 +55,32 @@ public sealed class ShopifyStoreTests
 
         Assert.Throws<ArgumentException>(() => store.RecordShopDomain(new string('a', ShopifyStore.ShopDomainMaxLength + 1)));
     }
+
+    // §6.1 y §7: el PUT de la tienda (tarea 16) la llena entera; la versión es su If-Match, así que sube.
+    [Fact]
+    public void ConfigureFillsTheStoreAndBumpsTheVersion()
+    {
+        var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), LinkedAt);
+        var advisor = Guid.CreateVersion7();
+        var classification = Guid.CreateVersion7();
+        var billing = new ShopifyBillingAccount(Guid.CreateVersion7(), "Bancolombia", "123-456", "cop");
+
+        store.Configure(advisor, billing, classification, " Cédula ", "Tipo", " nit ", advisor, LinkedAt.AddHours(1));
+
+        Assert.True(store.IsConfigured);
+        Assert.Equal((advisor, billing with { Currency = "COP" }, classification), (store.AdvisorMembershipId!.Value, store.Billing, store.DefaultClassificationId));
+        Assert.Equal(("Cédula", "Tipo", "NIT"), (store.DocumentAttributeKey, store.DocumentTypeAttributeKey, store.DefaultIdentificationType));
+        Assert.Equal((2L, LinkedAt.AddHours(1), (Guid?)advisor), (store.Version, store.UpdatedAt, store.UpdatedBy));
+    }
+
+    [Fact]
+    public void ConfigureRejectsAnEmptyAttributeKey()
+    {
+        var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), LinkedAt);
+        var billing = new ShopifyBillingAccount(Guid.CreateVersion7(), "Bancolombia", "123-456", "COP");
+
+        Assert.Throws<ArgumentException>(
+            () => store.Configure(Guid.CreateVersion7(), billing, null, " ", "Tipo", "CC", Guid.CreateVersion7(), LinkedAt));
+        Assert.Equal(1L, store.Version);
+    }
 }

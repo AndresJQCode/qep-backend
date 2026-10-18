@@ -160,6 +160,17 @@ internal sealed class PassThroughPhones : IPhoneNumberNormalizer
     public string? RegionOf(string? e164) => null;
 }
 
+/// <summary>Un normalizador de tabla: <c>(teléfono recortado, país)</c> → E.164; lo que no está no normaliza.</summary>
+internal sealed class MappedPhones : Dictionary<(string Phone, string Country), string>, IPhoneNumberNormalizer
+{
+    public string? ToE164(string? phone, string country) =>
+        phone is null ? null : TryGetValue((phone.Trim(), country), out var e164) ? e164 : null;
+
+    public bool IsKnownRegion(string regionCode) => true;
+
+    public string? RegionOf(string? e164) => null;
+}
+
 /// <summary>Los clientes que siembra la prueba. <see cref="Calls"/> cuenta toda lectura: lo que se prueba con él es
 /// que el adaptador no fue a la base.</summary>
 internal sealed class FakeCustomerRepository(params Customer[] customers) : ICustomerRepository

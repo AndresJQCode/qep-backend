@@ -10,6 +10,7 @@ using Modules.Integrations.Application;
 using Modules.Messaging.Application;
 using Modules.Pipeline.Application;
 using Modules.Pos.Application;
+using Modules.Shopify.Application;
 using Modules.Tenancy.Application;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
@@ -378,6 +379,30 @@ public sealed class CompositionRootTests
         }
     }
 
+    /// <summary>
+    /// Ruling S18 (spec de Shopify §5.2): el webhook de Shopify encola y el worker procesa. Sin el worker registrado, o con un
+    /// puerto del importador sin adaptador, el webhook responde 200 y nadie procesa nunca, sin error en ningún lado. Esto arma
+    /// el contenedor con <c>ValidateOnBuild</c> —lo mismo que hace el host en Development— y resuelve el worker y el importador.
+    /// </summary>
+    [Fact]
+    public void TheContainerValidatesAndBuildsTheShopifyWebhookWorker()
+    {
+        var services = BuildPlatformServices();
+        // Lo que el host web agrega por su cuenta antes de AddQepPlatform: sin esto, ValidateOnBuild fallaría por servicios que
+        // en producción sí están.
+        services.AddLogging();
+        services.AddRouting();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        services.AddSingleton<IHostApplicationLifetime, TestHostLifetime>();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+
+        Assert.Contains(
+            provider.GetServices<IHostedService>(),
+            service => service.GetType().FullName == "Modules.Shopify.Infrastructure.Workers.ShopifyWebhookDeliveryWorker");
+        using var scope = provider.CreateScope();
+        Assert.IsType<ShopifyOrderImporter>(scope.ServiceProvider.GetRequiredService<IShopifyOrderImporter>());
+    }
+
     [Fact]
     public void TheContainerCanBuildTheEntitlementMask()
     {
@@ -456,6 +481,19 @@ public sealed class CompositionRootTests
             .ToArray();
 
     private sealed record MessageType(Type Message, Type Response, bool IsCommand);
+
+    private sealed class TestHostLifetime : IHostApplicationLifetime
+    {
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+
+        public CancellationToken ApplicationStopping => CancellationToken.None;
+
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+
+        public void StopApplication()
+        {
+        }
+    }
 
     private sealed class TestHostEnvironment : IHostEnvironment
     {

@@ -73,6 +73,46 @@ public sealed class ShopifyStore
         ShopDomain = normalized;
     }
 
+    /// <summary>
+    /// §6.1 y §7: la tienda configurada de una vez, como la guarda el <c>PUT</c> (tarea 16). Lo que depende de otros módulos (que
+    /// el asesor sea miembro activo, que la cuenta exista en la empresa, que la clasificación sea del tenant, que el tipo de
+    /// documento sea uno de los de Customers) lo valida el handler antes de llamar; acá sólo la forma y los anchos de las columnas.
+    /// Sube <see cref="Version"/>: es el <c>If-Match</c> del <c>PUT</c>.
+    /// </summary>
+    public void Configure(
+        Guid advisorMembershipId,
+        ShopifyBillingAccount billing,
+        Guid? defaultClassificationId,
+        string documentAttributeKey,
+        string documentTypeAttributeKey,
+        string defaultIdentificationType,
+        Guid updatedBy,
+        DateTimeOffset now)
+    {
+        ArgumentOutOfRangeException.ThrowIfEqual(advisorMembershipId, Guid.Empty);
+        ArgumentOutOfRangeException.ThrowIfEqual(updatedBy, Guid.Empty);
+        if (defaultClassificationId == Guid.Empty)
+        {
+            throw new ArgumentException("The default classification cannot be the empty id.", nameof(defaultClassificationId));
+        }
+
+        var account = ValidatedBilling(billing);
+        var documentKey = Required(documentAttributeKey, AttributeKeyMaxLength, nameof(documentAttributeKey));
+        var documentTypeKey = Required(documentTypeAttributeKey, AttributeKeyMaxLength, nameof(documentTypeAttributeKey));
+        var identificationType = Required(defaultIdentificationType, IdentificationTypeMaxLength, nameof(defaultIdentificationType))
+            .ToUpperInvariant();
+
+        AdvisorMembershipId = advisorMembershipId;
+        Billing = account;
+        DefaultClassificationId = defaultClassificationId;
+        DocumentAttributeKey = documentKey;
+        DocumentTypeAttributeKey = documentTypeKey;
+        DefaultIdentificationType = identificationType;
+        UpdatedBy = updatedBy;
+        UpdatedAt = now;
+        Version++;
+    }
+
     public bool IsConfigured => AdvisorMembershipId is not null && Billing is not null;
 
     /// <summary>La fila vacía. <paramref name="linkedAt"/> es el momento del enlace: la conciliación arranca ahí y no trae
@@ -88,6 +128,32 @@ public sealed class ShopifyStore
             LastReconciledAt = linkedAt,
             Version = 1,
             UpdatedAt = linkedAt,
+        };
+    }
+
+    private static string Required(string value, int maxLength, string parameterName)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrEmpty(trimmed) || trimmed.Length > maxLength
+            ? throw new ArgumentException($"The value is required and cannot exceed {maxLength} characters.", parameterName)
+            : trimmed;
+    }
+
+    private static ShopifyBillingAccount ValidatedBilling(ShopifyBillingAccount billing)
+    {
+        ArgumentNullException.ThrowIfNull(billing);
+        ArgumentOutOfRangeException.ThrowIfEqual(billing.CompanyId, Guid.Empty);
+        var currency = billing.Currency?.Trim();
+        if (currency is null || currency.Length != ShopifyBillingAccount.CurrencyLength || !currency.All(char.IsAsciiLetter))
+        {
+            throw new ArgumentException("The billing currency must be a three-letter ISO 4217 code.", nameof(billing));
+        }
+
+        return billing with
+        {
+            BankName = Required(billing.BankName, ShopifyBillingAccount.BankNameMaxLength, nameof(billing)),
+            AccountNumber = Required(billing.AccountNumber, ShopifyBillingAccount.AccountNumberMaxLength, nameof(billing)),
+            Currency = currency.ToUpperInvariant(),
         };
     }
 }

@@ -47,9 +47,12 @@ internal sealed class FakeOrderImporter : IShopifyOrderImporter
 {
     public List<(ShopifyStore Store, ShopifyOrderMirror Row, ShopifyOrderSnapshot Snapshot)> Calls { get; } = [];
 
+    public List<ShopifyConnectionRef> Connections { get; } = [];
+
     public Task<ShopifyImportOutcome> ImportAsync(
-        ShopifyStore store, ShopifyOrderMirror row, ShopifyOrderSnapshot snapshot, CancellationToken cancellationToken)
+        ShopifyConnectionRef connection, ShopifyStore store, ShopifyOrderMirror row, ShopifyOrderSnapshot snapshot, CancellationToken cancellationToken)
     {
+        Connections.Add(connection);
         Calls.Add((store, row, snapshot));
         return Task.FromResult(new ShopifyImportOutcome(row.ImportState));
     }
@@ -121,6 +124,15 @@ internal sealed class FakeOrderMirrorRepository(FakeShopifyDatabase database) : 
                     pending.ConnectionId == connectionId && pending.ShopifyOrderId == shopifyOrderId && pending.TenantId == tenantId));
 
     public void Add(ShopifyOrderMirror row) => database.PendingOrders.Add(row);
+
+    public Task<Guid?> FindSeenCustomerIdAsync(Guid tenantId, Guid connectionId, long shopifyCustomerId, CancellationToken cancellationToken) =>
+        Task.FromResult(
+            database.Orders.Values
+                .Where(row => row.TenantId == tenantId && row.ConnectionId == connectionId && row.ShopifyCustomerId == shopifyCustomerId)
+                .Where(row => row.QepCustomerId is not null)
+                .OrderByDescending(row => row.ShopifyCreatedAt)
+                .Select(row => row.QepCustomerId)
+                .FirstOrDefault());
 
     public Task<int> DeleteByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
     {

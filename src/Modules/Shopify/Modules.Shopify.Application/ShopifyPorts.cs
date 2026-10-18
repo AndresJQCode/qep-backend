@@ -42,13 +42,22 @@ public interface IShopifyConnectionHealth
 }
 
 /// <summary>
-/// Spec 2026-10-15 §6.2: el intento de importar una fila en espera. Lo implementa <c>ShopifyOrderImporter</c> (tarea 13); acá está
-/// el contrato para que el webhook y la conciliación lo llamen igual. Sólo evalúa y escribe la fila; el commit es del llamador.
+/// Spec 2026-10-15 §6.2: el intento de importar una fila en espera. Lo implementa <see cref="ShopifyOrderImporter"/> (tarea 13);
+/// acá está el contrato para que el webhook, la conciliación y el reintento manual lo llamen igual. Evalúa y escribe la fila; el
+/// commit final es del llamador. La única escritura que confirma por su cuenta es el cliente anotado en la fila antes del pedido
+/// (D-S24).
+/// <para><paramref name="connection"/> va porque la clave externa del pedido es <c>"{shopId}:{shopifyOrderId}"</c> (D-S23) y la
+/// tienda no guarda el <c>shopId</c>; el reintento manual (tarea 16) la obtiene con
+/// <see cref="IShopifyConnectionDirectory.FindByShopDomainAsync"/> y el <c>ShopDomain</c> de la tienda.</para>
 /// </summary>
 public interface IShopifyOrderImporter
 {
     Task<ShopifyImportOutcome> ImportAsync(
-        ShopifyStore store, ShopifyOrderMirror row, ShopifyOrderSnapshot snapshot, CancellationToken cancellationToken);
+        ShopifyConnectionRef connection,
+        ShopifyStore store,
+        ShopifyOrderMirror row,
+        ShopifyOrderSnapshot snapshot,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>Cómo quedó la fila después del intento. La tarea 13 puede ampliarlo; la conciliación (tarea 15) cuenta por
@@ -132,8 +141,11 @@ public interface IShopifyCustomerDirectory
     /// lanzaría con un tipo desconocido (H7).</summary>
     Task<ShopifyCustomerRef?> FindByDocumentAsync(Guid tenantId, string type, string number, CancellationToken cancellationToken);
 
-    /// <summary>Por <c>phone_e164</c>, con la regla de D-M7: el más viejo, luego el id menor.</summary>
-    Task<ShopifyCustomerRef?> FindByPhoneAsync(Guid tenantId, string e164, CancellationToken cancellationToken);
+    /// <summary>Por <c>phone_e164</c>, con la regla de D-M7: el más viejo, luego el id menor. <paramref name="phone"/> llega como
+    /// lo dio Shopify (el de la dirección se escribe a mano: <c>300 123 4567</c>); el adaptador lo lleva a E.164 con el normalizador
+    /// de Customers y <paramref name="country"/> (el de la dirección de envío; sin él, <c>CO</c>). Uno que no normaliza da
+    /// <c>null</c> sin consultar.</summary>
+    Task<ShopifyCustomerRef?> FindByPhoneAsync(Guid tenantId, string phone, string? country, CancellationToken cancellationToken);
 
     /// <summary>Por correo exacto sin distinguir mayúsculas; si hay varios, el más viejo (H8).</summary>
     Task<ShopifyCustomerRef?> FindByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken);

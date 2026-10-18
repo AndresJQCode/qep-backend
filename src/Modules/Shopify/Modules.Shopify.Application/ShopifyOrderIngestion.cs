@@ -107,7 +107,7 @@ public sealed class ShopifyOrderIngestion(
 
         if (applied && connection.IsOperational && row.ImportState == ShopifyImportState.Waiting)
         {
-            await importer.ImportAsync(store, row, snapshot, cancellationToken);
+            await importer.ImportAsync(connection, store, row, snapshot, cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 

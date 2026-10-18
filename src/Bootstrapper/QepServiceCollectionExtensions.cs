@@ -763,9 +763,7 @@ public static class QepServiceCollectionExtensions
         // Shopify (spec 2026-10-15): el espejo de pedidos de las tiendas. Sólo ve Tenancy (y Audit para su auditoría atómica);
         // conexiones, clientes, productos, ciudades y pedidos entran por adaptadores que se registran más abajo.
         services.AddShopifyInfrastructure(configuration);
-        // §5.1: el webhook firmado. La firma usa el client secret de la app de Integrations por un puerto propio; el procesador y
-        // el worker (AddShopifyWebhookProcessing/AddShopifyWebhookWorker) se suman cuando exista el importador (tarea 13, ruling
-        // S18): hasta entonces las entregas quedan encoladas.
+        // §5.1: el webhook firmado. La firma usa el client secret de la app de Integrations por un puerto propio.
         services.AddSingleton<IShopifyAppSecret, ShopifyAppSecret>();
         services.AddScoped<ICommandHandler<ReceiveShopifyWebhookCommand, ShopifyWebhookReceipt>, ReceiveShopifyWebhookHandler>();
         // §5.2 y §6.2: los puertos de Shopify hacia Integrations, Customers, Catalog, Geography, Quotations, Companies y
@@ -780,6 +778,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IShopifyOrderWriter, ShopifyOrderWriter>();
         services.AddScoped<IShopifyMemberDirectory, ShopifyMemberDirectory>();
         services.AddScoped<IShopifyBillingAccounts, ShopifyBillingAccounts>();
+        // §6.2 y ruling S18: el importador y, con él, el procesador de entregas y su worker. Sin estas tres líneas el webhook
+        // responde 200, encola y nadie procesa nunca; CompositionRootTests arma el contenedor con ValidateOnBuild y resuelve el
+        // worker para que eso no pase en silencio.
+        services.AddScoped<ShopifyCustomerResolver>();
+        services.AddScoped<IShopifyOrderImporter, ShopifyOrderImporter>();
+        services.AddShopifyWebhookProcessing();
+        services.AddShopifyWebhookWorker();
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los

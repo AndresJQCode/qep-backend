@@ -83,6 +83,9 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
         Assert.Equal(ConnectionId, call.Store.ConnectionId);
         Assert.Equal(TenantId, call.Store.TenantId);
         Assert.Equal(5550000000001L, call.Snapshot.OrderId);
+        // D-S23: la clave externa del pedido lleva el shopId de la conexión, que la tienda no guarda.
+        var connection = Assert.Single(world.Importer.Connections);
+        Assert.Equal((TenantId, ConnectionId, "954889"), (connection.TenantId, connection.ConnectionId, connection.ShopId));
         // §5.4: el payload del espejo es el snapshot normalizado, no el cuerpo crudo del webhook.
         using var payload = JsonDocument.Parse(row.Payload);
         Assert.Equal("#1001", payload.RootElement.GetProperty("name").GetString());

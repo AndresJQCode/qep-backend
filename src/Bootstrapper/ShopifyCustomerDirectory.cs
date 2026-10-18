@@ -9,10 +9,13 @@ namespace Bootstrapper;
 /// Spec 2026-10-15 §6.2.1: Customers → Shopify. Todas las lecturas van con el <c>tenantId</c>, que los repositorios de Customers
 /// ponen en la consulta. Lo que vuelve es el estado (completo, activo) y nunca los campos que un cliente incompleto no tiene.
 /// </summary>
-internal sealed class ShopifyCustomerDirectory(ICustomerRepository customers, ICustomerProvisioning provisioning)
+internal sealed class ShopifyCustomerDirectory(
+    ICustomerRepository customers, ICustomerProvisioning provisioning, IPhoneNumberNormalizer phones)
     : IShopifyCustomerDirectory
 {
     private const string ValidationFailed = "validation.failed";
+
+    private const string DefaultCountry = "CO";
 
     // Los dos códigos de ICustomerProvisioning.CreateCompleteAsync que dicen «no alcanza para completo».
     private static readonly HashSet<string> NotCompletableCodes =
@@ -36,10 +39,16 @@ internal sealed class ShopifyCustomerDirectory(ICustomerRepository customers, IC
         return owners.TryGetValue(key, out var ownerId) ? await FindAsync(tenantId, ownerId, cancellationToken) : null;
     }
 
-    public async Task<ShopifyCustomerRef?> FindByPhoneAsync(Guid tenantId, string e164, CancellationToken cancellationToken) =>
-        string.IsNullOrWhiteSpace(e164)
-            ? null
-            : ToRef(await customers.FindOldestByPhoneE164Async(tenantId, e164.Trim(), cancellationToken));
+    // §6.2.1 paso 2: phone_e164 lo escribió Customers con este mismo normalizador, así que el número de Shopify (el de la
+    // dirección lo teclea el comprador: «300 123 4567») se lleva a E.164 igual antes de buscar. Sin país, el de la tienda
+    // colombiana; uno que no normaliza no tiene a quién encontrar.
+    public async Task<ShopifyCustomerRef?> FindByPhoneAsync(
+        Guid tenantId, string phone, string? country, CancellationToken cancellationToken)
+    {
+        var region = string.IsNullOrWhiteSpace(country) ? DefaultCountry : country.Trim().ToUpperInvariant();
+        var e164 = string.IsNullOrWhiteSpace(phone) ? null : phones.ToE164(phone.Trim(), region);
+        return e164 is null ? null : ToRef(await customers.FindOldestByPhoneE164Async(tenantId, e164, cancellationToken));
+    }
 
     public async Task<ShopifyCustomerRef?> FindByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken)
     {

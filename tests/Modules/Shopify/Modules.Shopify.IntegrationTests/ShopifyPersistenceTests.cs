@@ -111,6 +111,79 @@ public sealed class ShopifyPersistenceTests
             ("tenantId", tenantId)));
     }
 
+    // §6.2.1 paso 2: el comprador de Shopify ya visto en el espejo de la misma tienda y el mismo tenant, del pedido más reciente que
+    // lo anotó. Una fila sin cliente anotado, otra conexión u otro tenant no cuentan.
+    [Fact]
+    public async Task MirrorFindsTheLatestCustomerSeenForAShopifyCustomer()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var (older, newer) = (Guid.CreateVersion7(), Guid.CreateVersion7());
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ShopifyDbContext>();
+            db.Orders.AddRange(
+                Seen(tenantId, connectionId, 1L, Now.AddDays(-3), older),
+                Seen(tenantId, connectionId, 2L, Now.AddDays(-2), newer),
+                Seen(tenantId, connectionId, 3L, Now.AddDays(-1), null),
+                Seen(tenantId, Guid.CreateVersion7(), 4L, Now, Guid.CreateVersion7()),
+                Seen(Guid.CreateVersion7(), connectionId, 5L, Now, Guid.CreateVersion7()));
+            await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var read = factory.Services.CreateScope();
+        var mirrors = read.ServiceProvider.GetRequiredService<IShopifyOrderMirrorRepository>();
+
+        Assert.Equal(newer, await mirrors.FindSeenCustomerIdAsync(tenantId, connectionId, 7_001L, Ct));
+        Assert.Null(await mirrors.FindSeenCustomerIdAsync(tenantId, connectionId, 7_002L, Ct));
+    }
+
+    // §6.1: lo que el PUT de la tienda (tarea 16) guarda vuelve igual, cuenta de cobro incluida.
+    [Fact]
+    public async Task ConfiguredStoreRoundTrips()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), Now);
+        var (advisor, classification, company) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+        store.Configure(advisor, new ShopifyBillingAccount(company, "Bancolombia", "123-456", "COP"), classification, "Cédula", "Tipo", "NIT", advisor, Now);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IShopifyStoreRepository>().Add(store);
+            await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var read = factory.Services.CreateScope();
+        var saved = await read.ServiceProvider.GetRequiredService<IShopifyStoreRepository>().FindAsync(store.TenantId, store.ConnectionId, Ct);
+
+        Assert.NotNull(saved);
+        Assert.True(saved.IsConfigured);
+        Assert.Equal(
+            ((Guid?)advisor, new ShopifyBillingAccount(company, "Bancolombia", "123-456", "COP"), (Guid?)classification, "Cédula", "Tipo", "NIT", 2L),
+            (saved.AdvisorMembershipId, saved.Billing, saved.DefaultClassificationId, saved.DocumentAttributeKey, saved.DocumentTypeAttributeKey, saved.DefaultIdentificationType, saved.Version));
+    }
+
+    private static ShopifyOrderMirror Seen(Guid tenantId, Guid connectionId, long shopifyOrderId, DateTimeOffset createdAt, Guid? qepCustomerId)
+    {
+        var row = ShopifyOrderMirror.Create(
+            tenantId,
+            connectionId,
+            shopifyOrderId,
+            "{}",
+            Now,
+            new ShopifyOrderHeader($"#{shopifyOrderId}", 7_001L, createdAt, null, "paid", "COP", 1_000m, true));
+        if (qepCustomerId is { } id)
+        {
+            row.AttachCustomer(id);
+        }
+
+        return row;
+    }
+
     // §5.4: una fila por pedido y conexión. El webhook y la conciliación a la vez no dejan dos; el perdedor recibe
     // concurrency.conflict (por nombre de índice) y vuelve a leer la fila del ganador.
     [Fact]

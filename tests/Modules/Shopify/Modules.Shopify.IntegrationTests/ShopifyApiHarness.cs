@@ -7,12 +7,14 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Modules.Catalog.Application;
 using Modules.Companies.Application;
 using Modules.Customers.Application;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
 using Modules.Shopify.Api;
+using Modules.Shopify.Infrastructure.Workers;
 using Modules.Tenancy.Application;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -139,6 +141,18 @@ internal static class ShopifyApiHarness
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            // Ruling S18: el host registra el worker de entregas. En las pruebas no corre solo: la que lo necesita lo corre a mano
+            // (DrainAsync) y decide cuándo, así que uno en segundo plano reclamaría la misma entrega a la vez.
+            builder.ConfigureTestServices(services =>
+            {
+                foreach (var worker in services
+                    .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                        && descriptor.ImplementationType == typeof(ShopifyWebhookDeliveryWorker))
+                    .ToArray())
+                {
+                    services.Remove(worker);
+                }
+            });
             if (ConfigureTestServices is { } configure)
             {
                 builder.ConfigureTestServices(configure);

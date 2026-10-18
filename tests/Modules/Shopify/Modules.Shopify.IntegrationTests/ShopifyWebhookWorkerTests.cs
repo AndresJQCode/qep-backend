@@ -46,6 +46,59 @@ public sealed class ShopifyWebhookWorkerTests
         Assert.Single(ports.Importer.Calls);
     }
 
+    // Ruling S18 de punta a punta, sin dobles: el host registra el importador y sus adaptadores. Un pedido firmado de una tienda
+    // configurada entra como pedido de Shopify en Quotations, con su clave externa, y el comprador nace completo (documento del
+    // atributo, clasificación de la tienda y Medellín por ANT) y queda anotado en la fila.
+    [Fact]
+    public async Task WorkerWithTheRealImporterCreatesTheOrderAndAttachesTheCustomer()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        await ConfigureStoreAsync(factory, world);
+        using var client = factory.CreateClient();
+
+        await PostWebhookAsync(client, "orders/create", "wh-real", OrderFixture("taxes-included"));
+        await DrainAsync(factory);
+
+        Assert.Equal("1|none|none", await DeliveryAsync(connectionString, "wh-real"));
+        Assert.Equal(
+            "Imported|19000.00",
+            await ScalarAsync<string>(
+                connectionString, "SELECT import_state || '|' || total_difference FROM shopify.orders WHERE connection_id = @c", ("c", world.ConnectionId)));
+        Assert.Equal(
+            "Shopify|#1001|954889:5550000000001|Complete|Cc 1036000111",
+            await ScalarAsync<string>(
+                connectionString,
+                """
+                SELECT o.source || '|' || o.external_reference || '|' || o.external_key || '|' || c.completeness || '|'
+                       || c.identification_type || ' ' || c.identification_number
+                FROM shopify.orders m
+                JOIN quotations.orders o ON o.id = m.qep_order_id AND o.tenant_id = m.tenant_id
+                JOIN customers.customers c ON c.id = m.qep_customer_id AND c.tenant_id = m.tenant_id
+                WHERE m.connection_id = @c
+                """,
+                ("c", world.ConnectionId)));
+    }
+
+    private static async Task ConfigureStoreAsync(QepApiFactory factory, ShopifyWorld world)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var store = ShopifyStore.Create(world.ConnectionId, world.TenantId, DateTimeOffset.UtcNow);
+        store.Configure(
+            world.AdvisorMembershipId,
+            new ShopifyBillingAccount(world.Company.Id, world.Company.BankName, world.Company.AccountNumber, "COP"),
+            world.ClassificationId,
+            ShopifyStore.DefaultDocumentAttributeKey,
+            ShopifyStore.DefaultDocumentTypeAttributeKey,
+            ShopifyStore.DefaultIdentificationTypeCode,
+            world.AdvisorMembershipId,
+            DateTimeOffset.UtcNow);
+        scope.ServiceProvider.GetRequiredService<IShopifyStoreRepository>().Add(store);
+        await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+    }
+
     [Fact]
     public async Task WorkerMalformedPayloadClosesWithLastErrorWithoutRetry()
     {
@@ -288,7 +341,7 @@ public sealed class ShopifyWebhookWorkerTests
         public Func<ShopifyOrderMirror, int, Task>? OnImport { get; set; }
 
         public async Task<ShopifyImportOutcome> ImportAsync(
-            ShopifyStore store, ShopifyOrderMirror row, ShopifyOrderSnapshot snapshot, CancellationToken cancellationToken)
+            ShopifyConnectionRef connection, ShopifyStore store, ShopifyOrderMirror row, ShopifyOrderSnapshot snapshot, CancellationToken cancellationToken)
         {
             lock (Calls)
             {

@@ -380,7 +380,7 @@ public sealed class ShopifyAdaptersTests
     public async Task CustomerDirectoryUnknownDocumentTypeIsNotCalled()
     {
         var customers = new FakeCustomerRepository();
-        var directory = new ShopifyCustomerDirectory(customers, new FakeCustomerProvisioning());
+        var directory = new ShopifyCustomerDirectory(customers, new FakeCustomerProvisioning(), new PassThroughPhones());
 
         Assert.Null(await directory.FindByDocumentAsync(TenantId, "RUT", "1020304050", Ct));
         Assert.Null(await directory.FindByDocumentAsync(TenantId, "CC", "   ", Ct));
@@ -397,14 +397,32 @@ public sealed class ShopifyAdaptersTests
         {
             Identifications = { [(IdentificationType.Cc, "1020304050")] = incomplete.Id }
         };
-        var directory = new ShopifyCustomerDirectory(customers, new FakeCustomerProvisioning());
+        var directory = new ShopifyCustomerDirectory(customers, new FakeCustomerProvisioning(), new PassThroughPhones());
         var expected = new ShopifyCustomerRef(incomplete.Id.Value, false, false);
 
         Assert.Equal(expected, await directory.FindByDocumentAsync(TenantId, "cc", " 1020304050 ", Ct));
         Assert.Equal(expected, await directory.FindByEmailAsync(TenantId, "LAURA@verde.co", Ct));
-        Assert.Equal(expected, await directory.FindByPhoneAsync(TenantId, "+573001234567", Ct));
+        Assert.Equal(expected, await directory.FindByPhoneAsync(TenantId, "+573001234567", "CO", Ct));
         Assert.Equal(expected, await directory.FindByIdAsync(TenantId, incomplete.Id.Value, Ct));
         Assert.Null(await directory.FindByIdAsync(Guid.CreateVersion7(), incomplete.Id.Value, Ct));
+    }
+
+    // §6.2.1 paso 2: el teléfono de la dirección de envío lo escribe el comprador a mano; se busca en E.164 con el país de la
+    // dirección (sin él, CO), con el mismo normalizador con el que Customers guardó phone_e164.
+    [Fact]
+    public async Task CustomerDirectoryNormalizesThePhoneWithTheCountry()
+    {
+        var customer = Customer.CreateIncompleteFromExternalSale(
+            CustomerId.New(), TenantId, "Laura", "+573001234567", null, "CO", Now, new PassThroughPhones());
+        var customers = new FakeCustomerRepository(customer);
+        var phones = new MappedPhones { [("300 123 4567", "CO")] = "+573001234567" };
+        var directory = new ShopifyCustomerDirectory(customers, new FakeCustomerProvisioning(), phones);
+
+        Assert.Equal(customer.Id.Value, (await directory.FindByPhoneAsync(TenantId, " 300 123 4567 ", null, Ct))?.Id);
+        Assert.Equal(customer.Id.Value, (await directory.FindByPhoneAsync(TenantId, "300 123 4567", "co", Ct))?.Id);
+        var calls = customers.Calls;
+        Assert.Null(await directory.FindByPhoneAsync(TenantId, "no es un teléfono", "CO", Ct));
+        Assert.Equal(calls, customers.Calls);
     }
 
     [Fact]
@@ -414,7 +432,7 @@ public sealed class ShopifyAdaptersTests
         {
             OnComplete = () => throw new ValidationException([new ValidationFailure("Email", "Requerido.")])
         };
-        var directory = new ShopifyCustomerDirectory(new FakeCustomerRepository(), provisioning);
+        var directory = new ShopifyCustomerDirectory(new FakeCustomerRepository(), provisioning, new PassThroughPhones());
 
         var error = await Assert.ThrowsAsync<ShopifyCustomerNotCompletableException>(
             () => directory.CreateCompleteAsync(TenantId, CompleteCustomer(), Ct));
@@ -432,7 +450,7 @@ public sealed class ShopifyAdaptersTests
     public async Task CustomerDirectoryCreatesCompleteAndIncomplete()
     {
         var provisioning = new FakeCustomerProvisioning();
-        var directory = new ShopifyCustomerDirectory(new FakeCustomerRepository(), provisioning);
+        var directory = new ShopifyCustomerDirectory(new FakeCustomerRepository(), provisioning, new PassThroughPhones());
         var data = CompleteCustomer();
 
         var complete = await directory.CreateCompleteAsync(TenantId, data, Ct);

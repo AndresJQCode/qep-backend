@@ -26,6 +26,19 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
 
     public void Add(ShopifyOrderMirror row) => dbContext.Orders.Add(row);
 
+    // Sin tracking: sólo se lee un id. Acotada por IX_shopify_orders_connection_customer.
+    public Task<Guid?> FindSeenCustomerIdAsync(Guid tenantId, Guid connectionId, long shopifyCustomerId, CancellationToken cancellationToken) =>
+        dbContext.Orders
+            .AsNoTracking()
+            .Where(row => row.TenantId == tenantId
+                && row.ConnectionId == connectionId
+                && row.ShopifyCustomerId == shopifyCustomerId
+                && row.QepCustomerId != null)
+            .OrderByDescending(row => row.ShopifyCreatedAt)
+            .ThenByDescending(row => row.Id)
+            .Select(row => row.QepCustomerId)
+            .FirstOrDefaultAsync(cancellationToken);
+
     public Task<int> DeleteByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         dbContext.Orders
             .Where(row => row.TenantId == tenantId && row.ConnectionId == connectionId)
