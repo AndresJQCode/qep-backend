@@ -650,7 +650,7 @@ Integrations filtra su catálogo de proveedores por los módulos activos del ten
 Apagar un módulo descarta sus permisos en el request siguiente, por cookie y por el stub de
 desarrollo (este último sólo cuando el tenant existe en `tenancy.tenants`). No borra datos ni corta
 trabajos en vuelo. La SPA lo lee de `GET /api/v1/tenants/{tenantId}/modules` (autenticado, sin
-permiso), que siempre devuelve los nueve con `enabled`, `contracted` y `missingDependencies`, y se
+permiso), que siempre devuelve los diez con `enabled`, `contracted` y `missingDependencies`, y se
 entera en hasta 5 minutos.
 
 Un tenant del signup nace con los siete sin `pos`, `messaging` ni `pipeline` (los seis base más `shopify`) mientras `Entitlements:GrantDefaultModulesOnSignup`
