@@ -20,10 +20,17 @@ public interface IShopifyInstallRepository
     Task<ShopifyInstall?> FindAsync(Guid installId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Guarda el canje ya aplicado en el agregado (<see cref="ShopifyInstall.MarkExchanged"/>) con un solo
-    /// <c>UPDATE … WHERE id = @id AND state = @state AND access_token_protected IS NULL</c>: es lo que consume el
-    /// <c>state</c>. <c>false</c> = otro request lo consumió entre la lectura y este UPDATE (doble clic del callback,
-    /// Review Focus 5); el handler responde <c>install_not_found</c>.
+    /// Ruling S9: guarda el reclamo ya aplicado en el agregado (<see cref="ShopifyInstall.Claim"/>) con un solo
+    /// <c>UPDATE … SET state = @claim WHERE id = @id AND state = @state AND access_token_protected IS NULL</c>, antes de
+    /// llamar a Shopify: es lo que consume el <c>state</c>. <c>false</c> = otro request lo reclamó entre la lectura y este
+    /// UPDATE (doble clic del callback, Review Focus 5); el handler responde <c>install_not_found</c> sin gastar el code.
+    /// </summary>
+    Task<bool> TryClaimAsync(ShopifyInstall install, string state, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Guarda el canje ya aplicado en el agregado (<see cref="ShopifyInstall.MarkExchanged"/>) sobre la fila reclamada:
+    /// <c>UPDATE … WHERE id = @id AND state = @claim AND access_token_protected IS NULL</c>. Después de un reclamo ganado
+    /// no debería dar <c>false</c>; si lo da, el handler responde <c>install_not_found</c>.
     /// </summary>
     Task<bool> TryCompleteExchangeAsync(ShopifyInstall install, CancellationToken cancellationToken);
 }

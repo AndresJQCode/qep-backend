@@ -293,38 +293,59 @@ public sealed partial class StartShopifyInstallHandlerTests
     }
 }
 
-/// <summary>Las filas de <c>integrations.shopify_installs</c> en memoria. <see cref="TryCompleteExchangeAsync"/> imita el
-/// <c>UPDATE … WHERE state = @s AND access_token_protected IS NULL</c>: una fila ya canjeada no se canjea otra vez.
-/// <see cref="LoseNextExchange"/> simula al otro request que ganó la carrera entre la lectura y el UPDATE.</summary>
+/// <summary>Las filas de <c>integrations.shopify_installs</c> en memoria. Guarda el <c>state</c> de cada fila aparte del
+/// objeto, porque el handler cambia el suyo al reclamar: <see cref="TryClaimAsync"/> imita el
+/// <c>UPDATE … SET state = @claim WHERE id = @id AND state = @state AND access_token_protected IS NULL</c> y
+/// <see cref="TryCompleteExchangeAsync"/> el que guarda el canje sobre la fila reclamada. <see cref="LoseNextClaim"/> simula
+/// al otro request que reclamó primero.</summary>
 internal sealed class InMemoryShopifyInstallRepository : IShopifyInstallRepository
 {
+    private readonly Dictionary<Guid, string> _storedStates = [];
+
     public List<ShopifyInstall> Added { get; } = [];
 
     /// <summary>Lo que quedó guardado por id, ya canjeado.</summary>
     public Dictionary<Guid, ShopifyInstall> Exchanged { get; } = [];
 
-    public bool LoseNextExchange { get; set; }
+    public bool LoseNextClaim { get; set; }
 
-    public void Add(ShopifyInstall install) => Added.Add(install);
+    public void Add(ShopifyInstall install)
+    {
+        Added.Add(install);
+        _storedStates[install.Id] = install.State;
+    }
 
     public Task<ShopifyInstall?> FindByStateAsync(string state, CancellationToken cancellationToken) =>
-        Task.FromResult(Current().FirstOrDefault(install => string.Equals(install.State, state, StringComparison.Ordinal)));
+        Task.FromResult(Added.FirstOrDefault(install => string.Equals(_storedStates[install.Id], state, StringComparison.Ordinal)));
 
     public Task<ShopifyInstall?> FindAsync(Guid installId, CancellationToken cancellationToken) =>
-        Task.FromResult(Current().FirstOrDefault(install => install.Id == installId));
+        Task.FromResult(Added.FirstOrDefault(install => install.Id == installId));
+
+    public Task<bool> TryClaimAsync(ShopifyInstall install, string state, CancellationToken cancellationToken)
+    {
+        if (LoseNextClaim
+            || Exchanged.ContainsKey(install.Id)
+            || !_storedStates.TryGetValue(install.Id, out var stored)
+            || !string.Equals(stored, state, StringComparison.Ordinal))
+        {
+            LoseNextClaim = false;
+            return Task.FromResult(false);
+        }
+
+        _storedStates[install.Id] = install.State;
+        return Task.FromResult(true);
+    }
 
     public Task<bool> TryCompleteExchangeAsync(ShopifyInstall install, CancellationToken cancellationToken)
     {
-        if (LoseNextExchange || Exchanged.ContainsKey(install.Id) || Added.All(added => added.Id != install.Id))
+        if (Exchanged.ContainsKey(install.Id)
+            || !_storedStates.TryGetValue(install.Id, out var stored)
+            || !string.Equals(stored, install.State, StringComparison.Ordinal))
         {
-            LoseNextExchange = false;
             return Task.FromResult(false);
         }
 
         Exchanged[install.Id] = install;
         return Task.FromResult(true);
     }
-
-    private IEnumerable<ShopifyInstall> Current() =>
-        Added.Select(install => Exchanged.TryGetValue(install.Id, out var exchanged) ? exchanged : install);
 }

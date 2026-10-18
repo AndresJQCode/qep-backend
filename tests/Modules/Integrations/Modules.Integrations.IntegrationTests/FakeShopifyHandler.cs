@@ -13,12 +13,13 @@ internal sealed record ShopifyRequest(HttpMethod Method, Uri? Uri, string? Acces
 /// tienda real (V-1, V-3 y V-7 se cierran contra Shopify, en el handoff).</summary>
 internal sealed class FakeShopifyHandler : HttpMessageHandler
 {
-    private readonly ConcurrentQueue<(Regex Pattern, Func<HttpRequestMessage, HttpResponseMessage> Respond)> _rules = new();
+    private readonly ConcurrentQueue<(Regex Pattern, Func<HttpRequestMessage, HttpResponseMessage> Respond, TimeSpan Delay)> _rules = new();
 
     public ConcurrentQueue<ShopifyRequest> Requests { get; } = new();
 
-    public void Respond(string pattern, HttpStatusCode status, string body) =>
-        _rules.Enqueue((new Regex(pattern, RegexOptions.CultureInvariant), _ => Json(status, body)));
+    /// <param name="delay">Lo que tarda Shopify en responder: con él, dos requests concurrentes se cruzan de verdad.</param>
+    public void Respond(string pattern, HttpStatusCode status, string body, TimeSpan delay = default) =>
+        _rules.Enqueue((new Regex(pattern, RegexOptions.CultureInvariant), _ => Json(status, body), delay));
 
     public void Reset() => _rules.Clear();
 
@@ -26,12 +27,14 @@ internal sealed class FakeShopifyHandler : HttpMessageHandler
         new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
     /// <summary>El canje y la lectura de la tienda de una instalación sana de <paramref name="shop"/>.</summary>
-    public void ScriptHappyInstall(string shop, string accessToken, string scopes = "read_orders,read_customers", string name = "Mi Tienda")
+    public void ScriptHappyInstall(
+        string shop, string accessToken, string scopes = "read_orders,read_customers", string name = "Mi Tienda", TimeSpan exchangeDelay = default)
     {
         Respond(
             $"^{Regex.Escape(shop)}/admin/oauth/access_token$",
             HttpStatusCode.OK,
-            $$"""{"access_token":"{{accessToken}}","scope":"{{scopes}}"}""");
+            $$"""{"access_token":"{{accessToken}}","scope":"{{scopes}}"}""",
+            exchangeDelay);
         Respond(
             $"^{Regex.Escape(shop)}/admin/api/[0-9-]+/graphql\\.json$",
             HttpStatusCode.OK,
@@ -48,10 +51,15 @@ internal sealed class FakeShopifyHandler : HttpMessageHandler
             body));
 
         var target = request.RequestUri is { } uri ? uri.Host + uri.AbsolutePath : string.Empty;
-        foreach (var (pattern, respond) in _rules)
+        foreach (var (pattern, respond, delay) in _rules)
         {
             if (pattern.IsMatch(target))
             {
+                if (delay > TimeSpan.Zero)
+                {
+                    await Task.Delay(delay, cancellationToken);
+                }
+
                 return respond(request);
             }
         }

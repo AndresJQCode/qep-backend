@@ -3,7 +3,9 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using Modules.Integrations.Api;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Integrations.Application.Shopify;
+using Modules.Integrations.Domain;
 using static Modules.Integrations.IntegrationTests.IntegrationsApiHarness;
 
 namespace Modules.Integrations.IntegrationTests;
@@ -350,6 +352,69 @@ public sealed class ShopifyInstallApiTests
         Assert.Equal("integrations.shopify.install_not_found", (await ProblemAsync(second)).Code);
         Assert.Single(factory.ShopifyHandler.Requests, request => request.Uri!.AbsolutePath == "/admin/oauth/access_token");
         Assert.Equal(1, await CountInstallsAsync(connectionString));
+    }
+
+    // Ruling S9: dos complete del mismo state a la vez. Shopify tarda en canjear, así que los dos leen la fila sin token; el
+    // reclamo del state antes de llamar a Shopify deja pasar a uno solo, y el otro recibe install_not_found sin gastar el
+    // code otra vez (RFC 6749 §4.1.2: un code canjeado dos veces puede revocar el token del primero).
+    [Fact]
+    public async Task CompleteConcurrentSameStateExchangesTheCodeOnce()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        factory.ShopifyHandler.ScriptHappyInstall(Shop, SentinelShopifyAccessToken, exchangeDelay: TimeSpan.FromSeconds(1));
+        var tenant = await RegisterTenantAsync(factory);
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var state = await StartFromTenantAsync(owner, tenant.TenantId);
+        using var first = factory.CreateClient();
+        using var second = factory.CreateClient();
+
+        var responses = await Task.WhenAll(
+            SendAsync(first, HttpMethod.Post, CompleteUrl, CompleteBody(state)),
+            SendAsync(second, HttpMethod.Post, CompleteUrl, CompleteBody(state)));
+
+        Assert.Equal(
+            [HttpStatusCode.OK, HttpStatusCode.NotFound],
+            responses.Select(response => response.StatusCode).Order().ToArray());
+        var loser = responses.Single(response => response.StatusCode == HttpStatusCode.NotFound);
+        Assert.Equal("integrations.shopify.install_not_found", (await ProblemAsync(loser)).Code);
+        Assert.Single(factory.ShopifyHandler.Requests, request => request.Uri!.AbsolutePath == "/admin/oauth/access_token");
+        Assert.Equal(1, await ScalarAsync<long>(
+            connectionString, "SELECT count(*) FROM integrations.shopify_installs WHERE access_token_protected IS NOT NULL"));
+    }
+
+    // La rama perdedora del UPDATE condicionado, contra Postgres: dos lectores de la misma fila reclaman el mismo state y
+    // sólo uno gana. La prueba HTTP de arriba puede cortarse antes, en la lectura; esta no.
+    [Fact]
+    public async Task ClaimSameStateTwiceOnlyOneWins()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var state = await StartFromTenantAsync(owner, tenant.TenantId);
+        using var firstScope = factory.Services.CreateScope();
+        using var secondScope = factory.Services.CreateScope();
+        var firstRepository = firstScope.ServiceProvider.GetRequiredService<IShopifyInstallRepository>();
+        var secondRepository = secondScope.ServiceProvider.GetRequiredService<IShopifyInstallRepository>();
+        var first = await firstRepository.FindByStateAsync(state, Ct);
+        var second = await secondRepository.FindByStateAsync(state, Ct);
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        first.Claim($"{ShopifyInstall.ClaimedStatePrefix}first", DateTimeOffset.UtcNow);
+        second.Claim($"{ShopifyInstall.ClaimedStatePrefix}second", DateTimeOffset.UtcNow);
+
+        var firstWon = await firstRepository.TryClaimAsync(first, state, Ct);
+        var secondWon = await secondRepository.TryClaimAsync(second, state, Ct);
+
+        Assert.True(firstWon);
+        Assert.False(secondWon);
+        Assert.Equal(
+            $"{ShopifyInstall.ClaimedStatePrefix}first",
+            await ScalarAsync<string>(connectionString, "SELECT state FROM integrations.shopify_installs"));
+        Assert.Null(await firstRepository.FindByStateAsync(state, Ct));
     }
 
     [Fact]

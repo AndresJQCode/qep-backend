@@ -1,3 +1,5 @@
+using System.Buffers.Text;
+using System.Security.Cryptography;
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Integrations.Domain;
@@ -74,8 +76,9 @@ public sealed class CompleteShopifyInstallValidator : AbstractValidator<Complete
 /// la app configurada, <c>hmac_invalid</c>, como el inicio B) → dominio → fila por <c>state</c>, de la misma tienda y con
 /// el mismo <c>redirect_uri</c> (si no, <c>install_not_found</c>: no se revela que el <c>state</c> existe para otra) → ya
 /// canjeada = <c>install_not_found</c>, vencida = <c>install_expired</c> → llave de cifrado disponible (503 antes de
-/// gastar el <c>code</c>) → canje → scopes → lectura de la tienda → token cifrado con AAD <c>installId</c> +
-/// <c>accessToken</c> → <c>UPDATE</c> condicionado que consume el <c>state</c> → ruta existente.
+/// gastar el <c>code</c>) → reclamo de la fila con un <c>UPDATE</c> condicionado que consume el <c>state</c> (ruling S9;
+/// el perdedor, <c>install_not_found</c>) → canje → scopes → lectura de la tienda → token cifrado con AAD
+/// <c>installId</c> + <c>accessToken</c> → canje guardado sobre la fila reclamada → ruta existente.
 /// </summary>
 public sealed class CompleteShopifyInstallHandler(
     IShopifyInstallRepository installs,
@@ -88,6 +91,9 @@ public sealed class CompleteShopifyInstallHandler(
     IValidator<CompleteShopifyInstallCommand> validator)
     : ICommandHandler<CompleteShopifyInstallCommand, ShopifyInstallCompletedResponse>
 {
+    /// <summary>Como el state del inicio: 43 caracteres base64url, más el prefijo, caben en la columna (64).</summary>
+    private const int ClaimBytes = 32;
+
     public async Task<ShopifyInstallCompletedResponse> HandleAsync(
         CompleteShopifyInstallCommand command, CancellationToken cancellationToken)
     {
@@ -105,24 +111,38 @@ public sealed class CompleteShopifyInstallHandler(
         if (install is null
             || !string.Equals(install.ShopDomain, shopDomain, StringComparison.Ordinal)
             || !string.Equals(install.RedirectUri, command.RedirectUri, StringComparison.Ordinal)
+            || install.IsClaimed
             || install.IsExchanged)
         {
             throw ShopifyInstallErrors.InstallNotFound();
         }
 
-        if (!install.CanBeExchanged(clock.UtcNow))
+        // Un solo instante por request (minor 1 de la revisión): la vigencia se decide al reclamar, y la fila reclamada se
+        // canjea aunque los 15 minutos se cumplan mientras Shopify responde. Ya no la puede usar nadie más y Shopify ya
+        // gastó el code; vencerla ahí sería un 500 o un install_expired sin salida.
+        var now = clock.UtcNow;
+        if (!install.CanBeExchanged(now))
         {
             throw ShopifyInstallErrors.InstallExpired();
         }
 
         SecretProtectionGuard.EnsureAvailable(protector);
 
+        // Ruling S9: el state se consume antes de llamar a Shopify. El que pierde la carrera recibe lo mismo que un state ya
+        // consumido y no gasta el code otra vez (RFC 6749 §4.1.2: un code canjeado dos veces puede revocar el primer token).
+        var state = install.State;
+        install.Claim(ShopifyInstall.ClaimedStatePrefix + Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(ClaimBytes)), now);
+        if (!await installs.TryClaimAsync(install, state, cancellationToken))
+        {
+            throw ShopifyInstallErrors.InstallNotFound();
+        }
+
         var grant = await CallAsync(() => gateway.ExchangeCodeAsync(shopDomain, command.Code!, cancellationToken));
         EnsureScopes(grant.Scopes);
         var shop = await CallAsync(() => gateway.GetShopAsync(shopDomain, grant.AccessToken, cancellationToken));
 
         var token = protector.Protect(install.Id, ShopifyFieldKeys.AccessToken, grant.AccessToken);
-        install.MarkExchanged(shop.Id, shop.Name, grant.Scopes, token, clock.UtcNow);
+        install.MarkExchanged(shop.Id, shop.Name, grant.Scopes, token, now);
         if (!await installs.TryCompleteExchangeAsync(install, cancellationToken))
         {
             throw ShopifyInstallErrors.InstallNotFound();

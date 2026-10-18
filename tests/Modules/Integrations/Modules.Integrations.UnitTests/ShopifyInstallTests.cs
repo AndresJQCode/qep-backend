@@ -117,6 +117,32 @@ public sealed class ShopifyInstallTests
         Assert.Equal(ShopifyInstall.ShopNameMaxLength, install.ShopName!.Length);
     }
 
+    // Ruling S9: el reclamo reemplaza el state de Shopify por uno con prefijo, una sola vez y sólo mientras esté vigente.
+    [Fact]
+    public void ClaimReplacesTheStateOnceWhileExchangeable()
+    {
+        var install = Start();
+        var claim = ShopifyInstall.ClaimedStatePrefix + "abc";
+
+        install.Claim(claim, Now.AddMinutes(1));
+
+        Assert.True(install.IsClaimed);
+        Assert.Equal(claim, install.State);
+        Assert.True(install.CanBeExchanged(Now.AddMinutes(1)));
+        Assert.Throws<InvalidOperationException>(() => install.Claim(ShopifyInstall.ClaimedStatePrefix + "def", Now.AddMinutes(1)));
+    }
+
+    [Fact]
+    public void ClaimExpiredOrWithoutThePrefixThrows()
+    {
+        var install = Start();
+
+        Assert.Throws<InvalidOperationException>(() => install.Claim(ShopifyInstall.ClaimedStatePrefix + "abc", Now.AddMinutes(15)));
+        Assert.Throws<ArgumentException>(() => install.Claim("abc", Now));
+        Assert.Throws<ArgumentException>(() => install.Claim(ShopifyInstall.ClaimedStatePrefix + new string('a', 64), Now));
+        Assert.False(install.IsClaimed);
+    }
+
     [Fact]
     public void ToStringDoesNotPrintTheStateOrTheToken()
     {

@@ -23,6 +23,10 @@ public sealed class ShopifyInstall
 
     public const int ScopesMaxLength = 512;
 
+    /// <summary>Ruling S9: el <c>state</c> de una fila reclamada para el canje. El punto no es base64url, así que ningún
+    /// <c>state</c> emitido por el inicio puede chocar con uno reclamado.</summary>
+    public const string ClaimedStatePrefix = "claimed.";
+
     public static readonly TimeSpan StartLifetime = TimeSpan.FromMinutes(15);
 
     public static readonly TimeSpan ExchangedLifetime = TimeSpan.FromDays(7);
@@ -103,6 +107,31 @@ public sealed class ShopifyInstall
             CreatedAt = now,
             ExpiresAt = now + StartLifetime,
         };
+    }
+
+    /// <summary>Ya la reclamó un canje: el <c>state</c> de Shopify dejó de existir.</summary>
+    public bool IsClaimed => State.StartsWith(ClaimedStatePrefix, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Ruling S9: el canje reclama la fila <b>antes</b> de llamar a Shopify, reemplazando el <c>state</c> por
+    /// <paramref name="claimState"/> (aleatorio, con <see cref="ClaimedStatePrefix"/>). Es lo que lo vuelve de un solo uso:
+    /// otro request con el mismo <c>state</c> ya no encuentra la fila, aunque Shopify falle después. El repositorio lo
+    /// guarda con un <c>UPDATE</c> condicionado al <c>state</c> anterior.
+    /// </summary>
+    public void Claim(string claimState, DateTimeOffset now)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(claimState);
+        if (!claimState.StartsWith(ClaimedStatePrefix, StringComparison.Ordinal) || claimState.Length > StateMaxLength)
+        {
+            throw new ArgumentException("A claim state carries the claimed prefix and fits the column.", nameof(claimState));
+        }
+
+        if (IsClaimed || !CanBeExchanged(now))
+        {
+            throw new InvalidOperationException("The install was already claimed, exchanged or expired.");
+        }
+
+        State = claimState;
     }
 
     /// <summary>Vigente y todavía sin token: el <c>state</c> es de un solo uso.</summary>

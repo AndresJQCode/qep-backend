@@ -15,8 +15,22 @@ internal sealed class ShopifyInstallRepository(IntegrationsDbContext dbContext) 
     public Task<ShopifyInstall?> FindAsync(Guid installId, CancellationToken cancellationToken) =>
         dbContext.ShopifyInstalls.AsNoTracking().SingleOrDefaultAsync(install => install.Id == installId, cancellationToken);
 
-    // Una sola sentencia: la condición sobre access_token_protected es la que deja ganar a un solo canje. Las columnas son
-    // las que MarkExchanged cambia; nada más.
+    // Una sola sentencia: la condición sobre el state anterior es la que deja ganar a un solo reclamo, antes de que nadie
+    // llame a Shopify (ruling S9). Sin transacción abierta durante las llamadas: el reclamo ya es atómico.
+    public async Task<bool> TryClaimAsync(ShopifyInstall install, string state, CancellationToken cancellationToken)
+    {
+        if (!install.IsClaimed)
+        {
+            throw new InvalidOperationException("Claim has to run before the claim is stored.");
+        }
+
+        var updated = await dbContext.ShopifyInstalls
+            .Where(row => row.Id == install.Id && row.State == state && row.ProtectedToken == null)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(row => row.State, install.State), cancellationToken);
+        return updated == 1;
+    }
+
+    // Sobre la fila reclamada. Las columnas son las que MarkExchanged cambia; nada más.
     public async Task<bool> TryCompleteExchangeAsync(ShopifyInstall install, CancellationToken cancellationToken)
     {
         if (!install.IsExchanged)

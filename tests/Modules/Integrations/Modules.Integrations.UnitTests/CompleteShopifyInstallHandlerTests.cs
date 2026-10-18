@@ -303,18 +303,54 @@ public sealed class CompleteShopifyInstallHandlerTests
         Assert.Single(bed.Installs.Added);
     }
 
-    // Los dos clics leyeron la fila sin token; el UPDATE condicionado deja ganar a uno solo.
+    // Ruling S9: los dos clics leyeron la fila sin token; el reclamo del state, antes de llamar a Shopify, deja pasar a uno
+    // solo. El que pierde recibe lo mismo que un state ya consumido y no gasta el code.
     [Fact]
-    public async Task CompleteLosingTheRaceThrowsInstallNotFound()
+    public async Task CompleteLosingTheClaimThrowsInstallNotFoundWithoutCallingShopify()
     {
         var bed = new Bed();
         bed.Seed();
-        bed.Installs.LoseNextExchange = true;
+        bed.Installs.LoseNextClaim = true;
 
         var error = await Assert.ThrowsAsync<ResourceNotFoundException>(() => bed.Handler().HandleAsync(bed.Command(), Ct));
 
         Assert.Equal(IntegrationsErrorCodes.ShopifyInstallNotFound, error.Code);
+        Assert.Empty(bed.Gateway.Calls);
         Assert.Empty(bed.Installs.Exchanged);
+    }
+
+    // Minor 1 de la revisión: la fila vigente al reclamarla puede vencer mientras Shopify responde (hasta 20 s). El reclamo
+    // ya la consumió y Shopify ya gastó el code: el canje termina, con un solo instante por request, y nunca es 500.
+    [Fact]
+    public async Task CompleteRowExpiringDuringTheShopifyCallsStillCompletes()
+    {
+        var bed = new Bed();
+        var install = bed.Seed();
+        var claimedAt = IntegrationsTestBed.Now.AddMinutes(14).AddSeconds(59);
+        bed.Integrations.Clock.UtcNow = claimedAt;
+        bed.Gateway.OnExchange = () => bed.Integrations.Clock.UtcNow = IntegrationsTestBed.Now.AddMinutes(15).AddSeconds(10);
+
+        var response = await bed.Handler().HandleAsync(bed.Command(), Ct);
+
+        Assert.Equal(install.Id, response.InstallId);
+        Assert.Equal(claimedAt.AddDays(7), response.ExpiresAt);
+        Assert.Equal(claimedAt.AddDays(7), Assert.Single(bed.Installs.Exchanged.Values).ExpiresAt);
+    }
+
+    // Un state reclamado y no canjeado (Shopify falló después del reclamo) no se puede volver a usar.
+    [Fact]
+    public async Task CompleteAfterAFailedExchangeTheStateIsGone()
+    {
+        var bed = new Bed();
+        bed.Seed();
+        bed.Gateway.FailAt = "exchange";
+        await Assert.ThrowsAsync<IntegrationsDomainException>(() => bed.Handler().HandleAsync(bed.Command(), Ct));
+        bed.Gateway.FailAt = null;
+
+        var error = await Assert.ThrowsAsync<ResourceNotFoundException>(() => bed.Handler().HandleAsync(bed.Command(), Ct));
+
+        Assert.Equal(IntegrationsErrorCodes.ShopifyInstallNotFound, error.Code);
+        Assert.Equal(1, bed.Gateway.Calls.Count(call => call == "exchange"));
     }
 
     [Fact]
@@ -346,9 +382,13 @@ internal sealed class FakeShopifyAdminGateway : IShopifyAdminGateway
 
     public (string Shop, string Token)? LastShopRead { get; private set; }
 
+    /// <summary>Lo que pasa mientras Shopify canjea (por ejemplo, que el reloj avance).</summary>
+    public Action? OnExchange { get; set; }
+
     public Task<ShopifyTokenGrant> ExchangeCodeAsync(string shop, string code, CancellationToken cancellationToken)
     {
         Calls.Add("exchange");
+        OnExchange?.Invoke();
         ThrowIfFailing("exchange");
         return Task.FromResult(new ShopifyTokenGrant("shpat_access-token-SENTINEL-3c4d", GrantedScopes));
     }
