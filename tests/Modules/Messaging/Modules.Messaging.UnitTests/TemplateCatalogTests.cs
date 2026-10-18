@@ -120,17 +120,51 @@ public sealed class TemplateCatalogTests
     }
 
     [Fact]
-    public void ADynamicUrlButtonIsNotSendableButAStaticOneIs()
+    public void ADynamicUrlButtonIsSendableAndItsSuffixIsAParameterAfterTheBody()
     {
-        var dynamic = Single("""
+        var template = Single("""
             { "name": "track", "language": "es", "status": "APPROVED", "category": "UTILITY",
-              "components": [ { "type": "BODY", "text": "Tu guía" },
-                              { "type": "BUTTONS", "buttons": [ { "type": "URL", "text": "Rastrear", "url": "https://qcode.co/t/{{1}}", "example": [ "https://qcode.co/t/123" ] } ] } ] }
+              "components": [ { "type": "BODY", "text": "Hola {{1}}, tu guía" },
+                              { "type": "BUTTONS", "buttons": [ { "type": "QUICK_REPLY", "text": "Gracias" },
+                                                                { "type": "URL", "text": "Rastrear", "url": "https://qcode.co/t/{{1}}", "example": [ "https://qcode.co/t/123" ] } ] } ] }
             """);
 
-        Assert.False(dynamic.Sendable);
-        Assert.Equal("dynamic_url_button", dynamic.UnsupportedReason);
-        Assert.Equal(new TemplateButtonDto("Url", "Rastrear", "https://qcode.co/t/{{1}}"), Assert.Single(dynamic.Buttons));
+        Assert.True(template.Sendable);
+        Assert.Null(template.UnsupportedReason);
+        Assert.Equal(["1", "button:1"], template.Parameters);
+        Assert.Equal(new TemplateButtonDto("Url", "Rastrear", "https://qcode.co/t/{{1}}", "button:1"), template.Buttons[1]);
+        Assert.Null(template.Buttons[0].Parameter);
+    }
+
+    [Theory]
+    [InlineData("https://qcode.co/{{1}}/t/{{2}}")]
+    [InlineData("https://qcode.co/t/{{1}}?x=1")]
+    public void AUrlMetaWouldNotFillIsStillNotSendable(string url)
+    {
+        var template = Single($$"""
+            { "name": "track", "language": "es", "status": "APPROVED", "category": "UTILITY",
+              "components": [ { "type": "BODY", "text": "Tu guía" },
+                              { "type": "BUTTONS", "buttons": [ { "type": "URL", "text": "Rastrear", "url": "{{url}}" } ] } ] }
+            """);
+
+        Assert.False(template.Sendable);
+        Assert.Equal("dynamic_url_button", template.UnsupportedReason);
+    }
+
+    [Fact]
+    public void BuildSendSeparatesTheBodyFromTheUrlButtons()
+    {
+        var template = Single("""
+            { "name": "track", "language": "es", "status": "APPROVED", "category": "UTILITY",
+              "components": [ { "type": "BODY", "text": "Hola {{1}}" },
+                              { "type": "BUTTONS", "buttons": [ { "type": "URL", "text": "Rastrear", "url": "https://qcode.co/t/{{1}}" } ] } ] }
+            """);
+
+        var built = TemplateCatalog.BuildSend(template, new Dictionary<string, string> { ["1"] = "Ana", ["button:0"] = "A-1" });
+
+        Assert.Equal([new TemplateParameter("1", "Ana")], built.Send.Parameters);
+        Assert.Equal([new TemplateUrlButton(0, "A-1")], built.Send.UrlButtons!);
+        Assert.Equal("Hola Ana", built.Text);
     }
 
     [Fact]

@@ -161,6 +161,7 @@ internal sealed partial class WhatsAppCloudClient(
             ["name"] = send.Name,
             ["language"] = new JsonObject { ["code"] = send.Language },
         };
+        var components = new JsonArray();
         if (send.Parameters.Count > 0)
         {
             var parameters = new JsonArray();
@@ -175,7 +176,24 @@ internal sealed partial class WhatsAppCloudClient(
                 parameters.Add(item);
             }
 
-            content["components"] = new JsonArray(new JsonObject { ["type"] = "body", ["parameters"] = parameters });
+            components.Add(new JsonObject { ["type"] = "body", ["parameters"] = parameters });
+        }
+
+        // Meta pide el índice como texto y sólo el sufijo del enlace: el resto ya está en la plantilla aprobada.
+        foreach (var button in send.UrlButtons ?? [])
+        {
+            components.Add(new JsonObject
+            {
+                ["type"] = "button",
+                ["sub_type"] = "url",
+                ["index"] = button.Index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["parameters"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = button.Value }),
+            });
+        }
+
+        if (components.Count > 0)
+        {
+            content["components"] = components;
         }
 
         return PostMessageAsync(sender, MessagePayload(target, "template", content, callbackData, null), cancellationToken);

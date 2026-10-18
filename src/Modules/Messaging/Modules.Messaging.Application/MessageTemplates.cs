@@ -6,8 +6,9 @@ using Modules.Messaging.Domain;
 namespace Modules.Messaging.Application;
 
 /// <summary>Spec 2026-10-11 §5.2: <c>type</c> es <c>QuickReply</c>, <c>Url</c>, <c>PhoneNumber</c> u <c>Other</c>; <c>url</c> sólo
-/// viaja en los de tipo <c>Url</c>.</summary>
-public sealed record TemplateButtonDto(string Type, string Text, string? Url);
+/// viaja en los de tipo <c>Url</c>. <c>parameter</c> es la clave de <c>parameters</c> que completa el <c>{{1}}</c> de un enlace
+/// variable (<c>"button:0"</c>), para que la pantalla sepa qué campo llena qué botón sin conocer el formato de Meta.</summary>
+public sealed record TemplateButtonDto(string Type, string Text, string? Url, string? Parameter = null);
 
 /// <summary>
 /// Spec 2026-10-11 §5.1. BFF: <c>parameters</c> son las claves en orden de aparición (<c>"1"</c>, <c>"first_name"</c>) y
@@ -84,12 +85,18 @@ public sealed record MessagingTemplateSource(string WabaId, string AccessToken)
 /// <summary>Un valor del cuerpo de la plantilla, con la clave de la plantilla (<c>"1"</c>, <c>"first_name"</c>).</summary>
 public sealed record TemplateParameter(string Key, string Value);
 
+/// <summary>El sufijo de un botón de enlace variable: <c>Index</c> es su posición entre los botones de la plantilla, que es lo que
+/// Meta pide en el componente <c>button</c>.</summary>
+public sealed record TemplateUrlButton(int Index, string Value);
+
 /// <summary>
 /// Spec 2026-10-11 §5.1: lo que viaja a Meta para enviar una plantilla. <c>Parameters</c> van en el orden de la plantilla;
 /// con <c>Named</c> cada uno lleva su <c>parameter_name</c> y con posicionales sólo el orden. Sin parámetros no viaja
-/// <c>components</c>. Lo reutiliza el worker de campañas.
+/// <c>components</c>. Lo reutiliza el worker de campañas. <c>UrlButtons</c> son los sufijos de los enlaces variables, que viajan
+/// en un componente <c>button</c> por botón.
 /// </summary>
-public sealed record TemplateSend(string Name, string Language, bool Named, IReadOnlyList<TemplateParameter> Parameters);
+public sealed record TemplateSend(
+    string Name, string Language, bool Named, IReadOnlyList<TemplateParameter> Parameters, IReadOnlyList<TemplateUrlButton>? UrlButtons = null);
 
 /// <summary>R10: lo que sale de armar una plantilla con sus valores, igual para el envío humano y para el worker.</summary>
 public sealed record BuiltTemplate(TemplateSend Send, string Text, string DetailsJson);
@@ -119,6 +126,12 @@ public static partial class TemplateCatalog
 {
     public const string Named = "Named";
     public const string Positional = "Positional";
+
+    /// <summary>La clave de <c>parameters</c> del enlace variable de un botón es <c>"button:" + índice</c>. Meta no admite <c>:</c> en
+    /// el nombre de una variable, así que no choca con ninguna del cuerpo, ni nombrada ni posicional.</summary>
+    public const string ButtonParameterPrefix = "button:";
+
+    public static bool IsButtonParameter(string key) => key.StartsWith(ButtonParameterPrefix, StringComparison.Ordinal);
 
     public static IReadOnlyList<MessageTemplateDto> Normalize(IEnumerable<JsonElement> templates)
     {
@@ -209,7 +222,9 @@ public static partial class TemplateCatalog
             template.Name,
             template.Language,
             template.ParameterFormat == Named,
-            [.. template.Parameters.Select(key => new TemplateParameter(key, values[key]))]);
+            [.. template.Parameters.Where(key => !IsButtonParameter(key)).Select(key => new TemplateParameter(key, values[key]))],
+            [.. template.Parameters.Where(IsButtonParameter).Select(key => new TemplateUrlButton(
+                int.Parse(key.AsSpan(ButtonParameterPrefix.Length), System.Globalization.CultureInfo.InvariantCulture), values[key]))]);
         return new BuiltTemplate(
             send, Render(template, values), TemplateDetailsJson.Serialize(template.Name, template.Language, template.Category, values));
     }
@@ -285,7 +300,10 @@ public static partial class TemplateCatalog
             }
         }
 
-        var parameters = Placeholder().Matches(body).Select(match => match.Groups[1].Value).Distinct(StringComparer.Ordinal).ToArray();
+        // Las del cuerpo primero, en orden de aparición; después el enlace de cada botón variable.
+        var parameters = Placeholder().Matches(body).Select(match => match.Groups[1].Value).Distinct(StringComparer.Ordinal)
+            .Concat(buttons.Select(button => button.Parameter).OfType<string>())
+            .ToArray();
         var format = string.Equals(Text(raw, "parameter_format"), "NAMED", StringComparison.OrdinalIgnoreCase) ? Named : Positional;
         return new MessageTemplateDto(name, language, category, format, header, body, footer, buttons, parameters, reason is null, reason);
     }
@@ -297,8 +315,15 @@ public static partial class TemplateCatalog
             yield break;
         }
 
-        foreach (var button in buttons.EnumerateArray().Where(button => button.ValueKind == JsonValueKind.Object))
+        var index = -1;
+        foreach (var button in buttons.EnumerateArray())
         {
+            index++;
+            if (button.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
             var text = Text(button, "text") ?? string.Empty;
             switch (Text(button, "type")?.ToUpperInvariant())
             {
@@ -307,7 +332,7 @@ public static partial class TemplateCatalog
                     break;
                 case "URL":
                     var url = Text(button, "url");
-                    yield return (new TemplateButtonDto("Url", text, url), url is not null && url.Contains("{{", StringComparison.Ordinal) ? TemplateUnsupportedReasons.DynamicUrlButton : null);
+                    yield return UrlButton(text, url, index);
                     break;
                 case "PHONE_NUMBER":
                     yield return (new TemplateButtonDto("PhoneNumber", text, null), null);
@@ -323,6 +348,23 @@ public static partial class TemplateCatalog
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// Meta admite una sola variable en un enlace, al final (<c>https://qcode.co/t/{{1}}</c>), y el envío sólo manda su sufijo. Un enlace
+    /// con más de una o con llaves que no son una variable no se sabe enviar: queda con el motivo de antes.
+    /// </summary>
+    private static (TemplateButtonDto Dto, string? Reason) UrlButton(string text, string? url, int index)
+    {
+        if (url is null || !url.Contains("{{", StringComparison.Ordinal))
+        {
+            return (new TemplateButtonDto("Url", text, url), null);
+        }
+
+        var variables = Placeholder().Matches(url);
+        return variables.Count == 1 && url.EndsWith(variables[0].Value, StringComparison.Ordinal)
+            ? (new TemplateButtonDto("Url", text, url, ButtonParameterPrefix + index.ToString(System.Globalization.CultureInfo.InvariantCulture)), null)
+            : (new TemplateButtonDto("Url", text, url), TemplateUnsupportedReasons.DynamicUrlButton);
     }
 
     private static string? Worst(string? current, string? candidate)

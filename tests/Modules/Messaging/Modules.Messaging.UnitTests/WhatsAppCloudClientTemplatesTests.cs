@@ -100,6 +100,37 @@ public sealed class WhatsAppCloudClientTemplatesTests
     }
 
     [Fact]
+    public async Task AUrlButtonGoesAsItsOwnComponentWithItsIndex()
+    {
+        var (_, request) = await SendAsync(
+            new SendToPhone("573001234567"),
+            new TemplateSend("track", "es", Named: false, [new TemplateParameter("1", "Ana")], [new TemplateUrlButton(1, "A-1")]));
+
+        using var body = JsonDocument.Parse(request.Body!);
+        var components = body.RootElement.GetProperty("template").GetProperty("components").EnumerateArray().ToArray();
+        Assert.Equal(2, components.Length);
+        Assert.Equal("body", components[0].GetProperty("type").GetString());
+        var button = components[1];
+        Assert.Equal("button", button.GetProperty("type").GetString());
+        Assert.Equal("url", button.GetProperty("sub_type").GetString());
+        Assert.Equal("1", button.GetProperty("index").GetString());
+        var parameter = Assert.Single(button.GetProperty("parameters").EnumerateArray());
+        Assert.Equal("text", parameter.GetProperty("type").GetString());
+        Assert.Equal("A-1", parameter.GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task AUrlButtonWithoutBodyParametersSendsOnlyTheButton()
+    {
+        var (_, request) = await SendAsync(
+            new SendToPhone("573001234567"), new TemplateSend("track", "es", Named: false, [], [new TemplateUrlButton(0, "A-1")]));
+
+        using var body = JsonDocument.Parse(request.Body!);
+        var component = Assert.Single(body.RootElement.GetProperty("template").GetProperty("components").EnumerateArray());
+        Assert.Equal("button", component.GetProperty("type").GetString());
+    }
+
+    [Fact]
     public async Task ATemplateWithoutParametersCarriesNoComponents()
     {
         var (_, request) = await SendAsync(new SendToPhone("573001234567"), new TemplateSend("fijo", "es", Named: false, []));

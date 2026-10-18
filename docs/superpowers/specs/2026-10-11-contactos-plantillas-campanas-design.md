@@ -200,7 +200,13 @@ síntoma es un 500 y no un 403.
 - El normalizador puro `TemplateCatalog` convierte cada plantilla en
   `MessageTemplateDto { name, language, category, parameterFormat, header?, body, footer?, buttons[], parameters[], sendable, unsupportedReason? }`.
   - `parameters` son las claves en orden de aparición: `"1"`, `"2"` o `"first_name"`.
-  - `unsupportedReason` ∈ `media_header`, `dynamic_url_button`, `authentication`, `carousel`, `flow`, `other`.
+  - **2026-10-18:** un botón `Url` con una sola variable al final del enlace (`https://qcode.co/t/{{1}}`) es enviable. Su
+    sufijo es una clave más de `parameters`, `"button:<índice>"` (índice entre los botones de la plantilla), después de las
+    del cuerpo; `:` no es válido en un nombre de variable de Meta, así que no choca. El botón trae esa clave en `parameter`.
+    El envío la manda como componente `{ type: "button", sub_type: "url", index: "<índice>", parameters: [{ type: "text", text }] }`.
+    El valor no admite espacios y, en una campaña, sólo sale de un texto fijo.
+  - `unsupportedReason` ∈ `media_header`, `dynamic_url_button` (ya sólo un enlace con más de una variable o con una que no
+    está al final), `authentication`, `carousel`, `flow`, `other`.
   - Tiene pruebas unitarias con los JSON de ejemplo de Meta.
 - Caché: `IMemoryCache` por `(tenantId, connectionId)`, 5 minutos. `refresh=true` la salta.
 
@@ -211,7 +217,7 @@ Bajo `/api/v1/tenants/{tenantId:guid}/messaging`.
 | Método y ruta | Permiso | Cuerpo | Respuesta |
 | --- | --- | --- | --- |
 | `GET /connections` | `messaging.conversation.read` | — | `200 MessagingConnectionDto[]`: `{ id, name, displayPhoneNumber }`, sólo las conexiones `whatsapp-cloud` **activas** del tenant, por nombre. Lo usan la conversación nueva y las campañas. Sin él, la pantalla tendría que leer Integrations, cuyo permiso es de admin (agregado el 2026-10-11 al implementar E2) |
-| `GET /connections/{connectionId}/templates?refresh=` | `messaging.conversation.read` | — | `200 MessageTemplateDto[]`: sólo `APPROVED`, ordenadas por nombre e idioma. `buttons[]` = `{ type: "QuickReply"\|"Url"\|"PhoneNumber"\|"Other", text, url? }` |
+| `GET /connections/{connectionId}/templates?refresh=` | `messaging.conversation.read` | — | `200 MessageTemplateDto[]`: sólo `APPROVED`, ordenadas por nombre e idioma. `buttons[]` = `{ type: "QuickReply"\|"Url"\|"PhoneNumber"\|"Other", text, url?, parameter? }` |
 | `POST /conversations/{conversationId}/messages/template` | `messaging.conversation.manage` | `{ clientId, name, language, parameters: { [key]: string } }` | `201 MessageDto` |
 | `POST /conversations` | `messaging.conversation.manage` | `{ clientId, connectionId, customerId, template: { name, language, parameters } }` | `201 { conversation: ConversationSummary, message: MessageDto }` |
 
