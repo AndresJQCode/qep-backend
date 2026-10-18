@@ -236,6 +236,27 @@ public sealed class LifecycleHandlersTests
         Assert.Equal("integrations.connection-needs-attention.v1", Assert.Single(bed.Events.Published).EventName);
     }
 
+    // Ruling S12: que Shopify no registre los webhooks no es una credencial mala. El resume responde su propio código, sin
+    // marcar el token en errors, y la conexión queda NeedsAttention con webhooks_not_registered.
+    [Fact]
+    public async Task ResumeWithWebhooksNotRegisteredAnswersItsOwnCodeWithoutMarkingTheToken()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.Seed();
+        connection.Pause(IntegrationsTestBed.Now);
+        bed.Tester.Result = ConnectionTestResult.RejectedWith(ConnectionFailureCodes.WebhooksNotRegistered);
+
+        var error = await Assert.ThrowsAsync<IntegrationsDomainException>(() =>
+            bed.ResumeHandler().HandleAsync(new ResumeConnectionCommand(bed.TenantId, connection.Id, 2), Ct));
+
+        Assert.Equal("integrations.shopify.webhooks_not_registered", error.Code);
+        Assert.Empty(error.FieldErrors);
+        Assert.Equal(ConnectionStatus.NeedsAttention, connection.Status);
+        Assert.Equal("webhooks_not_registered", connection.LastFailureCode);
+        Assert.Equal(1, bed.UnitOfWork.Saves);
+        Assert.Equal("integrations.connection-needs-attention.v1", Assert.Single(bed.Events.Published).EventName);
+    }
+
     // P11: «no pude verificar» deja la conexión pausada y no guarda nada.
     [Fact]
     public async Task ResumeWithAnUnreachableProviderStaysPausedAndSavesNothing()

@@ -35,7 +35,8 @@ public sealed class LinkShopifyStoreValidator : AbstractValidator<LinkShopifySto
 /// <item>la instalación: desconocida o sin canjear = <c>install_not_found</c>; iniciada desde otro tenant (A) =
 /// <c>install_tenant_mismatch</c> (403); vencida, o con un token que ya no descifra = <c>install_expired</c>;</item>
 /// <item>la ruta <c>("shopify", shopDomain)</c>: de otro tenant = <c>shop_already_linked</c> con su nombre; del mismo,
-/// reenlace de esa conexión (sin tope, token nuevo, <c>Active</c>);</item>
+/// reenlace de esa conexión (sin tope, token nuevo, <c>Active</c> aunque estuviera pausada: ruling S11, §4.1 «la
+/// reactiva»);</item>
 /// <item>conexión nueva: tope de 20 y nombre no repetido;</item>
 /// <item>webhooks que falten (<see cref="ShopifyWebhookRegistration"/>); si Shopify falla, la conexión se guarda igual en
 /// <c>NeedsAttention</c> con <c>webhooks_not_registered</c> y el probador lo reintenta;</item>
@@ -158,13 +159,18 @@ public sealed class LinkShopifyStoreHandler(
         var wasActive = false;
         if (existing is not null)
         {
-            // §4.1: reenlace tras desinstalar. Mismo id, token nuevo; verified saca de NeedsAttention (Paused sigue en pausa:
-            // eso lo decidió una persona).
+            // §4.1: reenlace tras desinstalar. Mismo id, token nuevo; verified saca de NeedsAttention. Una pausada también
+            // vuelve a Active (ruling S11: «la reactiva»), con su auditoría de resume: reinstalar es pedir que funcione.
             wasActive = existing.Status == ConnectionStatus.Active;
             var changed = existing.Update(provider, name, fields, secrets, protector.Protect, now, verified: true);
             connection = existing;
             ConnectionAudit.ByMember(
                 auditRecorder, executionContext, connection, ConnectionAuditActions.Updated, [.. changed, .. onboarding], now);
+            if (connection.Status == ConnectionStatus.Paused)
+            {
+                connection.Resume(now);
+                ConnectionAudit.ByMember(auditRecorder, executionContext, connection, ConnectionAuditActions.Resumed, [], now);
+            }
         }
         else
         {

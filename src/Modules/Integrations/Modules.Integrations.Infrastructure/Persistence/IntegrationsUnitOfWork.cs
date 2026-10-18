@@ -28,14 +28,40 @@ internal sealed class IntegrationsUnitOfWork(IntegrationsDbContext dbContext) : 
                 "The connection changed while the operation was being committed.",
                 exception);
         }
-        // La misma tienda enlazada a la vez desde dos tenants (spec 2026-10-15 §4.1): gana uno, el otro recibe el código de
-        // Shopify. Se decide por la ruta que se estaba agregando, porque el índice es el mismo para todos los proveedores.
-        catch (DbUpdateException exception) when (IsUniqueViolation(exception, IntegrationsDbContext.RouteExternalIndex)
-            && AddsRouteOf(IntegrationProviders.Shopify.Key))
+        // La misma tienda enlazada a la vez por dos requests (spec 2026-10-15 §4.1). El índice de la ruta es el mismo para todos
+        // los proveedores, así que se decide por la ruta de Shopify que se estaba agregando; el del nombre también entra,
+        // porque en un doble clic las dos conexiones se llaman igual y ese choque puede salir primero. Quién ganó lo dice la
+        // ruta que quedó: si es del mismo tenant (doble clic), el perdedor recibe concurrency.conflict —ya está enlazada,
+        // recargar la muestra—; si es de otro, shop_already_linked. Nunca «otro tenant» a quien enlazó en el suyo.
+        catch (DbUpdateException exception) when ((IsUniqueViolation(exception, IntegrationsDbContext.RouteExternalIndex)
+                || IsUniqueViolation(exception, IntegrationsDbContext.ConnectionNameIndex))
+            && AddedShopifyRoute() is not null)
         {
+            var added = AddedShopifyRoute()!;
+            var winner = await dbContext.Routes.AsNoTracking()
+                .Where(route => route.ProviderKey == added.ProviderKey && route.ExternalId == added.ExternalId)
+                .Select(route => (Guid?)route.TenantId)
+                .SingleOrDefaultAsync(cancellationToken);
+            if (winner == added.TenantId)
+            {
+                throw new RequestConcurrencyException(
+                    "concurrency.conflict",
+                    "The shop was linked to this tenant by another request meanwhile; reload to see the connection.",
+                    exception);
+            }
+
+            if (winner is not null)
+            {
+                throw new IntegrationsDomainException(
+                    IntegrationsErrorCodes.ShopifyShopAlreadyLinked,
+                    "The shop is already linked to another tenant.",
+                    exception);
+            }
+
+            // Sin ruta ganadora el choque fue sólo de nombre, con otra tienda: el name_taken de siempre.
             throw new IntegrationsDomainException(
-                IntegrationsErrorCodes.ShopifyShopAlreadyLinked,
-                "The shop is already linked to another tenant.",
+                IntegrationsErrorCodes.NameTaken,
+                "Another connection of this provider already uses that name.",
                 exception);
         }
         catch (DbUpdateException exception) when (IsUniqueViolation(exception, IntegrationsDbContext.RouteExternalIndex))
@@ -54,9 +80,12 @@ internal sealed class IntegrationsUnitOfWork(IntegrationsDbContext dbContext) : 
         }
     }
 
-    private bool AddsRouteOf(string providerKey) =>
+    private IntegrationConnectionRoute? AddedShopifyRoute() =>
         dbContext.ChangeTracker.Entries<IntegrationConnectionRoute>()
-            .Any(entry => entry.State == EntityState.Added && string.Equals(entry.Entity.ProviderKey, providerKey, StringComparison.Ordinal));
+            .Where(entry => entry.State == EntityState.Added
+                && string.Equals(entry.Entity.ProviderKey, IntegrationProviders.Shopify.Key, StringComparison.Ordinal))
+            .Select(entry => entry.Entity)
+            .FirstOrDefault();
 
     private static bool IsUniqueViolation(DbUpdateException exception, string constraintName) =>
         exception.InnerException is PostgresException postgres

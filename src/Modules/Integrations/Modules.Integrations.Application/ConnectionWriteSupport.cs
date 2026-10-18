@@ -197,6 +197,13 @@ internal static class ConnectionVerification
     public static Exception Failure(IntegrationProvider provider, ConnectionTestResult result) =>
         result.Outcome switch
         {
+            // Ruling S12: el probador de Shopify reporta los webhooks no registrados como rechazo (así test y resume pasan a
+            // NeedsAttention por ConnectionTransitions), pero hacia la persona va su propio código y sin marcar el token:
+            // marcarlo la mandaría a corregir un campo que está bien.
+            ConnectionTestOutcome.CredentialsRejected when result.FailureCode == ConnectionFailureCodes.WebhooksNotRegistered =>
+                new IntegrationsDomainException(
+                    IntegrationsErrorCodes.ShopifyWebhooksNotRegistered,
+                    "Shopify did not accept registering the store webhooks."),
             ConnectionTestOutcome.CredentialsRejected => new IntegrationsDomainException(
                 IntegrationsErrorCodes.CredentialsRejected,
                 "The provider rejected the credentials.",

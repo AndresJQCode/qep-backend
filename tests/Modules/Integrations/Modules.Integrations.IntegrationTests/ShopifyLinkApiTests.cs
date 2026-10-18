@@ -3,9 +3,11 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Integrations.Api;
 using Modules.Integrations.Application;
 using Modules.Integrations.Application.Shopify;
+using Modules.Integrations.Domain;
 using static Modules.Integrations.IntegrationTests.IntegrationsApiHarness;
 
 namespace Modules.Integrations.IntegrationTests;
@@ -270,5 +272,87 @@ public sealed class ShopifyLinkApiTests
             connectionString,
             "SELECT count(*) FROM integrations.connections WHERE id = @id AND status = 'Active'",
             ("id", first.Id)));
+    }
+
+    // Ruling S12 por HTTP: una tienda pausada cuyo resume no logra registrar los webhooks responde
+    // integrations.shopify.webhooks_not_registered, no credentials_rejected con el token marcado.
+    [Fact]
+    public async Task ResumeWithWebhooksRejectedAnswersWebhooksNotRegistered()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        ShopifyFlow.ScriptHappyShop(factory.ShopifyHandler);
+        var tenant = await RegisterTenantAsync(factory);
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var linked = await (await SendAsync(
+                owner, HttpMethod.Post, ShopifyFlow.LinkUrl(tenant.TenantId),
+                new { installId = await ShopifyFlow.InstallAsync(factory, owner, tenant.TenantId) }))
+            .Content.ReadFromJsonAsync<ConnectionResponse>(Ct);
+        var url = ConnectionUrl(tenant.TenantId, linked!.Id);
+        (await SendAsync(owner, HttpMethod.Post, $"{url}/pause", ifMatch: $"\"{linked.Version}\"")).EnsureSuccessStatusCode();
+        factory.ShopifyHandler.Reset();
+        factory.ShopifyHandler.ScriptWebhooks(ShopifyFlow.Shop, ShopifyWebhookCallbackUrl, rejectCreate: true);
+        factory.ShopifyHandler.ScriptHappyInstall(ShopifyFlow.Shop, ShopifyFlow.SentinelAccessToken);
+
+        var resumed = await SendAsync(owner, HttpMethod.Post, $"{url}/resume", ifMatch: $"\"{linked.Version + 1}\"");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, resumed.StatusCode);
+        var (code, keys) = await ProblemAsync(resumed);
+        Assert.Equal("integrations.shopify.webhooks_not_registered", code);
+        Assert.Empty(keys);
+        Assert.Equal(1, await ScalarAsync<long>(
+            connectionString,
+            "SELECT count(*) FROM integrations.connections WHERE id = @id AND status = 'NeedsAttention' AND last_failure_code = 'webhooks_not_registered'",
+            ("id", linked.Id)));
+    }
+
+    // Minor 1 (S12): dos enlaces de la misma tienda que pasan la lectura de la ruta a la vez. Si el ganador es del mismo
+    // tenant (doble clic), el perdedor no puede leer «otro tenant»: es concurrency.conflict, choque por la ruta o por el
+    // nombre. Si es de otro tenant, shop_already_linked.
+    [Theory]
+    [InlineData(true, "Mi Tienda", "concurrency.conflict")]
+    [InlineData(true, "Otro nombre", "concurrency.conflict")]
+    [InlineData(false, "Mi Tienda", "integrations.shopify.shop_already_linked")]
+    public async Task LinkRaceOnTheSameShopIsTranslatedByWhoWon(bool sameTenant, string loserName, string expectedCode)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var loserTenant = sameTenant ? tenantId : Guid.CreateVersion7();
+
+        using var winnerScope = factory.Services.CreateScope();
+        using var loserScope = factory.Services.CreateScope();
+        Stage(winnerScope.ServiceProvider, tenantId, "Mi Tienda");
+        Stage(loserScope.ServiceProvider, loserTenant, loserName);
+        await winnerScope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>().SaveChangesAsync(Ct);
+
+        var error = await Record.ExceptionAsync(() =>
+            loserScope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>().SaveChangesAsync(Ct));
+
+        var code = error switch
+        {
+            BuildingBlocks.Application.RequestConcurrencyException concurrency => concurrency.Code,
+            BuildingBlocks.Domain.DomainException domain => domain.Code,
+            _ => error?.GetType().Name,
+        };
+        Assert.Equal(expectedCode, code);
+        if (sameTenant)
+        {
+            Assert.DoesNotContain("another tenant", error!.Message, StringComparison.Ordinal);
+        }
+    }
+
+    private static void Stage(IServiceProvider services, Guid tenantId, string name)
+    {
+        var protector = services.GetRequiredService<ISecretProtector>();
+        var connection = IntegrationConnection.Create(
+            IntegrationProviders.Shopify, tenantId, name,
+            new Dictionary<string, string> { [ShopifyFieldKeys.ShopDomain] = ShopifyFlow.Shop },
+            new Dictionary<string, string> { [ShopifyFieldKeys.AccessToken] = "shpat_race" },
+            protector.Protect, Guid.CreateVersion7(), DateTimeOffset.UtcNow);
+        services.GetRequiredService<IIntegrationConnectionRepository>().Add(connection);
+        services.GetRequiredService<IConnectionRouteRepository>().Add(
+            IntegrationConnectionRoute.Create(IntegrationProviders.Shopify.Key, ShopifyFlow.Shop, null, tenantId, connection.Id));
     }
 }

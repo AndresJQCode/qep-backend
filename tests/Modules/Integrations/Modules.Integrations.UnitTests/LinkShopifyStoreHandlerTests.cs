@@ -373,6 +373,24 @@ public sealed class LinkShopifyStoreHandlerTests
             && entry.ChangedFields.Contains(ShopifyFieldKeys.AccessToken));
     }
 
+    // Ruling S11: §4.1 dice que el reenlace «la reactiva con el token nuevo»; una conexión pausada también vuelve a Active.
+    [Fact]
+    public async Task LinkSameTenantRelinkOverPausedReactivates()
+    {
+        var bed = new Bed();
+        var existing = bed.SeedLinked();
+        existing.Pause(IntegrationsTestBed.Now.AddDays(-1));
+        var install = bed.SeedExchanged();
+
+        var response = await bed.Handler().HandleAsync(bed.Command(install.Id), Ct);
+
+        Assert.Equal(ConnectionStatus.Active, existing.Status);
+        Assert.Equal(nameof(ConnectionStatus.Active), response.Status);
+        Assert.Equal(AccessToken, bed.StoredToken(existing));
+        Assert.Contains(bed.Integrations.Audit.Entries, entry =>
+            entry.Action == ConnectionAuditActions.Resumed && entry.ConnectionId == existing.Id);
+    }
+
     // El reenlace no cuenta contra el tope: la conexión ya existe.
     [Fact]
     public async Task LinkSameTenantRelinkIgnoresTheLimitAndItsOwnName()

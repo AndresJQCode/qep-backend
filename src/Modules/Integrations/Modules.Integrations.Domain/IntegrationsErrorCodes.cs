@@ -58,6 +58,9 @@ public static class IntegrationsErrorCodes
     /// <summary>422: la ruta <c>("shopify", shopDomain)</c> es de otro tenant; el detalle trae su nombre y nada más (Review
     /// Focus 3). La misma tienda en el mismo tenant no es este error: es un reenlace.</summary>
     public const string ShopifyShopAlreadyLinked = "integrations.shopify.shop_already_linked";
+    /// <summary>422 (§7.1, ruling S12): Shopify no aceptó registrar los webhooks de la tienda. No es una credencial mala, así
+    /// que no marca el token en <c>errors</c>; la conexión queda <c>NeedsAttention</c> con el mismo código de falla.</summary>
+    public const string ShopifyWebhooksNotRegistered = "integrations.shopify.webhooks_not_registered";
 }
 
 /// <summary>Lo que va a <c>last_failure_code</c> (varchar(64)): el resultado, no el código HTTP.</summary>
