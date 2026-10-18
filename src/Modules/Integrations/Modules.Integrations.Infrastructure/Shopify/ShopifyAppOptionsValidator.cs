@@ -11,10 +11,14 @@ namespace Modules.Integrations.Infrastructure.Shopify;
 /// menos un origen; sin ellos el pod no arranca, a propósito, como con Meta: una app a medio configurar dejaría
 /// instalar tiendas cuyos webhooks nadie puede verificar. En todo ambiente valida, cuando vienen, la forma de
 /// <c>ApiVersion</c> (<c>^\d{4}-(01|04|07|10)$</c>, las versiones trimestrales de Shopify), de cada origen y de la URL
-/// (https absoluta: Shopify no entrega webhooks a http). Ningún mensaje lleva un valor: nombran la clave.
+/// (https absoluta: Shopify no entrega webhooks a http). Ningún mensaje lleva un valor: nombran la clave. En Production, un
+/// <c>ClientId</c> o <c>ClientSecret</c> que sigue siendo el token del pipeline (<c>#{…}#</c>) cuenta como ausente.
 /// </summary>
 internal sealed partial class ShopifyAppOptionsValidator(IHostEnvironment environment) : IValidateOptions<ShopifyAppOptions>
 {
+    /// <summary>Lo que el pipeline deja cuando una variable no existe: <c>#{NOMBRE}#</c> literal.</summary>
+    private const string UnresolvedTokenPrefix = "#{";
+
     [GeneratedRegex(@"^\d{4}-(01|04|07|10)\z", RegexOptions.CultureInvariant)]
     private static partial Regex VersionShape();
 
@@ -62,6 +66,12 @@ internal sealed partial class ShopifyAppOptionsValidator(IHostEnvironment enviro
         if (string.IsNullOrWhiteSpace(value))
         {
             failures.Add($"{ShopifyAppOptions.SectionName}:{key} is required in Production: without it no Shopify store can be installed nor its webhooks verified.");
+        }
+        else if (value.Trim().StartsWith(UnresolvedTokenPrefix, StringComparison.Ordinal))
+        {
+            // Tarea 17: la variable falta en el grupo Backend-prod y el pipeline dejó el token literal. No vacío, pasaría como
+            // configurado y el pod arrancaría rechazando la firma de cada webhook. Mismo criterio que DeploymentInfo.Normalize.
+            failures.Add($"{ShopifyAppOptions.SectionName}:{key} is an unresolved pipeline token in Production: add its variable to the Backend-prod group.");
         }
     }
 }

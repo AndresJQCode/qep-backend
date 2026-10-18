@@ -58,6 +58,25 @@ public sealed class ShopifyAppOptionsValidatorTests
         Assert.All(result.Failures!, failure => Assert.DoesNotContain(Secret, failure, StringComparison.Ordinal));
     }
 
+    // Tarea 17: si SHOPIFY_APP_CLIENT_ID o SHOPIFY_APP_CLIENT_SECRET faltan en el grupo Backend-prod, el pipeline deja el token
+    // literal en el ConfigMap o el Secret. Un valor no vacío pasaría como configurado y el pod arrancaría con todas las firmas del
+    // webhook inválidas (el hueco que CLAUDE.md describe para Instagram). Un token sin resolver es una clave ausente.
+    [Fact]
+    public void ProductionWithUnresolvedPipelineTokensNamesEachKey()
+    {
+        var options = Complete();
+        options.ClientId = "#{SHOPIFY_APP_CLIENT_ID}#";
+        options.ClientSecret = " #{SHOPIFY_APP_CLIENT_SECRET}# ";
+
+        var result = Validator(production: true).Validate(null, options);
+
+        Assert.True(result.Failed);
+        Assert.Equal(2, result.Failures!.Count());
+        Assert.Contains(result.Failures!, failure => failure.Contains("Shopify:App:ClientId", StringComparison.Ordinal));
+        Assert.Contains(result.Failures!, failure => failure.Contains("Shopify:App:ClientSecret", StringComparison.Ordinal));
+        Assert.All(result.Failures!, failure => Assert.Contains("pipeline token", failure, StringComparison.Ordinal));
+    }
+
     [Fact]
     public void ProductionHttpCallbackFails()
     {
