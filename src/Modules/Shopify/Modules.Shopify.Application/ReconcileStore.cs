@@ -172,7 +172,7 @@ public sealed partial class ReconcileStore(
     private async Task<ShopifyOrdersPage> FetchAsync(
         ShopifyConnectionRef connection, DateTimeOffset since, string? cursor, CancellationToken cancellationToken)
     {
-        for (var throttles = 0; ; )
+        for (var throttles = 0; ;)
         {
             try
             {
