@@ -231,7 +231,7 @@ public sealed class UpdateShopifyStoreHandler(
         return await ShopifyStoreSupport.ToDtoAsync(store, members, references, cancellationToken);
     }
 
-    // Lo que el formulario edita, con los nombres de los campos del cuerpo. Ids y textos de configuración: nada secreto (§12).
+    // Lo que el formulario edita, con los nombres de los campos del cuerpo; los valores sólo se comparan, no se auditan (S29).
     private static Dictionary<string, string?> AuditedFields(ShopifyStore store) => new(StringComparer.Ordinal)
     {
         ["advisorMembershipId"] = store.AdvisorMembershipId?.ToString(),
@@ -245,12 +245,15 @@ public sealed class UpdateShopifyStoreHandler(
         ["defaultIdentificationType"] = store.DefaultIdentificationType,
     };
 
-    /// <summary><c>{ campo: { from, to } }</c> sólo de lo que cambió; un <c>PUT</c> que no cambia nada audita <c>{}</c>.</summary>
+    /// <summary>Ruling S29: la forma de <c>tenancy.settings.updated</c>, un arreglo JSON con los nombres de los campos que
+    /// cambiaron, en el orden del formulario. Ningún valor: el número de cuenta no entra a la auditoría. Un <c>PUT</c> que no
+    /// cambia nada audita <c>[]</c>.</summary>
     private static string ChangesJson(Dictionary<string, string?> before, Dictionary<string, string?> after) =>
         JsonSerializer.Serialize(
             after
                 .Where(pair => !string.Equals(before.GetValueOrDefault(pair.Key), pair.Value, StringComparison.Ordinal))
-                .ToDictionary(pair => pair.Key, pair => new { from = before.GetValueOrDefault(pair.Key), to = pair.Value }, StringComparer.Ordinal));
+                .Select(pair => pair.Key)
+                .ToArray());
 
     // La cuenta se guarda como la tiene Companies (banco y número recortados como allá): es la misma comparación con la que el
     // importador la vuelve a buscar en cada pedido (billing_account_missing). La moneda tiene que ser la de la cuenta: una tienda

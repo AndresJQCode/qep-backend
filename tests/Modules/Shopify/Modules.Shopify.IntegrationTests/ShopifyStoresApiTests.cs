@@ -133,15 +133,19 @@ public sealed class ShopifyStoresApiTests
         var stale = await PutAsync(client, world.TenantId, world.ConnectionId, Body(world, documentAttributeKey: "Cédula"), "\"1\"");
 
         Assert.Equal((HttpStatusCode.OK, HttpStatusCode.PreconditionFailed), (saved.StatusCode, stale.StatusCode));
+        // Ruling S29: sólo los nombres de los campos (la forma de tenancy.settings.updated); el número de cuenta no queda en audit.
         Assert.Equal(
-            $"1|{world.Tenant.OwnerUserId}|{world.ConnectionId}|{world.AdvisorMembershipId}",
+            $"1|{world.Tenant.OwnerUserId}|{world.ConnectionId}|true|false",
             await ScalarAsync<string>(
                 connectionString,
                 """
-                SELECT count(*) || '|' || max(actor_id::text) || '|' || max(resource_id) || '|' || max(changed_fields -> 'advisorMembershipId' ->> 'to')
+                SELECT count(*) || '|' || max(actor_id::text) || '|' || max(resource_id)
+                    || '|' || bool_and(jsonb_typeof(changed_fields) = 'array' AND changed_fields ? 'advisorMembershipId' AND changed_fields ? 'billingAccountNumber')
+                    || '|' || bool_or(changed_fields::text LIKE '%' || @account || '%')
                 FROM audit.entries WHERE action = 'shopify.store.updated' AND tenant_id = @t
                 """,
-                ("t", world.TenantId)));
+                ("t", world.TenantId),
+                ("account", world.Company.AccountNumber)));
     }
 
     // §6.1 y ruling S25: si el PUT es el primer contacto, crea la tienda con el dominio de la conexión y la ventana de la

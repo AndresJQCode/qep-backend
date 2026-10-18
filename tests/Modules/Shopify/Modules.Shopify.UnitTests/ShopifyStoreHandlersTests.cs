@@ -329,8 +329,8 @@ public sealed class ShopifyStoreHandlersTests
         Assert.Equal(calendar.StartOfDayUtc(calendar.Today), world.Mirrors.LastImportedSince);
     }
 
-    // Ruling S27: el PUT audita shopify.store.updated en la misma transacción, con el valor anterior y el nuevo de lo que cambió;
-    // uno rechazado (412) no deja nada.
+    // Ruling S27 y S29: el PUT audita shopify.store.updated en la misma transacción, con los nombres de lo que cambió; uno
+    // rechazado (412) no deja nada.
     [Fact]
     public async Task PutRecordsStoreUpdatedAuditAndARejectedPutDoesNot()
     {
@@ -345,13 +345,12 @@ public sealed class ShopifyStoreHandlersTests
             ("shopify.store.updated", StoreHandlersWorld.TenantId, StoreHandlersWorld.SubjectId, AuditActorType.Human, StoreHandlersWorld.ConnectionId.ToString()),
             (entry.Action, entry.TenantId, entry.ActorId, entry.ActorType, entry.ResourceId));
         Assert.Empty(world.Database.PendingAudit);
-        using var fields = System.Text.Json.JsonDocument.Parse(entry.Fields);
-        var advisor = fields.RootElement.GetProperty("advisorMembershipId");
-        Assert.Equal(System.Text.Json.JsonValueKind.Null, advisor.GetProperty("from").ValueKind);
-        Assert.Equal(StoreHandlersWorld.AdvisorId, advisor.GetProperty("to").GetGuid());
-        Assert.Equal("123-456", fields.RootElement.GetProperty("billingAccountNumber").GetProperty("to").GetString());
-        // Lo que no cambió no aparece: las claves por defecto siguen iguales.
-        Assert.False(fields.RootElement.TryGetProperty("documentAttributeKey", out _));
+        // Ruling S29: como tenancy.settings.updated, sólo el arreglo con los nombres de lo que cambió; ningún valor (el número de
+        // cuenta no entra a la auditoría). Las claves por defecto no cambiaron y no aparecen.
+        Assert.Equal(
+            """["advisorMembershipId","billingCompanyId","billingBankName","billingAccountNumber","billingCurrency"]""",
+            entry.Fields);
+        Assert.DoesNotContain("123-456", entry.Fields, StringComparison.Ordinal);
     }
 
     // Minor 5 de la revisión: un payload del espejo que no se lee es un fallo permanente, como en la ingesta: queda en last_error
