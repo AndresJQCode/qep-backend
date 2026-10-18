@@ -2628,7 +2628,9 @@ no está en `Backend-prod`) cuenta como ausente. Sin ellas el pod entra en crash
 `Production`, sin `ClientId` y `ClientSecret` el proveedor sale del catálogo y el módulo arranca igual.
 
 En local, los dos van por user-secrets. `set` imprime el valor, así que va con `| Out-Null`; el secreto se pide con
-`Read-Host -MaskInput` (PowerShell 7) para que no quede en el historial de PSReadLine, y la verificación cuenta:
+`Read-Host -MaskInput` para que no quede en el historial de PSReadLine, y la verificación cuenta. `-MaskInput` exige
+PowerShell 7 (`pwsh`); en Windows PowerShell 5.1 el parámetro no existe y `$secret` queda vacío (la alternativa va
+después del bloque):
 
 ```powershell
 dotnet user-secrets set "Shopify:App:ClientId" "<client-id-de-la-app>" --project src/Api | Out-Null
@@ -2637,6 +2639,15 @@ dotnet user-secrets set "Shopify:App:ClientSecret" $secret --project src/Api | O
 Remove-Variable secret
 dotnet user-secrets list --project src/Api | Select-String -Pattern "Shopify:App" | Measure-Object
 ```
+
+En Windows PowerShell 5.1, cambia la segunda línea por estas dos:
+
+```powershell
+$secure = Read-Host -AsSecureString "Client secret de Shopify"
+$secret = [System.Net.NetworkCredential]::new("", $secure).Password
+```
+
+y al final borra también `$secure` (`Remove-Variable secure`).
 
 El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entregar webhooks a tu máquina; la conciliación y
 «Sincronizar ahora» traen los pedidos igual. Con túnel, `Shopify:App:WebhookCallbackUrl` es la URL del túnel más
@@ -2648,8 +2659,17 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
    no las nombra: la plantilla reemplaza cada `#{…}#` de `k8s/` con la variable del grupo que se llame igual.
 2. Backend, con sus migraciones (`AddShopifyModuleKey` en Tenancy, `AddOrderExternalKey` en Quotations,
    `AddCustomerEmailIndex` en Customers, `AddShopifyProvider` y `AddShopifyInstalls` en Integrations, `InitialShopify` y
-   `AddStoreShopDomain` en Shopify). Después, el frontend. **Rollback del backend:** el SPA muestra rutas que responden
-   404; nada se corrompe.
+   `AddStoreShopDomain` en Shopify), y el frontend de Shopify en la misma ventana (el porqué va abajo). **Rollback del
+   backend:** el SPA muestra rutas que responden 404; nada se corrompe.
+
+   **`develop` no va a `main` sin el frontend de Shopify.** Las dos variables del paso 1 no alcanzan. Todo tenant nuevo
+   nace con `shopify` (`DefaultForNewTenants`) y en `Production` la app está configurada, así que su catálogo de
+   Integraciones trae la tarjeta Shopify con `onboarding.kind = "ShopifyOAuth"`. El frontend de `develop` (`c940537`,
+   `provider-catalog.tsx`) manda todo `kind` que no sea `Form` ni `InstagramLogin` a `/integrations/whatsapp/new`: el
+   «Conectar» de Shopify abre el Embedded Signup de Meta. Mientras el backend esté en producción sin el frontend de
+   Shopify, cada tenant nuevo ve esa tarjeta rota, y pasa igual si `develop` llega a `main` por otra razón (un hotfix,
+   otra feature). Por eso el frontend de Shopify se despliega junto con el backend, no después. La alternativa, que
+   decide el owner, es sacar `shopify` de `DefaultForNewTenants` hasta que exista el frontend.
 3. La app en el Dev Dashboard de Shopify, la verificación con una tienda de desarrollo y el primer tenant piloto: los
    pasos y lo que queda por verificar contra Shopify real (V-1 a V-10) están en
    `docs/superpowers/plans/2026-10-18-shopify-handoff.md`.

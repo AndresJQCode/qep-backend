@@ -56,7 +56,9 @@ Tiene que salir una línea con el tamaño en bytes (no `0`). Nunca `get secret -
 
 **Local.** `dotnet user-secrets set` imprime la clave y su valor, así que van con `| Out-Null`. Y un secreto escrito en
 la línea de comando queda en el historial de PSReadLine (`ConsoleHost_history.txt`): el client secret se pide con
-`Read-Host -MaskInput` (PowerShell 7) y viaja en una variable que después se borra. La verificación cuenta:
+`Read-Host -MaskInput` y viaja en una variable que después se borra. `-MaskInput` exige PowerShell 7 (`pwsh`): en
+Windows PowerShell 5.1 el parámetro no existe, `$secret` queda vacío y el `set` falla sin valor. La alternativa para 5.1
+va después del bloque. La verificación cuenta:
 
 ```powershell
 dotnet user-secrets set "Shopify:App:ClientId" "<client-id-de-la-app>" --project src/Api | Out-Null
@@ -64,6 +66,14 @@ $secret = Read-Host -MaskInput "Client secret de Shopify"
 dotnet user-secrets set "Shopify:App:ClientSecret" $secret --project src/Api | Out-Null
 Remove-Variable secret
 dotnet user-secrets list --project src/Api | Select-String -Pattern "Shopify:App" | Measure-Object
+```
+
+En Windows PowerShell 5.1, cambia la segunda línea por estas dos, y al final borra también `$secure`
+(`Remove-Variable secure`):
+
+```powershell
+$secure = Read-Host -AsSecureString "Client secret de Shopify"
+$secret = [System.Net.NetworkCredential]::new("", $secure).Password
 ```
 
 El último comando tiene que dar `Count 2`. `appsettings.Development.json` ya trae `http://localhost:3002` como origen.
@@ -79,7 +89,18 @@ dotnet run --project src/Api
 
 ## 4. Despliegue y tienda de desarrollo (V-1, V-2, V-7)
 
-1. Despliega el backend (migraciones en el README, § Integración con Shopify) y después el frontend.
+**`develop` no va a `main` sin el frontend de Shopify.** Tener `SHOPIFY_APP_CLIENT_ID` y `SHOPIFY_APP_CLIENT_SECRET` en
+`Backend-prod` es la mitad. Todo tenant nuevo nace con `shopify` (`DefaultForNewTenants`, tu decisión del 2026-10-15) y
+en `Production` la app está configurada a la fuerza (sin ella el pod no arranca), así que el catálogo de Integraciones de
+cada tenant nuevo trae la tarjeta Shopify con `onboarding.kind = "ShopifyOAuth"`. El frontend de `develop` (`c940537`,
+`src/features/integrations/components/provider-catalog.tsx`) trata todo `kind` que no sea `Form` ni `InstagramLogin`
+como WhatsApp: el «Conectar» de Shopify lleva a `/integrations/whatsapp/new`, el Embedded Signup de Meta. Pasa igual si
+llevas `develop` a `main` por otra razón (un hotfix, otra feature) antes de terminar el frontend. Si no quieres esperar
+el frontend, la alternativa es tuya: sacar `shopify` de `DefaultForNewTenants` hasta que exista (una línea y su prueba,
+más la entrada de `pos` de `CLAUDE.md` y el README, que cuentan los módulos por defecto).
+
+1. Despliega el backend (migraciones en el README, § Integración con Shopify) y el frontend de Shopify en la misma
+   ventana.
 2. Crea una **tienda de desarrollo** en el Dev Dashboard.
 3. **Inicio A, desde QEP (V-1):** en un tenant con `shopify` prendido, Integraciones → Shopify → escribe el dominio
    `<tienda>.myshopify.com` → autoriza en Shopify → vuelves a QEP y la tienda queda enlazada. Que funcione de punta a
@@ -121,13 +142,15 @@ FROM shopify.orders ORDER BY shopify_created_at DESC LIMIT 20;
 
 **V-9: guarda los payloads reales como fixtures.** Los de `tests/Modules/Shopify/Modules.Shopify.UnitTests/Fixtures/rest`
 son armados a mano (`"_source": "synthetic, replace per V-9"`). Del envío cobrado, del gratis por descuento y de la
-recogida, exporta el cuerpo crudo. Escríbelo dentro del contenedor con `psql -o` y tráelo con `docker cp`: pasarlo por
+recogida, exporta el `payload`. Ojo: no es el cuerpo crudo que firmó Shopify. La columna es `jsonb`, y Postgres reordena
+las claves y quita los espacios al guardarla: sirve como fixture de los parsers, pero no para recalcular la firma
+(`X-Shopify-Hmac-Sha256`) ni para una prueba que compare bytes. Escríbelo dentro del contenedor con `psql -o` y tráelo con `docker cp`: pasarlo por
 la consola de PowerShell (`| Out-File`) decodifica con la página de códigos de la consola y daña las tildes («Gómez»,
 «Bogotá»).
 
 ```powershell
 $sql = "SELECT payload FROM shopify.webhook_deliveries WHERE topic = 'orders/create' ORDER BY received_at DESC LIMIT 1"
-docker exec postgres18 psql -U postgres -d <base> -At -c $sql -o /tmp/shipping-charged.real.json
+docker exec postgres18 psql -U postgres -d "<base>" -At -c $sql -o /tmp/shipping-charged.real.json
 docker cp postgres18:/tmp/shipping-charged.real.json .\shipping-charged.real.json
 ```
 
@@ -212,7 +235,8 @@ quedan por ratificar. Si D-S1 a D-S21 no las das por ratificadas, dilo y entran 
 | `a3e92759..1753b891` | Una clasificación por defecto inactiva se acepta (como en Customers); los clientes nacen completos con ella | Una validación en el `PUT` |
 | `a3e92759..1753b891` | El `PUT` de la tienda audita `shopify.store.updated` con los **nombres** de los campos que cambiaron, sin valores, como `tenancy.settings.updated`; un `PUT` sin cambios audita `[]` (Tenancy no audita en ese caso) | Renombrar la acción; saltar la auditoría sin cambios |
 | `8b58fe9f` | Un pedido de prueba (`test = true`) se ignora sin consultar la clave externa; un cancelado sí la consulta y, si el pedido existe en QEP, lo anula | Consultar también en los de prueba |
-| `0a20ebd6` | Un cancelado con la tienda sin configurar espera con `store_not_configured`, aunque su pedido no exista en QEP: al configurar la tienda, el reintento lo ignora o lo anula | Ninguno: una fila de más en «En espera» hasta configurar |
+| `0a20ebd6`, `94692eaa` | Un cancelado cuyo pedido ya está en QEP, con la tienda sin configurar (no hay asesor a cuyo nombre anular), espera con `store_not_configured` en vez de lanzar, en la primera llegada y en las siguientes; al configurar la tienda, la conciliación o el reintento lo anulan. Si el pedido no está en QEP, se ignora como cualquier cancelado | Ninguno: una fila de más en «En espera» hasta configurar |
+| `44b40973` | Al nacer la tienda de una conexión (borraste la conexión y volviste a enlazar la tienda), las filas `Waiting` del espejo del mismo tenant y dominio que tenía la conexión anterior pasan a la nueva, y la conciliación y el reintento las retoman. Las terminales y las de otro tenant no se tocan. El spec no lo cubre | Pedidos viejos que se importan al reenlazar, si preferías dejarlos fuera |
 | `f72c7d1b` | En `Production`, un `ClientId` o `ClientSecret` que empieza por `#{` cuenta como ausente | Ninguno, salvo que Shopify emitiera un secreto con ese prefijo |
 | — | Las excepciones a la regla de TDD de § 10 se aceptaron sin rehacer las pruebas | Rehacer las pruebas que lista § 10 |
 | — | `dotnet format --verify-no-changes` de la solución falla en `src/Modules/Quotations/Modules.Quotations.Api/CarrierEndpoints.cs` y `tests/Modules/Messaging/Modules.Messaging.IntegrationTests/ReplyMarksReadApiTests.cs`, que vienen de `develop`, no de esta rama | Arreglarlos en `develop` antes del merge, o el paso de verificación del README falla para todos |

@@ -266,8 +266,9 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `null` y dos conversaciones con BSUID pueden compartir número (reciclado). Un cuerpo de webhook de prueba
   sin `from_user_id` se descarta en silencio —la entrega queda procesada y no aparece nada—: es el síntoma,
   no un bug de la ingesta.
-- **Un cliente puede ser `Incomplete`** (sin CUC, documento, dirección ni clasificación): lo crea la ingesta
-  de Messaging, nunca un endpoint. Todo código nuevo que lea `Cuc`, `IdentificationType`, `Address`,
+- **Un cliente puede ser `Incomplete`** (sin CUC, documento, dirección ni clasificación): lo crean la ingesta
+  de Messaging y la importación de pedidos de Shopify (`Customer.CreateIncompleteFromExternalSale`, sin BSUID ni IGSID),
+  nunca un endpoint. Todo código nuevo que lea `Cuc`, `IdentificationType`, `Address`,
   `Country` o `ClassificationId` de un `Customer` tiene que tratar el `null`; Quotations lo rechaza con
   `client_incomplete` **antes** que `client_cuc_missing`, y un reporte que agrupe por clasificación o ciudad
   filtra `Completeness == Complete`.
@@ -368,9 +369,20 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **`ShopifyLayerTests` prohíbe que el módulo Shopify referencie módulos de negocio:** Application sólo ve Tenancy y Audit.
   La conexión (Integrations), el pedido (Quotations), el cliente (Customers), el producto (Catalog) y la ciudad
   (Geography) entran por los puertos de `ShopifyPorts.cs`, con adaptador en `src/Bootstrapper/Shopify*.cs`. El costo son
-  dos copias que se cambian juntas: `ShopifyWebhookTopics` vive en Integrations.Application (los que el enlace registra) y
-  en Shopify.Application (los que el worker atiende), y `ShopifyCashOnDeliveryGateways.Normalize` copia
-  `CarrierName.Normalize` con su prueba de paridad `ShopifyNormalizationParityTests` en `Bootstrapper.UnitTests` (2026-10-18, `e157d9c2`).
+  dos copias que se cambian juntas, cada una con su prueba de paridad en `Bootstrapper.UnitTests`, que ve los dos módulos:
+  `ShopifyWebhookTopics` vive en Integrations.Application (los que el enlace registra) y en Shopify.Application (los que el
+  worker atiende), amarradas por `ShopifyWebhookTopicsParityTests` (2026-10-18, `7b83a958`), y
+  `ShopifyCashOnDeliveryGateways.Normalize` copia `CarrierName.Normalize`, amarrada por `ShopifyNormalizationParityTests`
+  (2026-10-18, `e157d9c2`).
+- **`develop` no va a `main` sin el frontend de Shopify** (2026-10-18). `shopify` está en `DefaultForNewTenants`
+  (`TenantModuleKey.cs`, decisión del owner del 2026-10-15) y en `Production` la app está configurada a la fuerza —sin ella
+  el pod no arranca—, así que el catálogo de Integraciones de todo tenant nuevo trae la tarjeta Shopify con
+  `onboarding.kind = "ShopifyOAuth"`. El frontend de `develop` (`c940537`, `provider-catalog.tsx`) trata todo `kind` que no
+  sea `Form` ni `InstagramLogin` como WhatsApp: el «Conectar» de Shopify lleva a `/integrations/whatsapp/new`, el Embedded
+  Signup de Meta. Pasa igual si `develop` llega a `main` por otra razón (un hotfix, otra feature): antes de llevarlo, el
+  frontend de Shopify tiene que estar listo para desplegarse junto. La alternativa es del owner: sacar `shopify` de
+  `DefaultForNewTenants` hasta que exista el frontend (una línea y su prueba, más la entrada de `pos` de este archivo, que
+  cuenta siete módulos, y el README). El paso a paso está en el README, § Integración con Shopify, «Despliegue».
 - **Un token del pipeline sin resolver llega literal, no vacío.** Si la variable no está en el grupo `Backend-prod`, la
   plantilla deja `#{NOMBRE}#` en el ConfigMap o el Secret, y un `Require` que sólo mira `IsNullOrWhiteSpace` lo da por
   configurado: el pod arranca y rechaza cada firma (es el síntoma que la entrada de Instagram atribuye a
