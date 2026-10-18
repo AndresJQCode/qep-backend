@@ -28,6 +28,7 @@ using Modules.Geography.Application;
 using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Integrations.Application;
+using Modules.Integrations.Application.Shopify;
 using Modules.Integrations.Infrastructure;
 using Modules.Messaging.Application;
 using Modules.Messaging.Infrastructure;
@@ -604,6 +605,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ConnectInstagramCommand, ConnectionResponse>,
             ConnectInstagramHandler>();
+        // Integrations (spec 2026-10-15 §4.3): los dos inicios de la instalación de Shopify. Los validadores entran con
+        // AddValidatorsFromAssemblyContaining del módulo, más abajo.
+        services.AddScoped<
+            ICommandHandler<StartShopifyInstallForTenantCommand, ShopifyAuthorizeResponse>,
+            StartShopifyInstallForTenantHandler>();
+        services.AddScoped<
+            ICommandHandler<StartShopifyInstallCommand, ShopifyAuthorizeResponse>,
+            StartShopifyInstallHandler>();
         // Messaging (spec 2026-10-09): el webhook de Meta, anónimo y firmado.
         services.AddScoped<IQueryHandler<VerifyWebhookQuery, string?>, VerifyWebhookHandler>();
         services.AddScoped<ICommandHandler<ReceiveWebhookCommand, bool>, ReceiveWebhookHandler>();

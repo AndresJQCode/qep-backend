@@ -38,6 +38,18 @@ public static class IntegrationsErrorCodes
     public const string InstagramSubscriptionFailed = "integrations.instagram.subscription_failed";
     /// <summary>Agregado al implementar: el token canjeó pero <c>/me</c> no respondió; reintentar pide otro code.</summary>
     public const string InstagramAccountReadFailed = "integrations.instagram.account_read_failed";
+
+    // Spec 2026-10-15 §7.1, la instalación de Shopify.
+    /// <summary>401: el HMAC de la query de instalación o del callback no coincide.</summary>
+    public const string ShopifyHmacInvalid = "integrations.shopify.hmac_invalid";
+    /// <summary>422: el dominio no tiene la forma <c>*.myshopify.com</c> (D-S33).</summary>
+    public const string ShopifyShopInvalid = "integrations.shopify.shop_invalid";
+    /// <summary>404: <c>installId</c> o <c>state</c> desconocido.</summary>
+    public const string ShopifyInstallNotFound = "integrations.shopify.install_not_found";
+    /// <summary>422: la fila venció (15 min sin canje, 7 días sin enlace).</summary>
+    public const string ShopifyInstallExpired = "integrations.shopify.install_expired";
+    /// <summary>403: la instalación se inició desde otro tenant.</summary>
+    public const string ShopifyInstallTenantMismatch = "integrations.shopify.install_tenant_mismatch";
 }
 
 /// <summary>Lo que va a <c>last_failure_code</c> (varchar(64)): el resultado, no el código HTTP.</summary>

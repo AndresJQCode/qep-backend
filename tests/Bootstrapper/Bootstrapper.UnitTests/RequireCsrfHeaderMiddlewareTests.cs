@@ -35,7 +35,16 @@ public sealed class RequireCsrfHeaderMiddlewareTests
     public async Task TheWebhookPrefixPassesWithoutTheHeader(string method, string path) =>
         Assert.True((await RunAsync(method, path, null)).Reached);
 
+    // Spec 2026-10-15 §4.3: el inicio B de Shopify, exacto; el inicio A (con cookie) y cualquier variante, no.
+    [Fact]
+    public async Task TheShopifyAnonymousInstallStartPassesWithoutTheHeader() =>
+        Assert.True((await RunAsync("POST", "/api/v1/integrations/shopify/install/start", null)).Reached);
+
     [Theory]
+    [InlineData("/api/v1/tenants/x/integrations/shopify/install/start")]
+    [InlineData("/api/v1/integrations/shopify/install/start/x")]
+    [InlineData("/api/v1/integrations/shopify/install/complete")]
+    [InlineData("/API/v1/integrations/shopify/install/start")]
     [InlineData("/api/v1/tenants/x/messaging/conversations")]
     [InlineData("/api/webhooksx")]
     [InlineData("/API/webhooks/whatsapp")]

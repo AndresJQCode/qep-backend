@@ -107,6 +107,8 @@ public static class IntegrationsInfrastructureExtensions
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<ShopifyAppOptions>, ShopifyAppOptionsValidator>();
         services.AddSingleton<IShopifyAppSettings, ShopifyAppSettings>();
+        // Spec 2026-10-15 §4.3: la instalación en curso, en la misma unidad de trabajo que las conexiones.
+        services.AddScoped<IShopifyInstallRepository, ShopifyInstallRepository>();
 
         return services;
     }

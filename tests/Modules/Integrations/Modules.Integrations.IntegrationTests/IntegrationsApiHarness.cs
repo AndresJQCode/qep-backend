@@ -51,6 +51,14 @@ internal static class IntegrationsApiHarness
 
     public const string ZenviaBaseUrl = "https://zenvia.test";
 
+    /// <summary>Spec 2026-10-15 §4.2: la app de Shopify, fijada y nunca heredada. Con el par, shopify es visible (D-M3,
+    /// task 5); el secreto es centinela, como los de Meta.</summary>
+    public const string ShopifyClientId = "shopify-client-id-test";
+
+    public const string SentinelShopifyClientSecret = "shopify-client-secret-SENTINEL-8a7b6c";
+
+    public const string ShopifyRedirectUri = "https://qep.qcode.co/shopify/callback";
+
     /// <summary>La llave con la que el host cifra. Calculada, no escrita: un literal con forma de llave
     /// en el repo termina copiado a un ambiente. Bytes 0..31.</summary>
     public static string TestSecretProtectionKey { get; } =
@@ -231,6 +239,12 @@ internal static class IntegrationsApiHarness
             builder.UseSetting("Meta:Instagram:GraphApiVersion", "v24.0");
             builder.UseSetting("Meta:Instagram:AllowedRedirectOrigins:0", "https://qep.qcode.co");
             builder.UseSetting("Meta:Instagram:AllowedRedirectOrigins:1", "http://localhost:3002");
+            // Spec 2026-10-15 §4.2: sin ClientId y ClientSecret, fuera de Production, shopify no aparece (task 5).
+            builder.UseSetting("Shopify:App:ClientId", ShopifyClientId);
+            builder.UseSetting("Shopify:App:ClientSecret", SentinelShopifyClientSecret);
+            builder.UseSetting("Shopify:App:AllowedRedirectOrigins:0", "https://qep.qcode.co");
+            builder.UseSetting("Shopify:App:AllowedRedirectOrigins:1", "http://localhost:3002");
+            builder.UseSetting("Shopify:App:WebhookCallbackUrl", string.Empty);
             builder.ConfigureTestServices(services =>
             {
                 services.AddHttpClient(ZenviaConnectionTester.HttpClientName)
@@ -499,6 +513,18 @@ internal static class IntegrationsApiHarness
         {
             builder.UseSetting("Meta:Instagram:AppId", string.Empty);
             builder.UseSetting("Meta:Instagram:AppSecret", string.Empty);
+        });
+
+    /// <summary>
+    /// Auth real con el stub apagado, como corre producción: así se registra <c>RequireCsrfHeaderMiddleware</c>, que en
+    /// modo stub ni existe (CLAUDE.md). Sigue en Development, con una audiencia inventada porque la rama real la exige. Ningún request de esta variante puede autenticarse: sirve para
+    /// las rutas anónimas.
+    /// </summary>
+    public static WebApplicationFactory<Program> WithRealAuthentication(this WebApplicationFactory<Program> factory) =>
+        factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("Authentication:UseDevelopmentStub", "false");
+            builder.UseSetting("Authentication:Audience", "qep-integrations-tests");
         });
 
     public static WebApplicationFactory<Program> WithoutMetaApp(this WebApplicationFactory<Program> factory) =>

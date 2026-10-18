@@ -181,6 +181,8 @@ app.MapReportingEndpoints();
 app.MapPlatformEndpoints();
 app.MapPosEndpoints();
 app.MapIntegrationsEndpoints();
+// Spec 2026-10-15 §4.3: el inicio anónimo de la instalación de Shopify, con el limitador por IP de las superficies públicas.
+app.MapShopifyInstallEndpoints(RateLimiterPolicies.Public);
 app.MapWhatsAppWebhook(RateLimiterPolicies.Webhook);
 // Spec 2026-10-14 §6.2: el webhook de Instagram, con el mismo limitador y la misma exención de CSRF (prefijo /api/webhooks/).
 app.MapInstagramWebhook(RateLimiterPolicies.Webhook);

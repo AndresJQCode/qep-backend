@@ -10,7 +10,7 @@ namespace Modules.Integrations.Infrastructure.Persistence;
 
 /// <summary>
 /// Esquema <c>integrations</c> (spec 2026-10-08, «Conexión»): <c>connections</c> y su tabla hija
-/// <c>connection_secrets</c> (D9). Proyecta además <c>audit.entries</c> (auditoría atómica, ADR 0019,
+/// <c>connection_secrets</c> (D9), y <c>shopify_installs</c> (spec 2026-10-15 §9). Proyecta además <c>audit.entries</c> (auditoría atómica, ADR 0019,
 /// como Identity) y <c>platform.outbox_messages</c> (como Pos), las dos <c>ExcludeFromMigrations</c>.
 /// </summary>
 public sealed class IntegrationsDbContext(DbContextOptions<IntegrationsDbContext> options) : DbContext(options)
@@ -24,6 +24,10 @@ public sealed class IntegrationsDbContext(DbContextOptions<IntegrationsDbContext
     /// <summary>Spec 2026-10-09 §6.1: el único (provider_key, external_id). Traducido por nombre a
     /// <c>number_already_connected</c>.</summary>
     public const string RouteExternalIndex = "IX_connection_routes_provider_external";
+
+    /// <summary>Spec 2026-10-15 §9: el <c>state</c> de OAuth es único. 32 bytes aleatorios no chocan; el índice es el
+    /// que encuentra la fila en el canje.</summary>
+    public const string ShopifyInstallStateIndex = "IX_shopify_installs_state";
 
     private static readonly JsonSerializerOptions FieldsJson = new(JsonSerializerDefaults.General);
 
@@ -44,6 +48,8 @@ public sealed class IntegrationsDbContext(DbContextOptions<IntegrationsDbContext
 
     public DbSet<IntegrationConnectionRoute> Routes => Set<IntegrationConnectionRoute>();
 
+    public DbSet<ShopifyInstall> ShopifyInstalls => Set<ShopifyInstall>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     internal DbSet<IntegrationsOutboxMessage> Outbox => Set<IntegrationsOutboxMessage>();
@@ -57,6 +63,7 @@ public sealed class IntegrationsDbContext(DbContextOptions<IntegrationsDbContext
     {
         ConfigureConnection(modelBuilder);
         ConfigureConnectionRoute(modelBuilder);
+        ConfigureShopifyInstall(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
         ConfigureOutboxProjection(modelBuilder);
     }
@@ -125,6 +132,32 @@ public sealed class IntegrationsDbContext(DbContextOptions<IntegrationsDbContext
             .HasFilter("account_id IS NOT NULL");
         // La cascada borra la ruta con la conexión y libera el número (§6.1).
         route.HasOne<IntegrationConnection>().WithMany().HasForeignKey(value => value.ConnectionId).OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureShopifyInstall(ModelBuilder modelBuilder)
+    {
+        var install = modelBuilder.Entity<ShopifyInstall>();
+        install.ToTable("shopify_installs", Schema);
+        install.HasKey(value => value.Id);
+        install.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        install.Property(value => value.ShopDomain).HasColumnName("shop_domain").HasMaxLength(ShopifyInstall.ShopDomainMaxLength);
+        install.Property(value => value.State).HasColumnName("state").HasMaxLength(ShopifyInstall.StateMaxLength);
+        install.Property(value => value.RedirectUri).HasColumnName("redirect_uri").HasMaxLength(ShopifyInstall.RedirectUriMaxLength);
+        // Sin FK: tenancy.tenants y tenancy.memberships son de otro módulo.
+        install.Property(value => value.InitiatedTenantId).HasColumnName("initiated_tenant_id");
+        install.Property(value => value.InitiatedBy).HasColumnName("initiated_by");
+        install.Property(value => value.ShopId).HasColumnName("shop_id").HasMaxLength(ShopifyInstall.ShopIdMaxLength);
+        install.Property(value => value.ShopName).HasColumnName("shop_name").HasMaxLength(ShopifyInstall.ShopNameMaxLength);
+        install.Property(value => value.Scopes).HasColumnName("scopes").HasMaxLength(ShopifyInstall.ScopesMaxLength);
+        install.Property(value => value.ProtectedToken).HasColumnName("access_token_protected");
+        install.Property(value => value.KeyId).HasColumnName("key_id").HasMaxLength(ProtectedSecret.KeyIdMaxLength);
+        install.Property(value => value.CreatedAt).HasColumnName("created_at");
+        install.Property(value => value.ExpiresAt).HasColumnName("expires_at");
+        install.Ignore(value => value.IsExchanged);
+        install.HasIndex(value => value.State).IsUnique().HasDatabaseName(ShopifyInstallStateIndex);
+        // El barrido de las vencidas (§9) y el worker de re-cifrado recorren por estas dos.
+        install.HasIndex(value => value.ExpiresAt).HasDatabaseName("IX_shopify_installs_expires_at");
+        install.HasIndex(value => value.KeyId).HasDatabaseName("IX_shopify_installs_key_id").HasFilter("key_id IS NOT NULL");
     }
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)

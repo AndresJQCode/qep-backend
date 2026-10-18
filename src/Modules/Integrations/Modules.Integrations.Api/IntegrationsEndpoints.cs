@@ -3,11 +3,17 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Modules.Integrations.Application;
+using Modules.Integrations.Application.Shopify;
 
 namespace Modules.Integrations.Api;
 
 public static class IntegrationsEndpoints
 {
+    /// <summary>Spec 2026-10-15 §7: el inicio B, anónimo. Exento de CSRF por esta ruta exacta (lo abre Shopify, no hay
+    /// sesión y se autentica con su HMAC): <c>RequireCsrfHeaderMiddleware</c> la repite literal y la compara ordinal, así que
+    /// cambiarla acá exige cambiarla allá.</summary>
+    public const string ShopifyInstallStartRoute = "/api/v1/integrations/shopify/install/start";
+
     public static IEndpointRouteBuilder MapIntegrationsEndpoints(this IEndpointRouteBuilder endpoints)
     {
         // Tenant en la ruta, como pos y companies. Cada endpoint declara su propio
@@ -105,8 +111,45 @@ public static class IntegrationsEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
+        // Spec 2026-10-15 §4.3, A1: el inicio desde QEP. Devuelve la URL de autorización de la tienda; el SPA redirige.
+        group.MapPost("/shopify/install/start", StartShopifyInstallForTenantAsync)
+            .RequireAuthorization(IntegrationsPermissions.ConnectionManage)
+            .Accepts<ShopifyInstallStartForTenantRequest>("application/json")
+            .Produces<ShopifyAuthorizeResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
+
+    /// <summary>
+    /// Spec 2026-10-15 §4.3 y §7: las rutas anónimas de la instalación, fuera de <c>/api/v1/tenants</c> porque todavía no
+    /// hay tenant (ni <c>TenantModuleGuard</c>), con el limitador por IP que reciba (<c>public</c>). Hoy, el inicio B.
+    /// </summary>
+    public static IEndpointRouteBuilder MapShopifyInstallEndpoints(this IEndpointRouteBuilder endpoints, string rateLimiterPolicy)
+    {
+        endpoints.MapPost(ShopifyInstallStartRoute, StartShopifyInstallAsync)
+            .AllowAnonymous()
+            .RequireRateLimiting(rateLimiterPolicy)
+            .WithTags("Integrations")
+            .Accepts<ShopifyInstallStartRequest>("application/json")
+            .Produces<ShopifyAuthorizeResponse>()
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        return endpoints;
+    }
+
+    private static async Task<IResult> StartShopifyInstallForTenantAsync(
+        Guid tenantId, ShopifyInstallStartForTenantRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new StartShopifyInstallForTenantCommand(tenantId, request.Shop, request.RedirectUri), cancellationToken));
+
+    private static async Task<IResult> StartShopifyInstallAsync(
+        ShopifyInstallStartRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new StartShopifyInstallCommand(request.Shop, request.Hmac, request.Timestamp, request.Host, request.RedirectUri),
+            cancellationToken));
 
     private static async Task<IResult> ConnectInstagramAsync(
         Guid tenantId, InstagramConnectRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
@@ -250,3 +293,10 @@ public sealed record InstagramConnectRequest(string? Name, string? Code, string?
 {
     public override string ToString() => $"InstagramConnectRequest {{ Name = {Name}, RedirectUri = {RedirectUri} }}";
 }
+
+/// <summary>El cuerpo del inicio A (spec 2026-10-15 §7): el dominio que escribió la persona y el retorno del SPA.</summary>
+public sealed record ShopifyInstallStartForTenantRequest(string? Shop, string? RedirectUri);
+
+/// <summary>El cuerpo del inicio B (spec 2026-10-15 §7): lo que Shopify puso en la App URL, tal cual, más el retorno del
+/// SPA. Nada de esto es secreto: el HMAC prueba que lo firmó Shopify.</summary>
+public sealed record ShopifyInstallStartRequest(string? Shop, string? Hmac, string? Timestamp, string? Host, string? RedirectUri);

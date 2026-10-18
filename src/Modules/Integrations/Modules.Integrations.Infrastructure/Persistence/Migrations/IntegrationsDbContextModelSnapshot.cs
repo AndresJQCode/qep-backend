@@ -207,6 +207,86 @@ namespace Modules.Integrations.Infrastructure.Persistence.Migrations
                     b.ToTable("connection_routes", "integrations");
                 });
 
+            modelBuilder.Entity("Modules.Integrations.Domain.ShopifyInstall", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<Guid?>("InitiatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("initiated_by");
+
+                    b.Property<Guid?>("InitiatedTenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("initiated_tenant_id");
+
+                    b.Property<string>("KeyId")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("key_id");
+
+                    b.Property<byte[]>("ProtectedToken")
+                        .HasColumnType("bytea")
+                        .HasColumnName("access_token_protected");
+
+                    b.Property<string>("RedirectUri")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("redirect_uri");
+
+                    b.Property<string>("Scopes")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("scopes");
+
+                    b.Property<string>("ShopDomain")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("shop_domain");
+
+                    b.Property<string>("ShopId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("shop_id");
+
+                    b.Property<string>("ShopName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("shop_name");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("state");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt")
+                        .HasDatabaseName("IX_shopify_installs_expires_at");
+
+                    b.HasIndex("KeyId")
+                        .HasDatabaseName("IX_shopify_installs_key_id")
+                        .HasFilter("key_id IS NOT NULL");
+
+                    b.HasIndex("State")
+                        .IsUnique()
+                        .HasDatabaseName("IX_shopify_installs_state");
+
+                    b.ToTable("shopify_installs", "integrations");
+                });
+
             modelBuilder.Entity("Modules.Integrations.Infrastructure.Persistence.IntegrationsOutboxMessage", b =>
                 {
                     b.Property<Guid>("Id")
