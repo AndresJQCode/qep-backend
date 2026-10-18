@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Modules.Shopify.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Modules.Shopify.Domain\Modules.Shopify.Domain.csproj" />
+    <!-- Tenancy (módulos, membresías, contexto de ejecución) y Audit (AuditActorType del puerto de auditoría propio): las únicas
+         referencias a otro módulo que Application tiene permitidas (ShopifyLayerTests). Conexiones, pedidos, clientes,
+         productos y ciudades entran por puertos con adaptador en Bootstrapper. -->
+    <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
+    <ProjectReference Include="..\..\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" />
+  </ItemGroup>
+</Project>

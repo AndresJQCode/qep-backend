@@ -102,6 +102,12 @@
     <Project Path="src/Modules/Reporting/Modules.Reporting.Domain/Modules.Reporting.Domain.csproj" />
     <Project Path="src/Modules/Reporting/Modules.Reporting.Infrastructure/Modules.Reporting.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Shopify/">
+    <Project Path="src/Modules/Shopify/Modules.Shopify.Api/Modules.Shopify.Api.csproj" />
+    <Project Path="src/Modules/Shopify/Modules.Shopify.Application/Modules.Shopify.Application.csproj" />
+    <Project Path="src/Modules/Shopify/Modules.Shopify.Domain/Modules.Shopify.Domain.csproj" />
+    <Project Path="src/Modules/Shopify/Modules.Shopify.Infrastructure/Modules.Shopify.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Tenancy/">
     <Project Path="src/Modules/Tenancy/Modules.Tenancy.Api/Modules.Tenancy.Api.csproj" />
     <Project Path="src/Modules/Tenancy/Modules.Tenancy.Application/Modules.Tenancy.Application.csproj" />
@@ -175,6 +181,10 @@
   <Folder Name="/tests/Modules/Reporting/">
     <Project Path="tests/Modules/Reporting/Modules.Reporting.UnitTests/Modules.Reporting.UnitTests.csproj" />
     <Project Path="tests/Modules/Reporting/Modules.Reporting.IntegrationTests/Modules.Reporting.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Shopify/">
+    <Project Path="tests/Modules/Shopify/Modules.Shopify.IntegrationTests/Modules.Shopify.IntegrationTests.csproj" />
+    <Project Path="tests/Modules/Shopify/Modules.Shopify.UnitTests/Modules.Shopify.UnitTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/Tenancy/">
     <Project Path="tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/Modules.Tenancy.IntegrationTests.csproj" />

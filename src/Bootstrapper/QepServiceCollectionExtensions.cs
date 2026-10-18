@@ -43,6 +43,7 @@ using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Application;
 using Modules.Reporting.Infrastructure;
+using Modules.Shopify.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
 using Modules.Tenancy.Application;
@@ -757,6 +758,10 @@ public static class QepServiceCollectionExtensions
         // Pipeline (spec 2026-10-13): el embudo de ventas. Sólo ve Tenancy (y Audit en Infrastructure); conversaciones,
         // clientes y nombres de miembros entran por adaptadores que se registran más abajo.
         services.AddPipelineInfrastructure(configuration);
+
+        // Shopify (spec 2026-10-15): el espejo de pedidos de las tiendas. Sólo ve Tenancy (y Audit para su auditoría atómica);
+        // conexiones, clientes, productos, ciudades y pedidos entran por adaptadores que se registran más abajo.
+        services.AddShopifyInfrastructure(configuration);
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los

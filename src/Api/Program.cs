@@ -36,6 +36,7 @@ using Modules.Pos.Infrastructure;
 using Modules.Quotations.Api;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Api;
+using Modules.Shopify.Infrastructure;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
 using Modules.Tenancy.Api;
@@ -246,6 +247,11 @@ await app.Services.InitializeMessagingDatabaseAsync(
 // Pipeline (spec 2026-10-13): después de Audit (escribe en audit.entries) y de Tenancy (lee platform.outbox_messages). Sin FKs
 // a otros esquemas: clientes, conversaciones, membresías y cotizaciones son referencias blandas.
 await app.Services.InitializePipelineDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Shopify (spec 2026-10-15 §9): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas: conexión, cliente,
+// pedido, asesor y empresa son referencias blandas.
+await app.Services.InitializeShopifyDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y
