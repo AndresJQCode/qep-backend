@@ -43,9 +43,13 @@ internal sealed partial class ShopifyAdminGateway(
 
     internal static SocketsHttpHandler CreatePrimaryHandler() => new() { AllowAutoRedirect = false };
 
+    /// <summary>Lo que espera cada llamada. El barrido de instalaciones (<see cref="ShopifyInstallSweeper"/>) le da margen
+    /// a un canje en vuelo con esto.</summary>
+    internal static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
+
     internal static void ConfigureClient(HttpClient client)
     {
-        client.Timeout = TimeSpan.FromSeconds(10);
+        client.Timeout = Timeout;
         client.DefaultRequestHeaders.UserAgent.ParseAdd("qep-integrations");
     }
 
@@ -122,9 +126,10 @@ internal sealed partial class ShopifyAdminGateway(
     public async Task<ShopifyWebhookSubscription> CreateWebhookAsync(
         string shop, string token, string topic, Uri callback, CancellationToken cancellationToken)
     {
+        // Quien llama manda el topic en la forma REST (ShopifyWebhookTopics.Registered); GraphQL pide su enum.
         var variables = new Dictionary<string, object>(StringComparer.Ordinal)
         {
-            ["topic"] = topic,
+            ["topic"] = ShopifyWebhookTopics.ToGraphQl(topic),
             ["webhookSubscription"] = new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["uri"] = callback.ToString(),

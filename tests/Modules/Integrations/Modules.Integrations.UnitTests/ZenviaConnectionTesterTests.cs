@@ -152,12 +152,7 @@ public sealed class ZenviaConnectionTesterTests : IDisposable
     {
         var keys = _services.GetServices<IProviderConnectionTester>().Select(tester => tester.ProviderKey).ToHashSet();
 
-        // PENDIENTE (plan Shopify, Task 8): ShopifyConnectionTester llega con el enlace de la tienda; hasta entonces no
-        // se puede crear una conexión shopify (no hay install ni link), así que el registro nunca la recibe. Quita esta
-        // excepción en la Task 8.
-        Assert.All(
-            IntegrationProviders.All.Where(provider => provider != IntegrationProviders.Shopify),
-            provider => Assert.Contains(provider.Key, keys));
+        Assert.All(IntegrationProviders.All, provider => Assert.Contains(provider.Key, keys));
     }
 
     [Fact]

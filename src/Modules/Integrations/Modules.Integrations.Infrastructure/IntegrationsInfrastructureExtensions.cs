@@ -114,7 +114,11 @@ public static class IntegrationsInfrastructureExtensions
         services.AddHttpClient(ShopifyAdminGateway.HttpClientName, ShopifyAdminGateway.ConfigureClient)
             .ConfigurePrimaryHttpMessageHandler(() => ShopifyAdminGateway.CreatePrimaryHandler())
             .RemoveAllLoggers();
-        services.AddScoped<IShopifyAdminGateway, ShopifyAdminGateway>();
+        // Singleton: sus dependencias lo son, y el probador (singleton, como el registro de probadores) lo usa.
+        services.AddSingleton<IShopifyAdminGateway, ShopifyAdminGateway>();
+        services.AddSingleton<IProviderConnectionTester, ShopifyConnectionTester>();
+        // §9: las instalaciones vencidas se barren cada hora, con margen para el canje en vuelo (ruling S9).
+        services.AddHostedService<ShopifyInstallSweeper>();
 
         return services;
     }

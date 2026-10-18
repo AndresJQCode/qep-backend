@@ -60,6 +60,8 @@ internal static class IntegrationsApiHarness
 
     public const string ShopifyRedirectUri = "https://qep.qcode.co/shopify/callback";
 
+    public const string ShopifyWebhookCallbackUrl = "https://qep-api.qcode.co/api/webhooks/shopify";
+
     /// <summary>La llave con la que el host cifra. Calculada, no escrita: un literal con forma de llave
     /// en el repo termina copiado a un ambiente. Bytes 0..31.</summary>
     public static string TestSecretProtectionKey { get; } =
@@ -249,7 +251,8 @@ internal static class IntegrationsApiHarness
             builder.UseSetting("Shopify:App:ClientSecret", SentinelShopifyClientSecret);
             builder.UseSetting("Shopify:App:AllowedRedirectOrigins:0", "https://qep.qcode.co");
             builder.UseSetting("Shopify:App:AllowedRedirectOrigins:1", "http://localhost:3002");
-            builder.UseSetting("Shopify:App:WebhookCallbackUrl", string.Empty);
+            // El enlace y el probador registran los webhooks contra esta URL (D-S17); FakeShopifyHandler la ve en cada alta.
+            builder.UseSetting("Shopify:App:WebhookCallbackUrl", ShopifyWebhookCallbackUrl);
             builder.ConfigureTestServices(services =>
             {
                 services.AddHttpClient(ZenviaConnectionTester.HttpClientName)

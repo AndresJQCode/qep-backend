@@ -55,6 +55,9 @@ public static class IntegrationsErrorCodes
     public const string ShopifyCodeExchangeFailed = "integrations.shopify.code_exchange_failed";
     /// <summary>422: lo concedido no contiene <c>Shopify:App:Scopes</c>.</summary>
     public const string ShopifyScopesMissing = "integrations.shopify.scopes_missing";
+    /// <summary>422: la ruta <c>("shopify", shopDomain)</c> es de otro tenant; el detalle trae su nombre y nada más (Review
+    /// Focus 3). La misma tienda en el mismo tenant no es este error: es un reenlace.</summary>
+    public const string ShopifyShopAlreadyLinked = "integrations.shopify.shop_already_linked";
 }
 
 /// <summary>Lo que va a <c>last_failure_code</c> (varchar(64)): el resultado, no el código HTTP.</summary>

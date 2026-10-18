@@ -123,6 +123,17 @@ public static class IntegrationsEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-10-15 §4.3 paso 6: el enlace de la instalación canjeada a este tenant. 201 con la conexión, como los demás
+        // flujos que crean una; también cuando reenlaza la misma tienda, porque la pantalla hace lo mismo con las dos.
+        group.MapPost("/shopify/link", LinkShopifyStoreAsync)
+            .RequireAuthorization(IntegrationsPermissions.ConnectionManage)
+            .Accepts<ShopifyLinkRequest>("application/json")
+            .Produces<ConnectionResponse>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
         return endpoints;
     }
 
@@ -184,6 +195,14 @@ public static class IntegrationsEndpoints
         Results.Ok(await dispatcher.SendAsync(
             new StartShopifyInstallCommand(request.Shop, request.Hmac, request.Timestamp, request.Host, request.RedirectUri),
             cancellationToken));
+
+    private static async Task<IResult> LinkShopifyStoreAsync(
+        Guid tenantId, ShopifyLinkRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var connection = await dispatcher.SendAsync(
+            new LinkShopifyStoreCommand(tenantId, request.InstallId ?? Guid.Empty, request.Name), cancellationToken);
+        return Results.Created($"/api/v1/tenants/{tenantId}/integrations/connections/{connection.Id}", connection);
+    }
 
     private static async Task<IResult> ConnectInstagramAsync(
         Guid tenantId, InstagramConnectRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
@@ -342,3 +361,8 @@ public sealed record ShopifyInstallCompleteRequest(
 {
     public override string ToString() => $"ShopifyInstallCompleteRequest {{ Shop = {Shop}, RedirectUri = {RedirectUri} }}";
 }
+
+/// <summary>El cuerpo del enlace (spec 2026-10-15 §7): la instalación que devolvió el canje y, si la persona lo cambió, el
+/// nombre de la conexión. <see cref="InstallId"/> es nullable para que su ausencia sea un 422 en <c>installId</c> y no un
+/// 400 del binder.</summary>
+public sealed record ShopifyLinkRequest(Guid? InstallId, string? Name);

@@ -380,6 +380,18 @@ internal sealed class FakeShopifyAdminGateway : IShopifyAdminGateway
 
     public string GrantedScopes { get; set; } = "read_orders,read_customers";
 
+    /// <summary>El status con que falla <see cref="FailAt"/>; sin él, 401 para un rechazo y ninguno para lo demás.</summary>
+    public int? FailureStatus { get; set; }
+
+    /// <summary>El nombre que devuelve la lectura de la tienda (el probador lo refresca).</summary>
+    public string ShopName { get; set; } = "Mi Tienda";
+
+    /// <summary>Las suscripciones que la app ya tiene en la tienda, con el topic de GraphQL.</summary>
+    public List<ShopifyWebhookSubscription> ExistingWebhooks { get; } = [];
+
+    /// <summary>Los tokens con que se llamó a la Admin API, en orden.</summary>
+    public List<string> Tokens { get; } = [];
+
     public (string Shop, string Token)? LastShopRead { get; private set; }
 
     /// <summary>Lo que pasa mientras Shopify canjea (por ejemplo, que el reloj avance).</summary>
@@ -398,20 +410,23 @@ internal sealed class FakeShopifyAdminGateway : IShopifyAdminGateway
         Calls.Add("shop");
         ThrowIfFailing("shop");
         LastShopRead = (shop, accessToken);
-        return Task.FromResult(new ShopifyShopInfo("12345678", "Mi Tienda", shop));
+        Tokens.Add(accessToken);
+        return Task.FromResult(new ShopifyShopInfo("12345678", ShopName, shop));
     }
 
     public Task<IReadOnlyList<ShopifyWebhookSubscription>> ListWebhooksAsync(string shop, string token, CancellationToken cancellationToken)
     {
         Calls.Add("list-webhooks");
+        Tokens.Add(token);
         ThrowIfFailing("list-webhooks");
-        return Task.FromResult<IReadOnlyList<ShopifyWebhookSubscription>>([]);
+        return Task.FromResult<IReadOnlyList<ShopifyWebhookSubscription>>([.. ExistingWebhooks]);
     }
 
     public Task<ShopifyWebhookSubscription> CreateWebhookAsync(
         string shop, string token, string topic, Uri callback, CancellationToken cancellationToken)
     {
         Calls.Add($"create-webhook:{topic}");
+        Tokens.Add(token);
         ThrowIfFailing("create-webhook");
         return Task.FromResult(new ShopifyWebhookSubscription($"gid://shopify/WebhookSubscription/{Calls.Count}", topic, callback));
     }
@@ -420,7 +435,7 @@ internal sealed class FakeShopifyAdminGateway : IShopifyAdminGateway
     {
         if (string.Equals(FailAt, step, StringComparison.Ordinal))
         {
-            throw new ShopifyGatewayException(Failure, Failure == ShopifyGatewayFailure.Rejected ? 401 : null);
+            throw new ShopifyGatewayException(Failure, FailureStatus ?? (Failure == ShopifyGatewayFailure.Rejected ? 401 : null));
         }
     }
 }

@@ -13,6 +13,10 @@ public interface IShopifyInstallRepository
 {
     void Add(ShopifyInstall install);
 
+    /// <summary>El enlace borra la fila en la misma transacción que crea la conexión (§4.3 paso 6): se guarda con
+    /// <see cref="IIntegrationsUnitOfWork"/>. La instancia puede venir de <see cref="FindAsync"/>, sin tracking.</summary>
+    void Remove(ShopifyInstall install);
+
     /// <summary>Sin tracking: el canje no la guarda con la unidad de trabajo sino con <see cref="TryCompleteExchangeAsync"/>.</summary>
     Task<ShopifyInstall?> FindByStateAsync(string state, CancellationToken cancellationToken);
 

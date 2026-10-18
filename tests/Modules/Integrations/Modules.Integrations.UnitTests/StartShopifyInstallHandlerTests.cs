@@ -309,6 +309,11 @@ internal sealed class InMemoryShopifyInstallRepository : IShopifyInstallReposito
 
     public bool LoseNextClaim { get; set; }
 
+    /// <summary>Lo que el enlace marcó para borrar en su transacción.</summary>
+    public List<Guid> Removed { get; } = [];
+
+    public void Remove(ShopifyInstall install) => Removed.Add(install.Id);
+
     public void Add(ShopifyInstall install)
     {
         Added.Add(install);

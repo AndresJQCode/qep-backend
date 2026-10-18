@@ -9,6 +9,10 @@ internal sealed class ShopifyInstallRepository(IntegrationsDbContext dbContext) 
 {
     public void Add(ShopifyInstall install) => dbContext.ShopifyInstalls.Add(install);
 
+    // Remove adjunta la instancia sin tracking como Deleted: el DELETE sale con el SaveChanges del enlace. Si otro enlace
+    // ya la borró, EF ve 0 filas y el UnitOfWork lo responde concurrency.conflict.
+    public void Remove(ShopifyInstall install) => dbContext.ShopifyInstalls.Remove(install);
+
     public Task<ShopifyInstall?> FindByStateAsync(string state, CancellationToken cancellationToken) =>
         dbContext.ShopifyInstalls.AsNoTracking().SingleOrDefaultAsync(install => install.State == state, cancellationToken);
 

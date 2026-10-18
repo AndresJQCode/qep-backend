@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Modules.Integrations.Application;
+using Modules.Integrations.Domain;
 using Modules.Integrations.Infrastructure.SecretProtection;
 using static Modules.Integrations.IntegrationTests.IntegrationsApiHarness;
 
@@ -36,6 +37,9 @@ public sealed class ConnectionSecretRekeyWorkerTests
             connectionString,
             "SELECT key_id FROM integrations.connection_secrets WHERE connection_id = @id",
             ("id", connectionId));
+
+    private static Task<string> InstallKeyIdAsync(string connectionString, Guid installId) =>
+        ScalarAsync<string>(connectionString, "SELECT key_id FROM integrations.shopify_installs WHERE id = @id", ("id", installId));
 
     private static Task<long> VersionAsync(string connectionString, Guid connectionId) =>
         ScalarAsync<long>(connectionString, "SELECT version FROM integrations.connections WHERE id = @id", ("id", connectionId));
@@ -116,6 +120,53 @@ public sealed class ConnectionSecretRekeyWorkerTests
         Assert.Equal(versionA, await VersionAsync(connectionString, a));
         Assert.Equal(versionB, await VersionAsync(connectionString, b));
         Assert.Contains(thirdLogs.Entries, entry => entry.Contains("rekey finished: 0 re-encrypted, 2 skipped", StringComparison.Ordinal));
+    }
+
+    // Spec 2026-10-15 §9: una instalación canjeada guarda el token hasta 7 días; rotar la llave no la puede dejar sin enlace.
+    [Fact]
+    public async Task RekeyIncludesShopifyInstalls()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        ShopifyFlow.ScriptHappyShop(factory.ShopifyHandler);
+
+        Guid installId;
+        using (var oldHost = factory.WithSecretProtection("old", ("old", OldKey)))
+        {
+            await AwaitFirstRunAsync(oldHost);
+            var tenant = await RegisterTenantAsync(oldHost);
+            using var owner = CreateClient(oldHost, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+            installId = await ShopifyFlow.InstallAsync(oldHost, owner, tenant.TenantId);
+        }
+
+        Assert.Equal("old", await InstallKeyIdAsync(connectionString, installId));
+        var expiresAt = await ScalarAsync<DateTime>(
+            connectionString, "SELECT expires_at FROM integrations.shopify_installs WHERE id = @id", ("id", installId));
+
+        var logs = new CapturedLogs();
+        using (var newHost = factory
+                   .WithSecretProtection("test", ("old", OldKey), ("test", TestSecretProtectionKey))
+                   .WithCapturedLogs(logs))
+        {
+            await AwaitFirstRunAsync(newHost);
+
+            Assert.Equal("test", await InstallKeyIdAsync(connectionString, installId));
+            var ciphertext = await ScalarAsync<byte[]>(
+                connectionString, "SELECT access_token_protected FROM integrations.shopify_installs WHERE id = @id", ("id", installId));
+            using var scope = newHost.Services.CreateScope();
+            Assert.True(scope.ServiceProvider.GetRequiredService<ISecretProtector>().TryUnprotect(
+                installId, ShopifyFieldKeys.AccessToken, new ProtectedSecret("test", ciphertext), out var plaintext));
+            Assert.Equal(ShopifyFlow.SentinelAccessToken, plaintext);
+
+            // Idempotente: la segunda corrida ya no la toca.
+            Assert.Equal(new RekeyRunResult(0, 0), await WorkerOf(newHost).RunOnceAsync(Ct));
+        }
+
+        Assert.Equal(expiresAt, await ScalarAsync<DateTime>(
+            connectionString, "SELECT expires_at FROM integrations.shopify_installs WHERE id = @id", ("id", installId)));
+        Assert.Contains(logs.Entries, entry => entry.Contains("rekey finished: 1 re-encrypted, 0 skipped", StringComparison.Ordinal));
+        Assert.DoesNotContain(ShopifyFlow.SentinelAccessToken, logs.AllText, StringComparison.Ordinal);
     }
 
     [Fact]

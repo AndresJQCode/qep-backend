@@ -170,6 +170,20 @@ public sealed class ShopifyInstall
         ExpiresAt = now + ExchangedLifetime;
     }
 
+    /// <summary>El mismo token, cifrado con otra llave (el worker de re-cifrado, §9: una fila canjeada vive hasta 7 días).
+    /// No cambia el vencimiento ni nada más.</summary>
+    public void Reprotect(ProtectedSecret token)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        if (!IsExchanged)
+        {
+            throw new InvalidOperationException("Only an exchanged install carries a token to re-encrypt.");
+        }
+
+        ProtectedToken = token.Ciphertext;
+        KeyId = token.KeyId;
+    }
+
     // Sin token ni state: el ToString por defecto de una clase no imprime nada, pero se deja explícito.
     public override string ToString() => $"ShopifyInstall {{ Id = {Id}, ShopDomain = {ShopDomain}, ExpiresAt = {ExpiresAt:O} }}";
 }

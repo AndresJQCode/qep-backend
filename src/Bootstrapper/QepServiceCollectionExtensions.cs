@@ -620,6 +620,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetShopifyInstallQuery, ShopifyInstallResponse>,
             GetShopifyInstallHandler>();
+        // El enlace de la tienda al tenant elegido (§4.3 paso 6).
+        services.AddScoped<
+            ICommandHandler<LinkShopifyStoreCommand, ConnectionResponse>,
+            LinkShopifyStoreHandler>();
         // Messaging (spec 2026-10-09): el webhook de Meta, anónimo y firmado.
         services.AddScoped<IQueryHandler<VerifyWebhookQuery, string?>, VerifyWebhookHandler>();
         services.AddScoped<ICommandHandler<ReceiveWebhookCommand, bool>, ReceiveWebhookHandler>();

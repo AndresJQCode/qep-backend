@@ -5,6 +5,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Integrations.Application;
+using Modules.Integrations.Domain;
 using Modules.Integrations.Infrastructure.Persistence;
 
 namespace Modules.Integrations.Infrastructure.SecretProtection;
@@ -13,7 +14,8 @@ internal sealed record RekeyRunResult(int Reencrypted, int Skipped);
 
 /// <summary>
 /// Re-cifra con la llave activa todo secreto guardado con otra llave que siga configurada (spec
-/// 2026-10-08, «Secreto en reposo»; era <c>WhatsAppTokenRekeyWorker</c> en 6612298). Al arrancar y cada
+/// 2026-10-08, «Secreto en reposo»; era <c>WhatsAppTokenRekeyWorker</c> en 6612298): los de las conexiones y el token
+/// de las instalaciones de Shopify canjeadas (spec 2026-10-15 §9). Al arrancar y cada
 /// <see cref="SecretProtectionOptions.RekeyIntervalMinutes"/>. Rotar es cambiar <c>ActiveKeyId</c> y dejar
 /// la vieja declarada: nadie le pide nada al tenant (criterio 4).
 /// <list type="bullet">
@@ -123,6 +125,10 @@ internal sealed partial class ConnectionSecretRekeyWorker(
             skipped += notDone;
         }
 
+        var (installsDone, installsSkipped) = await RekeyShopifyInstallsAsync(active, cancellationToken);
+        reencrypted += installsDone;
+        skipped += installsSkipped;
+
         if (skipped > 0)
         {
             LogSkipped(logger, skipped, active);
@@ -142,6 +148,77 @@ internal sealed partial class ConnectionSecretRekeyWorker(
         {
             LogFailed(logger, exception);
         }
+    }
+
+    /// <summary>
+    /// Spec 2026-10-15 §9: una instalación de Shopify canjeada guarda el token cifrado hasta 7 días, con AAD
+    /// <c>installId</c> + <c>accessToken</c>. Sin esto, rotar la llave dejaría esas instalaciones sin poder enlazarse. Mismo
+    /// criterio que las conexiones: lo de una llave retirada o que no descifra se salta y se cuenta; una fila que el enlace o
+    /// el barrido borró en el medio devuelve el lote a la próxima corrida.
+    /// </summary>
+    private async Task<(int Reencrypted, int Skipped)> RekeyShopifyInstallsAsync(string active, CancellationToken cancellationToken)
+    {
+        List<Guid> installIds;
+        var skipped = 0;
+        await using (var scope = scopeFactory.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<IntegrationsDbContext>();
+            var pending = await dbContext.ShopifyInstalls
+                .AsNoTracking()
+                .Where(install => install.ProtectedToken != null && install.KeyId != null && install.KeyId != active)
+                .Select(install => new { install.Id, install.KeyId })
+                .ToListAsync(cancellationToken);
+            skipped += pending.Count(row => !protector.HasKey(row.KeyId!));
+            installIds = pending.Where(row => protector.HasKey(row.KeyId!)).Select(row => row.Id).ToList();
+        }
+
+        var reencrypted = 0;
+        foreach (var batch in installIds.Chunk(BatchSize))
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<IntegrationsDbContext>();
+            var installs = await dbContext.ShopifyInstalls
+                .Where(install => batch.Contains(install.Id) && install.ProtectedToken != null)
+                .ToListAsync(cancellationToken);
+
+            var done = 0;
+            foreach (var install in installs)
+            {
+                if (string.Equals(install.KeyId, active, StringComparison.Ordinal) || !protector.HasKey(install.KeyId!))
+                {
+                    continue;
+                }
+
+                var stored = new ProtectedSecret(install.KeyId!, install.ProtectedToken!);
+                if (protector.TryUnprotect(install.Id, ShopifyFieldKeys.AccessToken, stored, out var plaintext))
+                {
+                    install.Reprotect(protector.Protect(install.Id, ShopifyFieldKeys.AccessToken, plaintext));
+                    done++;
+                }
+                else
+                {
+                    skipped++;
+                }
+            }
+
+            if (done == 0)
+            {
+                continue;
+            }
+
+            try
+            {
+                await scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>().SaveChangesAsync(cancellationToken);
+                reencrypted += done;
+            }
+            catch (RequestConcurrencyException)
+            {
+                // El enlace o el barrido borró una fila del lote: se reintenta en la próxima corrida.
+                skipped += done;
+            }
+        }
+
+        return (reencrypted, skipped);
     }
 
     private async Task<(int Reencrypted, int Skipped)> RekeyBatchAsync(

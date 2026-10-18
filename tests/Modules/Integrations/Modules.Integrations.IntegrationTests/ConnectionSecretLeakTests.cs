@@ -237,6 +237,48 @@ public sealed class ConnectionSecretLeakTests
         await AssertNothingLeaksAsync(connectionString, logs, [failedBody, createdBody], SentinelMetaCode, SentinelMetaAccessToken, SentinelMetaAppSecret, sentinelPin);
     }
 
+    // Spec 2026-10-15 §12: el token de la Admin API (y el code y el client secret) no salen por ningún camino en el enlace,
+    // el probador ni un rechazo de Shopify que repite el token en su cuerpo.
+    [Fact]
+    public async Task ShopifyLinkAndTestNeverLeakTheTokenTheCodeNorTheClientSecret()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var logs = new CapturedLogs();
+        using var host = factory.WithCapturedLogs(logs);
+        ShopifyFlow.ScriptHappyShop(factory.ShopifyHandler);
+        var tenant = await RegisterTenantAsync(host);
+        using var client = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var installId = await ShopifyFlow.InstallAsync(host, client, tenant.TenantId);
+
+        var linked = await SendAsync(client, HttpMethod.Post, ShopifyFlow.LinkUrl(tenant.TenantId), new { installId });
+        var linkedBody = await linked.Content.ReadAsStringAsync(Ct);
+        var id = (await linked.Content.ReadFromJsonAsync<ConnectionResponse>(Ct))!.Id;
+        var tested = await SendAsync(client, HttpMethod.Post, $"{ConnectionUrl(tenant.TenantId, id)}/test");
+        var testedBody = await tested.Content.ReadAsStringAsync(Ct);
+        factory.ShopifyHandler.Reset();
+        factory.ShopifyHandler.Respond(
+            "/graphql\\.json$", HttpStatusCode.Unauthorized,
+            $$"""{"errors":"[API] Invalid API key or access token ({{ShopifyFlow.SentinelAccessToken}})"}""");
+        var rejected = await SendAsync(client, HttpMethod.Post, $"{ConnectionUrl(tenant.TenantId, id)}/test");
+        var rejectedBody = await rejected.Content.ReadAsStringAsync(Ct);
+        var read = await SendAsync(client, HttpMethod.Get, ConnectionUrl(tenant.TenantId, id));
+        var readBody = await read.Content.ReadAsStringAsync(Ct);
+
+        Assert.Equal(HttpStatusCode.Created, linked.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, tested.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, rejected.StatusCode);
+        Assert.Contains("credentials_rejected", rejectedBody, StringComparison.Ordinal);
+        AssertLogged(logs, "Shopify webhook-create answered HTTP 200");
+        AssertLogged(logs, "Shopify shop answered HTTP 401");
+        var fields = await ScalarAsync<string>(connectionString, "SELECT fields::text FROM integrations.connections WHERE id = @id", ("id", id));
+        Assert.DoesNotContain(ShopifyFlow.SentinelAccessToken, fields, StringComparison.Ordinal);
+        await AssertNothingLeaksAsync(
+            connectionString, logs, [linkedBody, testedBody, rejectedBody, readBody],
+            ShopifyFlow.SentinelAccessToken, ShopifyFlow.SentinelCode, SentinelShopifyClientSecret);
+    }
+
     // Spec, «Auditoría»: nunca un valor de campo, ni público. Y el token nunca en fields.
     [Fact]
     public async Task AWholeLifecycleNeverWritesASecretOrAFieldValueOutsideTheConnection()
