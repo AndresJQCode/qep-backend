@@ -58,10 +58,10 @@ public sealed class ShopifyGraphQlClientTests
         Assert.Equal(TimeSpan.FromSeconds(3), error.RetryAfter);
     }
 
+    // §5.3: sólo 401 y 402 son credencial rechazada (ruling S24).
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.PaymentRequired)]
-    [InlineData(HttpStatusCode.Forbidden)]
     public async Task Status402MapsToRejected(HttpStatusCode status)
     {
         var bed = new Bed((_, _) => Json(status, """{"errors":"[API] Invalid API key or access token (unrecognized login or wrong password)"}"""));
@@ -73,14 +73,35 @@ public sealed class ShopifyGraphQlClientTests
         Assert.DoesNotContain("Invalid API key", error.ToString(), StringComparison.Ordinal);
     }
 
+    // Ruling S24: ACCESS_DENIED es de alcance (p. ej. falta la aprobación de datos protegidos del cliente, V-3) y un 403 no se sabe
+    // qué significa sin Shopify real: ninguno de los dos marca la conexión NeedsAttention, que apagaría también el webhook.
     [Fact]
-    public async Task AccessDeniedErrorInBodyMapsToRejected()
+    public async Task Status403AndAccessDeniedMapToUnavailable()
     {
-        var bed = new Bed((_, _) => Json(HttpStatusCode.OK, """{"errors":[{"message":"Access denied for orders field.","extensions":{"code":"ACCESS_DENIED"}}]}"""));
+        var forbidden = new Bed((_, _) => Json(HttpStatusCode.Forbidden, """{"errors":"Forbidden"}"""));
+        var accessDenied = new Bed((_, _) => Json(HttpStatusCode.OK, """{"errors":[{"message":"Access denied for customer field.","extensions":{"code":"ACCESS_DENIED"}}]}"""));
+
+        var errors = new[]
+        {
+            await Assert.ThrowsAsync<ShopifyOrdersSourceException>(() => forbidden.FetchAsync()),
+            await Assert.ThrowsAsync<ShopifyOrdersSourceException>(() => accessDenied.FetchAsync()),
+        };
+
+        Assert.All(errors, error => Assert.Equal(ShopifyOrdersSourceFailure.Unavailable, error.Failure));
+    }
+
+    // Minor 4: un tipo inesperado en la respuesta (un id numérico, un booleano como texto) es una respuesta inusable, no un 500.
+    [Theory]
+    [InlineData("""{"data":{"orders":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":123}]}}}""")]
+    [InlineData("""{"data":{"orders":{"pageInfo":{"hasNextPage":"yes","endCursor":null},"nodes":[]}}}""")]
+    [InlineData("""{"data":{"orders":{"pageInfo":{"hasNextPage":true,"endCursor":42},"nodes":[]}}}""")]
+    public async Task UnexpectedTypesInTheResponseMapToUnavailable(string body)
+    {
+        var bed = new Bed((_, _) => Json(HttpStatusCode.OK, body));
 
         var error = await Assert.ThrowsAsync<ShopifyOrdersSourceException>(() => bed.FetchAsync());
 
-        Assert.Equal(ShopifyOrdersSourceFailure.Rejected, error.Failure);
+        Assert.Equal(ShopifyOrdersSourceFailure.Unavailable, error.Failure);
     }
 
     [Fact]
@@ -193,7 +214,87 @@ public sealed class ShopifyGraphQlClientTests
         var page = await bed.Client.FetchUpdatedSinceAsync(Connection, Since, cursor: null, Ct);
 
         Assert.Equal(5550000000001L, Assert.Single(page.Orders).OrderId);
+        // El ilegible no desaparece (ruling S24): vuelve con su id y su motivo para que la conciliación lo anote. El borrado no.
+        var skipped = Assert.Single(page.Skipped);
+        Assert.Equal(1L, skipped.OrderId);
+        Assert.StartsWith("invalid_payload", skipped.Reason, StringComparison.Ordinal);
     }
+
+    // Minor 6: un pedido con muchas líneas se pagina hasta el final, sin tope: uno truncado entraría con menos productos y sin
+    // aviso. 101 páginas extra (más que el tope de 100 que había) → 102 líneas.
+    [Fact]
+    public async Task FetchMergesEveryLinePageOfAVeryLongOrder()
+    {
+        var bed = new Bed((_, body) =>
+        {
+            if (body.Contains("orders(", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, Page(hasNextPage: false, null, "gid://shopify/Order/5550000000001"));
+            }
+
+            if (body.Contains("lineItems(first: 50, after: $after)", StringComparison.Ordinal))
+            {
+                var page = int.Parse(Variable(body, "after")![1..], System.Globalization.CultureInfo.InvariantCulture);
+                return Json(HttpStatusCode.OK, LinePage(page < 101, $"l{page + 1}"));
+            }
+
+            var order = JsonNode.Parse(Detail("gid://shopify/Order/5550000000001"))!;
+            order["data"]!["order"]!["lineItems"]!["pageInfo"] = new JsonObject { ["hasNextPage"] = true, ["endCursor"] = "l1" };
+            return Json(HttpStatusCode.OK, order.ToJsonString());
+        });
+
+        var page = await bed.Client.FetchUpdatedSinceAsync(Connection, Since, cursor: null, Ct);
+
+        Assert.Equal(102, Assert.Single(page.Orders).Lines.Count);
+    }
+
+    // Un cursor de líneas que no avanza es una respuesta rota de Shopify: inusable, no un bucle sin fin ni un pedido truncado.
+    [Fact]
+    public async Task LinePagesThatDoNotAdvanceMapToUnavailable()
+    {
+        var bed = new Bed((_, body) =>
+        {
+            if (body.Contains("orders(", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, Page(hasNextPage: false, null, "gid://shopify/Order/5550000000001"));
+            }
+
+            if (body.Contains("lineItems(first: 50, after: $after)", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, LinePage(hasNextPage: true, "l1"));
+            }
+
+            var order = JsonNode.Parse(Detail("gid://shopify/Order/5550000000001"))!;
+            order["data"]!["order"]!["lineItems"]!["pageInfo"] = new JsonObject { ["hasNextPage"] = true, ["endCursor"] = "l1" };
+            return Json(HttpStatusCode.OK, order.ToJsonString());
+        });
+
+        var error = await Assert.ThrowsAsync<ShopifyOrdersSourceException>(() => bed.FetchAsync());
+
+        Assert.Equal(ShopifyOrdersSourceFailure.Unavailable, error.Failure);
+    }
+
+    private static string LinePage(bool hasNextPage, string endCursor) =>
+        new JsonObject
+        {
+            ["data"] = new JsonObject
+            {
+                ["order"] = new JsonObject
+                {
+                    ["lineItems"] = new JsonObject
+                    {
+                        ["pageInfo"] = new JsonObject { ["hasNextPage"] = hasNextPage, ["endCursor"] = endCursor },
+                        ["nodes"] = new JsonArray(new JsonObject
+                        {
+                            ["sku"] = "GOR-002",
+                            ["quantity"] = 1,
+                            ["originalUnitPriceSet"] = new JsonObject { ["shopMoney"] = new JsonObject { ["amount"] = "30000.0" } },
+                            ["discountAllocations"] = new JsonArray(),
+                        }),
+                    },
+                },
+            },
+        }.ToJsonString();
 
     // Antes de pedir un pedido, si lo que queda en el balde de Shopify no alcanza para lo que costó el anterior, espera lo que
     // tarda en reponerse (con TimeProvider, sin dormir) en vez de gastar la consulta en un THROTTLED.

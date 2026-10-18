@@ -76,7 +76,8 @@ public sealed class ShopifyOrderIngestion(
         var store = await stores.FindAsync(connection.TenantId, connection.ConnectionId, cancellationToken);
         if (store is null)
         {
-            store = ShopifyStore.Create(connection.ConnectionId, connection.TenantId, clock.UtcNow);
+            // D-S4 (ruling S25): la ventana de la conciliación arranca en el enlace, no en este primer webhook.
+            store = ShopifyStore.Create(connection.ConnectionId, connection.TenantId, connection.LinkedAt ?? clock.UtcNow);
             stores.Add(store);
         }
 

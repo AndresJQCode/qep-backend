@@ -45,6 +45,89 @@ public sealed class ReconcileStoreTests
         Assert.Equal((TenantId, "mi-tienda.myshopify.com"), (store.TenantId, store.ShopDomain));
     }
 
+    // D-S4 y §5.3 (ruling S25): la tienda que se ve por primera vez arranca su ventana en el enlace, no en «ahora». Un pedido
+    // hecho entre el enlace y el primer contacto, cuyo webhook se perdió, entra igual.
+    [Fact]
+    public async Task ReconcileStoreSeenForTheFirstTimeStartsFromTheLink()
+    {
+        var world = new World();
+        var linked = world.Connection with { LinkedAt = Now.AddMinutes(-40) };
+        world.Source.FilterBySince = true;
+        world.Source.Catalog.Add(Order(55, updatedAt: Now.AddMinutes(-30)));
+
+        await world.Reconcile.RunAsync(linked, Ct);
+
+        Assert.Equal(Now.AddMinutes(-45), Assert.Single(world.Source.Calls).Since);
+        Assert.Contains((ConnectionId, 55L), world.Database.Orders.Keys);
+    }
+
+    // El primer contacto también puede ser un webhook: la tienda que crea la ingesta nace con la ventana en el enlace.
+    [Fact]
+    public async Task IngestionFirstContactStartsTheWindowAtTheLink()
+    {
+        var world = new World();
+        var linked = world.Connection with { LinkedAt = Now.AddMinutes(-40) };
+
+        await world.Ingestion.ApplyAsync(linked, Order(1), Ct);
+
+        Assert.Equal(Now.AddMinutes(-40), Assert.Single(world.Database.Stores.Values).LastReconciledAt);
+    }
+
+    // Ruling S24: un fallo permanente (una cabecera que el dominio no guarda) es como en el webhook: la fila queda con last_error,
+    // el pedido se cuenta como saltado y la ventana avanza. Si la congelara, el mismo pedido la clavaría para siempre.
+    [Fact]
+    public async Task ReconcilePermanentFailureRecordsLastErrorAndMovesTheWindow()
+    {
+        var world = new World().WithStore(LastReconciled).WithWaiting(1, Now.AddDays(-1));
+        world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(1, currency: "PESOS"), Order(2)], null));
+
+        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+
+        Assert.StartsWith("invalid_payload", world.Database.Orders[(ConnectionId, 1L)].LastError, StringComparison.Ordinal);
+        Assert.Contains((ConnectionId, 2L), world.Database.Orders.Keys);
+        Assert.Equal([Now], world.Leases.Reconciled);
+        Assert.Equal((2, 0, 1), (result.Fetched, result.Failed, result.Skipped));
+    }
+
+    [Fact]
+    public async Task ReconcilePermanentFailureOfANewOrderIsCountedAndMovesTheWindow()
+    {
+        var world = new World().WithStore(LastReconciled);
+        world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(1, currency: "PESOS")], null));
+
+        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+
+        Assert.Empty(world.Database.Orders);
+        Assert.Equal([Now], world.Leases.Reconciled);
+        Assert.Equal((0, 1), (result.Failed, result.Skipped));
+    }
+
+    // El pedido que el cliente no supo leer no desaparece: si la fila existe queda con su last_error, y se cuenta.
+    [Fact]
+    public async Task ReconcileOrderTheSourceCouldNotReadIsRecordedAndCounted()
+    {
+        var world = new World().WithStore(LastReconciled).WithWaiting(3, Now.AddDays(-1));
+        world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(2)], null) { Skipped = [new ShopifySkippedOrder(3, "invalid_payload: updatedAt")] });
+
+        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+
+        Assert.Equal("invalid_payload: updatedAt", world.Database.Orders[(ConnectionId, 3L)].LastError);
+        Assert.Equal([Now], world.Leases.Reconciled);
+        Assert.Equal((1, 0, 1), (result.Fetched, result.Failed, result.Skipped));
+    }
+
+    [Fact]
+    public async Task ReconcileUnreadableWaitingPayloadIsRecordedAndMovesTheWindow()
+    {
+        var world = new World().WithStore(LastReconciled).WithWaiting(4, Now.AddDays(-1), payload: "{");
+
+        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+
+        Assert.StartsWith("invalid_payload", world.Database.Orders[(ConnectionId, 4L)].LastError, StringComparison.Ordinal);
+        Assert.Equal([Now], world.Leases.Reconciled);
+        Assert.Equal((0, 1), (result.Failed, result.Skipped));
+    }
+
     [Fact]
     public async Task ReconcilePaginates()
     {
@@ -184,6 +267,8 @@ public sealed class ReconcileStoreTests
         Assert.Equal([Now], world.Leases.Reconciled);
         Assert.Equal(1, world.Leases.Released);
         Assert.Equal([(TenantId, ConnectionId, ReconcileStore.LeaseDuration)], world.Leases.Acquired);
+        // Suelta el lease que tomó, no el que haya en la fila (minor 5).
+        Assert.Equal([FakeReconcileLeases.Token], world.Leases.ReleasedTokens);
     }
 
     // §5.3, recuperación: el pedido cambió durante una corrida larga, cuando su página ya se había traído, y su webhook se perdió
@@ -260,8 +345,9 @@ public sealed class ReconcileStoreTests
         Assert.Empty(world.Leases.Acquired);
     }
 
-    private static ShopifyOrderSnapshot Order(long id, DateTimeOffset? updatedAt = null, string financialStatus = "pending") =>
-        ImporterWorld.Order(orderId: id, financialStatus: financialStatus) with { UpdatedAt = updatedAt ?? Now.AddMinutes(-2) };
+    private static ShopifyOrderSnapshot Order(
+        long id, DateTimeOffset? updatedAt = null, string financialStatus = "pending", string currency = "COP") =>
+        ImporterWorld.Order(orderId: id, financialStatus: financialStatus, currency: currency) with { UpdatedAt = updatedAt ?? Now.AddMinutes(-2) };
 
     private sealed class World
     {
@@ -271,9 +357,9 @@ public sealed class ReconcileStoreTests
             Reaction = new FakeOrderChangeReaction(UnitOfWork);
             var stores = new FakeStoreRepository(Database);
             var mirrors = new FakeOrderMirrorRepository(Database);
-            var ingestion = new ShopifyOrderIngestion(stores, mirrors, Importer, Reaction, UnitOfWork, Clock);
+            Ingestion = new ShopifyOrderIngestion(stores, mirrors, Importer, Reaction, UnitOfWork, Clock);
             Leases = new FakeReconcileLeases(Database);
-            Reconcile = new ReconcileStore(Source, ingestion, stores, mirrors, Leases, Health, UnitOfWork, Clock, Time);
+            Reconcile = new ReconcileStore(Source, Ingestion, stores, mirrors, Leases, Health, UnitOfWork, Clock, Time);
         }
 
         public FakeShopifyDatabase Database { get; } = new();
@@ -296,6 +382,8 @@ public sealed class ReconcileStoreTests
 
         public ReconcileStore Reconcile { get; }
 
+        public ShopifyOrderIngestion Ingestion { get; }
+
         public ShopifyStore? Store { get; private set; }
 
         public ShopifyConnectionRef Connection { get; } =
@@ -308,11 +396,11 @@ public sealed class ReconcileStoreTests
             return this;
         }
 
-        public World WithWaiting(long orderId, DateTimeOffset createdAt)
+        public World WithWaiting(long orderId, DateTimeOffset createdAt, string? payload = null)
         {
             var snapshot = Order(orderId) with { CreatedAt = createdAt, UpdatedAt = createdAt };
             var row = ShopifyOrderMirror.Create(
-                TenantId, ConnectionId, orderId, ShopifyOrderIngestion.WritePayload(snapshot), snapshot.UpdatedAt, snapshot.ToHeader());
+                TenantId, ConnectionId, orderId, payload ?? ShopifyOrderIngestion.WritePayload(snapshot), snapshot.UpdatedAt, snapshot.ToHeader());
             Database.Orders[(ConnectionId, orderId)] = row;
             return this;
         }
@@ -367,24 +455,30 @@ internal sealed class FakeReconcileLeases(FakeShopifyDatabase database) : IShopi
 
     public List<(Guid TenantId, Guid ConnectionId, TimeSpan Duration)> Acquired { get; } = [];
 
+    /// <summary>Lo que devuelve <see cref="TryAcquireAsync"/>: el <c>reconcile_lease_until</c> que tomó.</summary>
+    public static readonly DateTimeOffset Token = new(2026, 10, 18, 16, 30, 0, TimeSpan.Zero);
+
     public int Released { get; private set; }
+
+    public List<DateTimeOffset> ReleasedTokens { get; } = [];
 
     public List<DateTimeOffset> Reconciled { get; } = [];
 
-    public Task<bool> TryAcquireAsync(Guid tenantId, Guid connectionId, TimeSpan duration, CancellationToken cancellationToken)
+    public Task<DateTimeOffset?> TryAcquireAsync(Guid tenantId, Guid connectionId, TimeSpan duration, CancellationToken cancellationToken)
     {
         if (Held)
         {
-            return Task.FromResult(false);
+            return Task.FromResult<DateTimeOffset?>(null);
         }
 
         Acquired.Add((tenantId, connectionId, duration));
-        return Task.FromResult(true);
+        return Task.FromResult<DateTimeOffset?>(Token);
     }
 
-    public Task ReleaseAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    public Task ReleaseAsync(Guid tenantId, Guid connectionId, DateTimeOffset leaseUntil, CancellationToken cancellationToken)
     {
         Released++;
+        ReleasedTokens.Add(leaseUntil);
         return Task.CompletedTask;
     }
 

@@ -66,18 +66,26 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
 /// </summary>
 internal sealed class ShopifyReconcileLeases(ShopifyDbContext dbContext) : IShopifyReconcileLeases
 {
-    public async Task<bool> TryAcquireAsync(Guid tenantId, Guid connectionId, TimeSpan duration, CancellationToken cancellationToken) =>
-        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+    // RETURNING: el valor que quedó es el «token» del lease. Sin componer (EF lo mandaría como subconsulta y un UPDATE no lo es).
+    public async Task<DateTimeOffset?> TryAcquireAsync(Guid tenantId, Guid connectionId, TimeSpan duration, CancellationToken cancellationToken)
+    {
+        var taken = await dbContext.Database.SqlQuery<DateTimeOffset>(
             $"""
             UPDATE shopify.stores SET reconcile_lease_until = now() + {duration}
             WHERE tenant_id = {tenantId} AND connection_id = {connectionId}
               AND (reconcile_lease_until IS NULL OR reconcile_lease_until < now())
-            """,
-            cancellationToken) == 1;
+            RETURNING reconcile_lease_until AS "Value"
+            """).ToListAsync(cancellationToken);
+        return taken.Count == 1 ? taken[0] : null;
+    }
 
-    public Task ReleaseAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+    // Minor 5 de la revisión: sólo si el lease sigue siendo el que esta corrida tomó. Si venció y otra corrida lo tomó, es suyo.
+    public Task ReleaseAsync(Guid tenantId, Guid connectionId, DateTimeOffset leaseUntil, CancellationToken cancellationToken) =>
         dbContext.Database.ExecuteSqlInterpolatedAsync(
-            $"UPDATE shopify.stores SET reconcile_lease_until = NULL WHERE tenant_id = {tenantId} AND connection_id = {connectionId}",
+            $"""
+            UPDATE shopify.stores SET reconcile_lease_until = NULL
+            WHERE tenant_id = {tenantId} AND connection_id = {connectionId} AND reconcile_lease_until = {leaseUntil}
+            """,
             cancellationToken);
 
     public Task RecordReconciledAsync(Guid tenantId, Guid connectionId, DateTimeOffset reconciledAt, CancellationToken cancellationToken) =>

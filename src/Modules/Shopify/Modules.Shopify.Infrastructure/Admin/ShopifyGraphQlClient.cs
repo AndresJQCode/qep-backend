@@ -70,9 +70,6 @@ internal sealed partial class ShopifyGraphQlClient(
         "query OrderShippingLines($id: ID!, $after: String) { order(id: $id) { shippingLines(first: 10, after: $after, includeRemovals: true) { "
         + PageInfo + " nodes { " + ShippingLineFields + " } } } }";
 
-    /// <summary>Un tope a las páginas de líneas de un pedido: 50 × 100 líneas; más es un dato roto, no un pedido.</summary>
-    private const int MaxLinePages = 100;
-
     private readonly Dictionary<string, double> lastCost = new(StringComparer.Ordinal);
 
     private double? available;
@@ -110,56 +107,82 @@ internal sealed partial class ShopifyGraphQlClient(
         var orders = data?["orders"] as JsonObject ?? throw Unusable("orders", "no_orders");
 
         var snapshots = new List<ShopifyOrderSnapshot>();
-        foreach (var gid in (orders["nodes"] as JsonArray ?? []).Select(node => node?["id"]?.GetValue<string>()).OfType<string>())
+        var skipped = new List<ShopifySkippedOrder>();
+        foreach (var node in orders["nodes"] as JsonArray ?? [])
         {
-            if (await ReadOrderAsync(connection, gid, cancellationToken) is { } snapshot)
+            var gid = Text(node?["id"], "orders", "node_id") ?? throw Unusable("orders", "node_without_id");
+            switch (await ReadOrderAsync(connection, gid, cancellationToken))
             {
-                snapshots.Add(snapshot);
+                case { Snapshot: { } snapshot }:
+                    snapshots.Add(snapshot);
+                    break;
+                case { Skipped: { } unreadable }:
+                    skipped.Add(unreadable);
+                    break;
             }
         }
 
-        var hasNextPage = orders["pageInfo"]?["hasNextPage"]?.GetValue<bool>() ?? false;
-        return new ShopifyOrdersPage(snapshots, hasNextPage ? orders["pageInfo"]?["endCursor"]?.GetValue<string>() : null);
-    }
-
-    private async Task<ShopifyOrderSnapshot?> ReadOrderAsync(ShopifyConnectionRef connection, string gid, CancellationToken cancellationToken)
-    {
-        var data = await SendAsync("order", connection, OrderQuery, new JsonObject { ["id"] = gid }, cancellationToken);
-        if (data?["order"] is not JsonObject order)
+        var hasNextPage = Flag(orders["pageInfo"]?["hasNextPage"], "orders");
+        var endCursor = Text(orders["pageInfo"]?["endCursor"], "orders", "end_cursor");
+        if (hasNextPage && endCursor is null)
         {
-            // Se borró entre la lista y el detalle.
-            LogSkipped(logger, gid, "not_found");
-            return null;
+            throw Unusable("orders", "next_page_without_cursor");
         }
 
-        await AppendPagesAsync(connection, gid, order, "lineItems", OrderLinesQuery, cancellationToken);
-        await AppendPagesAsync(connection, gid, order, "shippingLines", OrderShippingLinesQuery, cancellationToken);
+        return new ShopifyOrdersPage(snapshots, hasNextPage ? endCursor : null) { Skipped = skipped };
+    }
+
+    private async Task<(ShopifyOrderSnapshot? Snapshot, ShopifySkippedOrder? Skipped)> ReadOrderAsync(
+        ShopifyConnectionRef connection, string gid, CancellationToken cancellationToken)
+    {
+        var data = await SendAsync("order", connection, OrderQuery, new JsonObject { ["id"] = gid }, cancellationToken);
+        if (data?["order"] is not JsonObject order
+            || !await AppendPagesAsync(connection, gid, order, "lineItems", OrderLinesQuery, cancellationToken)
+            || !await AppendPagesAsync(connection, gid, order, "shippingLines", OrderShippingLinesQuery, cancellationToken))
+        {
+            // Se borró entre la lista y el detalle (o mientras se leían sus líneas): no es un error, no hay nada que anotar.
+            LogSkipped(logger, gid, "not_found");
+            return (null, null);
+        }
+
         try
         {
-            return GraphQlOrderParser.Parse(JsonSerializer.SerializeToElement(order));
+            return (GraphQlOrderParser.Parse(JsonSerializer.SerializeToElement(order)), null);
         }
         catch (ShopifyPayloadException exception)
         {
-            // El mismo fallo permanente que un webhook ilegible: reintentarlo da lo mismo, así que no frena la página.
+            // El mismo fallo permanente que un webhook ilegible (ruling S24): no frena la página, y vuelve con su id y su motivo
+            // para que la conciliación lo anote en el espejo y lo cuente. Sin id numérico no hay fila que anotar: queda el log.
+            var reason = exception.Field.Length == 0
+                ? $"{ShopifyDeliveryResult.InvalidPayloadPrefix}: {exception.Message}"
+                : $"{ShopifyDeliveryResult.InvalidPayloadPrefix}: {exception.Field}: {exception.Message}";
             LogSkipped(logger, gid, exception.Field.Length == 0 ? "invalid_payload" : $"invalid_payload:{exception.Field}");
-            return null;
+            return (null, OrderIdOf(gid) is { } id ? new ShopifySkippedOrder(id, reason) : null);
         }
     }
 
-    private async Task AppendPagesAsync(
+    /// <summary>
+    /// Las páginas siguientes de <paramref name="field"/>, hasta la última (minor 6 de la revisión): sin tope, porque un pedido con
+    /// líneas de menos entraría con otro total y sólo avisaría <c>total_difference</c>. Lo que protege de un bucle sin fin es que
+    /// el cursor tiene que avanzar: uno que se repite, o una página «siguiente» sin cursor, es una respuesta rota (<c>Unavailable</c>,
+    /// la corrida no mueve la ventana). <c>false</c> si el pedido desapareció a mitad de camino.
+    /// </summary>
+    private async Task<bool> AppendPagesAsync(
         ShopifyConnectionRef connection, string gid, JsonObject order, string field, string query, CancellationToken cancellationToken)
     {
-        for (var page = 0; page < MaxLinePages && order[field] is JsonObject current
-            && current["pageInfo"]?["hasNextPage"]?.GetValue<bool>() == true; page++)
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        while (order[field] is JsonObject current && Flag(current["pageInfo"]?["hasNextPage"], field))
         {
-            var data = await SendAsync(field, connection, query, new JsonObject
+            var cursor = Text(current["pageInfo"]?["endCursor"], field, "end_cursor");
+            if (cursor is null || !seen.Add(cursor))
             {
-                ["id"] = gid,
-                ["after"] = current["pageInfo"]?["endCursor"]?.GetValue<string>(),
-            }, cancellationToken);
+                throw Unusable(field, "cursor_not_advancing");
+            }
+
+            var data = await SendAsync(field, connection, query, new JsonObject { ["id"] = gid, ["after"] = cursor }, cancellationToken);
             if (data?["order"]?[field] is not JsonObject next)
             {
-                return;
+                return false;
             }
 
             if (current["nodes"] is not JsonArray nodes)
@@ -174,7 +197,31 @@ internal sealed partial class ShopifyGraphQlClient(
 
             current["pageInfo"] = next["pageInfo"]?.DeepClone();
         }
+
+        return true;
     }
+
+    // Minor 4: un tipo inesperado donde se espera texto o booleano es una respuesta inusable (503 en el sync), no un
+    // InvalidOperationException sin clasificar (500).
+    private string? Text(JsonNode? node, string operation, string detail) => node switch
+    {
+        null => null,
+        JsonValue value when value.TryGetValue(out string? text) => text,
+        _ => throw Unusable(operation, $"{detail}_not_a_string"),
+    };
+
+    private bool Flag(JsonNode? node, string operation) => node switch
+    {
+        null => false,
+        JsonValue value when value.TryGetValue(out bool flag) => flag,
+        _ => throw Unusable(operation, "has_next_page_not_a_boolean"),
+    };
+
+    private static long? OrderIdOf(string gid) =>
+        gid.StartsWith("gid://shopify/Order/", StringComparison.Ordinal)
+        && long.TryParse(gid["gid://shopify/Order/".Length..], NumberStyles.None, CultureInfo.InvariantCulture, out var id)
+            ? id
+            : null;
 
     private async Task<JsonNode?> SendAsync(
         string operation, ShopifyConnectionRef connection, string query, JsonObject variables, CancellationToken cancellationToken)
@@ -212,7 +259,8 @@ internal sealed partial class ShopifyGraphQlClient(
         {
             case HttpStatusCode.TooManyRequests:
                 throw Fail(operation, ShopifyOrdersSourceFailure.Throttled, (int)status, "http_429", retryAfter);
-            case HttpStatusCode.Unauthorized or HttpStatusCode.PaymentRequired or HttpStatusCode.Forbidden:
+            // §5.3 (ruling S24): sólo 401 y 402 son credencial rechazada. Un 403 cae abajo, a Unavailable.
+            case HttpStatusCode.Unauthorized or HttpStatusCode.PaymentRequired:
                 throw Fail(operation, ShopifyOrdersSourceFailure.Rejected, (int)status, "http");
             case < HttpStatusCode.OK or >= HttpStatusCode.MultipleChoices:
                 throw Fail(operation, ShopifyOrdersSourceFailure.Unavailable, (int)status, "http");
@@ -231,11 +279,12 @@ internal sealed partial class ShopifyGraphQlClient(
         var cost = ReadCost(query, root);
         if (root?["errors"] is JsonArray { Count: > 0 } errors)
         {
+            // ACCESS_DENIED es de alcance (p. ej. sin la aprobación de datos protegidos, V-3), no de credencial: Unavailable con su
+            // código en el log, sin reportar la conexión, que apagaría también el webhook (ruling S24).
             var code = errors[0]?["extensions"]?["code"] is JsonValue value && value.TryGetValue(out string? text) ? text : "unknown";
             throw code switch
             {
                 "THROTTLED" => Fail(operation, ShopifyOrdersSourceFailure.Throttled, (int)status, code, cost),
-                "ACCESS_DENIED" => Fail(operation, ShopifyOrdersSourceFailure.Rejected, (int)status, code),
                 _ => Fail(operation, ShopifyOrdersSourceFailure.Unavailable, (int)status, code),
             };
         }

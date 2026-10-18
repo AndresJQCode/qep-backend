@@ -66,7 +66,7 @@ public sealed class ReconcileStore(
         var started = time.GetTimestamp();
         var startedAt = clock.UtcNow;
         var store = await EnsureStoreAsync(connection, startedAt, cancellationToken);
-        if (!await leases.TryAcquireAsync(connection.TenantId, connection.ConnectionId, LeaseDuration, cancellationToken))
+        if (await leases.TryAcquireAsync(connection.TenantId, connection.ConnectionId, LeaseDuration, cancellationToken) is not { } lease)
         {
             throw new ResourceConflictException(
                 ShopifyErrorCodes.StoreSyncInProgress, "A reconciliation of this Shopify store is already running.");
@@ -86,6 +86,11 @@ public sealed class ReconcileStore(
                     await ApplyAsync(connection, snapshot, run, cancellationToken);
                 }
 
+                foreach (var unreadable in page.Skipped)
+                {
+                    await RecordPermanentFailureAsync(connection, unreadable.OrderId, unreadable.Reason, run, cancellationToken);
+                }
+
                 cursor = page.NextCursor;
             }
             while (cursor is not null);
@@ -93,7 +98,7 @@ public sealed class ReconcileStore(
             foreach (var waiting in await mirrors.ListWaitingAsync(
                 connection.TenantId, connection.ConnectionId, WaitingRetryLimit, cancellationToken))
             {
-                if (run.States.ContainsKey(waiting.ShopifyOrderId))
+                if (run.Touched.Contains(waiting.ShopifyOrderId))
                 {
                     continue;
                 }
@@ -105,7 +110,7 @@ public sealed class ReconcileStore(
                 }
                 catch (Exception exception) when (exception is System.Text.Json.JsonException or ShopifyPayloadException)
                 {
-                    run.Fail(exception);
+                    await RecordPermanentFailureAsync(connection, waiting.ShopifyOrderId, Describe(exception), run, cancellationToken);
                     continue;
                 }
 
@@ -121,8 +126,8 @@ public sealed class ReconcileStore(
         }
         finally
         {
-            // Sin el token del llamador: una corrida cancelada también suelta su lease.
-            await leases.ReleaseAsync(connection.TenantId, connection.ConnectionId, CancellationToken.None);
+            // Sin el token del llamador: una corrida cancelada también suelta su lease. Sólo el suyo (minor 5).
+            await leases.ReleaseAsync(connection.TenantId, connection.ConnectionId, lease, CancellationToken.None);
         }
     }
 
@@ -137,7 +142,8 @@ public sealed class ReconcileStore(
                 return existing;
             }
 
-            var store = ShopifyStore.Create(connection.ConnectionId, connection.TenantId, now);
+            // D-S4 (ruling S25): la ventana arranca en el enlace, no en el primer contacto.
+            var store = ShopifyStore.Create(connection.ConnectionId, connection.TenantId, connection.LinkedAt ?? now);
             if (!string.IsNullOrWhiteSpace(connection.ShopDomain))
             {
                 store.RecordShopDomain(connection.ShopDomain);
@@ -194,7 +200,54 @@ public sealed class ReconcileStore(
         try
         {
             var row = await ingestion.ApplyAsync(connection, snapshot, cancellationToken);
+            run.Touched.Add(row.ShopifyOrderId);
             run.States[row.ShopifyOrderId] = row.ImportState;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (ShopifyPayloadException exception)
+        {
+            // Ruling S24, la regla del webhook: un fallo permanente (una cabecera que el dominio no guarda) se cierra con last_error
+            // y no frena la ventana. Reintentarlo da lo mismo, y congelarla clavaría la tienda en este pedido para siempre.
+            unitOfWork.DiscardPendingChanges();
+            run.States.Remove(snapshot.OrderId);
+            await RecordPermanentFailureAsync(connection, snapshot.OrderId, Describe(exception), run, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            // Transitorio (base, Quotations, concurrencia agotada): la ventana no avanza y la próxima corrida lo vuelve a traer.
+            unitOfWork.DiscardPendingChanges();
+            run.Touched.Add(snapshot.OrderId);
+            run.States.Remove(snapshot.OrderId);
+            run.Fail(exception);
+        }
+    }
+
+    /// <summary>
+    /// Un pedido que no se puede aplicar ni se podrá: se cuenta (<see cref="ShopifySyncResult.Skipped"/>) y, si su fila del espejo
+    /// existe, queda con <paramref name="reason"/> en <c>last_error</c> para que la bandeja lo muestre. Un pedido nuevo con la
+    /// cabecera rota no tiene fila (el dominio no la guarda): queda contado y en el log del worker. Perder la carrera al anotar no
+    /// importa (otro escritor tocó la fila); cualquier otra falla al guardar sí es transitoria y frena la ventana.
+    /// </summary>
+    private async Task RecordPermanentFailureAsync(
+        ShopifyConnectionRef connection, long orderId, string reason, Run run, CancellationToken cancellationToken)
+    {
+        run.Skipped++;
+        run.Touched.Add(orderId);
+        try
+        {
+            if (await mirrors.FindAsync(connection.TenantId, connection.ConnectionId, orderId, cancellationToken) is { } row)
+            {
+                row.RecordLastError(reason);
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+            }
+        }
+        catch (RequestConcurrencyException exception)
+            when (string.Equals(exception.Code, ConcurrencyConflict, StringComparison.Ordinal))
+        {
+            unitOfWork.DiscardPendingChanges();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -203,10 +256,18 @@ public sealed class ReconcileStore(
         catch (Exception exception)
         {
             unitOfWork.DiscardPendingChanges();
-            run.States.Remove(snapshot.OrderId);
             run.Fail(exception);
         }
     }
+
+    /// <summary>El <c>last_error</c> con el formato del webhook (<c>invalid_payload: campo: mensaje</c>).</summary>
+    private static string Describe(Exception exception) => exception switch
+    {
+        ShopifyPayloadException { Field.Length: > 0 } payload =>
+            $"{ShopifyDeliveryResult.InvalidPayloadPrefix}: {payload.Field}: {payload.Message}",
+        ShopifyPayloadException payload => $"{ShopifyDeliveryResult.InvalidPayloadPrefix}: {payload.Message}",
+        _ => $"{ShopifyDeliveryResult.InvalidPayloadPrefix}: payload: The mirror payload is not a readable snapshot.",
+    };
 
     private static ShopifyDomainException NotOperational(Exception? inner = null) => inner is null
         ? new(ShopifyErrorCodes.StoreNotOperational, "The Shopify connection is not operational.")
@@ -220,6 +281,11 @@ public sealed class ReconcileStore(
         public int Fetched { get; set; }
 
         public int Failed { get; private set; }
+
+        public int Skipped { get; set; }
+
+        /// <summary>Los pedidos que la corrida ya intentó: el reintento de los <c>Waiting</c> no los repite.</summary>
+        public HashSet<long> Touched { get; } = [];
 
         public string? FirstError { get; private set; }
 
@@ -242,6 +308,7 @@ public sealed class ReconcileStore(
         {
             Failed = Failed,
             FirstError = FirstError,
+            Skipped = Skipped,
         };
 
         private int Count(ShopifyImportState state) => States.Values.Count(value => value == state);
@@ -253,8 +320,9 @@ public sealed class ReconcileStore(
 /// Shopify devolvió en la ventana; <see cref="Imported"/>, <see cref="Waiting"/>, <see cref="Cancelled"/> e <see cref="Ignored"/>
 /// cuentan cómo <b>quedaron</b> todos los pedidos que la corrida tocó (los traídos y los <c>Waiting</c> reintentados), no sólo los
 /// que cambiaron: es lo que el aviso de la pantalla dice («3 importados, 2 en espera») sin que el cliente tenga que pedir la
-/// bandeja para entenderlo. Los cuatro viajan siempre, también en cero (BFF). <see cref="Failed"/> y <see cref="FirstError"/>
-/// (sólo el tipo de la excepción, nunca su mensaje) son para el log del worker y no viajan.
+/// bandeja para entenderlo. Los cuatro viajan siempre, también en cero (BFF). <see cref="Failed"/> (transitorios: frenan la
+/// ventana), <see cref="FirstError"/> (sólo el tipo de la excepción, nunca su mensaje) y <see cref="Skipped"/> (permanentes: quedan
+/// con <c>last_error</c> en el espejo y no frenan la ventana) son para el log del worker y no viajan: §7 fija la forma de la respuesta.
 /// </summary>
 public sealed record ShopifySyncResult(int Fetched, int Imported, int Waiting, int Cancelled, int Ignored, long DurationMs)
 {
@@ -263,4 +331,7 @@ public sealed record ShopifySyncResult(int Fetched, int Imported, int Waiting, i
 
     [JsonIgnore]
     public string? FirstError { get; init; }
+
+    [JsonIgnore]
+    public int Skipped { get; init; }
 }

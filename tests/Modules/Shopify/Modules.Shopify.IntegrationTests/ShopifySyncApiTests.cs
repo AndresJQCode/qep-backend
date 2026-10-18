@@ -274,15 +274,16 @@ public sealed class ShopifySyncApiTests
         var other = second.ServiceProvider.GetRequiredService<IShopifyReconcileLeases>();
         var reconciledAt = new DateTimeOffset(2026, 10, 18, 15, 0, 0, TimeSpan.Zero);
 
-        Assert.True(await leases.TryAcquireAsync(tenantId, connectionId, TimeSpan.FromMinutes(30), Ct));
-        Assert.False(await other.TryAcquireAsync(tenantId, connectionId, TimeSpan.FromMinutes(30), Ct));
+        var mine = await leases.TryAcquireAsync(tenantId, connectionId, TimeSpan.FromMinutes(30), Ct);
+        Assert.NotNull(mine);
+        Assert.Null(await other.TryAcquireAsync(tenantId, connectionId, TimeSpan.FromMinutes(30), Ct));
         // Otro tenant con el mismo id de conexión no toca la fila.
-        Assert.False(await other.TryAcquireAsync(Guid.CreateVersion7(), connectionId, TimeSpan.FromMinutes(30), Ct));
+        Assert.Null(await other.TryAcquireAsync(Guid.CreateVersion7(), connectionId, TimeSpan.FromMinutes(30), Ct));
         await leases.RecordReconciledAsync(tenantId, connectionId, reconciledAt, Ct);
-        await leases.ReleaseAsync(tenantId, connectionId, Ct);
-        Assert.True(await other.TryAcquireAsync(tenantId, connectionId, TimeSpan.FromMinutes(30), Ct));
+        await leases.ReleaseAsync(tenantId, connectionId, mine.Value, Ct);
+        Assert.NotNull(await other.TryAcquireAsync(tenantId, connectionId, TimeSpan.FromMinutes(30), Ct));
         await ExecuteAsync(connectionString, "UPDATE shopify.stores SET reconcile_lease_until = now() - interval '1 second'");
-        Assert.True(await leases.TryAcquireAsync(tenantId, connectionId, TimeSpan.FromMinutes(30), Ct));
+        Assert.NotNull(await leases.TryAcquireAsync(tenantId, connectionId, TimeSpan.FromMinutes(30), Ct));
         // Ni el lease ni la ventana suben la versión de la tienda: es el If-Match del PUT.
         Assert.Equal(
             $"{reconciledAt.UtcDateTime:yyyy-MM-dd HH:mm:ss}|1",
@@ -290,7 +291,62 @@ public sealed class ShopifySyncApiTests
                 connectionString,
                 "SELECT to_char(last_reconciled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') || '|' || version FROM shopify.stores"));
         // Una fila que no existe no se puede tomar: la conciliación la crea antes.
-        Assert.False(await leases.TryAcquireAsync(tenantId, Guid.CreateVersion7(), TimeSpan.FromMinutes(30), Ct));
+        Assert.Null(await leases.TryAcquireAsync(tenantId, Guid.CreateVersion7(), TimeSpan.FromMinutes(30), Ct));
+    }
+
+    // Minor 5: una corrida que tardó más que su lease no suelta el de la corrida que lo tomó después.
+    [Fact]
+    public async Task ReleaseDoesNotFreeTheLeaseOfAnotherRun()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new FakeShopifyAdmin().Factory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IShopifyStoreRepository>().Add(ShopifyStore.Create(connectionId, tenantId, DateTimeOffset.UtcNow));
+            await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        await using var scopeA = factory.Services.CreateAsyncScope();
+        await using var scopeB = factory.Services.CreateAsyncScope();
+        var slow = scopeA.ServiceProvider.GetRequiredService<IShopifyReconcileLeases>();
+        var next = scopeB.ServiceProvider.GetRequiredService<IShopifyReconcileLeases>();
+        var slowLease = await slow.TryAcquireAsync(tenantId, connectionId, TimeSpan.FromMinutes(30), Ct);
+        Assert.NotNull(slowLease);
+        await ExecuteAsync(connectionString, "UPDATE shopify.stores SET reconcile_lease_until = now() - interval '1 second'");
+        Assert.NotNull(await next.TryAcquireAsync(tenantId, connectionId, TimeSpan.FromMinutes(30), Ct));
+
+        await slow.ReleaseAsync(tenantId, connectionId, slowLease.Value, Ct);
+
+        Assert.Equal(1L, await ScalarAsync<long>(
+            connectionString, "SELECT count(*) FROM shopify.stores WHERE connection_id = @c AND reconcile_lease_until > now()", ("c", connectionId)));
+    }
+
+    // D-S4 (ruling S25): la tienda que nunca recibió nada nace, en su primera sincronización, con la ventana en el enlace (la
+    // creación de la conexión) y no en «ahora».
+    [Fact]
+    public async Task SyncFirstContactStartsTheWindowAtTheLink()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var shopify = new FakeShopifyAdmin();
+        using var factory = shopify.Factory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableShopifyAsync(connectionString, tenant.TenantId);
+        var connectionId = await LinkStoreAsync(factory, tenant.TenantId, tenant.OwnerUserId);
+        await ExecuteAsync(
+            connectionString,
+            "UPDATE integrations.connections SET created_at = timestamptz '2026-10-18 10:00:00+00' WHERE id = @c",
+            ("c", connectionId));
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, OrdersPermissions.OrderManage);
+
+        var response = await client.PostAsync(SyncRoute(tenant.TenantId, connectionId), content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var list = JsonDocument.Parse(shopify.Requests[0].Body);
+        Assert.Equal("updated_at:>='2026-10-18T09:55:00Z'", list.RootElement.GetProperty("variables").GetProperty("query").GetString());
     }
 
     private static string SyncRoute(Guid tenantId, Guid connectionId) =>

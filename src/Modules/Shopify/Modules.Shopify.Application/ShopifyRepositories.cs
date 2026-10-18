@@ -46,10 +46,13 @@ public sealed record ShopifyWaitingOrder(long ShopifyOrderId, string Payload);
 /// </summary>
 public interface IShopifyReconcileLeases
 {
-    /// <summary><c>false</c> si la fila no existe o si otra corrida tiene un lease vigente.</summary>
-    Task<bool> TryAcquireAsync(Guid tenantId, Guid connectionId, TimeSpan duration, CancellationToken cancellationToken);
+    /// <summary>El <c>reconcile_lease_until</c> que quedó, que es la prueba de que el lease es de esta corrida; <c>null</c> si la
+    /// fila no existe o si otra corrida tiene un lease vigente.</summary>
+    Task<DateTimeOffset?> TryAcquireAsync(Guid tenantId, Guid connectionId, TimeSpan duration, CancellationToken cancellationToken);
 
-    Task ReleaseAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+    /// <summary>Suelta el lease sólo si sigue siendo el que tomó esta corrida (<paramref name="leaseUntil"/>): pasado su vencimiento
+    /// otra corrida pudo tomarlo, y soltárselo la dejaría solaparse con una tercera.</summary>
+    Task ReleaseAsync(Guid tenantId, Guid connectionId, DateTimeOffset leaseUntil, CancellationToken cancellationToken);
 
     /// <summary>Mueve <c>last_reconciled_at</c>: la próxima corrida trae desde ahí menos el solape.</summary>
     Task RecordReconciledAsync(Guid tenantId, Guid connectionId, DateTimeOffset reconciledAt, CancellationToken cancellationToken);

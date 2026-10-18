@@ -515,6 +515,21 @@ public sealed class ShopifyAdaptersTests
         Assert.Equal(operational ? ConnectionWorld.Token : null, found.AccessToken);
     }
 
+    // D-S4 (ruling S25): el instante del enlace es la creación de la conexión, en los tres caminos del directorio.
+    [Fact]
+    public async Task ConnectionDirectoryCarriesTheLinkInstant()
+    {
+        var world = new ConnectionWorld(ConnectionStatus.Active, shopifyEnabled: true);
+        var linkedAt = new DateTimeOffset(2026, 10, 18, 12, 0, 0, TimeSpan.Zero);
+
+        var byDomain = await world.Directory.FindByShopDomainAsync(ConnectionWorld.Domain, Ct);
+        var byId = await world.Directory.FindAsync(world.Connection.TenantId, world.Connection.Id, Ct);
+        var listed = Assert.Single(await world.Directory.ListOperationalAsync(Ct));
+
+        Assert.Equal(linkedAt, world.Connection.CreatedAt);
+        Assert.Equal([linkedAt, linkedAt, linkedAt], new[] { byDomain?.LinkedAt, byId?.LinkedAt, listed.LinkedAt });
+    }
+
     [Fact]
     public async Task ConnectionDirectoryModuleOffIsNotOperational()
     {

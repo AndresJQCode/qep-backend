@@ -32,6 +32,11 @@ public interface IShopifyConnectionDirectory
 public sealed record ShopifyConnectionRef(
     Guid TenantId, Guid ConnectionId, string ShopId, string ShopDomain, bool IsOperational, string? AccessToken)
 {
+    /// <summary>D-S4 y §5.3 (ruling S25): el instante del enlace (la creación de la conexión). La tienda que el módulo ve por
+    /// primera vez arranca ahí su ventana de conciliación, para que un pedido hecho entre el enlace y el primer contacto entre
+    /// aunque su webhook se pierda. Nulo si el adaptador no lo sabe: entonces, «ahora».</summary>
+    public DateTimeOffset? LinkedAt { get; init; }
+
     public override string ToString() =>
         $"ShopifyConnectionRef {{ TenantId = {TenantId}, ConnectionId = {ConnectionId}, ShopId = {ShopId}, ShopDomain = {ShopDomain}, IsOperational = {IsOperational} }}";
 }
