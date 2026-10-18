@@ -105,6 +105,16 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
         }
     }
 
+    public async Task<ShopifyOrderWriteResult?> FindByExternalKeyAsync(Guid tenantId, string externalKey, CancellationToken cancellationToken)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
+        var result = await writer.FindByExternalKeyAsync(tenantId, OrderSource.Shopify, externalKey, cancellationToken);
+        return result is null
+            ? null
+            : ShopifyOrderWriteResult.Written(result.OrderId, result.OrderNumber, result.Total, alreadyExisted: true, result.ClientId);
+    }
+
     private static ExternalOrderDraft ToExternal(ShopifyOrderDraft draft)
     {
         var shipping = draft.Shipping;

@@ -110,6 +110,27 @@ public sealed class ShopifyAdaptersTests
         Assert.Equal(134_000m, result.Total);
     }
 
+    // §6.3: la fila en espera que se canceló se busca por clave externa antes de ignorarla. El adaptador busca sólo pedidos de
+    // origen Shopify y devuelve el cliente y el total del pedido guardado.
+    [Fact]
+    public async Task OrderWriterFindByExternalKeyReturnsTheShopifyOrder()
+    {
+        var clientId = Guid.CreateVersion7();
+        var orderId = Guid.CreateVersion7();
+        var writer = new FakeExternalOrderWriter();
+        writer.ByExternalKey[(TenantId, OrderSource.Shopify, "954889:5550000000001")] =
+            new ExternalOrderResult(orderId, "PED-9", 119_000m, 100_000m, "COP", clientId, AlreadyExisted: true);
+
+        var found = await OrderWriter(writer).FindByExternalKeyAsync(TenantId, "954889:5550000000001", Ct);
+        var missing = await OrderWriter(writer).FindByExternalKeyAsync(TenantId, "954889:otro", Ct);
+
+        Assert.NotNull(found);
+        Assert.Equal(
+            (orderId, "PED-9", 119_000m, true, clientId, false),
+            (found.OrderId, found.OrderNumber, found.Total, found.AlreadyExisted, found.ClientId, found.IsRejected));
+        Assert.Null(missing);
+    }
+
     [Fact]
     public async Task OrderWriterDomainExceptionReturnsRejectedWithCode()
     {

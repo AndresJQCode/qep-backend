@@ -346,6 +346,11 @@ public interface IShopifyOrderWriter
 
     Task<ShopifyOrderOutcome> CancelAsync(
         Guid tenantId, Guid orderId, Guid byMembershipId, string reason, CancellationToken cancellationToken);
+
+    /// <summary>D-S23: el pedido de Shopify que ya existe en QEP con esa clave, como <see cref="ShopifyOrderWriteResult.Written"/>
+    /// con <c>AlreadyExisted</c>, o <c>null</c>. Sólo lee. Lo usa §6.3 antes de ignorar una fila en espera que se canceló: si el
+    /// worker cayó entre crear el pedido y marcar la fila, el pedido de QEP existe y hay que anularlo, no ignorarlo.</summary>
+    Task<ShopifyOrderWriteResult?> FindByExternalKeyAsync(Guid tenantId, string externalKey, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-15 §6.1 y §6.2: el asesor de la tienda es una membresía del tenant. Adaptador sobre Tenancy e

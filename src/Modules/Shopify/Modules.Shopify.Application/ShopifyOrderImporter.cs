@@ -1,4 +1,6 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Unicode;
 using BuildingBlocks.Application;
 using Modules.Shopify.Domain;
 
@@ -11,8 +13,9 @@ namespace Modules.Shopify.Application;
 /// <list type="number">
 /// <item>Un pedido de prueba o cancelado antes de importarse se ignora sin mirar la tienda (§5.4).</item>
 /// <item>Precondiciones en el orden de §6.2: tienda configurada, asesor activo, cuenta de cobro, moneda, cliente encontrado
-/// activo y productos. <c>freight_tax_rate_missing</c> llega con el envío (tarea 14).</item>
-/// <item>Recién entonces se crea el cliente que no apareció, se anota en la fila y se guarda; después se escribe el pedido.</item>
+/// activo, productos y, con un envío cobrado en COP, el IVA del envío del tenant (<c>freight_tax_rate_missing</c>).</item>
+/// <item>Recién entonces se crea el cliente que no apareció, se anota en la fila y se guarda; después se escribe el pedido con su
+/// envío (<see cref="ShopifyShippingMapper"/>) y su parte de envío, y con contraentrega se sincroniza el pago (D-S26).</item>
 /// </list>
 /// <para><b>Qué no se atrapa.</b> Lo que propaga el escritor (<c>RequestConcurrencyException</c>, <c>order.order.number_taken</c>,
 /// base o red caídas) sale tal cual: la fila no cambia, el llamador no guarda y la entrega o la conciliación reintentan (ruling
@@ -27,6 +30,7 @@ public sealed class ShopifyOrderImporter(
     IShopifyBillingAccounts billingAccounts,
     ShopifyCustomerResolver customers,
     IShopifyProductLookup products,
+    IShopifyShippingLookup shipping,
     IShopifyOrderWriter orders,
     IShopifyUnitOfWork unitOfWork,
     IClock clock) : IShopifyOrderImporter
@@ -34,10 +38,19 @@ public sealed class ShopifyOrderImporter(
     /// <summary>H24: el ancho de <c>orders.payment_method</c>.</summary>
     public const int PaymentMethodMaxLength = 50;
 
-    private const string Cop = "COP";
+    /// <summary>§6.2.3 paso 2: el rótulo de la dirección cruda en las notas cuando no quedó como parte de envío.</summary>
+    public const string RawAddressLabel = "Dirección de envío de Shopify: ";
 
-    // Los detalles y los avisos viajan al frontend como JSON en camelCase, como los DTO de la API.
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    /// <summary>D-S6: el 1 % del total de Shopify.</summary>
+    private const decimal TotalDifferenceTolerance = 0.01m;
+
+    // Los detalles y los avisos viajan al frontend como JSON en camelCase, como los DTO de la API. Los títulos de Shopify y los
+    // nombres de transportadora llevan tildes («Envío», «Inter Rapidísimo»): van tal cual y no como \u00ED, que es lo que la
+    // bandeja muestra y lo que jsonb guarda igual.
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
+    };
 
     public async Task<ShopifyImportOutcome> ImportAsync(
         ShopifyConnectionRef connection,
@@ -110,6 +123,16 @@ public sealed class ShopifyOrderImporter(
             return Wait(row, ShopifyWaitReasons.ProductUnmatched, new { skus = unmatched }, now);
         }
 
+        var shippingResult = await ShippingAsync(tenantId, snapshot, orderCurrency, cancellationToken);
+        if (shippingResult.WaitReason is { } shippingWait)
+        {
+            return Wait(
+                row,
+                shippingWait,
+                new { shippingTitle = ShopifyShippingMapper.CarrierTitle(snapshot), amount = Normalized(ShopifyShippingMapper.Amount(snapshot)) },
+                now);
+        }
+
         var customer = found ?? await customers.CreateAsync(store, snapshot, cancellationToken);
         if (!customer.IsActive)
         {
@@ -126,8 +149,12 @@ public sealed class ShopifyOrderImporter(
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
+        var draft = shippingResult.Draft;
+        var party = draft.IsStorePickup ? null : await ShippingPartyAsync(snapshot, cancellationToken);
+        var addressUnresolved = !draft.IsStorePickup && snapshot.ShippingAddress is not null && party is null;
         var result = await orders.CreateAsync(
-            Draft(connection, store, advisorId, account, customer, snapshot, lines), cancellationToken);
+            Draft(connection, store, advisorId, account, customer, snapshot, lines, shippingResult, party, addressUnresolved),
+            cancellationToken);
         if (result.IsRejected)
         {
             return Wait(row, ShopifyWaitReasons.OrderRejected, new { code = result.RejectedCode }, now);
@@ -135,20 +162,36 @@ public sealed class ShopifyOrderImporter(
 
         // S17: el pedido ya existía con esa clave (el worker cayó entre crearlo y marcar la fila, o el segundo guardado de la
         // ingesta perdió la carrera). Es un éxito; lo que no se repite es el estado de pago, que nació con el del intento anterior
-        // y Shopify pudo haber cambiado desde entonces. Sincronizar con el mismo estado no hace nada (D-S26).
-        if (result.AlreadyExisted && snapshot.FinancialStatus.Length > 0)
+        // y Shopify pudo haber cambiado desde entonces. D-S26: un pedido contraentrega nace pendiente aunque Shopify ya lo dé por
+        // pagado (H5), así que se sincroniza justo después de crearlo. Sincronizar con el mismo estado no hace nada.
+        string? syncError = null;
+        if ((result.AlreadyExisted || draft.CashOnDelivery) && snapshot.FinancialStatus.Length > 0)
         {
-            await orders.SyncPaymentStatusAsync(tenantId, result.OrderId, snapshot.FinancialStatus, cancellationToken);
+            var synced = await orders.SyncPaymentStatusAsync(tenantId, result.OrderId, snapshot.FinancialStatus, cancellationToken);
+            // §6.3: payment_has_proofs o not_pending se auditan en la fila y no frenan: después de aprobar, el pago lo lleva QEP.
+            syncError = synced.Kind == ShopifyOrderOutcomeKind.Ignored ? synced.Code : null;
         }
 
         // El cliente del pedido como quedó en Quotations: con AlreadyExisted es el del intento que lo creó, que puede no ser el que
         // este intento encontró (si su anotado se perdió). La fila tiene que apuntar al mismo cliente que el pedido.
+        var totalDifference = snapshot.TotalPrice - result.Total;
         row.MarkImported(
             result.ClientId,
             result.OrderId,
-            snapshot.TotalPrice - result.Total,
-            WarningsJson(customer, ShopifyCustomerResolver.DocumentOf(store, snapshot)),
+            totalDifference,
+            WarningsJson(
+                customer,
+                ShopifyCustomerResolver.DocumentOf(store, snapshot),
+                addressUnresolved,
+                ExceedsTolerance(totalDifference, snapshot.TotalPrice),
+                shippingResult,
+                draft.CarrierName),
             now);
+        if (syncError is not null)
+        {
+            row.RecordLastError(syncError);
+        }
+
         return new ShopifyImportOutcome(row.ImportState);
     }
 
@@ -190,17 +233,66 @@ public sealed class ShopifyOrderImporter(
             lines.Add(new ShopifyOrderLineDraft(
                 product.Id,
                 line.Quantity,
-                UnitPriceWithVat(line.OriginalUnitPrice, snapshot.TaxesIncluded, product.TaxPercentage, currency),
-                DiscountPercentage(line.DiscountAmount, line.OriginalUnitPrice, line.Quantity),
+                ShopifyPricing.UnitPriceWithVat(line.OriginalUnitPrice, snapshot.TaxesIncluded, product.TaxPercentage, currency),
+                ShopifyPricing.DiscountPercentage(line.DiscountAmount, line.OriginalUnitPrice, line.Quantity),
                 product.TaxPercentage));
         }
 
         return (lines, unmatched);
     }
 
+    /// <summary>D-S23: la clave externa del pedido, <c>"{shopId}:{shopifyOrderId}"</c>. Con el shopId y no con la conexión, para
+    /// que borrar y volver a enlazar la tienda no duplique pedidos. La usa también §6.3 (<see cref="ShopifyOrderChanges"/>).</summary>
+    public static string ExternalKey(ShopifyConnectionRef connection, long shopifyOrderId)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        return $"{connection.ShopId}:{shopifyOrderId}";
+    }
+
+    /// <summary>§6.2.2 pasos 4 y 5: la transportadora del título de la primera línea y, sólo si el envío se cobra en COP, la tasa
+    /// del envío del tenant. Con recogida o sin líneas no se pregunta nada.</summary>
+    private async Task<ShopifyShippingResult> ShippingAsync(
+        Guid tenantId, ShopifyOrderSnapshot snapshot, string currency, CancellationToken cancellationToken)
+    {
+        if (ShopifyShippingMapper.IsStorePickup(snapshot))
+        {
+            return ShopifyShippingMapper.Map(snapshot, currency, null, null);
+        }
+
+        var title = ShopifyShippingMapper.CarrierTitle(snapshot);
+        var carrier = title is null ? null : await shipping.MatchCarrierAsync(tenantId, title, cancellationToken);
+        var rate = ShopifyPricing.IsCop(currency) && ShopifyShippingMapper.Amount(snapshot) > 0m
+            ? await shipping.GetFreightTaxPercentageAsync(tenantId, cancellationToken)
+            : null;
+        return ShopifyShippingMapper.Map(snapshot, currency, carrier, rate);
+    }
+
+    /// <summary>§6.2.3 paso 2 (H25): la dirección de Shopify es la parte de envío sólo si queda completa: nombre, teléfono,
+    /// dirección, departamento y ciudad. El nombre y el teléfono, si la dirección no los trae, salen del comprador; el correo es
+    /// el del comprador. La ciudad se resuelve con la misma regla que el alta del cliente (§6.2.1 paso 5).</summary>
+    private async Task<ShopifyPartyDraft?> ShippingPartyAsync(ShopifyOrderSnapshot snapshot, CancellationToken cancellationToken)
+    {
+        if (snapshot.ShippingAddress is not { } address)
+        {
+            return null;
+        }
+
+        var buyerName = string.Join(' ', new[] { snapshot.Buyer.FirstName, snapshot.Buyer.LastName }.Select(Blank).OfType<string>());
+        var name = Blank(address.Name) ?? Blank(buyerName);
+        var phone = Blank(address.Phone) ?? Blank(snapshot.Buyer.Phone);
+        var line = Blank(string.Join(' ', new[] { address.Address1, address.Address2 }.Select(Blank).OfType<string>()));
+        if (name is null || phone is null || line is null
+            || await customers.ResolveCityAsync(address, cancellationToken) is not { } city)
+        {
+            return null;
+        }
+
+        return new ShopifyPartyDraft(name, phone, Blank(snapshot.Buyer.Email), line, city.DepartmentId, city.CityId);
+    }
+
     /// <summary>
-    /// §6.2.3: el borrador del pedido. En esta tarea va sin envío (<c>ShippingDetails.None</c>) ni parte de envío; la tarea 14
-    /// agrega el envío, la parte con la dirección resuelta, la contraentrega y la dirección cruda en las notas.
+    /// §6.2.3: el borrador del pedido, con el envío ya resuelto (§6.2.2) y la parte de envío si la dirección quedó completa. Una
+    /// dirección que no quedó completa va cruda a las notas, para que nadie tenga que abrir Shopify para despachar.
     /// <para>Una línea con cantidad 0 (un payload sin <c>quantity</c>, tarea 10) no se filtra ni se corrige acá: la regla del
     /// pedido la rechaza (<c>order.item.quantity_invalid</c>) y la fila queda <c>order_rejected</c> con ese código, a la vista. Un
     /// precio 0 sí entra: en Shopify es un regalo legítimo, y si en cambio era un precio ausente, el total de Shopify no cuadra con
@@ -213,38 +305,25 @@ public sealed class ShopifyOrderImporter(
         ShopifyBillingAccountRef account,
         ShopifyCustomerRef customer,
         ShopifyOrderSnapshot snapshot,
-        IReadOnlyList<ShopifyOrderLineDraft> lines) =>
+        IReadOnlyList<ShopifyOrderLineDraft> lines,
+        ShopifyShippingResult shippingResult,
+        ShopifyPartyDraft? party,
+        bool addressUnresolved) =>
         new(
             store.TenantId,
             snapshot.Name,
             customer.Id,
             advisorId,
             PaymentMethod(snapshot.PaymentGateways),
-            Notes(snapshot),
-            ShippingParty: null,
+            Notes(snapshot, addressUnresolved ? snapshot.ShippingAddress : null),
+            party,
             account,
             lines,
             snapshot.FinancialStatus.Length == 0 ? null : snapshot.FinancialStatus,
             snapshot.CreatedAt,
-            Shipping: null,
-            // D-S23: con el shopId y no con la conexión, para que borrar y volver a enlazar la tienda no duplique pedidos.
-            $"{connection.ShopId}:{snapshot.OrderId}",
-            ExternalShippingTitle: null);
-
-    /// <summary>§6.2.2 (H3, D-S27): con impuestos incluidos el precio va tal cual; si no, en COP se le suma el IVA del producto y
-    /// fuera de COP va tal cual, porque ahí la tasa se fuerza a 0.</summary>
-    private static decimal UnitPriceWithVat(decimal original, bool taxesIncluded, int taxPercentage, string currency) =>
-        taxesIncluded || !string.Equals(currency, Cop, StringComparison.Ordinal)
-            ? original
-            : original * (100 + taxPercentage) / 100m;
-
-    /// <summary>§6.2.2: la suma de las asignaciones de descuento sobre <c>originalUnitPrice × quantity</c>, en porcentaje con 4
-    /// decimales. Sin base (cantidad o precio 0) no hay porcentaje que calcular.</summary>
-    private static decimal DiscountPercentage(decimal discount, decimal originalUnitPrice, decimal quantity)
-    {
-        var gross = originalUnitPrice * quantity;
-        return gross <= 0m || discount <= 0m ? 0m : Math.Round(discount / gross * 100m, 4, MidpointRounding.AwayFromZero);
-    }
+            shippingResult.Draft,
+            ExternalKey(connection, snapshot.OrderId),
+            shippingResult.UnrecognizedTitle);
 
     /// <summary>§6.2.3 paso 2 (H24): las pasarelas unidas con <c>", "</c> y recortadas al ancho de la columna.</summary>
     private static string? PaymentMethod(IReadOnlyList<string> gateways)
@@ -253,17 +332,60 @@ public sealed class ShopifyOrderImporter(
         return joined.Length == 0 ? null : joined.Length <= PaymentMethodMaxLength ? joined : joined[..PaymentMethodMaxLength].TrimEnd();
     }
 
-    /// <summary>§6.2.3 paso 2: <c>Shopify #1001</c> y, en otra línea, la nota del comprador. Sin tope (H24).</summary>
-    private static string Notes(ShopifyOrderSnapshot snapshot)
+    /// <summary>§6.2.3 paso 2: <c>Shopify #1001</c> y, en otra línea, la nota del comprador; si la dirección no quedó como parte
+    /// de envío, otra línea con la dirección cruda. Sin tope (H24).</summary>
+    private static string Notes(ShopifyOrderSnapshot snapshot, ShopifyAddress? unresolvedAddress)
     {
-        var header = $"Shopify {snapshot.Name}";
-        var note = snapshot.Note?.Trim();
-        return string.IsNullOrEmpty(note) ? header : $"{header}\n{note}";
+        var parts = new List<string> { $"Shopify {snapshot.Name}" };
+        if (Blank(snapshot.Note) is { } note)
+        {
+            parts.Add(note);
+        }
+
+        if (unresolvedAddress is { } address)
+        {
+            var raw = string.Join(", ", new[]
+                {
+                    address.Name, address.Address1, address.Address2, address.City, address.Province, address.CountryCode, address.Phone,
+                }
+                .Select(Blank)
+                .OfType<string>());
+            if (raw.Length > 0)
+            {
+                parts.Add($"{RawAddressLabel}{raw}");
+            }
+        }
+
+        return string.Join('\n', parts);
     }
 
-    /// <summary>§6.2.4: los avisos como arreglo de <c>{ code, detail }</c>. <c>customer_incomplete</c> lleva el documento que sí
-    /// vino, para que quien complete la ficha lo tenga a la mano (§6.2.1 paso 4); los demás avisos los agrega la tarea 14.</summary>
-    private static string? WarningsJson(ShopifyCustomerRef customer, ShopifyBuyerDocument? document)
+    /// <summary>D-S6: la diferencia avisa sólo si supera el 1 % del total de Shopify, en cualquier sentido. Con un total de 0,
+    /// cualquier diferencia avisa.</summary>
+    private static bool ExceedsTolerance(decimal difference, decimal shopifyTotal) =>
+        Math.Abs(difference) > Math.Abs(shopifyTotal) * TotalDifferenceTolerance;
+
+    /// <summary>15000.00 y 15000 son el mismo valor; el detalle viaja sin los ceros que el parser conserva del texto de
+    /// Shopify, para que no cambie según venga del REST o del GraphQL.</summary>
+    private static decimal Normalized(decimal value) => value / 1.000000000000000000000000000m;
+
+    private static string? Blank(string? value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrEmpty(trimmed) ? null : trimmed;
+    }
+
+    /// <summary>§6.2.4: los avisos como arreglo de <c>{ code, detail }</c>, en el orden del spec. <c>customer_incomplete</c> lleva
+    /// el documento que sí vino, para que quien complete la ficha lo tenga a la mano (§6.2.1 paso 4);
+    /// <c>carrier_unrecognized</c>, el título de Shopify, y <c>cash_on_delivery_unmatched</c>, la transportadora reconocida que
+    /// no recauda (§6.2.2). <c>shipping_address_unresolved</c> y <c>total_difference</c> no llevan detalle: la dirección cruda va
+    /// en las notas del pedido y la diferencia en <c>total_difference</c> de la fila.</summary>
+    private static string? WarningsJson(
+        ShopifyCustomerRef customer,
+        ShopifyBuyerDocument? document,
+        bool addressUnresolved,
+        bool totalDiffers,
+        ShopifyShippingResult shippingResult,
+        string? carrierName)
     {
         var warnings = new List<ShopifyImportWarning>();
         if (!customer.IsComplete)
@@ -271,6 +393,26 @@ public sealed class ShopifyOrderImporter(
             warnings.Add(new ShopifyImportWarning(
                 ShopifyWarnings.CustomerIncomplete,
                 document is null ? null : new { document = new { type = document.Type, number = document.Number } }));
+        }
+
+        if (addressUnresolved)
+        {
+            warnings.Add(new ShopifyImportWarning(ShopifyWarnings.ShippingAddressUnresolved, null));
+        }
+
+        if (totalDiffers)
+        {
+            warnings.Add(new ShopifyImportWarning(ShopifyWarnings.TotalDifference, null));
+        }
+
+        if (shippingResult.UnrecognizedTitle is { } title)
+        {
+            warnings.Add(new ShopifyImportWarning(ShopifyWarnings.CarrierUnrecognized, new { shippingTitle = title }));
+        }
+
+        if (shippingResult.CashOnDeliveryUnmatched)
+        {
+            warnings.Add(new ShopifyImportWarning(ShopifyWarnings.CashOnDeliveryUnmatched, new { carrierName }));
         }
 
         return warnings.Count == 0 ? null : JsonSerializer.Serialize(warnings, Json);

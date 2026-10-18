@@ -401,6 +401,9 @@ public sealed class CompositionRootTests
             service => service.GetType().FullName == "Modules.Shopify.Infrastructure.Workers.ShopifyWebhookDeliveryWorker");
         using var scope = provider.CreateScope();
         Assert.IsType<ShopifyOrderImporter>(scope.ServiceProvider.GetRequiredService<IShopifyOrderImporter>());
+        // Ruling S14/S17: la reacción de §6.3 de la tarea 14 reemplaza la vacía. Sin ella, pagos y cancelaciones de Shopify sobre
+        // pedidos importados se guardan en el espejo y nunca llegan a Quotations.
+        Assert.IsType<ShopifyOrderChanges>(scope.ServiceProvider.GetRequiredService<IShopifyOrderChangeReaction>());
     }
 
     [Fact]

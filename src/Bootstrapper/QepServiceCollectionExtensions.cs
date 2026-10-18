@@ -783,6 +783,9 @@ public static class QepServiceCollectionExtensions
         // worker para que eso no pase en silencio.
         services.AddScoped<ShopifyCustomerResolver>();
         services.AddScoped<IShopifyOrderImporter, ShopifyOrderImporter>();
+        // §6.3 (ruling S17): pago y cancelación de los pedidos ya importados. Va antes de AddShopifyWebhookProcessing, que sólo
+        // registra la reacción vacía si nadie registró otra (TryAdd).
+        services.AddScoped<IShopifyOrderChangeReaction, ShopifyOrderChanges>();
         services.AddShopifyWebhookProcessing();
         services.AddShopifyWebhookWorker();
 

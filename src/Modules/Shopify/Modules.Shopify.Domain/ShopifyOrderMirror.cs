@@ -196,6 +196,24 @@ public sealed class ShopifyOrderMirror
         Touch();
     }
 
+    /// <summary>§6.3: un cambio posterior que Quotations rechazó (<c>order.order.not_pending</c>,
+    /// <c>order.order.payment_has_proofs</c>, otro rechazo de la anulación) queda auditado en la fila, en cualquier estado, sin
+    /// cambiarlo. Se recorta al ancho de la columna. El mismo error otra vez no es un cambio: la reacción se repite (bucle de
+    /// concurrencia de la ingesta, reintento tras un guardado fallido) y no debe subir la versión.</summary>
+    public void RecordLastError(string error)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(error);
+        var trimmed = error.Trim();
+        var recorded = trimmed.Length <= LastErrorMaxLength ? trimmed : trimmed[..LastErrorMaxLength];
+        if (string.Equals(LastError, recorded, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        LastError = recorded;
+        Touch();
+    }
+
     /// <summary>D-S31: «Marcar como revisado». Sin avisos no hay nada que revisar; repetirlo conserva la primera revisión.</summary>
     public void ReviewWarnings(DateTimeOffset now)
     {

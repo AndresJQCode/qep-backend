@@ -63,10 +63,25 @@ public sealed class ShopifyWebhookWorkerTests
         await DrainAsync(factory);
 
         Assert.Equal("1|none|none", await DeliveryAsync(connectionString, "wh-real"));
+        // Tarea 14: el envío de 19 000 (Servientrega, impuestos incluidos, IVA del envío del tenant) entra con el pedido, así que
+        // los totales cuadran: total_difference pasa de 19 000 (sólo líneas, tarea 13) a 0. La transportadora no existe en el
+        // tenant de la prueba, así que el pedido entra sin ella, con el título para «reconocer este nombre» y su aviso.
         Assert.Equal(
-            "Imported|19000.00",
+            "Imported|0.00",
             await ScalarAsync<string>(
                 connectionString, "SELECT import_state || '|' || total_difference FROM shopify.orders WHERE connection_id = @c", ("c", world.ConnectionId)));
+        Assert.Equal(
+            "Charged|19000.00|19|Servientrega|119000.00|carrier_unrecognized",
+            await ScalarAsync<string>(
+                connectionString,
+                """
+                SELECT o.freight_charge_mode || '|' || o.freight_amount || '|' || o.freight_tax_percentage || '|'
+                       || o.external_shipping_title || '|' || o.total || '|' || (m.warnings -> 0 ->> 'code')
+                FROM shopify.orders m
+                JOIN quotations.orders o ON o.id = m.qep_order_id AND o.tenant_id = m.tenant_id
+                WHERE m.connection_id = @c
+                """,
+                ("c", world.ConnectionId)));
         Assert.Equal(
             "Shopify|#1001|954889:5550000000001|Complete|Cc 1036000111",
             await ScalarAsync<string>(
@@ -80,6 +95,54 @@ public sealed class ShopifyWebhookWorkerTests
                 WHERE m.connection_id = @c
                 """,
                 ("c", world.ConnectionId)));
+    }
+
+    // §6.3 de punta a punta, sin dobles: la reacción registrada en Bootstrapper anula en Quotations el pedido que Shopify canceló,
+    // a nombre del asesor de la tienda, y la fila del espejo cierra en Cancelled. El mismo aviso otra vez (llega orders/updated con
+    // la misma foto) encuentra la fila terminal y no anula dos veces. La repetición antes de cerrar la fila (bucle de concurrencia,
+    // guardado perdido) la cubre ShopifyOrderChangesTests.RepeatedCancellationDoesNotDuplicateAnything.
+    [Fact]
+    public async Task WorkerCancelledInShopifyCancelsTheImportedOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        await ConfigureStoreAsync(factory, world);
+        using var client = factory.CreateClient();
+        await PostWebhookAsync(client, "orders/create", "wh-create", OrderFixture("taxes-included"));
+        await DrainAsync(factory);
+        Assert.Equal("Imported|paid", await RowStateAsync(connectionString));
+
+        await PostWebhookAsync(client, "orders/cancelled", "wh-cancel", Cancelled());
+        await PostWebhookAsync(client, "orders/updated", "wh-cancel-again", Cancelled());
+        await DrainAsync(factory);
+
+        Assert.Equal("1|none|none", await DeliveryAsync(connectionString, "wh-cancel"));
+        Assert.Equal("1|none|none", await DeliveryAsync(connectionString, "wh-cancel-again"));
+        Assert.Equal("Cancelled|paid", await RowStateAsync(connectionString));
+        Assert.Equal(
+            $"Cancelled|Cancelado en Shopify: customer|{world.AdvisorMembershipId}",
+            await ScalarAsync<string>(
+                connectionString,
+                """
+                SELECT o.status || '|' || o.cancellation_reason || '|' || o.cancelled_by
+                FROM shopify.orders m
+                JOIN quotations.orders o ON o.id = m.qep_order_id AND o.tenant_id = m.tenant_id
+                """));
+        Assert.Equal(
+            1L,
+            await ScalarAsync<long>(
+                connectionString, "SELECT count(*) FROM quotations.order_history WHERE event_type = 'Cancelled'"));
+    }
+
+    private static byte[] Cancelled()
+    {
+        var node = JsonNode.Parse(OrderFixture("taxes-included"))!;
+        node["updated_at"] = "2026-10-01T12:00:00-05:00";
+        node["cancelled_at"] = "2026-10-01T12:00:00-05:00";
+        node["cancel_reason"] = "customer";
+        return System.Text.Encoding.UTF8.GetBytes(node.ToJsonString());
     }
 
     private static async Task ConfigureStoreAsync(QepApiFactory factory, ShopifyWorld world)

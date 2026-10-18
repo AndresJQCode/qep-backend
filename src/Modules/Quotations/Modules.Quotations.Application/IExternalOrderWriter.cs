@@ -62,6 +62,13 @@ public interface IExternalOrderWriter
 
     Task CancelAsync(
         Guid tenantId, Guid orderId, Guid cancelledByMembershipId, string reason, CancellationToken cancellationToken);
+
+    /// <summary>El pedido que ya entró con esa clave (D-S23), como lo devolvería un alta repetida
+    /// (<see cref="ExternalOrderResult.AlreadyExisted"/>), o <c>null</c>. Sólo lee y sólo ve el tenant y el origen
+    /// pedidos. El consumidor lo usa cuando necesita saber si un pedido llegó sin intentar crearlo (Shopify §6.3:
+    /// una fila en espera que se canceló).</summary>
+    Task<ExternalOrderResult?> FindByExternalKeyAsync(
+        Guid tenantId, OrderSource source, string externalKey, CancellationToken cancellationToken);
 }
 
 public sealed class ExternalOrderService(
@@ -161,6 +168,16 @@ public sealed class ExternalOrderService(
             ?? throw new InvalidOperationException(
                 "The external key was taken, but no committed order carries it.");
         return Existing(winner);
+    }
+
+    public async Task<ExternalOrderResult?> FindByExternalKeyAsync(
+        Guid tenantId, OrderSource source, string externalKey, CancellationToken cancellationToken)
+    {
+        var key = string.IsNullOrWhiteSpace(externalKey) ? null : externalKey.Trim();
+        return key is not null
+            && await orderRepository.FindByExternalKeyAsync(tenantId, source, key, cancellationToken) is { } order
+                ? Existing(order)
+                : null;
     }
 
     private static ExternalOrderResult Existing(Order order) =>

@@ -291,4 +291,47 @@ public sealed class ShopifyOrderMirrorTests
 
         Assert.Equal((DateTimeOffset?)reviewedAt, row.WarningsReviewedAt);
     }
+    // §6.3: un cambio posterior que Quotations rechazó (order.order.not_pending, payment_has_proofs, otro rechazo de la
+    // anulación) queda en last_error y sube la versión, en cualquier estado: la fila importada sigue importada.
+    [Fact]
+    public void RecordLastErrorStoresTheCodeAndBumpsTheVersion()
+    {
+        var row = ImportedRow(null);
+        var version = row.Version;
+
+        row.RecordLastError(" order.order.not_pending ");
+
+        Assert.Equal(("order.order.not_pending", ShopifyImportState.Imported), (row.LastError, row.ImportState));
+        Assert.Equal(version + 1, row.Version);
+    }
+
+    // La reacción se repite (bucle de concurrencia de la ingesta, reintento tras un guardado fallido): el mismo error otra vez
+    // no es un cambio y no sube la versión.
+    [Fact]
+    public void RecordLastErrorWithTheSameCodeDoesNothing()
+    {
+        var row = ImportedRow(null);
+        row.RecordLastError("order.order.payment_has_proofs");
+        var version = row.Version;
+
+        row.RecordLastError("order.order.payment_has_proofs");
+
+        Assert.Equal(version, row.Version);
+    }
+
+    [Fact]
+    public void RecordLastErrorCutsAtTheColumnWidth()
+    {
+        var row = ImportedRow(null);
+
+        row.RecordLastError(new string('x', ShopifyOrderMirror.LastErrorMaxLength + 10));
+
+        Assert.Equal(ShopifyOrderMirror.LastErrorMaxLength, row.LastError!.Length);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void RecordLastErrorRequiresAText(string error) =>
+        Assert.Throws<ArgumentException>(() => ImportedRow(null).RecordLastError(error));
 }

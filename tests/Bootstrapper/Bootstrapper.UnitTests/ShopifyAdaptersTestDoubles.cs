@@ -149,6 +149,15 @@ internal sealed class FakeExternalOrderWriter : IExternalOrderWriter
         Cancelled.Add((tenantId, orderId, cancelledByMembershipId, reason));
         return Task.CompletedTask;
     }
+
+    public Dictionary<(Guid TenantId, OrderSource Source, string Key), ExternalOrderResult> ByExternalKey { get; } = [];
+
+    public Task<ExternalOrderResult?> FindByExternalKeyAsync(
+        Guid tenantId, OrderSource source, string externalKey, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult(ByExternalKey.GetValueOrDefault((tenantId, source, externalKey)));
+    }
 }
 
 internal sealed class PassThroughPhones : IPhoneNumberNormalizer

@@ -138,6 +138,31 @@ internal sealed class FakeGeographyLookup : IShopifyGeographyLookup
     }
 }
 
+/// <summary>Transportadoras por título exacto y la tasa del envío del tenant; anota qué se le preguntó. La normalización del
+/// título es del adaptador (<c>ShopifyAdaptersTests</c>).</summary>
+internal sealed class FakeShippingLookup : IShopifyShippingLookup
+{
+    public Dictionary<string, ShopifyCarrierRef> Carriers { get; } = new(StringComparer.Ordinal);
+
+    public int? FreightTaxPercentage { get; set; } = 19;
+
+    public List<string> CarrierRequests { get; } = [];
+
+    public int RateRequests { get; private set; }
+
+    public Task<ShopifyCarrierRef?> MatchCarrierAsync(Guid tenantId, string title, CancellationToken cancellationToken)
+    {
+        CarrierRequests.Add(title);
+        return Task.FromResult(Carriers.GetValueOrDefault(title));
+    }
+
+    public Task<int?> GetFreightTaxPercentageAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        RateRequests++;
+        return Task.FromResult(FreightTaxPercentage);
+    }
+}
+
 /// <summary>Anota cada borrador con lo que la fila tenía al llamarlo y cuántos guardados había. <see cref="Result"/> decide la
 /// respuesta; <see cref="OnCreate"/> puede lanzar, como un fallo transitorio de Quotations.</summary>
 internal sealed class FakeOrderWriter(FakeUnitOfWork unitOfWork) : IShopifyOrderWriter
@@ -145,6 +170,11 @@ internal sealed class FakeOrderWriter(FakeUnitOfWork unitOfWork) : IShopifyOrder
     public List<(ShopifyOrderDraft Draft, int SavesSoFar)> Creates { get; } = [];
 
     public List<(Guid TenantId, Guid OrderId, string FinancialStatus)> Syncs { get; } = [];
+
+    /// <summary>El orden de las llamadas: <c>create</c> y <c>sync:{estado}</c>.</summary>
+    public List<string> Log { get; } = [];
+
+    public ShopifyOrderOutcome SyncOutcome { get; set; } = ShopifyOrderOutcome.Applied;
 
     public Func<ShopifyOrderDraft, ShopifyOrderWriteResult> Result { get; set; } =
         draft => ShopifyOrderWriteResult.Written(Guid.CreateVersion7(), "PED-0001", 119_000m, alreadyExisted: false, draft.ClientId);
@@ -154,6 +184,7 @@ internal sealed class FakeOrderWriter(FakeUnitOfWork unitOfWork) : IShopifyOrder
     public Task<ShopifyOrderWriteResult> CreateAsync(ShopifyOrderDraft draft, CancellationToken cancellationToken)
     {
         Creates.Add((draft, unitOfWork.Saves));
+        Log.Add("create");
         if (OnCreate is { } fail)
         {
             throw fail();
@@ -166,12 +197,54 @@ internal sealed class FakeOrderWriter(FakeUnitOfWork unitOfWork) : IShopifyOrder
         Guid tenantId, Guid orderId, string financialStatus, CancellationToken cancellationToken)
     {
         Syncs.Add((tenantId, orderId, financialStatus));
-        return Task.FromResult(ShopifyOrderOutcome.Applied);
+        Log.Add($"sync:{financialStatus}");
+        if (SyncOutcome.Kind == ShopifyOrderOutcomeKind.Applied && PaymentStatus.GetValueOrDefault(orderId) != financialStatus)
+        {
+            PaymentStatus[orderId] = financialStatus;
+            EffectiveSyncs++;
+        }
+
+        return Task.FromResult(SyncOutcome);
     }
 
+    /// <summary>Lo que Quotations tiene anulado: anular dos veces el mismo pedido da <c>AlreadyCancelled</c>, como el adaptador
+    /// real (<c>order.order.already_cancelled</c>).</summary>
+    public HashSet<Guid> CancelledOrders { get; } = [];
+
+    /// <summary>El estado de pago de cada pedido en Quotations: sincronizar con el mismo no cambia nada (D-S26), y
+    /// <see cref="EffectiveSyncs"/> cuenta sólo los que sí cambiaron.</summary>
+    public Dictionary<Guid, string> PaymentStatus { get; } = [];
+
+    public int EffectiveSyncs { get; private set; }
+
+    public List<(Guid TenantId, Guid OrderId, Guid By, string Reason)> Cancels { get; } = [];
+
+    /// <summary>Fuerza la respuesta de la anulación (<c>AlreadyInvoiced</c>, <c>Ignored</c>).</summary>
+    public ShopifyOrderOutcome? CancelOutcome { get; set; }
+
+    /// <summary>Los pedidos de Quotations por clave externa (D-S23).</summary>
+    public Dictionary<string, ShopifyOrderWriteResult> ByExternalKey { get; } = new(StringComparer.Ordinal);
+
+    public List<(Guid TenantId, string ExternalKey)> KeyLookups { get; } = [];
+
     public Task<ShopifyOrderOutcome> CancelAsync(
-        Guid tenantId, Guid orderId, Guid byMembershipId, string reason, CancellationToken cancellationToken) =>
-        throw new NotSupportedException("The importer never cancels.");
+        Guid tenantId, Guid orderId, Guid byMembershipId, string reason, CancellationToken cancellationToken)
+    {
+        Cancels.Add((tenantId, orderId, byMembershipId, reason));
+        Log.Add("cancel");
+        if (CancelOutcome is { } forced)
+        {
+            return Task.FromResult(forced);
+        }
+
+        return Task.FromResult(CancelledOrders.Add(orderId) ? ShopifyOrderOutcome.Applied : ShopifyOrderOutcome.AlreadyCancelled);
+    }
+
+    public Task<ShopifyOrderWriteResult?> FindByExternalKeyAsync(Guid tenantId, string externalKey, CancellationToken cancellationToken)
+    {
+        KeyLookups.Add((tenantId, externalKey));
+        return Task.FromResult(ByExternalKey.GetValueOrDefault(externalKey));
+    }
 }
 
 /// <summary>Una tienda lista para importar y el pedido de Shopify más simple que entra: lo que cada prueba cambia es una sola
@@ -223,6 +296,8 @@ internal sealed class ImporterWorld
 
     public FakeGeographyLookup Geography { get; } = new();
 
+    public FakeShippingLookup Shipping { get; } = new();
+
     public FakeOrderWriter Writer { get; }
 
     public ShopifyStore Store { get; set; }
@@ -233,7 +308,7 @@ internal sealed class ImporterWorld
     public ShopifyCustomerResolver Resolver => new(Customers, Mirrors, Geography);
 
     public ShopifyOrderImporter Importer =>
-        new(Members, Billing, Resolver, Products, Writer, UnitOfWork, new FakeClock(Now));
+        new(Members, Billing, Resolver, Products, Shipping, Writer, UnitOfWork, new FakeClock(Now));
 
     /// <summary>La fila en espera, ya guardada, para un snapshot.</summary>
     public ShopifyOrderMirror RowFor(ShopifyOrderSnapshot snapshot)
@@ -259,7 +334,10 @@ internal sealed class ImporterWorld
         string financialStatus = "pending",
         bool taxesIncluded = true,
         string? note = "Dejar en portería",
-        IReadOnlyList<string>? gateways = null) =>
+        IReadOnlyList<string>? gateways = null,
+        IReadOnlyList<ShopifyShippingLine>? shippingLines = null,
+        decimal totalPrice = 119_000m,
+        string? cancelReason = "customer") =>
         new(
             orderId,
             "#1001",
@@ -267,10 +345,10 @@ internal sealed class ImporterWorld
             Now.AddMinutes(-30),
             Now.AddMinutes(-20),
             cancelledAt,
-            cancelledAt is null ? null : "customer",
+            cancelledAt is null ? null : cancelReason,
             financialStatus,
             currency,
-            119_000m,
+            totalPrice,
             taxesIncluded,
             test,
             note,
@@ -279,5 +357,5 @@ internal sealed class ImporterWorld
             address,
             attributes ?? new Dictionary<string, string>(),
             lines ?? [new ShopifyLine("CAM-001", 1m, 119_000m, 0m)],
-            []);
+            shippingLines ?? []);
 }

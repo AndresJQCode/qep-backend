@@ -213,6 +213,135 @@ public sealed class ExternalOrderServiceTests
         Assert.Equal(1, await CountShopifyOrdersAsync(setup));
     }
 
+    // Arrastre de la tarea 2, determinista: la búsqueda previa no ve el pedido que ya existe (como si la otra llamada hubiera
+    // guardado justo después), así que el alta choca con IX_orders_tenant_external_key. El servicio descarta lo pendiente, relee
+    // y devuelve el ganador, y la transacción deshecha devuelve el consecutivo: el próximo pedido no deja hueco.
+    [Fact]
+    public async Task CreateAsyncLosingTheIndexRaceDiscardsAndReturnsTheWinnerWithoutSkippingTheNumber()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var draft = Draft(setup, "#2007", externalKey: "shop-1:order-2007");
+        var winner = await CreateAsync(factory, draft);
+
+        ExternalOrderResult loser;
+        BlindOnceOrderRepository blind;
+        CountingUnitOfWork unitOfWork;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            blind = BlindOnceOrderRepository.Wrap(scope.ServiceProvider.GetRequiredService<IOrderRepository>());
+            unitOfWork = new CountingUnitOfWork(scope.ServiceProvider.GetRequiredService<IQuotationsUnitOfWork>());
+            var service = ActivatorUtilities.CreateInstance<ExternalOrderService>(scope.ServiceProvider, (IOrderRepository)blind, (IQuotationsUnitOfWork)unitOfWork);
+            loser = await service.CreateAsync(draft, TestContext.Current.CancellationToken);
+        }
+
+        var next = await CreateAsync(factory, Draft(setup, "#2008", externalKey: "shop-1:order-2008"));
+
+        Assert.True(loser.AlreadyExisted);
+        Assert.Equal((winner.OrderId, winner.OrderNumber, winner.ClientId), (loser.OrderId, loser.OrderNumber, loser.ClientId));
+        Assert.Equal((1, 2), (unitOfWork.Discards, blind.ExternalKeyLookups));
+        Assert.Equal(Sequence(winner.OrderNumber) + 1, Sequence(next.OrderNumber));
+        Assert.Equal(2, (await OutboxMessagesAsync(factory, "quotations.order.created.v1")).Count);
+        Assert.Equal(2, await CountShopifyOrdersAsync(setup));
+    }
+
+    // La clave es por tenant (D-S23, índice (tenant_id, source, external_key)): la misma tienda enlazada a dos tenants crea un
+    // pedido en cada uno.
+    [Fact]
+    public async Task CreateAsyncSameExternalKeyInAnotherTenantCreatesItsOwnOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var other = await ArrangeAsync(factory);
+        using var __ = other.Client;
+
+        var first = await CreateAsync(factory, Draft(setup, "#2009", externalKey: "shop-1:order-2009"));
+        var second = await CreateAsync(factory, Draft(other, "#2009", externalKey: "shop-1:order-2009"));
+
+        Assert.Equal((false, false), (first.AlreadyExisted, second.AlreadyExisted));
+        Assert.NotEqual(first.OrderId, second.OrderId);
+        Assert.Equal((1, 1), (await CountShopifyOrdersAsync(setup), await CountShopifyOrdersAsync(other)));
+    }
+
+    private static int Sequence(string orderNumber) =>
+        int.Parse(new string(orderNumber.Reverse().TakeWhile(char.IsAsciiDigit).Reverse().ToArray()), System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>Delega todo en el repositorio real, salvo la primera búsqueda por clave externa, que no encuentra nada: la
+    /// carrera que la búsqueda previa no puede cerrar, sin depender del reloj.</summary>
+    public class BlindOnceOrderRepository : System.Reflection.DispatchProxy
+    {
+        private IOrderRepository inner = null!;
+
+        public int ExternalKeyLookups { get; private set; }
+
+        public static BlindOnceOrderRepository Wrap(IOrderRepository inner)
+        {
+            var proxy = Create<IOrderRepository, BlindOnceOrderRepository>();
+            var blind = (BlindOnceOrderRepository)(object)proxy;
+            blind.inner = inner;
+            return blind;
+        }
+
+        protected override object? Invoke(System.Reflection.MethodInfo? targetMethod, object?[]? args)
+        {
+            ArgumentNullException.ThrowIfNull(targetMethod);
+            if (targetMethod.Name == nameof(IOrderRepository.FindByExternalKeyAsync) && ++ExternalKeyLookups == 1)
+            {
+                return Task.FromResult<Order?>(null);
+            }
+
+            return targetMethod.Invoke(inner, args);
+        }
+    }
+
+    private sealed class CountingUnitOfWork(IQuotationsUnitOfWork inner) : IQuotationsUnitOfWork
+    {
+        public int Discards { get; private set; }
+
+        public Task<int> SaveChangesAsync(CancellationToken cancellationToken) => inner.SaveChangesAsync(cancellationToken);
+
+        public Task<IQuotationsTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+            inner.BeginTransactionAsync(cancellationToken);
+
+        public void DiscardPendingChanges()
+        {
+            Discards++;
+            inner.DiscardPendingChanges();
+        }
+    }
+
+    // Spec de Shopify §6.3: antes de ignorar una fila en espera que se canceló, el espejo pregunta si el pedido ya existe con su
+    // clave. Sólo lee, y sólo dentro del tenant y del origen: la misma clave en otro tenant no es este pedido.
+    [Fact]
+    public async Task FindByExternalKeyAsyncReturnsTheOrderOnlyInItsTenantAndSource()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var other = await ArrangeAsync(factory);
+        using var __ = other.Client;
+        var created = await CreateAsync(factory, Draft(setup, "#2006", externalKey: "shop-1:order-2006"));
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
+        var ct = TestContext.Current.CancellationToken;
+        var found = await writer.FindByExternalKeyAsync(setup.TenantId, OrderSource.Shopify, " shop-1:order-2006 ", ct);
+        var otherTenant = await writer.FindByExternalKeyAsync(other.TenantId, OrderSource.Shopify, "shop-1:order-2006", ct);
+        var otherSource = await writer.FindByExternalKeyAsync(setup.TenantId, OrderSource.Manual, "shop-1:order-2006", ct);
+
+        Assert.NotNull(found);
+        Assert.Equal(
+            (created.OrderId, created.OrderNumber, created.Total, created.ClientId, true),
+            (found.OrderId, found.OrderNumber, found.Total, found.ClientId, found.AlreadyExisted));
+        Assert.Null(otherTenant);
+        Assert.Null(otherSource);
+    }
+
     // §6.2.5: la pantalla ofrece «Reconocer este nombre» sin leer el espejo de Shopify.
     [Fact]
     public async Task GetOrderExposesExternalShippingTitle()
