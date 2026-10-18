@@ -295,7 +295,9 @@ internal static class ShopifyApiHarness
             registered.TenantId, registered.OwnerUserId, CreateClient(factory, registered.OwnerUserId, registered.TenantId, SeedPermissions));
     }
 
-    /// <summary>Ni el signup ni ninguna pantalla prenden <c>shopify</c> (D-S20): se prende por SQL, como <c>pos</c>.</summary>
+    /// <summary>El signup ya lo prende (<c>DefaultForNewTenants</c>, D-S20), pero sólo mientras
+    /// <c>Entitlements:GrantDefaultModulesOnSignup</c> esté en <c>true</c>; la prueba lo fija por SQL, como <c>pos</c>, para no
+    /// depender de esa clave. También lo vuelve a prender después de apagarlo.</summary>
     public static Task EnableShopifyAsync(string connectionString, Guid tenantId) =>
         ExecuteAsync(
             connectionString,
