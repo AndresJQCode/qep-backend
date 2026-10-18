@@ -32,6 +32,20 @@ public sealed record CompleteCustomerData(
 /// </summary>
 public interface ICustomerProvisioning
 {
+    /// <summary>
+    /// La ficha completa, con CUC, con las mismas reglas que el <c>POST</c> de clientes. Si el documento ya lo tiene otro
+    /// cliente del tenant (la carrera con otra alta, o un llamador que no buscó antes), devuelve ese con
+    /// <see cref="ProvisionedCustomer.Created"/> en <c>false</c> en vez de fallar. Ante cualquiera de los errores de abajo,
+    /// el llamador cae a <see cref="CreateIncompleteAsync"/>: los datos no alcanzan para una ficha completa, pero el
+    /// pedido entra igual.
+    /// </summary>
+    /// <exception cref="FluentValidation.ValidationException">Los datos no pasan <c>CustomerWriteRules</c>; por ejemplo,
+    /// falta el correo o el teléfono, el documento o el país no son válidos, o falta la ciudad que pide el país.</exception>
+    /// <exception cref="CustomersDomainException">Con <c>customers.customer.classification_not_found</c> si la
+    /// clasificación no existe en el tenant, o con <c>customers.customer.city_not_found</c> si la ciudad DIVIPOLA no
+    /// existe.</exception>
+    /// <exception cref="InvalidOperationException">El documento quedó tomado pero el ganador no se pudo releer. No
+    /// debería pasar, porque el índice no tiene filtro y un cliente no se borra.</exception>
     Task<ProvisionedCustomer> CreateCompleteAsync(Guid tenantId, CompleteCustomerData data, CancellationToken cancellationToken);
 
     Task<ProvisionedCustomer> CreateIncompleteAsync(
@@ -140,7 +154,9 @@ public sealed class CustomerProvisioning(
         {
             // §6.2.1 paso 3 (H8): el documento lo tomó otra alta entre la búsqueda del llamador y este commit (dos
             // pedidos del mismo comprador a la vez). El árbitro es IX_customers_tenant_identification; acá se relee y
-            // se usa el que ganó. Con el par ya normalizado por el agregado, que es como quedó en la base.
+            // se usa el que ganó. Con el par ya normalizado por el agregado, que es como quedó en la base. El número del
+            // consecutivo que se pidió arriba queda quemado, igual que en un POST que pierde la misma carrera.
+            // CustomersUnitOfWork ya limpió el tracker, así que el scope sirve para la siguiente alta.
             var winner = await FindByIdentificationAsync(tenantId, customer, cancellationToken);
             return winner is null
                 ? throw new InvalidOperationException("The identification was taken but its customer cannot be read back.", exception)

@@ -101,4 +101,40 @@ public sealed class CustomerProvisioningIntegrationTests
             "SELECT count(*) FROM platform.outbox_messages WHERE payload->>'action' = 'customers.customer.created' "
             + $"AND payload->>'resourceId' = '{created.Id}' AND payload->>'actorType' = 'Integration'"));
     }
+
+    // Fix 1 de la Task 4: perder la carrera del documento no deja la fila perdedora (ni su outbox) Added en el scope. Sin el
+    // Clear del unit of work, el siguiente SaveChanges del mismo scope la reintenta y vuelve a dar identification_taken.
+    [Fact]
+    public async Task CreateCompleteLostRaceLeavesTheScopeUsable()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var existing = await CreateCustomerAsync(client, city.CityId, classification.Id); // NIT 900.123.456-1
+        var sameDocument = new CompleteCustomerData(
+            "Verde otra vez", "NIT", "900.123.456-1", "310 000 0000", "otra@verde.co", "Calle 1", "CO", city.CityId, null,
+            classification.Id);
+        var otherBuyer = new CompleteCustomerData(
+            "Laura Pérez", "CC", "1020304050", "310 935 2187", "laura@verde.co", "Calle 10 # 45-12", "CO", city.CityId, null,
+            classification.Id);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var provisioning = scope.ServiceProvider.GetRequiredService<ICustomerProvisioning>();
+        var lost = await provisioning.CreateCompleteAsync(Tenant, sameDocument, TestContext.Current.CancellationToken);
+        var next = await provisioning.CreateCompleteAsync(Tenant, otherBuyer, TestContext.Current.CancellationToken);
+        var incomplete = await provisioning.CreateIncompleteAsync(Tenant, "Comprador", null, null, null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ProvisionedCustomer(existing.Id, true, true, false), lost);
+        Assert.True(next.Created);
+        Assert.True(incomplete.Created);
+        Assert.Equal("3", await ScalarAsync(database.GetConnectionString(),
+            $"SELECT count(*) FROM customers.customers WHERE tenant_id = '{Tenant}'"));
+        // La auditoría de la perdedora tampoco sobrevive: sólo las dos altas que entraron.
+        Assert.Equal("2", await ScalarAsync(database.GetConnectionString(),
+            "SELECT count(*) FROM platform.outbox_messages WHERE payload->>'action' = 'customers.customer.created' "
+            + "AND payload->>'actorType' = 'Integration'"));
+    }
 }

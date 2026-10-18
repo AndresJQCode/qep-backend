@@ -58,6 +58,12 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
         {
             // Traducido aca y no en Application, que no referencia Npgsql y se mantiene asi gracias
             // a CustomersLayerTests.
+            //
+            // El tracker se limpia, como con el BSUID: CustomerProvisioning (spec de Shopify §6.2.1) pierde esta carrera,
+            // relee al ganador y sigue en el mismo scope; sin el Clear, la fila perdedora y su outbox quedarían Added y
+            // el siguiente SaveChanges los reintentaría. En el POST y en la importación el scope termina con este 422, así
+            // que ahí no cambia nada. Ojo: Clear descarta cualquier otro cambio pendiente del scope, no sólo esa fila.
+            dbContext.ChangeTracker.Clear();
             throw new CustomersDomainException(
                 "customers.customer.identification_taken",
                 "Another customer in this tenant already uses that identification.");
