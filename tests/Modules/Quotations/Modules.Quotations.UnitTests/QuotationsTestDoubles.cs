@@ -1139,3 +1139,40 @@ internal sealed class StubQuotationTaxRateLookup(QuotationTaxRateRef? rate, bool
         return Task.FromResult(rate is not null && rate.Id == taxRateId ? rate : null);
     }
 }
+
+/// <summary>El catálogo con precio, sembrado a mano. Mismo cuerpo que el privado de
+/// <c>OrderPricingRecalculationTests</c>, que se queda donde está.</summary>
+internal sealed class StubQuotationProductPricingLookup(params QuotationProductPricingRef[] products)
+    : IQuotationProductPricingLookup
+{
+    private readonly Dictionary<Guid, QuotationProductPricingRef> _products = products.ToDictionary(product => product.Id);
+
+    public Task<QuotationProductPricingRef?> FindAsync(Guid tenantId, Guid productId, CancellationToken cancellationToken) =>
+        Task.FromResult(_products.GetValueOrDefault(productId));
+
+    public Task<IReadOnlyDictionary<Guid, QuotationProductPricingRef>> FindManyAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, QuotationProductPricingRef>>(
+            productIds.Where(_products.ContainsKey).ToDictionary(id => id, id => _products[id]));
+}
+
+/// <summary>El consecutivo en memoria: 1, 2, 3… <see cref="Calls"/> dice cuántos números se gastaron.</summary>
+internal sealed class SequentialQuotationNumberGenerator : IQuotationNumberGenerator
+{
+    private long _next;
+
+    public int Calls { get; private set; }
+
+    public Task<long> NextAsync(Guid tenantId, int year, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult(++_next);
+    }
+}
+
+internal sealed class DefaultNumberingFormats : IDocumentNumberingFormatLookup
+{
+    public Task<DocumentNumberFormat> GetAsync(
+        Guid tenantId, DocumentNumberType documentType, CancellationToken cancellationToken) =>
+        Task.FromResult(DocumentNumberFormat.DefaultFor(documentType));
+}

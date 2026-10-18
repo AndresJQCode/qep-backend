@@ -396,6 +396,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<CreateQuotationCommand, QuotationDto>,
             CreateQuotationHandler>();
+        // Lo comparten la creación y su cálculo previo sin id (spec 2026-10-18 §7.3).
+        services.AddScoped<QuotationDraftBuilder>();
         services.AddScoped<
             IQueryHandler<GetQuotationQuery, QuotationDto>,
             GetQuotationHandler>();

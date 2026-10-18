@@ -113,62 +113,12 @@ public sealed class SaveQuotationHandler(
             "success",
             now);
 
-        await RecordItemEditsAsync(
-            command.TenantId, quotation, outcome.ItemEdits, updatedBy, now, cancellationToken);
+        await QuotationItemEditHistory.RecordAsync(
+            repository, auditPublisher, productLookup, executionContext.SubjectId, command.TenantId, quotation,
+            outcome.ItemEdits, updatedBy, now, cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return quotation.ToDto();
-    }
-
-    // Una fila de historial Edited y una acción quotation.quotation.item_* por cada cambio, como
-    // los endpoints de línea de hoy. El nombre de una baja se busca en una sola ida al catálogo,
-    // igual que BatchUpdateQuotationItemsHandler.
-    private async Task RecordItemEditsAsync(
-        Guid tenantId,
-        Quotation quotation,
-        IReadOnlyList<QuotationItemEdit> edits,
-        MemberId updatedBy,
-        DateTimeOffset now,
-        CancellationToken cancellationToken)
-    {
-        var removedProductIds = edits
-            .Where(edit => edit.Kind == QuotationItemEditKind.Removed)
-            .Select(edit => edit.ProductId)
-            .ToArray();
-        var removedProducts = removedProductIds.Length == 0
-            ? new Dictionary<Guid, QuotationProductRef>()
-            : await productLookup.FindManyAsync(tenantId, removedProductIds, cancellationToken);
-
-        foreach (var edit in edits)
-        {
-            string summary;
-            string action;
-            if (edit.Kind == QuotationItemEditKind.Added)
-            {
-                summary = QuotationChangeSummary.ItemAdded(edit.ProductName!, edit.Quantity!.Value);
-                action = "quotation.quotation.item_added";
-            }
-            else if (edit.Kind == QuotationItemEditKind.QuantityChanged)
-            {
-                summary = QuotationChangeSummary.ItemQuantityChanged(
-                    edit.ProductName!, edit.PreviousQuantity!.Value, edit.Quantity!.Value);
-                action = "quotation.quotation.item_updated";
-            }
-            else
-            {
-                var productName = removedProducts.TryGetValue(edit.ProductId, out var product)
-                    ? product.Name
-                    : "un producto";
-                summary = QuotationChangeSummary.ItemRemoved(productName);
-                action = "quotation.quotation.item_removed";
-            }
-
-            repository.AddHistoryEntry(QuotationHistoryEntry.Create(
-                QuotationHistoryEntryId.New(), quotation.Id, QuotationHistoryEventType.Edited,
-                updatedBy, summary, now));
-            auditPublisher.Publish(
-                tenantId, executionContext.SubjectId, action, quotation.Id.ToString(), "success", now);
-        }
     }
 }
