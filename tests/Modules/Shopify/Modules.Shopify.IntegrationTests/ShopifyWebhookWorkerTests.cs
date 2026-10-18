@@ -369,6 +369,9 @@ public sealed class ShopifyWebhookWorkerTests
 
         public Task<IReadOnlyList<ShopifyConnectionRef>> ListOperationalAsync(CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<ShopifyConnectionRef?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FakeHealth : IShopifyConnectionHealth

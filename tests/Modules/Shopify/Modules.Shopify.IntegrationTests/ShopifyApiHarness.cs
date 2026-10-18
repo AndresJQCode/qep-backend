@@ -141,13 +141,15 @@ internal static class ShopifyApiHarness
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
-            // Ruling S18: el host registra el worker de entregas. En las pruebas no corre solo: la que lo necesita lo corre a mano
+            // Ruling S18: el host registra el worker de entregas y el de la conciliación. En las pruebas no corre solo: la que lo necesita lo corre a mano
             // (DrainAsync) y decide cuándo, así que uno en segundo plano reclamaría la misma entrega a la vez.
             builder.ConfigureTestServices(services =>
             {
+                // La conciliación (tarea 15) tampoco: la prueba que la necesita la corre a mano (RunOnceAsync).
                 foreach (var worker in services
                     .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
-                        && descriptor.ImplementationType == typeof(ShopifyWebhookDeliveryWorker))
+                        && (descriptor.ImplementationType == typeof(ShopifyWebhookDeliveryWorker)
+                            || descriptor.ImplementationType == typeof(ShopifyReconcileWorker)))
                     .ToArray())
                 {
                     services.Remove(worker);
@@ -235,6 +237,11 @@ internal static class ShopifyApiHarness
     /// <summary>Un pedido REST de los fixtures de las pruebas unitarias (sintéticos hasta V-9), copiados al compilar.</summary>
     public static byte[] OrderFixture(string name) =>
         File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", "rest", name + ".json"));
+
+    /// <summary>El mismo pedido en GraphQL (la conciliación), como lo devuelve <c>order(id:)</c>.</summary>
+    public static System.Text.Json.Nodes.JsonObject GraphQlFixture(string name) =>
+        (System.Text.Json.Nodes.JsonObject)System.Text.Json.Nodes.JsonNode.Parse(
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "graphql", name + ".json")))!;
 
     public static HttpClient CreateClient(WebApplicationFactory<Program> factory, Guid subjectId, Guid tenantId, params string[] permissions)
     {
@@ -529,5 +536,25 @@ internal sealed record ShopifyWorld(
         var camiseta = await ShopifyApiHarness.CreateProductAsync(tenant.Seeder, tenant.TenantId, "CAM-001", "Camiseta", 50_000m, tax19);
         var gorra = await ShopifyApiHarness.CreateProductAsync(tenant.Seeder, tenant.TenantId, "GOR-002", "Gorra", 30_000m, tax19);
         return new ShopifyWorld(tenant, connectionId, advisor, company, classification, tax19, camiseta, gorra);
+    }
+
+    /// <summary>§6.1: la tienda configurada (asesor, cuenta de cobro COP, clasificación y las claves por defecto), como la deja el
+    /// <c>PUT</c> de la tarea 16.</summary>
+    public async Task ConfigureStoreAsync(ShopifyApiHarness.QepApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var store = Modules.Shopify.Domain.ShopifyStore.Create(ConnectionId, TenantId, DateTimeOffset.UtcNow);
+        store.Configure(
+            AdvisorMembershipId,
+            new Modules.Shopify.Domain.ShopifyBillingAccount(Company.Id, Company.BankName, Company.AccountNumber, "COP"),
+            ClassificationId,
+            Modules.Shopify.Domain.ShopifyStore.DefaultDocumentAttributeKey,
+            Modules.Shopify.Domain.ShopifyStore.DefaultDocumentTypeAttributeKey,
+            Modules.Shopify.Domain.ShopifyStore.DefaultIdentificationTypeCode,
+            AdvisorMembershipId,
+            DateTimeOffset.UtcNow);
+        scope.ServiceProvider.GetRequiredService<Modules.Shopify.Application.IShopifyStoreRepository>().Add(store);
+        await scope.ServiceProvider.GetRequiredService<Modules.Shopify.Application.IShopifyUnitOfWork>()
+            .SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 }

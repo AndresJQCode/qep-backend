@@ -14,6 +14,8 @@
   <ItemGroup>
     <!-- Los mismos pedidos REST sintéticos de las pruebas unitarias (hasta V-9), para firmarlos y mandarlos al webhook. -->
     <None Include="..\Modules.Shopify.UnitTests\Fixtures\rest\*.json" Link="Fixtures\rest\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Y los de GraphQL, para el Shopify falso de la conciliación. -->
+    <None Include="..\Modules.Shopify.UnitTests\Fixtures\graphql\*.json" Link="Fixtures\graphql\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Api\Api.csproj" />

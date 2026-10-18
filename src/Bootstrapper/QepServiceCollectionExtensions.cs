@@ -766,6 +766,10 @@ public static class QepServiceCollectionExtensions
         // §5.1: el webhook firmado. La firma usa el client secret de la app de Integrations por un puerto propio.
         services.AddSingleton<IShopifyAppSecret, ShopifyAppSecret>();
         services.AddScoped<ICommandHandler<ReceiveShopifyWebhookCommand, ShopifyWebhookReceipt>, ReceiveShopifyWebhookHandler>();
+        // §5.3: «Sincronizar ahora» (quotations.order.manage, política ya registrada por Quotations) y la versión de la Admin API
+        // de la conciliación, la misma Shopify:App:ApiVersion que usa Integrations para el enlace.
+        services.AddScoped<ICommandHandler<SyncShopifyStoreCommand, ShopifySyncResult>, SyncShopifyStoreHandler>();
+        services.AddSingleton<IShopifyApiVersion, ShopifyApiVersion>();
         // §5.2 y §6.2: los puertos de Shopify hacia Integrations, Customers, Catalog, Geography, Quotations, Companies y
         // Tenancy/Identity (ShopifyPorts.cs). Shopify no referencia ninguno de esos módulos: el composition root los une. El
         // escritor de pedidos abre un scope propio por llamada (DiscardPendingChanges de Quotations, tarea 2).
@@ -788,6 +792,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IShopifyOrderChangeReaction, ShopifyOrderChanges>();
         services.AddShopifyWebhookProcessing();
         services.AddShopifyWebhookWorker();
+        // §5.3: el cron de la conciliación, cada Shopify:Reconcile:IntervalMinutes.
+        services.AddShopifyReconcileWorker();
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los

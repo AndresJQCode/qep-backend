@@ -22,6 +22,9 @@ internal sealed class FakeConnectionDirectory : IShopifyConnectionDirectory
 
     public Task<IReadOnlyList<ShopifyConnectionRef>> ListOperationalAsync(CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public Task<ShopifyConnectionRef?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(Connections.Values.FirstOrDefault(connection => connection.TenantId == tenantId && connection.ConnectionId == connectionId));
 }
 
 internal sealed class FakeConnectionHealth : IShopifyConnectionHealth
@@ -143,6 +146,15 @@ internal sealed class FakeOrderMirrorRepository(FakeShopifyDatabase database) : 
         keys.ForEach(key => database.Orders.Remove(key));
         return Task.FromResult(keys.Count);
     }
+
+    public Task<IReadOnlyList<ShopifyWaitingOrder>> ListWaitingAsync(Guid tenantId, Guid connectionId, int limit, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyWaitingOrder>>(
+            [.. database.Orders.Values
+                .Where(row => row.TenantId == tenantId && row.ConnectionId == connectionId && row.ImportState == ShopifyImportState.Waiting)
+                .OrderBy(row => row.ShopifyCreatedAt)
+                .ThenBy(row => row.Id)
+                .Take(limit)
+                .Select(row => new ShopifyWaitingOrder(row.ShopifyOrderId, row.Payload))]);
 }
 
 internal sealed class FakeWebhookDeliveries(FakeShopifyDatabase database) : IShopifyWebhookDeliveries

@@ -30,8 +30,12 @@
     "id": "gid://shopify/Customer/7770000000001",
     "firstName": "Laura",
     "lastName": "Gómez",
-    "email": "laura.gomez@example.com",
-    "phone": "+573001112233"
+    "defaultEmailAddress": {
+      "emailAddress": "laura.gomez@example.com"
+    },
+    "defaultPhoneNumber": {
+      "phoneNumber": "+573001112233"
+    }
   },
   "shippingAddress": {
     "name": "Laura Gómez",

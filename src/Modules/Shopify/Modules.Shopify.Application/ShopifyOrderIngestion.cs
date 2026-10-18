@@ -35,13 +35,22 @@ public sealed class ShopifyOrderIngestion(
     // §5.4: el payload del espejo es el snapshot normalizado, en camelCase como los DTO de la API.
     private static readonly JsonSerializerOptions PayloadJson = new(JsonSerializerDefaults.Web);
 
+    /// <summary>El payload del espejo de un snapshot (§5.4).</summary>
+    public static string WritePayload(ShopifyOrderSnapshot snapshot) => JsonSerializer.Serialize(snapshot, PayloadJson);
+
+    /// <summary>El snapshot que guardó <see cref="WritePayload"/>: con él la conciliación reintenta una fila en espera (§6.4) por
+    /// el mismo camino que un pedido recién traído.</summary>
+    public static ShopifyOrderSnapshot ReadPayload(string payload) =>
+        JsonSerializer.Deserialize<ShopifyOrderSnapshot>(payload, PayloadJson)
+        ?? throw new ShopifyPayloadException("payload", "The mirror payload is empty.");
+
     public async Task<ShopifyOrderMirror> ApplyAsync(
         ShopifyConnectionRef connection, ShopifyOrderSnapshot snapshot, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(snapshot);
         var header = snapshot.ToHeader();
-        var payload = JsonSerializer.Serialize(snapshot, PayloadJson);
+        var payload = WritePayload(snapshot);
         for (var attempt = 1; ; attempt++)
         {
             try

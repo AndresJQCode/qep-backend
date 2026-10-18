@@ -17,6 +17,11 @@ public interface IShopifyConnectionDirectory
     /// <summary>§5.3: las conexiones operativas de todos los tenants, para la conciliación. Cross-tenant a propósito, como la
     /// ruta del webhook: el cron no corre en nombre de ningún tenant.</summary>
     Task<IReadOnlyList<ShopifyConnectionRef>> ListOperationalAsync(CancellationToken cancellationToken);
+
+    /// <summary>§5.3 «Sincronizar ahora»: la conexión de Shopify <paramref name="connectionId"/> del tenant, en cualquier estado
+    /// (con <see cref="ShopifyConnectionRef.IsOperational"/> en <c>false</c> si no lo es); <c>null</c> si no existe en ese tenant
+    /// o no es de Shopify. El handler la responde 403, nunca 404.</summary>
+    Task<ShopifyConnectionRef?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }
 
 /// <summary>

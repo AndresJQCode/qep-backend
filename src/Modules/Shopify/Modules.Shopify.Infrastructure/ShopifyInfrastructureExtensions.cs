@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Modules.Shopify.Application;
+using Modules.Shopify.Infrastructure.Admin;
 using Modules.Shopify.Infrastructure.Parsing;
 using Modules.Shopify.Infrastructure.Persistence;
 using Modules.Shopify.Infrastructure.Workers;
@@ -37,6 +38,19 @@ public static class ShopifyInfrastructureExtensions
         services.AddScoped<IShopifyStoreRepository, ShopifyStoreRepository>();
         services.AddScoped<IShopifyOrderMirrorRepository, ShopifyOrderMirrorRepository>();
         services.AddSingleton<IShopifyOrderPayloadParser, ShopifyOrderPayloadParser>();
+
+        // §5.3: la conciliación. El cliente GraphQL es scoped (lleva el estado del balde de Shopify de una corrida) y su
+        // HttpClient no sigue redirecciones ni registra headers: el token va en uno. TimeProvider.System sólo si nadie registró otro.
+        services.AddOptions<ShopifyReconcileOptions>()
+            .Bind(configuration.GetSection(ShopifyReconcileOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<ShopifyReconcileOptions>, ShopifyReconcileOptionsValidator>();
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddHttpClient(ShopifyGraphQlClient.HttpClientName, ShopifyGraphQlClient.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => ShopifyGraphQlClient.CreatePrimaryHandler())
+            .RemoveAllLoggers();
+        services.AddScoped<IShopifyOrdersSource, ShopifyGraphQlClient>();
+        services.AddScoped<IShopifyReconcileLeases, ShopifyReconcileLeases>();
         return services;
     }
 
@@ -53,6 +67,9 @@ public static class ShopifyInfrastructureExtensions
         services.TryAddScoped<IShopifyOrderChangeReaction, NoShopifyOrderChangeReaction>();
         services.AddScoped<ShopifyOrderIngestion>();
         services.AddScoped<ShopifyWebhookDeliveryProcessor>();
+        // §5.3: la conciliación y «Sincronizar ahora» pasan cada pedido por la misma ingesta; necesitan también
+        // IShopifyConnectionHealth e IShopifyApiVersion, de Bootstrapper.
+        services.AddScoped<ReconcileStore>();
         return services;
     }
 
@@ -61,6 +78,14 @@ public static class ShopifyInfrastructureExtensions
     public static IServiceCollection AddShopifyWebhookWorker(this IServiceCollection services)
     {
         services.AddHostedService<ShopifyWebhookDeliveryWorker>();
+        return services;
+    }
+
+    /// <summary>§5.3: el cron de la conciliación. Requiere <see cref="AddShopifyWebhookProcessing"/>; las pruebas lo quitan y lo
+    /// corren a mano.</summary>
+    public static IServiceCollection AddShopifyReconcileWorker(this IServiceCollection services)
+    {
+        services.AddHostedService<ShopifyReconcileWorker>();
         return services;
     }
 }

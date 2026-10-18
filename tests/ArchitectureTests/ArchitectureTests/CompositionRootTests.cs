@@ -404,6 +404,12 @@ public sealed class CompositionRootTests
         // Ruling S14/S17: la reacción de §6.3 de la tarea 14 reemplaza la vacía. Sin ella, pagos y cancelaciones de Shopify sobre
         // pedidos importados se guardan en el espejo y nunca llegan a Quotations.
         Assert.IsType<ShopifyOrderChanges>(scope.ServiceProvider.GetRequiredService<IShopifyOrderChangeReaction>());
+        // Spec §5.3 (tarea 15): el cron de la conciliación y «Sincronizar ahora». Sin el worker, lo que el webhook pierde (abandonado
+        // a los 8 intentos o descartado con 200) y los Waiting no se recuperan nunca, sin error en ningún lado.
+        Assert.Contains(
+            provider.GetServices<IHostedService>(),
+            service => service.GetType().FullName == "Modules.Shopify.Infrastructure.Workers.ShopifyReconcileWorker");
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ICommandHandler<SyncShopifyStoreCommand, ShopifySyncResult>>());
     }
 
     [Fact]

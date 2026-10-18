@@ -190,6 +190,8 @@ app.MapWhatsAppWebhook(RateLimiterPolicies.Webhook);
 app.MapInstagramWebhook(RateLimiterPolicies.Webhook);
 // Spec 2026-10-15 §5.1: el webhook de Shopify, con el mismo limitador y la misma exención de CSRF (prefijo /api/webhooks/).
 app.MapShopifyWebhook(RateLimiterPolicies.Webhook);
+// Spec 2026-10-15 §7: las rutas por tenant de Shopify («Sincronizar ahora» desde la tarea 15).
+app.MapShopifyEndpoints();
 app.MapMessagingEndpoints();
 app.MapMessagingHub();
 app.MapPipelineEndpoints();

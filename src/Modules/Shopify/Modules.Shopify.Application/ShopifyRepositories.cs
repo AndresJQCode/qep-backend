@@ -29,6 +29,30 @@ public interface IShopifyOrderMirrorRepository
 
     /// <summary>§5.5 <c>shop/redact</c>: borra en el acto (no espera al commit) las filas de la tienda.</summary>
     Task<int> DeleteByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    /// <summary>§5.3 y §6.4: las filas <c>Waiting</c> de la tienda, los pedidos más viejos primero (<c>shopify_created_at</c>, luego
+    /// el id), hasta <paramref name="limit"/>. Sin tracking: la conciliación las vuelve a pasar por la ingesta, que las relee.</summary>
+    Task<IReadOnlyList<ShopifyWaitingOrder>> ListWaitingAsync(Guid tenantId, Guid connectionId, int limit, CancellationToken cancellationToken);
+}
+
+/// <summary>Una fila en espera como la reintenta la conciliación: el pedido y su último snapshot normalizado (§5.4).</summary>
+public sealed record ShopifyWaitingOrder(long ShopifyOrderId, string Payload);
+
+/// <summary>
+/// §5.3: el lease de la conciliación y su ventana en <c>shopify.stores</c>. Cada método es un <c>UPDATE</c> que se confirma en el
+/// acto, <b>fuera</b> del tracker de la unidad de trabajo: el importador hace un <c>SaveChanges</c> a mitad de camino (D-S24) que
+/// confirmaría cualquier cambio rastreado, y un lease pendiente ahí se soltaría o se tomaría cuando no toca. Tampoco sube la
+/// <c>version</c> de la tienda: es el <c>If-Match</c> del <c>PUT</c> y nada de esto lo edita el usuario.
+/// </summary>
+public interface IShopifyReconcileLeases
+{
+    /// <summary><c>false</c> si la fila no existe o si otra corrida tiene un lease vigente.</summary>
+    Task<bool> TryAcquireAsync(Guid tenantId, Guid connectionId, TimeSpan duration, CancellationToken cancellationToken);
+
+    Task ReleaseAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    /// <summary>Mueve <c>last_reconciled_at</c>: la próxima corrida trae desde ahí menos el solape.</summary>
+    Task RecordReconciledAsync(Guid tenantId, Guid connectionId, DateTimeOffset reconciledAt, CancellationToken cancellationToken);
 }
 
 /// <summary>§5.2: el cuerpo REST de un webhook <c>orders/*</c> a <see cref="ShopifyOrderSnapshot"/>. El parser vive en

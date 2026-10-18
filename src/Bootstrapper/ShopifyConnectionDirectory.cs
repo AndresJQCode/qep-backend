@@ -52,6 +52,26 @@ internal sealed class ShopifyConnectionDirectory(
         return result;
     }
 
+    // «Sincronizar ahora»: la conexión del tenant por su id y, con su dominio, la ruta. La ruta tiene que apuntar a esta misma
+    // conexión del mismo tenant: si la tienda se reenlazó a otro lado, esta conexión ya no recibe nada y no se sincroniza.
+    public async Task<ShopifyConnectionRef?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    {
+        var connection = await repository.FindAsync(tenantId, connectionId, cancellationToken);
+        if (connection is null
+            || connection.TenantId != tenantId
+            || !string.Equals(connection.ProviderKey, Provider, StringComparison.Ordinal)
+            || connection.Fields.GetValueOrDefault(ShopifyFieldKeys.ShopDomain)?.Trim().ToLowerInvariant() is not { Length: > 0 } domain)
+        {
+            return null;
+        }
+
+        return await routes.FindAsync(Provider, domain, cancellationToken) is { } route
+            && route.TenantId == tenantId
+            && route.ConnectionId == connectionId
+                ? await ToRefAsync(route, domain, cancellationToken)
+                : null;
+    }
+
     private async Task<ShopifyConnectionRef?> ToRefAsync(ConnectionRoute route, string? shopDomain, CancellationToken cancellationToken)
     {
         var connection = await repository.FindAsync(route.TenantId, route.ConnectionId, cancellationToken);

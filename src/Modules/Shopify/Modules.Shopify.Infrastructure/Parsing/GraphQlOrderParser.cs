@@ -8,7 +8,8 @@ namespace Modules.Shopify.Infrastructure.Parsing;
 /// Spec 2026-10-15 §5.3: el nodo <c>Order</c> del Admin API GraphQL (conciliación y sincronización manual) a
 /// <see cref="ShopifyOrderSnapshot"/>. Los ids llegan como GID (<c>gid://shopify/Order/123</c> → 123), los montos de
 /// <c>*Set.shopMoney</c> y los enums en mayúsculas (<c>PAID</c> → <c>paid</c>, como REST). <c>lineItems</c> y
-/// <c>shippingLines</c> se aceptan con <c>nodes</c> o con <c>edges/node</c>. Las líneas de envío retiradas sólo vienen si la
+/// <c>shippingLines</c> se aceptan con <c>nodes</c> o con <c>edges/node</c>. El contacto del cliente sale de
+/// <c>defaultEmailAddress</c>/<c>defaultPhoneNumber</c> (D-S29: 2026-10). Las líneas de envío retiradas sólo vienen si la
 /// consulta pide <c>shippingLines(includeRemovals: true)</c>.
 /// </summary>
 public static class GraphQlOrderParser
@@ -41,11 +42,16 @@ public static class GraphQlOrderParser
             ShippingLines(node));
     }
 
+    // Customer.email y Customer.phone están deprecados en la 2026-10 (D-S29): el contacto del cliente viene en
+    // defaultEmailAddress.emailAddress y defaultPhoneNumber.phoneNumber, que es lo que pide la consulta de la conciliación.
     private static ShopifyBuyer Buyer(JsonElement order, JsonElement? customer) => new(
         customer is { } c ? OptionalString(c, "firstName", "customer.firstName") : null,
         customer is { } d ? OptionalString(d, "lastName", "customer.lastName") : null,
-        OptionalString(order, "email", "email") ?? (customer is { } e ? OptionalString(e, "email", "customer.email") : null),
-        OptionalString(order, "phone", "phone") ?? (customer is { } f ? OptionalString(f, "phone", "customer.phone") : null));
+        OptionalString(order, "email", "email") ?? CustomerContact(customer, "defaultEmailAddress", "emailAddress"),
+        OptionalString(order, "phone", "phone") ?? CustomerContact(customer, "defaultPhoneNumber", "phoneNumber"));
+
+    private static string? CustomerContact(JsonElement? customer, string objectName, string name) =>
+        customer is { } c && Find(c, objectName) is { } contact ? OptionalString(contact, name, $"customer.{objectName}.{name}") : null;
 
     private static ShopifyAddress Address(JsonElement address) => new(
         OptionalString(address, "name", "shippingAddress.name"),
