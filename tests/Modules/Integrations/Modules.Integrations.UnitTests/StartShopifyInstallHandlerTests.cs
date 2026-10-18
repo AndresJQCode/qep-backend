@@ -293,9 +293,38 @@ public sealed partial class StartShopifyInstallHandlerTests
     }
 }
 
+/// <summary>Las filas de <c>integrations.shopify_installs</c> en memoria. <see cref="TryCompleteExchangeAsync"/> imita el
+/// <c>UPDATE … WHERE state = @s AND access_token_protected IS NULL</c>: una fila ya canjeada no se canjea otra vez.
+/// <see cref="LoseNextExchange"/> simula al otro request que ganó la carrera entre la lectura y el UPDATE.</summary>
 internal sealed class InMemoryShopifyInstallRepository : IShopifyInstallRepository
 {
     public List<ShopifyInstall> Added { get; } = [];
 
+    /// <summary>Lo que quedó guardado por id, ya canjeado.</summary>
+    public Dictionary<Guid, ShopifyInstall> Exchanged { get; } = [];
+
+    public bool LoseNextExchange { get; set; }
+
     public void Add(ShopifyInstall install) => Added.Add(install);
+
+    public Task<ShopifyInstall?> FindByStateAsync(string state, CancellationToken cancellationToken) =>
+        Task.FromResult(Current().FirstOrDefault(install => string.Equals(install.State, state, StringComparison.Ordinal)));
+
+    public Task<ShopifyInstall?> FindAsync(Guid installId, CancellationToken cancellationToken) =>
+        Task.FromResult(Current().FirstOrDefault(install => install.Id == installId));
+
+    public Task<bool> TryCompleteExchangeAsync(ShopifyInstall install, CancellationToken cancellationToken)
+    {
+        if (LoseNextExchange || Exchanged.ContainsKey(install.Id) || Added.All(added => added.Id != install.Id))
+        {
+            LoseNextExchange = false;
+            return Task.FromResult(false);
+        }
+
+        Exchanged[install.Id] = install;
+        return Task.FromResult(true);
+    }
+
+    private IEnumerable<ShopifyInstall> Current() =>
+        Added.Select(install => Exchanged.TryGetValue(install.Id, out var exchanged) ? exchanged : install);
 }

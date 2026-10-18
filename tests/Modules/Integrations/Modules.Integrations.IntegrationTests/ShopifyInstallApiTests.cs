@@ -10,7 +10,8 @@ namespace Modules.Integrations.IntegrationTests;
 
 /// <summary>Spec 2026-10-15 §4.3 y §7 por HTTP: el inicio A (tenant, permiso, módulo) y el B (anónimo, HMAC, limitador
 /// <c>public</c>, sin el header de CSRF con el stub apagado), cada uno con su fila en
-/// <c>integrations.shopify_installs</c>.</summary>
+/// <c>integrations.shopify_installs</c>; el canje contra <see cref="FakeShopifyHandler"/> y la lectura de la instalación
+/// con los tenants del usuario.</summary>
 public sealed class ShopifyInstallApiTests
 {
     private const string Timestamp = "1760796000";
@@ -20,6 +21,46 @@ public sealed class ShopifyInstallApiTests
     // La constante de la ruta y no un literal: RequireCsrfHeaderMiddleware repite la ruta literal, y la prueba sin el
     // header de CSRF es la que comprueba que las dos coinciden.
     private const string AnonymousStartUrl = IntegrationsEndpoints.ShopifyInstallStartRoute;
+
+    private const string CompleteUrl = IntegrationsEndpoints.ShopifyInstallCompleteRoute;
+
+    private const string Shop = "mi-tienda.myshopify.com";
+
+    private const string SentinelShopifyCode = "shopify-code-SENTINEL-5e6f";
+
+    private const string SentinelShopifyAccessToken = "shpat_access-token-SENTINEL-7a8b";
+
+    private static string InstallUrl(Guid installId) => $"/api/v1/integrations/shopify/installs/{installId}";
+
+    private static string SignCallback(string code, string shop, string state, string timestamp = Timestamp) =>
+        Convert.ToHexStringLower(HMACSHA256.HashData(
+            Encoding.UTF8.GetBytes(SentinelShopifyClientSecret),
+            Encoding.UTF8.GetBytes($"code={code}&shop={shop}&state={state}&timestamp={timestamp}")));
+
+    private static object CompleteBody(string state, string code = SentinelShopifyCode, string shop = Shop) =>
+        new { code, shop, state, hmac = SignCallback(code, shop, state), timestamp = Timestamp, redirectUri = ShopifyRedirectUri };
+
+    /// <summary>El inicio A de verdad, para tener una fila con su state.</summary>
+    private static async Task<string> StartFromTenantAsync(HttpClient client, Guid tenantId)
+    {
+        var response = await SendAsync(client, HttpMethod.Post, TenantStartUrl(tenantId), new { shop = Shop, redirectUri = ShopifyRedirectUri });
+        response.EnsureSuccessStatusCode();
+        var authorize = await response.Content.ReadFromJsonAsync<ShopifyAuthorizeResponse>(Ct);
+        return StateOf(authorize!.AuthorizeUrl);
+    }
+
+    /// <summary>Una membresía activa más del usuario, escrita directo, como <c>PipelineApiHarness.SeedMemberAsync</c>.</summary>
+    private static Task<int> SeedMembershipAsync(string connectionString, Guid tenantId, Guid userId, string role) =>
+        ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO tenancy.memberships (id, user_id, tenant_id, state, roles, origin, invited_at, accepted_at, expires_at, version, created_at, updated_at, display_name)
+            VALUES (@id, @userId, @tenantId, 'Active', ARRAY[@role]::text[], 'invitation', now(), now(), now() + interval '3 days', 1, now(), now(), NULL)
+            """,
+            ("id", Guid.CreateVersion7()),
+            ("userId", userId),
+            ("tenantId", tenantId),
+            ("role", role));
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -189,5 +230,172 @@ public sealed class ShopifyInstallApiTests
         Assert.Equal(HttpStatusCode.Forbidden, tenantRoute.StatusCode);
         Assert.Contains("X-Qep-Client", await tenantRoute.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
         Assert.Equal(1, await CountInstallsAsync(connectionString));
+    }
+
+    [Fact]
+    public async Task CompleteThenGetInstallListsUserTenantsWithFlags()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        factory.ShopifyHandler.ScriptHappyInstall(Shop, SentinelShopifyAccessToken);
+        var tenant = await RegisterTenantAsync(factory);
+        var advisorTenant = await RegisterTenantAsync(factory);
+        var moduleOffTenant = await RegisterTenantAsync(factory);
+        await SeedMembershipAsync(connectionString, advisorTenant.TenantId, tenant.OwnerUserId, "advisor");
+        await SeedMembershipAsync(connectionString, moduleOffTenant.TenantId, tenant.OwnerUserId, "admin");
+        await SetModuleStatusAsync(connectionString, moduleOffTenant.TenantId, "shopify", "inactive");
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var state = await StartFromTenantAsync(owner, tenant.TenantId);
+        using var anonymous = factory.CreateClient();
+
+        var completed = await SendAsync(anonymous, HttpMethod.Post, CompleteUrl, CompleteBody(state));
+        var completedText = await completed.Content.ReadAsStringAsync(Ct);
+
+        Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
+        Assert.DoesNotContain("SENTINEL", completedText, StringComparison.Ordinal);
+        var install = await completed.Content.ReadFromJsonAsync<ShopifyInstallCompletedResponse>(Ct);
+        Assert.NotNull(install);
+        Assert.Equal(Shop, install.ShopDomain);
+        Assert.Equal("Mi Tienda", install.ShopName);
+        Assert.Equal(tenant.TenantId, install.InitiatedTenantId);
+        Assert.Null(install.LinkedTenant);
+
+        // La fila: token cifrado (nunca el texto), la tienda y +7 días desde el canje.
+        Assert.Equal(1, await ScalarAsync<long>(
+            connectionString,
+            """
+            SELECT count(*) FROM integrations.shopify_installs
+            WHERE id = @id AND shop_id = '12345678' AND shop_name = 'Mi Tienda' AND scopes = 'read_orders,read_customers'
+              AND access_token_protected IS NOT NULL AND key_id = 'test'
+              AND expires_at > now() + interval '6 days 23 hours' AND expires_at <= now() + interval '7 days'
+              AND position(convert_to(@token, 'UTF8') in access_token_protected) = 0
+            """,
+            ("id", install.InstallId),
+            ("token", SentinelShopifyAccessToken)));
+
+        // A Shopify: el canje con el par de la app y el code; la Admin API con el token recién canjeado.
+        var requests = factory.ShopifyHandler.Requests.ToArray();
+        Assert.Equal(2, requests.Length);
+        Assert.Equal($"https://{Shop}/admin/oauth/access_token", requests[0].Uri!.ToString());
+        Assert.Contains(SentinelShopifyCode, requests[0].Body, StringComparison.Ordinal);
+        Assert.Contains(SentinelShopifyClientSecret, requests[0].Body, StringComparison.Ordinal);
+        Assert.Equal($"https://{Shop}/admin/api/2026-10/graphql.json", requests[1].Uri!.ToString());
+        Assert.Equal(SentinelShopifyAccessToken, requests[1].AccessToken);
+
+        var read = await owner.GetAsync(InstallUrl(install.InstallId), Ct);
+        var readText = await read.Content.ReadAsStringAsync(Ct);
+
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        Assert.DoesNotContain("SENTINEL", readText, StringComparison.Ordinal);
+        var view = await read.Content.ReadFromJsonAsync<ShopifyInstallResponse>(Ct);
+        Assert.NotNull(view);
+        Assert.Equal(Shop, view.ShopDomain);
+        Assert.Equal("Mi Tienda", view.ShopName);
+        Assert.Equal(install.ExpiresAt, view.ExpiresAt);
+        Assert.Equal(tenant.TenantId, view.InitiatedTenantId);
+        Assert.Equal(3, view.Tenants.Count);
+        Assert.Equal((true, true), Flags(view, tenant.TenantId));
+        Assert.Equal((false, true), Flags(view, advisorTenant.TenantId));
+        Assert.Equal((true, false), Flags(view, moduleOffTenant.TenantId));
+        Assert.All(view.Tenants, row => Assert.Equal("Integrations Test Org", row.Name));
+
+        static (bool CanLink, bool ModuleEnabled) Flags(ShopifyInstallResponse view, Guid tenantId)
+        {
+            var row = view.Tenants.Single(candidate => candidate.TenantId == tenantId);
+            return (row.CanLink, row.ModuleEnabled);
+        }
+    }
+
+    [Fact]
+    public async Task GetInstallUnknownReturns404()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId);
+        using var manager = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        // Una fila sin canjear: su id nunca salió del backend, así que tampoco existe para el GET.
+        await StartFromTenantAsync(manager, tenant.TenantId);
+        var notExchanged = await ScalarAsync<Guid>(connectionString, "SELECT id FROM integrations.shopify_installs");
+
+        var unknown = await client.GetAsync(InstallUrl(Guid.NewGuid()), Ct);
+        var pending = await client.GetAsync(InstallUrl(notExchanged), Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+        Assert.Equal("integrations.shopify.install_not_found", (await ProblemAsync(unknown)).Code);
+        Assert.Equal(HttpStatusCode.NotFound, pending.StatusCode);
+        Assert.Equal("integrations.shopify.install_not_found", (await ProblemAsync(pending)).Code);
+    }
+
+    // Review Focus 5 por HTTP: el doble clic del callback. El segundo no llama a Shopify ni toca la fila.
+    [Fact]
+    public async Task CompleteSameStateTwiceReturns404AndExchangesOnce()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        factory.ShopifyHandler.ScriptHappyInstall(Shop, SentinelShopifyAccessToken);
+        var tenant = await RegisterTenantAsync(factory);
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var state = await StartFromTenantAsync(owner, tenant.TenantId);
+        using var anonymous = factory.CreateClient();
+
+        var first = await SendAsync(anonymous, HttpMethod.Post, CompleteUrl, CompleteBody(state));
+        var second = await SendAsync(anonymous, HttpMethod.Post, CompleteUrl, CompleteBody(state));
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, second.StatusCode);
+        Assert.Equal("integrations.shopify.install_not_found", (await ProblemAsync(second)).Code);
+        Assert.Single(factory.ShopifyHandler.Requests, request => request.Uri!.AbsolutePath == "/admin/oauth/access_token");
+        Assert.Equal(1, await CountInstallsAsync(connectionString));
+    }
+
+    [Fact]
+    public async Task CompleteRejectedByShopifyReturns422AndKeepsTheRowUnexchanged()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        factory.ShopifyHandler.Respond("/admin/oauth/access_token$", HttpStatusCode.BadRequest, $$"""{"error":"invalid_request","error_description":"{{SentinelShopifyCode}}"}""");
+        var tenant = await RegisterTenantAsync(factory);
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var state = await StartFromTenantAsync(owner, tenant.TenantId);
+        using var anonymous = factory.CreateClient();
+
+        var response = await SendAsync(anonymous, HttpMethod.Post, CompleteUrl, CompleteBody(state));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("integrations.shopify.code_exchange_failed", (await ProblemAsync(response)).Code);
+        Assert.DoesNotContain("SENTINEL", await response.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
+        // El 422 queda en platform.request_failures: sin el code, ni el cuerpo de Shopify que lo repite.
+        Assert.DoesNotContain("SENTINEL", await RequestFailuresTextAsync(connectionString), StringComparison.Ordinal);
+        Assert.Equal(1, await ScalarAsync<long>(
+            connectionString, "SELECT count(*) FROM integrations.shopify_installs WHERE access_token_protected IS NULL AND shop_id IS NULL"));
+    }
+
+    // Ruling S4: el canje lo llama el SPA con fetch —Shopify sólo redirige el navegador a /shopify/callback, una página del
+    // SPA— y el SPA manda X-Qep-Client siempre, así que no entra en la lista de exentos. Con el stub apagado: sin el
+    // header, 403 de CSRF; con él, pasa sin sesión.
+    [Fact]
+    public async Task CompleteIsAnonymousButKeepsTheCsrfHeader()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        factory.ShopifyHandler.ScriptHappyInstall(Shop, SentinelShopifyAccessToken);
+        var tenant = await RegisterTenantAsync(factory);
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var state = await StartFromTenantAsync(owner, tenant.TenantId);
+        using var realAuth = factory.WithRealAuthentication();
+        using var client = realAuth.CreateClient();
+
+        var withoutHeader = await client.PostAsJsonAsync(CompleteUrl, CompleteBody(state), Ct);
+        var withHeader = await SendAsync(client, HttpMethod.Post, CompleteUrl, CompleteBody(state));
+
+        Assert.Equal(HttpStatusCode.Forbidden, withoutHeader.StatusCode);
+        Assert.Contains("X-Qep-Client", await withoutHeader.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.OK, withHeader.StatusCode);
     }
 }

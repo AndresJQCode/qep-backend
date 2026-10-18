@@ -116,6 +116,18 @@ public sealed class ShopifyInstall
         ArgumentNullException.ThrowIfNull(shopName);
         ArgumentNullException.ThrowIfNull(scopes);
         ArgumentNullException.ThrowIfNull(token);
+        // El nombre sólo se muestra y se recorta; el id y los scopes no se pueden recortar sin mentir. El gateway ya los
+        // rechaza antes (ShopifyGatewayException Invalid): esto es la última defensa contra un 500 de la base.
+        if (shopId.Length > ShopIdMaxLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(shopId), "The Shopify shop id exceeds its column.");
+        }
+
+        if (scopes.Length > ScopesMaxLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(scopes), "The Shopify scopes exceed their column.");
+        }
+
         if (!CanBeExchanged(now))
         {
             throw new InvalidOperationException("The install was already exchanged or expired.");

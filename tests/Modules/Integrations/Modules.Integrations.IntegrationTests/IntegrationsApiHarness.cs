@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
 using Modules.Integrations.Infrastructure.Meta;
+using Modules.Integrations.Infrastructure.Shopify;
 using Modules.Integrations.Infrastructure.Zenvia;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -197,6 +198,10 @@ internal static class IntegrationsApiHarness
         /// instagram) lo ve este otro: ninguna prueba llega a Instagram.</summary>
         public FakeMetaGraphHandler InstagramHandler { get; } = new();
 
+        /// <summary>Lo que sale hacia las tiendas de Shopify (canje, Admin API, webhooks) lo ve este: ninguna prueba llega a
+        /// *.myshopify.com.</summary>
+        public FakeShopifyHandler ShopifyHandler { get; } = new();
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
@@ -253,6 +258,8 @@ internal static class IntegrationsApiHarness
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
                 services.AddHttpClient(InstagramGraphClient.HttpClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => InstagramHandler);
+                services.AddHttpClient(ShopifyAdminGateway.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => ShopifyHandler);
             });
         }
     }

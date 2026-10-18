@@ -50,6 +50,11 @@ public static class IntegrationsErrorCodes
     public const string ShopifyInstallExpired = "integrations.shopify.install_expired";
     /// <summary>403: la instalación se inició desde otro tenant.</summary>
     public const string ShopifyInstallTenantMismatch = "integrations.shopify.install_tenant_mismatch";
+    /// <summary>422: Shopify no canjeó el <c>code</c> o no describió la tienda con el token recién canjeado; los dos piden
+    /// volver a empezar, porque el <c>code</c> ya se gastó.</summary>
+    public const string ShopifyCodeExchangeFailed = "integrations.shopify.code_exchange_failed";
+    /// <summary>422: lo concedido no contiene <c>Shopify:App:Scopes</c>.</summary>
+    public const string ShopifyScopesMissing = "integrations.shopify.scopes_missing";
 }
 
 /// <summary>Lo que va a <c>last_failure_code</c> (varchar(64)): el resultado, no el código HTTP.</summary>

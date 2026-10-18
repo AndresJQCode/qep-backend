@@ -613,6 +613,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<StartShopifyInstallCommand, ShopifyAuthorizeResponse>,
             StartShopifyInstallHandler>();
+        // El canje del code y la lectura de la instalación (§4.3 pasos 4 y 5).
+        services.AddScoped<
+            ICommandHandler<CompleteShopifyInstallCommand, ShopifyInstallCompletedResponse>,
+            CompleteShopifyInstallHandler>();
+        services.AddScoped<
+            IQueryHandler<GetShopifyInstallQuery, ShopifyInstallResponse>,
+            GetShopifyInstallHandler>();
         // Messaging (spec 2026-10-09): el webhook de Meta, anónimo y firmado.
         services.AddScoped<IQueryHandler<VerifyWebhookQuery, string?>, VerifyWebhookHandler>();
         services.AddScoped<ICommandHandler<ReceiveWebhookCommand, bool>, ReceiveWebhookHandler>();

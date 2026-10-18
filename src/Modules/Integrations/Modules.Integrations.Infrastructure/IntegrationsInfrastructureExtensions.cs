@@ -109,6 +109,12 @@ public static class IntegrationsInfrastructureExtensions
         services.AddSingleton<IShopifyAppSettings, ShopifyAppSettings>();
         // Spec 2026-10-15 §4.3: la instalación en curso, en la misma unidad de trabajo que las conexiones.
         services.AddScoped<IShopifyInstallRepository, ShopifyInstallRepository>();
+        // Spec 2026-10-15 §4.3 paso 4 y §4.1: el canje, la Admin API y los webhooks de cada tienda, con el patrón de Graph
+        // (sin redirecciones, 10 s, sin los loggers que pueden registrar el X-Shopify-Access-Token).
+        services.AddHttpClient(ShopifyAdminGateway.HttpClientName, ShopifyAdminGateway.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => ShopifyAdminGateway.CreatePrimaryHandler())
+            .RemoveAllLoggers();
+        services.AddScoped<IShopifyAdminGateway, ShopifyAdminGateway>();
 
         return services;
     }

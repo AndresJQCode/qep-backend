@@ -14,6 +14,10 @@ public static class IntegrationsEndpoints
     /// cambiarla acá exige cambiarla allá.</summary>
     public const string ShopifyInstallStartRoute = "/api/v1/integrations/shopify/install/start";
 
+    /// <summary>Spec 2026-10-15 §7: el canje, anónimo. <b>No</b> está exento de CSRF: lo llama el SPA con fetch (Shopify sólo
+    /// redirige el navegador a la página <c>/shopify/callback</c> del SPA), y el SPA manda <c>X-Qep-Client</c> siempre.</summary>
+    public const string ShopifyInstallCompleteRoute = "/api/v1/integrations/shopify/install/complete";
+
     public static IEndpointRouteBuilder MapIntegrationsEndpoints(this IEndpointRouteBuilder endpoints)
     {
         // Tenant en la ruta, como pos y companies. Cada endpoint declara su propio
@@ -137,8 +141,38 @@ public static class IntegrationsEndpoints
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        endpoints.MapPost(ShopifyInstallCompleteRoute, CompleteShopifyInstallAsync)
+            .AllowAnonymous()
+            .RequireRateLimiting(rateLimiterPolicy)
+            .WithTags("Integrations")
+            .Accepts<ShopifyInstallCompleteRequest>("application/json")
+            .Produces<ShopifyInstallCompletedResponse>()
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
+        // §7: sólo autenticación. El tenant todavía no está elegido: la respuesta lista los del usuario.
+        endpoints.MapGet("/api/v1/integrations/shopify/installs/{installId:guid}", GetShopifyInstallAsync)
+            .RequireAuthorization()
+            .WithTags("Integrations")
+            .Produces<ShopifyInstallResponse>()
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         return endpoints;
     }
+
+    private static async Task<IResult> CompleteShopifyInstallAsync(
+        ShopifyInstallCompleteRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new CompleteShopifyInstallCommand(
+                request.Code, request.Shop, request.State, request.Hmac, request.Timestamp, request.RedirectUri, request.Host),
+            cancellationToken));
+
+    private static async Task<IResult> GetShopifyInstallAsync(
+        Guid installId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetShopifyInstallQuery(installId), cancellationToken));
 
     private static async Task<IResult> StartShopifyInstallForTenantAsync(
         Guid tenantId, ShopifyInstallStartForTenantRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -300,3 +334,11 @@ public sealed record ShopifyInstallStartForTenantRequest(string? Shop, string? R
 /// <summary>El cuerpo del inicio B (spec 2026-10-15 §7): lo que Shopify puso en la App URL, tal cual, más el retorno del
 /// SPA. Nada de esto es secreto: el HMAC prueba que lo firmó Shopify.</summary>
 public sealed record ShopifyInstallStartRequest(string? Shop, string? Hmac, string? Timestamp, string? Host, string? RedirectUri);
+
+/// <summary>El cuerpo del canje (spec 2026-10-15 §7): lo que Shopify puso en el callback, tal cual, más el retorno con el
+/// que se pidió la autorización. <see cref="Host"/> no está en el §7: va si Shopify lo puso, porque entra en la firma.</summary>
+public sealed record ShopifyInstallCompleteRequest(
+    string? Code, string? Shop, string? State, string? Hmac, string? Timestamp, string? RedirectUri, string? Host = null)
+{
+    public override string ToString() => $"ShopifyInstallCompleteRequest {{ Shop = {Shop}, RedirectUri = {RedirectUri} }}";
+}
