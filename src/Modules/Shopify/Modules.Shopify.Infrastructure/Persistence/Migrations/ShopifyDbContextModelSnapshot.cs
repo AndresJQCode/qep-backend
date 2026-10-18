@@ -277,6 +277,11 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("reconcile_lease_until");
 
+                    b.Property<string>("ShopDomain")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("shop_domain");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
@@ -296,6 +301,9 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
 
                     b.HasKey("ConnectionId")
                         .HasName("PK_stores");
+
+                    b.HasIndex("ShopDomain")
+                        .HasDatabaseName("IX_shopify_stores_shop_domain");
 
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_stores_tenant");

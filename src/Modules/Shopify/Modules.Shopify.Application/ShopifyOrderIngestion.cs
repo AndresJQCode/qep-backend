@@ -17,13 +17,14 @@ namespace Modules.Shopify.Application;
 /// el mismo pedido o la misma tienda creados a la vez) descarta lo cargado, relee y vuelve a aplicar, hasta
 /// <see cref="MaxConcurrencyAttempts"/> veces; si sigue chocando, lanza y la entrega vuelve con su lease.</item>
 /// </list>
-/// Los cambios de pago y cancelación sobre una fila <c>Imported</c> (§6.3) son de la tarea 14: <c>ApplySnapshot</c> pisa
-/// <c>FinancialStatus</c> y <c>CancelledAt</c>, así que quien los conecte acá tiene que leer el estado anterior antes de aplicar.
+/// Los cambios de pago y cancelación sobre una fila que ya existía (§6.3) van a <see cref="IShopifyOrderChangeReaction"/> con el
+/// estado anterior capturado antes de <c>ApplySnapshot</c>, y antes del guardado que persiste el snapshot (Ruling S14).
 /// </summary>
 public sealed class ShopifyOrderIngestion(
     IShopifyStoreRepository stores,
     IShopifyOrderMirrorRepository mirrors,
     IShopifyOrderImporter importer,
+    IShopifyOrderChangeReaction reaction,
     IShopifyUnitOfWork unitOfWork,
     IClock clock)
 {
@@ -70,7 +71,15 @@ public sealed class ShopifyOrderIngestion(
             stores.Add(store);
         }
 
+        // Ruling S16: el dominio queda en la tienda para que shop/redact la encuentre aunque la conexión se borre.
+        if (!string.IsNullOrWhiteSpace(connection.ShopDomain)
+            && !string.Equals(store.ShopDomain, connection.ShopDomain.Trim().ToLowerInvariant(), StringComparison.Ordinal))
+        {
+            store.RecordShopDomain(connection.ShopDomain);
+        }
+
         var row = await mirrors.FindAsync(connection.TenantId, connection.ConnectionId, snapshot.OrderId, cancellationToken);
+        ShopifyMirrorState? previous = null;
         bool applied;
         if (row is null)
         {
@@ -81,8 +90,17 @@ public sealed class ShopifyOrderIngestion(
         }
         else
         {
+            // Ruling S14: ApplySnapshot pisa FinancialStatus y CancelledAt; lo que §6.3 compara se lee antes.
+            previous = ShopifyMirrorState.Of(row);
             var existing = row;
             applied = Guarded(() => existing.ApplySnapshot(payload, snapshot.UpdatedAt, header));
+        }
+
+        // Ruling S14: la reacción va antes del guardado, en la misma unidad de trabajo. Si falla no se guarda el snapshot, la
+        // entrega vuelve con su lease y el reintento ve el mismo estado anterior: el cambio no se pierde.
+        if (applied && previous is not null)
+        {
+            await reaction.ReactAsync(new ShopifyOrderChange(connection, store, row, previous, snapshot), cancellationToken);
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);

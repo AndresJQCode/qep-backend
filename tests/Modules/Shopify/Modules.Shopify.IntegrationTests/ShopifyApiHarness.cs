@@ -452,6 +452,39 @@ internal static class ShopifyApiHarness
     private sealed record IdDto(Guid Id);
 }
 
+/// <summary>Guarda en memoria lo que el host loguea, para afirmar sobre los avisos (y que no lleven el cuerpo).</summary>
+internal sealed class RecordingLoggerProvider : Microsoft.Extensions.Logging.ILoggerProvider
+{
+    private readonly System.Collections.Concurrent.ConcurrentQueue<(string Category, Microsoft.Extensions.Logging.LogLevel Level, string Message)> entries = new();
+
+    public IReadOnlyList<(string Category, Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries => [.. entries];
+
+    public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => new Logger(categoryName, entries);
+
+    public void Dispose()
+    {
+    }
+
+    private sealed class Logger(
+        string category,
+        System.Collections.Concurrent.ConcurrentQueue<(string Category, Microsoft.Extensions.Logging.LogLevel Level, string Message)> entries)
+        : Microsoft.Extensions.Logging.ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            Microsoft.Extensions.Logging.LogLevel logLevel,
+            Microsoft.Extensions.Logging.EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            entries.Enqueue((category, logLevel, formatter(state, exception) + (exception is null ? string.Empty : " " + exception)));
+    }
+}
+
 /// <summary>
 /// El tenant de una tienda lista para importar: <c>shopify</c> prendido, la tienda enlazada (conexión y ruta), un asesor activo, la
 /// empresa con cuenta COP, una clasificación, la tasa del envío y los productos de los SKU de los fixtures. Lo usan desde esta tarea

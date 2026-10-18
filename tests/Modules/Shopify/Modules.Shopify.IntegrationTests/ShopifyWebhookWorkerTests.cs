@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Shopify.Application;
 using Modules.Shopify.Domain;
@@ -25,7 +26,7 @@ public sealed class ShopifyWebhookWorkerTests
         var ports = new Ports();
         using var factory = ports.Factory(connectionString);
         var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
-        ports.Directory.Connections[Shop] = new ShopifyConnectionRef(world.TenantId, world.ConnectionId, "954889", true, "shpat_sentinel_token");
+        ports.Directory.Connections[Shop] = new ShopifyConnectionRef(world.TenantId, world.ConnectionId, "954889", Shop, true, "shpat_sentinel_token");
         using var client = factory.CreateClient();
 
         var response = await PostWebhookAsync(client, "orders/create", "wh-1", OrderFixture("taxes-included"));
@@ -127,6 +128,74 @@ public sealed class ShopifyWebhookWorkerTests
         Assert.Equal(1L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM shopify.stores"));
     }
 
+    // Ruling S14 contra Postgres: la reacción de §6.3 falla una vez. El snapshot no se guardó sin ella, así que la entrega vuelve
+    // con su lease, la fila sigue con el estado anterior y el reintento vuelve a ver el cambio.
+    [Fact]
+    public async Task WorkerFailedReactionIsSeenAgainOnRetry()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var ports = new Ports().WithShop(Guid.CreateVersion7(), Guid.CreateVersion7());
+        ports.Importer.OnImport = (row, _) =>
+        {
+            row.MarkImported(Guid.CreateVersion7(), Guid.CreateVersion7(), 0m, null, DateTimeOffset.UtcNow);
+            return Task.CompletedTask;
+        };
+        ports.Reaction.FailuresLeft = 1;
+        using var factory = ports.Factory(connectionString);
+        using var client = factory.CreateClient();
+        await PostWebhookAsync(client, "orders/create", "wh-create", OrderFixture("taxes-included"));
+        await DrainAsync(factory);
+        Assert.Equal("Imported|paid", await RowStateAsync(connectionString));
+
+        await PostWebhookAsync(client, "orders/updated", "wh-refund", Refunded());
+        await DrainAsync(factory);
+
+        Assert.Equal("pending", await DeliveryAsync(connectionString, "wh-refund"));
+        Assert.Equal("Imported|paid", await RowStateAsync(connectionString));
+
+        await ExecuteAsync(connectionString, "UPDATE shopify.webhook_deliveries SET lease_until = now() - interval '1 second' WHERE webhook_id = 'wh-refund'");
+        await DrainAsync(factory);
+
+        Assert.Equal("2|none|none", await DeliveryAsync(connectionString, "wh-refund"));
+        Assert.Equal("Imported|refunded", await RowStateAsync(connectionString));
+        Assert.Equal(["paid", "paid"], ports.Reaction.Previous.Select(state => state.FinancialStatus));
+    }
+
+    // Ruling S16 contra Postgres: la conexión se borró y la ruta cayó en cascada; shop/redact encuentra la tienda por su dominio.
+    [Fact]
+    public async Task WorkerShopRedactWithTheConnectionDeletedDeletesByDomain()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var ports = new Ports().WithShop(Guid.CreateVersion7(), Guid.CreateVersion7(), operational: false);
+        using var factory = ports.Factory(connectionString);
+        using var client = factory.CreateClient();
+        await PostWebhookAsync(client, "orders/create", "wh-order", OrderFixture("taxes-included"));
+        await DrainAsync(factory);
+        Assert.Equal(1L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM shopify.orders"));
+        ports.Directory.Connections.Clear();
+
+        await PostWebhookAsync(client, "shop/redact", "wh-redact", """{"shop_id":954889,"shop_domain":"mi-tienda.myshopify.com"}"""u8.ToArray());
+        await DrainAsync(factory);
+
+        Assert.Equal("1|none|none", await DeliveryAsync(connectionString, "wh-redact"));
+        Assert.Equal(0L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM shopify.orders"));
+        Assert.Equal("wh-redact", await ScalarAsync<string>(connectionString, "SELECT string_agg(webhook_id, ',') FROM shopify.webhook_deliveries"));
+        Assert.Equal(Shop, await ScalarAsync<string>(connectionString, "SELECT shop_domain FROM shopify.stores"));
+    }
+
+    private static byte[] Refunded()
+    {
+        var node = JsonNode.Parse(OrderFixture("taxes-included"))!;
+        node["updated_at"] = "2026-10-01T11:00:00-05:00";
+        node["financial_status"] = "refunded";
+        return System.Text.Encoding.UTF8.GetBytes(node.ToJsonString());
+    }
+
+    private static Task<string> RowStateAsync(string connectionString) =>
+        ScalarAsync<string>(connectionString, "SELECT import_state || '|' || coalesce(financial_status, '') FROM shopify.orders");
+
     private static async Task DrainAsync(QepApiFactory factory)
     {
         var worker = ActivatorUtilities.CreateInstance<ShopifyWebhookDeliveryWorker>(factory.Services);
@@ -152,9 +221,11 @@ public sealed class ShopifyWebhookWorkerTests
 
         public RecordingImporter Importer { get; } = new();
 
+        public FailingOnceReaction Reaction { get; } = new();
+
         public Ports WithShop(Guid tenantId, Guid connectionId, bool operational = true)
         {
-            Directory.Connections[Shop] = new ShopifyConnectionRef(tenantId, connectionId, "954889", operational, operational ? "shpat_x" : null);
+            Directory.Connections[Shop] = new ShopifyConnectionRef(tenantId, connectionId, "954889", Shop, operational, operational ? "shpat_x" : null);
             return this;
         }
 
@@ -168,6 +239,7 @@ public sealed class ShopifyWebhookWorkerTests
                 services.AddSingleton<IShopifyConnectionDirectory>(Directory);
                 services.AddSingleton<IShopifyConnectionHealth>(Health);
                 services.AddSingleton<IShopifyOrderImporter>(Importer);
+                services.AddSingleton<IShopifyOrderChangeReaction>(Reaction);
             },
         };
     }
@@ -185,6 +257,25 @@ public sealed class ShopifyWebhookWorkerTests
         public Task ReportUninstalledAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task ReportRejectedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class FailingOnceReaction : IShopifyOrderChangeReaction
+    {
+        public List<ShopifyMirrorState> Previous { get; } = [];
+
+        public int FailuresLeft { get; set; }
+
+        public Task ReactAsync(ShopifyOrderChange change, CancellationToken cancellationToken)
+        {
+            Previous.Add(change.Previous);
+            if (FailuresLeft > 0)
+            {
+                FailuresLeft--;
+                throw new InvalidOperationException("Quotations is down.");
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class RecordingImporter : IShopifyOrderImporter

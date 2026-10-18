@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Modules.Shopify.Application;
 using static Modules.Shopify.IntegrationTests.ShopifyApiHarness;
 
 namespace Modules.Shopify.IntegrationTests;
@@ -114,5 +117,98 @@ public sealed class ShopifyWebhookApiTests
         Assert.Equal(1L, await CountDeliveriesAsync(connectionString));
         Assert.Equal(HttpStatusCode.Forbidden, tenantRoute.StatusCode);
         Assert.Contains("X-Qep-Client", await tenantRoute.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
+    }
+
+    // Ruling S15: un descarte determinista (sin X-Shopify-Webhook-Id) responde 200 —reintentar da lo mismo— pero deja un aviso en
+    // el log, con el motivo y sin el cuerpo.
+    [Fact]
+    public async Task WebhookSignedButNotEnqueueableReturns200NoRowAndWarns()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var logs = new RecordingLoggerProvider();
+        using var factory = new QepApiFactory(connectionString) { ConfigureTestServices = services => services.AddSingleton<ILoggerProvider>(logs) };
+        using var client = factory.CreateClient();
+
+        var response = await PostWebhookAsync(client, "customers/data_request", webhookId: "", Encoding.UTF8.GetBytes(SecretBody));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(0L, await CountDeliveriesAsync(connectionString));
+        var warning = Assert.Single(logs.Entries, entry => entry.Level == LogLevel.Warning && entry.Message.Contains("missing_headers", StringComparison.Ordinal));
+        Assert.Contains("customers/data_request", warning.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(logs.Entries, entry => entry.Message.Contains(SecretMarker, StringComparison.Ordinal));
+    }
+
+    // Ruling S15: un fallo al encolar (la base) responde no-2xx para que Shopify reintente, también con su aviso sin el cuerpo.
+    [Fact]
+    public async Task WebhookEnqueueFailureReturnsNon2xxAndWarns()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var logs = new RecordingLoggerProvider();
+        using var factory = new QepApiFactory(connectionString)
+        {
+            ConfigureTestServices = services =>
+            {
+                services.AddSingleton<ILoggerProvider>(logs);
+                services.AddScoped<IShopifyWebhookDeliveries, FailingDeliveries>();
+            },
+        };
+        using var client = factory.CreateClient();
+
+        var response = await PostWebhookAsync(client, "customers/redact", "wh-down", Encoding.UTF8.GetBytes(SecretBody));
+
+        Assert.False(response.IsSuccessStatusCode, $"Expected a non-2xx, got {(int)response.StatusCode}.");
+        Assert.Contains(logs.Entries, entry => entry.Level == LogLevel.Warning
+            && entry.Message.Contains("wh-down", StringComparison.Ordinal)
+            && entry.Message.Contains("customers/redact", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs.Entries, entry => entry.Message.Contains(SecretMarker, StringComparison.Ordinal));
+    }
+
+    // Minor 4: "\u0000" pasa JsonDocument y lo rechaza el jsonb. Antes, 500 y 48 horas de reintentos; ahora, descarte determinista.
+    [Fact]
+    public async Task WebhookBodyWithANulEscapeReturns200NoRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        using var client = factory.CreateClient();
+
+        var response = await PostWebhookAsync(
+            client, "orders/create", Guid.CreateVersion7().ToString(), Encoding.UTF8.GetBytes("""{"id":1,"note":"a\u0000b"}"""));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(0L, await CountDeliveriesAsync(connectionString));
+    }
+
+    // Minor 5: la cabecera del dominio no va firmada; un cuerpo firmado de una tienda reenviado con la cabecera de otra no entra.
+    [Fact]
+    public async Task WebhookShopDomainMismatchReturns200NoRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        using var client = factory.CreateClient();
+
+        var response = await PostWebhookAsync(
+            client, "shop/redact", Guid.CreateVersion7().ToString(),
+            Encoding.UTF8.GetBytes("""{"shop_id":1,"shop_domain":"otra-tienda.myshopify.com"}"""));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(0L, await CountDeliveriesAsync(connectionString));
+    }
+
+    private const string SecretMarker = "comprador-secreto@example.com";
+
+    private const string SecretBody =
+        """{"shop_id":1,"shop_domain":"mi-tienda.myshopify.com","customer":{"id":7,"email":""" + "\"" + SecretMarker + "\"}}";
+
+    private sealed class FailingDeliveries : IShopifyWebhookDeliveries
+    {
+        public Task<bool> EnqueueAsync(ShopifyWebhookEnvelope envelope, DateTimeOffset receivedAt, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("The database is down.");
+
+        public Task<int> DeleteByShopDomainAsync(string shopDomain, long exceptDeliveryId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("The database is down.");
     }
 }

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure.Parsing;
@@ -48,6 +49,8 @@ public static class ShopifyInfrastructureExtensions
     /// </summary>
     public static IServiceCollection AddShopifyWebhookProcessing(this IServiceCollection services)
     {
+        // Ruling S14: la reacción de §6.3 vacía; la tarea 14 registra la suya (gana el último registro).
+        services.TryAddScoped<IShopifyOrderChangeReaction, NoShopifyOrderChangeReaction>();
         services.AddScoped<ShopifyOrderIngestion>();
         services.AddScoped<ShopifyWebhookDeliveryProcessor>();
         return services;

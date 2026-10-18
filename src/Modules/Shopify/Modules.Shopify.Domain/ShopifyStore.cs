@@ -13,6 +13,7 @@ public sealed class ShopifyStore
 
     public const int AttributeKeyMaxLength = 100;
     public const int IdentificationTypeMaxLength = 16;
+    public const int ShopDomainMaxLength = 255;
 
     private ShopifyStore()
     {
@@ -22,6 +23,11 @@ public sealed class ShopifyStore
     public Guid ConnectionId { get; private set; }
 
     public Guid TenantId { get; private set; }
+
+    /// <summary>Ruling S16: el dominio <c>*.myshopify.com</c> en minúsculas, anotado en el primer contacto del webhook. Con él
+    /// <c>shop/redact</c> encuentra la tienda aunque la conexión de Integrations y su ruta ya no existan (§5.5). Nulo en una
+    /// tienda que todavía no recibió nada.</summary>
+    public string? ShopDomain { get; private set; }
 
     /// <summary>Membresía del asesor a cuyo nombre entran los pedidos. Se valida activa al guardar.</summary>
     public Guid? AdvisorMembershipId { get; private set; }
@@ -53,6 +59,19 @@ public sealed class ShopifyStore
 
     /// <summary>Membresía de quien guardó por última vez; nula mientras la fila sigue vacía.</summary>
     public Guid? UpdatedBy { get; private set; }
+
+    /// <summary>Anota el dominio de la tienda. No sube <see cref="Version"/>: la versión es el <c>If-Match</c> del <c>PUT</c> de la
+    /// configuración, y un dato que el usuario no edita no puede invalidar lo que está editando.</summary>
+    public void RecordShopDomain(string shopDomain)
+    {
+        var normalized = shopDomain?.Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(normalized) || normalized.Length > ShopDomainMaxLength)
+        {
+            throw new ArgumentException($"The shop domain is required and cannot exceed {ShopDomainMaxLength} characters.", nameof(shopDomain));
+        }
+
+        ShopDomain = normalized;
+    }
 
     public bool IsConfigured => AdvisorMembershipId is not null && Billing is not null;
 

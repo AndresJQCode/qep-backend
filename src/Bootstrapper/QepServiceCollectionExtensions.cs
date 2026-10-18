@@ -767,7 +767,7 @@ public static class QepServiceCollectionExtensions
         // el worker (AddShopifyWebhookProcessing/AddShopifyWebhookWorker) se suman cuando sus puertos tengan adaptador (tareas 12
         // y 13): hasta entonces las entregas quedan encoladas.
         services.AddSingleton<IShopifyAppSecret, ShopifyAppSecret>();
-        services.AddScoped<ICommandHandler<ReceiveShopifyWebhookCommand, bool>, ReceiveShopifyWebhookHandler>();
+        services.AddScoped<ICommandHandler<ReceiveShopifyWebhookCommand, ShopifyWebhookReceipt>, ReceiveShopifyWebhookHandler>();
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los

@@ -12,7 +12,7 @@ namespace Modules.Shopify.Application;
 /// <item><c>app/uninstalled</c> → la conexión queda <c>NeedsAttention</c> con <c>app_uninstalled</c> (adaptador de la tarea 12).</item>
 /// <item>Cumplimiento: <c>customers/data_request</c> y <c>customers/redact</c> sólo se auditan (D-S9), con el dominio, el id del
 /// cliente en Shopify y los ids de pedidos, nunca su email ni su teléfono; <c>shop/redact</c> borra el espejo y las entregas de la
-/// tienda (no la tienda, la conexión, ni los pedidos o clientes de QEP).</item>
+/// tienda (no la tienda, la conexión, ni los pedidos o clientes de QEP), resuelta por su dominio y no por la ruta (Ruling S16).</item>
 /// <item><c>orders/*</c> → <see cref="ShopifyOrderIngestion"/>: espejo siempre, importación si la conexión es operativa.</item>
 /// </list>
 /// Un payload ilegible o una cabecera que el dominio no guarda (<see cref="ShopifyPayloadException"/>) cierra la entrega con
@@ -24,6 +24,7 @@ public sealed class ShopifyWebhookDeliveryProcessor(
     IShopifyConnectionHealth health,
     IShopifyOrderPayloadParser parser,
     ShopifyOrderIngestion ingestion,
+    IShopifyStoreRepository stores,
     IShopifyOrderMirrorRepository mirrors,
     IShopifyWebhookDeliveries deliveries,
     IShopifyAuditRecorder auditRecorder,
@@ -38,6 +39,12 @@ public sealed class ShopifyWebhookDeliveryProcessor(
     public async Task<ShopifyDeliveryResult> ProcessAsync(ShopifyWebhookDelivery delivery, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(delivery);
+        if (string.Equals(delivery.Topic, ShopifyWebhookTopics.ShopRedact, StringComparison.Ordinal))
+        {
+            await RedactShopAsync(delivery, cancellationToken);
+            return ShopifyDeliveryResult.Processed;
+        }
+
         var connection = await connections.FindByShopDomainAsync(delivery.ShopDomain, cancellationToken);
         if (connection is null)
         {
@@ -59,10 +66,6 @@ public sealed class ShopifyWebhookDeliveryProcessor(
                     await AuditComplianceAsync(
                         connection, delivery, ShopifyAuditActions.ComplianceCustomersRedact, "orders_to_redact", cancellationToken);
                     return ShopifyDeliveryResult.Processed;
-                case ShopifyWebhookTopics.ShopRedact:
-                    await mirrors.DeleteByConnectionAsync(connection.TenantId, connection.ConnectionId, cancellationToken);
-                    await deliveries.DeleteByShopDomainAsync(delivery.ShopDomain, delivery.Id, cancellationToken);
-                    return ShopifyDeliveryResult.Processed;
                 case var topic when ShopifyWebhookTopics.IsOrders(topic):
                     await ingestion.ApplyAsync(connection, parser.ParseRest(delivery.Payload), cancellationToken);
                     return ShopifyDeliveryResult.Processed;
@@ -73,6 +76,31 @@ public sealed class ShopifyWebhookDeliveryProcessor(
         catch (ShopifyPayloadException exception)
         {
             return ShopifyDeliveryResult.Failed(Describe(exception));
+        }
+    }
+
+    /// <summary>
+    /// Ruling S16 y §5.5: <c>shop/redact</c> borra el espejo y las entregas de la tienda resolviéndola por su dominio en
+    /// <c>shopify.stores</c>, no por la ruta de Integrations: 48 horas después de desinstalar la conexión pudo borrarse y su ruta con
+    /// ella. La tienda y la conexión quedan como estén. Excepción: si la ruta actual apunta a una conexión operativa, la tienda se
+    /// reinstaló (Review Focus 3) y lo de esa conexión no se toca, ni las entregas, que podrían ser suyas; las tiendas viejas del
+    /// mismo dominio sí se borran.
+    /// </summary>
+    private async Task RedactShopAsync(ShopifyWebhookDelivery delivery, CancellationToken cancellationToken)
+    {
+        var current = await connections.FindByShopDomainAsync(delivery.ShopDomain, cancellationToken);
+        var reinstalled = current is { IsOperational: true } ? current.ConnectionId : (Guid?)null;
+        foreach (var store in await stores.FindByShopDomainAsync(delivery.ShopDomain, cancellationToken))
+        {
+            if (store.ConnectionId != reinstalled)
+            {
+                await mirrors.DeleteByConnectionAsync(store.TenantId, store.ConnectionId, cancellationToken);
+            }
+        }
+
+        if (reinstalled is null)
+        {
+            await deliveries.DeleteByShopDomainAsync(delivery.ShopDomain, delivery.Id, cancellationToken);
         }
     }
 

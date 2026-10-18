@@ -52,6 +52,27 @@ internal sealed class FakeOrderImporter : IShopifyOrderImporter
     }
 }
 
+/// <summary>La reacción de §6.3 (tarea 14) vista desde la ingesta: anota cada cambio y cuántos guardados había cuando llegó, y
+/// puede fallar las primeras <see cref="FailuresLeft"/> veces.</summary>
+internal sealed class FakeOrderChangeReaction(FakeUnitOfWork unitOfWork) : IShopifyOrderChangeReaction
+{
+    public List<(ShopifyOrderChange Change, ShopifyMirrorState Current, int SavesSoFar)> Calls { get; } = [];
+
+    public int FailuresLeft { get; set; }
+
+    public Task ReactAsync(ShopifyOrderChange change, CancellationToken cancellationToken)
+    {
+        Calls.Add((change, ShopifyMirrorState.Of(change.Row), unitOfWork.Saves));
+        if (FailuresLeft > 0)
+        {
+            FailuresLeft--;
+            throw new InvalidOperationException("Quotations is down.");
+        }
+
+        return Task.CompletedTask;
+    }
+}
+
 /// <summary>Las tablas de la «base»: lo que <see cref="FakeUnitOfWork"/> confirma pasa de pendiente a guardado.</summary>
 internal sealed class FakeShopifyDatabase
 {
@@ -81,6 +102,10 @@ internal sealed class FakeStoreRepository(FakeShopifyDatabase database) : IShopi
                 : database.PendingStores.FirstOrDefault(pending => pending.ConnectionId == connectionId && pending.TenantId == tenantId));
 
     public void Add(ShopifyStore store) => database.PendingStores.Add(store);
+
+    public Task<IReadOnlyList<ShopifyStore>> FindByShopDomainAsync(string shopDomain, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyStore>>(
+            [.. database.Stores.Values.Where(store => string.Equals(store.ShopDomain, shopDomain, StringComparison.Ordinal))]);
 }
 
 internal sealed class FakeOrderMirrorRepository(FakeShopifyDatabase database) : IShopifyOrderMirrorRepository

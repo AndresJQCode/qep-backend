@@ -12,6 +12,9 @@ internal sealed class ShopifyStoreRepository(ShopifyDbContext dbContext) : IShop
             store => store.TenantId == tenantId && store.ConnectionId == connectionId, cancellationToken);
 
     public void Add(ShopifyStore store) => dbContext.Stores.Add(store);
+
+    public async Task<IReadOnlyList<ShopifyStore>> FindByShopDomainAsync(string shopDomain, CancellationToken cancellationToken) =>
+        await dbContext.Stores.AsNoTracking().Where(store => store.ShopDomain == shopDomain).ToListAsync(cancellationToken);
 }
 
 internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) : IShopifyOrderMirrorRepository

@@ -23,4 +23,36 @@ public sealed class ShopifyStoreTests
         // D-S4: no se trae historial; la conciliación arranca en el momento del enlace.
         Assert.Equal(((DateTimeOffset?)LinkedAt, 1L, LinkedAt), (store.LastReconciledAt, store.Version, store.UpdatedAt));
     }
+
+    // Ruling S16: shop/redact llega 48 horas después de desinstalar, cuando la ruta de Integrations pudo haberse borrado con la
+    // conexión; la tienda guarda su dominio para que el módulo la encuentre sin Integrations.
+    [Fact]
+    public void RecordShopDomainNormalizesAndDoesNotTouchTheVersion()
+    {
+        var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), LinkedAt);
+
+        store.RecordShopDomain("  Mi-Tienda.MyShopify.com ");
+
+        Assert.Equal("mi-tienda.myshopify.com", store.ShopDomain);
+        // La versión es el If-Match del PUT de la configuración: anotar el dominio no puede invalidar lo que el usuario edita.
+        Assert.Equal(1L, store.Version);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void RecordShopDomainRejectsAnEmptyDomain(string domain)
+    {
+        var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), LinkedAt);
+
+        Assert.Throws<ArgumentException>(() => store.RecordShopDomain(domain));
+    }
+
+    [Fact]
+    public void RecordShopDomainRejectsADomainWiderThanItsColumn()
+    {
+        var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), LinkedAt);
+
+        Assert.Throws<ArgumentException>(() => store.RecordShopDomain(new string('a', ShopifyStore.ShopDomainMaxLength + 1)));
+    }
 }

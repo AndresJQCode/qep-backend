@@ -268,6 +268,98 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
         Assert.Equal(ShopifyOrderIngestion.MaxConcurrencyAttempts, world.UnitOfWork.Saves);
     }
 
+    // Ruling S14: la reacción de §6.3 ve el estado anterior (ApplySnapshot pisa FinancialStatus y CancelledAt) y corre antes del
+    // guardado que persiste el snapshot: snapshot y reacción entran juntos o no entra ninguno.
+    [Fact]
+    public async Task OrdersTopicExistingRowReactsWithThePreviousStateBeforeSaving()
+    {
+        var world = new World().WithConnection(operational: true);
+        await world.Processor.ProcessAsync(Delivery("orders/create", RestFixture("taxes-included")), Ct);
+        var row = Assert.Single(world.Database.Orders.Values);
+        row.MarkImported(Guid.CreateVersion7(), Guid.CreateVersion7(), 0m, null, Now);
+        var savesBefore = world.UnitOfWork.Saves;
+        Assert.Empty(world.Reaction.Calls);
+
+        var result = await world.Processor.ProcessAsync(
+            Delivery("orders/cancelled", RestFixture("taxes-included", updatedAt: "2026-10-01T11:00:00-05:00", financialStatus: "refunded",
+                cancelledAt: "2026-10-01T10:59:00-05:00")), Ct);
+
+        Assert.Equal(ShopifyDeliveryResult.Processed, result);
+        var (change, current, savesSoFar) = Assert.Single(world.Reaction.Calls);
+        Assert.Same(row, change.Row);
+        Assert.Equal(new ShopifyMirrorState(ShopifyImportState.Imported, "paid", null), change.Previous);
+        Assert.Equal(
+            new ShopifyMirrorState(ShopifyImportState.Imported, "refunded", new DateTimeOffset(2026, 10, 1, 15, 59, 0, TimeSpan.Zero)),
+            current);
+        Assert.Equal(savesBefore, savesSoFar);
+        Assert.Equal(ConnectionId, change.Store.ConnectionId);
+        Assert.Equal("refunded", change.Snapshot.FinancialStatus);
+    }
+
+    [Fact]
+    public async Task OrdersTopicReactionFailureSavesNothingSoTheRetrySeesTheChangeAgain()
+    {
+        var world = new World().WithConnection(operational: true);
+        await world.Processor.ProcessAsync(Delivery("orders/create", RestFixture("taxes-included")), Ct);
+        Assert.Single(world.Database.Orders.Values).MarkImported(Guid.CreateVersion7(), Guid.CreateVersion7(), 0m, null, Now);
+        var savesBefore = world.UnitOfWork.Saves;
+        world.Reaction.FailuresLeft = 1;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => world.Processor.ProcessAsync(
+            Delivery("orders/paid", RestFixture("taxes-included", updatedAt: "2026-10-01T11:00:00-05:00", financialStatus: "refunded")), Ct));
+
+        Assert.Equal(savesBefore, world.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task OrdersTopicNewRowDoesNotReact()
+    {
+        var world = new World().WithConnection(operational: true);
+
+        await world.Processor.ProcessAsync(Delivery("orders/create", RestFixture("taxes-included")), Ct);
+
+        Assert.Empty(world.Reaction.Calls);
+    }
+
+    [Fact]
+    public async Task OrdersTopicNewStoreRecordsTheShopDomain()
+    {
+        var world = new World().WithConnection(operational: false);
+
+        await world.Processor.ProcessAsync(Delivery("orders/create", RestFixture("taxes-included")), Ct);
+
+        Assert.Equal(Shop, world.Database.Stores[ConnectionId].ShopDomain);
+    }
+
+    // Ruling S16 / §5.5: shop/redact llega 48 horas después de desinstalar. Si la conexión se borró, la ruta de Integrations cayó
+    // con ella; el módulo encuentra la tienda por su dominio y borra igual.
+    [Fact]
+    public async Task ShopRedactWithTheConnectionDeletedStillDeletesByDomain()
+    {
+        var world = new World().WithConnection(operational: false);
+        await world.Processor.ProcessAsync(Delivery("orders/create", RestFixture("taxes-included")), Ct);
+        world.Directory.Connections.Clear();
+
+        var result = await world.Processor.ProcessAsync(Delivery("shop/redact", """{"shop_id":954889,"shop_domain":"mi-tienda.myshopify.com"}"""), Ct);
+
+        Assert.Equal(ShopifyDeliveryResult.Processed, result);
+        Assert.Equal([(TenantId, ConnectionId)], world.Database.DeletedOrdersOf);
+        Assert.Empty(world.Database.Orders);
+        Assert.Equal([(Shop, DeliveryId)], world.Database.DeletedDeliveriesOf);
+    }
+
+    [Fact]
+    public async Task ShopRedactOfAShopQepNeverSawStillDeletesItsDeliveries()
+    {
+        var world = new World();
+
+        var result = await world.Processor.ProcessAsync(Delivery("shop/redact", """{"shop_id":954889,"shop_domain":"mi-tienda.myshopify.com"}"""), Ct);
+
+        Assert.Equal(ShopifyDeliveryResult.Processed, result);
+        Assert.Empty(world.Database.DeletedOrdersOf);
+        Assert.Equal([(Shop, DeliveryId)], world.Database.DeletedDeliveriesOf);
+    }
+
     [Fact]
     public async Task UnhandledTopicIsIgnoredWithItsReason()
     {
@@ -338,16 +430,31 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
 
     private static ShopifyWebhookDelivery Delivery(string topic, string payload) => new(DeliveryId, topic, Shop, payload);
 
-    private static string RestFixture(string name, string? updatedAt = null)
+    private static string RestFixture(string name, string? updatedAt = null, string? financialStatus = null, string? cancelledAt = null)
     {
         var text = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "rest", name + ".json"));
-        if (updatedAt is null)
+        if (updatedAt is null && financialStatus is null && cancelledAt is null)
         {
             return text;
         }
 
         var node = JsonNode.Parse(text)!;
-        node["updated_at"] = updatedAt;
+        if (updatedAt is not null)
+        {
+            node["updated_at"] = updatedAt;
+        }
+
+        if (financialStatus is not null)
+        {
+            node["financial_status"] = financialStatus;
+        }
+
+        if (cancelledAt is not null)
+        {
+            node["cancelled_at"] = cancelledAt;
+            node["cancel_reason"] = "customer";
+        }
+
         return node.ToJsonString();
     }
 
@@ -356,8 +463,9 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
         public World()
         {
             UnitOfWork = new FakeUnitOfWork(Database);
+            Reaction = new FakeOrderChangeReaction(UnitOfWork);
             Ingestion = new ShopifyOrderIngestion(
-                new FakeStoreRepository(Database), new FakeOrderMirrorRepository(Database), Importer, UnitOfWork, Clock);
+                new FakeStoreRepository(Database), new FakeOrderMirrorRepository(Database), Importer, Reaction, UnitOfWork, Clock);
         }
 
         public FakeShopifyDatabase Database { get; } = new();
@@ -374,11 +482,14 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
 
         public ShopifyOrderIngestion Ingestion { get; }
 
+        public FakeOrderChangeReaction Reaction { get; }
+
         public ShopifyWebhookDeliveryProcessor Processor => new(
             Directory,
             Health,
             new ShopifyOrderPayloadParser(),
             Ingestion,
+            new FakeStoreRepository(Database),
             new FakeOrderMirrorRepository(Database),
             new FakeWebhookDeliveries(Database),
             new FakeAuditRecorder(Database),
@@ -388,7 +499,7 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
         public World WithConnection(bool operational)
         {
             Directory.Connections[Shop] = new ShopifyConnectionRef(
-                TenantId, ConnectionId, "954889", operational, operational ? "shpat_sentinel" : null);
+                TenantId, ConnectionId, "954889", Shop, operational, operational ? "shpat_sentinel" : null);
             return this;
         }
 
