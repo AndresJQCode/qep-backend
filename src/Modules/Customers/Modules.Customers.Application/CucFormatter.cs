@@ -6,7 +6,8 @@ namespace Modules.Customers.Application;
 /// Arma el CUC final a partir de sus tres partes: el prefijo de la clasificacion del cliente, el
 /// codigo DIVIPOLA del departamento de su ciudad y el consecutivo que emite
 /// <see cref="ICucGenerator"/>. Ejemplo: prefijo <c>CLI</c> + departamento <c>08</c> (Antioquia) +
-/// consecutivo <c>1</c> => <c>CLI08000001</c>.
+/// consecutivo <c>1</c> => <c>CLI08000001</c>. Un cliente sin clasificacion no lleva prefijo:
+/// <c>08000001</c>.
 ///
 /// Pura y sin dependencias a proposito: es la pieza "encapsulada y reutilizable" que pide la
 /// generacion de CUC, separada del mecanismo de concurrencia del consecutivo (que resuelve
@@ -41,10 +42,20 @@ public static class CucFormatter
     /// digitos (invariante del modulo Geography): 20 + 2 + <see cref="SequenceDigits"/> (6) = 28,
     /// que entra sin ajustar <c>Customer.CucMaxLength</c> (32).
     /// </summary>
+    /// <param name="classificationPrefix">
+    /// <c>null</c> para un cliente sin clasificacion: su CUC son solo los ocho caracteres estables
+    /// (<see cref="Modules.Customers.Domain.Customer.StableSuffixOf"/>), y asignarle una despues
+    /// antepone el prefijo sin tocar nada mas. Un prefijo vacio, en cambio, sigue siendo un error:
+    /// una clasificacion siempre tiene uno, asi que <c>""</c> es un llamador roto.
+    /// </param>
     public static string Build(
-        string classificationPrefix, string departmentDivipolaCode, long sequence)
+        string? classificationPrefix, string departmentDivipolaCode, long sequence)
     {
-        ArgumentException.ThrowIfNullOrEmpty(classificationPrefix);
+        if (classificationPrefix is not null)
+        {
+            ArgumentException.ThrowIfNullOrEmpty(classificationPrefix);
+        }
+
         ArgumentException.ThrowIfNullOrEmpty(departmentDivipolaCode);
 
         // "D6" con cultura invariante, no ToString() a secas: el separador de miles y los digitos

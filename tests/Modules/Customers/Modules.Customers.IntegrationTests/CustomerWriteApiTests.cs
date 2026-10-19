@@ -81,6 +81,62 @@ public sealed class CustomerWriteApiTests
         Assert.Equal($"{expectedPrefix}000002", second.Cuc);
     }
 
+    // La clasificacion es opcional: sin ella el cliente nace igual y su CUC no lleva prefijo,
+    // solo departamento y consecutivo.
+    [Fact]
+    public async Task CreateWithoutClassificationEmitsACucWithoutPrefix()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+
+        var customer = await CreateCustomerAsync(client, city.CityId, classificationId: null);
+
+        Assert.Null(customer.Classification);
+        Assert.True(customer.IsComplete);
+        Assert.Equal($"{city.DepartmentDivipolaCode}000001", customer.Cuc);
+    }
+
+    // Quitarla en un PUT le quita el prefijo al CUC; volver a ponerla lo antepone. Los ocho
+    // caracteres estables no se mueven en ningun paso.
+    [Fact]
+    public async Task UpdateCanRemoveAndAssignTheClassification()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client, "Mediano", "CLI");
+        var created = await CreateCustomerAsync(client, city.CityId, classification.Id);
+        var suffix = $"{city.DepartmentDivipolaCode}000001";
+        Assert.Equal($"CLI{suffix}", created.Cuc);
+
+        var removed = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{created.Id}",
+            NewCustomerBody(city.CityId, classificationId: null, name: created.Name),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
+        var withoutClassification = await removed.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(withoutClassification);
+        Assert.Null(withoutClassification.Classification);
+        Assert.Equal(suffix, withoutClassification.Cuc);
+
+        var assigned = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{created.Id}",
+            NewCustomerBody(city.CityId, classification.Id, name: created.Name),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
+        var withClassification = await assigned.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(withClassification);
+        Assert.Equal(classification.Id, withClassification.Classification?.Id);
+        Assert.Equal($"CLI{suffix}", withClassification.Cuc);
+    }
+
     // El consecutivo es un unico contador por tenant, no uno por clasificacion: dos clientes del
     // mismo tenant con clasificaciones (y por lo tanto prefijos) distintas siguen compartiendo el
     // mismo numero de secuencia, aunque el CUC final se vea distinto por el prefijo.

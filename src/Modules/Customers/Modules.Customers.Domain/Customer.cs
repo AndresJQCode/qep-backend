@@ -239,11 +239,13 @@ public sealed class Customer
 
     /// <summary>
     /// La clasificacion del cliente, FK a <see cref="ClientClassification"/> — que vive en este
-    /// mismo modulo, asi que va tipada de forma fuerte igual que el resto del agregado.
-    /// Obligatoria: reemplaza al viejo enum fijo <c>CustomerClassification</c>, que no tenia
-    /// relacion con este catalogo y ya no tiene consumidores.
+    /// mismo modulo, asi que va tipada de forma fuerte igual que el resto del agregado. Reemplaza al
+    /// viejo enum fijo <c>CustomerClassification</c>, que no tenia relacion con este catalogo y ya
+    /// no tiene consumidores.
     ///
-    /// Nulo en un cliente incompleto (spec 2026-10-10 §6.2).
+    /// Opcional, tambien en una ficha completa (decision del owner, 2026-10-19): sin ella el CUC no
+    /// lleva prefijo. Ver <see cref="CustomerCommercialInfo.ClassificationId"/>. Y siempre nulo en
+    /// un cliente incompleto (spec 2026-10-10 §6.2).
     /// </summary>
     public ClientClassificationId? ClassificationId { get; private set; }
 
@@ -618,7 +620,9 @@ public sealed class Customer
     /// el request, pero no queda intocado: si <paramref name="commercial"/> trae una clasificacion
     /// distinta a la actual, su prefijo se reescribe con <paramref name="classificationPrefix"/> —
     /// regla de negocio confirmada, "cuando cambie el tamano del cliente, cambiara unicamente el
-    /// prefijo; el departamento y el consecutivo se conservaran".
+    /// prefijo; el departamento y el consecutivo se conservaran". Quitar la clasificacion es el
+    /// mismo cambio con un prefijo vacio: <paramref name="classificationPrefix"/> llega
+    /// <c>null</c>, y solo vale asi cuando la clasificacion tambien lo es.
     ///
     /// La ciudad y la clasificacion **si** se pueden reemplazar aca: un cliente se puede mudar de
     /// ciudad o cambiar de categoria comercial. La ciudad no reconstruye el CUC (el departamento
@@ -630,7 +634,7 @@ public sealed class Customer
         CustomerIdentification identification,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
-        string classificationPrefix,
+        string? classificationPrefix,
         DateTimeOffset occurredAt,
         IPhoneNumberNormalizer? phoneNormalizer = null)
     {
@@ -652,7 +656,11 @@ public sealed class Customer
         // asignar el nombre, dentro de la misma garantía de todo-o-nada que el resto del método.
         EnsureValidLocation(normalizedContact);
         var normalizedClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
-        var normalizedClassificationPrefix = NormalizeClassificationPrefix(classificationPrefix);
+        // Sin clasificacion no hay prefijo que validar: el CUC queda con sus ocho caracteres
+        // estables. Con clasificacion, el prefijo es obligatorio, llegue nulo o en blanco.
+        var normalizedClassificationPrefix = normalizedClassificationId is null
+            ? string.Empty
+            : NormalizeClassificationPrefix(classificationPrefix ?? string.Empty);
 
         Name = normalizedName;
         BusinessName = normalizedBusinessName;
@@ -915,9 +923,11 @@ public sealed class Customer
             : (country, null, normalized.CityName);
     }
 
-    private static ClientClassificationId EnsureValidClassificationId(
-        ClientClassificationId classificationId) =>
-        classificationId.Value == Guid.Empty
+    // Nulo es un cliente sin clasificacion y vale. Un Guid.Empty, en cambio, es un id roto y no
+    // una forma de decir "ninguna": se sigue rechazando.
+    private static ClientClassificationId? EnsureValidClassificationId(
+        ClientClassificationId? classificationId) =>
+        classificationId is { Value: var value } && value == Guid.Empty
             ? throw new CustomersDomainException(
                 "customers.customer.classification_required",
                 "The customer classification is required.")

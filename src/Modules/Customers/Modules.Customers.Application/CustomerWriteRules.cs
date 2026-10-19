@@ -32,7 +32,7 @@ public interface ICustomerWriteCommand
 
     string? CityName { get; }
 
-    Guid ClassificationId { get; }
+    Guid? ClassificationId { get; }
 }
 
 /// <summary>
@@ -49,7 +49,8 @@ public interface ICustomerWriteCommand
 /// (<c>FIELD_BY_BACKEND_NAME</c>): Name, IdentificationType, IdentificationNumber, Phone, Email,
 /// Address, CityId, ClassificationId, WithRetention, VatSurplus.
 ///
-/// <c>CityId</c> y <c>ClassificationId</c> solo se comprueban **no vacios** aca: que la fila
+/// <c>CityId</c> y <c>ClassificationId</c> solo se comprueban **no vacios** aca (la clasificacion,
+/// solo si viene: es opcional): que la fila
 /// exista y sea del tenant lo resuelve el handler (para armar el CUC) y, en la carrera, la FK de
 /// base — mismo criterio que el resto de las FKs de este repo, sin pre-chequeo de existencia en
 /// el validador.
@@ -88,9 +89,10 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
                 $"The identification type must be one of {Join(IdentificationTypeParser.SupportedWireValues)}.")
             .When(command => !string.IsNullOrWhiteSpace(command.IdentificationType));
 
-        // La clasificacion es obligatoria: la Fase 3 la convirtio en una FK de primer nivel, ya no
-        // texto libre opcional.
-        RuleFor(command => command.ClassificationId).NotEmpty();
+        // La clasificacion es opcional (decision del owner, 2026-10-19): sin ella el CUC no lleva
+        // prefijo. Lo que se rechaza es Guid.Empty, que es un id roto y no una forma de decir
+        // "ninguna" — la ausencia se dice con null.
+        RuleFor(command => command.ClassificationId).NotEqual(Guid.Empty);
 
         // El pais es obligatorio y son dos letras (ISO-3166-1 alpha-2). Dos RuleFor por la misma
         // razon que el correo: el When() gobierna toda la cadena que lo precede, asi que un

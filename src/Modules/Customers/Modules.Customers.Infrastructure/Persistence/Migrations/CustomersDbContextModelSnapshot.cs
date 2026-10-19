@@ -260,7 +260,7 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
 
                     b.ToTable("customers", "customers", t =>
                         {
-                            t.HasCheckConstraint("CK_customers_complete_fields", "completeness = 'Incomplete' OR (cuc IS NOT NULL AND identification_type IS NOT NULL AND identification_number IS NOT NULL AND address IS NOT NULL AND country IS NOT NULL AND classification_id IS NOT NULL)");
+                            t.HasCheckConstraint("CK_customers_complete_fields", "completeness = 'Incomplete' OR (cuc IS NOT NULL AND identification_type IS NOT NULL AND identification_number IS NOT NULL AND address IS NOT NULL AND country IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_customers_completeness", "completeness IN ('Complete', 'Incomplete')");
 
