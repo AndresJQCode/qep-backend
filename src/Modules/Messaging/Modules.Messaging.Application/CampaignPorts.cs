@@ -66,7 +66,8 @@ public sealed record CampaignRecipientRow(
     DateTimeOffset? SentAt,
     Guid? ConversationId,
     MessageStatus? MessageStatus,
-    int RetryCount);
+    int RetryCount,
+    bool Replied = false);
 
 public interface ICampaignQueries
 {

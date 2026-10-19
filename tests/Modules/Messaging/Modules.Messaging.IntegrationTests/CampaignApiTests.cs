@@ -415,7 +415,7 @@ public sealed class CampaignApiTests
     }
 
     [Fact]
-    public async Task TheCountsFollowTheRecipientsAndTheRepliesAndAlwaysTravelComplete()
+    public async Task TheCountsFollowTheRecipientsAndTheRepliesCountAsReadAndAlwaysTravelComplete()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
@@ -425,9 +425,9 @@ public sealed class CampaignApiTests
         var read = await SeedOutboundAsync(f.ConnectionString, conversation, f.Tenant.TenantId, f.ConnectionId, "wamid.read", status: 3);
         var delivered = await SeedOutboundAsync(f.ConnectionString, conversation, f.Tenant.TenantId, f.ConnectionId, "wamid.dlv", status: 2);
         var sentAt = DateTimeOffset.UtcNow.AddHours(-2);
-        await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Sent", conversationId: conversation, messageId: read, sentAt: sentAt);
-        await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Sent", conversationId: conversation, messageId: delivered, sentAt: sentAt);
-        await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Sent");
+        await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Sent", name: "Leída", conversationId: conversation, messageId: read, sentAt: sentAt);
+        await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Sent", name: "Sin confirmación", conversationId: conversation, messageId: delivered, sentAt: sentAt);
+        await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Sent", name: "Callada");
         await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Failed", failureCode: "131026");
         await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Pending");
         await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Sending");
@@ -440,10 +440,17 @@ public sealed class CampaignApiTests
         var detail = await f.Client.GetFromJsonAsync<JsonElement>(CampaignUrl(f, id), Ct);
 
         var counts = detail.GetProperty("counts");
+        // Read 2: el de wamid.dlv no avisó lectura, pero quien lo recibió respondió; lo leyó con las confirmaciones apagadas.
         Assert.Equal(
-            (7, 2, 3, 2, 1, 2, 1, 1),
+            (7, 2, 3, 2, 2, 2, 1, 1),
             (counts.GetProperty("total").GetInt32(), counts.GetProperty("pending").GetInt32(), counts.GetProperty("sent").GetInt32(), counts.GetProperty("delivered").GetInt32(),
              counts.GetProperty("read").GetInt32(), counts.GetProperty("replied").GetInt32(), counts.GetProperty("failed").GetInt32(), counts.GetProperty("skipped").GetInt32()));
+
+        var sent = await f.Client.GetFromJsonAsync<JsonElement>($"{CampaignUrl(f, id)}/recipients?status=Sent", Ct);
+        Assert.Equal(
+            [("Callada", false, false), ("Leída", true, false), ("Sin confirmación", true, true)],
+            sent.GetProperty("items").EnumerateArray().Select(item =>
+                (item.GetProperty("customerName").GetString(), item.GetProperty("replied").GetBoolean(), item.GetProperty("readWithoutReceipt").GetBoolean())));
     }
 
     [Fact]

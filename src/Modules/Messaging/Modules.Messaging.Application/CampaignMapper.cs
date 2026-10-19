@@ -44,7 +44,8 @@ public sealed class CampaignMapper(IMessagingConnectionDirectory connections, IM
         return new CampaignRecipientDto(
             row.CustomerId, row.CustomerName, row.Status.ToString(), row.FailureReason ?? CampaignFailureReasons.For(row.FailureCode), row.FailureCode,
             row.SentAt, row.ConversationId, row.MessageStatus?.ToString(), row.RetryCount,
-            CampaignFailureCodes.IsRetriableByHand(row.Status, row.FailureCode));
+            CampaignFailureCodes.IsRetriableByHand(row.Status, row.FailureCode), row.Replied,
+            row.Replied && row.MessageStatus != Domain.MessageStatus.Read);
     }
 
     private static CampaignSummaryDto Summary(

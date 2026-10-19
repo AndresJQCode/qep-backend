@@ -109,7 +109,8 @@ public sealed class CampaignDetailDto(
 
 /// <summary><c>retryCount</c> es en qué reintento de la campaña se reencoló este destinatario (cero: sólo el envío original).
 /// <c>retriable</c> dice si un reintento lo volvería a intentar; un <c>Failed</c> por opt-out (131050) viaja con <c>false</c> para que la
-/// pantalla lo marque.</summary>
+/// pantalla lo marque. <c>replied</c>: hay un entrante suyo después del envío. <c>readWithoutReceipt</c>: respondió pero Meta nunca avisó
+/// la lectura —casi siempre porque apagó las confirmaciones de lectura—; la pantalla lo muestra como leído y lo marca.</summary>
 public sealed record CampaignRecipientDto(
     Guid CustomerId,
     string CustomerName,
@@ -120,7 +121,9 @@ public sealed record CampaignRecipientDto(
     Guid? ConversationId,
     string? MessageStatus,
     int RetryCount,
-    bool Retriable);
+    bool Retriable,
+    bool Replied,
+    bool ReadWithoutReceipt);
 
 public sealed record CampaignPageDto<T>(IReadOnlyList<T> Items, int Total, int Page, int PageSize);
 
