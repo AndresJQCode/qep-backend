@@ -688,6 +688,9 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "NextAttemptAt" }, "IX_campaign_recipients_due")
                         .HasFilter("status IN ('Pending','Sending')");
 
+                    b.HasIndex(new[] { "MessageId" }, "IX_campaign_recipients_message")
+                        .HasFilter("message_id IS NOT NULL");
+
                     b.ToTable("campaign_recipients", "messaging", t =>
                         {
                             t.HasCheckConstraint("CK_campaign_recipients_status", "status IN ('Pending','Sending','Sent','Failed','Skipped')");

@@ -34,6 +34,7 @@ public sealed class MessagingPersistenceTests
             "IX_conversations_tenant_unread", "IX_conversations_profile_name_trgm", "IX_conversations_wa_id_trgm",
             "IX_messages_thread", "IX_messages_connection_wamid", "IX_messages_conversation_client", "IX_messages_tenant_search",
             "IX_message_media_pending", "IX_webhook_deliveries_body_sha256", "IX_webhook_deliveries_pending",
+            "IX_campaign_recipients_message",
         })
         {
             Assert.Contains(expected, indexes, StringComparison.Ordinal);
@@ -84,6 +85,7 @@ public sealed class MessagingPersistenceTests
             ("IX_message_media_pending", "USING btree (next_attempt_at) WHERE (stored_at IS NULL)"),
             ("IX_webhook_deliveries_body_sha256", "CREATE UNIQUE INDEX \"IX_webhook_deliveries_body_sha256\" ON messaging.webhook_deliveries USING btree (body_sha256)"),
             ("IX_webhook_deliveries_pending", "USING btree (id) WHERE (processed_at IS NULL)"),
+            ("IX_campaign_recipients_message", "USING btree (message_id) WHERE (message_id IS NOT NULL)"),
         })
         {
             var definition = await ScalarAsync<string>(connectionString,

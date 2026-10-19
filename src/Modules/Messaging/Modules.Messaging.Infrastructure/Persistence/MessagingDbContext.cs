@@ -334,6 +334,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         recipient.HasIndex(value => value.NextAttemptAt, "IX_campaign_recipients_due").HasFilter("status IN ('Pending','Sending')");
         // Los contadores y el filtro por estado del detalle.
         recipient.HasIndex(value => new { value.CampaignId, value.Status }, "IX_campaign_recipients_campaign_status");
+        // El fallo que Meta avisa después de aceptar (StatusIngestion) busca al destinatario por su mensaje: sin índice, cada
+        // acuse failed recorrería la tabla entera. Parcial porque los Pending y los Skipped no tienen mensaje.
+        recipient.HasIndex(value => value.MessageId, "IX_campaign_recipients_message").HasFilter("message_id IS NOT NULL");
     }
 
     /// <summary>Spec 2026-10-12 §3.1: el atajo es único por tenant. El índice va con nombre porque la unidad de trabajo lo reconoce
