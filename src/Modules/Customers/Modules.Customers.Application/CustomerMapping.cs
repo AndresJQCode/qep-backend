@@ -137,12 +137,12 @@ internal static class CustomerMapping
         };
 
     public static CustomerCommercialInfo ToCommercialInfo(
-        Guid classificationId,
+        Guid? classificationId,
         bool withRetention,
         bool vatSurplus) =>
         new()
         {
-            ClassificationId = new ClientClassificationId(classificationId),
+            ClassificationId = classificationId is { } id ? new ClientClassificationId(id) : null,
             WithRetention = withRetention,
             VatSurplus = vatSurplus
         };

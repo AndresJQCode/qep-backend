@@ -24,10 +24,11 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     internal DbSet<CustomersOutboxMessage> Outbox => Set<CustomersOutboxMessage>();
 
     /// <summary>Spec 2026-10-10 §7.2 (D-A11): exactamente las columnas que antes eran NOT NULL. Teléfono, correo y
-    /// ciudad siguen exigidos por CustomerWriteRules, como antes.</summary>
+    /// ciudad siguen exigidos por CustomerWriteRules, como antes. La clasificación salió de la lista el 2026-10-19
+    /// (decisión del owner): una ficha completa puede no tenerla, y su CUC va sin prefijo.</summary>
     public const string CompleteFieldsCheck =
         "completeness = 'Incomplete' OR (cuc IS NOT NULL AND identification_type IS NOT NULL AND identification_number IS NOT NULL "
-        + "AND address IS NOT NULL AND country IS NOT NULL AND classification_id IS NOT NULL)";
+        + "AND address IS NOT NULL AND country IS NOT NULL)";
 
     /// <summary>El único por <c>(tenant_id, lower(name))</c>. Va en la migración con SQL —EF no modela índices por
     /// expresión— y <c>CustomersUnitOfWork</c> lo traduce por este nombre a 409 <c>customers.tag.name_taken</c>.</summary>

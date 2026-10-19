@@ -311,7 +311,7 @@ internal static class CustomersApiHarness
     /// </summary>
     public static object NewCustomerBody(
         Guid cityId,
-        Guid classificationId,
+        Guid? classificationId,
         string name = "Verde Esencial S.A.S.",
         string identificationType = "NIT",
         string identificationNumber = "900.123.456-1",
@@ -368,7 +368,7 @@ internal static class CustomersApiHarness
     public static async Task<CustomerResponse> CreateCustomerAsync(
         HttpClient client,
         Guid cityId,
-        Guid classificationId,
+        Guid? classificationId,
         string name = "Verde Esencial S.A.S.",
         string identificationNumber = "900.123.456-1",
         string tenantId = TenantId)

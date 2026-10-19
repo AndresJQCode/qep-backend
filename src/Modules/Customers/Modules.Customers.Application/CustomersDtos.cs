@@ -153,8 +153,9 @@ public sealed record CustomersResponse(
 // lectura — `CLI-01` lo dice explicito; su prefijo puede cambiar en un Update, pero por el lado
 // del servidor, al resolver la clasificacion, nunca porque el cliente lo haya mandado.
 //
-// ClassificationId es obligatorio: la Fase 3 hizo la clasificacion una FK de primer nivel, ya no
-// texto libre opcional. CityId lo era tambien hasta que llego el pais: ahora es obligatorio **solo
+// ClassificationId es opcional (decision del owner, 2026-10-19): el formulario de alta la ofrece
+// primero pero no la exige, y sin ella el CUC no lleva prefijo. Ausente o null es "sin
+// clasificacion"; en un PUT eso la quita. CityId era obligatorio hasta que llego el pais: ahora es obligatorio **solo
 // para Colombia**, y un cliente de afuera manda CityName en su lugar. Cual de los dos hace falta
 // lo decide CustomerWriteRules segun Country, y el dominio lo vuelve a exigir en
 // Customer.EnsureValidLocation.
@@ -176,7 +177,7 @@ public sealed record CreateCustomerRequest(
     /// <summary>La ciudad escrita a mano. Obligatoria si <c>Country</c> **no** es <c>CO</c>,
     /// ignorada si lo es.</summary>
     string? CityName,
-    Guid ClassificationId,
+    Guid? ClassificationId,
     bool WithRetention,
     bool VatSurplus);
 
@@ -191,7 +192,7 @@ public sealed record UpdateCustomerRequest(
     string Country,
     Guid? CityId,
     string? CityName,
-    Guid ClassificationId,
+    Guid? ClassificationId,
     bool WithRetention,
     bool VatSurplus);
 

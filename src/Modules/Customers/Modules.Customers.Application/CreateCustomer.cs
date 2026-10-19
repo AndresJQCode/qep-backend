@@ -17,7 +17,7 @@ public sealed record CreateCustomerCommand(
     string Country,
     Guid? CityId,
     string? CityName,
-    Guid ClassificationId,
+    Guid? ClassificationId,
     bool WithRetention,
     bool VatSurplus) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
@@ -55,14 +55,11 @@ public sealed class CreateCustomerHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         // La clasificacion y la ciudad se resuelven **antes** de pedir el CUC: hacen falta su
-        // prefijo y su codigo de departamento para armarlo, no son un pre-chequeo de integridad
+        // prefijo (si trae clasificacion) y su codigo de departamento para armarlo, no son un pre-chequeo de integridad
         // redundante con la FK de base. Resolverlas antes tambien evita quemar un numero del
         // consecutivo cuando la referencia del cuerpo es invalida.
-        var classification = await classificationRepository.FindAsync(
-            command.TenantId, new ClientClassificationId(command.ClassificationId), cancellationToken)
-            ?? throw new CustomersDomainException(
-                "customers.customer.classification_not_found",
-                "The client classification was not found in this tenant.");
+        var classification = await classificationRepository.ResolveForCustomerAsync(
+            command.TenantId, command.ClassificationId, cancellationToken);
         // Solo un cliente colombiano tiene ciudad DIVIPOLA que resolver. El validador ya se
         // aseguro de que venga la que corresponde al pais; aca se comprueba que exista.
         // Sin `?.`: el validador de arriba ya exigio el pais NotEmpty, asi que a esta altura no es
@@ -86,7 +83,7 @@ public sealed class CreateCustomerHandler(
         // Un cliente de afuera no tiene departamento DIVIPOLA, y el CUC lleva dos digitos en ese
         // lugar: van los de CucFormatter.ForeignDepartmentCode. Ver alla por que no se omiten.
         var cuc = CucFormatter.Build(
-            classification.Prefix,
+            classification?.Prefix,
             city?.DepartmentDivipolaCode ?? CucFormatter.ForeignDepartmentCode,
             sequence);
         var now = clock.UtcNow;

@@ -18,7 +18,7 @@ public sealed record UpdateCustomerCommand(
     string Country,
     Guid? CityId,
     string? CityName,
-    Guid ClassificationId,
+    Guid? ClassificationId,
     bool WithRetention,
     bool VatSurplus) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
@@ -61,11 +61,8 @@ public sealed class UpdateCustomerHandler(
         // departamento y la clasificacion resueltos, igual que el detalle. Ademas, si la
         // clasificacion cambia, su prefijo es lo que Customer.Update usa para reescribir el CUC —
         // ver la regla de negocio documentada alla.
-        var classification = await classificationRepository.FindAsync(
-            command.TenantId, new ClientClassificationId(command.ClassificationId), cancellationToken)
-            ?? throw new CustomersDomainException(
-                "customers.customer.classification_not_found",
-                "The client classification was not found in this tenant.");
+        var classification = await classificationRepository.ResolveForCustomerAsync(
+            command.TenantId, command.ClassificationId, cancellationToken);
         // Solo un cliente colombiano tiene ciudad DIVIPOLA que resolver; uno de afuera escribe la
         // suya. El validador ya exigio la que corresponde al pais. Sobre una ficha completa es puro
         // chequeo de existencia: el CUC no se reconstruye en un Update (el departamento de su
@@ -93,7 +90,7 @@ public sealed class UpdateCustomerHandler(
             // al cliente por su numero.
             var sequence = await cucGenerator.NextAsync(command.TenantId, cancellationToken);
             var cuc = CucFormatter.Build(
-                classification.Prefix,
+                classification?.Prefix,
                 city?.DepartmentDivipolaCode ?? CucFormatter.ForeignDepartmentCode,
                 sequence);
             customer.Complete(
@@ -142,6 +139,8 @@ public sealed class UpdateCustomerHandler(
         // entero, asi que un campo ausente se limpia. El CUC no esta en la firma porque no viaja
         // en el request — lo emite el backend al crear. Update si recibe el prefijo de la
         // clasificacion resuelta: lo usa para reescribir el CUC solo si la clasificacion cambio.
+        // Sin clasificacion el prefijo llega nulo y el CUC se queda con sus ocho caracteres
+        // estables.
         // `address`/`cityId` del request son el **domicilio del cliente** (spec 2026-09-18) y
         // nada mas: la libreta de envio tiene su propio recurso (`/customers/{id}/addresses`) y
         // no se toca desde aca. Espejar el domicilio en la principal era justo el acoplamiento
@@ -162,7 +161,7 @@ public sealed class UpdateCustomerHandler(
             },
             CustomerMapping.ToCommercialInfo(
                 command.ClassificationId, command.WithRetention, command.VatSurplus),
-            classification.Prefix,
+            classification?.Prefix,
             now,
             phoneNormalizer);
 

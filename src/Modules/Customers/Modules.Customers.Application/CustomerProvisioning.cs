@@ -96,11 +96,8 @@ public sealed class CustomerProvisioning(
 
         // Mismo orden que CreateCustomerHandler, y por lo mismo: clasificación y ciudad antes del CUC, para no quemar un
         // número del consecutivo por una referencia que no existe.
-        var classification = await classificationRepository.FindAsync(
-            tenantId, new ClientClassificationId(command.ClassificationId), cancellationToken)
-            ?? throw new CustomersDomainException(
-                "customers.customer.classification_not_found",
-                "The client classification was not found in this tenant.");
+        var classification = await classificationRepository.ResolveForCustomerAsync(
+            tenantId, command.ClassificationId, cancellationToken);
         var isColombian = string.Equals(
             command.Country.Trim(), Customer.ColombiaCountryCode, StringComparison.OrdinalIgnoreCase);
         var city = isColombian
@@ -110,7 +107,7 @@ public sealed class CustomerProvisioning(
 
         var sequence = await cucGenerator.NextAsync(tenantId, cancellationToken);
         var cuc = CucFormatter.Build(
-            classification.Prefix,
+            classification?.Prefix,
             city?.DepartmentDivipolaCode ?? CucFormatter.ForeignDepartmentCode,
             sequence);
         var now = clock.UtcNow;

@@ -685,6 +685,79 @@ public sealed class CustomerTests
         Assert.Equal(newClassificationId, customer.ClassificationId);
     }
 
+    // La clasificacion es opcional: un cliente puede nacer sin ella. Su CUC no lleva prefijo.
+    [Fact]
+    public void CreateAcceptsACustomerWithoutClassification()
+    {
+        var customer = Create(
+            cuc: "08000142",
+            commercial: Commercial() with { ClassificationId = null });
+
+        Assert.Null(customer.ClassificationId);
+        Assert.Equal("08000142", customer.Cuc);
+    }
+
+    // Quitarle la clasificacion le quita el prefijo al CUC y conserva los ocho caracteres
+    // estables: es la misma regla que cambiarla, con un prefijo vacio.
+    [Fact]
+    public void UpdateDropsThePrefixWhenTheClassificationIsRemoved()
+    {
+        var customer = Create(cuc: "CLI08000142");
+
+        customer.Update(
+            customer.Name,
+            businessName: null,
+            Identification(),
+            ValidContact(),
+            Commercial() with { ClassificationId = null },
+            classificationPrefix: null,
+            Now.AddMinutes(5));
+
+        Assert.Null(customer.ClassificationId);
+        Assert.Equal("08000142", customer.Cuc);
+    }
+
+    // Y al reves: asignarle una clasificacion a un cliente que no tenia antepone el prefijo.
+    [Fact]
+    public void UpdatePrependsThePrefixWhenAClassificationIsAssigned()
+    {
+        var customer = Create(
+            cuc: "08000142",
+            commercial: Commercial() with { ClassificationId = null });
+        var newClassificationId = new ClientClassificationId(Guid.CreateVersion7());
+
+        customer.Update(
+            customer.Name,
+            businessName: null,
+            Identification(),
+            ValidContact(),
+            Commercial(classificationId: newClassificationId),
+            "MAY",
+            Now.AddMinutes(5));
+
+        Assert.Equal(newClassificationId, customer.ClassificationId);
+        Assert.Equal("MAY08000142", customer.Cuc);
+    }
+
+    // Una clasificacion sin prefijo es un llamador roto, no un cliente sin clasificacion: el
+    // prefijo nulo solo vale cuando la clasificacion tambien lo es.
+    [Fact]
+    public void UpdateRejectsAClassificationWithoutItsPrefix()
+    {
+        var customer = Create();
+
+        var exception = Assert.Throws<CustomersDomainException>(() => customer.Update(
+            customer.Name,
+            businessName: null,
+            Identification(),
+            ValidContact(),
+            Commercial(classificationId: new ClientClassificationId(Guid.CreateVersion7())),
+            classificationPrefix: null,
+            Now.AddMinutes(5)));
+
+        Assert.Equal("customers.customer.classification_prefix_required", exception.Code);
+    }
+
     // El CUC no viaja en el request y Update no lo toca por si solo — pero regla de negocio
     // confirmada, si la clasificacion cambia, si reescribe el prefijo. Sin clasificacion nueva
     // (mismo Commercial() de siempre) el CUC entero se conserva.
