@@ -537,10 +537,10 @@ public sealed class CustomerStatusAndImportApiTests
             error.RowNumber == 2 && error.Code == "customers.import.row.address_required");
     }
 
-    // Telefono y correo son obligatorios. Una celda vacia se rechaza como fila, con su codigo, y
-    // no como una excepcion del dominio a mitad del archivo: la fila valida del mismo lote entra.
+    // El telefono es obligatorio y el correo no. Un telefono vacio se rechaza como fila, con su
+    // codigo, y no como una excepcion del dominio a mitad del archivo; la fila sin correo entra.
     [Fact]
-    public async Task ImportRowsWithoutPhoneOrEmailAreRejectedWithTheirOwnCodes()
+    public async Task ImportRejectsRowsWithoutPhoneAndAcceptsRowsWithoutEmail()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -581,13 +581,10 @@ public sealed class CustomerStatusAndImportApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(result);
         Assert.Equal("completed_with_errors", result.Status);
-        Assert.Equal(1, result.ImportedCount);
+        Assert.Equal(2, result.ImportedCount);
         Assert.Contains(result.Errors, error =>
             error.RowNumber == 3 && error.Code == "customers.import.row.phone_required");
-        Assert.Contains(result.Errors, error =>
-            error.RowNumber == 4 && error.Code == "customers.import.row.email_required");
-        Assert.DoesNotContain(result.Errors, error =>
-            error.Code == "customers.import.row.email_invalid");
+        Assert.DoesNotContain(result.Errors, error => error.RowNumber == 4);
     }
 
     [Fact]

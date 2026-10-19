@@ -225,19 +225,20 @@ public sealed class CustomerTests
         Assert.Equal("customers.customer.classification_required", exception.Code);
     }
 
-    // El correo y el telefono son obligatorios al crear y al editar. Vacio y solo espacios cuentan
-    // como ausente, igual que null: el formulario manda "" cuando el usuario borra el input.
+    // El correo es opcional. Vacio y solo espacios cuentan como ausente, igual que null: el
+    // formulario manda "" cuando el usuario borra el input, y eso se guarda como null.
     [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    public void CreateRejectsABlankEmail(string? email)
+    public void CreateAcceptsABlankEmailAndStoresNull(string? email)
     {
-        var exception = Assert.Throws<CustomersDomainException>(
-            () => Create(contact: ValidContact() with { Email = email }));
+        var customer = Create(contact: ValidContact() with { Email = email });
 
-        Assert.Equal("customers.customer.email_required", exception.Code);
+        Assert.Null(customer.Email);
     }
+
+    // El telefono sigue siendo obligatorio al crear y al editar.
 
     [Theory]
     [InlineData(null)]
@@ -251,10 +252,8 @@ public sealed class CustomerTests
         Assert.Equal("customers.customer.phone_required", exception.Code);
     }
 
-    [Theory]
-    [InlineData(null, "310 935 2187", "customers.customer.email_required")]
-    [InlineData("compras@verde.co", "  ", "customers.customer.phone_required")]
-    public void UpdateRejectsABlankEmailOrPhone(string? email, string? phone, string expectedCode)
+    [Fact]
+    public void UpdateRejectsABlankPhone()
     {
         var customer = Create();
 
@@ -262,13 +261,31 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
-            ValidContact() with { Email = email, Phone = phone },
+            ValidContact() with { Phone = "  " },
             Commercial(),
             ClassificationPrefix,
             Now.AddMinutes(5)));
 
-        Assert.Equal(expectedCode, exception.Code);
+        Assert.Equal("customers.customer.phone_required", exception.Code);
         Assert.Equal(1, customer.Version);
+    }
+
+    // El PUT reemplaza el recurso entero: un correo vacio limpia el que habia.
+    [Fact]
+    public void UpdateWithABlankEmailClearsIt()
+    {
+        var customer = Create();
+
+        customer.Update(
+            customer.Name,
+            businessName: null,
+            Identification(),
+            ValidContact() with { Email = "" },
+            Commercial(),
+            ClassificationPrefix,
+            Now.AddMinutes(5));
+
+        Assert.Null(customer.Email);
     }
 
     [Fact]

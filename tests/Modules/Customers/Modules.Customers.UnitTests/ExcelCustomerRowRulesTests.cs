@@ -133,22 +133,16 @@ public sealed class ExcelCustomerRowRulesTests
             error.ErrorCode == "customers.import.row.email_invalid");
     }
 
-    // El correo es obligatorio: la fila se rechaza con su codigo, no dejando que el dominio
-    // reviente a mitad del archivo. Y con el codigo de requerido, no el de formato.
+    // El correo es opcional: una celda vacia no rechaza la fila ni se reporta como formato invalido.
     [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    public void AnEmptyEmailFailsWithTheRequiredCodeAndNotTheFormatCode(string? email)
+    public void AnEmptyEmailIsValid(string? email)
     {
         var result = validator.Validate(ValidRow(email: email));
 
-        Assert.False(result.IsValid);
-        Assert.Contains(result.Errors, error =>
-            error.ErrorCode == "customers.import.row.email_required" &&
-            error.PropertyName == nameof(ExcelCustomerRow.Email));
-        Assert.DoesNotContain(result.Errors, error =>
-            error.ErrorCode == "customers.import.row.email_invalid");
+        Assert.True(result.IsValid);
     }
 
     [Theory]

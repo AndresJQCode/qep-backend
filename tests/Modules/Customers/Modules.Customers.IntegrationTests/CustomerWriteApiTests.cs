@@ -421,12 +421,12 @@ public sealed class CustomerWriteApiTests
         Assert.Contains("Address", await ValidationFieldsAsync(response));
     }
 
-    // Telefono y correo son obligatorios. El formulario manda "" cuando el usuario borra el
-    // input, y ese vacio tiene que volver como validation.failed con el mapa errors --el unico
-    // 422 que el formulario sabe leer para marcar el input--, no como el codigo pelado del
-    // dominio.
+    // El telefono es obligatorio y el correo no. El formulario manda "" cuando el usuario borra el
+    // input: el telefono vacio tiene que volver como validation.failed con el mapa errors --el
+    // unico 422 que el formulario sabe leer para marcar el input--, no como el codigo pelado del
+    // dominio; el correo vacio no se marca.
     [Fact]
-    public async Task CreateWithoutPhoneOrEmailMarksBothFields()
+    public async Task CreateWithoutPhoneMarksOnlyThePhone()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -453,7 +453,7 @@ public sealed class CustomerWriteApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var fields = await ValidationFieldsAsync(response);
         Assert.Contains("Phone", fields);
-        Assert.Contains("Email", fields);
+        Assert.DoesNotContain("Email", fields);
         Assert.Empty((await ListAsync(client, string.Empty)).Items);
     }
 
@@ -509,10 +509,11 @@ public sealed class CustomerWriteApiTests
         Assert.DoesNotContain("errors", body, StringComparison.Ordinal);
     }
 
-    // El PUT reemplaza el recurso entero, pero telefono y correo son obligatorios: llegar vacios
-    // no los limpia, se rechaza con el mapa errors. Con valores, si los reemplaza.
+    // El PUT reemplaza el recurso entero, pero el telefono es obligatorio: llegar vacio no lo
+    // limpia, se rechaza con el mapa errors. El correo es opcional: vacio lo limpia. Con valores,
+    // los reemplaza.
     [Fact]
-    public async Task UpdateRejectsABlankPhoneOrEmailAndReplacesThemWhenGiven()
+    public async Task UpdateRejectsABlankPhoneClearsABlankEmailAndReplacesThemWhenGiven()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -548,7 +549,18 @@ public sealed class CustomerWriteApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
         var fields = await ValidationFieldsAsync(rejected);
         Assert.Contains("Phone", fields);
-        Assert.Contains("Email", fields);
+        Assert.DoesNotContain("Email", fields);
+
+        var cleared = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{customer.Id}",
+            NewCustomerBody(city.CityId, classification.Id, phone: "310 935 2187", email: ""),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+        var withoutEmail = await cleared.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(withoutEmail);
+        Assert.Null(withoutEmail.Email);
 
         var response = await client.PutAsJsonAsync(
             $"{CustomersUrl()}/{customer.Id}",

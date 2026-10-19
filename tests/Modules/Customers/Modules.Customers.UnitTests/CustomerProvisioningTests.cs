@@ -227,7 +227,7 @@ public sealed class CustomerProvisioningTests
         var bed = NewBed();
 
         await Assert.ThrowsAsync<ValidationException>(() =>
-            bed.Provisioning.CreateCompleteAsync(Tenant, Buyer(email: null), TestContext.Current.CancellationToken));
+            bed.Provisioning.CreateCompleteAsync(Tenant, Buyer(email: "no-es-un-correo"), TestContext.Current.CancellationToken));
 
         Assert.Empty(bed.Calls);
         Assert.Empty(bed.Customers.Added);

@@ -87,8 +87,8 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
                     "The identification number cannot exceed " +
                     $"{CustomerIdentification.NumberMaxLength} characters.");
 
-        // Telefono y correo son obligatorios (CustomerContactInfo). Se rechazan como fila, con su
-        // codigo, por la misma razon que la direccion: si llegaran vacios al dominio, la
+        // El telefono es obligatorio (CustomerContactInfo). Se rechaza como fila, con su codigo,
+        // por la misma razon que la direccion: si llegara vacio al dominio, la
         // CustomersDomainException reventaria a mitad del archivo y se llevaria el lote entero.
         RuleFor(row => row.Phone)
             .NotEmpty()
@@ -112,14 +112,8 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
                 .WithMessage(
                     $"The address cannot exceed {CustomerContactInfo.AddressMaxLength} characters.");
 
-        // Requerido y formato en dos RuleFor, mismo motivo que IdentificationType mas arriba: el
-        // When() del formato apagaria un NotEmpty() encadenado delante. Con la celda vacia se
-        // reporta solo email_required, no ademas email_invalid.
-        RuleFor(row => row.Email)
-            .NotEmpty()
-                .WithErrorCode("customers.import.row.email_required")
-                .WithMessage("The email is required.");
-
+        // El correo es opcional, igual que en el formulario (CustomerContactInfo): una celda vacia
+        // no rechaza la fila; si viene, tiene que ser una direccion.
         RuleFor(row => row.Email)
             .MaximumLength(CustomerContactInfo.EmailMaxLength)
                 .WithErrorCode("customers.import.row.email_too_long")
