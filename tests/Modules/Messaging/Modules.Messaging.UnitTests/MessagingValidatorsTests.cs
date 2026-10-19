@@ -9,20 +9,45 @@ public sealed class MessagingValidatorsTests
         validator.Validate(instance).Errors.Select(error => error.PropertyName).Distinct().Order(StringComparer.Ordinal).ToArray();
 
     [Theory]
-    [InlineData("Open", null, 1, 30, new string[0])]
+    [InlineData("Open", null, null, 30, new string[0])]
     [InlineData(null, null, null, null, new string[0])]
-    [InlineData("Resolved", "laura", 2, 50, new string[0])]
-    [InlineData("Archived", null, 1, 30, new[] { "status" })]
-    [InlineData("open", null, 1, 30, new[] { "status" })]
-    [InlineData("Open", null, 0, 30, new[] { "page" })]
-    [InlineData("Open", null, 1, 0, new[] { "pageSize" })]
-    [InlineData("Open", null, 1, 51, new[] { "pageSize" })]
-    public void ListConversationsNamesTheField(string? status, string? search, int? page, int? pageSize, string[] expected) =>
-        Assert.Equal(expected, Keys(new ListConversationsValidator(), new ListConversationsQuery(Guid.CreateVersion7(), status, search, page, pageSize)));
+    [InlineData("Resolved", "laura", null, 50, new string[0])]
+    [InlineData("Archived", null, null, 30, new[] { "status" })]
+    [InlineData("open", null, null, 30, new[] { "status" })]
+    [InlineData("Open", null, null, 0, new[] { "pageSize" })]
+    [InlineData("Open", null, null, 51, new[] { "pageSize" })]
+    public void ListConversationsNamesTheField(string? status, string? search, string? cursor, int? pageSize, string[] expected) =>
+        Assert.Equal(expected, Keys(new ListConversationsValidator(), new ListConversationsQuery(Guid.CreateVersion7(), status, search, cursor, pageSize)));
 
     [Fact]
     public void ListConversationsRejectsASearchOver100Characters() =>
-        Assert.Equal(["search"], Keys(new ListConversationsValidator(), new ListConversationsQuery(Guid.CreateVersion7(), "Open", new string('x', 101), 1, 30)));
+        Assert.Equal(["search"], Keys(new ListConversationsValidator(), new ListConversationsQuery(Guid.CreateVersion7(), "Open", new string('x', 101), null, 30)));
+
+    // El cursor es opaco: lo que no salió de ConversationCursor.Encode es validation.failed con la clave «cursor».
+    [Theory]
+    [InlineData("")]
+    [InlineData("no-es-un-cursor")]
+    [InlineData("MTIz")]
+    public void ListConversationsRejectsACursorItDidNotIssue(string cursor) =>
+        Assert.Equal(["cursor"], Keys(new ListConversationsValidator(), new ListConversationsQuery(Guid.CreateVersion7(), null, null, cursor, null)));
+
+    [Fact]
+    public void ListConversationsAcceptsAnIssuedCursor()
+    {
+        var cursor = ConversationCursor.Encode(new ConversationCursor(DateTimeOffset.UtcNow, Guid.CreateVersion7()));
+
+        Assert.Empty(Keys(new ListConversationsValidator(), new ListConversationsQuery(Guid.CreateVersion7(), null, null, cursor, null)));
+    }
+
+    // Postgres guarda microsegundos: el cursor tiene que devolver exactamente la posición que leyó de la base.
+    [Fact]
+    public void AConversationCursorRoundTripsItsPosition()
+    {
+        var position = new ConversationCursor(new DateTimeOffset(2026, 10, 19, 13, 45, 7, TimeSpan.Zero).AddTicks(1234560), Guid.CreateVersion7());
+
+        Assert.True(ConversationCursor.TryDecode(ConversationCursor.Encode(position), out var decoded));
+        Assert.Equal(position, decoded);
+    }
 
     // Spec 2026-10-10 §5.1: assigned ∈ me|none|all (default all); otro valor, con la clave «assigned».
     [Theory]

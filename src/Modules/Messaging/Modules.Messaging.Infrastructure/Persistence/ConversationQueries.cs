@@ -13,10 +13,10 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
         conversation.Id, conversation.TenantId, conversation.ConnectionId, conversation.UserId, conversation.WaId, conversation.Username,
         conversation.ProfileName, conversation.CustomerId, conversation.AssignedMemberId, conversation.Status,
         conversation.UnreadCount, conversation.LastInboundAt, conversation.LastMessageId, conversation.LastMessageDirection, conversation.LastMessageKind,
-        conversation.LastMessagePreview, conversation.LastMessageStatus, conversation.LastMessageAt, conversation.UpdatedAt, conversation.Version, conversation.Channel, conversation.ResolutionReasonId);
+        conversation.LastMessagePreview, conversation.LastMessageStatus, conversation.LastMessageAt, conversation.UpdatedAt, conversation.Version, conversation.Channel, conversation.ResolutionReasonId, conversation.LastActivityAt);
 
-    public async Task<(IReadOnlyList<ConversationRow> Items, int Total)> ListAsync(
-        Guid tenantId, ConversationListFilter filter, int page, int pageSize, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<ConversationRow>> ListAsync(
+        Guid tenantId, ConversationListFilter filter, ConversationCursor? after, int take, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(filter);
         var query = dbContext.Conversations.AsNoTracking().Where(conversation => conversation.TenantId == tenantId && conversation.Status == filter.Status);
@@ -62,16 +62,24 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
                 || (conversation.CustomerId == null && conversation.WaId != null && phones.Contains(conversation.WaId)));
         }
 
-        var total = await query.CountAsync(cancellationToken);
+        // Comparación de fila de Postgres, el mismo orden que el índice, como el hilo de mensajes (MessageQueries).
+        if (after is { } cursor)
+        {
+            query = filter.Sort == ConversationSort.Oldest
+                ? query.Where(conversation => EF.Functions.GreaterThan(
+                    ValueTuple.Create(conversation.LastActivityAt, conversation.Id), ValueTuple.Create(cursor.LastActivityAt, cursor.Id)))
+                : query.Where(conversation => EF.Functions.LessThan(
+                    ValueTuple.Create(conversation.LastActivityAt, conversation.Id), ValueTuple.Create(cursor.LastActivityAt, cursor.Id)));
+        }
+
         // El mismo índice (IX_conversations_tenant_status_activity) sirve a los dos órdenes, leído al revés.
         var ordered = filter.Sort == ConversationSort.Oldest
             ? query.OrderBy(conversation => conversation.LastActivityAt).ThenBy(conversation => conversation.Id)
             : query.OrderByDescending(conversation => conversation.LastActivityAt).ThenByDescending(conversation => conversation.Id);
-        var items = await ordered
-            .Skip((page - 1) * pageSize).Take(pageSize)
+        return await ordered
+            .Take(take)
             .Select(Projection)
             .ToListAsync(cancellationToken);
-        return (items, total);
     }
 
     public async Task<ConversationCountsDto> CountsAsync(Guid tenantId, Guid? memberId, CancellationToken cancellationToken)

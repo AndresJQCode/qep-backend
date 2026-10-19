@@ -46,9 +46,10 @@ public sealed class ConversationsApiTests
 
         var page = await f.Client.GetFromJsonAsync<JsonElement>(ConversationsUrl(f.Tenant.TenantId), Ct);
 
-        Assert.Equal(2, page.GetProperty("total").GetInt32());
-        Assert.Equal(1, page.GetProperty("page").GetInt32());
-        Assert.Equal(30, page.GetProperty("pageSize").GetInt32());
+        // Cursor, no páginas numeradas: ni total ni page ni pageSize; una sola página trae nextCursor null.
+        Assert.Equal(JsonValueKind.Null, page.GetProperty("nextCursor").ValueKind);
+        Assert.False(page.TryGetProperty("total", out var _));
+        Assert.False(page.TryGetProperty("page", out var _));
         Assert.Equal(2, page.GetProperty("counts").GetProperty("open").GetInt32());
         Assert.Equal(3, page.GetProperty("counts").GetProperty("unread").GetInt32());
         var items = page.GetProperty("items").EnumerateArray().ToArray();
@@ -92,8 +93,8 @@ public sealed class ConversationsApiTests
 
         var items = page.GetProperty("items").EnumerateArray().ToArray();
         Assert.Equal(expectedWaId is null ? [] : [expectedWaId], items.Select(item => item.GetProperty("contact").GetProperty("waId").GetString()));
-        // total sí respeta la búsqueda (el scroll infinito para en page * pageSize >= total); counts no (§5.4).
-        Assert.Equal(expectedWaId is null ? 0 : 1, page.GetProperty("total").GetInt32());
+        // La búsqueda acota el recorrido (no hay más páginas); counts no (§5.4).
+        Assert.Equal(JsonValueKind.Null, page.GetProperty("nextCursor").ValueKind);
         Assert.Equal(2, page.GetProperty("counts").GetProperty("open").GetInt32());
         Assert.Equal(2, page.GetProperty("counts").GetProperty("unread").GetInt32());
     }

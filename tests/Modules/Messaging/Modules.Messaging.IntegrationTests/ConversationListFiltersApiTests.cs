@@ -76,7 +76,6 @@ public sealed class ConversationListFiltersApiTests
 
         Assert.Equal([sofia, mateo, laura], Ids(all));
         Assert.Equal([sofia, laura], Ids(tagged));
-        Assert.Equal(2, tagged.GetProperty("total").GetInt32());
         Assert.Empty(Ids(none));
         Assert.Empty(Ids(foreign));
         // §5.4: los contadores cuentan el tenant entero, sin filtros.
@@ -113,9 +112,53 @@ public sealed class ConversationListFiltersApiTests
 
         Assert.Equal([third, second, first], Ids(await ListAsync(f, "?sort=newest")));
         Assert.Equal([first, second, third], Ids(await ListAsync(f, "?sort=oldest")));
-        Assert.Equal([first, second], Ids(await ListAsync(f, "?sort=oldest&pageSize=2")));
-        Assert.Equal([third], Ids(await ListAsync(f, "?sort=oldest&pageSize=2&page=2")));
+        var oldestFirstPage = await ListAsync(f, "?sort=oldest&pageSize=2");
+        Assert.Equal([first, second], Ids(oldestFirstPage));
+        var oldestSecondPage = await ListAsync(f, $"?sort=oldest&pageSize=2&cursor={NextCursor(oldestFirstPage)}");
+        Assert.Equal([third], Ids(oldestSecondPage));
+        Assert.Equal(JsonValueKind.Null, oldestSecondPage.GetProperty("nextCursor").ValueKind);
     }
+
+    /// <summary>Scroll infinito de la bandeja: el cursor es la posición <c>(last_activity_at, id)</c> de la última fila, así que una
+    /// conversación que sube al tope entre una página y la siguiente no empuja otra a la página que sigue (con OFFSET se repetía
+    /// la que quedaba en el borde). La que subió la trae el refresco de la primera página, no la siguiente.</summary>
+    [Fact]
+    public async Task TheCursorPagesByPositionSoActivityBetweenPagesNeitherRepeatsNorSkips()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var (one, _) = await IngestAsync(f, "CO.1", "w1", 1760000100, "Uno");
+        var (two, _) = await IngestAsync(f, "CO.2", "w2", 1760000200, "Dos");
+        var (three, _) = await IngestAsync(f, "CO.3", "w3", 1760000300, "Tres");
+        var (four, _) = await IngestAsync(f, "CO.4", "w4", 1760000400, "Cuatro");
+
+        var firstPage = await ListAsync(f, "?pageSize=2");
+        Assert.Equal([four, three], Ids(firstPage));
+        // «Uno» escribe: sube al tope.
+        await IngestAsync(f, "CO.1", "w5", 1760000500, "Uno");
+        var secondPage = await ListAsync(f, $"?pageSize=2&cursor={NextCursor(firstPage)}");
+
+        Assert.Equal([two], Ids(secondPage));
+        Assert.Equal(JsonValueKind.Null, secondPage.GetProperty("nextCursor").ValueKind);
+        Assert.Equal([one, four, three, two], Ids(await ListAsync(f, "")));
+    }
+
+    [Fact]
+    public async Task ACursorTheServerDidNotIssueIsA422OnCursor()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        var response = await f.Client.GetAsync($"{ConversationsUrl(f.Tenant.TenantId)}?cursor=basura", Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("cursor", (await ProblemAsync(response)).ErrorKeys);
+    }
+
+    private static string NextCursor(JsonElement page) =>
+        Uri.EscapeDataString(page.GetProperty("nextCursor").GetString() ?? throw new InvalidOperationException("Se esperaba otra página."));
 
     [Fact]
     public async Task AnUnknownSortIsA422OnSort()

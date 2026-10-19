@@ -55,7 +55,11 @@ public sealed record ConversationCountsDto(int Open, int Unread, int Mine, int U
 
 /// <summary><c>Total</c> es exacto: la consulta infinita del frontend se detiene en
 /// <c>page * pageSize &gt;= total</c>.</summary>
-public sealed record ConversationPageDto(IReadOnlyList<ConversationSummary> Items, int Total, int Page, int PageSize, ConversationCountsDto Counts);
+/// <summary>La bandeja se recorre con scroll infinito, no por número de página: <c>nextCursor</c> es la posición de la última
+/// fila (o <c>null</c> si no hay más) y el cliente lo devuelve tal cual en <c>cursor</c>. Con OFFSET, una conversación que sube
+/// al tope mientras se recorre la lista corre todas una posición y la del borde sale repetida en la página siguiente. No hay
+/// <c>total</c>: la pantalla no lo dibuja (los números de las pestañas son <c>counts</c>) y sólo servía para saber si seguir.</summary>
+public sealed record ConversationPageDto(IReadOnlyList<ConversationSummary> Items, string? NextCursor, ConversationCountsDto Counts);
 
 public sealed record MediaDto(string Url, string MimeType, string? FileName, string? Caption);
 

@@ -25,7 +25,8 @@ public sealed record ConversationRow(
     DateTimeOffset UpdatedAt,
     long Version,
     ConversationChannel Channel = ConversationChannel.WhatsApp,
-    Guid? ResolutionReasonId = null);
+    Guid? ResolutionReasonId = null,
+    DateTimeOffset LastActivityAt = default);
 
 /// <summary>Spec 2026-10-10 §5.1: <c>assigned=all|me|none</c>.</summary>
 public enum AssignedFilter
@@ -61,11 +62,11 @@ public interface IConversationQueries
 {
     /// <summary>«Lista sin/con búsqueda» de §7.6: <c>WHERE tenant_id = @t AND status = @s [AND assigned_member_id = @m |
     /// IS NULL] [AND (profile_name ILIKE @p OR username ILIKE @p OR wa_id LIKE @d OR customer_id = ANY(@customerIds) OR
-    /// (customer_id IS NULL AND wa_id = ANY(@phones)))] ORDER BY last_activity_at DESC, id DESC LIMIT/OFFSET</c> más el
-    /// <c>count(*)</c> exacto, por <c>IX_conversations_tenant_status_activity</c> o los parciales de asignado (spec
-    /// 2026-10-10 §6.1.6).</summary>
-    Task<(IReadOnlyList<ConversationRow> Items, int Total)> ListAsync(
-        Guid tenantId, ConversationListFilter filter, int page, int pageSize, CancellationToken cancellationToken);
+    /// (customer_id IS NULL AND wa_id = ANY(@phones)))] [AND (last_activity_at, id) &lt; (@t, @id)] ORDER BY last_activity_at DESC,
+    /// id DESC LIMIT @take</c> (al revés con <see cref="ConversationSort.Oldest"/>), por <c>IX_conversations_tenant_status_activity</c>
+    /// o los parciales de asignado (spec 2026-10-10 §6.1.6). Sin <c>count(*)</c>: la bandeja pagina por cursor.</summary>
+    Task<IReadOnlyList<ConversationRow>> ListAsync(
+        Guid tenantId, ConversationListFilter filter, ConversationCursor? after, int take, CancellationToken cancellationToken);
 
     /// <summary>«Contadores» de §7.6: <c>count(*) WHERE status = 'Open'</c>, <c>SUM(unread_count) WHERE
     /// unread_count &gt; 0</c>, y las abiertas mías y sin asignar (D-A10), por los índices parciales. Sin búsqueda.

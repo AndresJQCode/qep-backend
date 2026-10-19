@@ -278,8 +278,8 @@ internal sealed class InMemoryConversationQueries : IConversationQueries
 {
     public List<ConversationRow> Rows { get; } = [];
 
-    public Task<(IReadOnlyList<ConversationRow> Items, int Total)> ListAsync(
-        Guid tenantId, ConversationListFilter filter, int page, int pageSize, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<ConversationRow>> ListAsync(
+        Guid tenantId, ConversationListFilter filter, ConversationCursor? after, int take, CancellationToken cancellationToken)
     {
         var items = Rows
             .Where(row => row.TenantId == tenantId && row.Status == filter.Status)
@@ -290,7 +290,7 @@ internal sealed class InMemoryConversationQueries : IConversationQueries
                 _ => true,
             })
             .ToList();
-        return Task.FromResult<(IReadOnlyList<ConversationRow>, int)>((items, items.Count));
+        return Task.FromResult<IReadOnlyList<ConversationRow>>(items.Take(take).ToList());
     }
 
     public Task<ConversationCountsDto> CountsAsync(Guid tenantId, Guid? memberId, CancellationToken cancellationToken)

@@ -6,11 +6,12 @@ using Modules.Tenancy.Application;
 namespace Modules.Messaging.Application;
 
 public sealed record ListConversationsQuery(
-    Guid TenantId, string? Status, string? Search, int? Page, int? PageSize, string? Assigned = null, string? Channel = null,
+    Guid TenantId, string? Status, string? Search, string? Cursor, int? PageSize, string? Assigned = null, string? Channel = null,
     Guid? TagId = null, bool? Unread = null, string? Sort = null)
     : IQuery<ConversationPageDto>;
 
-/// <summary>Spec §6.4: status ∈ Open|Resolved (default Open), search ≤ 100, page ≥ 1, pageSize 1–50 (default 30);
+/// <summary>Spec §6.4: status ∈ Open|Resolved (default Open), search ≤ 100, pageSize 1–50 (default 30), cursor emitido
+/// por <see cref="ConversationCursor.Encode"/>;
 /// spec 2026-10-10 §5.1: assigned ∈ me|none|all (default all).
 /// La clave de <c>errors</c> es el nombre del query string (<c>OverridePropertyName</c>, como
 /// <c>CompleteWhatsAppSignupValidator</c>): <c>WithName</c> sólo cambia el texto, no la clave.</summary>
@@ -22,7 +23,9 @@ public sealed class ListConversationsValidator : AbstractValidator<ListConversat
             .Must(status => status is null || status is nameof(ConversationStatus.Open) or nameof(ConversationStatus.Resolved))
             .OverridePropertyName("status").WithMessage("status must be Open or Resolved.");
         RuleFor(query => query.Search).MaximumLength(100).OverridePropertyName("search");
-        RuleFor(query => query.Page).GreaterThanOrEqualTo(1).When(query => query.Page is not null).OverridePropertyName("page");
+        RuleFor(query => query.Cursor)
+            .Must(value => ConversationCursor.TryDecode(value, out _)).When(query => query.Cursor is not null)
+            .OverridePropertyName("cursor").WithMessage("cursor is not a cursor issued by this list.");
         RuleFor(query => query.PageSize).InclusiveBetween(1, 50).When(query => query.PageSize is not null).OverridePropertyName("pageSize");
         RuleFor(query => query.Assigned)
             .Must(value => value is null or "me" or "none" or "all")
@@ -58,7 +61,6 @@ public sealed class ListConversationsHandler(
         await validator.ValidateAndThrowAsync(query, cancellationToken);
 
         var status = query.Status is nameof(ConversationStatus.Resolved) ? ConversationStatus.Resolved : ConversationStatus.Open;
-        var page = query.Page ?? 1;
         var pageSize = query.PageSize ?? DefaultPageSize;
         var search = string.IsNullOrWhiteSpace(query.Search) ? null : query.Search.Trim();
         var assigned = query.Assigned switch { "me" => AssignedFilter.Mine, "none" => AssignedFilter.Unassigned, _ => AssignedFilter.All };
@@ -79,8 +81,19 @@ public sealed class ListConversationsHandler(
         var filter = new ConversationListFilter(
             status, assigned, me, search, customerWaIds, customerIds, channel, tagCustomerIds, query.Unread is true, sort);
 
-        var (rows, total) = await queries.ListAsync(query.TenantId, filter, page, pageSize, cancellationToken);
+        ConversationCursor? after = null;
+        if (query.Cursor is not null && ConversationCursor.TryDecode(query.Cursor, out var decoded))
+        {
+            after = decoded;
+        }
+
+        // La fila pageSize + 1 sólo decide si hay otra página, como el hilo de mensajes (ListMessagesHandler).
+        var rows = await queries.ListAsync(query.TenantId, filter, after, pageSize + 1, cancellationToken);
+        var page = rows.Take(pageSize).ToArray();
+        var nextCursor = rows.Count > pageSize
+            ? ConversationCursor.Encode(new ConversationCursor(page[^1].LastActivityAt, page[^1].Id))
+            : null;
         var counts = await queries.CountsAsync(query.TenantId, me, cancellationToken);
-        return new ConversationPageDto(await summaries.BuildAsync(query.TenantId, rows, cancellationToken), total, page, pageSize, counts);
+        return new ConversationPageDto(await summaries.BuildAsync(query.TenantId, page, cancellationToken), nextCursor, counts);
     }
 }

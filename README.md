@@ -2160,6 +2160,14 @@ del teléfono no aparece en QEP todavía.
 `131051` (tipo que la Cloud API no entrega); cualquier otro código viaja `null`. La lista de conversaciones no lo
 trae. Handoff al frontend: `docs/superpowers/plans/2026-10-14-mensaje-no-disponible-frontend.md`.
 
+**Lista e hilo: paginación por cursor.** `GET …/conversations` devuelve `{ items, nextCursor, counts }`: el
+cliente manda `nextCursor` tal cual en `?cursor=` para la página siguiente (`pageSize` 1–50, default 30) y
+`null` significa que no hay más. El cursor es la posición `(last_activity_at, id)` de la última fila, así que una
+conversación que sube al tope mientras se recorre la lista no repite ni salta filas, que es lo que pasaba con
+`OFFSET`. Un cursor que no emitió el servidor da 422 `validation.failed` en `cursor`. No hay `total` ni `page`:
+los números de las pestañas son `counts`. El hilo (`…/messages?before=&limit=`) ya usaba el id del mensaje más
+viejo como cursor, con `hasMore`.
+
 **Envío.** `POST …/conversations/{id}/messages` con `{ clientId, text }` es idempotente por
 `(conversación, clientId)`: repetir devuelve el mismo mensaje; un `Failed` se reenvía. Cada envío lleva
 `biz_opaque_callback_data = "qep:{messageId}"`, que es como se correlaciona un acuse que llegue antes de
