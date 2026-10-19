@@ -51,7 +51,7 @@ public sealed class RemoveOrderPaymentProofHandler(
         // El estado del pago cambia con lo que quede cargado -- mismo motivo que
         // AddOrderItemsHandler recalcula tras sumar un producto: el agregado no tiene el neto de la
         // cotización a mano.
-        order.RecalculatePaymentStatus(quotation.NetTotal, now);
+        order.RecalculatePaymentStatus(quotation.NetTotal, quotation.Currency, now);
 
         auditPublisher.Publish(
             command.TenantId,
