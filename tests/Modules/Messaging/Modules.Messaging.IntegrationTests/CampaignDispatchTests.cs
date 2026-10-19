@@ -266,6 +266,33 @@ public sealed class CampaignDispatchTests
     }
 
     [Fact]
+    public async Task AFailureMetaReportsAfterAcceptingFailsTheRecipientWithItsReasonAndMakesItRetriable()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Ruiz", "300 111 2222"));
+        var id = await LaunchAsync(f, Input(f, [.. customers]));
+        await DrainCampaignsAsync(f.Host);
+        Assert.Equal("Sent", await RecipientStatusAsync(f, "Ana Ruiz"));
+        var wamid = await ScalarAsync<string>(f.ConnectionString, "SELECT wamid FROM messaging.messages WHERE direction = 2");
+
+        using var webhook = f.Host.CreateClient();
+        await PostWebhookAsync(webhook, MetaPayloads.Status("111", wamid, "failed", DateTimeOffset.UtcNow.ToUnixTimeSeconds(), null, 131042, "Business eligibility payment issue"));
+        await DrainDeliveriesAsync(f.Host);
+
+        Assert.Equal("Failed", await RecipientStatusAsync(f, "Ana Ruiz"));
+        var detail = await f.Client.GetFromJsonAsync<JsonElement>($"{CampaignsUrl(f)}/{id}", Ct);
+        var counts = detail.GetProperty("counts");
+        Assert.Equal((0, 1, 1), (counts.GetProperty("sent").GetInt32(), counts.GetProperty("failed").GetInt32(), counts.GetProperty("retriable").GetInt32()));
+        var recipients = await f.Client.GetFromJsonAsync<JsonElement>($"{CampaignsUrl(f)}/{id}/recipients", Ct);
+        var recipient = recipients.GetProperty("items")[0];
+        Assert.Equal("131042", recipient.GetProperty("failureCode").GetString());
+        Assert.Equal(MessageFailureReasons.For(131042), recipient.GetProperty("failureReason").GetString());
+        Assert.True(recipient.GetProperty("retriable").GetBoolean());
+    }
+
+    [Fact]
     public async Task APausedTemplateStopsTheCampaignAndSkipsWhatWasPending()
     {
         await using var database = await StartDatabaseAsync();

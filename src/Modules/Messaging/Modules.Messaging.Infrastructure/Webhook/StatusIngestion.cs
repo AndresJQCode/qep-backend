@@ -63,6 +63,21 @@ internal static class StatusIngestion
             return exists.Count == 0 ? StatusApplied.NotFound : StatusApplied.NoChange;
         }
 
+        if (failureCode is { } code)
+        {
+            // Meta aceptó una plantilla de campaña (el destinatario quedó Sent) y avisa después que no la entregó (131042, 131050…). El
+            // destinatario pasa a Failed con ese código en la misma transacción: así el detalle lo cuenta, muestra el motivo y un reintento
+            // lo toma (salvo el opt-out, CampaignFailureCodes.IsRetriableByHand).
+            var text = code.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var reason = CampaignFailureReasons.For(text);
+            var messageIds = updated.Select(row => row.Id).ToArray();
+            await dbContext.Database.ExecuteSqlAsync(
+                $"""
+                UPDATE messaging.campaign_recipients SET status = 'Failed', failure_code = {text}, failure_reason = {reason}
+                 WHERE message_id = ANY({messageIds}) AND status = 'Sent'
+                """, cancellationToken);
+        }
+
         foreach (var row in updated)
         {
             // §7.5: sin subir version ni updated_at; un acuse no puede convertir un resolve en 412.
