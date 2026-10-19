@@ -124,7 +124,7 @@ public sealed class PreviewOrderEditsHandler(
         await QuotationPricingRecalculation.ApplyAsync(
             pricingLookup, query.TenantId, quotation, now, cancellationToken);
 
-        order.RecalculatePaymentStatus(quotation.NetTotal, now);
+        order.RecalculatePaymentStatus(quotation.NetTotal, quotation.Currency, now);
 
         return new OrderDetailDto(order.ToDto() with { Version = storedVersion }, quotation.ToDto());
     }

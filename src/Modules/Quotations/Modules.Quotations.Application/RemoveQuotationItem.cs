@@ -104,7 +104,7 @@ public sealed class RemoveQuotationItemHandler(
         await QuotationPricingRecalculation.ApplyAsync(
             pricingLookup, command.TenantId, quotation, now, cancellationToken);
 
-        order?.RecalculatePaymentStatus(quotation.NetTotal, now);
+        order?.RecalculatePaymentStatus(quotation.NetTotal, quotation.Currency, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return quotation.ToDto();

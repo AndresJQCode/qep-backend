@@ -433,11 +433,32 @@ public sealed class OrderTests
         var order = NewOrder(proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), proofAmount)]);
         var later = Now.AddDays(1);
 
-        order.RecalculatePaymentStatus(amountDue, later);
+        order.RecalculatePaymentStatus(amountDue, QuotationCurrency.Cop, later);
 
         Assert.Equal(expected, order.PaymentStatus);
         Assert.Equal(later, order.UpdatedAt);
         Assert.Equal(2, order.Version);
+    }
+
+    // Hotfix 2026-10-19: la retención (2,5 % redondeado a centavos) deja el neto con fracción de
+    // peso. La pantalla lo muestra en pesos enteros —un neto de 97.529,25 se ve como $97.529— y la
+    // persona carga eso; comparar contra los centavos lo dejaba en pago parcial. En USD los
+    // centavos sí se cobran, así que ahí uno de menos sigue siendo parcial.
+    [Theory]
+    [InlineData(97_529, 97_529.25, QuotationCurrency.Cop, OrderPaymentStatus.FullPaymentReceived)]
+    [InlineData(97_530, 97_529.50, QuotationCurrency.Cop, OrderPaymentStatus.FullPaymentReceived)]
+    [InlineData(97_529, 97_529.50, QuotationCurrency.Cop, OrderPaymentStatus.PartialPaymentReceived)]
+    [InlineData(97_528, 97_529.25, QuotationCurrency.Cop, OrderPaymentStatus.PartialPaymentReceived)]
+    [InlineData(975.24, 975.25, QuotationCurrency.Usd, OrderPaymentStatus.PartialPaymentReceived)]
+    [InlineData(975.25, 975.25, QuotationCurrency.Usd, OrderPaymentStatus.FullPaymentReceived)]
+    public void RecalculatePaymentStatusComparesAgainstTheNetAsTheCurrencyDisplaysIt(
+        decimal proofAmount, decimal amountDue, QuotationCurrency currency, OrderPaymentStatus expected)
+    {
+        var order = NewOrder(proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), proofAmount)]);
+
+        order.RecalculatePaymentStatus(amountDue, currency, Now.AddDays(1));
+
+        Assert.Equal(expected, order.PaymentStatus);
     }
 
     [Fact]
@@ -445,7 +466,7 @@ public sealed class OrderTests
     {
         var order = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending, proofs: []);
 
-        order.RecalculatePaymentStatus(100_000m, Now.AddDays(1));
+        order.RecalculatePaymentStatus(100_000m, QuotationCurrency.Cop, Now.AddDays(1));
 
         Assert.Equal(OrderPaymentStatus.PaymentPending, order.PaymentStatus);
     }
@@ -460,7 +481,7 @@ public sealed class OrderTests
         order.Approve(ConvertedBy, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.RecalculatePaymentStatus(200_000m, Now.AddDays(1)));
+            order.RecalculatePaymentStatus(200_000m, QuotationCurrency.Cop, Now.AddDays(1)));
 
         Assert.Equal("order.order.not_pending", error.Code);
     }
@@ -639,7 +660,7 @@ public sealed class OrderTests
                 ConvertedBy,
                 later));
         var recalculate = Assert.Throws<QuotationsDomainException>(() =>
-            order.RecalculatePaymentStatus(200_000m, later));
+            order.RecalculatePaymentStatus(200_000m, QuotationCurrency.Cop, later));
         var removeProof = Assert.Throws<QuotationsDomainException>(() =>
             order.RemovePaymentProof(proofId, later));
         var approve = Assert.Throws<QuotationsDomainException>(() =>
@@ -1018,7 +1039,7 @@ public sealed class OrderTests
                 ConvertedBy,
                 later));
         var recalculate = Assert.Throws<QuotationsDomainException>(() =>
-            order.RecalculatePaymentStatus(200_000m, later));
+            order.RecalculatePaymentStatus(200_000m, QuotationCurrency.Cop, later));
         var removeProof = Assert.Throws<QuotationsDomainException>(() =>
             order.RemovePaymentProof(proofId, later));
         var approve = Assert.Throws<QuotationsDomainException>(() =>

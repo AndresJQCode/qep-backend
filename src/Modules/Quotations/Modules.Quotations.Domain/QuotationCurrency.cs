@@ -31,6 +31,14 @@ public static class QuotationCurrencies
         currency == QuotationCurrency.Usd ? UsdCode : CopCode;
 
     /// <summary>
+    /// Un monto redondeado a lo que esa moneda muestra: pesos enteros en COP, centavos en USD.
+    /// Los totales se guardan con dos decimales en las dos, pero en COP no se cobra nada más chico
+    /// que el peso. Mitad hacia arriba, como el <c>Math.round</c> del frontend.
+    /// </summary>
+    public static decimal RoundToDisplayedPrecision(this QuotationCurrency currency, decimal amount) =>
+        Math.Round(amount, currency == QuotationCurrency.Usd ? 2 : 0, MidpointRounding.AwayFromZero);
+
+    /// <summary>
     /// La moneda que corresponde al código ISO de una cuenta bancaria de la empresa.
     ///
     /// Una cuenta en cualquier otra moneda no se puede usar para facturar: el catálogo no tiene

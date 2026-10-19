@@ -330,8 +330,15 @@ public sealed class Order
     /// fuente queda por debajo de <see cref="Quotation.Total"/> — el cliente no paga lo que retiene,
     /// así que comparar contra el bruto dejaba en pago parcial a quien ya pagó todo (decisión del
     /// dueño de producto, 2026-10-05). Sin retención, los dos valen lo mismo.
+    ///
+    /// El neto se compara redondeado a lo que la moneda muestra (<paramref name="currency"/>):
+    /// pesos enteros en COP, centavos en USD (hotfix 2026-10-19). La retención se redondea a
+    /// centavos y le deja al neto una fracción de peso que la pantalla no muestra —un neto de
+    /// 97.529,25 se ve como $97.529—, así que quien cargaba lo que veía quedaba en pago parcial
+    /// por 25 centavos. Mismo redondeo que <c>roundToCurrencyPrecision</c> del frontend.
     /// </summary>
-    public void RecalculatePaymentStatus(decimal amountDue, DateTimeOffset occurredAt)
+    public void RecalculatePaymentStatus(
+        decimal amountDue, QuotationCurrency currency, DateTimeOffset occurredAt)
     {
         if (Status != OrderStatus.Pending)
         {
@@ -341,9 +348,10 @@ public sealed class Order
         }
 
         var proofsTotal = _paymentProofs.Sum(proof => proof.Amount);
+        var displayedAmountDue = currency.RoundToDisplayedPrecision(amountDue);
         PaymentStatus = proofsTotal <= 0
             ? OrderPaymentStatus.PaymentPending
-            : proofsTotal >= amountDue
+            : proofsTotal >= displayedAmountDue
                 ? OrderPaymentStatus.FullPaymentReceived
                 : OrderPaymentStatus.PartialPaymentReceived;
         UpdatedAt = occurredAt;
