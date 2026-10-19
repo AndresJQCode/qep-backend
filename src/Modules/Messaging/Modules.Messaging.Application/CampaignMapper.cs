@@ -43,7 +43,8 @@ public sealed class CampaignMapper(IMessagingConnectionDirectory connections, IM
         ArgumentNullException.ThrowIfNull(row);
         return new CampaignRecipientDto(
             row.CustomerId, row.CustomerName, row.Status.ToString(), row.FailureReason ?? CampaignFailureReasons.For(row.FailureCode), row.FailureCode,
-            row.SentAt, row.ConversationId, row.MessageStatus?.ToString());
+            row.SentAt, row.ConversationId, row.MessageStatus?.ToString(), row.RetryCount,
+            CampaignFailureCodes.IsRetriableByHand(row.Status, row.FailureCode));
     }
 
     private static CampaignSummaryDto Summary(
@@ -63,5 +64,6 @@ public sealed class CampaignMapper(IMessagingConnectionDirectory connections, IM
             row.Counts,
             row.CreatedAt,
             row.UpdatedAt,
-            row.Version);
+            row.Version,
+            row.RetryCount);
 }

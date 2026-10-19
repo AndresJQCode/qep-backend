@@ -189,6 +189,47 @@ public sealed class CampaignTests
     }
 
     [Fact]
+    public void RetryReopensAFinishedCampaignClearsItsStopAndCountsTheRetry()
+    {
+        var completed = Draft();
+        completed.Launch(Now);
+        CampaignStates.Finish(completed, CampaignStatus.Completed);
+        var failed = Draft();
+        failed.Launch(Now);
+        CampaignStates.Finish(failed, CampaignStatus.Failed, "132015");
+
+        completed.Retry("MARKETING", Now.AddHours(1));
+        failed.Retry("UTILITY", Now.AddHours(1));
+        CampaignStates.Finish(completed, CampaignStatus.Completed);
+        completed.Retry("MARKETING", Now.AddHours(2));
+
+        Assert.Equal((CampaignStatus.Sending, 2, 4L), (completed.Status, completed.RetryCount, completed.Version));
+        Assert.Equal((CampaignStatus.Sending, 1, "UTILITY"), (failed.Status, failed.RetryCount, failed.TemplateCategory));
+        Assert.All([completed, failed], campaign =>
+        {
+            Assert.Null(campaign.CompletedAt);
+            Assert.Null(campaign.FailureCode);
+            Assert.Null(campaign.FailureReason);
+            Assert.Equal(Now, campaign.StartedAt);
+        });
+    }
+
+    [Fact]
+    public void OnlyACompletedOrFailedCampaignCanBeRetried()
+    {
+        var draft = Draft();
+        Assert.False(draft.IsRetriable);
+        Assert.Throws<InvalidOperationException>(() => draft.Retry("MARKETING", Now));
+
+        draft.Launch(Now);
+        Assert.Throws<InvalidOperationException>(() => draft.Retry("MARKETING", Now));
+
+        draft.Cancel(Now);
+        Assert.False(draft.IsRetriable);
+        Assert.Throws<InvalidOperationException>(() => draft.Retry("MARKETING", Now));
+    }
+
+    [Fact]
     public void ADraftOrACancelledCampaignCannotBeCancelled()
     {
         var draft = Draft();

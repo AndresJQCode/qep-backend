@@ -23,6 +23,13 @@ public interface ICampaignRepository
     /// <c>concurrency.conflict</c>.
     /// </summary>
     Task SaveCancelledAsync(Campaign campaign, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Guarda el reintento (con su auditoría) y pasa a <c>Pending</c> los destinatarios que
+    /// <see cref="CampaignFailureCodes.IsRetriableByHand"/> admite, con sus intentos en cero y el número de reintento de la campaña, en la
+    /// misma transacción. Devuelve cuántos reencoló. Una versión vieja es <c>concurrency.conflict</c>.
+    /// </summary>
+    Task<int> SaveRetriedAsync(Campaign campaign, DateTimeOffset now, CancellationToken cancellationToken);
 }
 
 /// <summary>Lo que la lista y el detalle leen de una campaña, con los contadores ya calculados (siempre completos, incluso en cero).</summary>
@@ -46,6 +53,7 @@ public sealed record CampaignRow(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     long Version,
+    int RetryCount,
     CampaignCountsDto Counts);
 
 /// <summary><c>MessageStatus</c> sale del mensaje que el destinatario tiene atado (<c>message_id</c>); <c>null</c> mientras no hay.</summary>
@@ -57,7 +65,8 @@ public sealed record CampaignRecipientRow(
     string? FailureReason,
     DateTimeOffset? SentAt,
     Guid? ConversationId,
-    MessageStatus? MessageStatus);
+    MessageStatus? MessageStatus,
+    int RetryCount);
 
 public interface ICampaignQueries
 {

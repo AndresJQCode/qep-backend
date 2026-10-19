@@ -36,6 +36,16 @@ public static class CampaignFailureCodes
         code is MetaErrorCodes.TemplateDoesNotExist or MetaErrorCodes.TemplatePaused or MetaErrorCodes.TemplateDisabled
         || MetaErrorCodes.IsRejectedCredentials(code);
 
+    /// <summary>Meta respondió 131050: la persona apagó el marketing. Un reintento manual nunca la vuelve a intentar (y el worker igual
+    /// la omitiría por la ficha, decisión 10).</summary>
+    public const string MetaOptedOut = "131050";
+
+    /// <summary>Lo que <c>POST /{id}/retry</c> reencola: un <c>Failed</c> que no sea por opt-out, o un <c>Skipped campaign_failed</c> —la
+    /// detención lo dejó sin intentar—. Una copia en C# para el mapeo; el SQL de consultas y repositorio repite la misma regla.</summary>
+    public static bool IsRetriableByHand(CampaignRecipientStatus status, string? code) =>
+        (status == CampaignRecipientStatus.Failed && code != MetaOptedOut)
+        || (status == CampaignRecipientStatus.Skipped && code == CampaignFailed);
+
     /// <summary>Los parámetros guardados de la campaña no se pueden leer: ningún destinatario se podría armar, así que la campaña se detiene.</summary>
     public const string InvalidParameters = "invalid_parameters";
 }

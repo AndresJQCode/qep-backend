@@ -87,6 +87,16 @@ internal static class CampaignEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/{campaignId:guid}/retry", RetryAsync)
+            .RequireAuthorization(MessagingPermissions.CampaignManage)
+            .Accepts<CampaignVersionRequest>("application/json")
+            .Produces<CampaignDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
     }
 
     private static async Task<IResult> ListAsync(Guid tenantId, int? page, int? pageSize, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -134,6 +144,10 @@ internal static class CampaignEndpoints
     private static async Task<IResult> CancelAsync(
         Guid tenantId, Guid campaignId, CampaignVersionRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new CancelCampaignCommand(tenantId, campaignId, request.ExpectedVersion), cancellationToken));
+
+    private static async Task<IResult> RetryAsync(
+        Guid tenantId, Guid campaignId, CampaignVersionRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new RetryCampaignCommand(tenantId, campaignId, request.ExpectedVersion), cancellationToken));
 
     private static Dictionary<string, CampaignParameterInput?>? Parameters(CampaignRequest request) =>
         request.Parameters?.ToDictionary(pair => pair.Key, pair => pair.Value is null ? null : new CampaignParameterInput(pair.Value.Source, pair.Value.Value), StringComparer.Ordinal);

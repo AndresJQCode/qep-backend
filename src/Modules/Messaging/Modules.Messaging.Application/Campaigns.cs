@@ -63,6 +63,8 @@ public sealed record LaunchCampaignCommand(Guid TenantId, Guid CampaignId, long?
 
 public sealed record CancelCampaignCommand(Guid TenantId, Guid CampaignId, long? ExpectedVersion) : ICommand<CampaignDetailDto>;
 
+public sealed record RetryCampaignCommand(Guid TenantId, Guid CampaignId, long? ExpectedVersion) : ICommand<CampaignDetailDto>;
+
 public sealed record ListCampaignsQuery(Guid TenantId, int? Page, int? PageSize) : IQuery<CampaignPageDto<CampaignSummaryDto>>;
 
 public sealed record GetCampaignQuery(Guid TenantId, Guid CampaignId) : IQuery<CampaignDetailDto>;
@@ -192,6 +194,12 @@ public sealed class CancelCampaignValidator : AbstractValidator<CancelCampaignCo
         RuleFor(command => command.ExpectedVersion).Must(version => version is > 0).OverridePropertyName("expectedVersion").WithMessage("Falta la versión que estás viendo.");
 }
 
+public sealed class RetryCampaignValidator : AbstractValidator<RetryCampaignCommand>
+{
+    public RetryCampaignValidator() =>
+        RuleFor(command => command.ExpectedVersion).Must(version => version is > 0).OverridePropertyName("expectedVersion").WithMessage("Falta la versión que estás viendo.");
+}
+
 /// <summary>page ≥ 1, pageSize 1–100.</summary>
 public sealed class ListCampaignsValidator : AbstractValidator<ListCampaignsQuery>
 {
@@ -267,6 +275,12 @@ internal static class CampaignSupport
 
     public static ResourceConflictException NotCancellable() =>
         new(MessagingErrorCodes.CampaignNotCancellable, "Only a scheduled or sending campaign can be cancelled.");
+
+    public static ResourceConflictException NotRetriable() =>
+        new(MessagingErrorCodes.CampaignNotRetriable, "Only a completed or failed campaign can retry its failed recipients.");
+
+    public static ResourceConflictException NothingToRetry() =>
+        new(MessagingErrorCodes.CampaignNothingToRetry, "The campaign has no failed recipients that can be retried.");
 
     public static async Task<CampaignDetailDto> DetailAsync(
         ICampaignQueries queries, CampaignMapper mapper, Guid tenantId, Guid campaignId, CancellationToken cancellationToken)
@@ -459,6 +473,57 @@ public sealed class CancelCampaignHandler(
         campaign.Cancel(now);
         audit.RecordCampaign(command.TenantId, executionContext.SubjectId, bySystem: false, MessagingAuditActions.CampaignCancelled, campaign.Id, now);
         await repository.SaveCancelledAsync(campaign, cancellationToken);
+        return await CampaignSupport.DetailAsync(queries, mapper, command.TenantId, campaign.Id, cancellationToken);
+    }
+}
+
+/// <summary>
+/// <c>POST /{id}/retry</c>: una campaña <c>Completed</c> o <c>Failed</c> (409 si no) vuelve a <c>Sending</c> y sus fallidos a <c>Pending</c>,
+/// en la misma transacción, para que el worker los envíe de nuevo. No entran los que fallaron por opt-out (131050): quedan
+/// <c>Failed</c> y la pantalla los marca. Sí entran los <c>Skipped campaign_failed</c>, a los que la detención dejó sin intentar. Sin nada
+/// que reintentar es 409, no un viaje de ida y vuelta a <c>Sending</c>. La plantilla se valida otra vez contra el catálogo, como al lanzar:
+/// la campaña pudo detenerse justo porque se pausó.
+/// </summary>
+public sealed class RetryCampaignHandler(
+    ICampaignRepository repository,
+    ICampaignQueries queries,
+    IMessagingAuditRecorder audit,
+    IMessageTemplates templates,
+    CampaignMapper mapper,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext,
+    IClock clock,
+    IValidator<RetryCampaignCommand> validator)
+    : ICommandHandler<RetryCampaignCommand, CampaignDetailDto>
+{
+    public async Task<CampaignDetailDto> HandleAsync(RetryCampaignCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.CampaignManage, cancellationToken);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var campaign = await repository.FindAsync(command.TenantId, command.CampaignId, cancellationToken) ?? throw CampaignSupport.NotFound(command.CampaignId);
+        if (!campaign.IsRetriable)
+        {
+            throw CampaignSupport.NotRetriable();
+        }
+
+        if (campaign.Version != command.ExpectedVersion)
+        {
+            throw CampaignSupport.Stale();
+        }
+
+        var row = await queries.FindAsync(command.TenantId, command.CampaignId, cancellationToken) ?? throw CampaignSupport.NotFound(command.CampaignId);
+        if (row.Counts.Retriable == 0)
+        {
+            throw CampaignSupport.NothingToRetry();
+        }
+
+        var template = await CampaignSupport.ResolveTemplateAsync(
+            templates, command.TenantId, campaign.ConnectionId, campaign.TemplateName, campaign.TemplateLanguage, campaign.Parameters.Keys, cancellationToken);
+        var now = clock.UtcNow;
+        campaign.Retry(template.Category, now);
+        audit.RecordCampaign(command.TenantId, executionContext.SubjectId, bySystem: false, MessagingAuditActions.CampaignRetried, campaign.Id, now);
+        await repository.SaveRetriedAsync(campaign, now, cancellationToken);
         return await CampaignSupport.DetailAsync(queries, mapper, command.TenantId, campaign.Id, cancellationToken);
     }
 }

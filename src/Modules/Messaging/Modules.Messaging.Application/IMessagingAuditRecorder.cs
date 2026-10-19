@@ -41,6 +41,7 @@ public static class MessagingAuditActions
     public const string CampaignCreated = "messaging.campaign.created";
     public const string CampaignLaunched = "messaging.campaign.launched";
     public const string CampaignCancelled = "messaging.campaign.cancelled";
+    public const string CampaignRetried = "messaging.campaign.retried";
     public const string CampaignCompleted = "messaging.campaign.completed";
     public const string CampaignFailed = "messaging.campaign.failed";
 

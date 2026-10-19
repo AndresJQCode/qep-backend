@@ -44,6 +44,9 @@ internal sealed class CampaignRecipientRecord
     public DateTimeOffset? LockedUntil { get; set; }
 
     public DateTimeOffset? SentAt { get; set; }
+
+    /// <summary>En qué reintento de la campaña se reencoló por última vez; cero si sólo vio el envío original.</summary>
+    public int RetryCount { get; set; }
 }
 
 /// <summary>

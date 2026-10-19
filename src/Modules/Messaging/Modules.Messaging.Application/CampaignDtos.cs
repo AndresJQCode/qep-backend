@@ -9,9 +9,10 @@ namespace Modules.Messaging.Application;
 /// <c>sent</c> son los destinatarios en <c>Sent</c> («Meta lo aceptó»); <c>delivered</c> y <c>read</c> son subconjuntos de <c>sent</c>
 /// que salen del estado del mensaje (leído implica entregado) y <c>replied</c> cuenta los <c>Sent</c> con un entrante posterior.
 /// <c>pending</c> suma <c>Pending</c> y <c>Sending</c>. <c>total</c> es la suma de <c>pending</c>, <c>sent</c>, <c>failed</c> y
-/// <c>skipped</c>, así la barra de progreso cierra.
+/// <c>skipped</c>, así la barra de progreso cierra. <c>retriable</c> no suma: es cuántos reencolaría <c>POST /{id}/retry</c> ahora
+/// (los <c>Failed</c> que no son opt-out más los <c>Skipped campaign_failed</c>), para que la pantalla no lo calcule.
 /// </summary>
-public sealed record CampaignCountsDto(int Total, int Pending, int Sent, int Delivered, int Read, int Replied, int Failed, int Skipped);
+public sealed record CampaignCountsDto(int Total, int Pending, int Sent, int Delivered, int Read, int Replied, int Failed, int Skipped, int Retriable);
 
 public sealed record CampaignConnectionDto(Guid Id, string Name);
 
@@ -32,7 +33,8 @@ public class CampaignSummaryDto(
     CampaignCountsDto counts,
     DateTimeOffset createdAt,
     DateTimeOffset updatedAt,
-    long version)
+    long version,
+    int retryCount)
 {
     public Guid Id { get; } = id;
 
@@ -63,6 +65,9 @@ public class CampaignSummaryDto(
     public DateTimeOffset UpdatedAt { get; } = updatedAt;
 
     public long Version { get; } = version;
+
+    /// <summary>Cuántas veces se reintentaron sus fallidos.</summary>
+    public int RetryCount { get; } = retryCount;
 }
 
 /// <summary><c>source</c> es <c>text</c> (con <c>value</c>) o <c>customerName</c> (sin).</summary>
@@ -94,13 +99,17 @@ public sealed class CampaignDetailDto(
         summary.Counts,
         summary.CreatedAt,
         summary.UpdatedAt,
-        summary.Version)
+        summary.Version,
+        summary.RetryCount)
 {
     public IReadOnlyDictionary<string, CampaignParameterDto> Parameters { get; } = parameters;
 
     public CampaignAudienceDto Audience { get; } = audience;
 }
 
+/// <summary><c>retryCount</c> es en qué reintento de la campaña se reencoló este destinatario (cero: sólo el envío original).
+/// <c>retriable</c> dice si un reintento lo volvería a intentar; un <c>Failed</c> por opt-out (131050) viaja con <c>false</c> para que la
+/// pantalla lo marque.</summary>
 public sealed record CampaignRecipientDto(
     Guid CustomerId,
     string CustomerName,
@@ -109,7 +118,9 @@ public sealed record CampaignRecipientDto(
     string? FailureCode,
     DateTimeOffset? SentAt,
     Guid? ConversationId,
-    string? MessageStatus);
+    string? MessageStatus,
+    int RetryCount,
+    bool Retriable);
 
 public sealed record CampaignPageDto<T>(IReadOnlyList<T> Items, int Total, int Page, int PageSize);
 

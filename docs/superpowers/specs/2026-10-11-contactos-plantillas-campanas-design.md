@@ -95,8 +95,15 @@ mensajería, política de WhatsApp Business), respond.io, WATI, Kommo, Zoko, Zen
     miles. El worker copia `MediaCopyWorker`: `FOR UPDATE SKIP LOCKED`, lease y reintento con
     backoff.
 12. **Entrega como máximo una vez.** Un destinatario cuyo envío quedó sin resultado (caída a mitad de la
-    llamada) se marca `Failed` con `unknown_outcome` y **no se reenvía**. Un duplicado de marketing
-    cuesta plata y quejas; un faltante se ve en el detalle y se reintenta con una campaña nueva.
+    llamada) se marca `Failed` con `unknown_outcome` y **el worker no lo reenvía solo**. Un duplicado de
+    marketing cuesta plata y quejas; un faltante se ve en el detalle y lo reintenta una persona.
+    **Actualizada (decisión del owner, 2026-10-19):** el reintento manual es en la **misma campaña**, no en
+    una nueva. `POST /{id}/retry` sólo sirve en una campaña `Completed` o `Failed`, que vuelve a `Sending`.
+    Reencola a `Pending` **todos** los `Failed`, incluidos los `unknown_outcome` (quien reintenta acepta el
+    riesgo de duplicado), y también los `Skipped campaign_failed` que la detención dejó sin intentar. Los que
+    fallaron por opt-out (`131050`) **nunca** se reintentan: quedan `Failed` y el reporte los marca
+    (`retriable: false`). Cada reencolado arranca con intentos en cero y anota el número de reintento
+    (`retry_count` en la campaña y en el destinatario), que el reporte muestra.
 13. **Audiencia congelada al empezar el envío**, no al crear la campaña. Una campaña programada para
     mañana le llega a quien tenga la etiqueta mañana. Así funcionan los segmentos de respond.io.
 14. **Ritmo:** 20 mensajes por segundo por conexión como objetivo inicial, configurable
@@ -279,6 +286,7 @@ para la burbuja, en tuteo. 131050 además llama a `MarkMarketingOptOutAsync`.
 | `Draft` | crear | `Scheduled` (lanzar con fecha futura), `Sending` (lanzar ya), borrada |
 | `Scheduled` | — | `Sending` (llega la hora), `Cancelled` |
 | `Sending` | — | `Completed` (sin pendientes), `Cancelled`, `Failed` (decisión 15) |
+| `Completed`, `Failed` | — | `Sending` (reintentar los fallidos, decisión 12) |
 
 Destinatario: `Pending → Sending → Sent | Failed`, o `Skipped`. `Sent` es «Meta lo aceptó». Entregado y
 leído salen del `status` del mensaje, que ya actualiza el webhook. Respondido es: hay un entrante en esa

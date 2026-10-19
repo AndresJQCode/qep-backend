@@ -316,6 +316,73 @@ public sealed class CampaignApiTests
     }
 
     [Fact]
+    public async Task RetryingRequeuesTheFailedButTheOptOutReopensTheCampaignAndNumbersTheRetry()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var id = (await CreateAsync(f)).GetProperty("id").GetGuid();
+        await SendAsync(f.Client, HttpMethod.Post, $"{CampaignUrl(f, id)}/launch", new { expectedVersion = 1 });
+        await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Failed", name: "Ana", failureCode: "131049");
+        await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Failed", name: "Beto", failureCode: "131050");
+        await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Skipped", name: "Caro", failureCode: "campaign_failed");
+        await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Skipped", name: "Dani", failureCode: "opted_out");
+        await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Sent", name: "Eva");
+        // Lo que haría el worker: la campaña se detuvo (o terminó) con la versión arriba.
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.campaigns SET status = 'Failed', failure_code = '132015', completed_at = now(), audience_frozen_at = now(), version = 3 WHERE id = @id",
+            ("id", id));
+        var before = await (await f.Client.GetAsync(CampaignUrl(f, id), Ct)).Content.ReadFromJsonAsync<JsonElement>(Ct);
+
+        var stale = await SendAsync(f.Client, HttpMethod.Post, $"{CampaignUrl(f, id)}/retry", new { expectedVersion = 2 });
+        var response = await SendAsync(f.Client, HttpMethod.Post, $"{CampaignUrl(f, id)}/retry", new { expectedVersion = 3 });
+        var again = await SendAsync(f.Client, HttpMethod.Post, $"{CampaignUrl(f, id)}/retry", new { expectedVersion = 4 });
+
+        Assert.Equal(2, before.GetProperty("counts").GetProperty("retriable").GetInt32());
+        Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal(("Sending", 4, 1), (Status(body), body.GetProperty("version").GetInt32(), body.GetProperty("retryCount").GetInt32()));
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("failureCode").ValueKind);
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("completedAt").ValueKind);
+        var counts = body.GetProperty("counts");
+        Assert.Equal((5, 2, 1, 1, 1, 0), (counts.GetProperty("total").GetInt32(), counts.GetProperty("pending").GetInt32(), counts.GetProperty("sent").GetInt32(),
+            counts.GetProperty("failed").GetInt32(), counts.GetProperty("skipped").GetInt32(), counts.GetProperty("retriable").GetInt32()));
+        Assert.Equal(HttpStatusCode.Conflict, again.StatusCode);
+        Assert.Equal("messaging.campaign.not_retriable", (await ProblemAsync(again)).Code);
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM audit.entries WHERE action = 'messaging.campaign.retried'"));
+        Assert.Equal(2L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.campaign_recipients WHERE status = 'Pending' AND retry_count = 1 AND attempts = 0 AND failure_code IS NULL"));
+
+        var recipients = await (await f.Client.GetAsync($"{CampaignUrl(f, id)}/recipients", Ct)).Content.ReadFromJsonAsync<JsonElement>(Ct);
+        var rows = recipients.GetProperty("items").EnumerateArray()
+            .Select(item => (item.GetProperty("customerName").GetString(), item.GetProperty("status").GetString(), item.GetProperty("retryCount").GetInt32(), item.GetProperty("retriable").GetBoolean()))
+            .ToList();
+        Assert.Equal(
+            [("Ana", "Pending", 1, false), ("Beto", "Failed", 0, false), ("Caro", "Pending", 1, false), ("Dani", "Skipped", 0, false), ("Eva", "Sent", 0, false)],
+            rows);
+    }
+
+    [Fact]
+    public async Task RetryingACampaignWhoseOnlyFailuresAreOptOutsIs409NothingToRetry()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var id = (await CreateAsync(f)).GetProperty("id").GetGuid();
+        await SendAsync(f.Client, HttpMethod.Post, $"{CampaignUrl(f, id)}/launch", new { expectedVersion = 1 });
+        await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Failed", failureCode: "131050");
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.campaigns SET status = 'Completed', completed_at = now(), audience_frozen_at = now(), version = 3 WHERE id = @id", ("id", id));
+
+        var response = await SendAsync(f.Client, HttpMethod.Post, $"{CampaignUrl(f, id)}/retry", new { expectedVersion = 3 });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("messaging.campaign.nothing_to_retry", (await ProblemAsync(response)).Code);
+        Assert.Equal("Completed", await ScalarAsync<string>(f.ConnectionString, "SELECT status FROM messaging.campaigns"));
+    }
+
+    [Fact]
     public async Task TheRecipientsComeFilteredWithTheirTextsAndTheMessageStatusOfWhatMetaAccepted()
     {
         await using var database = await StartDatabaseAsync();

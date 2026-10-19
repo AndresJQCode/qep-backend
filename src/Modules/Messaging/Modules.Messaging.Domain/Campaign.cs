@@ -121,6 +121,9 @@ public sealed class Campaign
     /// audiencia que se cayó a medias parecería terminada.</summary>
     public DateTimeOffset? AudienceFrozenAt { get; private set; }
 
+    /// <summary>Cuántas veces se reencolaron sus fallidos (<see cref="Retry"/>). Cero para una campaña que sólo se lanzó.</summary>
+    public int RetryCount { get; private set; }
+
     public Guid CreatedByMemberId { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
@@ -132,6 +135,10 @@ public sealed class Campaign
     public bool IsEditable => Status == CampaignStatus.Draft;
 
     public bool IsCancellable => Status is CampaignStatus.Scheduled or CampaignStatus.Sending;
+
+    /// <summary>Sólo una campaña que ya terminó de enviar —completa o detenida— reencola sus fallidos; una cancelada no, porque alguien
+    /// decidió frenarla.</summary>
+    public bool IsRetriable => Status is CampaignStatus.Completed or CampaignStatus.Failed;
 
     public static Campaign Create(
         Guid id,
@@ -219,6 +226,23 @@ public sealed class Campaign
         RequireStatus(IsCancellable);
         Status = CampaignStatus.Cancelled;
         CompletedAt = now;
+        Touch(now);
+    }
+
+    /// <summary>
+    /// Vuelve a <see cref="CampaignStatus.Sending"/> para que el worker envíe de nuevo a los fallidos que quien guarda pasa a
+    /// <c>Pending</c>. La audiencia sigue congelada: no se recalcula, se reintenta a los mismos. Se borra el motivo de la detención y se
+    /// guarda la categoría que el catálogo tiene ahora (R7), como al lanzar.
+    /// </summary>
+    public void Retry(string templateCategory, DateTimeOffset now)
+    {
+        RequireStatus(IsRetriable);
+        TemplateCategory = templateCategory;
+        Status = CampaignStatus.Sending;
+        FailureReason = null;
+        FailureCode = null;
+        CompletedAt = null;
+        RetryCount++;
         Touch(now);
     }
 

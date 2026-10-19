@@ -25,7 +25,7 @@ internal sealed class CampaignQueries(MessagingDbContext dbContext) : ICampaignQ
                    c.template_category AS "TemplateCategory", c.parameters::text AS "Parameters", c.audience_tag_ids AS "AudienceTagIds",
                    c.audience_customer_ids AS "AudienceCustomerIds", c.status AS "Status", c.failure_reason AS "FailureReason", c.failure_code AS "FailureCode",
                    c.scheduled_at AS "ScheduledAt", c.started_at AS "StartedAt", c.completed_at AS "CompletedAt", c.created_by_member_id AS "CreatedByMemberId",
-                   c.created_at AS "CreatedAt", c.updated_at AS "UpdatedAt", c.version AS "Version"
+                   c.created_at AS "CreatedAt", c.updated_at AS "UpdatedAt", c.version AS "Version", c.retry_count AS "RetryCount"
               FROM messaging.campaigns c
              WHERE c.tenant_id = {tenantId}
              ORDER BY c.created_at DESC, c.id DESC
@@ -44,7 +44,7 @@ internal sealed class CampaignQueries(MessagingDbContext dbContext) : ICampaignQ
                    c.template_category AS "TemplateCategory", c.parameters::text AS "Parameters", c.audience_tag_ids AS "AudienceTagIds",
                    c.audience_customer_ids AS "AudienceCustomerIds", c.status AS "Status", c.failure_reason AS "FailureReason", c.failure_code AS "FailureCode",
                    c.scheduled_at AS "ScheduledAt", c.started_at AS "StartedAt", c.completed_at AS "CompletedAt", c.created_by_member_id AS "CreatedByMemberId",
-                   c.created_at AS "CreatedAt", c.updated_at AS "UpdatedAt", c.version AS "Version"
+                   c.created_at AS "CreatedAt", c.updated_at AS "UpdatedAt", c.version AS "Version", c.retry_count AS "RetryCount"
               FROM messaging.campaigns c
              WHERE c.tenant_id = {tenantId} AND c.id = {campaignId}
             """).ToListAsync(cancellationToken);
@@ -62,7 +62,7 @@ internal sealed class CampaignQueries(MessagingDbContext dbContext) : ICampaignQ
             $"""
             SELECT r.customer_id AS "CustomerId", r.customer_name AS "CustomerName", r.status AS "Status", r.failure_code AS "FailureCode",
                    r.failure_reason AS "FailureReason", r.sent_at AS "SentAt", r.conversation_id AS "ConversationId",
-                   CASE WHEN r.status = 'Sent' THEN m.status END AS "MessageStatus"
+                   CASE WHEN r.status = 'Sent' THEN m.status END AS "MessageStatus", r.retry_count AS "RetryCount"
               FROM messaging.campaign_recipients r
               LEFT JOIN messaging.messages m ON m.id = r.message_id
              WHERE r.campaign_id = {campaignId} AND r.tenant_id = {tenantId} AND ({filter}::text IS NULL OR r.status = {filter})
@@ -76,12 +76,13 @@ internal sealed class CampaignQueries(MessagingDbContext dbContext) : ICampaignQ
             """).SingleAsync(cancellationToken);
         return ([.. rows.Select(row => new CampaignRecipientRow(
             row.CustomerId, row.CustomerName, Enum.Parse<CampaignRecipientStatus>(row.Status), row.FailureCode, row.FailureReason, row.SentAt,
-            row.ConversationId, row.MessageStatus is { } code ? MessageColumnCodes.ToStatus(code) : null))], total);
+            row.ConversationId, row.MessageStatus is { } code ? MessageColumnCodes.ToStatus(code) : null, row.RetryCount))], total);
     }
 
     private async Task<IReadOnlyList<CampaignRow>> WithCountsAsync(List<CampaignColumns> campaigns, CancellationToken cancellationToken)
     {
         var ids = campaigns.Select(campaign => campaign.Id).ToArray();
+        // Retriable: la misma regla que CampaignFailureCodes.IsRetriableByHand y que el UPDATE de CampaignRepository.SaveRetriedAsync.
         var counts = (await dbContext.Database.SqlQuery<CountColumns>(
             $"""
             SELECT r.campaign_id AS "CampaignId",
@@ -94,20 +95,23 @@ internal sealed class CampaignQueries(MessagingDbContext dbContext) : ICampaignQ
                         SELECT 1 FROM messaging.messages i
                          WHERE i.conversation_id = r.conversation_id AND i.direction = 1 AND i.occurred_at > r.sent_at)))::int AS "Replied",
                    (count(*) FILTER (WHERE r.status = 'Failed'))::int AS "Failed",
-                   (count(*) FILTER (WHERE r.status = 'Skipped'))::int AS "Skipped"
+                   (count(*) FILTER (WHERE r.status = 'Skipped'))::int AS "Skipped",
+                   (count(*) FILTER (WHERE (r.status = 'Failed' AND r.failure_code IS DISTINCT FROM {CampaignFailureCodes.MetaOptedOut})
+                                        OR (r.status = 'Skipped' AND r.failure_code = {CampaignFailureCodes.CampaignFailed})))::int AS "Retriable"
               FROM messaging.campaign_recipients r
               LEFT JOIN messaging.messages m ON m.id = r.message_id
              WHERE r.campaign_id = ANY({ids})
              GROUP BY r.campaign_id
             """).ToListAsync(cancellationToken)).ToDictionary(row => row.CampaignId);
-        var zero = new CampaignCountsDto(0, 0, 0, 0, 0, 0, 0, 0);
+        var zero = new CampaignCountsDto(0, 0, 0, 0, 0, 0, 0, 0, 0);
         return [.. campaigns.Select(campaign => new CampaignRow(
             campaign.Id, campaign.ConnectionId, campaign.Name, campaign.TemplateName, campaign.TemplateLanguage, campaign.TemplateCategory,
             CampaignParametersJson.Parse(campaign.Parameters), campaign.AudienceTagIds, campaign.AudienceCustomerIds,
             Enum.Parse<CampaignStatus>(campaign.Status), campaign.FailureReason, campaign.FailureCode, campaign.ScheduledAt, campaign.StartedAt,
-            campaign.CompletedAt, campaign.CreatedByMemberId, campaign.CreatedAt, campaign.UpdatedAt, campaign.Version,
+            campaign.CompletedAt, campaign.CreatedByMemberId, campaign.CreatedAt, campaign.UpdatedAt, campaign.Version, campaign.RetryCount,
             counts.TryGetValue(campaign.Id, out var found)
-                ? new CampaignCountsDto(found.Total, found.Pending, found.Sent, found.Delivered, found.Read, found.Replied, found.Failed, found.Skipped)
+                ? new CampaignCountsDto(
+                    found.Total, found.Pending, found.Sent, found.Delivered, found.Read, found.Replied, found.Failed, found.Skipped, found.Retriable)
                 : zero))];
     }
 
@@ -150,6 +154,8 @@ internal sealed class CampaignQueries(MessagingDbContext dbContext) : ICampaignQ
         public DateTimeOffset UpdatedAt { get; set; }
 
         public long Version { get; set; }
+
+        public int RetryCount { get; set; }
     }
 
     private sealed class RecipientColumns
@@ -169,6 +175,8 @@ internal sealed class CampaignQueries(MessagingDbContext dbContext) : ICampaignQ
         public Guid? ConversationId { get; set; }
 
         public short? MessageStatus { get; set; }
+
+        public int RetryCount { get; set; }
     }
 
     private sealed class CountColumns
@@ -190,5 +198,7 @@ internal sealed class CampaignQueries(MessagingDbContext dbContext) : ICampaignQ
         public int Failed { get; set; }
 
         public int Skipped { get; set; }
+
+        public int Retriable { get; set; }
     }
 }

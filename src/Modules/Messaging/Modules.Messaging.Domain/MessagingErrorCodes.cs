@@ -63,6 +63,12 @@ public static class MessagingErrorCodes
     /// <summary>§6.2: sólo una campaña programada o enviándose se cancela (409).</summary>
     public const string CampaignNotCancellable = "messaging.campaign.not_cancellable";
 
+    /// <summary>Sólo una campaña completa o detenida reencola sus fallidos (409).</summary>
+    public const string CampaignNotRetriable = "messaging.campaign.not_retriable";
+
+    /// <summary>La campaña no tiene fallidos que se puedan reintentar: los que fallaron por opt-out no cuentan (409).</summary>
+    public const string CampaignNothingToRetry = "messaging.campaign.nothing_to_retry";
+
     /// <summary>Agregado al implementar E3 (el spec no lo nombra): el dominio de <c>Campaign</c> es la última línea de defensa de las
     /// reglas de entrada que el validador ya marca por campo; llegar acá sería un hueco del validador. Es un 422 como los demás.</summary>
     public const string CampaignInvalid = "messaging.campaign.invalid";

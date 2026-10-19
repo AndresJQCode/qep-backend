@@ -291,6 +291,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         campaign.Property(value => value.StartedAt).HasColumnName("started_at");
         campaign.Property(value => value.CompletedAt).HasColumnName("completed_at");
         campaign.Property(value => value.AudienceFrozenAt).HasColumnName("audience_frozen_at");
+        campaign.Property(value => value.RetryCount).HasColumnName("retry_count").HasDefaultValue(0);
         campaign.Property(value => value.CreatedByMemberId).HasColumnName("created_by_member_id");
         campaign.Property(value => value.CreatedAt).HasColumnName("created_at");
         campaign.Property(value => value.UpdatedAt).HasColumnName("updated_at");
@@ -325,6 +326,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         recipient.Property(value => value.NextAttemptAt).HasColumnName("next_attempt_at");
         recipient.Property(value => value.LockedUntil).HasColumnName("locked_until");
         recipient.Property(value => value.SentAt).HasColumnName("sent_at");
+        recipient.Property(value => value.RetryCount).HasColumnName("retry_count").HasDefaultValue(0);
         recipient.HasOne<Campaign>().WithMany().HasForeignKey(value => value.CampaignId)
             .HasConstraintName("FK_campaign_recipients_campaign").OnDelete(DeleteBehavior.Cascade);
         // El blanco del ON CONFLICT DO NOTHING con el que el worker congela la audiencia: repetirlo es inocuo.

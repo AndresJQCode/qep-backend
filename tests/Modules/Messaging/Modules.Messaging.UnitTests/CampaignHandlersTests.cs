@@ -114,13 +114,13 @@ public sealed class CampaignHandlersTests
         bed.Bed.Customers.Tags.Add(new MessagingTagRef(liveTag, "Mayoristas", "blue"));
         var campaign = bed.SeedDraft();
         campaign.Update("Promo", bed.Bed.ConnectionId, "promo", "es", "MARKETING", campaign.Parameters, [liveTag, goneTag], [liveCustomer.CustomerId, goneCustomer], null, bed.Bed.Now);
-        bed.Queries.Counts = new CampaignCountsDto(10, 2, 5, 3, 1, 0, 1, 2);
+        bed.Queries.Counts = new CampaignCountsDto(10, 2, 5, 3, 1, 0, 1, 2, 1);
 
         var dto = await bed.GetHandler().HandleAsync(new GetCampaignQuery(bed.Bed.TenantId, campaign.Id), Ct);
 
         Assert.Equal([new CampaignAudienceTagDto(liveTag, "Mayoristas", "blue")], dto.Audience.Tags);
         Assert.Equal([new CampaignAudienceCustomerDto(liveCustomer.CustomerId, "Laura")], dto.Audience.Customers);
-        Assert.Equal(new CampaignCountsDto(10, 2, 5, 3, 1, 0, 1, 2), dto.Counts);
+        Assert.Equal(new CampaignCountsDto(10, 2, 5, 3, 1, 0, 1, 2, 1), dto.Counts);
     }
 
     [Fact]
@@ -162,7 +162,7 @@ public sealed class CampaignHandlersTests
 
         Assert.Equal([newer.Id, older.Id], page.Items.Select(item => item.Id));
         Assert.Equal((2, 1, ListCampaignsHandler.DefaultPageSize), (page.Total, page.Page, page.PageSize));
-        Assert.All(page.Items, item => Assert.Equal(new CampaignCountsDto(0, 0, 0, 0, 0, 0, 0, 0), item.Counts));
+        Assert.All(page.Items, item => Assert.Equal(new CampaignCountsDto(0, 0, 0, 0, 0, 0, 0, 0, 0), item.Counts));
     }
 
     [Fact]
@@ -318,6 +318,88 @@ public sealed class CampaignHandlersTests
         Assert.Empty(bed.Repository.CancelledSaves);
     }
 
+    [Theory]
+    [InlineData(CampaignStatus.Completed)]
+    [InlineData(CampaignStatus.Failed)]
+    public async Task RetryReopensAFinishedCampaignRequeuesItsFailedAndAuditsIt(CampaignStatus finished)
+    {
+        var bed = new CampaignBed();
+        var campaign = bed.SeedDraft();
+        campaign.Launch(bed.Bed.Now);
+        CampaignStates.Finish(campaign, finished, finished == CampaignStatus.Failed ? "132015" : null);
+        bed.Queries.Counts = new CampaignCountsDto(4, 0, 2, 2, 0, 0, 2, 0, 1);
+
+        var dto = await bed.RetryHandler().HandleAsync(new RetryCampaignCommand(bed.Bed.TenantId, campaign.Id, campaign.Version), Ct);
+
+        Assert.Equal(("Sending", 1, 3L), (dto.Status, dto.RetryCount, dto.Version));
+        Assert.Null(dto.FailureCode);
+        Assert.Null(dto.CompletedAt);
+        Assert.Equal([campaign], bed.Repository.RetriedSaves);
+        Assert.Equal([new CampaignAuditCall(bed.Bed.TenantId, bed.Bed.SubjectId, false, MessagingAuditActions.CampaignRetried, campaign.Id)], bed.Audit.Campaigns);
+    }
+
+    [Fact]
+    public async Task RetryOfACampaignThatIsNotFinishedIs409NotRetriableAndAStaleVersionIs412()
+    {
+        var bed = new CampaignBed();
+        var draft = bed.SeedDraft();
+        var sending = bed.SeedDraft();
+        sending.Launch(bed.Bed.Now);
+        var cancelled = bed.SeedDraft();
+        cancelled.Launch(bed.Bed.Now);
+        cancelled.Cancel(bed.Bed.Now);
+        var completed = CampaignStates.Finish(bed.SeedDraft(), CampaignStatus.Completed);
+        bed.Queries.Counts = new CampaignCountsDto(1, 0, 0, 0, 0, 0, 1, 0, 1);
+
+        foreach (var campaign in new[] { draft, sending, cancelled })
+        {
+            var conflict = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+                bed.RetryHandler().HandleAsync(new RetryCampaignCommand(bed.Bed.TenantId, campaign.Id, campaign.Version), Ct));
+            Assert.Equal(MessagingErrorCodes.CampaignNotRetriable, conflict.Code);
+        }
+
+        await Assert.ThrowsAsync<RequestConcurrencyException>(() => bed.RetryHandler().HandleAsync(new RetryCampaignCommand(bed.Bed.TenantId, completed.Id, 99), Ct));
+        await Assert.ThrowsAsync<ValidationException>(() => bed.RetryHandler().HandleAsync(new RetryCampaignCommand(bed.Bed.TenantId, completed.Id, null), Ct));
+        Assert.Empty(bed.Repository.RetriedSaves);
+    }
+
+    [Fact]
+    public async Task RetryWithOnlyOptedOutFailuresIs409NothingToRetryAndWithAPausedTemplateIs422()
+    {
+        var bed = new CampaignBed();
+        var campaign = CampaignStates.Finish(bed.SeedDraft(), CampaignStatus.Completed);
+        bed.Queries.Counts = new CampaignCountsDto(3, 0, 2, 2, 0, 0, 1, 0, 0);
+
+        var nothing = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+            bed.RetryHandler().HandleAsync(new RetryCampaignCommand(bed.Bed.TenantId, campaign.Id, campaign.Version), Ct));
+
+        Assert.Equal(MessagingErrorCodes.CampaignNothingToRetry, nothing.Code);
+        bed.Queries.Counts = new CampaignCountsDto(3, 0, 2, 2, 0, 0, 1, 0, 1);
+        var gone = bed.SeedDraft();
+        typeof(Campaign).GetProperty(nameof(Campaign.TemplateName))!.SetValue(gone, "noexiste");
+        CampaignStates.Finish(gone, CampaignStatus.Failed, "132001");
+        var paused = await Assert.ThrowsAsync<MessagingDomainException>(() =>
+            bed.RetryHandler().HandleAsync(new RetryCampaignCommand(bed.Bed.TenantId, gone.Id, gone.Version), Ct));
+        Assert.Equal(MessagingErrorCodes.TemplateNotAvailable, paused.Code);
+        Assert.Equal(CampaignStatus.Failed, gone.Status);
+        Assert.Empty(bed.Repository.RetriedSaves);
+        Assert.Empty(bed.Audit.Campaigns);
+    }
+
+    [Fact]
+    public async Task AnOptedOutFailureTravelsAsNotRetriable()
+    {
+        var bed = new CampaignBed();
+        var campaign = bed.SeedDraft();
+        bed.Queries.Recipients.Add((campaign.Id, new CampaignRecipientRow(Guid.CreateVersion7(), "Baja", CampaignRecipientStatus.Failed, "131050", null, null, null, null, 0)));
+        bed.Queries.Recipients.Add((campaign.Id, new CampaignRecipientRow(Guid.CreateVersion7(), "Detenida", CampaignRecipientStatus.Skipped, "campaign_failed", null, null, null, null, 0)));
+        bed.Queries.Recipients.Add((campaign.Id, new CampaignRecipientRow(Guid.CreateVersion7(), "Omitida", CampaignRecipientStatus.Skipped, "opted_out", null, null, null, null, 0)));
+
+        var page = await bed.RecipientsHandler().HandleAsync(new ListCampaignRecipientsQuery(bed.Bed.TenantId, campaign.Id, null, null, null), Ct);
+
+        Assert.Equal([("Baja", false), ("Detenida", true), ("Omitida", false)], page.Items.Select(item => (item.CustomerName, item.Retriable)));
+    }
+
     [Fact]
     public async Task ARecipientPageResolvesTheirTextsAndPassesTheFilter()
     {
@@ -325,14 +407,15 @@ public sealed class CampaignHandlersTests
         var campaign = bed.SeedDraft();
         var conversation = Guid.CreateVersion7();
         var customer = Guid.CreateVersion7();
-        bed.Queries.Recipients.Add((campaign.Id, new CampaignRecipientRow(customer, "Laura", CampaignRecipientStatus.Failed, "131049", null, bed.Bed.Now, conversation, MessageStatus.Failed)));
-        bed.Queries.Recipients.Add((campaign.Id, new CampaignRecipientRow(Guid.CreateVersion7(), "Omitida", CampaignRecipientStatus.Skipped, "opted_out", null, null, null, null)));
+        bed.Queries.Recipients.Add((campaign.Id, new CampaignRecipientRow(customer, "Laura", CampaignRecipientStatus.Failed, "131049", null, bed.Bed.Now, conversation, MessageStatus.Failed, 1)));
+        bed.Queries.Recipients.Add((campaign.Id, new CampaignRecipientRow(Guid.CreateVersion7(), "Omitida", CampaignRecipientStatus.Skipped, "opted_out", null, null, null, null, 0)));
 
         var failed = await bed.RecipientsHandler().HandleAsync(new ListCampaignRecipientsQuery(bed.Bed.TenantId, campaign.Id, "Failed", null, null), Ct);
         var all = await bed.RecipientsHandler().HandleAsync(new ListCampaignRecipientsQuery(bed.Bed.TenantId, campaign.Id, null, 1, 1), Ct);
 
         var item = Assert.Single(failed.Items);
         Assert.Equal(("Laura", "Failed", "131049", "Failed", conversation), (item.CustomerName, item.Status, item.FailureCode, item.MessageStatus, item.ConversationId));
+        Assert.Equal((1, true), (item.RetryCount, item.Retriable));
         Assert.Equal(MessageFailureReasons.For(131049), item.FailureReason);
         Assert.Equal((2, 1, 1), (all.Total, all.Page, all.PageSize));
         Assert.Equal(CampaignFailureReasons.For("opted_out"), (await bed.RecipientsHandler().HandleAsync(new ListCampaignRecipientsQuery(bed.Bed.TenantId, campaign.Id, "Skipped", null, null), Ct)).Items[0].FailureReason);

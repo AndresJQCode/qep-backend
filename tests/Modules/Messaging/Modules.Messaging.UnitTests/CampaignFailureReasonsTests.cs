@@ -76,4 +76,16 @@ public sealed class CampaignFailureReasonsTests
     [InlineData(132018)]
     public void TheRestAreNot(int code) =>
         Assert.False(CampaignFailureCodes.IsRetriable(code));
+
+    [Theory]
+    [InlineData(CampaignRecipientStatus.Failed, "131049", true)]
+    [InlineData(CampaignRecipientStatus.Failed, "unknown_outcome", true)]
+    [InlineData(CampaignRecipientStatus.Failed, null, true)]
+    [InlineData(CampaignRecipientStatus.Failed, "131050", false)]
+    [InlineData(CampaignRecipientStatus.Skipped, "campaign_failed", true)]
+    [InlineData(CampaignRecipientStatus.Skipped, "opted_out", false)]
+    [InlineData(CampaignRecipientStatus.Skipped, "campaign_cancelled", false)]
+    [InlineData(CampaignRecipientStatus.Sent, null, false)]
+    public void AManualRetryTakesEveryFailureButTheOptOutAndWhatTheStopLeftUntried(CampaignRecipientStatus status, string? code, bool expected) =>
+        Assert.Equal(expected, CampaignFailureCodes.IsRetriableByHand(status, code));
 }

@@ -16,6 +16,9 @@ internal sealed class FakeCampaignRepository : ICampaignRepository
 
     public Exception? CancelFailure { get; set; }
 
+    /// <summary>Cada <c>SaveRetriedAsync</c>: el reintento y el reencolado de los fallidos van juntos.</summary>
+    public List<Campaign> RetriedSaves { get; } = [];
+
     public Task<Campaign?> FindAsync(Guid tenantId, Guid campaignId, CancellationToken cancellationToken) =>
         Task.FromResult(Campaigns.TryGetValue(campaignId, out var campaign) && campaign.TenantId == tenantId ? campaign : null);
 
@@ -37,11 +40,30 @@ internal sealed class FakeCampaignRepository : ICampaignRepository
         CancelledSaves.Add(campaign);
         return Task.CompletedTask;
     }
+
+    public Task<int> SaveRetriedAsync(Campaign campaign, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        RetriedSaves.Add(campaign);
+        return Task.FromResult(1);
+    }
+}
+
+/// <summary>Completed y Failed los escribe el worker por SQL, sin pasar por el agregado: en memoria se fijan a mano.</summary>
+internal static class CampaignStates
+{
+    public static Campaign Finish(Campaign campaign, CampaignStatus status, string? failureCode = null)
+    {
+        typeof(Campaign).GetProperty(nameof(Campaign.Status))!.SetValue(campaign, status);
+        typeof(Campaign).GetProperty(nameof(Campaign.CompletedAt))!.SetValue(campaign, campaign.UpdatedAt);
+        typeof(Campaign).GetProperty(nameof(Campaign.FailureCode))!.SetValue(campaign, failureCode);
+        typeof(Campaign).GetProperty(nameof(Campaign.FailureReason))!.SetValue(campaign, failureCode is null ? null : "La plantilla está pausada.");
+        return campaign;
+    }
 }
 
 internal sealed class FakeCampaignQueries(FakeCampaignRepository repository) : ICampaignQueries
 {
-    public CampaignCountsDto Counts { get; set; } = new(0, 0, 0, 0, 0, 0, 0, 0);
+    public CampaignCountsDto Counts { get; set; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0);
 
     public List<(Guid CampaignId, CampaignRecipientRow Row)> Recipients { get; } = [];
 
@@ -68,7 +90,8 @@ internal sealed class FakeCampaignQueries(FakeCampaignRepository repository) : I
     internal static CampaignRow RowOf(Campaign campaign, CampaignCountsDto counts) =>
         new(campaign.Id, campaign.ConnectionId, campaign.Name, campaign.TemplateName, campaign.TemplateLanguage, campaign.TemplateCategory,
             campaign.Parameters, campaign.AudienceTagIds, campaign.AudienceCustomerIds, campaign.Status, campaign.FailureReason, campaign.FailureCode,
-            campaign.ScheduledAt, campaign.StartedAt, campaign.CompletedAt, campaign.CreatedByMemberId, campaign.CreatedAt, campaign.UpdatedAt, campaign.Version, counts);
+            campaign.ScheduledAt, campaign.StartedAt, campaign.CompletedAt, campaign.CreatedByMemberId, campaign.CreatedAt, campaign.UpdatedAt, campaign.Version,
+            campaign.RetryCount, counts);
 }
 
 internal sealed record TemplateAuditCall(Guid TenantId, Guid ActorId, string Action, Guid TemplateId, IReadOnlyCollection<string>? ChangedFields);
@@ -181,6 +204,9 @@ internal sealed class CampaignBed
 
     public CancelCampaignHandler CancelHandler() =>
         new(Repository, Queries, Audit, Mapper, Bed.TenantModules, Context, Clock, new CancelCampaignValidator());
+
+    public RetryCampaignHandler RetryHandler() =>
+        new(Repository, Queries, Audit, Bed.Templates, Mapper, Bed.TenantModules, Context, Clock, new RetryCampaignValidator());
 
     public ListCampaignsHandler ListHandler() => new(Queries, Mapper, Bed.TenantModules, Context, new ListCampaignsValidator());
 

@@ -39,4 +39,33 @@ internal sealed class CampaignRepository(MessagingDbContext dbContext) : ICampai
             """, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
+
+    public async Task<int> SaveRetriedAsync(Campaign campaign, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(campaign);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException exception)
+        {
+            throw new RequestConcurrencyException("concurrency.conflict", "The campaign changed while the operation was being committed.", exception);
+        }
+
+        // La regla de CampaignFailureCodes.IsRetriableByHand. Intentos en cero: el reintento vuelve a tener los cinco del §6.3. El mensaje
+        // y la conversación se conservan, así el worker reenvía el mismo mensaje (PrepareAsync) en lugar de crear otro. Sin carrera con el
+        // cierre del worker: hasta el commit su UPDATE ve la campaña Completed o Failed y no la toca.
+        var requeued = await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE messaging.campaign_recipients
+               SET status = 'Pending', failure_code = NULL, failure_reason = NULL, attempts = 0, next_attempt_at = {now}, locked_until = NULL,
+                   retry_count = {campaign.RetryCount}
+             WHERE campaign_id = {campaign.Id} AND tenant_id = {campaign.TenantId}
+               AND ((status = 'Failed' AND failure_code IS DISTINCT FROM {CampaignFailureCodes.MetaOptedOut})
+                    OR (status = 'Skipped' AND failure_code = {CampaignFailureCodes.CampaignFailed}))
+            """, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return requeued;
+    }
 }
