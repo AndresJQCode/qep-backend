@@ -70,16 +70,27 @@ public sealed class UpdateProductHandler(
 
         // Los tres campos se mandan siempre, incluidos los null: el PUT reemplaza el recurso
         // entero, así que un campo ausente se limpia. Es lo que verifica CA-CAT-04-03.
+        //
+        // Variantes, Tarea 2: el cuerpo de hoy describe un producto sin opciones, así que edita su
+        // única variante (la por defecto) y la imagen pasa a ser toda la galería. El cuerpo con
+        // opciones, variantes y galería es de la Tarea 5.
         product.Update(
             command.Name,
-            command.Code,
             new ProductDetails
             {
                 Description = command.Description,
-                ImageFileId = image?.FileId,
                 TaxRateId = taxRateId
             },
-            pricing,
+            [],
+            [
+                new ProductVariantInput
+                {
+                    Id = product.Variants[0].Id.Value,
+                    Code = command.Code,
+                    Pricing = pricing
+                }
+            ],
+            image is null ? [] : [image.FileId],
             now);
 
         auditPublisher.Publish(

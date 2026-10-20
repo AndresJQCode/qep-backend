@@ -14,7 +14,7 @@ public sealed class PriceScaleCopyTests
 
     private static Product ProductWith(ProductPricing pricing, string code = "VS-001") =>
         Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", code, ProductDetails.Empty, pricing, Now);
+            ProductId.New(), TenantId, "Vela de soja", ProductDetails.Empty, new ProductVariantInput { Code = code, Pricing = pricing }, [], Now);
 
     private static Product ProductWithPrices(
         Dictionary<string, decimal> prices, params PriceScaleInput[] scales) =>
@@ -185,7 +185,7 @@ public sealed class PriceScaleCopyTests
 
         var copied = Assert.Single(target.PriceScales);
         Assert.NotEqual(sourceScaleId, copied.Id);
-        Assert.Equal(target.Id, copied.ProductId);
+        Assert.Equal(target.Variants.Single().Id, copied.VariantId);
         Assert.Equal(TenantId, copied.TenantId);
     }
 

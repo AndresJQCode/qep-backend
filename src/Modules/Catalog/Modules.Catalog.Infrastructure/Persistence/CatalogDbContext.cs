@@ -166,9 +166,11 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasColumnName("id")
             .HasConversion(id => id.Value, value => new PriceScaleId(value))
             .ValueGeneratedNever();
-        scale.Property(value => value.ProductId)
+        // Variantes, Tarea 2: la escala ya es de la variante, pero el mapeo sigue en la columna
+        // y la relación de antes sólo para que compile. La tabla y la FK nuevas son de la Tarea 3.
+        scale.Property(value => value.VariantId)
             .HasColumnName("product_id")
-            .HasConversion(id => id.Value, value => new ProductId(value));
+            .HasConversion(id => id.Value, value => new VariantId(value));
         scale.Property(value => value.TenantId).HasColumnName("tenant_id");
         scale.Property(value => value.FromUnit).HasColumnName("from_unit");
         scale.Property(value => value.ToUnit).HasColumnName("to_unit");
@@ -183,14 +185,14 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         scale.Property(value => value.Multiple).HasColumnName("multiple");
         scale.Property(value => value.AllowGrouping).HasColumnName("allow_grouping");
         // final_usd/final_cop stay in the table, unmapped, until DropLegacyProductPriceColumns.
-        scale.HasIndex(value => value.ProductId).HasDatabaseName("IX_product_price_scales_product");
+        scale.HasIndex(value => value.VariantId).HasDatabaseName("IX_product_price_scales_product");
 
         // CASCADE y no RESTRICT, a diferencia de la FK de TaxRate: una escala no tiene sentido
         // sin su producto — no es una referencia a un catálogo compartido, es parte del mismo
         // agregado. Borrar el producto debe borrar sus escalas.
         scale.HasOne<Product>()
             .WithMany(product => product.PriceScales)
-            .HasForeignKey(value => value.ProductId)
+            .HasForeignKey(value => value.VariantId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 

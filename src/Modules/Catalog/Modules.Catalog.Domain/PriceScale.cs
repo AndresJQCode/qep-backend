@@ -1,9 +1,9 @@
 namespace Modules.Catalog.Domain;
 
 /// <summary>
-/// Un tramo de precio por cantidad de un producto (CAT-09). No es un agregado propio: nace,
-/// vive y muere con su <see cref="Product"/> — no tiene repositorio ni caso de uso propio, y
-/// <see cref="Create"/> es <c>internal</c> porque sólo <c>Product</c> la construye.
+/// Un tramo de precio por cantidad de una variante (CAT-09; de un producto hasta 2026-10-20). No es
+/// un agregado propio: nace, vive y muere con su <see cref="ProductVariant"/>, dentro de <see cref="Product"/> — no tiene repositorio ni caso de uso propio, y
+/// <see cref="Create"/> es <c>internal</c> porque sólo el agregado la construye.
 /// </summary>
 public sealed class PriceScale
 {
@@ -15,7 +15,7 @@ public sealed class PriceScale
 
     private PriceScale(
         PriceScaleId id,
-        ProductId productId,
+        VariantId variantId,
         Guid tenantId,
         int fromUnit,
         int toUnit,
@@ -25,7 +25,7 @@ public sealed class PriceScale
         bool allowGrouping)
     {
         Id = id;
-        ProductId = productId;
+        VariantId = variantId;
         TenantId = tenantId;
         FromUnit = fromUnit;
         ToUnit = toUnit;
@@ -37,7 +37,11 @@ public sealed class PriceScale
 
     public PriceScaleId Id { get; private set; }
 
-    public ProductId ProductId { get; private set; }
+    /// <summary>
+    /// La variante dueña de la escala. Era el producto hasta las variantes (2026-10-20): cada variante
+    /// se comporta como antes un producto, con sus propias escalas.
+    /// </summary>
+    public VariantId VariantId { get; private set; }
 
     public Guid TenantId { get; private set; }
 
@@ -66,7 +70,7 @@ public sealed class PriceScale
     public bool AllowGrouping { get; private set; }
 
     internal static PriceScale Create(
-        ProductId productId,
+        VariantId variantId,
         Guid tenantId,
         PriceScaleInput input)
     {
@@ -103,7 +107,7 @@ public sealed class PriceScale
             }
 
             // Sin número propio: la escala usa los empaques del producto, y que no estén vacíos
-            // lo hace cumplir Product, que es el que ve los dos (Product.PackagingUnits).
+            // lo hace cumplir la variante, que es la que ve los dos (ProductVariant.PackagingUnits).
             if (input.Multiple is not null)
             {
                 throw new CatalogDomainException(
@@ -116,7 +120,7 @@ public sealed class PriceScale
 
         return new PriceScale(
             PriceScaleId.New(),
-            productId,
+            variantId,
             tenantId,
             input.FromUnit,
             input.ToUnit,
@@ -137,7 +141,7 @@ public sealed class PriceScale
     /// y eso es un error de programación, no un 422.
     /// </summary>
     internal static PriceScale CreateIncomplete(
-        ProductId productId,
+        VariantId variantId,
         Guid tenantId,
         PriceScaleInput input)
     {
@@ -154,7 +158,7 @@ public sealed class PriceScale
 
         return new PriceScale(
             PriceScaleId.New(),
-            productId,
+            variantId,
             tenantId,
             input.FromUnit,
             input.ToUnit,

@@ -427,8 +427,19 @@ public sealed class ProductWriteApiTests
 
         // Recién ahora escribe el primero, sobre una copia que ya no refleja la base.
         stale.Update(
-            "Vela de soja premium", "VS-002", ProductDetails.Empty,
-            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m } }, DateTimeOffset.UtcNow);
+            "Vela de soja premium",
+            ProductDetails.Empty,
+            [],
+            [
+                new ProductVariantInput
+                {
+                    Id = stale.Variants.Single().Id.Value,
+                    Code = "VS-002",
+                    Pricing = new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m } }
+                }
+            ],
+            [],
+            DateTimeOffset.UtcNow);
 
         await Assert.ThrowsAsync<RequestConcurrencyException>(
             () => unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken));

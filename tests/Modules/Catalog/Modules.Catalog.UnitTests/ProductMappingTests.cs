@@ -27,13 +27,16 @@ public sealed class ProductMappingTests
             ProductId.New(),
             TenantId,
             "Vela de soja",
-            "VS-001",
             ProductDetails.Empty,
-            new ProductPricing
+            new ProductVariantInput
             {
-                Prices = new Dictionary<string, decimal> { ["COP"] = 400_000m, ["USD"] = 100m },
-                Scales = [Scale(20, 29), Scale(1, 9), Scale(10, 19)]
-            },
+                Code = "VS-001",
+                Pricing = new ProductPricing
+                {
+                    Prices = new Dictionary<string, decimal> { ["COP"] = 400_000m, ["USD"] = 100m },
+                    Scales = [Scale(20, 29), Scale(1, 9), Scale(10, 19)]
+                }
+            }, [],
             Now);
 
         var dto = product.ToDto();
@@ -47,12 +50,15 @@ public sealed class ProductMappingTests
     public void PricesAndDerivedFinalsComeInCatalogueOrder()
     {
         var product = Product.Create(
-            ProductId.New(), Guid.CreateVersion7(), "Vela de soja", "VS-001", ProductDetails.Empty,
-            new ProductPricing
+            ProductId.New(), Guid.CreateVersion7(), "Vela de soja", ProductDetails.Empty, new ProductVariantInput
             {
-                Prices = new Dictionary<string, decimal> { ["EUR"] = 11.4m, ["COP"] = 45_000m },
-                Scales = [new PriceScaleInput(1, 9, 10m, PriceScaleRestriction.Multiple, 1)]
-            },
+                Code = "VS-001",
+                Pricing = new ProductPricing
+                {
+                    Prices = new Dictionary<string, decimal> { ["EUR"] = 11.4m, ["COP"] = 45_000m },
+                    Scales = [new PriceScaleInput(1, 9, 10m, PriceScaleRestriction.Multiple, 1)]
+                }
+            }, [],
             DateTimeOffset.UtcNow);
 
         var dto = product.ToDto();
@@ -70,20 +76,26 @@ public sealed class ProductMappingTests
     {
         PriceScaleInput scale = new(1, 9, 10m, PriceScaleRestriction.Multiple, 1);
         var both = Product.Create(
-            ProductId.New(), TenantId, "Vela", "VS-BOTH", ProductDetails.Empty,
-            new ProductPricing
+            ProductId.New(), TenantId, "Vela", ProductDetails.Empty, new ProductVariantInput
             {
-                Prices = new Dictionary<string, decimal> { ["COP"] = 45_000m, ["USD"] = 12.5m },
-                Scales = [scale]
-            },
+                Code = "VS-BOTH",
+                Pricing = new ProductPricing
+                {
+                    Prices = new Dictionary<string, decimal> { ["COP"] = 45_000m, ["USD"] = 12.5m },
+                    Scales = [scale]
+                }
+            }, [],
             Now);
         var copOnly = Product.Create(
-            ProductId.New(), TenantId, "Vela", "VS-COP", ProductDetails.Empty,
-            new ProductPricing
+            ProductId.New(), TenantId, "Vela", ProductDetails.Empty, new ProductVariantInput
             {
-                Prices = new Dictionary<string, decimal> { ["COP"] = 20_000m },
-                Scales = [scale]
-            },
+                Code = "VS-COP",
+                Pricing = new ProductPricing
+                {
+                    Prices = new Dictionary<string, decimal> { ["COP"] = 20_000m },
+                    Scales = [scale]
+                }
+            }, [],
             Now);
 
         Assert.Equal(

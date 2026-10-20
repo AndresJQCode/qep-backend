@@ -13,15 +13,48 @@ public sealed class ProductTests
     // precio — sólo necesitan una entrada válida para no chocar con esa regla nueva.
     private static readonly ProductPricing ValidPricing = new() { Prices = new Dictionary<string, decimal> { ["USD"] = 1000m } };
 
+    // Variantes (2026-10-20): Code, precios, escalas y empaques son de la variante. Estas pruebas
+    // son de antes y ejercen un producto sin opciones, o sea con una sola variante por defecto.
+    private static Product NewProduct(
+        string name,
+        string code,
+        ProductDetails details,
+        ProductPricing pricing,
+        DateTimeOffset at,
+        IReadOnlyList<Guid>? gallery = null) =>
+        Product.Create(
+            ProductId.New(),
+            TenantId,
+            name,
+            details,
+            new ProductVariantInput { Code = code, Pricing = pricing },
+            gallery ?? [],
+            at);
+
+    private static void UpdateDefault(
+        Product product,
+        string name,
+        string code,
+        ProductDetails details,
+        ProductPricing pricing,
+        DateTimeOffset at) =>
+        product.Update(
+            name,
+            details,
+            [],
+            [new ProductVariantInput { Id = product.Variants.Single().Id.Value, Code = code, Pricing = pricing }],
+            [],
+            at);
+
     [Fact]
     public void CreateStartsActive()
     {
-        var product = Product.Create(ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
 
         Assert.True(product.IsActive);
         Assert.Equal(TenantId, product.TenantId);
         Assert.Equal("Vela de soja", product.Name);
-        Assert.Equal("VS-001", product.Code);
+        Assert.Equal("VS-001", product.Variants.Single().Code);
         Assert.Equal(Now, product.CreatedAt);
         Assert.Equal(Now, product.UpdatedAt);
     }
@@ -32,11 +65,10 @@ public sealed class ProductTests
     [Fact]
     public void CreateTrimsNameAndCode()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "  Vela de soja  ", "  VS-001  ", ProductDetails.Empty, ValidPricing, Now);
+        var product = NewProduct("  Vela de soja  ", "  VS-001  ", ProductDetails.Empty, ValidPricing, Now);
 
         Assert.Equal("Vela de soja", product.Name);
-        Assert.Equal("VS-001", product.Code);
+        Assert.Equal("VS-001", product.Variants.Single().Code);
     }
 
     [Theory]
@@ -45,7 +77,7 @@ public sealed class ProductTests
     public void CreateRejectsBlankName(string name)
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(ProductId.New(), TenantId, name, "VS-001", ProductDetails.Empty, ValidPricing, Now));
+            NewProduct(name, "VS-001", ProductDetails.Empty, ValidPricing, Now));
 
         Assert.Equal("catalog.product.name_required", error.Code);
     }
@@ -56,7 +88,7 @@ public sealed class ProductTests
     public void CreateRejectsBlankCode(string code)
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(ProductId.New(), TenantId, "Vela de soja", code, ProductDetails.Empty, ValidPricing, Now));
+            NewProduct("Vela de soja", code, ProductDetails.Empty, ValidPricing, Now));
 
         Assert.Equal("catalog.product.code_required", error.Code);
     }
@@ -68,7 +100,7 @@ public sealed class ProductTests
     public void CreateRejectsNameOverTwoHundredCharacters()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(ProductId.New(), TenantId, new string('a', 201), "VS-001", ProductDetails.Empty, ValidPricing, Now));
+            NewProduct(new string('a', 201), "VS-001", ProductDetails.Empty, ValidPricing, Now));
 
         Assert.Equal("catalog.product.name_too_long", error.Code);
     }
@@ -77,7 +109,7 @@ public sealed class ProductTests
     public void CreateRejectsCodeOverSixtyCharacters()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(ProductId.New(), TenantId, "Vela de soja", new string('a', 61), ProductDetails.Empty, ValidPricing, Now));
+            NewProduct("Vela de soja", new string('a', 61), ProductDetails.Empty, ValidPricing, Now));
 
         Assert.Equal("catalog.product.code_too_long", error.Code);
     }
@@ -85,13 +117,13 @@ public sealed class ProductTests
     [Fact]
     public void UpdateChangesNameAndCodeAndAdvancesUpdatedAt()
     {
-        var product = Product.Create(ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
         var later = Now.AddMinutes(5);
 
-        product.Update("Vela de cera", "VC-002", ProductDetails.Empty, ValidPricing, later);
+        UpdateDefault(product, "Vela de cera", "VC-002", ProductDetails.Empty, ValidPricing, later);
 
         Assert.Equal("Vela de cera", product.Name);
-        Assert.Equal("VC-002", product.Code);
+        Assert.Equal("VC-002", product.Variants.Single().Code);
         Assert.Equal(later, product.UpdatedAt);
         Assert.Equal(Now, product.CreatedAt);
     }
@@ -99,10 +131,10 @@ public sealed class ProductTests
     [Fact]
     public void UpdateRejectsBlankName()
     {
-        var product = Product.Create(ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
 
         var error = Assert.Throws<CatalogDomainException>(() =>
-            product.Update("  ", "VS-001", ProductDetails.Empty, ValidPricing, Now.AddMinutes(5)));
+            UpdateDefault(product, "  ", "VS-001", ProductDetails.Empty, ValidPricing, Now.AddMinutes(5)));
 
         Assert.Equal("catalog.product.name_required", error.Code);
     }
@@ -110,7 +142,7 @@ public sealed class ProductTests
     [Fact]
     public void DeactivateTurnsProductInactiveAndAdvancesUpdatedAt()
     {
-        var product = Product.Create(ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
         var later = Now.AddMinutes(5);
 
         product.Deactivate(later);
@@ -123,7 +155,7 @@ public sealed class ProductTests
     [Fact]
     public void DeactivateRejectsAnAlreadyInactiveProduct()
     {
-        var product = Product.Create(ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
         product.Deactivate(Now.AddMinutes(5));
 
         var error = Assert.Throws<CatalogDomainException>(() =>
@@ -135,11 +167,11 @@ public sealed class ProductTests
     [Fact]
     public void UpdateRejectsAnInactiveProduct()
     {
-        var product = Product.Create(ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
         product.Deactivate(Now.AddMinutes(5));
 
         var error = Assert.Throws<CatalogDomainException>(() =>
-            product.Update("Vela de cera", "VC-002", ProductDetails.Empty, ValidPricing, Now.AddMinutes(10)));
+            UpdateDefault(product, "Vela de cera", "VC-002", ProductDetails.Empty, ValidPricing, Now.AddMinutes(10)));
 
         Assert.Equal("catalog.product.inactive", error.Code);
     }
@@ -154,8 +186,7 @@ public sealed class ProductTests
     [Fact]
     public void CreateWithoutDetailsLeavesThemNull()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
 
         Assert.Null(product.Description);
         Assert.Null(product.ImageFileId);
@@ -168,19 +199,16 @@ public sealed class ProductTests
         var image = Guid.CreateVersion7();
         var taxRate = TaxRateId.New();
 
-        var product = Product.Create(
-            ProductId.New(),
-            TenantId,
-            "Vela de soja",
+        var product = NewProduct("Vela de soja",
             "VS-001",
             ProductDetails.Empty with
             {
                 Description = "Cera de soja, 200 g",
-                ImageFileId = image,
                 TaxRateId = taxRate
             },
             ValidPricing,
-            Now);
+            Now,
+            gallery: [image]);
 
         Assert.Equal("Cera de soja, 200 g", product.Description);
         Assert.Equal(image, product.ImageFileId);
@@ -191,10 +219,7 @@ public sealed class ProductTests
     public void CreateRejectsADescriptionOverTwoThousandCharacters()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(),
-                TenantId,
-                "Vela de soja",
+            NewProduct("Vela de soja",
                 "VS-001",
                 ProductDetails.Empty with { Description = new string('a', 2001) },
                 ValidPricing,
@@ -208,21 +233,18 @@ public sealed class ProductTests
     [Fact]
     public void UpdateClearsDetailsThatArePassedAsNull()
     {
-        var product = Product.Create(
-            ProductId.New(),
-            TenantId,
-            "Vela de soja",
+        var product = NewProduct("Vela de soja",
             "VS-001",
             ProductDetails.Empty with
             {
                 Description = "Cera de soja",
-                ImageFileId = Guid.CreateVersion7(),
                 TaxRateId = TaxRateId.New()
             },
             ValidPricing,
-            Now);
+            Now,
+            gallery: [Guid.CreateVersion7()]);
 
-        product.Update("Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now.AddMinutes(5));
+        UpdateDefault(product, "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now.AddMinutes(5));
 
         Assert.Null(product.Description);
         Assert.Null(product.ImageFileId);
@@ -232,11 +254,10 @@ public sealed class ProductTests
     [Fact]
     public void UpdateAdvancesTheConcurrencyTokenWithDetails()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
 
-        product.Update(
-            "Vela de soja",
+        UpdateDefault(
+            product, "Vela de soja",
             "VS-001",
             ProductDetails.Empty with { Description = "Cera de soja" },
             ValidPricing,
@@ -250,7 +271,7 @@ public sealed class ProductTests
     [Fact]
     public void ActivateTurnsProductActiveAndAdvancesUpdatedAt()
     {
-        var product = Product.Create(ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
         product.Deactivate(Now.AddMinutes(5));
         var later = Now.AddMinutes(10);
 
@@ -265,7 +286,7 @@ public sealed class ProductTests
     [Fact]
     public void ActivateRejectsAnAlreadyActiveProduct()
     {
-        var product = Product.Create(ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
 
         var error = Assert.Throws<CatalogDomainException>(() =>
             product.Activate(Now.AddMinutes(5)));
@@ -279,7 +300,7 @@ public sealed class ProductTests
     [Fact]
     public void ActivateAdvancesTheConcurrencyToken()
     {
-        var product = Product.Create(ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
         product.Deactivate(Now.AddMinutes(5));
 
         product.Activate(Now.AddMinutes(10));
@@ -293,14 +314,14 @@ public sealed class ProductTests
     [Fact]
     public void ActivateReopensUpdate()
     {
-        var product = Product.Create(ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
         product.Deactivate(Now.AddMinutes(5));
         product.Activate(Now.AddMinutes(10));
 
-        product.Update("Vela de coco", "VS-002", ProductDetails.Empty, ValidPricing, Now.AddMinutes(15));
+        UpdateDefault(product, "Vela de coco", "VS-002", ProductDetails.Empty, ValidPricing, Now.AddMinutes(15));
 
         Assert.Equal("Vela de coco", product.Name);
-        Assert.Equal("VS-002", product.Code);
+        Assert.Equal("VS-002", product.Variants.Single().Code);
     }
 
     // ---- Prices as a collection (spec 2026-10-08, D3) ----
@@ -312,8 +333,7 @@ public sealed class ProductTests
     public void CreateRejectsAProductWithNoPrice()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+            NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing(), Now));
 
         Assert.Equal("catalog.product.price_required", error.Code);
@@ -322,22 +342,20 @@ public sealed class ProductTests
     [Fact]
     public void CreateKeepsOnePricePerCurrency()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
             PricedIn(("COP", 45_000m), ("EUR", 11.4m)), Now);
 
-        Assert.Equal(45_000m, product.PriceIn("COP"));
-        Assert.Equal(11.4m, product.PriceIn("EUR"));
-        Assert.Null(product.PriceIn("USD"));
-        Assert.Equal(["COP", "EUR"], product.PricedCurrencies);
+        Assert.Equal(45_000m, product.Variants.Single().PriceIn("COP"));
+        Assert.Equal(11.4m, product.Variants.Single().PriceIn("EUR"));
+        Assert.Null(product.Variants.Single().PriceIn("USD"));
+        Assert.Equal(["COP", "EUR"], product.Variants.Single().PricedCurrencies);
     }
 
     [Fact]
     public void CreateRejectsANegativePriceInAnyCurrency()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+            NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
                 PricedIn(("COP", 45_000m), ("EUR", -1m)), Now));
 
         Assert.Equal("catalog.product.price_negative", error.Code);
@@ -349,23 +367,21 @@ public sealed class ProductTests
     public void CreateRejectsACurrencyCodeThatWasNotNormalised()
     {
         Assert.Throws<ArgumentException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+            NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
                 PricedIn(("eur", 10m)), Now));
     }
 
     [Fact]
     public void UpdateReplacesThePricesEntirely()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
             PricedIn(("USD", 10m)), Now);
 
-        product.Update("Vela de soja", "VS-001", ProductDetails.Empty, PricedIn(("COP", 45_000m)), Now.AddMinutes(5));
+        UpdateDefault(product, "Vela de soja", "VS-001", ProductDetails.Empty, PricedIn(("COP", 45_000m)), Now.AddMinutes(5));
 
-        Assert.Null(product.PriceIn("USD"));
-        Assert.Equal(45_000m, product.PriceIn("COP"));
-        Assert.Single(product.Prices);
+        Assert.Null(product.Variants.Single().PriceIn("USD"));
+        Assert.Equal(45_000m, product.Variants.Single().PriceIn("COP"));
+        Assert.Single(product.Variants.Single().Prices);
     }
 
     // The owned rows are keyed (product_id, currency): changing an amount must keep the same row
@@ -373,14 +389,13 @@ public sealed class ProductTests
     [Fact]
     public void UpdateKeepsThePriceRowWhenOnlyTheAmountChanges()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
             PricedIn(("COP", 45_000m)), Now);
-        var before = Assert.Single(product.Prices);
+        var before = Assert.Single(product.Variants.Single().Prices);
 
-        product.Update("Vela de soja", "VS-001", ProductDetails.Empty, PricedIn(("COP", 47_000m)), Now.AddMinutes(5));
+        UpdateDefault(product, "Vela de soja", "VS-001", ProductDetails.Empty, PricedIn(("COP", 47_000m)), Now.AddMinutes(5));
 
-        Assert.Same(before, Assert.Single(product.Prices));
+        Assert.Same(before, Assert.Single(product.Variants.Single().Prices));
         Assert.Equal(47_000m, before.Amount);
     }
 
@@ -393,8 +408,7 @@ public sealed class ProductTests
     [Fact]
     public void CreateAcceptsAProductWithValidScales()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
             new ProductPricing
             {
                 Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
@@ -402,7 +416,7 @@ public sealed class ProductTests
             },
             Now);
 
-        var scale = Assert.Single(product.PriceScales);
+        var scale = Assert.Single(product.Variants.Single().PriceScales);
         Assert.Equal(1, scale.FromUnit);
         Assert.Equal(9, scale.ToUnit);
         Assert.Equal(3, scale.Multiple);
@@ -416,8 +430,7 @@ public sealed class ProductTests
     [Fact]
     public void CreateAcceptsAPackagingUnitScaleWhenTheProductHasPackagingUnits()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
             new ProductPricing
             {
                 Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
@@ -426,18 +439,17 @@ public sealed class ProductTests
             },
             Now);
 
-        var scale = Assert.Single(product.PriceScales);
+        var scale = Assert.Single(product.Variants.Single().PriceScales);
         Assert.Equal(PriceScaleRestriction.PackagingUnit, scale.Restriction);
         Assert.Null(scale.Multiple);
-        Assert.Equal([12], product.PackagingUnits);
+        Assert.Equal([12], product.Variants.Single().PackagingUnits);
     }
 
     [Fact]
     public void CreateRejectsAScaleWhereToUnitIsNotGreaterThanFromUnit()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+            NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing
                 {
                     Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
@@ -454,8 +466,7 @@ public sealed class ProductTests
     public void CreateRejectsAScaleWithADiscountOutOfRange(decimal discount)
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+            NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing
                 {
                     Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
@@ -470,8 +481,7 @@ public sealed class ProductTests
     public void CreateRejectsAScaleWithoutARestriction()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+            NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing
                 {
                     Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
@@ -487,13 +497,12 @@ public sealed class ProductTests
     [Fact]
     public void UpdateRejectsAScaleWithoutARestriction()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
             new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m } }, Now);
 
         var error = Assert.Throws<CatalogDomainException>(() =>
-            product.Update(
-                "Vela de soja", "VS-001", ProductDetails.Empty,
+            UpdateDefault(
+                product, "Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing
                 {
                     Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
@@ -508,8 +517,7 @@ public sealed class ProductTests
     public void CreateRejectsAMultipleRestrictionWithoutAMultiple()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+            NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing
                 {
                     Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
@@ -526,8 +534,7 @@ public sealed class ProductTests
     public void CreateRejectsGroupingOnAPackagingUnitRestriction()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+            NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing
                 {
                     Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
@@ -542,8 +549,7 @@ public sealed class ProductTests
     [Fact]
     public void CreateKeepsGroupingOnAMultipleRestriction()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
             new ProductPricing
             {
                 Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
@@ -556,7 +562,7 @@ public sealed class ProductTests
             },
             Now);
 
-        Assert.True(Assert.Single(product.PriceScales).AllowGrouping);
+        Assert.True(Assert.Single(product.Variants.Single().PriceScales).AllowGrouping);
     }
 
     // Sin el flag explícito, una escala no agrupa: es el comportamiento de todas las que ya
@@ -564,8 +570,7 @@ public sealed class ProductTests
     [Fact]
     public void CreateDefaultsGroupingToDisabled()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
             new ProductPricing
             {
                 Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
@@ -573,15 +578,14 @@ public sealed class ProductTests
             },
             Now);
 
-        Assert.False(Assert.Single(product.PriceScales).AllowGrouping);
+        Assert.False(Assert.Single(product.Variants.Single().PriceScales).AllowGrouping);
     }
 
     [Fact]
     public void CreateRejectsAPackagingUnitRestrictionWithAMultiple()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+            NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
                 new ProductPricing
                 {
                     Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
@@ -596,13 +600,12 @@ public sealed class ProductTests
     [Fact]
     public void UpdateReplacesAllPriceScales()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
             new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, Scales = [MultipleScale()] }, Now);
-        var originalScaleId = Assert.Single(product.PriceScales).Id;
+        var originalScaleId = Assert.Single(product.Variants.Single().PriceScales).Id;
 
-        product.Update(
-            "Vela de soja", "VS-001", ProductDetails.Empty,
+        UpdateDefault(
+            product, "Vela de soja", "VS-001", ProductDetails.Empty,
             new ProductPricing
             {
                 Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
@@ -610,7 +613,7 @@ public sealed class ProductTests
             },
             Now.AddMinutes(5));
 
-        var replaced = Assert.Single(product.PriceScales);
+        var replaced = Assert.Single(product.Variants.Single().PriceScales);
         Assert.NotEqual(originalScaleId, replaced.Id);
         Assert.Equal(10, replaced.FromUnit);
         Assert.Equal(5, replaced.Multiple);
@@ -619,15 +622,14 @@ public sealed class ProductTests
     [Fact]
     public void UpdateWithNoScalesClearsThemAll()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
             new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, Scales = [MultipleScale()] }, Now);
 
-        product.Update(
-            "Vela de soja", "VS-001", ProductDetails.Empty,
+        UpdateDefault(
+            product, "Vela de soja", "VS-001", ProductDetails.Empty,
             new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m } }, Now.AddMinutes(5));
 
-        Assert.Empty(product.PriceScales);
+        Assert.Empty(product.Variants.Single().PriceScales);
     }
 
     // ---- Empaques del producto (2026-10-01) ----
@@ -635,11 +637,10 @@ public sealed class ProductTests
     [Fact]
     public void CreateWithoutPackagingUnitsLeavesThemEmpty()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty,
             ValidPricing, Now);
 
-        Assert.Empty(product.PackagingUnits);
+        Assert.Empty(product.Variants.Single().PackagingUnits);
     }
 
     // Se guardan ascendentes, lleguen como lleguen: es el orden en que la pantalla los pinta y
@@ -647,24 +648,22 @@ public sealed class ProductTests
     [Fact]
     public void CreateSortsThePackagingUnits()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+        var product = NewProduct("Keratina 120 ml", "KR-120", ProductDetails.Empty,
             new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [150, 100] },
             Now);
 
-        Assert.Equal([100, 150], product.PackagingUnits);
+        Assert.Equal([100, 150], product.Variants.Single().PackagingUnits);
     }
 
     // Un producto puede declarar sus empaques sin que ninguna escala los exija.
     [Fact]
     public void CreateAcceptsPackagingUnitsWithoutAPackagingScale()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+        var product = NewProduct("Keratina 120 ml", "KR-120", ProductDetails.Empty,
             new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [100, 150], Scales = [MultipleScale()] },
             Now);
 
-        Assert.Equal([100, 150], product.PackagingUnits);
+        Assert.Equal([100, 150], product.Variants.Single().PackagingUnits);
     }
 
     [Theory]
@@ -673,8 +672,7 @@ public sealed class ProductTests
     public void CreateRejectsAPackagingUnitThatIsNotPositive(int packagingUnit)
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+            NewProduct("Keratina 120 ml", "KR-120", ProductDetails.Empty,
                 new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [100, packagingUnit] },
                 Now));
 
@@ -688,8 +686,7 @@ public sealed class ProductTests
     public void CreateRejectsAPackagingUnitAboveTheMaximum()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+            NewProduct("Keratina 120 ml", "KR-120", ProductDetails.Empty,
                 new ProductPricing
                 {
                     Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
@@ -703,12 +700,11 @@ public sealed class ProductTests
     [Fact]
     public void CreateAcceptsAPackagingUnitAtTheMaximum()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+        var product = NewProduct("Keratina 120 ml", "KR-120", ProductDetails.Empty,
             new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [Product.MaxPackagingUnitValue] },
             Now);
 
-        Assert.Equal([100_000], product.PackagingUnits);
+        Assert.Equal([100_000], product.Variants.Single().PackagingUnits);
     }
 
     // Ningún producto viene en más de un puñado de cajas; el tope (Product.MaxPackagingUnits)
@@ -717,8 +713,7 @@ public sealed class ProductTests
     public void CreateRejectsMorePackagingUnitsThanTheMaximum()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+            NewProduct("Keratina 120 ml", "KR-120", ProductDetails.Empty,
                 new ProductPricing
                 {
                     Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
@@ -732,8 +727,7 @@ public sealed class ProductTests
     [Fact]
     public void CreateAcceptsExactlyTheMaximumNumberOfPackagingUnits()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+        var product = NewProduct("Keratina 120 ml", "KR-120", ProductDetails.Empty,
             new ProductPricing
             {
                 Prices = new Dictionary<string, decimal> { ["USD"] = 10m },
@@ -741,7 +735,7 @@ public sealed class ProductTests
             },
             Now);
 
-        Assert.Equal(10, product.PackagingUnits.Count);
+        Assert.Equal(10, product.Variants.Single().PackagingUnits.Count);
     }
 
     // Un repetido se rechaza y no se descarta en silencio: quien mandó [100, 100] seguramente
@@ -750,8 +744,7 @@ public sealed class ProductTests
     public void CreateRejectsADuplicatedPackagingUnit()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+            NewProduct("Keratina 120 ml", "KR-120", ProductDetails.Empty,
                 new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [100, 150, 100] },
                 Now));
 
@@ -764,8 +757,7 @@ public sealed class ProductTests
     public void CreateRejectsAPackagingScaleWhenTheProductHasNoPackagingUnits()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            Product.Create(
-                ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+            NewProduct("Keratina 120 ml", "KR-120", ProductDetails.Empty,
                 new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, Scales = [PackagingScale()] },
                 Now));
 
@@ -776,14 +768,13 @@ public sealed class ProductTests
     [Fact]
     public void UpdateRejectsRemovingThePackagingUnitsOfAPackagingScale()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+        var product = NewProduct("Keratina 120 ml", "KR-120", ProductDetails.Empty,
             new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [100], Scales = [PackagingScale()] },
             Now);
 
         var error = Assert.Throws<CatalogDomainException>(() =>
-            product.Update(
-                "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+            UpdateDefault(
+                product, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
                 new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [], Scales = [PackagingScale()] },
                 Now.AddMinutes(5)));
 
@@ -794,16 +785,15 @@ public sealed class ProductTests
     [Fact]
     public void UpdateReplacesThePackagingUnits()
     {
-        var product = Product.Create(
-            ProductId.New(), TenantId, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+        var product = NewProduct("Keratina 120 ml", "KR-120", ProductDetails.Empty,
             new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [100] },
             Now);
 
-        product.Update(
-            "Keratina 120 ml", "KR-120", ProductDetails.Empty,
+        UpdateDefault(
+            product, "Keratina 120 ml", "KR-120", ProductDetails.Empty,
             new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m }, PackagingUnits = [150, 100], Scales = [PackagingScale()] },
             Now.AddMinutes(5));
 
-        Assert.Equal([100, 150], product.PackagingUnits);
+        Assert.Equal([100, 150], product.Variants.Single().PackagingUnits);
     }
 }

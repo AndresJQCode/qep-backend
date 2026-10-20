@@ -1,7 +1,8 @@
 namespace Modules.Catalog.Domain;
 
 /// <summary>
-/// What a product POST/PUT sends to set prices and scales. Grouped for the same reason as
+/// What a product POST/PUT sends to set the prices and scales of one variant (of the product until
+/// the variants of 2026-10-20; it travels inside <see cref="ProductVariantInput"/>). Grouped for the same reason as
 /// <see cref="ProductDetails"/>: the invariants that cross these fields need one place to live.
 /// </summary>
 public sealed record ProductPricing
@@ -13,10 +14,10 @@ public sealed record ProductPricing
     public IReadOnlyCollection<PriceScaleInput> Scales { get; init; } = [];
 
     /// <summary>
-    /// The packaging units the product comes in (e.g. boxes of 100 and 150). They travel here,
+    /// The packaging units the variant comes in (e.g. boxes of 100 and 150). They travel here,
     /// next to the scales, and not in <see cref="ProductDetails"/>: a scale restricted to
     /// <see cref="PriceScaleRestriction.PackagingUnit"/> is validated against this set, so both are
-    /// validated together in the same POST/PUT. See <see cref="Product.PackagingUnits"/>.
+    /// validated together in the same POST/PUT. See <see cref="ProductVariant.PackagingUnits"/>.
     /// </summary>
     public IReadOnlyCollection<int> PackagingUnits { get; init; } = [];
 }

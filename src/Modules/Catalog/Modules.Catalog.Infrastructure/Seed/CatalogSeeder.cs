@@ -64,17 +64,21 @@ public static class CatalogSeeder
                 ProductId.New(),
                 tenantId,
                 product.Name,
-                product.Sku,
                 new ProductDetails { TaxRateId = taxRate.Id },
-                new ProductPricing
+                new ProductVariantInput
                 {
-                    Prices = product.Prices.ToDictionary(
-                        entry => Currencies.Normalize(entry.Key), entry => entry.Value, StringComparer.Ordinal),
-                    Scales = product.Scales
-                        .Select(scale => ToPriceScaleInput(product, scale))
-                        .ToList(),
-                    PackagingUnits = product.PackagingUnits ?? [],
+                    Code = product.Sku,
+                    Pricing = new ProductPricing
+                    {
+                        Prices = product.Prices.ToDictionary(
+                            entry => Currencies.Normalize(entry.Key), entry => entry.Value, StringComparer.Ordinal),
+                        Scales = product.Scales
+                            .Select(scale => ToPriceScaleInput(product, scale))
+                            .ToList(),
+                        PackagingUnits = product.PackagingUnits ?? [],
+                    },
                 },
+                [],
                 now));
             added = true;
         }

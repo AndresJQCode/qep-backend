@@ -885,9 +885,8 @@ public sealed class OrphanUserCleanupTests
             ProductId.New(),
             tenantId,
             "Vela de soja",
-            $"VS-{Guid.NewGuid():N}"[..12],
             ProductDetails.Empty,
-            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 100m } },
+            new ProductVariantInput { Code = $"VS-{Guid.NewGuid():N}"[..12], Pricing = new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 100m } } }, [],
             occurredAt);
         dbContext.Products.Add(product);
         dbContext.ProductPriceChanges.AddRange(ProductPriceChangeDetector.Detect(

@@ -290,8 +290,7 @@ public sealed class ProductPriceChangeDetectorTests
         IReadOnlyDictionary<string, decimal> prices,
         params PriceScaleInput[] scales) =>
         Product.Create(
-            ProductId.New(), TenantId, "Vela de soja", "VS-001", ProductDetails.Empty,
-            PricingOf(prices, scales), Now);
+            ProductId.New(), TenantId, "Vela de soja", ProductDetails.Empty, new ProductVariantInput { Code = "VS-001", Pricing = PricingOf(prices, scales) }, [], Now);
 
     private static ProductPricing PricingOf(
         IReadOnlyDictionary<string, decimal> prices,

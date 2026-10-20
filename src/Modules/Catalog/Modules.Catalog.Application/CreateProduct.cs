@@ -63,18 +63,20 @@ public sealed class CreateProductHandler(
         var pricing = command.Pricing.ToDomain();
 
         var now = clock.UtcNow;
+        // Variantes, Tarea 2: el cuerpo de hoy describe un producto sin opciones, o sea su
+        // variante por defecto, y la imagen es la única foto de la galería. El cuerpo con
+        // variantes y galería es de la Tarea 5.
         var product = Product.Create(
             ProductId.New(),
             command.TenantId,
             command.Name,
-            command.Code,
             new ProductDetails
             {
                 Description = command.Description,
-                ImageFileId = image?.FileId,
                 TaxRateId = taxRateId
             },
-            pricing,
+            new ProductVariantInput { Code = command.Code, Pricing = pricing },
+            image is null ? [] : [image.FileId],
             now);
 
         repository.Add(product);

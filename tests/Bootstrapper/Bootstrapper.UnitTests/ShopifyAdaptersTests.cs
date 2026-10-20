@@ -674,9 +674,9 @@ public sealed class ShopifyAdaptersTests
 
     private static Product NewProduct(string code, TaxRateId? taxRateId) =>
         Product.Create(
-            ProductId.New(), TenantId, $"Producto {code}", code,
+            ProductId.New(), TenantId, $"Producto {code}",
             new ProductDetails { TaxRateId = taxRateId },
-            new ProductPricing { Prices = new Dictionary<string, decimal> { ["COP"] = 11_900m } },
+            new ProductVariantInput { Code = code, Pricing = new ProductPricing { Prices = new Dictionary<string, decimal> { ["COP"] = 11_900m } } }, [],
             Now);
 
     // ---- Conexiones del tenant (§7 GET /stores) ----
