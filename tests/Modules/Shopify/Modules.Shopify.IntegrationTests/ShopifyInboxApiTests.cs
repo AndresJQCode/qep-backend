@@ -289,6 +289,27 @@ public sealed class ShopifyInboxApiTests
         Assert.Equal(0, cancelledOnly!["total"]!.GetValue<int>());
     }
 
+    // Decisión del owner del 2026-10-20: la fila trae lastErrorCodes siempre, [] sin error; lastError queda como texto de soporte.
+    [Fact]
+    public async Task OrdersCarryNormalizedLastErrorCodes()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        var rejected = await ShopifyInboxSeed.ImportedWithErrorAsync(
+            factory, world.TenantId, world.ConnectionId, 5_550_000_000_291L, "order.order.not_pending; Ignored; order.order.not_pending");
+        var clean = await ShopifyInboxSeed.ImportedAsync(factory, world.TenantId, world.ConnectionId, 5_550_000_000_292L, null);
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, OrdersPermissions.OrderRead);
+
+        var page = await client.GetFromJsonAsync<JsonObject>($"{OrdersRoute(world.TenantId)}?state=Imported", Ct);
+
+        var rows = page!["items"]!.AsArray().Select(item => item!.AsObject()).ToDictionary(row => Str(row, "id")!);
+        Assert.Equal("""["order.order.not_pending","shopify.order.sync_failed"]""", rows[rejected.ToString()]["lastErrorCodes"]!.ToJsonString());
+        Assert.Equal("order.order.not_pending; Ignored; order.order.not_pending", Str(rows[rejected.ToString()], "lastError"));
+        Assert.Equal("[]", rows[clean.ToString()]["lastErrorCodes"]!.ToJsonString());
+    }
+
     // Sin tope, (page - 1) * pageSize da la vuelta a un OFFSET negativo y Postgres responde 500.
     [Fact]
     public async Task OrdersPageBeyondTheCapReturns422()

@@ -378,6 +378,18 @@ internal static class ShopifyInboxSeed
             orderId,
             row => row.MarkImported(Guid.CreateVersion7(), Guid.CreateVersion7(), 0m, warningsJson, importedAt ?? DateTimeOffset.UtcNow));
 
+    public static Task<Guid> ImportedWithErrorAsync(QepApiFactory factory, Guid tenantId, Guid connectionId, long orderId, string lastError) =>
+        SeedAsync(
+            factory,
+            tenantId,
+            connectionId,
+            orderId,
+            row =>
+            {
+                row.MarkImported(Guid.CreateVersion7(), Guid.CreateVersion7(), 0m, null, DateTimeOffset.UtcNow);
+                row.RecordLastError(lastError);
+            });
+
     public static Task<Guid> CancelledAfterInvoiceAsync(QepApiFactory factory, Guid tenantId, Guid connectionId, long orderId) =>
         SeedAsync(
             factory,

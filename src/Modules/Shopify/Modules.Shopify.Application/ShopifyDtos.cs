@@ -64,8 +64,14 @@ public sealed record ShopifyStoreDto(
 /// <item><see cref="Warnings"/> es un arreglo <c>[{"code","detail"}]</c> o <c>null</c> sin avisos, y <c>detail</c> puede ser
 /// <c>null</c> (<c>shipping_address_unresolved</c> y <c>total_difference</c> no llevan detalle: la diferencia está en
 /// <see cref="TotalDifference"/>). <see cref="WarningsReviewedAt"/> <c>null</c> es aviso pendiente (D-S31).</item>
-/// <item><see cref="LastError"/> puede traer varios errores unidos con <c>"; "</c> (p. ej. el rechazo del pago y el de la
-/// anulación del mismo aviso); se muestra como texto, no se parte.</item>
+/// <item><see cref="LastError"/> es texto libre para soporte y logs: puede traer varios errores unidos con <c>"; "</c>, nombres
+/// de enum o un <c>invalid_payload: …</c> en inglés. La pantalla no lo muestra.</item>
+/// <item><see cref="LastErrorCodes"/> es lo que la bandeja pinta: los códigos de <see cref="LastError"/> normalizados por
+/// <see cref="ShopifyLastErrorCodes.Normalize"/>, en orden y sin repetir, y <c>[]</c> sin error (siempre presente). BFF: existe
+/// porque el formato de <c>last_error</c> es del backend; si la pantalla lo partiera, tendría que conocer el separador, los
+/// prefijos y los nombres de enum de cada origen, y un cambio aquí rompería la traducción en silencio. Cada código es uno de
+/// Quotations tal cual (<c>order.order.not_pending</c>, …), <c>shopify.order.invalid_payload</c> o
+/// <c>shopify.order.sync_failed</c> (todo lo que no es código); el texto lo tiene el diccionario del frontend.</item>
 /// <item><see cref="StoreName"/> es el nombre de la conexión, <c>null</c> si ya no existe. <see cref="CustomerName"/> y
 /// <see cref="CustomerEmail"/> son los del comprador en el último snapshot de Shopify (no los de la ficha de QEP), <c>null</c> en
 /// un pedido sin cliente. <see cref="QepOrderNumber"/> es el <c>PED-…</c> del pedido de QEP, <c>null</c> mientras no haya
@@ -89,6 +95,7 @@ public sealed record ShopifyOrderRowDto(
     int Attempts,
     DateTimeOffset? LastAttemptAt,
     string? LastError,
+    IReadOnlyList<string> LastErrorCodes,
     Guid? QepCustomerId,
     Guid? QepOrderId,
     string? QepOrderNumber,
