@@ -18,6 +18,11 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
     private const string VariantBarcodeIndex = "IX_product_variants_tenant_barcode";
     private const string TaxRateNameIndex = "IX_tax_rates_tenant_name";
     private const string ProductTaxRateForeignKey = "FK_products_tax_rates_tax_rate_id";
+    private const string OptionNameIndex = "IX_option_definitions_tenant_name";
+    private const string ProductOptionForeignKey =
+        "FK_product_options_option_definitions_option_definition_id";
+    private const string VariantOptionValueForeignKey =
+        "FK_product_variant_option_values_option_values_option_value_id";
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
@@ -81,6 +86,34 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
                 "catalog.tax_rate.name_taken",
                 "Another tax rate in this tenant already uses that name.");
         }
+        // Variantes, Tarea 4. Otro índice único, otro código: el nombre de la opción ya existe en
+        // el tenant (sin mayúsculas: el índice es sobre lower(name)). Sin consulta previa en el
+        // handler; el índice es lo único que cierra la carrera de dos POST a la vez.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(
+                      postgres.ConstraintName,
+                      OptionNameIndex,
+                      StringComparison.Ordinal))
+        {
+            throw new CatalogDomainException(
+                "catalog.option.name_taken",
+                "Another option in this tenant already uses that name.");
+        }
+        // Las FK RESTRICT de product_options y product_variant_option_values, sólo cuando lo que
+        // se estaba guardando era el borrado de una opción o de un valor: es la carrera entre el
+        // «¿está en uso?» del handler y el commit, y sale con el mismo 409 que la consulta. Si la
+        // misma FK salta escribiendo un producto (una opción que no existe), ese caso no es éste
+        // y no se traduce acá: lo resuelve la validación del producto (Tarea 5).
+        catch (DbUpdateException exception)
+            when (IsOptionReferenceViolation(exception) && IsDeletingAnOptionOrValue())
+        {
+            throw new ResourceConflictException(
+                "catalog.option.in_use",
+                "The option or value is used by at least one variant: deactivate it instead.",
+                exception);
+        }
         // Hallazgo `B` de la revisión de 4 lentes de CAT-04. La FK que estrena AddProductDetails
         // va con RESTRICT, y su violación no estaba traducida: salía como 500 server.unexpected
         // y —por el hallazgo `C`, que es de ApiExceptionHandler y no de este módulo— con el
@@ -135,6 +168,18 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
             }
         }
     }
+
+    private static bool IsOptionReferenceViolation(DbUpdateException exception) =>
+        exception.InnerException is PostgresException postgres &&
+        postgres.SqlState == PostgresErrorCodes.ForeignKeyViolation &&
+        (string.Equals(postgres.ConstraintName, ProductOptionForeignKey, StringComparison.Ordinal) ||
+         string.Equals(postgres.ConstraintName, VariantOptionValueForeignKey, StringComparison.Ordinal));
+
+    // Por el ChangeTracker y no por exception.Entries: con lotes, las entradas que EF adjunta
+    // dependen de qué sentencia falló, y el valor borrado en cascada puede no estar entre ellas.
+    private bool IsDeletingAnOptionOrValue() =>
+        dbContext.ChangeTracker.Entries().Any(entry =>
+            entry.Entity is OptionDefinition or OptionValue && entry.State == EntityState.Deleted);
 
     private static bool IsProductTaxRateViolation(DbUpdateException exception) =>
         exception.InnerException is PostgresException postgres &&

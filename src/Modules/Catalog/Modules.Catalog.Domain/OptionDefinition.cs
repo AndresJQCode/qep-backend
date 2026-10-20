@@ -96,11 +96,79 @@ public sealed class OptionDefinition
         Version++;
     }
 
+    /// <summary>
+    /// Los ids de los valores guardados que <paramref name="values"/> deja afuera: los que
+    /// <see cref="ReplaceValues"/> borraría. El handler pregunta antes si alguno está en uso.
+    /// </summary>
+    public IReadOnlyList<Guid> RemovedValueIds(IReadOnlyList<OptionValueInput> values)
+    {
+        var kept = values.Where(v => v.Id is not null).Select(v => v.Id!.Value).ToHashSet();
+        return _values.Where(v => !kept.Contains(v.Id)).Select(v => v.Id).ToArray();
+    }
+
+    /// <summary>
+    /// Reemplaza la lista de valores entera, en el orden del cuerpo (el PUT de la biblioteca): un
+    /// valor con id existente es ése —se renombra, se activa o desactiva y cambia de posición—,
+    /// uno sin id es nuevo, y uno guardado que no viene se quita. La unicidad se comprueba sobre la
+    /// lista final, así que intercambiar dos nombres en el mismo guardado vale.
+    /// </summary>
+    public void ReplaceValues(IReadOnlyList<OptionValueInput> values)
+    {
+        var normalized = values.Select(v => NormalizeValue(v.Value)).ToArray();
+        for (var i = 0; i < normalized.Length; i++)
+        {
+            for (var j = 0; j < i; j++)
+            {
+                if (string.Equals(normalized[i], normalized[j], StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new CatalogDomainException(
+                        "catalog.option.value_duplicate",
+                        "The option already has that value.");
+                }
+            }
+        }
+
+        // Todo se comprueba antes de tocar un valor: un error a mitad de camino no deja el
+        // agregado a medias. Un id repetido en el cuerpo no corresponde a una segunda fila.
+        var seen = new HashSet<Guid>();
+        foreach (var id in values.Where(v => v.Id is not null).Select(v => v.Id!.Value))
+        {
+            if (!seen.Add(id) || _values.TrueForAll(v => v.Id != id))
+            {
+                throw ValueNotFound();
+            }
+        }
+
+        var replacement = new List<OptionValue>(values.Count);
+        for (var position = 0; position < values.Count; position++)
+        {
+            var input = values[position];
+            OptionValue value;
+            if (input.Id is { } id)
+            {
+                value = Find(id);
+                value.Value = normalized[position];
+                value.Position = position;
+            }
+            else
+            {
+                value = new OptionValue(Guid.CreateVersion7(), normalized[position], position);
+            }
+
+            value.IsActive = input.IsActive;
+            replacement.Add(value);
+        }
+
+        _values.Clear();
+        _values.AddRange(replacement);
+        Version++;
+    }
+
     private OptionValue Find(Guid valueId) =>
-        _values.Find(v => v.Id == valueId)
-        ?? throw new CatalogDomainException(
-            "catalog.option.value_not_found",
-            "The option value does not exist.");
+        _values.Find(v => v.Id == valueId) ?? throw ValueNotFound();
+
+    private static CatalogDomainException ValueNotFound() =>
+        new("catalog.option.value_not_found", "The option value does not exist.");
 
     private void EnsureNotDuplicate(string normalized, Guid? exceptValueId)
     {
@@ -147,3 +215,6 @@ public sealed class OptionDefinition
             : trimmed;
     }
 }
+
+/// <summary>Un valor tal como lo manda el PUT de la biblioteca: con id, uno guardado; sin id, nuevo.</summary>
+public sealed record OptionValueInput(Guid? Id, string Value, bool IsActive);

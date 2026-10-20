@@ -22,7 +22,7 @@ public sealed class OptionValue
     public string Value { get; internal set; }
 
     /// <summary>Posición base 0 dentro de la opción; define el orden en que se muestran.</summary>
-    public int Position { get; private set; }
+    public int Position { get; internal set; }
 
     public bool IsActive { get; internal set; }
 }
