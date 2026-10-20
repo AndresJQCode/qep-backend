@@ -403,7 +403,8 @@ internal static class ShopifyInboxSeed
                 row.MarkCancelled(null);
             });
 
-    public static Task<Guid> CancelledAfterInvoiceAsync(QepApiFactory factory, Guid tenantId, Guid connectionId, long orderId) =>
+    public static Task<Guid> CancelledAfterInvoiceAsync(
+        QepApiFactory factory, Guid tenantId, Guid connectionId, long orderId, string? warningsJson = null) =>
         SeedAsync(
             factory,
             tenantId,
@@ -411,8 +412,8 @@ internal static class ShopifyInboxSeed
             orderId,
             row =>
             {
-                row.MarkImported(Guid.CreateVersion7(), Guid.CreateVersion7(), 0m, null, DateTimeOffset.UtcNow.AddDays(-3));
-                row.MarkCancelled("""{"reason":"invoiced_before_cancel"}""");
+                row.MarkImported(Guid.CreateVersion7(), Guid.CreateVersion7(), 0m, warningsJson, DateTimeOffset.UtcNow.AddDays(-3));
+                row.MarkCancelled(ShopifyOrderChanges.InvoicedBeforeCancelDetail);
             });
 
     private static async Task<Guid> SeedAsync(

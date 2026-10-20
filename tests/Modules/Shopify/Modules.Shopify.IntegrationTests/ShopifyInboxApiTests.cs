@@ -301,6 +301,8 @@ public sealed class ShopifyInboxApiTests
         var invoiced = await ShopifyInboxSeed.CancelledAfterInvoiceAsync(factory, world.TenantId, world.ConnectionId, 5_550_000_000_301L);
         await ShopifyInboxSeed.CancelledAsync(factory, world.TenantId, world.ConnectionId, 5_550_000_000_302L);
         await ShopifyInboxSeed.WaitingAsync(factory, world.TenantId, world.ConnectionId, 5_550_000_000_303L);
+        var warned = await ShopifyInboxSeed.CancelledAfterInvoiceAsync(
+            factory, world.TenantId, world.ConnectionId, 5_550_000_000_304L, """[{"code":"total_difference","detail":null}]""");
         using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, OrdersPermissions.OrderRead);
 
         var filtered = await client.GetFromJsonAsync<JsonObject>($"{OrdersRoute(world.TenantId)}?cancelledAfterInvoice=true", Ct);
@@ -308,13 +310,18 @@ public sealed class ShopifyInboxApiTests
         var otherStore = await client.GetFromJsonAsync<JsonObject>(
             $"{OrdersRoute(world.TenantId)}?cancelledAfterInvoice=true&connectionId={Guid.CreateVersion7()}", Ct);
         var off = await client.GetFromJsonAsync<JsonObject>($"{OrdersRoute(world.TenantId)}?cancelledAfterInvoice=false&state=Cancelled", Ct);
+        var andWarnings = await client.GetFromJsonAsync<JsonObject>($"{OrdersRoute(world.TenantId)}?cancelledAfterInvoice=true&withWarnings=true", Ct);
         var summary = await client.GetFromJsonAsync<JsonObject>($"{OrdersRoute(world.TenantId)}/summary", Ct);
 
-        Assert.Equal(invoiced.ToString(), Str(Assert.Single(filtered!["items"]!.AsArray())!.AsObject(), "id"));
+        Assert.Equal(
+            new[] { invoiced.ToString(), warned.ToString() }.Order(StringComparer.Ordinal),
+            filtered!["items"]!.AsArray().Select(item => Str(item!.AsObject(), "id")).Order(StringComparer.Ordinal));
         Assert.Equal(summary!["cancelledAfterInvoice"]!.GetValue<int>(), filtered["total"]!.GetValue<int>());
-        Assert.Equal(1, withState!["total"]!.GetValue<int>());
+        Assert.Equal(2, withState!["total"]!.GetValue<int>());
         Assert.Equal(0, otherStore!["total"]!.GetValue<int>());
-        Assert.Equal(2, off!["total"]!.GetValue<int>());
+        Assert.Equal(3, off!["total"]!.GetValue<int>());
+        // Con withWarnings=true los dos filtros se suman (AND): cancelados después de facturar con avisos sin revisar.
+        Assert.Equal(warned.ToString(), Str(Assert.Single(andWarnings!["items"]!.AsArray())!.AsObject(), "id"));
     }
 
     // Un state distinto de Cancelled con cancelledAfterInvoice=true no se combina en silencio: 422 con el campo.

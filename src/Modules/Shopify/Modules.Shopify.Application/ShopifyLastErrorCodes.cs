@@ -5,13 +5,16 @@ namespace Modules.Shopify.Application;
 /// <summary>
 /// Decisión del owner del 2026-10-20: <c>last_error</c> del espejo es texto libre para soporte y logs, y la bandeja pinta
 /// <see cref="ShopifyOrderRowDto.LastErrorCodes"/>, que sale de acá. El backend es dueño del formato de <c>last_error</c>, así que
-/// lo parte él y no la pantalla. Lo que escriben los cuatro orígenes:
+/// lo parte él y no la pantalla. Los cuatro orígenes (las únicas llamadas a <c>RecordLastError</c>) escriben:
 /// <list type="bullet">
-/// <item><see cref="ShopifyOrderChanges"/>: los códigos que Quotations rechazó en la anulación y el pago del mismo aviso, unidos
-/// por <c>"; "</c> (<c>order.order.not_pending</c>, <c>order.order.payment_has_proofs</c>, <c>order.order.not_found</c>, …), o el
-/// nombre del enum (<c>Ignored</c>, <c>Unchanged</c>) si el puerto no dio código.</item>
-/// <item><see cref="ShopifyOrderImporter"/>: el código del pago rechazado justo después del alta.</item>
-/// <item>El reintento manual y la conciliación: <c>invalid_payload: campo: mensaje</c> (mensaje en inglés, del parser).</item>
+/// <item><see cref="ShopifyOrderChanges"/>: los códigos que rechazó el adaptador de pedidos en la anulación y el pago del mismo
+/// aviso, unidos por <c>"; "</c> (<c>order.order.not_pending</c>, <c>order.order.payment_has_proofs</c>,
+/// <c>order.order.not_found</c>, <c>tenancy.tenant.not_found</c>), o el nombre del enum (<c>Ignored</c>, <c>Unchanged</c>) si el
+/// puerto no dio código.</item>
+/// <item><see cref="ShopifyOrderImporter"/>: el código del pago rechazado justo después del alta (el mismo conjunto del pago).</item>
+/// <item><see cref="RetryShopifyOrderHandler"/> (reintento manual): <c>invalid_payload: campo: mensaje</c> (mensaje en inglés,
+/// del parser).</item>
+/// <item><see cref="ReconcileStore"/> (conciliación): el mismo <c>invalid_payload: …</c>, propio o del <c>Skipped</c> de la página.</item>
 /// </list>
 /// Regla: cada parte recortada que empieza con <c>invalid_payload</c> es <see cref="InvalidPayload"/>; una que ya tiene forma de
 /// código (<c>a.b</c>, minúsculas, dígitos y guiones bajos) viaja tal cual; cualquier otra cosa es <see cref="SyncFailed"/>. En el

@@ -2658,7 +2658,8 @@ sin `state` no filtra por estado) y `cancelledAfterInvoice=true`: sólo las `Can
 `{"reason":"invoiced_before_cancel"}`. Ese filtro implica `state=Cancelled`; con otro `state` responde 422
 `validation.failed` con `errors.cancelledAfterInvoice`. Sin `connectionId`, el `total` de `withWarnings=true` y el de
 `cancelledAfterInvoice=true` son iguales a los contadores de `GET …/shopify/orders/summary`, así que la sección pagina
-en el servidor y nunca filtra en el navegador.
+en el servidor y nunca filtra en el navegador. `cancelledAfterInvoice=true` junto con `withWarnings=true` suma los dos
+filtros (AND): los cancelados después de facturar que todavía tienen avisos sin revisar.
 
 Cada fila trae `lastError` —texto libre para soporte y logs, que la pantalla no muestra— y `lastErrorCodes`, siempre
 presente (`[]` sin error): los códigos de `lastError` partidos por `"; "`, en orden y sin repetir. Un código de
