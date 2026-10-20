@@ -2193,10 +2193,38 @@ opcional hasta 1024. Mismas reglas que el texto: ventana, asignado, autoasignaci
 `Failed` conserva el staging para el reintento. Errores 422: `messaging.media.upload_not_found`, `too_large`,
 `unsupported_format` e `invalid_image`.
 
+**Video y audio como archivo** (spec 2026-10-20). Mismas dos rutas. La tabla de formatos es `OutboundMediaPolicy` (extensión →
+kind, mime canónico, tope de WhatsApp y de Instagram); la sesión de subida ya aplica la del canal, así que un formato que el
+canal no recibe o un archivo que pasa su tope es 422 **antes** del `PUT`. El contenido lo confirma `OutboundMediaSniffer` (64
+bytes de cabecera):
+
+| Kind  | Extensión → mime | WhatsApp | Instagram | Firma |
+| ----- | ---------------- | -------- | --------- | ----- |
+| Video | `.mp4` → `video/mp4` | 16 MB | 25 MB | `ftyp` con marca `iso*`, `mp4*`, `avc1` o `M4V ` |
+| Video | `.3gp` → `video/3gpp` | 16 MB | — | `ftyp` con marca `3gp*` |
+| Audio | `.mp3` → `audio/mpeg` | 16 MB | 25 MB | `ID3` o trama MPEG (`FF Ex`, capa ≠ 00) |
+| Audio | `.m4a` → `audio/mp4` | 16 MB | 25 MB | `ftyp` con marca `M4A `, `iso*` o `mp4*` |
+| Audio | `.aac` → `audio/aac` | 16 MB | 25 MB | ADTS (`FF F1`/`FF F9`) |
+| Audio | `.amr` → `audio/amr` | 16 MB | — | `#!AMR\n` o `#!AMR-WB\n` |
+| Audio | `.ogg` → `audio/ogg` | 16 MB | — | `OggS` con `OpusHead` (Vorbis no) |
+
+**La tabla está en borrador hasta las verificaciones V-1..V-3 con Meta real** (las corre el owner; ver el spec): lo que Meta
+no acepte se quita de `OutboundMediaPolicy` y de esta tabla. No hay transcodificación ni `ffmpeg`: `.mov`, `.webm`, `.avi`,
+`.wav`, `.flac`, `.wma` y el `.ogg` Vorbis son `unsupported_format`. El video sale con `type: video` y su `caption`; el audio,
+con `type: audio` **sin** `voice` (la nota de voz sigue con `voice: true`) y **sin texto**: un `caption` con un audio es 422
+`validation.failed` en `caption`. El multipart a Meta lleva `video{ext}` o `audio{ext}`; el nombre real queda en
+`message_media.file_name` y viaja en `media.fileName`, que en un audio adjunto **no es nulo** y en una nota de voz sí: así
+distingue el frontend un archivo de audio de una nota. El backend no mira el códec: si Meta rechaza un MP4 HEVC, el mensaje
+queda `Failed` con el código de Meta, como cualquier envío.
+
 **Medios.** Los entrantes se copian a R2 (bucket privado, `messaging/{tenantId}/{messageId}`) con un
 worker que verifica el SHA-256 de Meta; `GET …/messaging/media/{messageId}` los sirve con la sesión,
 con `nosniff`, CSP `sandbox` y `attachment` para todo lo que no sea imagen, audio o video. Mientras no
-está copiado responde 404 sin código. El campo `sha256` de Meta se acepta en hex (64) o base64 (44); si
+está copiado responde 404 sin código. Responde `Accept-Ranges: bytes` y un `Range` de un solo tramo (`bytes=a-b`, `a-`,
+`-n`) da **206** con `Content-Range: bytes a-b/total` y los mismos `nosniff` y CSP (spec 2026-10-20 D10: Safari no adelanta un
+`<video>` sin él); el rango viaja a R2 en el `GET` (`IObjectStorage.OpenReadRangeAsync`), con un stat para el tamaño. Un rango
+fuera del objeto es **416** con `Content-Range: bytes */total`; varios tramos o un valor que no se entiende se ignoran y se
+sirve el archivo entero (200). El campo `sha256` de Meta se acepta en hex (64) o base64 (44); si
 llega en otro formato el medio se guarda **sin verificar** y queda un warning `stored without
 verification` por fila en el log.
 
@@ -2329,6 +2357,11 @@ El código está en `develop` desde `a5a79c0` (2026-10-13). Antes de llevarlo a 
    mensaje sale. El frontend lo trata como «sigue enviando» y reintenta con el mismo `clientId`, que no duplica.
 6. **Aceptar que los adjuntos no pasan por ClamAV.** A diferencia de la biblioteca de archivos, Messaging no escanea.
    Se decidió así al aceptar `.doc` y `.xls`, que pueden traer macros.
+7. **Correr V-1..V-3 del spec de video y audio (2026-10-20) antes de `main`.** La tabla de «Video y audio como archivo»
+   sale de la documentación pública de Meta y nadie la probó contra Meta real: WhatsApp con un `.mp4` H.264/AAC de ~15 MB,
+   un `.3gp` y audio sin `voice` en `.mp3`, `.m4a`, `.aac`, `.amr` y `.ogg` Opus (V-1); Instagram con un `.mp4` y los
+   tres audios por URL firmada (V-2); y qué hace WhatsApp con un `.mp4` HEVC del iPhone (V-3, define el copy del fallo).
+   Mismo método que el paso 4. Lo que no pase se quita de `OutboundMediaPolicy` (y de su prueba) y de la tabla.
 
 #### Tiempo real (SignalR)
 
@@ -2473,9 +2506,11 @@ QEP: el `mid` lo deduplica) entra como saliente `Sent` sin autor, mueve la foto 
 
 **Responder.** `POST …/messages`: `text` hasta **1000** caracteres (422 en `text` si pasa); va a
 `POST graph.instagram.com/{v}/{igUserId}/messages` con `recipient.id = IGSID` y el token de la cuenta; `replyTo` se
-guarda pero no viaja (Instagram no cita). Imagen (jpeg/png) y **sólo PDF**, hasta 25 MB: la sesión de subida es la
-misma, y la confirmación, en vez de subir a Meta, deja el objeto en R2 y le da a Meta una URL prefirmada de 10
-minutos en `attachment.payload.url` (`caption` se guarda y se muestra en QEP; no viaja). Nota de voz: mismo contrato
+guarda pero no viaja (Instagram no cita). Imagen (jpeg/png), **sólo PDF** de documentos, video **sólo `.mp4`** y audio
+`.mp3`, `.m4a` o `.aac` (spec 2026-10-20, en borrador hasta V-2), todo hasta 25 MB: la sesión de subida es la misma y ya
+rechaza lo que Instagram no recibe; la confirmación, en vez de subir a Meta, deja el objeto en R2 y le da a Meta una URL
+prefirmada de 10 minutos en `attachment.payload.url` con `type` `image`, `file`, `video` o `audio` (`caption` se guarda y se
+muestra en QEP; no viaja, y en un audio es 422 como en WhatsApp). Nota de voz: mismo contrato
 que WhatsApp, y el backend la **transcodifica a WAV** (PCM 16 bits, mono, 16 kHz, con Concentus, sin ffmpeg) antes de
 guardarla y enviarla como `audio`; un WAV de más de 25 MB es `media_too_large`. Un `400` con `code 10` (subcódigo
 `2534022`) es la ventana cerrada: `messaging.window_closed` y la fila `Failed` con `failure_code = 10`. Marcar leída
