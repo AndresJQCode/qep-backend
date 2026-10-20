@@ -108,6 +108,13 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
             query = query.Where(row => row.Warnings != null && row.WarningsReviewedAt == null);
         }
 
+        if (filter.CancelledAfterInvoice)
+        {
+            // jsonb @>: el mismo criterio que el contador del resumen (wait_detail ->> 'reason'), para que la lista cierre con él.
+            query = query.Where(row => row.WaitDetail != null
+                && EF.Functions.JsonContains(row.WaitDetail, ShopifyOrderChanges.InvoicedBeforeCancelDetail));
+        }
+
         var total = await query.CountAsync(cancellationToken);
         var items = await query
             .OrderByDescending(row => row.ShopifyCreatedAt)

@@ -121,6 +121,7 @@ public static class ShopifyEndpoints
         bool? withWarnings,
         int? page,
         int? pageSize,
+        bool? cancelledAfterInvoice,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
@@ -128,7 +129,7 @@ public static class ShopifyEndpoints
             .SelectMany(value => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             .ToArray();
         return Results.Ok(await dispatcher.QueryAsync(
-            new ListShopifyOrdersQuery(tenantId, states, connectionId, withWarnings, page, pageSize), cancellationToken));
+            new ListShopifyOrdersQuery(tenantId, states, connectionId, withWarnings, page, pageSize, cancelledAfterInvoice), cancellationToken));
     }
 
     private static async Task<IResult> SummaryAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

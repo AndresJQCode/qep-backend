@@ -63,7 +63,8 @@ public interface IShopifyOrderMirrorRepository
 /// <summary>El filtro de la bandeja (§7). <see cref="States"/> vacío es cualquier estado («con avisos» sin
 /// <c>state</c>, BFF: así la lista cierra con <c>summary.withWarnings</c>); el handler pone <c>Waiting</c> cuando no hay <c>state</c> ni <c>withWarnings</c>. <see cref="WithWarnings"/>
 /// deja sólo las filas con avisos <b>sin revisar</b>.</summary>
-public sealed record ShopifyOrderFilter(IReadOnlyCollection<ShopifyImportState> States, Guid? ConnectionId, bool WithWarnings);
+public sealed record ShopifyOrderFilter(
+    IReadOnlyCollection<ShopifyImportState> States, Guid? ConnectionId, bool WithWarnings, bool CancelledAfterInvoice = false);
 
 /// <summary>Los contadores del resumen (§7), como los arma la base.</summary>
 public sealed record ShopifyOrderCounts(int Waiting, int WithWarnings, int CancelledAfterInvoice, int ImportedToday);

@@ -7,16 +7,26 @@ using Modules.Tenancy.Application;
 namespace Modules.Shopify.Application;
 
 /// <summary>Spec 2026-10-15 §7 <c>GET /orders</c> (<c>quotations.order.read</c>). <paramref name="States"/> son nombres de
-/// <see cref="ShopifyImportState"/> (sin distinguir mayúsculas); vacío o ausente es <c>Waiting</c>.</summary>
+/// <see cref="ShopifyImportState"/> (sin distinguir mayúsculas); vacío o ausente es <c>Waiting</c>.
+/// <paramref name="CancelledAfterInvoice"/> en <c>true</c> deja sólo las <c>Cancelled</c> con <c>invoiced_before_cancel</c> e implica
+/// <c>state=Cancelled</c> (decisión del owner del 2026-10-20).</summary>
 public sealed record ListShopifyOrdersQuery(
-    Guid TenantId, IReadOnlyList<string>? States, Guid? ConnectionId, bool? WithWarnings, int? Page, int? PageSize)
+    Guid TenantId,
+    IReadOnlyList<string>? States,
+    Guid? ConnectionId,
+    bool? WithWarnings,
+    int? Page,
+    int? PageSize,
+    bool? CancelledAfterInvoice = null)
     : IQuery<ShopifyOrderPageDto>;
 
 /// <summary>Spec 2026-10-15 §7 <c>GET /orders/summary</c> (<c>quotations.order.read</c>).</summary>
 public sealed record GetShopifyOrdersSummaryQuery(Guid TenantId) : IQuery<ShopifyOrdersSummaryDto>;
 
 /// <summary>Los filtros de la bandeja vienen de la query string: un estado que no existe o una página fuera de rango es un 422
-/// con <c>errors</c> (<c>state</c>, <c>page</c>, <c>pageSize</c>), no un filtro que se ignora en silencio.</summary>
+/// con <c>errors</c> (<c>state</c>, <c>page</c>, <c>pageSize</c>), no un filtro que se ignora en silencio. Lo mismo
+/// <c>cancelledAfterInvoice=true</c> con un <c>state</c> distinto de <c>Cancelled</c>: implica <c>Cancelled</c>, y combinarlo con otro
+/// estado daría una lista que no es ni la una ni la otra.</summary>
 public sealed class ListShopifyOrdersValidator : AbstractValidator<ListShopifyOrdersQuery>
 {
     /// <summary>§7: tope 50 por página; también es el tamaño por defecto.</summary>
@@ -32,6 +42,12 @@ public sealed class ListShopifyOrdersValidator : AbstractValidator<ListShopifyOr
             .Must(states => states is null || states.All(state => ShopifyOrderFilters.TryParseState(state, out _)))
             .WithMessage($"Each state must be one of {string.Join(", ", Enum.GetNames<ShopifyImportState>())}.")
             .OverridePropertyName("state");
+        RuleFor(query => query.States)
+            .Must(states => states is null
+                || states.All(state => !ShopifyOrderFilters.TryParseState(state, out var parsed) || parsed == ShopifyImportState.Cancelled))
+            .When(query => query.CancelledAfterInvoice == true)
+            .WithMessage($"cancelledAfterInvoice implies state {nameof(ShopifyImportState.Cancelled)}; it cannot be combined with another state.")
+            .OverridePropertyName("cancelledAfterInvoice");
         RuleFor(query => query.Page).InclusiveBetween(1, MaxPage).When(query => query.Page is not null).OverridePropertyName("page");
         RuleFor(query => query.PageSize)
             .InclusiveBetween(1, MaxPageSize)
@@ -75,11 +91,15 @@ public sealed class ListShopifyOrdersHandler(
         // BFF: sin state, la bandeja muestra lo que espera; pero «con avisos» sin state no filtra por estado, para
         // que la lista cierre con summary.withWarnings (que cuenta en cualquier estado) sin que la pantalla conozca el enum. Un
         // state explícito se respeta siempre.
+        // cancelledAfterInvoice implica Cancelled (el validador ya rechazó otro state), para que la lista cierre con
+        // summary.cancelledAfterInvoice y la sección pagine en el servidor en vez de filtrar páginas en el navegador.
         var withWarnings = query.WithWarnings == true;
-        IReadOnlyCollection<ShopifyImportState> filterStates = states.Length > 0 ? states
+        var cancelledAfterInvoice = query.CancelledAfterInvoice == true;
+        IReadOnlyCollection<ShopifyImportState> filterStates = cancelledAfterInvoice ? [ShopifyImportState.Cancelled]
+            : states.Length > 0 ? states
             : withWarnings ? []
             : [ShopifyImportState.Waiting];
-        var filter = new ShopifyOrderFilter(filterStates, query.ConnectionId, withWarnings);
+        var filter = new ShopifyOrderFilter(filterStates, query.ConnectionId, withWarnings, cancelledAfterInvoice);
         var page = query.Page ?? 1;
         var pageSize = query.PageSize ?? ListShopifyOrdersValidator.MaxPageSize;
         var (items, total) = await mirrors.SearchAsync(query.TenantId, filter, page, pageSize, cancellationToken);

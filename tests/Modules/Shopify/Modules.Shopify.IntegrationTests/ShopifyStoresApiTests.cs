@@ -390,6 +390,19 @@ internal static class ShopifyInboxSeed
                 row.RecordLastError(lastError);
             });
 
+    /// <summary>Anulada en QEP sin factura: <c>Cancelled</c> sin <c>wait_detail</c>.</summary>
+    public static Task<Guid> CancelledAsync(QepApiFactory factory, Guid tenantId, Guid connectionId, long orderId) =>
+        SeedAsync(
+            factory,
+            tenantId,
+            connectionId,
+            orderId,
+            row =>
+            {
+                row.MarkImported(Guid.CreateVersion7(), Guid.CreateVersion7(), 0m, null, DateTimeOffset.UtcNow.AddDays(-3));
+                row.MarkCancelled(null);
+            });
+
     public static Task<Guid> CancelledAfterInvoiceAsync(QepApiFactory factory, Guid tenantId, Guid connectionId, long orderId) =>
         SeedAsync(
             factory,

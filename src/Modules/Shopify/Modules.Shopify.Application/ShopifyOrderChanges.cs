@@ -36,7 +36,9 @@ public sealed class ShopifyOrderChanges(IShopifyOrderWriter orders, IShopifyCust
     public const int CancellationReasonMaxLength = 500;
 
     private const string CancelledInShopify = "Cancelado en Shopify";
-    private const string InvoicedBeforeCancelDetail = """{"reason":"invoiced_before_cancel"}""";
+    /// <summary>El <c>wait_detail</c> de una fila <c>Cancelled</c> cuyo pedido ya estaba facturado. Lo leen el resumen y el filtro
+    /// <c>cancelledAfterInvoice</c> de la bandeja.</summary>
+    public const string InvoicedBeforeCancelDetail = """{"reason":"invoiced_before_cancel"}""";
 
     public async Task ReactAsync(ShopifyOrderChange change, CancellationToken cancellationToken)
     {

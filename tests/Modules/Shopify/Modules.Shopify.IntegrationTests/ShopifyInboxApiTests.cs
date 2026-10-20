@@ -289,6 +289,57 @@ public sealed class ShopifyInboxApiTests
         Assert.Equal(0, cancelledOnly!["total"]!.GetValue<int>());
     }
 
+    // Decisión del owner del 2026-10-20: cancelledAfterInvoice=true filtra en el servidor lo que cuenta summary.cancelledAfterInvoice,
+    // para que la sección pagine sin filtrar en el navegador. Implica state=Cancelled.
+    [Fact]
+    public async Task OrdersCancelledAfterInvoiceCloseWithTheSummary()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        var invoiced = await ShopifyInboxSeed.CancelledAfterInvoiceAsync(factory, world.TenantId, world.ConnectionId, 5_550_000_000_301L);
+        await ShopifyInboxSeed.CancelledAsync(factory, world.TenantId, world.ConnectionId, 5_550_000_000_302L);
+        await ShopifyInboxSeed.WaitingAsync(factory, world.TenantId, world.ConnectionId, 5_550_000_000_303L);
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, OrdersPermissions.OrderRead);
+
+        var filtered = await client.GetFromJsonAsync<JsonObject>($"{OrdersRoute(world.TenantId)}?cancelledAfterInvoice=true", Ct);
+        var withState = await client.GetFromJsonAsync<JsonObject>($"{OrdersRoute(world.TenantId)}?cancelledAfterInvoice=true&state=Cancelled", Ct);
+        var otherStore = await client.GetFromJsonAsync<JsonObject>(
+            $"{OrdersRoute(world.TenantId)}?cancelledAfterInvoice=true&connectionId={Guid.CreateVersion7()}", Ct);
+        var off = await client.GetFromJsonAsync<JsonObject>($"{OrdersRoute(world.TenantId)}?cancelledAfterInvoice=false&state=Cancelled", Ct);
+        var summary = await client.GetFromJsonAsync<JsonObject>($"{OrdersRoute(world.TenantId)}/summary", Ct);
+
+        Assert.Equal(invoiced.ToString(), Str(Assert.Single(filtered!["items"]!.AsArray())!.AsObject(), "id"));
+        Assert.Equal(summary!["cancelledAfterInvoice"]!.GetValue<int>(), filtered["total"]!.GetValue<int>());
+        Assert.Equal(1, withState!["total"]!.GetValue<int>());
+        Assert.Equal(0, otherStore!["total"]!.GetValue<int>());
+        Assert.Equal(2, off!["total"]!.GetValue<int>());
+    }
+
+    // Un state distinto de Cancelled con cancelledAfterInvoice=true no se combina en silencio: 422 con el campo.
+    [Fact]
+    public async Task OrdersCancelledAfterInvoiceWithAnotherStateReturns422()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableShopifyAsync(connectionString, tenant.TenantId);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, OrdersPermissions.OrderRead);
+
+        var waiting = await client.GetAsync($"{OrdersRoute(tenant.TenantId)}?cancelledAfterInvoice=true&state=Waiting", Ct);
+        var mixed = await client.GetAsync($"{OrdersRoute(tenant.TenantId)}?cancelledAfterInvoice=true&state=Cancelled&state=Imported", Ct);
+
+        foreach (var response in new[] { waiting, mixed })
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            var body = await response.Content.ReadFromJsonAsync<JsonObject>(Ct);
+            Assert.Equal("validation.failed", body!["code"]!.GetValue<string>());
+            Assert.NotNull(body["errors"]!["cancelledAfterInvoice"]);
+        }
+    }
+
     // Decisión del owner del 2026-10-20: la fila trae lastErrorCodes siempre, [] sin error; lastError queda como texto de soporte.
     [Fact]
     public async Task OrdersCarryNormalizedLastErrorCodes()
