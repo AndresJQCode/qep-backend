@@ -565,11 +565,14 @@ public sealed class RealAuthenticationApiTests
 
         using var create = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/tenants/{tenantId}/catalog/products")
         {
+            // Variantes (Catalog, Tarea 5): código y precio van en la única variante.
             Content = JsonContent.Create(new
             {
                 name = "Vela de soja",
-                code = "VS-001",
-                pricing = new { prices = new Dictionary<string, decimal> { ["EUR"] = 9m } },
+                variants = new[]
+                {
+                    new { code = "VS-001", pricing = new { prices = new Dictionary<string, decimal> { ["EUR"] = 9m } } },
+                },
             }),
         };
         create.Headers.Add("X-Tenant-Id", tenantId.ToString());

@@ -366,20 +366,28 @@ internal static class ReportingApiHarness
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
+            // Variantes (Catalog, Tarea 5): un producto sin opciones lleva su código y su precio en
+            // su única variante.
             new
             {
                 name = "Vela de soja",
-                code = $"VS-{Guid.NewGuid():N}"[..12],
-                pricing = new
+                variants = new[]
                 {
-                    // A given map wins over the COP shorthand, so tests can price in any currency.
-                    prices = prices ?? new Dictionary<string, decimal> { ["COP"] = baseCop },
-                    scales = new object[]
+                    new
                     {
-                        new
+                        code = $"VS-{Guid.NewGuid():N}"[..12],
+                        pricing = new
                         {
-                            fromUnit = 1, toUnit = 999_999, discount = 0m,
-                            restriction = "multiple", multiple = 1
+                            // A given map wins over the COP shorthand, so tests can price in any currency.
+                            prices = prices ?? new Dictionary<string, decimal> { ["COP"] = baseCop },
+                            scales = new object[]
+                            {
+                                new
+                                {
+                                    fromUnit = 1, toUnit = 999_999, discount = 0m,
+                                    restriction = "multiple", multiple = 1
+                                }
+                            }
                         }
                     }
                 }
@@ -406,19 +414,28 @@ internal static class ReportingApiHarness
 
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products/{productId}",
+            // El PUT de Catalog pide la versión leída y la variante por su id (Tarea 5).
             new
             {
+                expectedVersion = current.Version,
                 name = current.Name,
-                code = current.Code,
-                pricing = new
+                variants = new[]
                 {
-                    prices = prices ?? new Dictionary<string, decimal> { ["COP"] = newBaseCop },
-                    scales = new object[]
+                    new
                     {
-                        new
+                        id = Assert.Single(current.Variants).Id,
+                        code = Assert.Single(current.Variants).Code,
+                        pricing = new
                         {
-                            fromUnit = 1, toUnit = 999_999, discount = 0m,
-                            restriction = "multiple", multiple = 1
+                            prices = prices ?? new Dictionary<string, decimal> { ["COP"] = newBaseCop },
+                            scales = new object[]
+                            {
+                                new
+                                {
+                                    fromUnit = 1, toUnit = 999_999, discount = 0m,
+                                    restriction = "multiple", multiple = 1
+                                }
+                            }
                         }
                     }
                 }
@@ -655,7 +672,10 @@ internal static class ReportingApiHarness
 
     private sealed record CompanyResponseDto(Guid Id, string Name);
 
-    internal sealed record ProductDetailResponseDto(Guid Id, string Name, string Code);
+    internal sealed record ProductDetailResponseDto(
+        Guid Id, string Name, long Version, IReadOnlyList<ProductVariantDetailDto> Variants);
+
+    internal sealed record ProductVariantDetailDto(Guid Id, string Code);
 
     private sealed record UploadSessionResponseDto(
         Guid FileResourceId, string UploadUrl, string StorageKey);

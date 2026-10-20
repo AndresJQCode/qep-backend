@@ -8,27 +8,27 @@ namespace Modules.Catalog.Application;
 public sealed record CreateProductCommand(
     Guid TenantId,
     string Name,
-    string Code,
     string? Description,
-    Guid? ImageFileId,
     Guid? TaxRateId,
-    ProductPricingRequest Pricing) : ICommand<ProductDto>, IProductWriteCommand;
+    IReadOnlyList<Guid>? OptionIds,
+    IReadOnlyList<ProductVariantRequest>? Variants,
+    IReadOnlyList<Guid>? Gallery) : ICommand<ProductDto>, IProductWriteCommand;
 
 // Las reglas viven en ProductWriteRules y se incluyen, no se copian: duplicarlas entre este
-// validador y el del PUT fue el hallazgo `D` de la revisión de 4 lentes. CAT-09: el precio y
-// las escalas siguen el mismo criterio, con su propio ProductPricingRules.
+// validador y el del PUT fue el hallazgo `D` de la revisión de 4 lentes. En el POST el precio de
+// cada variante es obligatorio: no hay variante guardada de la cual heredarlo.
 public sealed class CreateProductValidator : AbstractValidator<CreateProductCommand>
 {
     public CreateProductValidator()
     {
-        Include(new ProductWriteRules());
-        RuleFor(command => command.Pricing).SetValidator(new ProductPricingRules());
+        Include(new ProductWriteRules(pricingRequired: true));
     }
 }
 
 public sealed class CreateProductHandler(
     IProductRepository repository,
     ITaxRateRepository taxRateRepository,
+    IOptionDefinitionRepository optionRepository,
     IProductImageLookup imageLookup,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
@@ -55,17 +55,35 @@ public sealed class CreateProductHandler(
         var taxRateId = await ProductTaxRateResolver.ResolveAsync(
             taxRateRepository, command.TenantId, command.TaxRateId, cancellationToken);
 
-        // CAT-05: la imagen no tiene FK que la respalde —es referencia blanda a Storage—, así
-        // que esta comprobación es la única red. Ver ProductImageResolver.
-        var image = await ProductImageResolver.ResolveAsync(
-            imageLookup, command.TenantId, command.ImageFileId, cancellationToken);
+        // CAT-05: cada foto es referencia blanda a Storage, sin FK, así que esta comprobación es
+        // la única red. Ver ProductImageResolver.
+        var gallery = command.Gallery ?? [];
+        await ProductImageResolver.ResolveGalleryAsync(
+            imageLookup, command.TenantId, gallery, cancellationToken);
 
-        var pricing = command.Pricing.ToDomain();
+        var optionIds = command.OptionIds ?? [];
+        var library = await ProductOptionLibrary.LoadAsync(
+            optionRepository, command.TenantId, optionIds, cancellationToken);
+
+        // En el POST no hay nada que proyectar ni heredar: cada variante trae sus valores y su
+        // precio (el validador ya exigió el precio).
+        var variants = command.Variants!
+            .Select(variant => new ProductVariantInput
+            {
+                Code = variant.Code ?? string.Empty,
+                Barcode = variant.Barcode,
+                OptionValueIds = variant.OptionValueIds ?? [],
+                Pricing = variant.Pricing!.ToDomain(),
+                GalleryFileId = variant.GalleryFileId,
+                IsActive = variant.IsActive ?? true,
+            })
+            .ToArray();
+
+        ProductVariantReferences.EnsureValid(null, optionIds, variants, library);
+        await ProductVariantReferences.EnsureCodesAvailableAsync(
+            repository, command.TenantId, null, variants, cancellationToken);
 
         var now = clock.UtcNow;
-        // Variantes, Tarea 2: el cuerpo de hoy describe un producto sin opciones, o sea su
-        // variante por defecto, y la imagen es la única foto de la galería. El cuerpo con
-        // variantes y galería es de la Tarea 5.
         var product = Product.Create(
             ProductId.New(),
             command.TenantId,
@@ -75,8 +93,9 @@ public sealed class CreateProductHandler(
                 Description = command.Description,
                 TaxRateId = taxRateId
             },
-            new ProductVariantInput { Code = command.Code, Pricing = pricing },
-            image is null ? [] : [image.FileId],
+            optionIds,
+            variants,
+            gallery,
             now);
 
         repository.Add(product);
@@ -89,6 +108,8 @@ public sealed class CreateProductHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return product.ToDto(image?.PublicUrl);
+        var dtos = await new[] { product }.ToDtosAsync(
+            imageLookup, optionRepository, command.TenantId, cancellationToken);
+        return dtos[0];
     }
 }

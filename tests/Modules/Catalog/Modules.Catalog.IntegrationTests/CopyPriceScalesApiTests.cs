@@ -52,21 +52,21 @@ public sealed class CopyPriceScalesApiTests
         var reloadedFirst = await GetProductAsync(client, first.Id);
         var reloadedSecond = await GetProductAsync(client, second.Id);
 
-        Assert.Equal(2, reloadedFirst.PriceScales.Count);
-        Assert.Equal(2, reloadedSecond.PriceScales.Count);
+        Assert.Equal(2, reloadedFirst.Only().PriceScales.Count);
+        Assert.Equal(2, reloadedSecond.Only().PriceScales.Count);
 
         // 10% sobre el precio base de cada destino, no el final del origen (90).
         var firstDiscounted = Assert.Single(
-            reloadedFirst.PriceScales, scale => scale.FromUnit == 1);
+            reloadedFirst.Only().PriceScales, scale => scale.FromUnit == 1);
         Assert.Equal(45m, firstDiscounted.Finals["USD"]);
 
         var secondDiscounted = Assert.Single(
-            reloadedSecond.PriceScales, scale => scale.FromUnit == 1);
+            reloadedSecond.Only().PriceScales, scale => scale.FromUnit == 1);
         Assert.Equal(180m, secondDiscounted.Finals["USD"]);
 
         // El precio base del destino no se toca: se copian las escalas, no el precio.
-        Assert.Equal(50m, reloadedFirst.Prices["USD"]);
-        Assert.Equal(200m, reloadedSecond.Prices["USD"]);
+        Assert.Equal(50m, reloadedFirst.Only().Prices["USD"]);
+        Assert.Equal(200m, reloadedSecond.Only().Prices["USD"]);
     }
 
     // La restricción no viaja: la escala llega incompleta y así se lee de vuelta desde Postgres,
@@ -85,15 +85,15 @@ public sealed class CopyPriceScalesApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var reloaded = await GetProductAsync(client, target.Id);
-        Assert.Equal(2, reloaded.PriceScales.Count);
-        Assert.All(reloaded.PriceScales, scale =>
+        Assert.Equal(2, reloaded.Only().PriceScales.Count);
+        Assert.All(reloaded.Only().PriceScales, scale =>
         {
             Assert.Null(scale.Restriction);
             Assert.Null(scale.Multiple);
             Assert.False(scale.AllowGrouping);
         });
-        Assert.Contains(reloaded.PriceScales, scale => scale is { FromUnit: 1, Discount: 10m });
-        Assert.Contains(reloaded.PriceScales, scale => scale is { FromUnit: 10, Discount: 20m });
+        Assert.Contains(reloaded.Only().PriceScales, scale => scale is { FromUnit: 1, Discount: 10m });
+        Assert.Contains(reloaded.Only().PriceScales, scale => scale is { FromUnit: 10, Discount: 20m });
     }
 
     // El reemplazo tiene que borrar las filas viejas de verdad. Contra el agregado en memoria esto
@@ -109,13 +109,13 @@ public sealed class CopyPriceScalesApiTests
         var target = await CreateProductAsync(
             client, "Vela de cera", "VC-001", 100m, OneScale(fromUnit: 100, toUnit: 200));
 
-        Assert.Single(target.PriceScales);
+        Assert.Single(target.Only().PriceScales);
 
         await CopyAsync(client, source.Id, [target.Id]);
 
         var reloaded = await GetProductAsync(client, target.Id);
-        Assert.Equal(2, reloaded.PriceScales.Count);
-        Assert.DoesNotContain(reloaded.PriceScales, scale => scale.FromUnit == 100);
+        Assert.Equal(2, reloaded.Only().PriceScales.Count);
+        Assert.DoesNotContain(reloaded.Only().PriceScales, scale => scale.FromUnit == 100);
     }
 
     // La diferencia con el lote que armaba el cliente: un destino que no existe tumba la operación
@@ -135,7 +135,7 @@ public sealed class CopyPriceScalesApiTests
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
 
         var reloaded = await GetProductAsync(client, target.Id);
-        Assert.Empty(reloaded.PriceScales);
+        Assert.Empty(reloaded.Only().PriceScales);
     }
 
     // Un origen sin escalas sería un borrado masivo disfrazado de copia.
@@ -158,7 +158,7 @@ public sealed class CopyPriceScalesApiTests
 
         // Y el destino conserva las suyas.
         var reloaded = await GetProductAsync(client, target.Id);
-        Assert.Single(reloaded.PriceScales);
+        Assert.Single(reloaded.Only().PriceScales);
     }
 
     [Fact]
@@ -280,12 +280,10 @@ public sealed class CopyPriceScalesApiTests
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
-            new
-            {
+            ProductBodies.Create(
                 name,
                 code,
-                pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = baseUsd }, scales = scales ?? [], packagingUnits = packagingUnits ?? [] }
-            },
+                pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = baseUsd }, scales = scales ?? [], packagingUnits = packagingUnits ?? [] }),
             TestContext.Current.CancellationToken);
 
         Assert.True(

@@ -11,6 +11,8 @@ public sealed record DeactivateProductCommand(Guid TenantId, Guid ProductId)
 // agregado, que es donde va esa regla.
 public sealed class DeactivateProductHandler(
     IProductRepository repository,
+    IOptionDefinitionRepository optionRepository,
+    IProductImageLookup imageLookup,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -39,6 +41,10 @@ public sealed class DeactivateProductHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return product.ToDto();
+        // El detalle completo, como el GET: la pantalla repinta lo que vuelve, y hasta las
+        // variantes devolvía la ficha sin la URL de la imagen.
+        var dtos = await new[] { product }.ToDtosAsync(
+            imageLookup, optionRepository, command.TenantId, cancellationToken);
+        return dtos[0];
     }
 }

@@ -56,11 +56,11 @@ public sealed class ProductPriceHistoryApiTests
         var before = DateTimeOffset.UtcNow;
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new
-            {
-                name = "Vela de soja",
-                code = "VS-001",
-                pricing = new
+            ProductBodies.Update(
+                created,
+                "Vela de soja",
+                "VS-001",
+                new
                 {
                     prices = new Dictionary<string, decimal> { ["USD"] = 120m, ["COP"] = 400000m },
                     scales = new object[]
@@ -74,8 +74,7 @@ public sealed class ProductPriceHistoryApiTests
                             multiple = 3
                         }
                     }
-                }
-            },
+                }),
             TestContext.Current.CancellationToken);
         await ReadProductAsync(response);
         var after = DateTimeOffset.UtcNow;
@@ -109,8 +108,10 @@ public sealed class ProductPriceHistoryApiTests
 
     /// <summary>
     /// Misma transacción que el producto, no un guardado aparte. El `PUT` de acá cambia el
-    /// precio **y** pisa el código de otro producto: la violación de <c>IX_products_tenant_code</c>
-    /// tira el commit entero, y con él tiene que irse el histórico. Con un
+    /// precio **y** pisa el código de otro producto: el rechazo (desde la Tarea 5 lo da la
+    /// comprobación previa del handler con el campo marcado, y en una carrera el índice
+    /// <c>IX_product_variants_tenant_code</c>) tira el guardado entero, y con él tiene que irse el
+    /// histórico. Con un
     /// <c>SaveChangesAsync</c> propio para las filas de cambio esta prueba encuentra un
     /// histórico que afirma un cambio de precio que el catálogo nunca tuvo.
     /// </summary>
@@ -127,12 +128,11 @@ public sealed class ProductPriceHistoryApiTests
 
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{target.Id}",
-            new
-            {
-                name = "Vela de soja",
-                code = "VS-001",
-                pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 555m } }
-            },
+            ProductBodies.Update(
+                target,
+                "Vela de soja",
+                "VS-001",
+                new { prices = new Dictionary<string, decimal> { ["USD"] = 555m } }),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -145,7 +145,7 @@ public sealed class ProductPriceHistoryApiTests
         object pricing) =>
         client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
-            new { name = "Vela de soja", code, pricing },
+            ProductBodies.Create("Vela de soja", code, pricing),
             TestContext.Current.CancellationToken);
 
     private static async Task<ProductResponse> ReadProductAsync(HttpResponseMessage response)

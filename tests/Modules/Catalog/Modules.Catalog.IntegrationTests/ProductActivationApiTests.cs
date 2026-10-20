@@ -84,20 +84,25 @@ public sealed class ProductActivationApiTests
 
         var created = await ReadProductAsync(
             await CreateProductAsync(client, TenantId, "Vela de soja", "VS-001"));
-        await DeactivateAsync(client, TenantId, created.Id);
+        var deactivated = await ReadProductAsync(await DeactivateAsync(client, TenantId, created.Id));
 
-        // Antes de activar, editar está cerrado: es el callejón sin salida que el slice abre.
+        // Antes de activar, editar está cerrado: es el callejón sin salida que el slice abre. Con la
+        // versión vigente, para que el 422 sea por el producto inactivo y no un 412 de concurrencia.
         var blocked = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new { name = "Vela de coco", code = "VS-001", pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } },
+            ProductBodies.Update(deactivated, "Vela de coco", "VS-001"),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, blocked.StatusCode);
+        Assert.Contains(
+            "catalog.product.inactive",
+            await blocked.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
 
-        await ActivateAsync(client, TenantId, created.Id);
+        var activated = await ReadProductAsync(await ActivateAsync(client, TenantId, created.Id));
 
         var edited = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new { name = "Vela de coco", code = "VS-001", pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } },
+            ProductBodies.Update(activated, "Vela de coco", "VS-001"),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, edited.StatusCode);
@@ -238,7 +243,7 @@ public sealed class ProductActivationApiTests
         string code) =>
         client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
-            new { name, code, pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } },
+            ProductBodies.Create(name, code),
             TestContext.Current.CancellationToken);
 
     private static Task<HttpResponseMessage> DeactivateAsync(

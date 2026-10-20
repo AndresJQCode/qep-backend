@@ -3,98 +3,204 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Application;
 
+/// <summary>
+/// Lo que el mapeo del detalle necesita de afuera del agregado: los nombres de las opciones y sus
+/// valores (de la biblioteca) y los archivos de la galería (de Storage, por el puerto). No son del
+/// agregado —<c>Product</c> guarda ids—, así que entran resueltos y el mapeo no necesita puertos.
+/// </summary>
+/// <param name="TenantId">Se vuelve a comparar contra el tenant de cada archivo. Ver
+/// <see cref="ProductMapping.ToDtosAsync"/>.</param>
+internal sealed record ProductReadLookups(
+    Guid TenantId,
+    IReadOnlyDictionary<Guid, OptionDefinition> Options,
+    IReadOnlyDictionary<Guid, ProductImageRef> Images)
+{
+    /// <summary>Sin nombres de opción ni URLs: para quien mapea en memoria (pruebas).</summary>
+    public static ProductReadLookups Empty(Guid tenantId) =>
+        new(tenantId, new Dictionary<Guid, OptionDefinition>(), new Dictionary<Guid, ProductImageRef>());
+
+    // Un archivo que desapareció de Storage, que nunca se publicó, o que es de otro tenant, deja la
+    // foto sin URL — no sin foto. El fileId sigue viajando: el cliente lo necesita para el PUT.
+    public string? UrlOf(Guid? fileId) =>
+        fileId is { } id && Images.TryGetValue(id, out var image) && image.TenantId == TenantId
+            ? image.PublicUrl
+            : null;
+}
+
 internal static class ProductMapping
 {
-    /// <summary>
-    /// La URL entra como parámetro y no se saca del agregado porque **no es del agregado**:
-    /// `Product` guarda cuál es su portada, y dónde se sirve ese archivo es de `Storage`. Quien
-    /// llama ya la tiene —el que escribe, del resolver; el que lee, del lote— y pasarla acá evita
-    /// que este mapeo necesite un puerto.
-    /// </summary>
-    public static ProductDto ToDto(
-        this Product product,
-        string? imageUrl = null) => new(
-        product.Id.Value,
-        product.Name,
-        product.Code,
-        product.IsActive,
-        product.Description,
-        product.ImageFileId,
-        imageUrl,
-        product.TaxRateId?.Value,
-        PricesOf(product),
-        product.PackagingUnits.ToArray(),
-        // Ordered here, and not left to whatever order the aggregate or the database hands
-        // over: the grid paints the tiers from the smallest up, and neither the write order
-        // nor the row order the database returns is a contract it can rely on. Same criterion
-        // the Excel export already applies (`ClosedXmlProductExportBuilder`), and doing it in
-        // the mapping covers every product response instead of one query at a time.
-        product.PriceScales.OrderBy(scale => scale.FromUnit).Select(scale => ToResponse(scale, product)).ToArray(),
-        product.CreatedAt,
-        product.UpdatedAt);
+    public static ProductDto ToDto(this Product product, ProductReadLookups lookups)
+    {
+        var gallery = product.Gallery;
+        var galleryById = gallery.ToDictionary(image => image.Id);
+        var mainImageUrl = lookups.UrlOf(product.ImageFileId);
+        var valueNames = ValueNamesOf(product, lookups);
 
-    // Catalogue order (spec D10), not insertion order: the form and the product table paint one
-    // column per currency in that order.
-    private static Dictionary<string, decimal> PricesOf(Product product) =>
-        product.Prices
-            .OrderBy(price => Currencies.OrderOf(price.Currency))
-            .ToDictionary(price => price.Currency, price => price.Amount);
-
-    private static PriceScaleResponse ToResponse(PriceScale scale, Product product) => new(
-        scale.Id.Value, scale.FromUnit, scale.ToUnit, scale.Discount,
-        scale.Restriction?.ToWireValue(), scale.Multiple,
-        scale.AllowGrouping,
-        // Derived, never stored (spec D4): one final per currency the product has.
-        product.Prices
-            .OrderBy(price => Currencies.OrderOf(price.Currency))
-            .ToDictionary(price => price.Currency, price => PriceScale.FinalFor(price.Amount, scale.Discount)!.Value));
+        return new ProductDto(
+            product.Id.Value,
+            product.Name,
+            product.IsActive,
+            product.Description,
+            product.ImageFileId,
+            mainImageUrl,
+            product.TaxRateId?.Value,
+            OptionsOf(product, lookups),
+            product.Variants
+                .Select(variant => ToResponse(product, variant, galleryById, valueNames, mainImageUrl, lookups))
+                .ToArray(),
+            gallery
+                .Select(image => new ProductGalleryImageResponse(image.Id, image.FileId, lookups.UrlOf(image.FileId)))
+                .ToArray(),
+            product.Version,
+            product.CreatedAt,
+            product.UpdatedAt);
+    }
 
     /// <summary>
-    /// Mapea una colección resolviendo las URLs en **una sola** consulta al puerto.
+    /// Mapea una colección resolviendo las URLs en **una sola** consulta al puerto de imágenes y
+    /// los nombres de opción en **una sola** consulta a la biblioteca.
     ///
-    /// Es la razón de ser de `CAT-05b`: sin esto, el cliente que pinta una grilla de 20 productos
-    /// tiene que pedir 20 URLs de descarga, una por producto. Los productos sin portada no entran
-    /// al lote, así que un catálogo sin imágenes no paga nada.
+    /// Es la razón de ser de `CAT-05b`: sin esto, el cliente que pinta N productos tiene que pedir
+    /// N URLs de descarga. Con la galería (Tarea 5) el lote son todas las fotos de todos los
+    /// productos; un catálogo sin imágenes no paga nada.
     ///
     /// **Recibe el `tenantId` y vuelve a comprobarlo, aunque el resolver ya lo haya hecho en la
     /// escritura.** No es redundancia: `CAT-05a` cerró la escritura, pero **no borra lo que ya
-    /// estaba**. Cualquier producto cargado antes de este slice pudo guardar el `imageFileId` de
-    /// otro tenant, porque nadie lo verificaba, y esa fila sigue en la base. Sin esta
-    /// comprobación, la escritura queda cerrada y la lectura abierta — y la lectura es la que se
-    /// pinta en una grilla. Lo encontró la revisión, y tiene su prueba.
+    /// estaba**. Cualquier producto cargado antes de ese slice pudo guardar el archivo de otro
+    /// tenant, y esa fila sigue en la base (la migración de variantes la pasó a la galería). Sin
+    /// esta comprobación, la escritura queda cerrada y la lectura abierta.
     /// </summary>
     public static async Task<IReadOnlyList<ProductDto>> ToDtosAsync(
         this IEnumerable<Product> products,
         IProductImageLookup imageLookup,
+        IOptionDefinitionRepository optionRepository,
         Guid tenantId,
         CancellationToken cancellationToken)
     {
         var materialized = products as IReadOnlyList<Product> ?? products.ToArray();
+        var lookups = await LoadLookupsAsync(
+            materialized, imageLookup, optionRepository, tenantId, cancellationToken);
 
-        var imageIds = materialized
-            .Select(product => product.ImageFileId)
-            .OfType<Guid>()
+        return materialized.Select(product => product.ToDto(lookups)).ToArray();
+    }
+
+    public static async Task<ProductReadLookups> LoadLookupsAsync(
+        IReadOnlyCollection<Product> products,
+        IProductImageLookup imageLookup,
+        IOptionDefinitionRepository optionRepository,
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        var fileIds = products
+            .SelectMany(product => product.Gallery.Select(image => image.FileId))
             .Distinct()
             .ToArray();
-        var images = imageIds.Length == 0
+        var images = fileIds.Length == 0
             ? new Dictionary<Guid, ProductImageRef>()
-            : await imageLookup.FindManyAsync(imageIds, cancellationToken);
+            : await imageLookup.FindManyAsync(fileIds, cancellationToken);
 
-        return materialized
-            .Select(product => product.ToDto(UrlOf(product, images, tenantId)))
+        var optionIds = products
+            .SelectMany(product => product.OptionIds)
+            .Distinct()
+            .Select(id => new OptionDefinitionId(id))
+            .ToArray();
+        var options = optionIds.Length == 0
+            ? []
+            : await optionRepository.ListByIdsAsync(tenantId, optionIds, cancellationToken);
+
+        return new ProductReadLookups(
+            tenantId,
+            options.ToDictionary(option => option.Id.Value),
+            images);
+    }
+
+    // Valor → nombre, de las opciones del producto. Un valor sin nombre (una opción que la lectura
+    // no encontró) no rompe el detalle: el nombre visible lo omite.
+    private static Dictionary<Guid, string> ValueNamesOf(Product product, ProductReadLookups lookups)
+    {
+        var names = new Dictionary<Guid, string>();
+        foreach (var optionId in product.OptionIds)
+        {
+            if (!lookups.Options.TryGetValue(optionId, out var option))
+            {
+                continue;
+            }
+
+            foreach (var value in option.Values)
+            {
+                names[value.Id] = value.Value;
+            }
+        }
+
+        return names;
+    }
+
+    private static ProductOptionResponse[] OptionsOf(Product product, ProductReadLookups lookups)
+    {
+        var used = product.Variants.SelectMany(variant => variant.OptionValueIds).ToHashSet();
+
+        return product.OptionIds
+            .Select(optionId => lookups.Options.TryGetValue(optionId, out var option)
+                ? new ProductOptionResponse(
+                    optionId,
+                    option.Name,
+                    option.Values
+                        .Where(value => used.Contains(value.Id))
+                        .OrderBy(value => value.Position)
+                        .Select(value => new ProductOptionValueResponse(value.Id, value.Value))
+                        .ToArray())
+                : new ProductOptionResponse(optionId, string.Empty, []))
             .ToArray();
     }
 
-    // Un archivo que desapareció de Storage, que nunca se publicó, o que es de otro tenant, deja
-    // el producto sin URL — no sin producto. `imageFileId` sigue viajando: el cliente lo necesita
-    // para el PUT, y ocultárselo le rompería la edición sin decirle por qué.
-    private static string? UrlOf(
+    private static ProductVariantResponse ToResponse(
         Product product,
-        IReadOnlyDictionary<Guid, ProductImageRef> images,
-        Guid tenantId) =>
-        product.ImageFileId is { } fileId &&
-        images.TryGetValue(fileId, out var image) &&
-        image.TenantId == tenantId
-            ? image.PublicUrl
+        ProductVariant variant,
+        Dictionary<Guid, ProductGalleryImage> galleryById,
+        Dictionary<Guid, string> valueNames,
+        string? mainImageUrl,
+        ProductReadLookups lookups)
+    {
+        Guid? galleryFileId = variant.GalleryImageId is { } imageId && galleryById.TryGetValue(imageId, out var image)
+            ? image.FileId
             : null;
+
+        return new ProductVariantResponse(
+            variant.Id.Value,
+            VariantDisplayName.For(
+                product.Name,
+                variant.OptionValueIds.Where(valueNames.ContainsKey).Select(id => valueNames[id]).ToArray()),
+            variant.Code,
+            variant.Barcode,
+            variant.OptionValueIds,
+            PricesOf(variant),
+            // Ordered here, and not left to whatever order the aggregate or the database hands
+            // over: the grid paints the tiers from the smallest up, and neither the write order
+            // nor the row order the database returns is a contract it can rely on. Same criterion
+            // the Excel export already applies (`ClosedXmlProductExportBuilder`).
+            variant.PriceScales.OrderBy(scale => scale.FromUnit).Select(scale => ToResponse(scale, variant)).ToArray(),
+            variant.PackagingUnits.ToArray(),
+            variant.GalleryImageId,
+            galleryFileId,
+            galleryFileId is { } fileId ? lookups.UrlOf(fileId) : mainImageUrl,
+            variant.IsActive,
+            // Tarea 6: la consulta de uso (IVariantUsageChecker). Ver ProductVariantResponse.
+            CanDelete: false);
+    }
+
+    // Catalogue order (spec D10), not insertion order: the form and the product table paint one
+    // column per currency in that order.
+    private static Dictionary<string, decimal> PricesOf(ProductVariant variant) =>
+        variant.Prices
+            .OrderBy(price => Currencies.OrderOf(price.Currency))
+            .ToDictionary(price => price.Currency, price => price.Amount);
+
+    private static PriceScaleResponse ToResponse(PriceScale scale, ProductVariant variant) => new(
+        scale.Id.Value, scale.FromUnit, scale.ToUnit, scale.Discount,
+        scale.Restriction?.ToWireValue(), scale.Multiple,
+        scale.AllowGrouping,
+        // Derived, never stored (spec D4): one final per currency the variant has.
+        variant.Prices
+            .OrderBy(price => Currencies.OrderOf(price.Currency))
+            .ToDictionary(price => price.Currency, price => PriceScale.FinalFor(price.Amount, scale.Discount)!.Value));
 }

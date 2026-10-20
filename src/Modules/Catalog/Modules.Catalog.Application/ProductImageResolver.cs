@@ -35,7 +35,38 @@ internal static class ProductImageResolver
         }
 
         var image = await lookup.FindAsync(imageFileId.Value, cancellationToken);
+        return Check(image, tenantId);
+    }
 
+    /// <summary>
+    /// Variantes, Tarea 5: la galería entera, con las mismas tres reglas por archivo y en una
+    /// sola consulta al puerto (hasta 250 fotos; una vuelta por foto se pagaría en cada guardado).
+    /// Cada archivo es referencia blanda igual que la portada de antes: sin esto, una foto de
+    /// otro tenant entra con 201. Falla en la primera foto inválida, en el orden de la galería.
+    /// </summary>
+    public static async Task<IReadOnlyDictionary<Guid, ProductImageRef>> ResolveGalleryAsync(
+        IProductImageLookup lookup,
+        Guid tenantId,
+        IReadOnlyList<Guid> fileIds,
+        CancellationToken cancellationToken)
+    {
+        if (fileIds.Count == 0)
+        {
+            return new Dictionary<Guid, ProductImageRef>();
+        }
+
+        var found = await lookup.FindManyAsync(fileIds.Distinct().ToArray(), cancellationToken);
+        var resolved = new Dictionary<Guid, ProductImageRef>();
+        foreach (var fileId in fileIds)
+        {
+            resolved[fileId] = Check(found.GetValueOrDefault(fileId), tenantId);
+        }
+
+        return resolved;
+    }
+
+    private static ProductImageRef Check(ProductImageRef? image, Guid tenantId)
+    {
         // Las dos condiciones dan el mismo código a propósito: distinguir "no existe" de "es de
         // otro tenant" le confirma al llamador que el id existe en otro tenant, que es justo lo
         // que la frontera esconde. Mismo razonamiento que ProductTaxRateResolver.

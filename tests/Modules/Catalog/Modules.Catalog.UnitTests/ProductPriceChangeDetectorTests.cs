@@ -286,6 +286,44 @@ public sealed class ProductPriceChangeDetectorTests
         Assert.Null(change.Currency);
     }
 
+    // Variantes, Tarea 5: el PUT compara cada variante guardada contra su propio precio. La que no
+    // cambió no deja filas, la que cambió deja la suya con su VariantId, y la nueva no deja ninguna.
+    [Fact]
+    public void DetectComparesEachSavedVariantAgainstItsOwnPrice()
+    {
+        var talla = Guid.CreateVersion7();
+        var (small, medium, large) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+        var product = Product.Create(
+            ProductId.New(),
+            TenantId,
+            "Camiseta",
+            ProductDetails.Empty,
+            [talla],
+            [
+                new ProductVariantInput { Code = "CAM-S", OptionValueIds = [small], Pricing = PricingOf(Prices(("USD", 20m))) },
+                new ProductVariantInput { Code = "CAM-M", OptionValueIds = [medium], Pricing = PricingOf(Prices(("USD", 30m))) },
+            ],
+            [],
+            Now);
+        var (savedSmall, savedMedium) = (product.Variants[0], product.Variants[1]);
+
+        var changes = ProductPriceChangeDetector.Detect(
+            product,
+            [
+                new ProductVariantInput { Id = savedSmall.Id.Value, Code = "CAM-S", OptionValueIds = [small], Pricing = PricingOf(Prices(("USD", 20m))) },
+                new ProductVariantInput { Id = savedMedium.Id.Value, Code = "CAM-M", OptionValueIds = [medium], Pricing = PricingOf(Prices(("USD", 35m))) },
+                new ProductVariantInput { Code = "CAM-L", OptionValueIds = [large], Pricing = PricingOf(Prices(("USD", 99m))) },
+            ],
+            ChangedBy,
+            Now);
+
+        var change = Assert.Single(changes);
+        Assert.Equal(savedMedium.Id, change.VariantId);
+        Assert.Equal(product.Id, change.ProductId);
+        Assert.Equal(30m, change.PreviousValue);
+        Assert.Equal(35m, change.NewValue);
+    }
+
     private static Product ProductWith(
         IReadOnlyDictionary<string, decimal> prices,
         params PriceScaleInput[] scales) =>

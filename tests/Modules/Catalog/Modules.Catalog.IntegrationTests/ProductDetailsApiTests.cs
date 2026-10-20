@@ -93,15 +93,13 @@ public sealed class ProductDetailsApiTests
         var taxRateId = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
         var image = await UploadImageAsync(client, TenantId, database);
 
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            description = "Cera de soja, 200 g",
-            imageFileId = image,
-            taxRateId,
-            pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }
-        });
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-001",
+            pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
+            description: "Cera de soja, 200 g",
+            taxRateId: taxRateId,
+            imageFileId: image));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await ReadProductAsync(response);
@@ -127,7 +125,7 @@ public sealed class ProductDetailsApiTests
 
         var response = await CreateProductAsync(
             client, TenantId,
-            new { name = "Vela de soja", code = "VS-001", pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } });
+            ProductBodies.Create("Vela de soja", "VS-001", pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await ReadProductAsync(response);
@@ -146,19 +144,17 @@ public sealed class ProductDetailsApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var taxRateId = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
-        var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            description = "Cera de soja",
-            imageFileId = await UploadImageAsync(client, TenantId, database),
-            taxRateId,
-            pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }
-        }));
+        var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-001",
+            pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
+            description: "Cera de soja",
+            taxRateId: taxRateId,
+            imageFileId: await UploadImageAsync(client, TenantId, database))));
 
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new { name = "Vela de soja", code = "VS-001", pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } },
+            ProductBodies.Update(created, "Vela de soja", "VS-001", pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -189,13 +185,11 @@ public sealed class ProductDetailsApiTests
         // La tasa existe de verdad — en el otro tenant. La FK la aceptaría.
         var foreignTaxRateId = await CreateTaxRateAsync(other, OtherTenantId, "IVA ajeno", 19);
 
-        var response = await CreateProductAsync(owner, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            taxRateId = foreignTaxRateId,
-            pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }
-        });
+        var response = await CreateProductAsync(owner, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-001",
+            pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
+            taxRateId: foreignTaxRateId));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Contains(
@@ -214,13 +208,11 @@ public sealed class ProductDetailsApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            taxRateId = Guid.CreateVersion7(),
-            pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }
-        });
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-001",
+            pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
+            taxRateId: Guid.CreateVersion7()));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Contains(
@@ -245,13 +237,11 @@ public sealed class ProductDetailsApiTests
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, deactivate.StatusCode);
 
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            taxRateId,
-            pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }
-        });
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-001",
+            pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
+            taxRateId: taxRateId));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         Assert.Equal(taxRateId, (await ReadProductAsync(response)).TaxRateId);
@@ -267,17 +257,16 @@ public sealed class ProductDetailsApiTests
 
         var created = await ReadProductAsync(await CreateProductAsync(
             client, TenantId,
-            new { name = "Vela de soja", code = "VS-001", pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } }));
+            ProductBodies.Create("Vela de soja", "VS-001", pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } })));
 
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new
-            {
-                name = "Vela de soja",
-                code = "VS-001",
-                description = "Cera de soja, 200 g",
-                pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }
-            },
+            ProductBodies.Update(
+                created,
+                "Vela de soja",
+                "VS-001",
+                pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
+                description: "Cera de soja, 200 g"),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
@@ -453,7 +442,7 @@ public sealed class ProductDetailsApiTests
         return product;
     }
 
-    private static async Task<IReadOnlyCollection<ProductResponse>> ListAsync(
+    private static async Task<IReadOnlyCollection<ProductListItemDto>> ListAsync(
         HttpClient client,
         string tenantId)
     {

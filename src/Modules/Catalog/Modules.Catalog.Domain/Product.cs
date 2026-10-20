@@ -98,17 +98,16 @@ public sealed class Product
     // --- Transitorio (variantes, Tarea 2). Code, precios, escalas y empaques son de la variante;
     // estos accesos leen la única variante (y fallan si hay más de una) para que los llamadores que todavía piensan en "un
     // producto, un código" (persistencia, adaptadores de Bootstrapper, Excel, historial y copia de
-    // escalas) compilen hasta que sus tareas los pasen a variantes (T3, T5, T7, T8, T9). En un
+    // escalas) compilen hasta que sus tareas los pasen a variantes (T7, T8, T9). En un
     // producto sin opciones es exactamente lo de antes. Código nuevo no los usa: lee Variants.
+    // La Tarea 5 pasó a variantes el mapeo del detalle, el listado y el detector del PUT, y retiró
+    // PricedCurrencies, que quedó sin llamadores.
 
     /// <summary>Transitorio: el <see cref="ProductVariant.Code"/> de la única variante.</summary>
     public string Code => PrimaryVariant.Code;
 
     /// <summary>Transitorio: los precios de la única variante.</summary>
     public IReadOnlyCollection<ProductPrice> Prices => PrimaryVariant.Prices;
-
-    /// <summary>Transitorio: las monedas de la única variante.</summary>
-    public IReadOnlyCollection<string> PricedCurrencies => PrimaryVariant.PricedCurrencies;
 
     /// <summary>Transitorio: el precio de la única variante en esa moneda.</summary>
     public decimal? PriceIn(string currency) => PrimaryVariant.PriceIn(currency);
@@ -167,6 +166,42 @@ public sealed class Product
         var product = new Product(id, tenantId, NormalizeName(name), details, occurredAt);
         product.ReplaceGallery(galleryFileIds);
         product.ReplaceVariants([defaultVariant with { Id = id.Value }], optionCount: 0, isCreate: true);
+        return product;
+    }
+
+    /// <summary>
+    /// Crea un producto con sus opciones y todas sus variantes de una vez (el POST del formulario,
+    /// Tarea 5), con <c>Version = 1</c> como cualquier producto nuevo. La primera variante toma el
+    /// id del producto, igual que la variante por defecto de <see cref="Create(ProductId, Guid, string, ProductDetails, ProductVariantInput, IReadOnlyList{Guid}, DateTimeOffset)"/>;
+    /// el resto nace con id nuevo. Los <c>Id</c> que traigan las variantes se ignoran: en un
+    /// producto nuevo no hay ninguna guardada con la cual emparejar.
+    /// </summary>
+    public static Product Create(
+        ProductId id,
+        Guid tenantId,
+        string name,
+        ProductDetails details,
+        IReadOnlyList<Guid> optionIds,
+        IReadOnlyList<ProductVariantInput> variants,
+        IReadOnlyList<Guid> galleryFileIds,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(optionIds);
+        ArgumentNullException.ThrowIfNull(variants);
+        ArgumentNullException.ThrowIfNull(galleryFileIds);
+
+        var normalizedName = NormalizeName(name);
+        EnsureOptions(optionIds);
+        EnsureGallery(galleryFileIds);
+        EnsureVariantCount(variants);
+
+        var product = new Product(id, tenantId, normalizedName, details, occurredAt);
+        product.ReplaceOptions(optionIds);
+        product.ReplaceGallery(galleryFileIds);
+        product.ReplaceVariants(
+            variants.Select((variant, index) => variant with { Id = index == 0 ? id.Value : null }).ToArray(),
+            optionIds.Count,
+            isCreate: true);
         return product;
     }
 

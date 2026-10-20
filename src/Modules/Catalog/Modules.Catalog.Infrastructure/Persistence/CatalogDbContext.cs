@@ -96,7 +96,6 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         // variante o en la galería. Los accesos transitorios de Product que los leen no se mapean.
         product.Ignore(value => value.Code);
         product.Ignore(value => value.Prices);
-        product.Ignore(value => value.PricedCurrencies);
         product.Ignore(value => value.PriceScales);
         product.Ignore(value => value.PackagingUnits);
         product.Ignore(value => value.ImageFileId);

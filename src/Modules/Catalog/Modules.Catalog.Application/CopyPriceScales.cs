@@ -70,6 +70,7 @@ public sealed class CopyPriceScalesValidator : AbstractValidator<CopyPriceScales
 
 public sealed class CopyPriceScalesHandler(
     IProductRepository repository,
+    IOptionDefinitionRepository optionRepository,
     IProductImageLookup imageLookup,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
@@ -153,6 +154,6 @@ public sealed class CopyPriceScalesHandler(
         var byId = targets.ToDictionary(target => target.Id);
         return await targetIds
             .Select(id => byId[id])
-            .ToDtosAsync(imageLookup, command.TenantId, cancellationToken);
+            .ToDtosAsync(imageLookup, optionRepository, command.TenantId, cancellationToken);
     }
 }

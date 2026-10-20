@@ -39,9 +39,9 @@ public sealed class ProductMappingTests
             }, [],
             Now);
 
-        var dto = product.ToDto();
+        var dto = product.ToDto(ProductReadLookups.Empty(TenantId));
 
-        Assert.Equal([1, 10, 20], dto.PriceScales.Select(scale => scale.FromUnit));
+        Assert.Equal([1, 10, 20], Assert.Single(dto.Variants).PriceScales.Select(scale => scale.FromUnit));
     }
 
     // Spec D10: prices and finals travel in catalogue order (COP, USD, EUR), not insertion order,
@@ -61,10 +61,10 @@ public sealed class ProductMappingTests
             }, [],
             DateTimeOffset.UtcNow);
 
-        var dto = product.ToDto();
+        var variant = Assert.Single(product.ToDto(ProductReadLookups.Empty(TenantId)).Variants);
 
-        Assert.Equal(["COP", "EUR"], dto.Prices.Keys);
-        var scale = Assert.Single(dto.PriceScales);
+        Assert.Equal(["COP", "EUR"], variant.Prices.Keys);
+        var scale = Assert.Single(variant.PriceScales);
         Assert.Equal(new Dictionary<string, decimal> { ["COP"] = 40_500m, ["EUR"] = 10.26m }, scale.Finals);
         Assert.Equal(["COP", "EUR"], scale.Finals.Keys);
     }
@@ -100,9 +100,9 @@ public sealed class ProductMappingTests
 
         Assert.Equal(
             new Dictionary<string, decimal> { ["COP"] = 40_500m, ["USD"] = 11.25m },
-            Assert.Single(both.ToDto().PriceScales).Finals);
+            Assert.Single(Assert.Single(both.ToDto(ProductReadLookups.Empty(TenantId)).Variants).PriceScales).Finals);
         Assert.Equal(
             new Dictionary<string, decimal> { ["COP"] = 18_000m },
-            Assert.Single(copOnly.ToDto().PriceScales).Finals);
+            Assert.Single(Assert.Single(copOnly.ToDto(ProductReadLookups.Empty(TenantId)).Variants).PriceScales).Finals);
     }
 }

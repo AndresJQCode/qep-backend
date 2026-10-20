@@ -221,12 +221,10 @@ public sealed class ProductExportApiTests
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
-            new
-            {
+            ProductBodies.Create(
                 name,
                 code,
-                pricing = new { prices = new Dictionary<string, decimal> { ["COP"] = BaseCop }, scales },
-            },
+                new { prices = new Dictionary<string, decimal> { ["COP"] = BaseCop }, scales }),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
     }

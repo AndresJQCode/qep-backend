@@ -240,21 +240,28 @@ internal static class PosApiHarness
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
+            // Variantes (Catalog, Tarea 5): código y precio van en la única variante.
             new
             {
                 name,
-                code,
                 taxRateId,
-                pricing = new
+                variants = new[]
                 {
-                    prices = prices ?? new Dictionary<string, decimal> { ["COP"] = priceCop },
-                    scales = new object[]
+                    new
                     {
-                        new { fromUnit = 1, toUnit = 9, discount = 0m, restriction = "multiple", multiple = 1 },
-                        new { fromUnit = 10, toUnit = 19, discount = 5m, restriction = "multiple", multiple = 1 },
-                        new { fromUnit = 20, toUnit = 999_999, discount = 10m, restriction = "multiple", multiple = 1 },
+                        code,
+                        pricing = new
+                        {
+                            prices = prices ?? new Dictionary<string, decimal> { ["COP"] = priceCop },
+                            scales = new object[]
+                            {
+                                new { fromUnit = 1, toUnit = 9, discount = 0m, restriction = "multiple", multiple = 1 },
+                                new { fromUnit = 10, toUnit = 19, discount = 5m, restriction = "multiple", multiple = 1 },
+                                new { fromUnit = 20, toUnit = 999_999, discount = 10m, restriction = "multiple", multiple = 1 },
+                            },
+                            packagingUnits = Array.Empty<int>(),
+                        },
                     },
-                    packagingUnits = Array.Empty<int>(),
                 },
             },
             TestContext.Current.CancellationToken);

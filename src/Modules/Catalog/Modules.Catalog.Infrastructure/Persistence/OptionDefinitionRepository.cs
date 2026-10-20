@@ -33,6 +33,23 @@ internal sealed class OptionDefinitionRepository(CatalogDbContext dbContext) : I
                 option => option.TenantId == tenantId && option.Id == optionId,
                 cancellationToken);
 
+    public async Task<IReadOnlyList<OptionDefinition>> ListByIdsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<OptionDefinitionId> optionIds,
+        CancellationToken cancellationToken)
+    {
+        if (optionIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await dbContext.OptionDefinitions
+            .AsNoTracking()
+            .Include(option => option.Values.OrderBy(value => value.Position))
+            .Where(option => option.TenantId == tenantId && optionIds.Contains(option.Id))
+            .ToListAsync(cancellationToken);
+    }
+
     // SQL y no LINQ: product_options y product_variant_option_values son tipos owned sin DbSet.
     // El filtro de tenant va por products y product_variants, que son los que tienen tenant_id.
     public async Task<OptionUsage> GetUsageAsync(Guid tenantId, CancellationToken cancellationToken)

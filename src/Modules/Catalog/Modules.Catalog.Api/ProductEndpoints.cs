@@ -54,6 +54,7 @@ public static class ProductEndpoints
             .Produces<ProductResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         // Un recurso propio y no un PUT por destino: la operación es "copiar estas escalas a
@@ -127,7 +128,7 @@ public static class ProductEndpoints
             cancellationToken);
 
         return Results.Ok(new ProductsResponse(
-            result.Items.Select(ToResponse).ToArray(),
+            result.Items,
             result.Total,
             result.Page,
             result.PageSize));
@@ -156,11 +157,11 @@ public static class ProductEndpoints
             new CreateProductCommand(
                 tenantId,
                 request.Name,
-                request.Code,
                 request.Description,
-                request.ImageFileId,
                 request.TaxRateId,
-                request.Pricing),
+                request.OptionIds,
+                request.Variants,
+                request.Gallery),
             cancellationToken);
 
         return Results.Created(
@@ -179,12 +180,13 @@ public static class ProductEndpoints
             new UpdateProductCommand(
                 tenantId,
                 productId,
+                request.ExpectedVersion,
                 request.Name,
-                request.Code,
                 request.Description,
-                request.ImageFileId,
                 request.TaxRateId,
-                request.Pricing),
+                request.OptionIds,
+                request.Variants,
+                request.Gallery),
             cancellationToken);
 
         return Results.Ok(ToResponse(product));
@@ -236,15 +238,15 @@ public static class ProductEndpoints
     private static ProductResponse ToResponse(ProductDto product) => new(
         product.Id,
         product.Name,
-        product.Code,
         product.IsActive,
         product.Description,
         product.ImageFileId,
         product.ImageUrl,
         product.TaxRateId,
-        product.Prices,
-        product.PackagingUnits,
-        product.PriceScales,
+        product.Options,
+        product.Variants,
+        product.Gallery,
+        product.Version,
         product.CreatedAt,
         product.UpdatedAt);
 }

@@ -24,6 +24,20 @@ public interface IProductRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// La misma página que <see cref="SearchAsync"/> —mismo filtro, mismo orden, mismo total—
+    /// pero proyectada a lo que pinta la grilla del listado, sin traer variantes ni escalas.
+    /// </summary>
+    Task<(IReadOnlyList<ProductSummary> Items, int Total)> SearchSummariesAsync(
+        Guid tenantId,
+        string? search,
+        string? name,
+        string? code,
+        bool? isActive,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Todos los productos que coinciden con el filtro, sin paginar y con sus escalas — para la
     /// exportacion, que saca el catalogo completo que el filtro deja a la vista y no la pagina
     /// que se esta mirando. Es una consulta aparte y no <see cref="SearchAsync"/> con un
@@ -124,6 +138,16 @@ public interface IProductRepository
         IReadOnlyCollection<string> codes,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Como <see cref="FindExistingCodesAsync"/>, para los códigos de barras (igualdad exacta, como
+    /// <c>IX_product_variants_tenant_barcode</c>). Variantes, Tarea 5: el PUT marca el campo antes
+    /// de que choque el índice.
+    /// </summary>
+    Task<IReadOnlySet<string>> FindExistingBarcodesAsync(
+        Guid tenantId,
+        IReadOnlyCollection<string> barcodes,
+        CancellationToken cancellationToken);
+
     void Add(Product product);
 
     /// <summary>
@@ -152,3 +176,23 @@ public interface IProductRepository
         TaxRateId taxRateId,
         CancellationToken cancellationToken);
 }
+
+/// <summary>Una fila del listado de productos (<see cref="IProductRepository.SearchSummariesAsync"/>).</summary>
+/// <param name="ImageFileId">El archivo de la primera foto de la galería.</param>
+/// <param name="Code">El código de la única variante; null si tiene más de una.</param>
+/// <param name="PriceRanges">Por moneda, entre las variantes activas.</param>
+public sealed record ProductSummary(
+    ProductId Id,
+    string Name,
+    bool IsActive,
+    string? Description,
+    TaxRateId? TaxRateId,
+    Guid? ImageFileId,
+    int VariantCount,
+    string? Code,
+    IReadOnlyList<ProductPriceRange> PriceRanges,
+    long Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+public sealed record ProductPriceRange(string Currency, decimal Min, decimal Max);

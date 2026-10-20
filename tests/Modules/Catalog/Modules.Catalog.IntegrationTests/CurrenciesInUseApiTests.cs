@@ -55,7 +55,7 @@ public sealed class CurrenciesInUseApiTests
         HttpClient client, string tenantId, string code, Dictionary<string, decimal> prices) =>
         (await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
-            new { name = "Producto " + code, code, pricing = new { prices } },
+            ProductBodies.Create("Producto " + code, code, new { prices }),
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
     private static async Task<PostgreSqlContainer> StartDatabaseAsync()

@@ -30,10 +30,53 @@ public static class ProductPriceChangeDetector
         ArgumentNullException.ThrowIfNull(product);
         ArgumentNullException.ThrowIfNull(newPricing);
 
+        // Transitorio (variantes): la copia de escalas todavía copia sobre la única variante del
+        // destino; compararla por variante es de la Tarea 7. Con más de una variante, Single()
+        // falla en voz alta en vez de anotar el cambio en otra talla.
+        return DetectFor(product, product.Variants.Single(), newPricing, changedBy, occurredAt);
+    }
+
+    /// <summary>
+    /// El historial del PUT con variantes (Tarea 5): compara cada variante **guardada** que viene
+    /// en el cuerpo contra su propio precio de hoy. Una variante nueva (sin id) no deja filas: nace
+    /// con su precio, igual que un producto nuevo no deja historial al crearse. Una variante
+    /// guardada que no viene no se compara: el agregado la rechaza o la resuelve por su cuenta.
+    /// </summary>
+    public static IReadOnlyList<ProductPriceChange> Detect(
+        Product product,
+        IReadOnlyList<ProductVariantInput> variants,
+        Guid changedBy,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(product);
+        ArgumentNullException.ThrowIfNull(variants);
+
+        var changes = new List<ProductPriceChange>();
+        foreach (var input in variants)
+        {
+            if (input.Id is not { } id
+                || product.Variants.FirstOrDefault(saved => saved.Id.Value == id) is not { } variant)
+            {
+                continue;
+            }
+
+            changes.AddRange(DetectFor(product, variant, input.Pricing, changedBy, occurredAt));
+        }
+
+        return changes;
+    }
+
+    private static List<ProductPriceChange> DetectFor(
+        Product product,
+        ProductVariant variant,
+        ProductPricing newPricing,
+        Guid changedBy,
+        DateTimeOffset occurredAt)
+    {
         var changes = new List<ProductPriceChange>();
 
-        AddBasePriceChanges(changes, product, newPricing, changedBy, occurredAt);
-        AddScaleDiscountChanges(changes, product, newPricing, changedBy, occurredAt);
+        AddBasePriceChanges(changes, product, variant, newPricing, changedBy, occurredAt);
+        AddScaleDiscountChanges(changes, product, variant, newPricing, changedBy, occurredAt);
 
         return changes;
     }
@@ -44,18 +87,19 @@ public static class ProductPriceChangeDetector
     private static void AddBasePriceChanges(
         List<ProductPriceChange> changes,
         Product product,
+        ProductVariant variant,
         ProductPricing newPricing,
         Guid changedBy,
         DateTimeOffset occurredAt)
     {
-        var currencies = product.Prices
+        var currencies = variant.Prices
             .Select(price => price.Currency)
             .Union(newPricing.Prices.Keys)
             .Order(StringComparer.Ordinal);
 
         foreach (var currency in currencies)
         {
-            var previousValue = product.PriceIn(currency);
+            var previousValue = variant.PriceIn(currency);
             decimal? newValue = newPricing.Prices.TryGetValue(currency, out var amount) ? amount : null;
             if (previousValue == newValue)
             {
@@ -63,7 +107,7 @@ public static class ProductPriceChangeDetector
             }
 
             changes.Add(ProductPriceChange.ForBasePrice(
-                product.TenantId, product.Id, OnlyVariant(product), currency, previousValue, newValue, changedBy, occurredAt));
+                product.TenantId, product.Id, variant.Id, currency, previousValue, newValue, changedBy, occurredAt));
         }
     }
 
@@ -75,12 +119,13 @@ public static class ProductPriceChangeDetector
     private static void AddScaleDiscountChanges(
         List<ProductPriceChange> changes,
         Product product,
+        ProductVariant variant,
         ProductPricing newPricing,
         Guid changedBy,
         DateTimeOffset occurredAt)
     {
         var previousDiscounts = IndexByRange(
-            product.PriceScales.Select(scale => (scale.FromUnit, scale.ToUnit, scale.Discount)));
+            variant.PriceScales.Select(scale => (scale.FromUnit, scale.ToUnit, scale.Discount)));
         var newDiscounts = IndexByRange(
             newPricing.Scales.Select(scale => (scale.FromUnit, scale.ToUnit, scale.Discount)));
 
@@ -107,7 +152,7 @@ public static class ProductPriceChangeDetector
             changes.Add(ProductPriceChange.ForScaleDiscount(
                 product.TenantId,
                 product.Id,
-                OnlyVariant(product),
+                variant.Id,
                 range.FromUnit,
                 range.ToUnit,
                 // Un rango nuevo entra con `PreviousValue` nulo; uno que desapareció sale con
@@ -134,9 +179,4 @@ public static class ProductPriceChangeDetector
 
         return indexed;
     }
-
-    // Transitorio (variantes, Tarea 3): el detector todavía compara el precio del producto, que
-    // sólo existe con una variante (los accesos de Product fallan con más). Compararlo por variante
-    // es de la Tarea 7.
-    private static VariantId OnlyVariant(Product product) => product.Variants.Single().Id;
 }

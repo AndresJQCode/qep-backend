@@ -210,7 +210,7 @@ public sealed class CatalogVariantPersistenceTests
     private static Task<HttpResponseMessage> CreateProductAsync(HttpClient client, string name, string code) =>
         client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
-            new { name, code, pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } },
+            ProductBodies.Create(name, code),
             TestContext.Current.CancellationToken);
 
     private static HttpClient CreateClient(QepApiFactory factory)

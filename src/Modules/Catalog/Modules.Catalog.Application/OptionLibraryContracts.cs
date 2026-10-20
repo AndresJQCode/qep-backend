@@ -58,6 +58,16 @@ public interface IOptionDefinitionRepository
         OptionDefinitionId optionId,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Las opciones de esos ids, con sus valores, sin rastreo y sólo del tenant: un id que no existe
+    /// o es de otro tenant no aparece. Variantes, Tarea 5: el producto valida sus opciones y arma
+    /// los nombres visibles con esto.
+    /// </summary>
+    Task<IReadOnlyList<OptionDefinition>> ListByIdsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<OptionDefinitionId> optionIds,
+        CancellationToken cancellationToken);
+
     Task<OptionUsage> GetUsageAsync(Guid tenantId, CancellationToken cancellationToken);
 
     void Add(OptionDefinition definition);

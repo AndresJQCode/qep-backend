@@ -432,17 +432,25 @@ internal static class QuotationsApiHarness
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
+            // Variantes (Catalog, Tarea 5): un producto sin opciones lleva su código y su precio en
+            // su única variante.
             new
             {
                 name = "Vela de soja",
-                code = $"VS-{Guid.NewGuid():N}"[..12],
                 taxRateId,
-                pricing = new
+                variants = new[]
                 {
-                    // A given map wins over the COP shorthand, so tests can price in any currency.
-                    prices = prices ?? new Dictionary<string, decimal> { ["COP"] = baseCop },
-                    scales = scales ?? DefaultScales(baseCop),
-                    packagingUnits = packagingUnits ?? []
+                    new
+                    {
+                        code = $"VS-{Guid.NewGuid():N}"[..12],
+                        pricing = new
+                        {
+                            // A given map wins over the COP shorthand, so tests can price in any currency.
+                            prices = prices ?? new Dictionary<string, decimal> { ["COP"] = baseCop },
+                            scales = scales ?? DefaultScales(baseCop),
+                            packagingUnits = packagingUnits ?? []
+                        }
+                    }
                 }
             },
             TestContext.Current.CancellationToken);
@@ -478,13 +486,26 @@ internal static class QuotationsApiHarness
         HttpClient client, Guid tenantId, Guid productId, string name, string code,
         decimal baseCop = 100_000m)
     {
+        // El PUT de Catalog pide la versión leída y la variante por su id (Tarea 5).
+        var current = await client.GetFromJsonAsync<ProductResponseDto>(
+            $"/api/v1/tenants/{tenantId}/catalog/products/{productId}",
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(current);
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products/{productId}",
             new
             {
+                expectedVersion = current.Version,
                 name,
-                code,
-                pricing = new { prices = new Dictionary<string, decimal> { ["COP"] = baseCop }, scales = DefaultScales(baseCop) }
+                variants = new[]
+                {
+                    new
+                    {
+                        id = Assert.Single(current.Variants).Id,
+                        code,
+                        pricing = new { prices = new Dictionary<string, decimal> { ["COP"] = baseCop }, scales = DefaultScales(baseCop) }
+                    }
+                }
             },
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
@@ -867,7 +888,9 @@ internal static class QuotationsApiHarness
         }
     }
 
-    private sealed record ProductResponseDto(Guid Id);
+    private sealed record ProductResponseDto(Guid Id, long Version, IReadOnlyList<ProductVariantIdDto> Variants);
+
+    private sealed record ProductVariantIdDto(Guid Id);
 
     private sealed record TaxRateResponseDto(Guid Id);
 

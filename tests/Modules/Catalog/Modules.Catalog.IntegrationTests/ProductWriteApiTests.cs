@@ -205,7 +205,7 @@ public sealed class ProductWriteApiTests
 
         var update = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{missing}",
-            new { name = "Vela", code = "VS-001", pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } },
+            ProductBodies.Update(1, Guid.CreateVersion7(), "Vela", "VS-001"),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.NotFound, update.StatusCode);
 
@@ -229,13 +229,15 @@ public sealed class ProductWriteApiTests
 
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new { name = "Vela de cera", code = "VC-002", pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } },
+            ProductBodies.Update(created, "Vela de cera", "VC-002"),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var updated = await ReadProductAsync(response);
         Assert.Equal("Vela de cera", updated.Name);
-        Assert.Equal("VC-002", updated.Code);
+        Assert.Equal("VC-002", updated.Only().Code);
+        Assert.Equal(created.Only().Id, updated.Only().Id);
+        Assert.Equal(created.Version + 1, updated.Version);
         Assert.True(updated.UpdatedAt >= created.UpdatedAt);
 
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
@@ -451,7 +453,7 @@ public sealed class ProductWriteApiTests
                 TestContext.Current.CancellationToken));
         Assert.False(current.IsActive);
         Assert.Equal("Vela de soja", current.Name);
-        Assert.Equal("VS-001", current.Code);
+        Assert.Equal("VS-001", current.Only().Code);
     }
 
     // El total cuenta las coincidencias, no la página — mismo criterio que
@@ -523,7 +525,7 @@ public sealed class ProductWriteApiTests
         string code) =>
         client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
-            new { name, code, pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } },
+            ProductBodies.Create(name, code),
             TestContext.Current.CancellationToken);
 
     private static async Task<ProductResponse> ReadProductAsync(HttpResponseMessage response)
@@ -534,7 +536,7 @@ public sealed class ProductWriteApiTests
         return product;
     }
 
-    private static async Task<IReadOnlyCollection<ProductResponse>> ListAsync(
+    private static async Task<IReadOnlyCollection<ProductListItemDto>> ListAsync(
         HttpClient client,
         string tenantId,
         string? search)

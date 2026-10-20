@@ -72,7 +72,7 @@ public sealed class TaxRateDeletionApiTests
         var taxRateId = await CreateTaxRateAsync(client, TenantId, "IVA en uso", 19);
         var created = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
-            new { name = "Vela de soja", code = "VS-001", taxRateId, pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } } },
+            ProductBodies.Create("Vela de soja", "VS-001", taxRateId: taxRateId),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
 
