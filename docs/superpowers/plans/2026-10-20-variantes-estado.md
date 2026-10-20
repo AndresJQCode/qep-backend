@@ -17,7 +17,7 @@ Archivo vivo: se actualiza al cerrar cada tarea o decisión. Las tareas detallad
 | # | Tarea | Estado |
 | --- | --- | --- |
 | 1 | Biblioteca de opciones (dominio) | Hecha (`e0506006`) |
-| 2 | Variante, galería y reglas del agregado | Pendiente |
+| 2 | Variante, galería y reglas del agregado | Hecha (`31fb3098`, `04b26bfc`) |
 | 3 | Persistencia y migración de datos de Catalog | Pendiente |
 | 4 | Biblioteca de opciones: casos de uso y API | Pendiente |
 | 5 | Producto con variantes: crear, ver, listar, editar | Pendiente |
