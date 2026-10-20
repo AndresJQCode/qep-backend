@@ -15,6 +15,7 @@ Estados: **Construido** (mergeado a `develop`) · **En curso** · **Aprobado, si
 | Trabajo | Estado | Dónde |
 | --- | --- | --- |
 | Variantes de producto | Diseño aprobado y plan escrito; implementación sin empezar | [estado propio](superpowers/plans/2026-10-20-variantes-estado.md) |
+| Shopify: días de historial en «Sincronizar ahora» | Diseño acordado (2026-10-21), sin commitear ni implementar; frontend sin verificar | [spec](superpowers/specs/2026-10-21-shopify-historial-dias-design.md) |
 | Productos desde Shopify | En cola (después de variantes); sin diseño | memoria del proyecto |
 | Centro de notificaciones (campanita) | En cola (después del anterior); sin diseño | memoria del proyecto |
 | Alertas de salud de la conexión Shopify | En cola (depende de la campanita); sin diseño | memoria del proyecto |
@@ -47,6 +48,7 @@ Orden acordado con el owner: variantes → productos desde Shopify → campanita
 | 2026-10-17 flete | Construido; backend (`07487ded`) y frontend (`5feba65`) en `develop` local | Pendientes del owner P1/P2 con valor por defecto en el spec |
 | 2026-10-18 layout de documentos | Construido; backend y frontend en `develop` local | |
 | 2026-10-20 variantes de producto | Aprobado, sin empezar | Ver «Trabajo en curso» |
+| 2026-10-21 Shopify: días de historial | Aprobado en conversación, sin empezar | Tope 30 días, desde `LinkedAt`, en cada pulsación; el cron no cambia. Extiende D-S4 |
 
 Los specs `2026-09-*` que el README cita no están en la carpeta (p. ej. `README.md:555` y `:1622`).
 
@@ -82,4 +84,6 @@ Los specs `2026-09-*` que el README cita no están en la carpeta (p. ej. `README
 
 ## Registro
 
+- 2026-10-21 — Se escribe el spec de días de historial para «Sincronizar ahora» de Shopify (origen: un pedido anterior al
+  enlace no entraba por D-S4). Sin commitear; el frontend está sin verificar.
 - 2026-10-20 — Se crea este archivo. Diseño y plan de variantes en `develop` local.
