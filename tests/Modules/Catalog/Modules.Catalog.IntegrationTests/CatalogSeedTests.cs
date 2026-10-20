@@ -32,7 +32,7 @@ public sealed class CatalogSeedTests
         // Include explícito: CatalogDbContext.PriceScales es internal y las escalas no se
         // cargan solas con el producto.
         var products = await dbContext.Products
-            .Include(product => product.PriceScales)
+            .Include(product => product.Variants).ThenInclude(variant => variant.PriceScales)
             .ToListAsync(TestContext.Current.CancellationToken);
         Assert.Equal(19, products.Count);
         // `.Value` explícito: Product.TaxRateId es TaxRateId? y taxRate.Id es TaxRateId, así que

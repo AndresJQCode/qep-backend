@@ -311,8 +311,11 @@ public sealed class ProductDetailsApiTests
             await using var command = new NpgsqlCommand(
                 """
                 INSERT INTO catalog.products
-                    (id, tenant_id, name, code, is_active, version, created_at, updated_at)
-                VALUES (@id, @tenantId, 'Producto viejo', 'OLD-001', true, 1, now(), now())
+                    (id, tenant_id, name, is_active, version, created_at, updated_at)
+                VALUES (@id, @tenantId, 'Producto viejo', true, 1, now(), now());
+                INSERT INTO catalog.product_variants
+                    (id, product_id, tenant_id, code, combination_key, is_active, position)
+                VALUES (@id, @id, @tenantId, 'OLD-001', '', true, 0);
                 """,
                 connection);
             command.Parameters.AddWithValue("id", legacyId);

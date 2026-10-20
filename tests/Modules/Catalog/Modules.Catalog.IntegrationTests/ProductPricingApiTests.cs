@@ -171,7 +171,8 @@ public sealed class ProductPricingApiTests
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         await using var command = new NpgsqlCommand(
-            "SELECT count(*) FROM catalog.product_price_scales WHERE product_id = @id", connection);
+            // La variante por defecto lleva el id del producto.
+            "SELECT count(*) FROM catalog.product_price_scales WHERE variant_id = @id", connection);
         command.Parameters.AddWithValue("id", created.Id);
         var count = (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         Assert.Equal(1, count);
@@ -353,7 +354,8 @@ public sealed class ProductPricingApiTests
         {
             await connection.OpenAsync(TestContext.Current.CancellationToken);
             await using var command = new NpgsqlCommand(
-                "SELECT packaging_units FROM catalog.products WHERE id = @id", connection);
+                // Los empaques son de la variante por defecto, que lleva el id del producto.
+                "SELECT packaging_units FROM catalog.product_variants WHERE id = @id", connection);
             command.Parameters.AddWithValue("id", created.Id);
             var stored = (int[])(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
             Assert.Equal([100, 150], stored);

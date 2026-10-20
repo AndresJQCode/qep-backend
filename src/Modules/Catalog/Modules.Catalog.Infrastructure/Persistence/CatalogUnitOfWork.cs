@@ -6,18 +6,23 @@ using Npgsql;
 
 namespace Modules.Catalog.Infrastructure.Persistence;
 
-internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext) : ICatalogUnitOfWork
+internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock) : ICatalogUnitOfWork
 {
     // Discriminar por nombre de índice y no sólo por SqlState es deliberado: 23505 sólo dice
     // que se violó algún índice único, y responder catalog.product.code_taken para otro
     // mandaría al llamador a corregir el campo equivocado. Esa es la lección con la que se
     // cerró SDD-CT-06, donde otro índice único reportaba el código de dominio equivocado.
-    private const string ProductCodeIndex = "IX_products_tenant_code";
+    // Desde las variantes (2026-10-20) el código vive en product_variants; el código de dominio no
+    // cambia, porque para quien llena el formulario es el mismo error.
+    private const string ProductCodeIndex = "IX_product_variants_tenant_code";
+    private const string VariantBarcodeIndex = "IX_product_variants_tenant_barcode";
     private const string TaxRateNameIndex = "IX_tax_rates_tenant_name";
     private const string ProductTaxRateForeignKey = "FK_products_tax_rates_tax_rate_id";
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
+        StampChangedOptions();
+
         try
         {
             return await dbContext.SaveChangesAsync(cancellationToken);
@@ -47,6 +52,19 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext) : ICatalogUn
             throw new CatalogDomainException(
                 "catalog.product.code_taken",
                 "Another product in this tenant already uses that code.");
+        }
+        // Rama propia, por la misma razón que la de abajo: cada índice único devuelve su código.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(
+                      postgres.ConstraintName,
+                      VariantBarcodeIndex,
+                      StringComparison.Ordinal))
+        {
+            throw new CatalogDomainException(
+                "catalog.variant.barcode_taken",
+                "Another variant in this tenant already uses that barcode.");
         }
         // Rama propia y no un `or` con la anterior: son dos índices únicos del mismo esquema y
         // cada uno tiene que devolver su código. Colapsarlos es exactamente el defecto de
@@ -101,6 +119,20 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext) : ICatalogUn
             throw new CatalogDomainException(
                 "catalog.product.tax_rate_not_found",
                 "The tax rate was not found in this tenant.");
+        }
+    }
+
+    // Los mutadores de OptionDefinition no reciben la hora (Rename, SetActive, AddValue...), pero
+    // todos suben la Version, así que una opción cambiada siempre llega Modified. El sello va acá,
+    // una sola vez por guardado, con el reloj del sistema.
+    private void StampChangedOptions()
+    {
+        foreach (var entry in dbContext.ChangeTracker.Entries<OptionDefinition>())
+        {
+            if (entry.State == EntityState.Modified)
+            {
+                entry.Property(option => option.UpdatedAt).CurrentValue = clock.UtcNow;
+            }
         }
     }
 

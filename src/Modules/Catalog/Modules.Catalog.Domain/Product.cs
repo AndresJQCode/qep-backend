@@ -26,6 +26,7 @@ public sealed class Product
 
     private readonly List<ProductVariant> _variants = [];
     private readonly List<ProductGalleryImage> _gallery = [];
+    private readonly List<ProductOption> _options = [];
 
     // EF Core materializa por acá. El código nunca construye el agregado así:
     // Create es el único punto de entrada, y es el que hace cumplir los invariantes.
@@ -73,7 +74,8 @@ public sealed class Product
     /// variantes, en orden; a lo sumo <see cref="MaxOptions"/>. Vacía en un producto sin opciones,
     /// que tiene exactamente una variante: la variante por defecto.
     /// </summary>
-    public IReadOnlyList<Guid> OptionIds { get; private set; } = [];
+    public IReadOnlyList<Guid> OptionIds =>
+        _options.OrderBy(option => option.Position).Select(option => option.OptionDefinitionId.Value).ToArray();
 
     /// <summary>Las variantes en orden de presentación (<see cref="ProductVariant.Position"/>).
     /// Nunca vacía.</summary>
@@ -199,7 +201,7 @@ public sealed class Product
 
         Name = normalizedName;
         Apply(details);
-        OptionIds = optionIds.ToArray();
+        ReplaceOptions(optionIds);
         ReplaceGallery(galleryFileIds);
         ReplaceVariants(variants, optionIds.Count, isCreate: false);
         Version++;
@@ -329,7 +331,7 @@ public sealed class Product
             // Sólo entre activas: quitar una opción puede dejar dos variantes con la misma
             // combinación, y la que sobra queda inactiva (spec §3.3.1).
             if (variant.IsActive
-                && !activeCombinations.Add(string.Join(',', variant.OptionValueIds)))
+                && !activeCombinations.Add(ProductVariant.CombinationKeyOf(variant.OptionValueIds)))
             {
                 throw new CatalogDomainException(
                     "catalog.variant.combination_duplicate",
@@ -374,6 +376,25 @@ public sealed class Product
             }
 
             target.Apply(input, code, barcode, position, imageId);
+        }
+    }
+
+    // En el lugar, por posición: la fila se identifica por (producto, posición), y EF seguiría una
+    // borrada y una agregada con la misma clave en el mismo guardado.
+    private void ReplaceOptions(IReadOnlyList<Guid> optionIds)
+    {
+        _options.RemoveAll(option => option.Position >= optionIds.Count);
+        for (var position = 0; position < optionIds.Count; position++)
+        {
+            var existing = _options.Find(option => option.Position == position);
+            if (existing is null)
+            {
+                _options.Add(new ProductOption(new OptionDefinitionId(optionIds[position]), position));
+            }
+            else
+            {
+                existing.OptionDefinitionId = new OptionDefinitionId(optionIds[position]);
+            }
         }
     }
 

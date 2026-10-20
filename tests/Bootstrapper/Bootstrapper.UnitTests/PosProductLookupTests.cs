@@ -152,6 +152,16 @@ public sealed class PosProductLookupTests
         public Task<Product?> FindByCodeAsync(Guid tenantId, string code, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<Product?> FindVariantByCodeAsync(Guid tenantId, string code, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<Product?> FindVariantByBarcodeAsync(Guid tenantId, string barcode, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<Product>> FindVariantsByIdsAsync(
+            Guid tenantId, IReadOnlyCollection<VariantId> variantIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlySet<string>> FindExistingCodesAsync(
             Guid tenantId, IReadOnlyCollection<string> codes, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

@@ -46,9 +46,9 @@ public static class CatalogSeeder
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 
-        var existingCodes = await dbContext.Products
-            .Where(product => product.TenantId == tenantId)
-            .Select(product => product.Code)
+        var existingCodes = await dbContext.ProductVariants
+            .Where(variant => variant.TenantId == tenantId)
+            .Select(variant => variant.Code)
             .ToListAsync(cancellationToken);
         var existing = new HashSet<string>(existingCodes, StringComparer.Ordinal);
 

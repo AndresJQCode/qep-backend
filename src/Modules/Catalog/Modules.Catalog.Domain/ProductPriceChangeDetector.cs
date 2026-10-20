@@ -63,7 +63,7 @@ public static class ProductPriceChangeDetector
             }
 
             changes.Add(ProductPriceChange.ForBasePrice(
-                product.TenantId, product.Id, currency, previousValue, newValue, changedBy, occurredAt));
+                product.TenantId, product.Id, OnlyVariant(product), currency, previousValue, newValue, changedBy, occurredAt));
         }
     }
 
@@ -107,6 +107,7 @@ public static class ProductPriceChangeDetector
             changes.Add(ProductPriceChange.ForScaleDiscount(
                 product.TenantId,
                 product.Id,
+                OnlyVariant(product),
                 range.FromUnit,
                 range.ToUnit,
                 // Un rango nuevo entra con `PreviousValue` nulo; uno que desapareció sale con
@@ -133,4 +134,9 @@ public static class ProductPriceChangeDetector
 
         return indexed;
     }
+
+    // Transitorio (variantes, Tarea 3): el detector todavía compara el precio del producto, que
+    // sólo existe con una variante (los accesos de Product fallan con más). Compararlo por variante
+    // es de la Tarea 7.
+    private static VariantId OnlyVariant(Product product) => product.Variants.Single().Id;
 }

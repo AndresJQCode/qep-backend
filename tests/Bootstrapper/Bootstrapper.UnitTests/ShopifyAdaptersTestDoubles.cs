@@ -74,6 +74,16 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
     public Task<Product?> FindByCodeAsync(Guid tenantId, string code, CancellationToken cancellationToken) =>
         Task.FromResult(products.FirstOrDefault(product => product.TenantId == tenantId && product.Code == code));
 
+    public Task<Product?> FindVariantByCodeAsync(Guid tenantId, string code, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<Product?> FindVariantByBarcodeAsync(Guid tenantId, string barcode, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyList<Product>> FindVariantsByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<VariantId> variantIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<IReadOnlyList<Product>> ListByIdsAsync(
         Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();

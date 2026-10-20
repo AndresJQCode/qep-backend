@@ -22,6 +22,7 @@ public sealed class ProductPriceChange
         ProductPriceChangeId id,
         Guid tenantId,
         ProductId productId,
+        VariantId variantId,
         ProductPriceField field,
         string? currency,
         int? scaleFromUnit,
@@ -34,6 +35,7 @@ public sealed class ProductPriceChange
         Id = id;
         TenantId = tenantId;
         ProductId = productId;
+        VariantId = variantId;
         Field = field;
         Currency = currency;
         ScaleFromUnit = scaleFromUnit;
@@ -49,6 +51,12 @@ public sealed class ProductPriceChange
     public Guid TenantId { get; private set; }
 
     public ProductId ProductId { get; private set; }
+
+    /// <summary>
+    /// La variante cuyo precio cambió (spec 2026-10-20 §3.5). Las filas de antes de las variantes
+    /// quedaron en la variante por defecto, que lleva el id del producto (AddProductVariants).
+    /// </summary>
+    public VariantId VariantId { get; private set; }
 
     public ProductPriceField Field { get; private set; }
 
@@ -95,9 +103,9 @@ public sealed class ProductPriceChange
     /// rows by hand would open the door to a history that does not match what was saved.
     /// </summary>
     internal static ProductPriceChange ForBasePrice(
-        Guid tenantId, ProductId productId, string currency,
+        Guid tenantId, ProductId productId, VariantId variantId, string currency,
         decimal? previousValue, decimal? newValue, Guid changedBy, DateTimeOffset changedAt) =>
-        new(ProductPriceChangeId.New(), tenantId, productId, ProductPriceField.PriceBase, currency,
+        new(ProductPriceChangeId.New(), tenantId, productId, variantId, ProductPriceField.PriceBase, currency,
             scaleFromUnit: null, scaleToUnit: null, previousValue, newValue, changedBy, changedAt);
 
     /// <summary>
@@ -106,8 +114,8 @@ public sealed class ProductPriceChange
     /// por su rango.
     /// </summary>
     internal static ProductPriceChange ForScaleDiscount(
-        Guid tenantId, ProductId productId, int scaleFromUnit, int scaleToUnit,
+        Guid tenantId, ProductId productId, VariantId variantId, int scaleFromUnit, int scaleToUnit,
         decimal? previousValue, decimal? newValue, Guid changedBy, DateTimeOffset changedAt) =>
-        new(ProductPriceChangeId.New(), tenantId, productId, ProductPriceField.ScaleDiscount, currency: null,
+        new(ProductPriceChangeId.New(), tenantId, productId, variantId, ProductPriceField.ScaleDiscount, currency: null,
             scaleFromUnit, scaleToUnit, previousValue, newValue, changedBy, changedAt);
 }

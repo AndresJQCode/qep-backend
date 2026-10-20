@@ -20,9 +20,14 @@ public sealed class ProductVariant
 
     private readonly List<ProductPrice> _prices = [];
     private readonly List<PriceScale> _priceScales = [];
+    private readonly List<ProductVariantOptionValue> _optionValues = [];
 
     // EF Core materializa por acá.
-    private ProductVariant() => Code = string.Empty;
+    private ProductVariant()
+    {
+        Code = string.Empty;
+        CombinationKey = string.Empty;
+    }
 
     private ProductVariant(VariantId id, ProductId productId, Guid tenantId)
     {
@@ -30,6 +35,7 @@ public sealed class ProductVariant
         ProductId = productId;
         TenantId = tenantId;
         Code = string.Empty;
+        CombinationKey = string.Empty;
     }
 
     public VariantId Id { get; private set; }
@@ -47,7 +53,16 @@ public sealed class ProductVariant
 
     /// <summary>Un valor por cada opción del producto (<see cref="Product.OptionIds"/>), en el
     /// mismo orden. Vacío en la variante por defecto de un producto sin opciones.</summary>
-    public IReadOnlyList<Guid> OptionValueIds { get; private set; } = [];
+    public IReadOnlyList<Guid> OptionValueIds =>
+        _optionValues.OrderBy(value => value.Position).Select(value => value.OptionValueId).ToArray();
+
+    /// <summary>
+    /// <see cref="OptionValueIds"/> en una sola cadena, en orden (vacía en la variante por defecto).
+    /// Es lo que compara <see cref="Product"/> para no repetir una combinación entre variantes
+    /// activas, y lo que indexa <c>IX_product_variants_product_combination</c> para buscar una
+    /// variante por su combinación sin juntar la tabla de valores.
+    /// </summary>
+    public string CombinationKey { get; private set; }
 
     public IReadOnlyCollection<ProductPrice> Prices => _prices;
 
@@ -97,7 +112,8 @@ public sealed class ProductVariant
     {
         Code = normalizedCode;
         Barcode = normalizedBarcode;
-        OptionValueIds = input.OptionValueIds.ToArray();
+        ReplaceOptionValues(input.OptionValueIds);
+        CombinationKey = CombinationKeyOf(input.OptionValueIds);
         GalleryImageId = galleryImageId;
         IsActive = input.IsActive;
         Position = position;
@@ -111,6 +127,27 @@ public sealed class ProductVariant
         foreach (var scale in scales)
         {
             _priceScales.Add(PriceScale.CreateIncomplete(Id, TenantId, scale));
+        }
+    }
+
+    internal static string CombinationKeyOf(IReadOnlyList<Guid> optionValueIds) =>
+        string.Join(',', optionValueIds);
+
+    // En el lugar, por posición, como Product.ReplaceOptions.
+    private void ReplaceOptionValues(IReadOnlyList<Guid> optionValueIds)
+    {
+        _optionValues.RemoveAll(value => value.Position >= optionValueIds.Count);
+        for (var position = 0; position < optionValueIds.Count; position++)
+        {
+            var existing = _optionValues.Find(value => value.Position == position);
+            if (existing is null)
+            {
+                _optionValues.Add(new ProductVariantOptionValue(optionValueIds[position], position));
+            }
+            else
+            {
+                existing.OptionValueId = optionValueIds[position];
+            }
         }
     }
 

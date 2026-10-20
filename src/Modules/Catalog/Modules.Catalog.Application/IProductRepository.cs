@@ -72,9 +72,11 @@ public interface IProductRepository
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Igualdad exacta, con mayúsculas, servida por IX_products_tenant_code (spec 2026-10-07,
-    /// decisión 30). Sin respaldo sin mayúsculas: el lector teclea el código tal cual. Activos e
-    /// inactivos; sin escalas, sin conteo, sin rastreo.
+    /// El producto que tiene una variante con ese código. Igualdad exacta, con mayúsculas, servida
+    /// por IX_product_variants_tenant_code (spec 2026-10-07, decisión 30; variantes 2026-10-20).
+    /// Sin respaldo sin mayúsculas: el lector teclea el código tal cual. Activos e inactivos; sin
+    /// rastreo. Mismo resultado que <see cref="FindVariantByCodeAsync"/>, que es el nombre que
+    /// usa el código nuevo.
     /// </summary>
     Task<Product?> FindByCodeAsync(
         Guid tenantId,
@@ -82,7 +84,37 @@ public interface IProductRepository
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Cuáles de estos códigos ya existen en el tenant, en una sola consulta — la usa la
+    /// El producto (el agregado entero, sin rastreo) que tiene la variante con ese
+    /// <see cref="ProductVariant.Code"/>; quien llama elige la variante dentro de él. Devuelve el
+    /// producto y no la variante suelta porque el nombre visible, la imagen principal y el IVA son
+    /// del producto. Igualdad exacta y con mayúsculas, como el índice único.
+    /// </summary>
+    Task<Product?> FindVariantByCodeAsync(
+        Guid tenantId,
+        string code,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Como <see cref="FindVariantByCodeAsync"/>, por <see cref="ProductVariant.Barcode"/>
+    /// (IX_product_variants_tenant_barcode). Igualdad exacta.
+    /// </summary>
+    Task<Product?> FindVariantByBarcodeAsync(
+        Guid tenantId,
+        string barcode,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Los productos que contienen alguna de esas variantes, en una sola consulta y sin rastreo;
+    /// cada uno trae **todas** sus variantes, y quien llama elige por id. Un id que no existe o es
+    /// de otro tenant simplemente no aparece.
+    /// </summary>
+    Task<IReadOnlyList<Product>> FindVariantsByIdsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<VariantId> variantIds,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Cuáles de estos códigos ya usa alguna variante del tenant, en una sola consulta — la usa la
     /// importación masiva para el chequeo de duplicados **contra la base**, mismo criterio que
     /// <c>ICustomerRepository.FindExistingIdentificationsAsync</c>: una consulta batch en vez de
     /// una por fila.

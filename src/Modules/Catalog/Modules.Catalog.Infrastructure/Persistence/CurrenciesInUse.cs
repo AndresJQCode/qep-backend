@@ -8,12 +8,12 @@ internal sealed class CurrenciesInUse(CatalogDbContext dbContext) : ICurrenciesI
 {
     public async Task<IReadOnlyList<string>> GetAsync(Guid tenantId, CancellationToken cancellationToken)
     {
-        // DISTINCT over product_prices joined to the tenant's products, in SQL. Inactive products
-        // count: their prices are still the tenant's data.
-        var codes = await dbContext.Products
+        // DISTINCT over product_prices joined to the tenant's variants, in SQL. Inactive products
+        // and variants count: their prices are still the tenant's data.
+        var codes = await dbContext.ProductVariants
             .AsNoTracking()
-            .Where(product => product.TenantId == tenantId)
-            .SelectMany(product => product.Prices)
+            .Where(variant => variant.TenantId == tenantId)
+            .SelectMany(variant => variant.Prices)
             .Select(price => price.Currency)
             .Distinct()
             .ToListAsync(cancellationToken);

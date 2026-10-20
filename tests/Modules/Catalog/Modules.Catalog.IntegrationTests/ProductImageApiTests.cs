@@ -402,9 +402,13 @@ public sealed class ProductImageApiTests
             await using var command = new NpgsqlCommand(
                 """
                 INSERT INTO catalog.products
-                    (id, tenant_id, name, code, is_active, version, created_at, updated_at,
-                     image_file_id)
-                VALUES (@id, @tenantId, 'Heredado', 'HE-001', true, 1, now(), now(), @imageId)
+                    (id, tenant_id, name, is_active, version, created_at, updated_at)
+                VALUES (@id, @tenantId, 'Heredado', true, 1, now(), now());
+                INSERT INTO catalog.product_variants
+                    (id, product_id, tenant_id, code, combination_key, is_active, position)
+                VALUES (@id, @id, @tenantId, 'HE-001', '', true, 0);
+                INSERT INTO catalog.product_gallery_images (id, product_id, file_id, position)
+                VALUES (gen_random_uuid(), @id, @imageId, 0);
                 """,
                 connection);
             command.Parameters.AddWithValue("id", legacyId);

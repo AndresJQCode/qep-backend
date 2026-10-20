@@ -268,9 +268,11 @@ public sealed class TaxRateDeletionApiTests
         await using var command = new NpgsqlCommand(
             """
             INSERT INTO catalog.products
-                (id, tenant_id, name, code, is_active, version, created_at, updated_at,
-                 tax_rate_id)
-            VALUES (@id, @tenantId, 'Producto en carrera', 'PC-001', true, 1, now(), now(), @taxRateId)
+                (id, tenant_id, name, is_active, version, created_at, updated_at, tax_rate_id)
+            VALUES (@id, @tenantId, 'Producto en carrera', true, 1, now(), now(), @taxRateId);
+            INSERT INTO catalog.product_variants
+                (id, product_id, tenant_id, code, combination_key, is_active, position)
+            VALUES (@id, @id, @tenantId, 'PC-001', '', true, 0);
             """,
             connection);
         command.Parameters.AddWithValue("id", Guid.CreateVersion7());
