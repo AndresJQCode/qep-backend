@@ -8,7 +8,7 @@ Archivo vivo: se actualiza al cerrar cada tarea o decisión. Las tareas detallad
 | Fase | Estado | Referencia |
 | --- | --- | --- |
 | Diseño | Aprobado por el owner (2026-10-20), en `develop` local, sin push | `ea383771` |
-| Plan backend | Escrito, en `develop` local, sin push; **falta elegir método de ejecución** | `e0d7756f` |
+| Plan backend | Escrito, en `develop` local, sin push; **ejecución: subagentes, en sesión nueva** | `e0d7756f` |
 | Implementación backend | No iniciada | — |
 | Plan y trabajo de frontend | No iniciado (sale en la misma ventana que el backend) | — |
 
@@ -44,7 +44,7 @@ Estados: Pendiente · En curso · Hecha (con SHA del commit) · Bloqueada (con m
 
 ## Pendientes y riesgos abiertos
 
-- Elegir método de ejecución (subagentes o nativo) y crear la rama `feature/variantes-producto` desde `develop`.
+- Método elegido por el owner (2026-10-20): `superpowers:subagent-driven-development`, en sesión nueva. Falta crear la rama `feature/variantes-producto` desde `develop`, preferiblemente en un worktree (el árbol se comparte entre sesiones).
 - Plan del frontend: no existe; parte del traspaso de la tarea 15.
 - T9–T12 cambian contratos entre módulos y se commitean juntas.
 - Antes de desplegar: backend y frontend juntos; probar el escáner del POS con códigos de barras reales.
@@ -53,3 +53,4 @@ Estados: Pendiente · En curso · Hecha (con SHA del commit) · Bloqueada (con m
 ## Registro
 
 - 2026-10-20 — Diseño aprobado y mergeado a `develop`; plan escrito.
+- 2026-10-20 — El owner elige ejecutar por subagentes en una sesión nueva.
