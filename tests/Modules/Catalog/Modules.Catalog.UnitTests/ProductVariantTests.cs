@@ -326,4 +326,66 @@ public sealed class ProductVariantTests
         Assert.Equal(2, product.Variants.Count);
         Assert.False(product.Variants[1].IsActive);
     }
+
+    // Los accesos transitorios de Product (Code, precios, escalas, empaques) sólo valen para un
+    // producto de una variante: con más, un llamador sin migrar leería una sola en silencio.
+    [Fact]
+    public void TransitionalAccessorsFailLoudlyWithMoreThanOneVariant()
+    {
+        var product = NewProduct();
+        var talla = Guid.CreateVersion7();
+        product.Update(
+            "Camiseta básica",
+            ProductDetails.Empty,
+            [talla],
+            [
+                Variant("CAM-M", [Guid.CreateVersion7()], id: product.Id.Value),
+                Variant("CAM-L", [Guid.CreateVersion7()]),
+            ],
+            [],
+            Now.AddMinutes(5));
+
+        var error = Assert.Throws<InvalidOperationException>(() => product.Code);
+        Assert.Contains("transitorio", error.Message, StringComparison.Ordinal);
+        Assert.Throws<InvalidOperationException>(() => product.Prices);
+        Assert.Throws<InvalidOperationException>(() => product.PricedCurrencies);
+        Assert.Throws<InvalidOperationException>(() => product.PriceIn("USD"));
+        Assert.Throws<InvalidOperationException>(() => product.PriceScales);
+        Assert.Throws<InvalidOperationException>(() => product.PackagingUnits);
+    }
+
+    [Fact]
+    public void TransitionalAccessorsReadTheOnlyVariant()
+    {
+        var product = NewProduct(Variant("CAM-001", pricing: PricedIn(25m)));
+
+        Assert.Equal("CAM-001", product.Code);
+        Assert.Equal(25m, product.PriceIn("USD"));
+    }
+
+    [Fact]
+    public void CreateRejectsMoreThan250GalleryImages()
+    {
+        var gallery = Enumerable.Range(0, Product.MaxGalleryImages + 1)
+            .Select(_ => Guid.CreateVersion7())
+            .ToArray();
+
+        var error = Assert.Throws<CatalogDomainException>(() =>
+            Product.Create(ProductId.New(), TenantId, "Camiseta básica", ProductDetails.Empty, Variant("CAM-001"), gallery, Now));
+
+        Assert.Equal("catalog.product.gallery_limit", error.Code);
+    }
+
+    [Fact]
+    public void CreateRejectsARepeatedGalleryImage()
+    {
+        var photo = Guid.CreateVersion7();
+
+        var error = Assert.Throws<CatalogDomainException>(() =>
+            Product.Create(
+                ProductId.New(), TenantId, "Camiseta básica", ProductDetails.Empty, Variant("CAM-001"),
+                [photo, Guid.CreateVersion7(), photo], Now));
+
+        Assert.Equal("catalog.product.gallery_duplicate", error.Code);
+    }
 }

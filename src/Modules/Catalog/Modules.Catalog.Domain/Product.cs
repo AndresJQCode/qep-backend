@@ -94,32 +94,37 @@ public sealed class Product
         _gallery.Count == 0 ? null : _gallery.MinBy(image => image.Position)!.FileId;
 
     // --- Transitorio (variantes, Tarea 2). Code, precios, escalas y empaques son de la variante;
-    // estos accesos leen la primera variante para que los llamadores que todavía piensan en "un
+    // estos accesos leen la única variante (y fallan si hay más de una) para que los llamadores que todavía piensan en "un
     // producto, un código" (persistencia, adaptadores de Bootstrapper, Excel, historial y copia de
     // escalas) compilen hasta que sus tareas los pasen a variantes (T3, T5, T7, T8, T9). En un
     // producto sin opciones es exactamente lo de antes. Código nuevo no los usa: lee Variants.
 
-    /// <summary>Transitorio: el <see cref="ProductVariant.Code"/> de la primera variante.</summary>
+    /// <summary>Transitorio: el <see cref="ProductVariant.Code"/> de la única variante.</summary>
     public string Code => PrimaryVariant.Code;
 
-    /// <summary>Transitorio: los precios de la primera variante.</summary>
+    /// <summary>Transitorio: los precios de la única variante.</summary>
     public IReadOnlyCollection<ProductPrice> Prices => PrimaryVariant.Prices;
 
-    /// <summary>Transitorio: las monedas de la primera variante.</summary>
+    /// <summary>Transitorio: las monedas de la única variante.</summary>
     public IReadOnlyCollection<string> PricedCurrencies => PrimaryVariant.PricedCurrencies;
 
-    /// <summary>Transitorio: el precio de la primera variante en esa moneda.</summary>
+    /// <summary>Transitorio: el precio de la única variante en esa moneda.</summary>
     public decimal? PriceIn(string currency) => PrimaryVariant.PriceIn(currency);
 
-    /// <summary>Transitorio: las escalas de la primera variante.</summary>
+    /// <summary>Transitorio: las escalas de la única variante.</summary>
     public IReadOnlyCollection<PriceScale> PriceScales => PrimaryVariant.PriceScales;
 
-    /// <summary>Transitorio: los empaques de la primera variante.</summary>
+    /// <summary>Transitorio: los empaques de la única variante.</summary>
     public IReadOnlyList<int> PackagingUnits => PrimaryVariant.PackagingUnits;
 
-    private ProductVariant PrimaryVariant =>
-        _variants.MinBy(variant => variant.Position)
-        ?? throw new InvalidOperationException("A product always has at least one variant.");
+    // Falla en voz alta con más de una variante: devolver una sola en silencio le daría a un
+    // llamador sin migrar el código o el precio de otra talla. Con una sola es lo de antes.
+    private ProductVariant PrimaryVariant => _variants.Count switch
+    {
+        1 => _variants[0],
+        0 => throw new InvalidOperationException("A product always has at least one variant."),
+        _ => throw new InvalidOperationException("transitorio: llamador sin migrar a variantes"),
+    };
 
     /// <summary>
     /// Token de concurrencia optimista, como en <c>Tenant</c> y <c>Membership</c>. Cada mutación
@@ -153,6 +158,9 @@ public sealed class Product
         DateTimeOffset occurredAt)
     {
         ArgumentNullException.ThrowIfNull(defaultVariant);
+
+        ArgumentNullException.ThrowIfNull(galleryFileIds);
+        EnsureGallery(galleryFileIds);
 
         var product = new Product(id, tenantId, NormalizeName(name), details, occurredAt);
         product.ReplaceGallery(galleryFileIds);
@@ -414,8 +422,8 @@ public sealed class Product
     /// Y quedan **incompletas**: sin restricción, múltiplo, empaque ni agrupación
     /// (<see cref="PriceScale.CreateIncomplete"/>). Es el único camino que las produce.
     ///
-    /// Transitorio (variantes, Tarea 2): copia sobre la primera variante, que en un producto sin
-    /// opciones es la única. La copia por variante es de la Tarea 7.
+    /// Transitorio (variantes, Tarea 2): copia sobre la única variante y falla si hay más de una.
+    /// La copia por variante es de la Tarea 7.
     /// </summary>
     public void ApplyCopiedPriceScales(
         IReadOnlyCollection<PriceScaleInput> scales,
