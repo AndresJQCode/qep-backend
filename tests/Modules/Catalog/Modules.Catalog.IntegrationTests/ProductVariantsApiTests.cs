@@ -53,7 +53,8 @@ public sealed class ProductVariantsApiTests
         Assert.Empty(variant.OptionValueIds);
         Assert.Equal(12m, variant.Prices["USD"]);
         Assert.True(variant.IsActive);
-        Assert.False(variant.CanDelete);
+        // Tarea 6: recién creada, ninguna línea puede venderla.
+        Assert.True(variant.CanDelete);
         Assert.Empty(created.Options);
         Assert.Empty(created.Gallery);
         Assert.Equal(1, created.Version);
@@ -206,36 +207,6 @@ public sealed class ProductVariantsApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal("catalog.product.image_not_found", await ReadCodeAsync(response));
         Assert.Empty((await GetProductAsync(owner, TenantId, created.Id)).Gallery);
-    }
-
-    // Una variante guardada que no viene en el cuerpo no se borra en silencio (spec §6): se rechaza
-    // con su código. El borrado o la desactivación con su estado son de la Tarea 6.
-    [Fact]
-    public async Task PutMissingSavedVariantRejected()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        using var client = CreateClient(factory, SubjectId, TenantId, All);
-
-        var talla = await CreateOptionAsync(client, TenantId, "Talla", "S", "M");
-        var created = await ReadProductAsync(await PostProductAsync(client, TenantId, new
-        {
-            name = "Camiseta",
-            optionIds = new[] { talla.Id },
-            variants = new[] { VariantBody("CAM-S", ValueOf(talla, "S")), VariantBody("CAM-M", ValueOf(talla, "M")) }
-        }));
-
-        var response = await PutProductAsync(client, TenantId, created.Id, new
-        {
-            expectedVersion = created.Version,
-            name = "Camiseta",
-            optionIds = new[] { talla.Id },
-            variants = new[] { new { id = created.Variants[0].Id, code = "CAM-S" } }
-        });
-
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Equal("catalog.variant.missing_in_request", await ReadCodeAsync(response));
-        Assert.Equal(2, (await GetProductAsync(client, TenantId, created.Id)).Variants.Count);
     }
 
     // El detalle trae la galería en orden con sus URLs, y cada variante su foto: la suya si eligió

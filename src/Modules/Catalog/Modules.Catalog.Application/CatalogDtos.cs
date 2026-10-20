@@ -42,7 +42,8 @@ public sealed record ProductResponse(
     // Las opciones del producto en su orden, con sus nombres ya resueltos de la biblioteca.
     IReadOnlyList<ProductOptionResponse> Options,
     // **Todas** las variantes en orden de presentación, activas e inactivas: el formulario edita
-    // también las inactivas, y el PUT exige que vuelvan todas las guardadas.
+    // también las inactivas. Una guardada que el PUT omite se borra si no está en uso y se
+    // desactiva si lo está (spec §3.3); cada una trae CanDelete para que la pantalla lo anticipe.
     IReadOnlyList<ProductVariantResponse> Variants,
     // La galería en orden; la primera es la principal.
     IReadOnlyList<ProductGalleryImageResponse> Gallery,
@@ -78,9 +79,11 @@ public sealed record ProductOptionValueResponse(Guid Id, string Name);
 /// <param name="ImageUrl">La URL que la variante muestra: la de su foto o, sin foto, la de la
 /// principal del producto (spec §3.3). Resuelta acá para que la pantalla no repita la regla.</param>
 /// <param name="CanDelete">Si el formulario puede ofrecer «Eliminar» en vez de «Desactivar»
-/// (spec §3.3). Hasta la Tarea 6, que trae la consulta de uso en cotizaciones, pedidos y POS,
-/// viaja siempre en <c>false</c>: hoy el PUT no borra variantes (una guardada que falta se
-/// rechaza), así que ofrecer «Eliminar» sería prometer algo que el backend no hace.</param>
+/// (spec §3.3): true cuando ninguna línea de cotización, pedido o venta del POS guarda esta
+/// variante. Viaja calculado porque desde la pantalla no se ven esas líneas. «Eliminar» es omitir
+/// la variante del PUT: el backend la borra si sigue sin uso y la desactiva si, entretanto, alguien
+/// la vendió (la respuesta lo muestra). Con false, omitirla la desactiva. No mira la regla de «al
+/// menos una variante activa»: esa la responde el PUT con su propio código.</param>
 public sealed record ProductVariantResponse(
     Guid Id,
     string Name,

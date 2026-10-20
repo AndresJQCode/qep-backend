@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
 using Npgsql;
@@ -153,6 +154,16 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
                 "catalog.product.tax_rate_not_found",
                 "The tax rate was not found in this tenant.");
         }
+    }
+
+    public async Task<ICatalogTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        new CatalogTransaction(await dbContext.Database.BeginTransactionAsync(cancellationToken));
+
+    private sealed class CatalogTransaction(IDbContextTransaction transaction) : ICatalogTransaction
+    {
+        public Task CommitAsync(CancellationToken cancellationToken) => transaction.CommitAsync(cancellationToken);
+
+        public ValueTask DisposeAsync() => transaction.DisposeAsync();
     }
 
     // Los mutadores de OptionDefinition no reciben la hora (Rename, SetActive, AddValue...), pero

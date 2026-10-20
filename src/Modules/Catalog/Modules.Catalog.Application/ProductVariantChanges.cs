@@ -21,8 +21,9 @@ namespace Modules.Catalog.Application;
 /// <item><b>Quitar una opción.</b> Las variantes sueltan el valor de esa opción. Si dos activas
 /// quedan con la misma combinación, sigue activa la primera (en el orden del cuerpo) y las demás se
 /// desactivan: nunca dos activas iguales. Quitar todas deja una sola activa, que pasa a ser la
-/// variante por defecto. Desactivar y no borrar: el borrado de una variante sin uso es de la
-/// Tarea 6.</item>
+/// variante por defecto. Desactivar y no borrar: el agregado no sabe si una variante está en uso.
+/// Para borrar una sin uso, el formulario la omite del PUT y <c>UpdateProductHandler</c> decide con
+/// <see cref="IVariantUsageChecker"/> (spec §3.3, Tarea 6).</item>
 /// </list>
 ///
 /// Lo que el formulario sí manda, gana: valores, precio y estado explícitos no se tocan (salvo la

@@ -72,6 +72,7 @@ public sealed class CopyPriceScalesHandler(
     IProductRepository repository,
     IOptionDefinitionRepository optionRepository,
     IProductImageLookup imageLookup,
+    IVariantUsageChecker usageChecker,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -154,6 +155,6 @@ public sealed class CopyPriceScalesHandler(
         var byId = targets.ToDictionary(target => target.Id);
         return await targetIds
             .Select(id => byId[id])
-            .ToDtosAsync(imageLookup, optionRepository, command.TenantId, cancellationToken);
+            .ToDtosAsync(imageLookup, optionRepository, usageChecker, command.TenantId, cancellationToken);
     }
 }

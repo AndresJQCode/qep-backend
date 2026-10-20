@@ -147,6 +147,58 @@ public sealed class ProductVariantTests
         Assert.Equal("catalog.variant.missing_in_request", error.Code);
     }
 
+    // Tarea 6: el agregado borra sólo la variante que el llamador le nombra (ya comprobó que no está
+    // en uso); el código de la borrada queda libre para otra del mismo cuerpo.
+    [Fact]
+    public void UpdateDeletesTheSavedVariantItIsToldToDelete()
+    {
+        var talla = Guid.CreateVersion7();
+        var s = Guid.CreateVersion7();
+        var m = Guid.CreateVersion7();
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Camiseta básica", ProductDetails.Empty,
+            [talla], [Variant("CAM-S", [s]), Variant("CAM-M", [m])], [], Now);
+        var kept = product.Variants[0].Id.Value;
+        var deleted = product.Variants[1].Id.Value;
+
+        product.Update(
+            "Camiseta básica",
+            ProductDetails.Empty,
+            [talla],
+            [Variant("CAM-S", [s], id: kept), Variant("CAM-M", [m])],
+            [],
+            Now.AddMinutes(5),
+            [deleted]);
+
+        Assert.Equal(2, product.Variants.Count);
+        Assert.Equal(kept, product.Variants[0].Id.Value);
+        Assert.DoesNotContain(product.Variants, variant => variant.Id.Value == deleted);
+        Assert.Equal("CAM-M", product.Variants[1].Code);
+    }
+
+    // Una variante no puede venir en el cuerpo y en la lista de borradas a la vez, y una que no es
+    // del producto no se «borra» en silencio.
+    [Fact]
+    public void UpdateRejectsDeletingAVariantThatComesInTheBodyOrIsNotOfTheProduct()
+    {
+        var product = NewProduct();
+
+        var both = Assert.Throws<CatalogDomainException>(() =>
+            product.Update(
+                "Camiseta básica", ProductDetails.Empty, [],
+                [Variant("CAM-001", id: product.Id.Value)], [], Now.AddMinutes(5),
+                [product.Id.Value]));
+        var foreign = Assert.Throws<CatalogDomainException>(() =>
+            product.Update(
+                "Camiseta básica", ProductDetails.Empty, [],
+                [Variant("CAM-001", id: product.Id.Value)], [], Now.AddMinutes(5),
+                [Guid.CreateVersion7()]));
+
+        Assert.Equal("catalog.variant.duplicated_in_request", both.Code);
+        Assert.Equal("catalog.variant.not_found", foreign.Code);
+        Assert.Single(product.Variants);
+    }
+
     [Fact]
     public void UpdateRejectsAVariantWhoseValueCountDoesNotMatchTheOptions()
     {

@@ -10,14 +10,21 @@ namespace Modules.Catalog.Application;
 /// </summary>
 /// <param name="TenantId">Se vuelve a comparar contra el tenant de cada archivo. Ver
 /// <see cref="ProductMapping.ToDtosAsync"/>.</param>
+/// <param name="UsedVariantIds">Las variantes que alguna línea vende (<see cref="IVariantUsageChecker"/>):
+/// de acá sale <c>CanDelete</c>. Null es «no se consultó» y deja <c>CanDelete</c> en false: ofrecer
+/// «Eliminar» sin saberlo sería prometer un borrado que el PUT puede convertir en
+/// desactivación.</param>
 internal sealed record ProductReadLookups(
     Guid TenantId,
     IReadOnlyDictionary<Guid, OptionDefinition> Options,
-    IReadOnlyDictionary<Guid, ProductImageRef> Images)
+    IReadOnlyDictionary<Guid, ProductImageRef> Images,
+    IReadOnlySet<Guid>? UsedVariantIds = null)
 {
     /// <summary>Sin nombres de opción ni URLs: para quien mapea en memoria (pruebas).</summary>
     public static ProductReadLookups Empty(Guid tenantId) =>
         new(tenantId, new Dictionary<Guid, OptionDefinition>(), new Dictionary<Guid, ProductImageRef>());
+
+    public bool CanDelete(Guid variantId) => UsedVariantIds is { } used && !used.Contains(variantId);
 
     // Un archivo que desapareció de Storage, que nunca se publicó, o que es de otro tenant, deja la
     // foto sin URL — no sin foto. El fileId sigue viajando: el cliente lo necesita para el PUT.
@@ -69,17 +76,33 @@ internal static class ProductMapping
     /// estaba**. Cualquier producto cargado antes de ese slice pudo guardar el archivo de otro
     /// tenant, y esa fila sigue en la base (la migración de variantes la pasó a la galería). Sin
     /// esta comprobación, la escritura queda cerrada y la lectura abierta.
+    ///
+    /// <c>CanDelete</c> de cada variante sale de **una** consulta de uso por lote
+    /// (<paramref name="usageChecker"/>). Null sólo para productos que se acaban de crear en esta
+    /// misma petición: ninguna línea puede vender una variante que no existía, así que todas se
+    /// pueden borrar sin preguntarle a nadie.
     /// </summary>
     public static async Task<IReadOnlyList<ProductDto>> ToDtosAsync(
         this IEnumerable<Product> products,
         IProductImageLookup imageLookup,
         IOptionDefinitionRepository optionRepository,
+        IVariantUsageChecker? usageChecker,
         Guid tenantId,
         CancellationToken cancellationToken)
     {
         var materialized = products as IReadOnlyList<Product> ?? products.ToArray();
         var lookups = await LoadLookupsAsync(
             materialized, imageLookup, optionRepository, tenantId, cancellationToken);
+
+        var variantIds = materialized
+            .SelectMany(product => product.Variants.Select(variant => variant.Id.Value))
+            .ToArray();
+        lookups = lookups with
+        {
+            UsedVariantIds = usageChecker is null
+                ? new HashSet<Guid>()
+                : await usageChecker.FindUsedAsync(tenantId, variantIds, cancellationToken),
+        };
 
         return materialized.Select(product => product.ToDto(lookups)).ToArray();
     }
@@ -184,8 +207,9 @@ internal static class ProductMapping
             galleryFileId,
             galleryFileId is { } fileId ? lookups.UrlOf(fileId) : mainImageUrl,
             variant.IsActive,
-            // Tarea 6: la consulta de uso (IVariantUsageChecker). Ver ProductVariantResponse.
-            CanDelete: false);
+            // Spec §3.3: sin líneas que la vendan se puede borrar (omitiéndola del PUT); con
+            // líneas, el PUT la desactiva. Ver ProductVariantResponse.
+            CanDelete: lookups.CanDelete(variant.Id.Value));
     }
 
     // Catalogue order (spec D10), not insertion order: the form and the product table paint one

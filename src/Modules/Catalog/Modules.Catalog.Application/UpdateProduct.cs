@@ -32,6 +32,7 @@ public sealed class UpdateProductHandler(
     ITaxRateRepository taxRateRepository,
     IOptionDefinitionRepository optionRepository,
     IProductImageLookup imageLookup,
+    IVariantUsageChecker usageChecker,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -72,13 +73,44 @@ public sealed class UpdateProductHandler(
         await ProductImageResolver.ResolveGalleryAsync(
             imageLookup, command.TenantId, gallery, cancellationToken);
 
+        // Spec §3.3: una variante guardada que el cuerpo omite se borra si ninguna línea la vende y
+        // se desactiva si alguna sí. Primera comprobación, antes de abrir la transacción.
+        var requestedIds = command.Variants!
+            .Where(variant => variant.Id is not null)
+            .Select(variant => variant.Id!.Value)
+            .ToHashSet();
+        var absentIds = product.Variants
+            .Select(variant => variant.Id.Value)
+            .Where(id => !requestedIds.Contains(id))
+            .ToArray();
+        var usedBefore = await usageChecker.FindUsedAsync(command.TenantId, absentIds, cancellationToken);
+        var deletedIds = absentIds.Where(id => !usedBefore.Contains(id)).ToList();
+
+        // La segunda comprobación y el borrado van en la misma transacción (Enfoque de revisión 3):
+        // el adaptador corre sobre la conexión de Catalog, así que su consulta queda adentro. Una
+        // línea que apareció entre las dos comprobaciones convierte el borrado en desactivación:
+        // nunca una línea con variant_id huérfano. Lo que queda abierto —una línea que se guarda
+        // después de esta consulta y antes del commit— está en el reporte de la Tarea 6.
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        if (deletedIds.Count > 0)
+        {
+            var usedNow = await usageChecker.FindUsedAsync(command.TenantId, deletedIds, cancellationToken);
+            deletedIds.RemoveAll(usedNow.Contains);
+        }
+
+        var requests = command.Variants!
+            .Concat(product.Variants
+                .Where(variant => !requestedIds.Contains(variant.Id.Value) && !deletedIds.Contains(variant.Id.Value))
+                .Select(variant => KeptInactive(product, variant, gallery)))
+            .ToArray();
+
         var optionIds = command.OptionIds ?? [];
         // Las de antes también: proyectar los valores guardados necesita saber qué opción era cada
         // posición, y una opción que se quita no viene en el cuerpo.
         var library = await ProductOptionLibrary.LoadAsync(
             optionRepository, command.TenantId, optionIds.Concat(product.OptionIds), cancellationToken);
 
-        var variants = ProductVariantChanges.Resolve(product, optionIds, command.Variants!, library);
+        var variants = ProductVariantChanges.Resolve(product, optionIds, requests, library);
 
         ProductVariantReferences.EnsureValid(product, optionIds, variants, library);
         // Un intercambio de códigos entre dos variantes del mismo producto (A toma el de B y B el de
@@ -110,7 +142,8 @@ public sealed class UpdateProductHandler(
             optionIds,
             variants,
             gallery,
-            now);
+            now,
+            deletedIds);
 
         auditPublisher.Publish(
             command.TenantId,
@@ -120,9 +153,32 @@ public sealed class UpdateProductHandler(
             "success",
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         var dtos = await new[] { product }.ToDtosAsync(
-            imageLookup, optionRepository, command.TenantId, cancellationToken);
+            imageLookup, optionRepository, usageChecker, command.TenantId, cancellationToken);
         return dtos[0];
+    }
+
+    // Una variante en uso que el cuerpo omite: se queda, inactiva, con todo lo suyo. Sus valores y
+    // su precio van en null para que ProductVariantChanges los resuelva igual que en una guardada
+    // que vino (proyectados a las opciones nuevas, el precio como está). La foto se conserva si
+    // sigue en la galería del cuerpo; si no, se limpia, como cuando se quita la foto de la galería.
+    // Va al final del orden: el formulario no la mandó, así que no tiene posición que respetar.
+    private static ProductVariantRequest KeptInactive(
+        Product product, ProductVariant variant, IReadOnlyList<Guid> gallery)
+    {
+        var fileId = variant.GalleryImageId is { } imageId
+            ? product.Gallery.FirstOrDefault(image => image.Id == imageId)?.FileId
+            : null;
+
+        return new ProductVariantRequest(
+            variant.Id.Value,
+            variant.Code,
+            variant.Barcode,
+            OptionValueIds: null,
+            Pricing: null,
+            GalleryFileId: fileId is { } id && gallery.Contains(id) ? id : null,
+            IsActive: false);
     }
 }

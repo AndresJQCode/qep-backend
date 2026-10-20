@@ -13,6 +13,7 @@ public sealed class DeactivateProductHandler(
     IProductRepository repository,
     IOptionDefinitionRepository optionRepository,
     IProductImageLookup imageLookup,
+    IVariantUsageChecker usageChecker,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -44,7 +45,7 @@ public sealed class DeactivateProductHandler(
         // El detalle completo, como el GET: la pantalla repinta lo que vuelve, y hasta las
         // variantes devolvía la ficha sin la URL de la imagen.
         var dtos = await new[] { product }.ToDtosAsync(
-            imageLookup, optionRepository, command.TenantId, cancellationToken);
+            imageLookup, optionRepository, usageChecker, command.TenantId, cancellationToken);
         return dtos[0];
     }
 }

@@ -108,8 +108,9 @@ public sealed class CreateProductHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
+        // Sin consulta de uso: ninguna línea puede vender una variante que nació en esta petición.
         var dtos = await new[] { product }.ToDtosAsync(
-            imageLookup, optionRepository, command.TenantId, cancellationToken);
+            imageLookup, optionRepository, usageChecker: null, command.TenantId, cancellationToken);
         return dtos[0];
     }
 }

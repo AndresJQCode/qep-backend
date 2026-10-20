@@ -208,23 +208,31 @@ public sealed class Product
     /// <summary>
     /// Reemplaza el recurso entero, como el PUT: nombre, datos opcionales, opciones, variantes y
     /// galería. Las variantes se emparejan por id (spec §3.3.1); una variante guardada que no
-    /// viene se rechaza con <c>catalog.variant.missing_in_request</c> —no se borra en silencio—.
+    /// viene se rechaza con <c>catalog.variant.missing_in_request</c> —no se borra en silencio—,
+    /// salvo que esté en <paramref name="deletedVariantIds"/>.
     /// Los topes y los ids se validan antes de tocar nada; las reglas entre variantes (combinación,
     /// código, valores por opción), antes de aplicar la primera. Lo que falla después —precios,
     /// escalas, empaques de una variante— deja el agregado a medias, como antes de las variantes:
     /// la excepción aborta la unidad de trabajo y nada se guarda.
     /// </summary>
+    /// <param name="deletedVariantIds">Variantes guardadas que se borran (spec §3.3, Tarea 6). El
+    /// agregado no sabe si una variante está en uso —las líneas viven en otros módulos—, así que
+    /// sólo borra las que el llamador le nombra después de comprobarlo; una ausente que no está
+    /// acá sigue siendo <c>missing_in_request</c>. Una variante en uso no llega por este camino:
+    /// el llamador la manda en <paramref name="variants"/>, inactiva.</param>
     public void Update(
         string name,
         ProductDetails details,
         IReadOnlyList<Guid> optionIds,
         IReadOnlyList<ProductVariantInput> variants,
         IReadOnlyList<Guid> galleryFileIds,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        IReadOnlyCollection<Guid>? deletedVariantIds = null)
     {
         ArgumentNullException.ThrowIfNull(optionIds);
         ArgumentNullException.ThrowIfNull(variants);
         ArgumentNullException.ThrowIfNull(galleryFileIds);
+        var deleted = deletedVariantIds ?? [];
 
         EnsureActive();
 
@@ -232,12 +240,16 @@ public sealed class Product
         EnsureOptions(optionIds);
         EnsureGallery(galleryFileIds);
         EnsureVariantCount(variants);
-        EnsureSavedVariantsArePresent(variants);
+        EnsureSavedVariantsArePresent(variants, deleted);
 
         Name = normalizedName;
         Apply(details);
         ReplaceOptions(optionIds);
         ReplaceGallery(galleryFileIds);
+        // Antes de ReplaceVariants: una variante borrada libera su código y su combinación para las
+        // del cuerpo. EF borra la fila (y en cascada sus precios, escalas, valores e historial) en el
+        // mismo guardado.
+        _variants.RemoveAll(variant => deleted.Contains(variant.Id.Value));
         ReplaceVariants(variants, optionIds.Count, isCreate: false);
         Version++;
         UpdatedAt = occurredAt;
@@ -307,9 +319,21 @@ public sealed class Product
         }
     }
 
-    private void EnsureSavedVariantsArePresent(IReadOnlyList<ProductVariantInput> variants)
+    private void EnsureSavedVariantsArePresent(
+        IReadOnlyList<ProductVariantInput> variants,
+        IReadOnlyCollection<Guid> deletedVariantIds)
     {
-        var requested = new HashSet<Guid>();
+        foreach (var id in deletedVariantIds)
+        {
+            if (!_variants.Exists(saved => saved.Id.Value == id))
+            {
+                throw new CatalogDomainException(
+                    "catalog.variant.not_found",
+                    "The variant does not belong to this product.");
+            }
+        }
+
+        var requested = new HashSet<Guid>(deletedVariantIds);
         foreach (var variant in variants)
         {
             if (variant.Id is not { } id)

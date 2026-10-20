@@ -3,6 +3,9 @@
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <!-- CatalogVariantUsageCheckerTests: el SQL entre esquemas del adaptador sólo se prueba contra
+         PostgreSQL. Es la única prueba de este proyecto que necesita Docker. -->
+    <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>

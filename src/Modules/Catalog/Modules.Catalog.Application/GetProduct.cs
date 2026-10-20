@@ -9,6 +9,7 @@ public sealed record GetProductQuery(Guid TenantId, Guid ProductId) : IQuery<Pro
 public sealed class GetProductHandler(
     IProductRepository repository,
     IProductImageLookup imageLookup,
+    IVariantUsageChecker usageChecker,
     IOptionDefinitionRepository optionRepository,
     IExecutionContext executionContext)
     : IQueryHandler<GetProductQuery, ProductDto>
@@ -32,7 +33,7 @@ public sealed class GetProductHandler(
         // galería (ninguna si no tiene) y otra para los nombres de sus opciones (ninguna si no
         // tiene opciones).
         var dtos = await new[] { product }.ToDtosAsync(
-            imageLookup, optionRepository, query.TenantId, cancellationToken);
+            imageLookup, optionRepository, usageChecker, query.TenantId, cancellationToken);
         return dtos[0];
     }
 }
