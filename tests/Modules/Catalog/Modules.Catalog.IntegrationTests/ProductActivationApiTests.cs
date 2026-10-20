@@ -212,9 +212,11 @@ public sealed class ProductActivationApiTests
         Assert.True(await QueryUpdatedAfterCreatedAsync(connection, created.Id));
     }
 
-    // CA-CAT-07-09: ancla la afirmación sobre el índice. IX_products_tenant_code es único **sin
-    // filtro parcial**, así que desactivar nunca liberó el código y reactivar no puede colisionar.
-    // Si algún día alguien le agrega un filtro parcial, esta prueba se cae y avisa.
+    // CA-CAT-07-09: desactivar nunca liberó el código y reactivar no puede colisionar. Desde la
+    // Tarea 5 el código repetido lo frena la comprobación previa del handler, que busca entre
+    // **todas** las variantes del tenant, activas o no; el índice ya no se alcanza por acá. Que
+    // IX_product_variants_tenant_code siga siendo no parcial lo ancla
+    // CatalogVariantPersistenceTests.SavingATakenCodeThrowsCodeTaken, con la variante inactiva.
     [Fact]
     public async Task AnInactiveProductNeverReleasedItsCode()
     {

@@ -22,8 +22,11 @@ public sealed class CatalogVariantPersistenceTests
     private const string SubjectId = "01900000-0000-7000-8000-00000000e002";
     private static readonly DateTimeOffset Now = new(2026, 10, 20, 12, 0, 0, TimeSpan.Zero);
 
+    // Desde la Tarea 5 este camino HTTP lo frena la comprobación previa del handler
+    // (ProductVariantReferences.EnsureCodesAvailableAsync), con el campo marcado, antes de llegar
+    // al índice. La traducción del índice por nombre la cubre SavingATakenCodeThrowsCodeTaken.
     [Fact]
-    public async Task CreateWithTakenCodeReturns422CodeTaken()
+    public async Task CreateWithTakenCodeIsRejectedByTheHandlerWithCodeTaken()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -37,6 +40,53 @@ public sealed class CatalogVariantPersistenceTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, second.StatusCode);
         var body = await second.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.Contains("catalog.product.code_taken", body, StringComparison.Ordinal);
+    }
+
+    // La red de la carrera: dos guardados que pasan la comprobación previa a la vez llegan al
+    // índice, y CatalogUnitOfWork lo traduce **por nombre** (IX_product_variants_tenant_code) a
+    // catalog.product.code_taken. Por el repositorio y no por HTTP, porque por HTTP el handler lo
+    // frena antes. Si alguien renombra el índice o la constante ProductCodeIndex, esto sale 500
+    // (DbUpdateException) y la prueba se cae.
+    //
+    // Y ancla que el índice no es parcial (spec §3.3; CA-CAT-07-09): la variante dueña del código
+    // está **inactiva**, y aun así el código no se libera.
+    [Fact]
+    public async Task SavingATakenCodeThrowsCodeTaken()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.Parse(TenantId);
+
+        var owner = NewProduct(tenantId, "CAM-001", barcode: null);
+        await SaveAsync(factory, owner);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var tracked = await scope.ServiceProvider.GetRequiredService<IProductRepository>()
+                .FindAsync(tenantId, owner.Id, TestContext.Current.CancellationToken);
+            Assert.NotNull(tracked);
+            tracked.Update(
+                tracked.Name,
+                ProductDetails.Empty,
+                [],
+                [Variant("CAM-001", [], id: tracked.Variants.Single().Id.Value) with { IsActive = false }],
+                [],
+                Now.AddMinutes(1));
+            await scope.ServiceProvider.GetRequiredService<ICatalogUnitOfWork>()
+                .SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (var readScope = factory.Services.CreateAsyncScope())
+        {
+            var reloaded = await readScope.ServiceProvider.GetRequiredService<IProductRepository>()
+                .FindAsync(tenantId, owner.Id, TestContext.Current.CancellationToken);
+            Assert.False(Assert.Single(reloaded!.Variants).IsActive);
+        }
+
+        var error = await Assert.ThrowsAsync<CatalogDomainException>(
+            () => SaveAsync(factory, NewProduct(tenantId, "CAM-001", barcode: null)));
+
+        Assert.Equal("catalog.product.code_taken", error.Code);
     }
 
     [Fact]

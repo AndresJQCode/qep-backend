@@ -407,6 +407,11 @@ public sealed class TaxRateApiTests
     /// antes de que pueda existir: los dos índices únicos del esquema catalog tienen que
     /// devolver códigos distintos. Colapsarlos en una sola rama manda al llamador a corregir el
     /// campo equivocado, que es exactamente SDD-CT-06.
+    ///
+    /// Desde la Tarea 5 el lado del producto ya no llega al índice: lo frena la comprobación previa
+    /// del handler con el mismo código (catalog.product.code_taken). La prueba sigue afirmando que
+    /// cada lado responde su código; la traducción por nombre del índice de código la cubre
+    /// CatalogVariantPersistenceTests.SavingATakenCodeThrowsCodeTaken.
     /// </summary>
     [Fact]
     public async Task TheTwoUniqueIndexesOfTheSchemaReturnTheirOwnDomainCode()
