@@ -1,7 +1,7 @@
 # Variantes de producto — diseño
 
-Fecha: 2026-10-20. Autor: brainstorming con el owner (Andrés Jaramillo). Estado: **borrador para aprobación del owner**
-(el builder check ya pasó; falta que el owner lea el documento y confirme §9).
+Fecha: 2026-10-20. Autor: brainstorming con el owner (Andrés Jaramillo). Estado: **aprobado por el owner el 2026-10-20**
+(las siete decisiones de §9 confirmadas; tres corregidas: 3, 5 y 6).
 
 Este documento describe *qué* se construye y *por qué*. Las decisiones del owner van marcadas **(owner)**; las que tomó
 quien escribe y el owner todavía no confirmó van marcadas **(propuesta)**. El código es la autoridad: las rutas citadas
@@ -37,6 +37,9 @@ productos desde Shopify → centro de notificaciones → alertas de salud de la 
 2. **Producto con hasta 3 opciones** y sus variantes (combinaciones de valores).
 3. **Variante** con datos propios: `Code`, código de barras, precios por moneda, escalas por cantidad, empaques e imagen
    (owner: código de barras, escalas y empaques por variante; precios e imagen por variante como Shopify).
+   **Galería del producto (owner, 2026-10-20):** hasta 250 fotos ordenadas (la primera es la principal, como Shopify);
+   cada variante apunta opcionalmente a una foto de la galería. Reemplaza la imagen única de hoy: la imagen actual de cada
+   producto migra como primera foto de su galería.
 4. **Elegir variante al vender** en cotizaciones, pedidos y punto de venta; producto sin opciones no pide elegir nada
    (owner).
 5. **Escaneo por código de barras** en el punto de venta (owner).
@@ -50,8 +53,6 @@ productos desde Shopify → centro de notificaciones → alertas de salud de la 
   `shopify-productos-brainstorm.md`). Este proyecto sólo deja el modelo listo y cambia el emparejamiento de pedidos.
 - Inventario, peso y envío por variante (QEP no maneja inventario).
 - IVA por variante: el IVA sigue en el producto (owner, no lo corrigió al proponerlo).
-- Galería de imágenes del producto **(propuesta)**: el producto conserva su imagen única de hoy y cada variante puede tener
-  la suya; una galería con varias fotos queda para cuando la pida la sincronización con Shopify.
 - Descripción o nombre propio por variante: el nombre visible se arma (§3.4).
 - **Reporte de ventas por producto y por variante (owner, 2026-10-20: «no meter en este proyecto»)**: hoy no existe
   ninguno (el único reporte por producto es el de cambios de precio, `Bootstrapper/PriceChangeReportSource.cs`). Queda
@@ -70,12 +71,13 @@ productos desde Shopify → centro de notificaciones → alertas de salud de la 
   crea el embudo (Tenancy no publica nada al crear un tenant que Catalog escuche) **(propuesta)**.
   No hay taxonomía global compartida entre tenants: las predefinidas son una semilla, cada tenant tiene su copia.
 - Una opción o un valor que alguna variante ya usa **no se borra**: se desactiva (no se ofrece para variantes nuevas; las
-  existentes lo conservan). Saber si está en uso es una consulta dentro de Catalog (las variantes viven ahí), sin puertos. Renombrar un valor cambia el nombre visible de las variantes que lo usan; las líneas ya
+  existentes lo conservan). Saber si está en uso es una consulta dentro de Catalog (las variantes viven ahí), sin puertos.
+  Una opción o un valor que ninguna variante usa sí se puede borrar. Renombrar un valor cambia el nombre visible de las variantes que lo usan; las líneas ya
   guardadas conservan su foto (§4).
 - Permisos **(propuesta)**: leer con `catalog.product.read`, administrar con `catalog.product.manage`. Sin permiso nuevo.
 
 ### 3.2 Producto
-- Conserva: nombre, descripción, imagen, IVA (`TaxRateId`), activo/inactivo, `Version`.
+- Conserva: nombre, descripción, galería de imágenes (§2), IVA (`TaxRateId`), activo/inactivo, `Version`.
 - Gana: **hasta 3 opciones** (referencias a opciones de la biblioteca, en orden). Límite de 3 tomado de Shopify
   (hasta 3 opciones por producto, hasta 2.048 variantes: help.shopify.com/en/manual/products/variants/add-variants).
 - Pierde, hacia la variante: `Code`, precios, escalas y empaques.
@@ -90,15 +92,19 @@ productos desde Shopify → centro de notificaciones → alertas de salud de la 
 - Un valor por cada opción del producto; la combinación es única dentro del producto.
 - Precios por moneda (al menos uno, como hoy `catalog.product.price_required`), escalas por cantidad, empaques: con las
   mismas reglas y códigos de error que hoy tiene el producto (`catalog.product.price_scale.*`, `packaging_units.*`).
-- Imagen opcional (misma regla de Storage que la del producto); sin imagen, se usa la del producto.
+- Imagen opcional: una foto de la galería del producto (misma regla de Storage); sin imagen, se usa la principal del producto.
 - Activa/inactiva: una variante inactiva no se ofrece al vender; un producto inactivo inactiva la venta de todas.
 - Orden de presentación.
-- **Una variante guardada nunca se borra: se desactiva (propuesta).** Sólo se puede quitar del formulario una variante que
-  todavía no se guardó. Así Catalog no necesita preguntarle a Quotations ni a Pos si una variante está en uso (no hay
-  puerto nuevo entre tres esquemas), y ninguna línea histórica apunta a una variante inexistente. Lo mismo con los valores
-  de opción (§3.1).
-- Tope de variantes por producto **(propuesta)**: 100. Shopify permite 2.048; 100 cubre talla × color con holgura y
-  mantiene usable la tabla del formulario. La sincronización con Shopify decidirá qué hace con un producto que lo exceda.
+- **Una variante guardada se borra sólo si no está en uso; si está en uso, se desactiva (owner, 2026-10-20).** «En uso» =
+  alguna línea de `quotations.quotation_items`, `quotations.order_items` o `pos.sale_lines` guarda su `variant_id`.
+  Catalog no referencia esos módulos (`CatalogLayerTests`), así que declara un puerto de sólo lectura
+  (`IVariantUsageChecker`, nombre tentativo) con adaptador en Bootstrapper que consulta los tres esquemas, como
+  `PriceChangeReportSource`. La comprobación ocurre en el handler y la repite el borrado en la misma transacción; una línea
+  que apareció entre las dos se resuelve desactivando en vez de borrar, nunca dejando una línea con `variant_id` huérfano.
+  La respuesta del `PUT` dice por variante si se puede borrar, para que el formulario ofrezca «Eliminar» o «Desactivar»
+  sin adivinar (BFF). Lo mismo con los valores de opción.
+- Tope de variantes por producto **(owner, 2026-10-20)**: 2.048, igual que Shopify, así que un producto de
+  Shopify siempre cabe. Con ese tope la tabla del formulario tiene que paginar o virtualizar (builder, §10).
 
 ### 3.3.1 Cambiar las opciones de un producto que ya existe (propuesta)
 Es el caso principal: un tenant de ropa tiene «Camiseta» migrada (una variante por defecto con ventas) y le agrega Talla.
@@ -110,7 +116,7 @@ Es el caso principal: un tenant de ropa tiene «Camiseta» migrada (una variante
   toma un valor de la opción nueva (el tenant elige; por defecto el primero) y conserva su id; las combinaciones que
   faltan nacen nuevas, copiadas de la variante de su misma talla.
 - **Quitar una opción**: sólo se permite si después de quitarla no quedan dos variantes **activas** con la misma
-  combinación; las que sobran se desactivan (nunca se borran). Quitar todas deja una sola variante activa, que pasa a ser
+  combinación; las que sobran se desactivan (se desactivan o se borran según §3.3). Quitar todas deja una sola variante activa, que pasa a ser
   la variante por defecto.
 - El `PUT` empareja variantes por su id: una variante del cuerpo con id existente es esa variante; sin id, es nueva.
 
@@ -169,7 +175,7 @@ El consumidor es `qep-frontend` y nada más, así que la forma se decide por la 
 - Un producto sin opciones devuelve una sola variante; el formulario la muestra como los campos de siempre.
 - El guardado reemplaza el recurso entero (como `UpdateProduct` hoy): producto + variantes en un solo `PUT`, para que el
   formulario repinte lo que devuelve. Una variante guardada que falta en el cuerpo se rechaza con un código propio (no se
-  borra; se desactiva con su estado, §3.3).
+  borra; se desactiva o se borra con su estado, §3.3).
 - **Despliegue (propuesta):** backend y frontend van juntos, como manda el precedente de Shopify en `CLAUDE.md`: el
   frontend es el único consumidor, así que el cambio de `productId` a `variantId` es directo, sin aceptar los dos
   contratos a la vez.
@@ -202,16 +208,16 @@ El consumidor es `qep-frontend` y nada más, así que la forma se decide por la 
 ## 9. Decisiones que el owner debe confirmar al aprobar
 Preguntas ya resueltas: reporte de ventas por producto/variante **fuera** de este proyecto (§2). El revisor del diseño
 (builder check, 2026-10-20) hizo siete preguntas; cinco quedaron respondidas en el texto como **propuesta** (cambiar las
-opciones de un producto existente §3.3.1; conteo de escalas §4; copiar escalas §4; variantes nunca se borran §3.3;
+opciones de un producto existente §3.3.1; conteo de escalas §4; copiar escalas §4; borrado de variantes §3.3 (luego corregido por el owner);
 despliegue conjunto §6). Quedan por confirmar, al aprobar el documento, estas propuestas que cambian la estructura:
-1. Opciones predefinidas «Talla» y «Color», sembradas **inactivas** en el primer acceso (§3.1).
-2. Código de barras opcional y único por tenant; el escáner busca primero por código de barras y luego por `Code`
+1. ✔ Opciones predefinidas «Talla» y «Color», sembradas **inactivas** en el primer acceso (§3.1).
+2. ✔ Código de barras opcional y único por tenant; el escáner busca primero por código de barras y luego por `Code`
    (§3.3, §5).
-3. Tope de 100 variantes por producto (§3.3).
-4. Sin permisos nuevos: `catalog.product.read` y `catalog.product.manage` (§3.1).
-5. Imagen única del producto más una imagen opcional por variante, sin galería (§2).
-6. Una variante guardada nunca se borra, sólo se desactiva (§3.3).
-7. Despliegue de backend y frontend juntos, `productId` → `variantId` sin doble contrato (§6).
+3. ✔ **Corregida por el owner:** tope de 2.048 variantes por producto (§3.3).
+4. ✔ Sin permisos nuevos: `catalog.product.read` y `catalog.product.manage` (§3.1).
+5. ✔ **Corregida por el owner:** galería de hasta 250 fotos por producto; cada variante elige una (§2).
+6. ✔ **Corregida por el owner:** una variante se borra si no está en uso; en uso, se desactiva (§3.3).
+7. ✔ Despliegue de backend y frontend juntos, `productId` → `variantId` sin doble contrato (§6).
 
 ## 10. Lo que queda al builder
 - Nombres de tablas, columnas, endpoints y DTOs; forma exacta de las migraciones y su orden entre módulos.
@@ -219,6 +225,7 @@ despliegue conjunto §6). Quedan por confirmar, al aprobar el documento, estas p
 - Textos de la interfaz, en español colombiano tuteando.
 - Si la variante por defecto lleva el mismo id que el producto (§8) o se resuelve de otra forma.
 - Límite de largo del código de barras.
+- Cómo pagina o virtualiza la tabla de variantes con 2.048 filas, y cómo se sube y ordena una galería de 250 fotos.
 
 ## 11. Referencias en el código (develop, 2026-10-20)
 - Catalog: `Catalog.Domain/Product.cs`, `ProductPrice.cs`, `PriceScale.cs`, `ProductPriceChange(Detector).cs`;
