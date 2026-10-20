@@ -2652,6 +2652,23 @@ prendido, al importador:
   nada más. `POST …/shopify/stores/{connectionId}/sync` hace lo mismo en el request; `POST …/shopify/orders/{id}/retry`,
   una sola fila.
 
+**La bandeja.** `GET /tenants/{tenantId}/shopify/orders` pagina el espejo (tope 50, más recientes primero) con
+`state` (repetible o separado por comas; sin él, `Waiting`), `connectionId`, `withWarnings=true` (avisos sin revisar;
+sin `state` no filtra por estado) y `cancelledAfterInvoice=true`: sólo las `Cancelled` cuyo `wait_detail` es
+`{"reason":"invoiced_before_cancel"}`. Ese filtro implica `state=Cancelled`; con otro `state` responde 422
+`validation.failed` con `errors.cancelledAfterInvoice`. Sin `connectionId`, el `total` de `withWarnings=true` y el de
+`cancelledAfterInvoice=true` son iguales a los contadores de `GET …/shopify/orders/summary`, así que la sección pagina
+en el servidor y nunca filtra en el navegador.
+
+Cada fila trae `lastError` —texto libre para soporte y logs, que la pantalla no muestra— y `lastErrorCodes`, siempre
+presente (`[]` sin error): los códigos de `lastError` partidos por `"; "`, en orden y sin repetir. Un código de
+Quotations viaja tal cual; `invalid_payload: …` se vuelve `shopify.order.invalid_payload`; cualquier otra cosa (un
+nombre de enum, un texto) es `shopify.order.sync_failed`. Hoy los valores posibles son `order.order.not_pending`,
+`order.order.payment_has_proofs`, `order.order.not_found`, `tenancy.tenant.not_found`,
+`shopify.order.invalid_payload` y `shopify.order.sync_failed`; el texto de cada uno lo tiene el diccionario del frontend
+(`features/shopify`), y uno que no conozca se muestra con un mensaje genérico. La normalización está en
+`ShopifyLastErrorCodes`.
+
 **Configuración.**
 
 | Clave | Dónde vive en prod | Qué |
