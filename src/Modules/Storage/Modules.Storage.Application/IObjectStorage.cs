@@ -57,6 +57,20 @@ public interface IObjectStorage
 
     // null si el objeto no está. El stream es del llamador: lo cierra él.
     Task<StoredObjectStream?> OpenReadAsync(string key, CancellationToken cancellationToken);
+
+    // Spec 2026-10-20 D10: los bytes [first, last] (inclusive, ya resueltos contra el tamaño del objeto) para servir un 206. R2 la pisa
+    // con un GET por rango; la de acá corta el objeto entero y existe para que los dobles en memoria no tengan que implementarla.
+    // null si el objeto no está. Length es el del tramo.
+    async Task<StoredObjectStream?> OpenReadRangeAsync(string key, long first, long last, CancellationToken cancellationToken)
+    {
+        if (await OpenReadAsync(key, cancellationToken) is not { } whole)
+        {
+            return null;
+        }
+
+        var length = last - first + 1;
+        return whole with { Content = await BuildingBlocks.Application.StreamSlice.CreateAsync(whole.Content, first, length, cancellationToken), Length = length };
+    }
 }
 
 public sealed record StoredObject(long SizeBytes, string Checksum);

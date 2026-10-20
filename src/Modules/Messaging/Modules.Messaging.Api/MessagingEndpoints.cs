@@ -218,7 +218,7 @@ public static class MessagingEndpoints
     private static async Task<IResult> GetMediaAsync(
         Guid tenantId, Guid messageId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {
-        var media = await dispatcher.QueryAsync(new GetMediaQuery(tenantId, messageId), cancellationToken);
+        var media = await dispatcher.QueryAsync(new GetMediaQuery(tenantId, messageId, httpContext.Request.Headers.Range.ToString()), cancellationToken);
         if (media is null)
         {
             return Results.NotFound();
@@ -229,6 +229,22 @@ public static class MessagingEndpoints
         headers.ContentSecurityPolicy = "sandbox; default-src 'none'";
         headers.CacheControl = "private, max-age=3600";
         headers.ContentDisposition = ContentDispositionFor(media.ContentType, media.FileName, messageId);
+
+        // Spec 2026-10-20 D10: Safari no adelanta un <video> sin 206. El rango lo resuelve el handler y lo lee R2; acá sólo se arma la
+        // respuesta. enableRangeProcessing no sirve: el stream de R2 no admite búsqueda.
+        headers.AcceptRanges = "bytes";
+        if (media.Range is { } range)
+        {
+            if (!range.Satisfiable)
+            {
+                headers.ContentRange = $"bytes */{range.Total}";
+                return Results.StatusCode(StatusCodes.Status416RangeNotSatisfiable);
+            }
+
+            httpContext.Response.StatusCode = StatusCodes.Status206PartialContent;
+            headers.ContentRange = $"bytes {range.From}-{range.To}/{range.Total}";
+        }
+
         headers.ContentLength = media.Length;
         return Results.Stream(media.Content, media.ContentType);
     }

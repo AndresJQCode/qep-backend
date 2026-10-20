@@ -68,6 +68,25 @@ public sealed class R2ObjectStorageTests
         Assert.Equal(10, request.Headers.ContentLength);
     }
 
+    // Spec 2026-10-20 D10: el stream de R2 no admite búsqueda, así que el rango viaja en el GET y no se lee el objeto entero.
+    [Fact]
+    public async Task ARangedReadAsksR2ForThatRangeOnly()
+    {
+        using var client = new CapturingS3Client();
+        var storage = new R2ObjectStorage(client, Options.Create(new StorageOptions
+        {
+            R2 = new R2Options { Bucket = "qep-private" },
+        }));
+
+        var opened = await storage.OpenReadRangeAsync("messaging/t/m", 100, 199, TestContext.Current.CancellationToken);
+
+        var request = Assert.IsType<GetObjectRequest>(client.CapturedGet);
+        Assert.Equal(("qep-private", "messaging/t/m", 100L, 199L), (request.BucketName, request.Key, request.ByteRange.Start, request.ByteRange.End));
+        Assert.NotNull(opened);
+        Assert.Equal((100L, "video/mp4"), (opened.Length, opened.ContentType));
+        await opened.Content.DisposeAsync();
+    }
+
     [Fact]
     public async Task DownloadUrlHonoursTheRequestedExpiryAndFileName()
     {
@@ -188,6 +207,21 @@ public sealed class R2ObjectStorageTests
         }
 
         public PutObjectRequest? Captured { get; private set; }
+
+        public GetObjectRequest? CapturedGet { get; private set; }
+
+        public override Task<GetObjectResponse> GetObjectAsync(GetObjectRequest request, CancellationToken cancellationToken = default)
+        {
+            CapturedGet = request;
+            var response = new GetObjectResponse
+            {
+                ResponseStream = new MemoryStream(new byte[100]),
+                ContentLength = 100,
+                HttpStatusCode = System.Net.HttpStatusCode.PartialContent,
+            };
+            response.Headers.ContentType = "video/mp4";
+            return Task.FromResult(response);
+        }
 
         public override Task<PutObjectResponse> PutObjectAsync(
             PutObjectRequest request,

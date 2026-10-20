@@ -139,4 +139,6 @@ public sealed record MessageHitDto(
 
 public sealed record SearchPageDto(IReadOnlyList<MessageHitDto> Items, bool HasMore);
 
-public sealed record MediaStreamDto(Stream Content, string ContentType, long Length, string? FileName);
+/// <param name="Range">Spec 2026-10-20 D10: el tramo servido cuando el request trajo un <c>Range</c> que se entendió; <c>null</c> = el
+/// archivo entero (200).</param>
+public sealed record MediaStreamDto(Stream Content, string ContentType, long Length, string? FileName, MediaRangeDto? Range = null);

@@ -161,4 +161,23 @@ internal sealed class R2ObjectStorage(IAmazonS3 client, IOptions<StorageOptions>
             return null;
         }
     }
+
+    // Spec 2026-10-20 D10: el stream de GetObject no admite búsqueda, así que el rango viaja en el GET y R2 sólo manda ese tramo.
+    public async Task<StoredObjectStream?> OpenReadRangeAsync(string key, long first, long last, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await client.GetObjectAsync(
+                new GetObjectRequest { BucketName = Bucket, Key = key, ByteRange = new ByteRange(first, last) },
+                cancellationToken);
+            return new StoredObjectStream(
+                response.ResponseStream,
+                response.Headers.ContentType ?? "application/octet-stream",
+                response.ContentLength);
+        }
+        catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
 }

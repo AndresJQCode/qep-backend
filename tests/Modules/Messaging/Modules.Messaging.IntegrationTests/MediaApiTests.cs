@@ -122,6 +122,63 @@ public sealed class MediaApiTests
         Assert.Equal("sandbox; default-src 'none'", served.Headers.GetValues("Content-Security-Policy").Single());
     }
 
+    // Spec 2026-10-20 D10: Safari no adelanta un <video> sin 206. El rango llega al almacén y la respuesta conserva nosniff y el CSP.
+    [Theory]
+    [InlineData("bytes=0-3", "0-3", "0123")]
+    [InlineData("bytes=10-", "10-15", "abcdef")]
+    [InlineData("bytes=-4", "12-15", "cdef")]
+    [InlineData("bytes=12-999", "12-15", "cdef")]
+    public async Task ARangeIsServedAs206WithItsContentRangeAndTheSameSecurityHeaders(string range, string served, string body)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, "video/mp4", bytes: Encoding.ASCII.GetBytes("0123456789abcdef"));
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        await DrainMediaAsync(f.Host);
+        using var request = new HttpRequestMessage(HttpMethod.Get, MediaUrl(f.Tenant.TenantId, f.MessageId));
+        request.Headers.TryAddWithoutValidation("Range", range);
+
+        var response = await f.Client.SendAsync(request, Ct);
+
+        Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+        Assert.Equal($"bytes {served}/16", response.Content.Headers.ContentRange?.ToString());
+        Assert.Equal(body.Length, response.Content.Headers.ContentLength);
+        Assert.Equal("bytes", response.Headers.AcceptRanges.Single());
+        Assert.Equal("video/mp4", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("inline", response.Content.Headers.ContentDisposition?.DispositionType);
+        Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal("sandbox; default-src 'none'", response.Headers.GetValues("Content-Security-Policy").Single());
+        Assert.Equal(body, await response.Content.ReadAsStringAsync(Ct));
+    }
+
+    [Fact]
+    public async Task WithoutRangeItIs200AndAdvertisesRangesAndARangeOutsideTheObjectIs416()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, "audio/mpeg", bytes: Encoding.ASCII.GetBytes("0123456789abcdef"));
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        await DrainMediaAsync(f.Host);
+
+        var whole = await f.Client.GetAsync(MediaUrl(f.Tenant.TenantId, f.MessageId), Ct);
+        using var outside = new HttpRequestMessage(HttpMethod.Get, MediaUrl(f.Tenant.TenantId, f.MessageId));
+        outside.Headers.TryAddWithoutValidation("Range", "bytes=16-");
+        var unsatisfiable = await f.Client.SendAsync(outside, Ct);
+        using var multiple = new HttpRequestMessage(HttpMethod.Get, MediaUrl(f.Tenant.TenantId, f.MessageId));
+        multiple.Headers.TryAddWithoutValidation("Range", "bytes=0-1,4-5");
+        var ignored = await f.Client.SendAsync(multiple, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, whole.StatusCode);
+        Assert.Equal("bytes", whole.Headers.AcceptRanges.Single());
+        Assert.Equal(16, whole.Content.Headers.ContentLength);
+        Assert.Equal("0123456789abcdef", await whole.Content.ReadAsStringAsync(Ct));
+        Assert.Equal(HttpStatusCode.RequestedRangeNotSatisfiable, unsatisfiable.StatusCode);
+        Assert.Equal("bytes */16", unsatisfiable.Content.Headers.ContentRange?.ToString());
+        Assert.Equal("nosniff", unsatisfiable.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal(HttpStatusCode.OK, ignored.StatusCode);
+        Assert.Equal("0123456789abcdef", await ignored.Content.ReadAsStringAsync(Ct));
+    }
+
     // Bug 4 de PENDIENTES (2026-10-15): el medio lo pide un <audio>/<img>/<video>, sin X-Tenant-Id. El tenant
     // sale del path de esta ruta; antes, sin él, la sesión no tenía permisos y la respuesta era 403.
     [Fact]
