@@ -15,6 +15,9 @@ public sealed record SendMediaMessageCommand(
 /// permitido y cuánto pesa lo decide el handler, con códigos de dominio.</summary>
 public sealed class SendMediaMessageValidator : AbstractValidator<SendMediaMessageCommand>
 {
+    private static bool IsAudio(string fileName) =>
+        OutboundMediaPolicy.FormatOf(OutboundMediaPolicy.ExtensionOf(fileName)) is { } format && !OutboundMediaPolicy.AcceptsCaption(format);
+
     /// <summary>El tope de Meta para el pie de una imagen o un documento, y <c>messages.caption</c> es varchar(1024).</summary>
     public const int MaxCaptionLength = 1024;
 
@@ -29,6 +32,14 @@ public sealed class SendMediaMessageValidator : AbstractValidator<SendMediaMessa
             .OverridePropertyName("fileName");
         RuleFor(command => command.Caption)
             .MaximumLength(MaxCaptionLength).WithMessage("El texto que acompaña al archivo puede tener hasta 1024 caracteres.")
+            .OverridePropertyName("caption");
+
+        // Spec 2026-10-20 D7: WhatsApp no admite texto en un audio e Instagram tampoco lo manda; guardarlo mostraría en QEP un texto
+        // que el contacto nunca recibió. Un texto en blanco no cuenta: el handler lo guarda como null.
+        RuleFor(command => command.Caption)
+            .Must(caption => string.IsNullOrWhiteSpace(caption))
+            .When(command => !string.IsNullOrWhiteSpace(command.FileName) && IsAudio(command.FileName))
+            .WithMessage("Los audios se envían sin texto.")
             .OverridePropertyName("caption");
     }
 }
@@ -62,10 +73,10 @@ public sealed class SendMediaMessageHandler(
     IValidator<SendMediaMessageCommand> validator)
     : ICommandHandler<SendMediaMessageCommand, MessageDto>
 {
-    // Toda imagen sale como JPEG (R12); el multipart lleva un nombre genérico ASCII y el real viaja en document.filename.
+    // Toda imagen sale como JPEG (R12); el multipart lleva un nombre genérico ASCII y el real viaja en document.filename (el de un
+    // video o un audio no viaja: WhatsApp no lo muestra, queda en QEP).
     private const string ImageMimeType = "image/jpeg";
     private const string GenericImageName = "image.jpg";
-    private const string GenericDocumentName = "document";
 
     /// <summary>Spec 2026-10-14 decisión 12 y §11: cuánto vive la URL firmada con la que Meta descarga el adjunto de Instagram. Más
     /// que los 10 s del envío, por si Meta la baja después de responder.</summary>
@@ -144,7 +155,8 @@ public sealed class SendMediaMessageHandler(
         var prepared = await PrepareAsync(sender, stagingKey, staged, fileName, extension, cancellationToken);
 
         var caption = string.IsNullOrWhiteSpace(command.Caption) ? null : command.Caption.Trim();
-        var kind = OutboundMediaPolicy.IsImage(declared) ? MessageKind.Image : MessageKind.Document;
+        // Spec 2026-10-20 D3: el kind sale de la tabla. Un audio adjunto guarda su nombre: así se distingue de la nota de voz (null).
+        var kind = OutboundMediaPolicy.KindOf(declared);
         var draft = new OutboundDraft(
             Guid.CreateVersion7(), conversation.Id, command.TenantId, conversation.ConnectionId, clientId, Text: null, target.Member, permit.Now,
             permit.Quoted?.Id, permit.Quoted?.Wamid, kind, new OutboundMedia(prepared.MimeType, prepared.SizeBytes, prepared.Sha256Hex, prepared.FileName), Caption: caption);
@@ -197,9 +209,15 @@ public sealed class SendMediaMessageHandler(
                 var recipient = SendTarget.For(conversation.UserId, conversation.WaId);
                 result = mediaId is null
                     ? SendAudioMessageHandler.FromUploadFailure(prepared.Upload?.Failure)
-                    : kind == MessageKind.Image
-                        ? await meta.SendImageAsync(sender!, recipient, mediaId, caption, callback, permit.Quoted?.Wamid, CancellationToken.None)
-                        : await meta.SendDocumentAsync(sender!, recipient, mediaId, prepared.FileName, caption, callback, permit.Quoted?.Wamid, CancellationToken.None);
+                    : kind switch
+                    {
+                        MessageKind.Image => await meta.SendImageAsync(sender!, recipient, mediaId, caption, callback, permit.Quoted?.Wamid, CancellationToken.None),
+                        MessageKind.Video => await meta.SendVideoAsync(sender!, recipient, mediaId, caption, callback, permit.Quoted?.Wamid, CancellationToken.None),
+
+                        // D5: un audio adjunto no es nota de voz; el validador ya garantizó que no trae caption.
+                        MessageKind.Audio => await meta.SendAudioAsync(sender!, recipient, mediaId, voice: false, callback, permit.Quoted?.Wamid, CancellationToken.None),
+                        _ => await meta.SendDocumentAsync(sender!, recipient, mediaId, prepared.FileName, caption, callback, permit.Quoted?.Wamid, CancellationToken.None),
+                    };
             }
 
             answeredAt = _guards.UtcNow;
@@ -269,7 +287,7 @@ public sealed class SendMediaMessageHandler(
                 return new Prepared(mimeType, fileName, staged.SizeBytes, null, null, null);
             }
 
-            var upload = await meta.UploadMediaAsync(sender, whole, staged.SizeBytes, mimeType, GenericDocumentName + extension, cancellationToken);
+            var upload = await meta.UploadMediaAsync(sender, whole, staged.SizeBytes, mimeType, GenericNameOf(format) + extension, cancellationToken);
             return new Prepared(mimeType, fileName, staged.SizeBytes, whole.BytesRead == staged.SizeBytes ? whole.FinishHex() : null, null, upload);
         }
 
@@ -292,6 +310,13 @@ public sealed class SendMediaMessageHandler(
             ImageMimeType, Path.GetFileNameWithoutExtension(fileName) + ".jpg", compressed.Content.Length,
             Convert.ToHexStringLower(SHA256.HashData(compressed.Content)), compressed.Content, uploaded);
     }
+
+    private static string GenericNameOf(OutboundMediaFormat format) => OutboundMediaPolicy.KindOf(format) switch
+    {
+        MessageKind.Video => "video",
+        MessageKind.Audio => "audio",
+        _ => "document",
+    };
 
     private static MessagingDomainException UploadNotFound() =>
         new(MessagingErrorCodes.MediaUploadNotFound, "The upload does not exist, expired or was already used.");

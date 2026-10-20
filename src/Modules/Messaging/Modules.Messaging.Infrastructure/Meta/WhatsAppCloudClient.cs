@@ -74,8 +74,16 @@ internal sealed partial class WhatsAppCloudClient(
         PostMessageAsync(sender, MessagePayload(target, "text", new JsonObject { ["body"] = body }, callbackData, contextWamid), cancellationToken);
 
     public Task<SendResult> SendAudioAsync(
-        MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken) =>
-        PostMessageAsync(sender, MessagePayload(target, "audio", new JsonObject { ["id"] = mediaId, ["voice"] = true }, callbackData, contextWamid), cancellationToken);
+        MessagingSender sender, SendTarget target, string mediaId, bool voice, string callbackData, string? contextWamid, CancellationToken cancellationToken)
+    {
+        var content = new JsonObject { ["id"] = mediaId };
+        if (voice)
+        {
+            content["voice"] = true;
+        }
+
+        return PostMessageAsync(sender, MessagePayload(target, "audio", content, callbackData, contextWamid), cancellationToken);
+    }
 
     /// <summary>Spec 2026-10-11 §5.1: tope de páginas de <c>message_templates</c>. Con 100 por página son 1000 plantillas, el
     /// máximo que Meta deja tener por cuenta.</summary>
@@ -209,6 +217,18 @@ internal sealed partial class WhatsAppCloudClient(
         }
 
         return PostMessageAsync(sender, MessagePayload(target, "image", content, callbackData, contextWamid), cancellationToken);
+    }
+
+    public Task<SendResult> SendVideoAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string? caption, string callbackData, string? contextWamid, CancellationToken cancellationToken)
+    {
+        var content = new JsonObject { ["id"] = mediaId };
+        if (caption is not null)
+        {
+            content["caption"] = caption;
+        }
+
+        return PostMessageAsync(sender, MessagePayload(target, "video", content, callbackData, contextWamid), cancellationToken);
     }
 
     public Task<SendResult> SendDocumentAsync(

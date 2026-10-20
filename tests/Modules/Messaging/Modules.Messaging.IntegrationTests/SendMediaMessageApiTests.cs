@@ -247,6 +247,73 @@ public sealed class SendMediaMessageApiTests
         Assert.Equal([0xFF, 0xD8, 0xFF], stored.Bytes[..3]);
     }
 
+    private static byte[] Mp4() => [0, 0, 0, 0x18, .. "ftypmp42"u8, 0, 0, 0, 0, .. "isommp42"u8, 0, 0, 0, 8, .. "free"u8, .. new byte[64]];
+
+    private static byte[] Mp3() => [.. "ID3"u8, 4, 0, 0, 0, 0, 0, 0, 0xFF, 0xFB, 0x90, 0x64, .. new byte[64]];
+
+    // Spec 2026-10-20 D3 y D5: el video sale como type video con su texto y queda Video con su nombre.
+    [Fact]
+    public async Task AVideoAnswers201AsVideoWithItsNameAndCaption()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        var uploadId = Stage(f, "producto.mp4", Mp4());
+
+        var response = await ConfirmAsync(f, uploadId, "producto.mp4", caption: "Mira el producto");
+
+        Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync(Ct));
+        var message = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        var id = message.GetProperty("id").GetGuid();
+        Assert.Equal("Video", message.GetProperty("kind").GetString());
+        var media = message.GetProperty("media");
+        Assert.Equal(("video/mp4", "producto.mp4", "Mira el producto"),
+            (media.GetProperty("mimeType").GetString(), media.GetProperty("fileName").GetString(), media.GetProperty("caption").GetString()));
+        var upload = Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath == "/v24.0/111/media");
+        Assert.Contains("video/mp4", upload.Body, StringComparison.Ordinal);
+        Assert.Contains("video.mp4", upload.Body, StringComparison.Ordinal);
+        var send = Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath == "/v24.0/111/messages" && !IsReadReceipt(request));
+        Assert.Contains("\"video\":{\"id\":\"media.out\",\"caption\":\"Mira el producto\"}", send.Body, StringComparison.Ordinal);
+        Assert.Equal("3|producto.mp4|video/mp4", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT m.kind || '|' || mm.file_name || '|' || mm.mime_type FROM messaging.message_media mm JOIN messaging.messages m ON m.id = mm.message_id WHERE mm.message_id = @id",
+            ("id", id)));
+    }
+
+    // D5 y D7: un audio adjunto sale sin voice y guarda su nombre (la nota de voz guarda null); con texto es 422 en caption.
+    [Fact]
+    public async Task AFileAudioAnswers201AsAudioWithItsNameWithoutVoiceAndACaptionIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        var withCaption = await ConfirmAsync(f, Stage(f, "cancion.mp3", Mp3()), "cancion.mp3", caption: "Escúchalo");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, withCaption.StatusCode);
+        var problem = await ProblemAsync(withCaption);
+        Assert.Equal("validation.failed", problem.Code);
+        Assert.Equal(["caption"], problem.ErrorKeys);
+        Assert.Equal(0, MetaCalls(f.Factory.MetaHandler));
+
+        var response = await ConfirmAsync(f, Stage(f, "cancion.mp3", Mp3()), "cancion.mp3");
+
+        Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync(Ct));
+        var message = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal("Audio", message.GetProperty("kind").GetString());
+        var media = message.GetProperty("media");
+        Assert.Equal(("audio/mpeg", "cancion.mp3", JsonValueKind.Null),
+            (media.GetProperty("mimeType").GetString(), media.GetProperty("fileName").GetString(), media.GetProperty("caption").ValueKind));
+        var send = Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath == "/v24.0/111/messages" && !IsReadReceipt(request));
+        Assert.Contains("\"audio\":{\"id\":\"media.out\"}", send.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("voice", send.Body, StringComparison.Ordinal);
+        Assert.Equal("4|cancion.mp3", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT m.kind || '|' || mm.file_name FROM messaging.message_media mm JOIN messaging.messages m ON m.id = mm.message_id WHERE mm.message_id = @id",
+            ("id", message.GetProperty("id").GetGuid())));
+    }
+
     [Fact]
     public async Task ARepeatedClientIdReturnsTheStoredMessageWithoutSendingAgain()
     {

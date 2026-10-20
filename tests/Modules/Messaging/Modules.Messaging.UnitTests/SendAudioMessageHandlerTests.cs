@@ -37,7 +37,7 @@ public sealed class SendAudioMessageHandlerTests
         Assert.Equal("audio/ogg", upload.MimeType);
         Assert.Equal(Voice, upload.Content);
         var send = Assert.Single(bed.Meta.AudioSends);
-        Assert.Equal(("media.out", $"qep:{message.Id}", (string?)null), (send.MediaId, send.CallbackData, send.ContextWamid));
+        Assert.Equal(("media.out", $"qep:{message.Id}", (string?)null, true), (send.MediaId, send.CallbackData, send.ContextWamid, send.Voice));
         Assert.Equal((SendTarget)new SendToPhone(conversation.WaId!), send.Target);
         Assert.Empty(bed.Meta.Sends);
         var claim = Assert.Single(bed.Outbound.Claims);

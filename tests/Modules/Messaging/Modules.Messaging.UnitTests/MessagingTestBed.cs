@@ -387,7 +387,9 @@ internal sealed record SentDocument(MessagingSender Sender, SendTarget Target, s
 
 internal sealed record SentTemplate(MessagingSender Sender, SendTarget Target, TemplateSend Template, string CallbackData);
 
-internal sealed record SentAudio(MessagingSender Sender, SendTarget Target, string MediaId, string CallbackData, string? ContextWamid);
+internal sealed record SentAudio(MessagingSender Sender, SendTarget Target, string MediaId, string CallbackData, string? ContextWamid, bool Voice = true);
+
+internal sealed record SentVideo(MessagingSender Sender, SendTarget Target, string MediaId, string? Caption, string CallbackData, string? ContextWamid);
 
 internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
 {
@@ -466,6 +468,18 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
         return Task.FromResult(NextSend);
     }
 
+    public List<SentVideo> VideoSends { get; } = [];
+
+    /// <summary>Como <see cref="SendImageAsync"/>.</summary>
+    public Task<SendResult> SendVideoAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string? caption, string callbackData, string? contextWamid, CancellationToken cancellationToken)
+    {
+        VideoSends.Add(new SentVideo(sender, target, mediaId, caption, callbackData, contextWamid));
+        DuringSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(NextSend);
+    }
+
     /// <summary>Como <see cref="SendImageAsync"/>.</summary>
     public Task<SendResult> SendDocumentAsync(
         MessagingSender sender, SendTarget target, string mediaId, string fileName, string? caption, string callbackData, string? contextWamid,
@@ -479,9 +493,9 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
 
     /// <summary>Como <see cref="SendTextAsync"/>: devuelve <see cref="NextSend"/> y corre <see cref="DuringSend"/>.</summary>
     public Task<SendResult> SendAudioAsync(
-        MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken)
+        MessagingSender sender, SendTarget target, string mediaId, bool voice, string callbackData, string? contextWamid, CancellationToken cancellationToken)
     {
-        AudioSends.Add(new SentAudio(sender, target, mediaId, callbackData, contextWamid));
+        AudioSends.Add(new SentAudio(sender, target, mediaId, callbackData, contextWamid, voice));
         DuringSend?.Invoke();
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(NextSend);

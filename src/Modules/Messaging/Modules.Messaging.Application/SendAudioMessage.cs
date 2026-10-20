@@ -145,7 +145,7 @@ public sealed class SendAudioMessageHandler(
                 result = mediaId is null
                     ? FromUploadFailure(upload.Failure)
                     : await meta.SendAudioAsync(
-                        sender!, SendTarget.For(conversation.UserId, conversation.WaId), mediaId, SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D"),
+                        sender!, SendTarget.For(conversation.UserId, conversation.WaId), mediaId, voice: true, SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D"),
                         permit.Quoted?.Wamid, CancellationToken.None);
             }
 

@@ -21,6 +21,11 @@ public sealed class SendMediaMessageHandlerTests
     private static readonly byte[] Ole = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 7, 7];
     private static readonly byte[] Exe = [0x4D, 0x5A, 0x90, 0x00, 3, 0, 0, 0, 4];
 
+    // Spec 2026-10-20: cabeceras reales, como las del sniffer, con algo de cuerpo detrás.
+    private static readonly byte[] Mp4 = [0, 0, 0, 0x18, .. "ftypmp42"u8, 0, 0, 0, 0, .. "isommp42"u8, 0, 0, 0, 8, .. "free"u8, .. new byte[40]];
+    private static readonly byte[] M4a = [0, 0, 0, 0x18, .. "ftypM4A "u8, 0, 0, 2, 0, .. "isomM4A "u8, 0, 0, 0, 8, .. "free"u8, .. new byte[40]];
+    private static readonly byte[] Mp3 = [.. "ID3"u8, 4, 0, 0, 0, 0, 0, 0, 0xFF, 0xFB, 0x90, 0x64, .. new byte[60]];
+
     private sealed record Staged(ConversationRow Conversation, Guid UploadId, string StagingKey);
 
     private static Staged Prepare(MessagingTestBed bed, string fileName, byte[] bytes, bool assigned = true)
@@ -461,5 +466,104 @@ public sealed class SendMediaMessageHandlerTests
 
         Assert.Equal("Sent", message.Status);
         Assert.Equal([CancellationToken.None], bed.Store.DeleteTokens);
+    }
+
+    // Spec 2026-10-20 D3 y D5: un video va intacto por la subida de documentos, sale como type video con su texto y queda Video.
+    [Fact]
+    public async Task AVideoTravelsIntactAndIsSentAsAVideoWithItsCaption()
+    {
+        var bed = new MessagingTestBed();
+        var staged = Prepare(bed, "Producto.mp4", Mp4);
+        bed.Meta.NextUpload = new MessagingGraphResult<string>("media.vid", null);
+        bed.Meta.NextSend = new SendResult(SendOutcome.Sent, "wamid.vid", null, null);
+
+        var message = await bed.SendMediaHandler().HandleAsync(Command(bed, staged, "Producto.mp4", "Mira el producto"), Ct);
+
+        Assert.Equal(("Video", "Sent"), (message.Kind, message.Status));
+        Assert.Equal(new MediaDto($"/api/v1/tenants/{bed.TenantId}/messaging/media/{message.Id}", "video/mp4", "Producto.mp4", "Mira el producto"), message.Media);
+        var upload = Assert.Single(bed.Meta.StreamUploads);
+        Assert.Equal(Mp4, upload.Content);
+        Assert.Equal(((long)Mp4.Length, "video/mp4", "video.mp4"), (upload.DeclaredLength, upload.MimeType, upload.FileName));
+        var send = Assert.Single(bed.Meta.VideoSends);
+        Assert.Equal(("media.vid", "Mira el producto", $"qep:{message.Id}"), (send.MediaId, send.Caption, send.CallbackData));
+        Assert.Empty(bed.Meta.DocumentSends);
+        Assert.Empty(bed.Meta.ImageSends);
+        var claim = Assert.Single(bed.Outbound.Claims);
+        Assert.Equal((MessageKind.Video, "Mira el producto"), (claim.Draft.Kind, claim.Draft.Caption));
+        Assert.Equal(new OutboundMedia("video/mp4", Mp4.Length, Convert.ToHexStringLower(SHA256.HashData(Mp4)), "Producto.mp4"), claim.Draft.Media);
+        Assert.Equal((staged.StagingKey, FinalKeyOf(bed, claim), FakeUploadStaging.ETag), Assert.Single(bed.Staging.Promoted));
+    }
+
+    // D5 y D13 del frontend: un audio adjunto sale sin voice y guarda su nombre; la nota de voz guarda null, así se distinguen.
+    [Theory]
+    [InlineData("Llamada.m4a", "audio/mp4", "audio.m4a")]
+    [InlineData("Canción.mp3", "audio/mpeg", "audio.mp3")]
+    public async Task AFileAudioIsSentWithoutTheVoiceFlagAndKeepsItsFileName(string fileName, string mimeType, string multipartName)
+    {
+        var bed = new MessagingTestBed();
+        var bytes = fileName.EndsWith(".m4a", StringComparison.Ordinal) ? M4a : Mp3;
+        var staged = Prepare(bed, fileName, bytes);
+        bed.Meta.NextUpload = new MessagingGraphResult<string>("media.aud", null);
+
+        var message = await bed.SendMediaHandler().HandleAsync(Command(bed, staged, fileName), Ct);
+
+        Assert.Equal(("Audio", "Sent"), (message.Kind, message.Status));
+        Assert.Equal(new MediaDto($"/api/v1/tenants/{bed.TenantId}/messaging/media/{message.Id}", mimeType, fileName, null), message.Media);
+        Assert.Equal((mimeType, multipartName), (Assert.Single(bed.Meta.StreamUploads).MimeType, bed.Meta.StreamUploads[0].FileName));
+        var send = Assert.Single(bed.Meta.AudioSends);
+        Assert.Equal(("media.aud", false), (send.MediaId, send.Voice));
+        var claim = Assert.Single(bed.Outbound.Claims);
+        Assert.Equal((MessageKind.Audio, (string?)null, fileName), (claim.Draft.Kind, claim.Draft.Caption, claim.Draft.Media!.FileName));
+    }
+
+    // D9: el backend no mira el códec; si Meta rechaza el video, el mensaje queda Failed con el código de Meta, como un documento.
+    [Fact]
+    public async Task AVideoThatMetaRejectsIsFailedWithItsCode()
+    {
+        var bed = new MessagingTestBed();
+        var staged = Prepare(bed, "hevc.mp4", Mp4);
+        bed.Meta.NextSend = new SendResult(SendOutcome.GraphError, null, 131053, "Media upload error");
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => bed.SendMediaHandler().HandleAsync(Command(bed, staged, "hevc.mp4"), Ct));
+
+        Assert.Equal(MessagingErrorCodes.MessageRejected, error.Code);
+        Assert.Equal("committed-failed:131053", Assert.Single(bed.Outbound.Claims).Outcome);
+        Assert.True(bed.Store.Objects.ContainsKey(staged.StagingKey));
+    }
+
+    // D6: en Instagram el video y el audio van por URL firmada con su attachment.type.
+    [Theory]
+    [InlineData("Producto.mp4", "video", "Video")]
+    [InlineData("Llamada.m4a", "audio", "Audio")]
+    [InlineData("Canción.mp3", "audio", "Audio")]
+    public async Task OnInstagramAVideoOrAnAudioGoesByASignedUrlWithItsAttachmentType(string fileName, string attachmentType, string kind)
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1, assignedTo: bed.MemberId, userId: "1789", waId: null, channel: ConversationChannel.Instagram);
+        var uploadId = Guid.CreateVersion7();
+        var bytes = fileName.EndsWith(".mp4", StringComparison.Ordinal) ? Mp4 : fileName.EndsWith(".m4a", StringComparison.Ordinal) ? M4a : Mp3;
+        var staged = new Staged(conversation, uploadId, bed.Stage(conversation.Id, uploadId, fileName, bytes));
+        bed.Instagram.NextSend = new SendResult(SendOutcome.Sent, "mid.1", null, null);
+
+        var message = await bed.SendMediaHandler().HandleAsync(Command(bed, staged, fileName), Ct);
+
+        Assert.Equal((kind, "Sent", fileName), (message.Kind, message.Status, message.Media!.FileName));
+        var sent = Assert.Single(bed.Instagram.SentAttachments);
+        Assert.Equal(("1789", attachmentType), (sent.RecipientId, sent.Type));
+        Assert.Empty(bed.Meta.StreamUploads);
+    }
+
+    // D2: el tope del canal también se mide al confirmar, sobre el objeto real.
+    [Fact]
+    public async Task AVideoOverTheWhatsAppLimitIsTooLargeAtConfirmation()
+    {
+        var bed = new MessagingTestBed();
+        var staged = Prepare(bed, "largo.mp4", Mp4);
+        bed.Staging.StatSize = 16L * 1024 * 1024 + 1;
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => bed.SendMediaHandler().HandleAsync(Command(bed, staged, "largo.mp4"), Ct));
+
+        Assert.Equal(MessagingErrorCodes.MediaTooLarge, error.Code);
+        Assert.Empty(bed.Meta.StreamUploads);
     }
 }

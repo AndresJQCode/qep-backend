@@ -53,4 +53,24 @@ public sealed class SendMediaMessageValidatorTests
     [Fact]
     public void AFileNameLongerThanTheColumnFailsOnFileName() =>
         Assert.Equal(["fileName"], KeysOf(Command(fileName: new string('a', 253) + ".jpg")));
+
+    // Spec 2026-10-20 D7: WhatsApp no admite texto en audio y en Instagram no viaja: un audio con texto es 422 en caption.
+    [Theory]
+    [InlineData("a.mp3")]
+    [InlineData("a.m4a")]
+    [InlineData("a.AAC")]
+    [InlineData("a.amr")]
+    [InlineData("a.ogg")]
+    public void AnAudioWithACaptionFailsOnCaption(string fileName)
+    {
+        Assert.Equal(["caption"], KeysOf(Command(fileName: fileName, caption: "Escúchalo")));
+        Assert.True(new SendMediaMessageValidator().Validate(Command(fileName: fileName)).IsValid);
+        Assert.True(new SendMediaMessageValidator().Validate(Command(fileName: fileName, caption: "  ")).IsValid);
+    }
+
+    [Theory]
+    [InlineData("a.mp4")]
+    [InlineData("a.3gp")]
+    public void AVideoAcceptsACaption(string fileName) =>
+        Assert.True(new SendMediaMessageValidator().Validate(Command(fileName: fileName, caption: "Mira el producto")).IsValid);
 }

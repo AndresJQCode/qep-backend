@@ -68,10 +68,16 @@ public interface IWhatsAppCloudClient
         MessagingSender sender, SendTarget target, string mediaId, string fileName, string? caption, string callbackData, string? contextWamid,
         CancellationToken cancellationToken);
 
-    /// <summary>Spec 2026-10-11 §6.4: <c>type: "audio"</c> con <c>voice: true</c>, para que llegue como nota de voz.
-    /// Devuelve el mismo <see cref="SendResult"/> que el texto (D-V4: el nombre no se cambia en este trabajo).</summary>
+    /// <summary>Spec 2026-10-20 D5: <c>type: "video"</c>, como la imagen; <paramref name="caption"/> y <paramref name="contextWamid"/>
+    /// sólo viajan si vienen.</summary>
+    Task<SendResult> SendVideoAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string? caption, string callbackData, string? contextWamid, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-11 §6.4: <c>type: "audio"</c>. Con <paramref name="voice"/> viaja <c>voice: true</c> y llega como nota de
+    /// voz; sin él (un audio adjunto como archivo, spec 2026-10-20 D5) la clave no viaja y WhatsApp lo muestra como archivo. Sin
+    /// <c>caption</c>: WhatsApp no lo admite en audio. Devuelve el mismo <see cref="SendResult"/> que el texto.</summary>
     Task<SendResult> SendAudioAsync(
-        MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken);
+        MessagingSender sender, SendTarget target, string mediaId, bool voice, string callbackData, string? contextWamid, CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-11 §5.1: <c>GET /{waba_id}/message_templates</c> con los campos que lee el normalizador, de a 100 y
     /// siguiendo <c>paging.next</c> hasta 10 páginas. Devuelve cada plantilla tal cual la mandó Meta (ya clonada, sin ligar al

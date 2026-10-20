@@ -199,7 +199,7 @@ public sealed class WhatsAppCloudClientTests
         var client = new WhatsAppCloudClient(factory, Options.Create(new MessagingMetaOptions()), NullLogger<WhatsAppCloudClient>.Instance);
 
         await client.UploadMediaAsync(new MessagingSender("111", "token"), Audio, "audio/ogg", TestContext.Current.CancellationToken);
-        await client.SendAudioAsync(new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.123", "qep:x", null, TestContext.Current.CancellationToken);
+        await client.SendAudioAsync(new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.123", voice: true, "qep:x", null, TestContext.Current.CancellationToken);
 
         Assert.Equal(["messaging.meta-graph-upload", "messaging.meta-graph"], factory.Names);
     }
@@ -420,7 +420,7 @@ public sealed class WhatsAppCloudClientTests
         using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"messages":[{"id":"wamid.voice"}]}""");
 
         var result = await ClientFor(handler).SendAudioAsync(
-            new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.1", "qep:x", null, TestContext.Current.CancellationToken);
+            new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.1", voice: true, "qep:x", null, TestContext.Current.CancellationToken);
 
         Assert.Equal((SendOutcome.Sent, "wamid.voice"), (result.Outcome, result.Wamid));
         Assert.Equal("/v24.0/111/messages", handler.Path);
@@ -439,7 +439,7 @@ public sealed class WhatsAppCloudClientTests
         using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"messages":[{"id":"wamid.voice"}]}""");
 
         await ClientFor(handler).SendAudioAsync(
-            new MessagingSender("111", "token"), new SendToPhone("573001234567"), "media.1", "qep:x", "wamid.quoted", TestContext.Current.CancellationToken);
+            new MessagingSender("111", "token"), new SendToPhone("573001234567"), "media.1", voice: true, "qep:x", "wamid.quoted", TestContext.Current.CancellationToken);
 
         Assert.Contains("\"to\":\"573001234567\"", handler.Body, StringComparison.Ordinal);
         Assert.DoesNotContain("\"recipient\"", handler.Body, StringComparison.Ordinal);
@@ -452,8 +452,56 @@ public sealed class WhatsAppCloudClientTests
         using var handler = new ScriptedHandler(HttpStatusCode.BadRequest, """{"error":{"code":131053,"error_user_title":"Media upload error"}}""");
 
         var result = await ClientFor(handler).SendAudioAsync(
-            new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.1", "qep:x", null, TestContext.Current.CancellationToken);
+            new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.1", voice: true, "qep:x", null, TestContext.Current.CancellationToken);
 
         Assert.Equal(new SendResult(SendOutcome.GraphError, null, 131053, "Media upload error"), result);
+    }
+
+    // Spec 2026-10-20 D5: un audio adjunto como archivo va sin voice, así WhatsApp lo muestra como archivo y no como nota de voz.
+    [Fact]
+    public async Task AFileAudioGoesAsAudioWithoutTheVoiceFlag()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"messages":[{"id":"wamid.audio"}]}""");
+
+        var result = await ClientFor(handler).SendAudioAsync(
+            new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.a", voice: false, "qep:x", "wamid.quoted", TestContext.Current.CancellationToken);
+
+        Assert.Equal((SendOutcome.Sent, "wamid.audio"), (result.Outcome, result.Wamid));
+        Assert.Contains("\"type\":\"audio\"", handler.Body, StringComparison.Ordinal);
+        Assert.Contains("\"audio\":{\"id\":\"media.a\"}", handler.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"voice\"", handler.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"caption\"", handler.Body, StringComparison.Ordinal);
+        Assert.Contains("\"context\":{\"message_id\":\"wamid.quoted\"}", handler.Body, StringComparison.Ordinal);
+    }
+
+    // D5: type video, como la imagen; el texto le llega al contacto.
+    [Fact]
+    public async Task AVideoGoesWithItsMediaIdCaptionAndQuotedContext()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.OK, """{"messages":[{"id":"wamid.vid"}]}""");
+
+        var result = await ClientFor(handler).SendVideoAsync(
+            new MessagingSender("111", "token"), new SendToUserId("CO.1"), "media.vid", "El producto", "qep:x", "wamid.quoted", TestContext.Current.CancellationToken);
+
+        Assert.Equal((SendOutcome.Sent, "wamid.vid"), (result.Outcome, result.Wamid));
+        Assert.Equal("/v24.0/111/messages", handler.Path);
+        Assert.Contains("\"type\":\"video\"", handler.Body, StringComparison.Ordinal);
+        Assert.Contains("\"video\":{\"id\":\"media.vid\",\"caption\":\"El producto\"}", handler.Body, StringComparison.Ordinal);
+        Assert.Contains("\"biz_opaque_callback_data\":\"qep:x\"", handler.Body, StringComparison.Ordinal);
+        Assert.Contains("\"context\":{\"message_id\":\"wamid.quoted\"}", handler.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AVideoWithoutCaptionOrQuoteCarriesNeitherKeyAndARejectionKeepsTheGraphCode()
+    {
+        using var handler = new ScriptedHandler(HttpStatusCode.BadRequest, """{"error":{"code":131053,"error_user_title":"Media upload error"}}""");
+
+        var result = await ClientFor(handler).SendVideoAsync(
+            new MessagingSender("111", "token"), new SendToPhone("573001234567"), "media.vid", null, "qep:x", null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new SendResult(SendOutcome.GraphError, null, 131053, "Media upload error"), result);
+        Assert.Contains("\"video\":{\"id\":\"media.vid\"}", handler.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"caption\"", handler.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"context\"", handler.Body, StringComparison.Ordinal);
     }
 }
