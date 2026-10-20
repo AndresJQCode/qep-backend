@@ -59,7 +59,8 @@ public sealed record ShopifyShippingLine(string? Code, string? Title, decimal Di
 /// Todo nulo en un pedido sin cliente.</summary>
 public sealed record ShopifyBuyer(string? FirstName, string? LastName, string? Email, string? Phone);
 
-/// <summary>La dirección de envío. <see cref="ProvinceCode"/> es ISO 3166-2 sin el prefijo del país (V-4).</summary>
+/// <summary>La dirección de envío. <see cref="ProvinceCode"/> es ISO 3166-2 sin el prefijo del país (V-4). <see cref="Company"/> es el
+/// campo «Empresa» del checkout, que muchas tiendas reusan para pedir el documento (<see cref="ShopifyDocumentSources"/>).</summary>
 public sealed record ShopifyAddress(
     string? Name,
     string? Address1,
@@ -68,4 +69,5 @@ public sealed record ShopifyAddress(
     string? Province,
     string? ProvinceCode,
     string? CountryCode,
-    string? Phone);
+    string? Phone,
+    string? Company = null);

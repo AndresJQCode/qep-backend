@@ -42,6 +42,26 @@ public sealed class ShopifyCustomerResolverTests
             world.Customers.Log);
     }
 
+    // La clave es la ruta exacta: `shipping_address.company` lee el campo de la dirección (el que los checkouts usan para pedir el
+    // documento) y una ruta que no existe en el pedido no encuentra nada. La clave a secas no cae a la dirección.
+    [Theory]
+    [InlineData("shipping_address.company", "1020304050")]
+    [InlineData("company", null)]
+    [InlineData("shipping_address.address2", null)]
+    public void DocumentKeyIsTheExactPath(string key, string? expected)
+    {
+        var store = ConfiguredStore(documentKey: key);
+        var snapshot = Order(address: Medellin with { Company = " 1020304050 " });
+
+        var document = ShopifyCustomerResolver.DocumentOf(store, snapshot);
+
+        Assert.Equal(expected, document?.Number);
+    }
+
+    [Fact]
+    public void DocumentKeyOfTheAddressWithoutAddressFindsNothing() =>
+        Assert.Null(ShopifyCustomerResolver.DocumentOf(ConfiguredStore(documentKey: "shipping_address.company"), Order()));
+
     [Fact]
     public async Task SearchStopsAtTheFirstMatch()
     {

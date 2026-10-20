@@ -37,13 +37,13 @@ public sealed class ShopifyCustomerResolver(
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(snapshot);
-        var number = Attribute(snapshot.Attributes, store.DocumentAttributeKey)?.Trim();
+        var number = ShopifyDocumentSources.Read(snapshot, store.DocumentAttributeKey)?.Trim();
         if (string.IsNullOrEmpty(number) || number.Length > DocumentNumberMaxLength)
         {
             return null;
         }
 
-        var type = ShopifyDocumentTypes.Normalize(Attribute(snapshot.Attributes, store.DocumentTypeAttributeKey))
+        var type = ShopifyDocumentTypes.Normalize(ShopifyDocumentSources.Attribute(snapshot.Attributes, store.DocumentTypeAttributeKey))
             ?? ShopifyDocumentTypes.Normalize(store.DefaultIdentificationType)
             ?? ShopifyStore.DefaultIdentificationTypeCode;
         return new ShopifyBuyerDocument(type, number);
@@ -206,20 +206,6 @@ public sealed class ShopifyCustomerResolver(
     {
         var line = string.Join(' ', new[] { address.Address1, address.Address2 }.Select(Blank).OfType<string>());
         return line.Length > 0 ? line : null;
-    }
-
-    private static string? Attribute(IReadOnlyDictionary<string, string> attributes, string key)
-    {
-        if (attributes.TryGetValue(key, out var exact))
-        {
-            return exact;
-        }
-
-        var wanted = key.Trim();
-        return attributes
-            .Where(pair => string.Equals(pair.Key.Trim(), wanted, StringComparison.OrdinalIgnoreCase))
-            .Select(pair => pair.Value)
-            .FirstOrDefault();
     }
 
     private static string? Blank(string? value)
