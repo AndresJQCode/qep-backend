@@ -42,6 +42,13 @@ public sealed class CreateMediaUploadSessionTests
     [InlineData("a.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 1)]
     [InlineData("a.xls", "application/vnd.ms-excel", 1)]
     [InlineData("a.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 1)]
+    [InlineData("a.mp4", "video/mp4", 16 * Mb)]
+    [InlineData("a.3gp", "video/3gpp", 16 * Mb)]
+    [InlineData("a.mp3", "audio/mpeg", 16 * Mb)]
+    [InlineData("a.m4a", "audio/mp4", 16 * Mb)]
+    [InlineData("a.aac", "audio/aac", 16 * Mb)]
+    [InlineData("a.amr", "audio/amr", 16 * Mb)]
+    [InlineData("a.ogg", "audio/ogg", 16 * Mb)]
     public async Task EveryAllowedTypeAtItsLimitIsAccepted(string fileName, string mimeType, long sizeBytes)
     {
         var bed = new MessagingTestBed();
@@ -54,7 +61,10 @@ public sealed class CreateMediaUploadSessionTests
 
     [Theory]
     [InlineData("a.webp", "image/webp", 1 * Mb)]
-    [InlineData("a.mp4", "video/mp4", 1 * Mb)]
+    [InlineData("a.mov", "video/quicktime", 1 * Mb)]
+    [InlineData("a.wav", "audio/wav", 1 * Mb)]
+    [InlineData("a.mp4", "audio/mp4", 1 * Mb)]
+    [InlineData("a.m4a", "video/mp4", 1 * Mb)]
     [InlineData("a.exe", "application/octet-stream", 1 * Mb)]
     [InlineData("a.pdf", "image/png", 1 * Mb)]
     [InlineData("a.jpg", "application/pdf", 1 * Mb)]
@@ -74,6 +84,8 @@ public sealed class CreateMediaUploadSessionTests
     [Theory]
     [InlineData("a.jpg", "image/jpeg", 25 * Mb + 1)]
     [InlineData("a.pdf", "application/pdf", 100 * Mb + 1)]
+    [InlineData("a.mp4", "video/mp4", 16 * Mb + 1)]
+    [InlineData("a.mp3", "audio/mpeg", 16 * Mb + 1)]
     public async Task ABiggerFileThanItsLimitIsRejectedBeforeSigning(string fileName, string mimeType, long sizeBytes)
     {
         var bed = new MessagingTestBed();
@@ -83,6 +95,42 @@ public sealed class CreateMediaUploadSessionTests
             bed.CreateMediaUploadSessionHandler().HandleAsync(Command(bed, conversation.Id, fileName, mimeType, sizeBytes), Ct));
 
         Assert.Equal(MessagingErrorCodes.MediaTooLarge, error.Code);
+        Assert.Empty(bed.Staging.Signed);
+    }
+
+    // Spec 2026-10-20 D2: el tope y los formatos son los del canal, así que el 422 llega antes del PUT y no al confirmar.
+    [Theory]
+    [InlineData("a.mp4", "video/mp4", 25 * Mb)]
+    [InlineData("a.mp3", "audio/mpeg", 25 * Mb)]
+    [InlineData("a.m4a", "audio/mp4", 25 * Mb)]
+    [InlineData("a.aac", "audio/aac", 25 * Mb)]
+    [InlineData("a.pdf", "application/pdf", 25 * Mb)]
+    public async Task InstagramAcceptsItsFormatsUpToItsOwnLimit(string fileName, string mimeType, long sizeBytes)
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1, userId: "1789", waId: null, channel: ConversationChannel.Instagram);
+
+        var session = await bed.CreateMediaUploadSessionHandler().HandleAsync(Command(bed, conversation.Id, fileName, mimeType, sizeBytes), Ct);
+
+        Assert.NotEqual(Guid.Empty, session.UploadId);
+    }
+
+    [Theory]
+    [InlineData("a.pdf", "application/pdf", 25 * Mb + 1, MessagingErrorCodes.MediaTooLarge)]
+    [InlineData("a.mp4", "video/mp4", 25 * Mb + 1, MessagingErrorCodes.MediaTooLarge)]
+    [InlineData("a.3gp", "video/3gpp", 1 * Mb, MessagingErrorCodes.MediaUnsupportedFormat)]
+    [InlineData("a.amr", "audio/amr", 1 * Mb, MessagingErrorCodes.MediaUnsupportedFormat)]
+    [InlineData("a.ogg", "audio/ogg", 1 * Mb, MessagingErrorCodes.MediaUnsupportedFormat)]
+    [InlineData("a.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 1 * Mb, MessagingErrorCodes.MediaUnsupportedFormat)]
+    public async Task InstagramRejectsWhatItDoesNotReceiveOrIsOverItsLimitBeforeSigning(string fileName, string mimeType, long sizeBytes, string expected)
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1, userId: "1789", waId: null, channel: ConversationChannel.Instagram);
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() =>
+            bed.CreateMediaUploadSessionHandler().HandleAsync(Command(bed, conversation.Id, fileName, mimeType, sizeBytes), Ct));
+
+        Assert.Equal(expected, error.Code);
         Assert.Empty(bed.Staging.Signed);
     }
 

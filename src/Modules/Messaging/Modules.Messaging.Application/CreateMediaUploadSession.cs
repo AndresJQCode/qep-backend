@@ -63,18 +63,20 @@ public sealed class CreateMediaUploadSessionHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var target = await _guards.LoadAsync(command.TenantId, command.ConversationId, cancellationToken);
 
-        // La extensión decide el formato y el mime tiene que ser el suyo: un .pdf declarado image/png no se firma.
+        // La extensión decide el formato y el mime tiene que ser el suyo: un .pdf declarado image/png no se firma. Spec 2026-10-20 D2:
+        // formatos y tope son los del canal, para que el 422 llegue antes del PUT y no después de subir 25 MB.
         var extension = OutboundMediaPolicy.ExtensionOf(command.FileName!);
+        var channel = target.Conversation.Channel;
         if (OutboundMediaPolicy.FormatOf(extension) is not { } format
-            || !string.Equals(OutboundMediaPolicy.MimeTypeOf(format), command.MimeType!.Trim(), StringComparison.OrdinalIgnoreCase))
+            || !string.Equals(OutboundMediaPolicy.MimeTypeOf(format), command.MimeType!.Trim(), StringComparison.OrdinalIgnoreCase)
+            || OutboundMediaPolicy.MaxBytesOf(format, channel) is not { } maxBytes)
         {
-            throw new MessagingDomainException(
-                MessagingErrorCodes.MediaUnsupportedFormat, "Only JPEG and PNG images and PDF, Word and Excel documents can be sent.");
+            throw new MessagingDomainException(MessagingErrorCodes.MediaUnsupportedFormat, "The channel does not accept this file type as is.");
         }
 
-        if (command.SizeBytes > OutboundMediaPolicy.MaxBytesOf(format))
+        if (command.SizeBytes > maxBytes)
         {
-            throw new MessagingDomainException(MessagingErrorCodes.MediaTooLarge, "The file is bigger than WhatsApp allows for its type.");
+            throw new MessagingDomainException(MessagingErrorCodes.MediaTooLarge, "The file is bigger than the channel allows for its type.");
         }
 
         var uploadId = Guid.CreateVersion7();

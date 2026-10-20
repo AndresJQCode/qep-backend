@@ -1,6 +1,7 @@
 namespace Modules.Messaging.Application;
 
-/// <summary>Formatos de adjunto que el asesor puede enviar (decisión del owner 2026-10-12). webp queda fuera: Meta lo trata como sticker.</summary>
+/// <summary>Formatos de adjunto que el asesor puede enviar (decisión del owner 2026-10-12; video y audio, spec 2026-10-20). webp queda
+/// fuera: Meta lo trata como sticker. Qué canal acepta cada uno y hasta cuánto, en <see cref="OutboundMediaPolicy"/>.</summary>
 public enum OutboundMediaFormat
 {
     Jpeg,
@@ -10,6 +11,13 @@ public enum OutboundMediaFormat
     Xls,
     Docx,
     Xlsx,
+    Mp4,
+    ThreeGp,
+    Mp3,
+    M4a,
+    Aac,
+    Amr,
+    Ogg,
 }
 
 /// <summary>

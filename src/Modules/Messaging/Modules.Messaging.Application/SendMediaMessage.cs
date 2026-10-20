@@ -99,14 +99,14 @@ public sealed class SendMediaMessageHandler(
         var extension = OutboundMediaPolicy.ExtensionOf(fileName);
         if (OutboundMediaPolicy.FormatOf(extension) is not { } declared)
         {
-            throw new MessagingDomainException(MessagingErrorCodes.MediaUnsupportedFormat, "Only JPEG and PNG images and PDF, Word and Excel documents can be sent.");
+            throw new MessagingDomainException(MessagingErrorCodes.MediaUnsupportedFormat, "No channel accepts this file type as is.");
         }
 
-        // Spec 2026-10-14 decisión 12: Instagram no acepta Word ni Excel.
+        // Spec 2026-10-14 decisión 12 y spec 2026-10-20 D2: Instagram no acepta Word, Excel, 3GP, AMR ni OGG.
         var channel = conversation.Channel;
         if (!OutboundMediaPolicy.IsAllowed(declared, channel))
         {
-            throw new MessagingDomainException(MessagingErrorCodes.MediaUnsupportedFormat, "Instagram only accepts JPEG and PNG images and PDF documents.");
+            throw new MessagingDomainException(MessagingErrorCodes.MediaUnsupportedFormat, "The channel does not accept this file type as is.");
         }
 
         var permit = await _guards.AdmitAsync(command.TenantId, target, command.ReplyTo, cancellationToken);
@@ -122,8 +122,8 @@ public sealed class SendMediaMessageHandler(
                 : throw UploadNotFound();
         }
 
-        // R10: el PUT prefirmado no impone tope; el stat sobre el objeto real manda.
-        if (staged.SizeBytes <= 0 || staged.SizeBytes > OutboundMediaPolicy.MaxBytesOf(declared, channel))
+        // R10: el PUT prefirmado no impone tope; el stat sobre el objeto real manda. IsAllowed ya garantizó el tope del canal.
+        if (staged.SizeBytes <= 0 || staged.SizeBytes > OutboundMediaPolicy.MaxBytesOf(declared, channel)!.Value)
         {
             await DiscardAsync(stagingKey);
             throw new MessagingDomainException(MessagingErrorCodes.MediaTooLarge, "The file is bigger than the channel allows for its type.");
