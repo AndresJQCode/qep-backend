@@ -9,14 +9,14 @@ Archivo vivo: se actualiza al cerrar cada tarea o decisión. Las tareas detallad
 | --- | --- | --- |
 | Diseño | Aprobado por el owner (2026-10-20), en `develop` local, sin push | `ea383771` |
 | Plan backend | Escrito, en `develop` local, sin push; **ejecución: subagentes, en sesión nueva** | `e0d7756f` |
-| Implementación backend | No iniciada | — |
+| Implementación backend | En curso, rama `feature/variantes-producto` (worktree `../qep-backend-variantes`) | — |
 | Plan y trabajo de frontend | No iniciado (sale en la misma ventana que el backend) | — |
 
 ## Tareas del plan (backend)
 
 | # | Tarea | Estado |
 | --- | --- | --- |
-| 1 | Biblioteca de opciones (dominio) | Pendiente |
+| 1 | Biblioteca de opciones (dominio) | Hecha (`e0506006`) |
 | 2 | Variante, galería y reglas del agregado | Pendiente |
 | 3 | Persistencia y migración de datos de Catalog | Pendiente |
 | 4 | Biblioteca de opciones: casos de uso y API | Pendiente |
