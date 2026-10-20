@@ -20,7 +20,7 @@ Archivo vivo: se actualiza al cerrar cada tarea o decisión. Las tareas detallad
 | 2 | Variante, galería y reglas del agregado | Hecha (`31fb3098`, `04b26bfc`) |
 | 3 | Persistencia y migración de datos de Catalog | Hecha (`ba326a59`) |
 | 4 | Biblioteca de opciones: casos de uso y API | Hecha (`13d50f02`), pruebas escritas y sin ejecutar |
-| 5 | Producto con variantes: crear, ver, listar, editar | Pendiente |
+| 5 | Producto con variantes: crear, ver, listar, editar | Hecha (`852cd6c5`, `3f9497b9`), pruebas sin ejecutar |
 | 6 | Borrar o desactivar variantes (puerto de uso) | Pendiente |
 | 7 | Historial de precios y copia de escalas por variante | Pendiente |
 | 8 | Excel de productos por variante | Pendiente |
