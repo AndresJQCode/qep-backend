@@ -42,8 +42,8 @@ public sealed record ProductResponse(
     // Las opciones del producto en su orden, con sus nombres ya resueltos de la biblioteca.
     IReadOnlyList<ProductOptionResponse> Options,
     // **Todas** las variantes en orden de presentación, activas e inactivas: el formulario edita
-    // también las inactivas. Una guardada que el PUT omite se borra si no está en uso y se
-    // desactiva si lo está (spec §3.3); cada una trae CanDelete para que la pantalla lo anticipe.
+    // también las inactivas, y el PUT exige que vuelvan todas las guardadas salvo las que pide
+    // eliminar en DeletedVariantIds (spec §3.3, §6); cada una trae CanDelete para anticiparlo.
     IReadOnlyList<ProductVariantResponse> Variants,
     // La galería en orden; la primera es la principal.
     IReadOnlyList<ProductGalleryImageResponse> Gallery,
@@ -80,10 +80,12 @@ public sealed record ProductOptionValueResponse(Guid Id, string Name);
 /// principal del producto (spec §3.3). Resuelta acá para que la pantalla no repita la regla.</param>
 /// <param name="CanDelete">Si el formulario puede ofrecer «Eliminar» en vez de «Desactivar»
 /// (spec §3.3): true cuando ninguna línea de cotización, pedido o venta del POS guarda esta
-/// variante. Viaja calculado porque desde la pantalla no se ven esas líneas. «Eliminar» es omitir
-/// la variante del PUT: el backend la borra si sigue sin uso y la desactiva si, entretanto, alguien
-/// la vendió (la respuesta lo muestra). Con false, omitirla la desactiva. No mira la regla de «al
-/// menos una variante activa»: esa la responde el PUT con su propio código.</param>
+/// variante. Viaja calculado porque desde la pantalla no se ven esas líneas. «Eliminar» es mandar
+/// su id en <c>UpdateProductRequest.DeletedVariantIds</c> (omitirla de <c>Variants</c> no borra:
+/// responde <c>missing_in_request</c>): el backend la borra si sigue sin uso y la desactiva si,
+/// entretanto, alguien la vendió (la respuesta lo muestra). Con false, pedir su borrado la
+/// desactiva. No mira la regla de «al menos una variante activa»: esa la responde el PUT con su
+/// propio código.</param>
 public sealed record ProductVariantResponse(
     Guid Id,
     string Name,
@@ -263,6 +265,14 @@ public sealed record CopyPriceScalesResponse(
 /// desde entonces, el PUT responde 412 <c>concurrency.conflict</c> en vez de pisar lo que guardó
 /// otra persona. Mismo nombre que el resto de los PUT del repositorio (notas, etiquetas,
 /// cotizaciones).</param>
+/// <param name="DeletedVariantIds">Las variantes guardadas que el usuario pidió eliminar (spec §3.3 y
+/// §6). Se borran si ninguna línea de cotización, pedido o venta del POS las guarda y se desactivan
+/// si alguna sí (la respuesta las trae inactivas). Una guardada que no viene en
+/// <c>Variants</c> ni acá responde 422 <c>catalog.variant.missing_in_request</c>: **omitir no
+/// borra**. Es BFF a propósito: la tabla de variantes llega a 2.048 filas y el formulario la
+/// pagina o virtualiza, así que una fila ausente puede ser una página que no se mandó, no una orden
+/// de borrar. Un id que además viene en <c>Variants</c> da <c>duplicated_in_request</c>; uno que no
+/// es de este producto, <c>catalog.variant.not_found</c>.</param>
 public sealed record UpdateProductRequest(
     long ExpectedVersion,
     string Name,
@@ -270,7 +280,8 @@ public sealed record UpdateProductRequest(
     Guid? TaxRateId,
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
-    IReadOnlyList<Guid>? Gallery);
+    IReadOnlyList<Guid>? Gallery,
+    IReadOnlyList<Guid>? DeletedVariantIds = null);
 
 public sealed record TaxRateDto(
     Guid Id,

@@ -232,7 +232,7 @@ public sealed class Product
         ArgumentNullException.ThrowIfNull(optionIds);
         ArgumentNullException.ThrowIfNull(variants);
         ArgumentNullException.ThrowIfNull(galleryFileIds);
-        var deleted = deletedVariantIds ?? [];
+        var deleted = (deletedVariantIds ?? []).ToHashSet();
 
         EnsureActive();
 
@@ -323,9 +323,11 @@ public sealed class Product
         IReadOnlyList<ProductVariantInput> variants,
         IReadOnlyCollection<Guid> deletedVariantIds)
     {
+        // Con conjuntos: hasta 2.048 variantes por lado, y Exists por cada id sería cuadrático.
+        var savedIds = _variants.Select(saved => saved.Id.Value).ToHashSet();
         foreach (var id in deletedVariantIds)
         {
-            if (!_variants.Exists(saved => saved.Id.Value == id))
+            if (!savedIds.Contains(id))
             {
                 throw new CatalogDomainException(
                     "catalog.variant.not_found",
@@ -348,7 +350,7 @@ public sealed class Product
                     "The same variant cannot come twice in the request.");
             }
 
-            if (!_variants.Exists(saved => saved.Id.Value == id))
+            if (!savedIds.Contains(id))
             {
                 throw new CatalogDomainException(
                     "catalog.variant.not_found",
@@ -356,7 +358,7 @@ public sealed class Product
             }
         }
 
-        if (_variants.Exists(saved => !requested.Contains(saved.Id.Value)))
+        if (savedIds.Any(id => !requested.Contains(id)))
         {
             throw new CatalogDomainException(
                 "catalog.variant.missing_in_request",

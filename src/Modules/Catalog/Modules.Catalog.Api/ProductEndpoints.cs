@@ -186,7 +186,8 @@ public static class ProductEndpoints
                 request.TaxRateId,
                 request.OptionIds,
                 request.Variants,
-                request.Gallery),
+                request.Gallery,
+                request.DeletedVariantIds),
             cancellationToken);
 
         return Results.Ok(ToResponse(product));

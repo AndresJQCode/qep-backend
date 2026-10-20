@@ -14,7 +14,8 @@ public sealed record UpdateProductCommand(
     Guid? TaxRateId,
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
-    IReadOnlyList<Guid>? Gallery) : ICommand<ProductDto>, IProductWriteCommand;
+    IReadOnlyList<Guid>? Gallery,
+    IReadOnlyList<Guid>? DeletedVariantIds = null) : ICommand<ProductDto>, IProductWriteCommand;
 
 // Mismas reglas que el POST, por inclusión y no por copia. Ver ProductWriteRules. El precio puede
 // faltar en una variante: ProductVariantChanges lo hereda (la suya, o la de la variante de la que
@@ -73,18 +74,22 @@ public sealed class UpdateProductHandler(
         await ProductImageResolver.ResolveGalleryAsync(
             imageLookup, command.TenantId, gallery, cancellationToken);
 
-        // Spec §3.3: una variante guardada que el cuerpo omite se borra si ninguna línea la vende y
-        // se desactiva si alguna sí. Primera comprobación, antes de abrir la transacción.
-        var requestedIds = command.Variants!
+        // Spec §3.3 y §6: borrar una variante es pedirlo por nombre en DeletedVariantIds. Una
+        // guardada que sólo falta del cuerpo no se toca: el agregado la rechaza con
+        // missing_in_request (con 2.048 filas paginadas, una página que no se mandó no es una orden
+        // de borrar). La pedida se borra si ninguna línea la vende y se desactiva si alguna sí.
+        var body = command.Variants!;
+        var requestedIds = body
             .Where(variant => variant.Id is not null)
             .Select(variant => variant.Id!.Value)
             .ToHashSet();
-        var absentIds = product.Variants
-            .Select(variant => variant.Id.Value)
-            .Where(id => !requestedIds.Contains(id))
-            .ToArray();
-        var usedBefore = await usageChecker.FindUsedAsync(command.TenantId, absentIds, cancellationToken);
-        var deletedIds = absentIds.Where(id => !usedBefore.Contains(id)).ToList();
+        var listed = command.DeletedVariantIds ?? [];
+        EnsureDeletable(product, listed, requestedIds);
+        var listedIds = listed.ToHashSet();
+
+        // Primera comprobación, antes de abrir la transacción.
+        var usedBefore = await usageChecker.FindUsedAsync(command.TenantId, listedIds, cancellationToken);
+        var deletedIds = listedIds.Where(id => !usedBefore.Contains(id)).ToHashSet();
 
         // La segunda comprobación y el borrado van en la misma transacción (Enfoque de revisión 3):
         // el adaptador corre sobre la conexión de Catalog, así que su consulta queda adentro. Una
@@ -95,14 +100,15 @@ public sealed class UpdateProductHandler(
         if (deletedIds.Count > 0)
         {
             var usedNow = await usageChecker.FindUsedAsync(command.TenantId, deletedIds, cancellationToken);
-            deletedIds.RemoveAll(usedNow.Contains);
+            deletedIds.ExceptWith(usedNow);
         }
 
-        var requests = command.Variants!
-            .Concat(product.Variants
-                .Where(variant => !requestedIds.Contains(variant.Id.Value) && !deletedIds.Contains(variant.Id.Value))
-                .Select(variant => KeptInactive(product, variant, gallery)))
+        // Las pedidas que están en uso siguen, inactivas. Van detrás del cuerpo mientras se validan
+        // —así Variants[i] es la fila i del cuerpo— y vuelven a su posición antes de aplicar.
+        var kept = product.Variants
+            .Where(variant => listedIds.Contains(variant.Id.Value) && !deletedIds.Contains(variant.Id.Value))
             .ToArray();
+        var requests = body.Concat(kept.Select(variant => KeptInactive(product, variant, gallery))).ToArray();
 
         var optionIds = command.OptionIds ?? [];
         // Las de antes también: proyectar los valores guardados necesita saber qué opción era cada
@@ -110,16 +116,24 @@ public sealed class UpdateProductHandler(
         var library = await ProductOptionLibrary.LoadAsync(
             optionRepository, command.TenantId, optionIds.Concat(product.OptionIds), cancellationToken);
 
-        var variants = ProductVariantChanges.Resolve(product, optionIds, requests, library);
+        IReadOnlyList<ProductVariantInput> variants;
+        try
+        {
+            variants = ProductVariantChanges.Resolve(product, optionIds, requests, library);
 
-        ProductVariantReferences.EnsureValid(product, optionIds, variants, library);
-        // Un intercambio de códigos entre dos variantes del mismo producto (A toma el de B y B el de
-        // A) pasa esta comprobación —los dos códigos son del propio producto— pero choca con
-        // IX_product_variants_tenant_code al guardar, porque PostgreSQL revisa el índice fila por
-        // fila y el índice no es diferible. Sale 422 catalog.product.code_taken aunque el estado
-        // final sea válido. No se resuelve acá (Tarea 3): el usuario lo hace en dos guardados.
-        await ProductVariantReferences.EnsureCodesAvailableAsync(
-            repository, command.TenantId, product, variants, cancellationToken);
+            ProductVariantReferences.EnsureValid(product, optionIds, variants, library);
+            // Un intercambio de códigos entre dos variantes del mismo producto (A toma el de B y B el
+            // de A) pasa esta comprobación —los dos códigos son del propio producto— pero choca con
+            // IX_product_variants_tenant_code al guardar, porque PostgreSQL revisa el índice fila por
+            // fila y el índice no es diferible. Sale 422 catalog.product.code_taken aunque el estado
+            // final sea válido. No se resuelve acá (Tarea 3): el usuario lo hace en dos guardados.
+            await ProductVariantReferences.EnsureCodesAvailableAsync(
+                repository, command.TenantId, product, variants, cancellationToken);
+        }
+        catch (CatalogDomainException exception) when (kept.Length > 0 && exception.FieldErrors.Count > 0)
+        {
+            throw PointAtDeletedVariantIds(exception, body.Count, kept, listed);
+        }
 
         var now = clock.UtcNow;
 
@@ -140,7 +154,7 @@ public sealed class UpdateProductHandler(
                 TaxRateId = taxRateId
             },
             optionIds,
-            variants,
+            InOriginalPositions(variants, body.Count, kept),
             gallery,
             now,
             deletedIds);
@@ -160,11 +174,35 @@ public sealed class UpdateProductHandler(
         return dtos[0];
     }
 
-    // Una variante en uso que el cuerpo omite: se queda, inactiva, con todo lo suyo. Sus valores y
-    // su precio van en null para que ProductVariantChanges los resuelva igual que en una guardada
-    // que vino (proyectados a las opciones nuevas, el precio como está). La foto se conserva si
-    // sigue en la galería del cuerpo; si no, se limpia, como cuando se quita la foto de la galería.
-    // Va al final del orden: el formulario no la mandó, así que no tiene posición que respetar.
+    // DeletedVariantIds sólo nombra variantes guardadas de este producto que no vienen en el cuerpo.
+    // El agregado repite las dos reglas; acá van antes porque un id que no es del producto nunca
+    // llegaría al agregado (no hay variante que borrar ni que desactivar) y se perdería en silencio.
+    private static void EnsureDeletable(Product product, IReadOnlyList<Guid> listed, HashSet<Guid> requestedIds)
+    {
+        var saved = product.Variants.Select(variant => variant.Id.Value).ToHashSet();
+        var seen = new HashSet<Guid>();
+        foreach (var id in listed)
+        {
+            if (!saved.Contains(id))
+            {
+                throw new CatalogDomainException(
+                    "catalog.variant.not_found",
+                    "The variant does not belong to this product.");
+            }
+
+            if (requestedIds.Contains(id) || !seen.Add(id))
+            {
+                throw new CatalogDomainException(
+                    "catalog.variant.duplicated_in_request",
+                    "The same variant cannot come twice in the request.");
+            }
+        }
+    }
+
+    // Una pedida para borrar que está en uso: se queda, inactiva, con todo lo suyo. Sus valores y su
+    // precio van en null para que ProductVariantChanges los resuelva igual que en una guardada que
+    // vino (proyectados a las opciones nuevas, el precio como está). La foto se conserva si sigue en
+    // la galería del cuerpo; si no, se limpia, como cuando se quita la foto de la galería.
     private static ProductVariantRequest KeptInactive(
         Product product, ProductVariant variant, IReadOnlyList<Guid> gallery)
     {
@@ -180,5 +218,65 @@ public sealed class UpdateProductHandler(
             Pricing: null,
             GalleryFileId: fileId is { } id && gallery.Contains(id) ? id : null,
             IsActive: false);
+    }
+
+    // Las desactivadas vuelven a la posición que tenían (si el cuerpo es más corto, al final): el
+    // formulario no las mandó y no tiene por qué verlas saltar. El agregado numera por el orden de
+    // esta lista.
+    private static List<ProductVariantInput> InOriginalPositions(
+        IReadOnlyList<ProductVariantInput> variants, int bodyCount, ProductVariant[] kept)
+    {
+        var ordered = variants.Take(bodyCount).ToList();
+        foreach (var (variant, input) in kept
+            .Select((variant, index) => (variant, variants[bodyCount + index]))
+            .OrderBy(pair => pair.variant.Position))
+        {
+            ordered.Insert(Math.Min(variant.Position, ordered.Count), input);
+        }
+
+        return ordered;
+    }
+
+    // Un error de una desactivada (p. ej. una opción nueva sin valores activos para proyectarle)
+    // saldría en Variants[i] con i fuera del cuerpo: la pantalla no tendría fila que marcar. Se
+    // marca sobre DeletedVariantIds[k], la entrada que el formulario sí mandó.
+    private static CatalogDomainException PointAtDeletedVariantIds(
+        CatalogDomainException exception,
+        int bodyCount,
+        ProductVariant[] kept,
+        IReadOnlyList<Guid> listed)
+    {
+        var prefix = $"{nameof(IProductWriteCommand.Variants)}[";
+        var fieldErrors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        foreach (var (field, messages) in exception.FieldErrors)
+        {
+            var key = field;
+            if (field.StartsWith(prefix, StringComparison.Ordinal)
+                && field.IndexOf(']', prefix.Length) is var close and > 0
+                && int.TryParse(field.AsSpan(prefix.Length, close - prefix.Length), out var index)
+                && index >= bodyCount
+                && index - bodyCount < kept.Length)
+            {
+                var position = IndexOf(listed, kept[index - bodyCount].Id.Value);
+                key = $"{nameof(UpdateProductCommand.DeletedVariantIds)}[{position}]";
+            }
+
+            fieldErrors[key] = fieldErrors.TryGetValue(key, out var previous) ? [.. previous, .. messages] : messages;
+        }
+
+        return new CatalogDomainException(exception.Code, exception.Message, fieldErrors);
+    }
+
+    private static int IndexOf(IReadOnlyList<Guid> ids, Guid id)
+    {
+        for (var index = 0; index < ids.Count; index++)
+        {
+            if (ids[index] == id)
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 }
