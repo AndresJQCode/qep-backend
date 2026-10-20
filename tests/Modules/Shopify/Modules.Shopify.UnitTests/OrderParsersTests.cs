@@ -43,7 +43,7 @@ public sealed class OrderParsersTests
             null, null, "paid", "COP", 119_000m, true, false, null,
             ["Mercado Pago"],
             new ShopifyBuyer("Laura", "Gómez", "laura.gomez@example.com", "+573001112233"),
-            new ShopifyAddress("Laura Gómez", "Calle 10 # 43-20", "Apto 301", "Medellín", "Antioquia", "ANT", "CO", "+573001112233"),
+            new ShopifyAddress("Laura Gómez", "Calle 10 # 43-20", "Apto 301", "Medellín", "Antioquia", "ANT", "CO", "+573001112233", "1036000111"),
             new Dictionary<string, string> { ["documento"] = "1036000111", ["tipo_documento"] = "CC" },
             [new ShopifyLine("CAM-001", 2m, 50_000m, 0m)],
             [new ShopifyShippingLine("standard", "Servientrega", 19_000m, 3_033.61m, false)]);

@@ -56,7 +56,7 @@ internal sealed partial class ShopifyGraphQlClient(
         + "id name email phone createdAt updatedAt cancelledAt cancelReason displayFinancialStatus currencyCode "
         + "totalPriceSet { shopMoney { amount } } taxesIncluded test note paymentGatewayNames "
         + "customer { id firstName lastName defaultEmailAddress { emailAddress } defaultPhoneNumber { phoneNumber } } "
-        + "shippingAddress { name address1 address2 city province provinceCode countryCodeV2 phone } "
+        + "shippingAddress { name address1 address2 city province provinceCode countryCodeV2 phone company } "
         + "customAttributes { key value } "
         + "lineItems(first: 50) { " + PageInfo + " nodes { " + LineFields + " } } "
         + "shippingLines(first: 10, includeRemovals: true) { " + PageInfo + " nodes { " + ShippingLineFields + " } } "
