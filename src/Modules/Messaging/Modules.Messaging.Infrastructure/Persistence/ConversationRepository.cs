@@ -111,20 +111,35 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
         for (var attempt = 0; attempt < 2; attempt++)
         {
             await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-            var connection = await dbContext.Database.SqlQuery<Guid>(
+            // Spec 2026-10-21 §6: si el asistente estaba activo, la misma sentencia lo pausa (AdvisorReplied): asignar sin pausar
+            // viola CK_conversations_automation_assignment. Los CASE miran el valor ANTERIOR de automation_status; RETURNING ve
+            // el nuevo, y por eso PausedNow se deduce de la razón y la hora que acaba de escribir (COALESCE: sin asistente son NULL).
+            var taken = await dbContext.Database.SqlQuery<AutoAssignRow>(
                 $"""
                 UPDATE messaging.conversations
-                   SET assigned_member_id = {memberId}, assigned_at = {at}, version = version + 1, updated_at = {at}
+                   SET assigned_member_id = {memberId}, assigned_at = {at}, version = version + 1, updated_at = {at},
+                       automation_status = CASE WHEN automation_status = 'Active' THEN 'Paused' ELSE automation_status END,
+                       automation_paused_at = CASE WHEN automation_status = 'Active' THEN {at} ELSE automation_paused_at END,
+                       automation_paused_by_member_id = CASE WHEN automation_status = 'Active' THEN {memberId} ELSE automation_paused_by_member_id END,
+                       automation_pause_reason = CASE WHEN automation_status = 'Active' THEN 'AdvisorReplied' ELSE automation_pause_reason END
                  WHERE id = {conversationId} AND tenant_id = {tenantId} AND assigned_member_id IS NULL
-                RETURNING connection_id AS "Value"
+                RETURNING connection_id AS "ConnectionId",
+                          COALESCE(automation_pause_reason = 'AdvisorReplied' AND automation_paused_at = {at}, false) AS "PausedNow"
                 """).ToListAsync(cancellationToken);
-            if (connection.Count == 1)
+            if (taken.Count == 1)
             {
                 // occurred_at = la hora de la autoasignación, anterior a la respuesta de Meta: el evento queda antes
                 // del saliente en el hilo.
-                await Webhook.ConversationEventRows.InsertAsync(dbContext, tenantId, connection[0], conversationId,
+                await Webhook.ConversationEventRows.InsertAsync(dbContext, tenantId, taken[0].ConnectionId, conversationId,
                     new ConversationEvent(ConversationEventType.AutoTaken, Actor: memberId), at, at, cancellationToken);
                 audit.Record(tenantId, actorUserId, MessagingAuditActions.AutoTaken, conversationId, at);
+                if (taken[0].PausedNow)
+                {
+                    await Webhook.ConversationEventRows.InsertAsync(dbContext, tenantId, taken[0].ConnectionId, conversationId,
+                        new ConversationEvent(ConversationEventType.AutomationPaused, Actor: memberId, PauseReason: AutomationPauseReason.AdvisorReplied), at, at, cancellationToken);
+                    audit.Record(tenantId, actorUserId, MessagingAuditActions.AutomationPaused, conversationId, at);
+                }
+
                 await dbContext.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
                 return AutoAssignOutcome.Assigned;
@@ -148,6 +163,8 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
 
         return AutoAssignOutcome.AssignedToOther;
     }
+
+    private sealed record AutoAssignRow(Guid ConnectionId, bool PausedNow);
 
     private sealed record RepliedRow(Guid ConnectionId, string? LastInboundWamid, DateTimeOffset? LastInboundAt, string Channel, string? UserId, int UnreadCount);
 

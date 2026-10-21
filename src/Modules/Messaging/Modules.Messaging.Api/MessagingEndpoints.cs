@@ -182,6 +182,25 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        // Spec 2026-10-21 §4: pausar el asistente y devolvérselo, con If-Match como take/release.
+        group.MapPost("/conversations/{conversationId:guid}/automation/pause", PauseAutomationAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Produces<ConversationSummary>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapPost("/conversations/{conversationId:guid}/automation/resume", ResumeAutomationAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Produces<ConversationSummary>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
         group.MapGet("/messages/search", SearchMessagesAsync)
             .RequireAuthorization(MessagingPermissions.ConversationRead)
             .Produces<SearchPageDto>()
@@ -441,6 +460,12 @@ public static class MessagingEndpoints
 
     private static async Task<IResult> ReleaseAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new ReleaseConversationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> PauseAutomationAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new PauseAutomationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> ResumeAutomationAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new ResumeAutomationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
 
     // Copia de IntegrationsEndpoints: mismo contrato que /pos y /orders-export-layout; sin If-Match 428,
     // vieja 412 (en el handler).

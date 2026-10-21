@@ -1,3 +1,5 @@
+using Modules.Messaging.Domain;
+
 namespace Modules.Messaging.Application;
 
 /// <summary>§6.4: auditoría atómica propia (proyección de audit.entries en MessagingDbContext, como
@@ -33,9 +35,24 @@ public static class MessagingAuditActions
     public const string Transferred = "messaging.conversation.transferred";
     public const string Released = "messaging.conversation.released";
     public const string AutoTaken = "messaging.conversation.auto_taken";
+    public const string AutomationPaused = "messaging.conversation.automation_paused";
+    public const string AutomationResumed = "messaging.conversation.automation_resumed";
 
     /// <summary>Spec 2026-10-11 decisión 9: una conversación abierta desde la plataforma, asignada a quien la inició.</summary>
     public const string Started = "messaging.conversation.started";
+
+    /// <summary>La acción de auditoría de un evento de asignación o de asistente: un cambio puede escribir varios eventos
+    /// (tomar una conversación con asistente activo escribe <c>Taken</c> y <c>AutomationPaused</c>) y cada uno tiene la suya.</summary>
+    public static string ForEvent(ConversationEventType type) => type switch
+    {
+        ConversationEventType.Taken => Taken,
+        ConversationEventType.Transferred => Transferred,
+        ConversationEventType.Released => Released,
+        ConversationEventType.AutoTaken => AutoTaken,
+        ConversationEventType.AutomationPaused => AutomationPaused,
+        ConversationEventType.AutomationResumed => AutomationResumed,
+        _ => throw new ArgumentOutOfRangeException(nameof(type), type, "That event type has no assignment audit action."),
+    };
 
     public const string CampaignResourceType = "campaign";
     public const string CampaignCreated = "messaging.campaign.created";

@@ -301,6 +301,20 @@ public sealed class ConversationTests
             events);
     }
 
+    // TransferTo(self, self) delega en Take: la razón es AdvisorTook, no AdvisorTransferred.
+    [Fact]
+    public void TransferringAnActiveConversationToYourselfPausesItWithAdvisorTook()
+    {
+        var conversation = Active();
+
+        var events = conversation.TransferTo(Andres, Andres, Now.AddMinutes(1));
+
+        Assert.Equal(
+            [new ConversationEvent(ConversationEventType.Taken, Actor: Andres),
+             new ConversationEvent(ConversationEventType.AutomationPaused, Actor: Andres, PauseReason: AutomationPauseReason.AdvisorTook)],
+            events);
+    }
+
     [Fact]
     public void TakingANoneConversationReturnsOnlyTheTakenEvent()
     {
