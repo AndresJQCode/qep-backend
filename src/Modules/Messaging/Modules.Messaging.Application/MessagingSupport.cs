@@ -38,7 +38,8 @@ public sealed class ConversationSummaryBuilder(
     IMessagingCustomerDirectory customers,
     IMessagingMemberNames memberNames,
     IResolutionReasonNames reasonNames,
-    CallerMembership caller)
+    CallerMembership caller,
+    IAutomationsChatbotNames chatbotNames)
 {
     public const string DeletedConnectionName = "Conexión eliminada";
 
@@ -76,7 +77,11 @@ public sealed class ConversationSummaryBuilder(
         var reasonIds = rows.Where(row => row.Status == ConversationStatus.Resolved && row.ResolutionReasonId is not null)
             .Select(row => row.ResolutionReasonId!.Value).Distinct().ToArray();
         var reasons = reasonIds.Length == 0 ? null : await reasonNames.FindAsync(tenantId, reasonIds, cancellationToken);
-        return rows.Select(row => ToSummary(row, names, tagged, taggedByPhone, resolvedNames, me, reasons)).ToArray();
+        // Spec 2026-10-21 D-M14: los nombres de los chatbots, una consulta por respuesta para todas las conversaciones con asistente.
+        var chatbotIds = rows.Where(row => row.AutomationStatus != ConversationAutomationStatus.None && row.AutomationChatbotId is not null)
+            .Select(row => row.AutomationChatbotId!.Value).Distinct().ToArray();
+        var chatbots = chatbotIds.Length == 0 ? null : await chatbotNames.ResolveAsync(tenantId, chatbotIds, cancellationToken);
+        return rows.Select(row => ToSummary(row, names, tagged, taggedByPhone, resolvedNames, me, reasons, chatbots)).ToArray();
     }
 
     private static CustomerRefDto WithTags(CustomerRefDto customer, IReadOnlyDictionary<Guid, IReadOnlyList<MessagingTagRef>> tags) =>
@@ -89,7 +94,8 @@ public sealed class ConversationSummaryBuilder(
         IReadOnlyDictionary<string, CustomerRefDto> customersByWaId,
         IReadOnlyDictionary<Guid, string> memberNames,
         Guid? callerMemberId,
-        IReadOnlyDictionary<Guid, string>? reasonNames = null)
+        IReadOnlyDictionary<Guid, string>? reasonNames = null,
+        IReadOnlyDictionary<Guid, string>? chatbotNames = null)
     {
         ArgumentNullException.ThrowIfNull(row);
         ArgumentNullException.ThrowIfNull(connectionNames);
@@ -119,12 +125,13 @@ public sealed class ConversationSummaryBuilder(
             row.Status == ConversationStatus.Resolved && row.ResolutionReasonId is { } reasonId && reasonNames?.GetValueOrDefault(reasonId) is { } reasonName
                 ? new ResolutionReasonRefDto(reasonId, reasonName)
                 : null,
-            AutomationFrom(row, memberNames));
+            AutomationFrom(row, memberNames, chatbotNames));
     }
 
     /// <summary><c>null</c> en <c>None</c> (D-A10). La guarda de <c>StartedAt</c> es inalcanzable por <c>CK_conversations_automation_started</c>;
     /// sólo evita un 500 si alguna vez llegara una fila a medio escribir.</summary>
-    private static ConversationAutomationDto? AutomationFrom(ConversationRow row, IReadOnlyDictionary<Guid, string> memberNames) =>
+    private static ConversationAutomationDto? AutomationFrom(
+        ConversationRow row, IReadOnlyDictionary<Guid, string> memberNames, IReadOnlyDictionary<Guid, string>? chatbotNames) =>
         row is { AutomationStatus: not ConversationAutomationStatus.None, AutomationStartedAt: { } startedAt }
             ? new ConversationAutomationDto(
                 row.AutomationStatus.ToString(),
@@ -133,7 +140,10 @@ public sealed class ConversationSummaryBuilder(
                 row.AutomationPausedByMemberId is { } pausedBy
                     ? new MemberRefDto(pausedBy, memberNames.GetValueOrDefault(pausedBy) ?? MessageMapping.DeletedMemberName)
                     : null,
-                row.AutomationPauseReason?.ToString())
+                row.AutomationPauseReason?.ToString(),
+                row.AutomationChatbotId,
+                row.AutomationChatbotId is { } chatbotId ? chatbotNames?.GetValueOrDefault(chatbotId) ?? MessageMapping.DeletedChatbotName : null,
+                row.AutomationStep)
             : null;
 
     /// <summary>La foto del último mensaje sólo si están sus cinco campos: una fila a medio escribir

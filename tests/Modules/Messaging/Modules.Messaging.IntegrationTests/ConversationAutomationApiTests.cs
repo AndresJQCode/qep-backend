@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Messaging.Application;
+using Modules.Messaging.Infrastructure.Persistence;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
 namespace Modules.Messaging.IntegrationTests;
@@ -53,6 +56,43 @@ public sealed class ConversationAutomationApiTests
 
     private static async Task<JsonElement> ReadAsync(HttpResponseMessage response) =>
         await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+
+    [Fact]
+    public async Task TheSummaryCarriesChatbotAndStep()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var chatbotId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT automation_chatbot_id FROM messaging.conversations");
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET automation_step = 'Número de documento' WHERE id = @id", ("id", f.ConversationId));
+
+        var response = await SendAsync(f.Client, HttpMethod.Get, ConversationUrl(f.Tenant.TenantId, f.ConversationId));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var automation = (await ReadAsync(response)).GetProperty("automation");
+        Assert.Equal(chatbotId, automation.GetProperty("chatbotId").GetGuid());
+        Assert.Equal("Número de documento", automation.GetProperty("stepTitle").GetString());
+        Assert.Equal("Chatbot", automation.GetProperty("chatbotName").GetString());
+    }
+
+    [Fact]
+    public async Task RecordBySystemWritesASystemActor()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        await using (var scope = f.Factory.Services.CreateAsyncScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IMessagingAuditRecorder>()
+                .RecordBySystem(f.Tenant.TenantId, "messaging.conversation.automation_ended", f.ConversationId, DateTimeOffset.UtcNow);
+            await scope.ServiceProvider.GetRequiredService<MessagingDbContext>().SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM audit.entries WHERE action = 'messaging.conversation.automation_ended' AND resource_id = @id AND actor_type = 'System' AND actor_id = @empty",
+            ("id", f.ConversationId.ToString()), ("empty", Guid.Empty)));
+    }
 
     [Fact]
     public async Task WithoutIfMatchIs428AndAStaleVersionIs412()

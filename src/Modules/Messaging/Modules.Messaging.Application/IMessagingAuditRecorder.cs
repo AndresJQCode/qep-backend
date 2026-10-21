@@ -8,6 +8,10 @@ public interface IMessagingAuditRecorder
 {
     void Record(Guid tenantId, Guid actorId, string action, Guid conversationId, DateTimeOffset occurredAt);
 
+    /// <summary>Spec 2026-10-21 §5.5: un cambio de conversación que hace el motor de chatbots, sin una persona detrás: actor
+    /// <see cref="Guid.Empty"/> y tipo System, como las campañas que cierra el worker.</summary>
+    void RecordBySystem(Guid tenantId, string action, Guid conversationId, DateTimeOffset occurredAt);
+
     /// <summary>Spec 2026-10-11 §6.2: la auditoría de una campaña (creada, lanzada, cancelada, terminada o fallida). Las dos últimas las
     /// escribe el worker, sin una persona detrás: <paramref name="bySystem"/> y actor vacío, como Customers con la ingesta.</summary>
     void RecordCampaign(Guid tenantId, Guid actorId, bool bySystem, string action, Guid campaignId, DateTimeOffset occurredAt);

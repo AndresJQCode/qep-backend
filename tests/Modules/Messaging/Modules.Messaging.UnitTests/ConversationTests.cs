@@ -236,7 +236,7 @@ public sealed class ConversationTests
     private static Conversation Active()
     {
         var conversation = Open();
-        conversation.StartAutomation(Now);
+        conversation.StartAutomation(Guid.CreateVersion7(), Now);
         return conversation;
     }
 
@@ -246,20 +246,20 @@ public sealed class ConversationTests
     public void StartAutomationNeedsAnOpenUnassignedConversationInNone()
     {
         var conversation = Open();
-        conversation.StartAutomation(Now);
+        conversation.StartAutomation(Guid.CreateVersion7(), Now);
         Assert.Equal(ConversationAutomationStatus.Active, conversation.AutomationStatus);
         Assert.Equal(Now, conversation.AutomationStartedAt);
         Assert.Equal(2, conversation.Version);
 
         var assigned = Open();
         assigned.Take(Andres, Now);
-        Assert.Equal(MessagingErrorCodes.AutomationNotAvailable, CodeOf(() => assigned.StartAutomation(Now)));
+        Assert.Equal(MessagingErrorCodes.AutomationNotAvailable, CodeOf(() => assigned.StartAutomation(Guid.CreateVersion7(), Now)));
 
         var resolved = Open();
         resolved.Resolve(Now);
-        Assert.Equal(MessagingErrorCodes.ConversationNotOpen, CodeOf(() => resolved.StartAutomation(Now)));
+        Assert.Equal(MessagingErrorCodes.ConversationNotOpen, CodeOf(() => resolved.StartAutomation(Guid.CreateVersion7(), Now)));
 
-        Assert.Equal(MessagingErrorCodes.AutomationAlreadyActive, CodeOf(() => Active().StartAutomation(Now)));
+        Assert.Equal(MessagingErrorCodes.AutomationAlreadyActive, CodeOf(() => Active().StartAutomation(Guid.CreateVersion7(), Now)));
     }
 
     [Fact]
@@ -267,7 +267,7 @@ public sealed class ConversationTests
     {
         var conversation = Active();
         conversation.PauseAutomation(Andres, AutomationPauseReason.Manual, Now);
-        Assert.Equal(MessagingErrorCodes.AutomationNotAvailable, CodeOf(() => conversation.StartAutomation(Now)));
+        Assert.Equal(MessagingErrorCodes.AutomationNotAvailable, CodeOf(() => conversation.StartAutomation(Guid.CreateVersion7(), Now)));
     }
 
     [Fact]

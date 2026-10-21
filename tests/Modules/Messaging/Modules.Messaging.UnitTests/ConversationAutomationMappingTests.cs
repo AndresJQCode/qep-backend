@@ -72,4 +72,19 @@ public sealed class ConversationAutomationMappingTests
 
         Assert.Equal(expected, dto.Event!.PauseReason);
     }
+
+    [Fact]
+    public void TheSummaryCarriesChatbotNameAndStep()
+    {
+        var chatbotId = Guid.CreateVersion7();
+        var row = Row(ConversationAutomationStatus.Active, Started) with { AutomationChatbotId = chatbotId, AutomationStep = "Número de documento" };
+
+        var named = ConversationSummaryBuilder.ToSummary(
+            row, new Dictionary<Guid, string>(), new Dictionary<Guid, CustomerRefDto>(), new Dictionary<string, CustomerRefDto>(), new Dictionary<Guid, string>(), null,
+            chatbotNames: new Dictionary<Guid, string> { [chatbotId] = "Bienvenida" }).Automation;
+        var unnamed = Summary(row, new Dictionary<Guid, string>()).Automation;
+
+        Assert.Equal((chatbotId, "Bienvenida", "Número de documento"), (named!.ChatbotId, named.ChatbotName, named.StepTitle));
+        Assert.Equal("Chatbot", unnamed!.ChatbotName);
+    }
 }

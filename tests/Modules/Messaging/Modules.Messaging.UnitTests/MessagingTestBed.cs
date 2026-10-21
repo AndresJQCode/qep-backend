@@ -201,7 +201,7 @@ internal sealed class MessagingTestBed
             Templates,
             Customers,
             Opener,
-            new ConversationSummaryBuilder(Connections, Customers, memberNames, new FakeResolutionReasonNames(), new CallerMembership(membership, context)),
+            new ConversationSummaryBuilder(Connections, Customers, memberNames, new FakeResolutionReasonNames(), new CallerMembership(membership, context), new FakeChatbotNames()),
             TenantModules,
             context,
             new FakeClock(Now),

@@ -27,6 +27,20 @@ internal sealed class MessagingAuditRecorder(MessagingDbContext dbContext) : IMe
             Source,
             occurredAt));
 
+    // Spec 2026-10-21 §5.5: lo que hace el motor de chatbots no tiene persona detrás: actor vacío y System, como RecordCampaign(bySystem: true).
+    public void RecordBySystem(Guid tenantId, string action, Guid conversationId, DateTimeOffset occurredAt) =>
+        dbContext.AuditEntries.Add(AuditEntry.Create(
+            tenantId,
+            Guid.Empty,
+            AuditActorType.System,
+            action,
+            MessagingAuditActions.ResourceType,
+            conversationId.ToString(),
+            Outcome,
+            NoChangedFields,
+            Source,
+            occurredAt));
+
     // Spec 2026-10-11 §6.2: la campaña se audita en la misma transacción que su cambio. Las que escribe el worker (terminada, fallida) no
     // tienen una persona detrás: actor System y vacío, como Customers con lo que nace de un webhook.
     public void RecordCampaign(Guid tenantId, Guid actorId, bool bySystem, string action, Guid campaignId, DateTimeOffset occurredAt) =>

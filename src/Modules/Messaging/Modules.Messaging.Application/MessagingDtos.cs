@@ -53,7 +53,8 @@ public sealed record ConversationSummary(
 /// <summary>Spec 2026-10-21 §4.5: el asistente de la conversación. <c>Status</c> ∈ Active|Paused, por nombre. <c>PausedAt</c>,
 /// <c>PausedBy</c> y <c>PauseReason</c> sólo vienen pausada; <c>PausedBy</c> es <c>null</c> si lo pausó el sistema, y si la membresía
 /// ya no está sale como «Miembro eliminado», como <c>AssignedTo</c>.</summary>
-public sealed record ConversationAutomationDto(string Status, DateTimeOffset StartedAt, DateTimeOffset? PausedAt, MemberRefDto? PausedBy, string? PauseReason);
+public sealed record ConversationAutomationDto(string Status, DateTimeOffset StartedAt, DateTimeOffset? PausedAt, MemberRefDto? PausedBy, string? PauseReason,
+    Guid? ChatbotId = null, string? ChatbotName = null, string? StepTitle = null);
 
 /// <summary><c>Open</c> = conversaciones abiertas del tenant; <c>Unread</c> = la suma de
 /// <c>unread_count</c> del tenant (§5.4: la pantalla lo dibuja como «N sin leer»). Ninguno respeta la

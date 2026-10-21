@@ -109,6 +109,11 @@ internal sealed class RecordingAudit : IMessagingAuditRecorder
     public void RecordCampaign(Guid tenantId, Guid actorId, bool bySystem, string action, Guid campaignId, DateTimeOffset occurredAt) =>
         Campaigns.Add(new CampaignAuditCall(tenantId, actorId, bySystem, action, campaignId));
 
+    public List<(Guid TenantId, string Action, Guid ConversationId)> Systems { get; } = [];
+
+    public void RecordBySystem(Guid tenantId, string action, Guid conversationId, DateTimeOffset occurredAt) =>
+        Systems.Add((tenantId, action, conversationId));
+
     public void RecordQuickReply(Guid tenantId, Guid actorId, string action, Guid quickReplyId, DateTimeOffset occurredAt) =>
         throw new NotSupportedException();
 

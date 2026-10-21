@@ -302,7 +302,7 @@ public sealed partial class Conversation
 
     /// <summary>Spec 2026-10-21 §4.2: arranca el asistente. Sólo sobre una conversación abierta, sin asesor y sin asistente previo:
     /// el motor no reactiva lo que un humano pausó (eso es <see cref="ResumeAutomation"/>).</summary>
-    public void StartAutomation(DateTimeOffset now)
+    public void StartAutomation(Guid chatbotId, DateTimeOffset now)
     {
         EnsureOpenForAutomation();
         if (AssignedMemberId is not null)
@@ -320,6 +320,25 @@ public sealed partial class Conversation
 
         AutomationStatus = ConversationAutomationStatus.Active;
         AutomationStartedAt = now;
+        AutomationChatbotId = chatbotId;
+        Touch(now);
+    }
+
+    /// <summary>Spec 2026-10-21 D-M14: el paso del flujo donde va la conversación. No hace <c>Touch</c>: lo escribe el motor en cada
+    /// avance y no es un cambio que el asesor deba ver como actividad ni que mueva la versión por sí solo.</summary>
+    public void SetAutomationStep(string? stepTitle) => AutomationStep = stepTitle;
+
+    /// <summary>Spec 2026-10-21 D-M11: el flujo terminó. Sólo desde <c>Active</c>: una pausada la decide una persona y se devuelve con
+    /// <see cref="ResumeAutomation"/>. Sin evento: el cierre de un flujo no es un hecho de asignación que mostrar en el hilo.</summary>
+    public void EndAutomation(DateTimeOffset now)
+    {
+        EnsureOpenForAutomation();
+        if (AutomationStatus != ConversationAutomationStatus.Active)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.AutomationNotAvailable, "Only an active assistant can end.");
+        }
+
+        ClearAutomation();
         Touch(now);
     }
 
@@ -397,6 +416,8 @@ public sealed partial class Conversation
         AutomationPausedAt = null;
         AutomationPausedByMemberId = null;
         AutomationPauseReason = null;
+        AutomationChatbotId = null;
+        AutomationStep = null;
     }
 
     private void EnsureOpenForAutomation()
