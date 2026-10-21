@@ -16,10 +16,9 @@ namespace Modules.Quotations.UnitTests;
 /// </summary>
 public sealed class ZenviaWhatsAppSenderTests
 {
-    // Deliberadamente ficticios: lo que esta prueba verifica es que sale lo que se configuro,
-    // no cual es la plantilla vigente. Poner acá el id real de `Quotations:WhatsApp:TemplateId`
-    // obligaria a tocar el test cada vez que se aprueba una plantilla nueva -- que es siempre,
-    // porque Meta no deja editar una aprobada.
+    // Deliberadamente ficticios: lo que esta prueba verifica es que sale lo que trae el canal del
+    // tenant, no cual es la plantilla vigente. Poner acá un id real obligaria a tocar el test cada
+    // vez que se aprueba una plantilla nueva -- que es siempre, porque Meta no deja editar una aprobada.
     private const string TemplateId = "plantilla-de-prueba";
     private const string FromNumber = "570000000000";
     private const string OrderTemplateId = "plantilla-de-pedido-de-prueba";
@@ -46,7 +45,7 @@ public sealed class ZenviaWhatsAppSenderTests
     {
         var (sender, capture, _) = NewSender();
 
-        await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
+        await sender.SendQuotationAsync(Channel(), Message, TestContext.Current.CancellationToken);
 
         Assert.Equal(
             "https://r2.example.com/cotizacion.pdf?sig=abc",
@@ -59,7 +58,7 @@ public sealed class ZenviaWhatsAppSenderTests
         var (sender, capture, _) = NewSender();
 
         await sender.SendQuotationAsync(
-            Message with { Total = 2450.5m, Currency = "EUR" }, TestContext.Current.CancellationToken);
+            Channel(), Message with { Total = 2450.5m, Currency = "EUR" }, TestContext.Current.CancellationToken);
 
         Assert.Equal("€ 2.450,50", capture.Fields().GetProperty("total").GetString());
     }
@@ -69,7 +68,7 @@ public sealed class ZenviaWhatsAppSenderTests
     {
         var (sender, capture, _) = NewSender();
 
-        await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
+        await sender.SendQuotationAsync(Channel(), Message, TestContext.Current.CancellationToken);
 
         var total = capture.Fields().GetProperty("total").GetString();
         // Sin centavos: en es-CO el separador decimal es la coma, y un precio de cotización
@@ -82,7 +81,7 @@ public sealed class ZenviaWhatsAppSenderTests
     {
         var (sender, capture, _) = NewSender();
 
-        await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
+        await sender.SendQuotationAsync(Channel(), Message, TestContext.Current.CancellationToken);
 
         Assert.Equal(
             "30 de septiembre de 2026",
@@ -90,11 +89,11 @@ public sealed class ZenviaWhatsAppSenderTests
     }
 
     [Fact]
-    public async Task SendUsesTheConfiguredTemplateAndSender()
+    public async Task SendUsesTheChannelTemplateSenderAndToken()
     {
         var (sender, capture, _) = NewSender();
 
-        await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
+        await sender.SendQuotationAsync(Channel(), Message, TestContext.Current.CancellationToken);
 
         var body = capture.Body();
         Assert.Equal(FromNumber, body.GetProperty("from").GetString());
@@ -112,7 +111,7 @@ public sealed class ZenviaWhatsAppSenderTests
         var (sender, capture, _) = NewSender();
 
         await sender.SendQuotationAsync(
-            Message with { ToPhone = stored }, TestContext.Current.CancellationToken);
+            Channel(), Message with { ToPhone = stored }, TestContext.Current.CancellationToken);
 
         Assert.Equal(expected, capture.Body().GetProperty("to").GetString());
     }
@@ -124,7 +123,7 @@ public sealed class ZenviaWhatsAppSenderTests
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             sender.SendQuotationAsync(
-                Message with { ToPhone = null }, TestContext.Current.CancellationToken));
+                Channel(), Message with { ToPhone = null }, TestContext.Current.CancellationToken));
 
         Assert.Equal("quotation.whatsapp.recipient_missing", error.Code);
     }
@@ -135,7 +134,7 @@ public sealed class ZenviaWhatsAppSenderTests
         var (sender, _, _) = NewSender(HttpStatusCode.BadRequest, """{"code":"INVALID_TEMPLATE"}""");
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
-            sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken));
+            sender.SendQuotationAsync(Channel(), Message, TestContext.Current.CancellationToken));
 
         Assert.Equal("quotation.whatsapp.send_failed", error.Code);
         Assert.Contains("INVALID_TEMPLATE", error.Message);
@@ -149,7 +148,7 @@ public sealed class ZenviaWhatsAppSenderTests
     {
         var (sender, _, logger) = NewSender(responseBody: """{"id":"zid-abc-123"}""");
 
-        await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
+        await sender.SendQuotationAsync(Channel(), Message, TestContext.Current.CancellationToken);
 
         Assert.Contains(logger.Messages, message => message.Contains("zid-abc-123"));
     }
@@ -162,7 +161,7 @@ public sealed class ZenviaWhatsAppSenderTests
     {
         var (sender, _, logger) = NewSender(responseBody: """{"status":"queued"}""");
 
-        await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
+        await sender.SendQuotationAsync(Channel(), Message, TestContext.Current.CancellationToken);
 
         Assert.Contains(logger.Messages, message => message.Contains("COT-000123"));
     }
@@ -172,7 +171,7 @@ public sealed class ZenviaWhatsAppSenderTests
     {
         var (sender, _, logger) = NewSender(responseBody: "OK");
 
-        await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
+        await sender.SendQuotationAsync(Channel(), Message, TestContext.Current.CancellationToken);
 
         Assert.Contains(logger.Messages, message => message.Contains("COT-000123"));
     }
@@ -187,7 +186,7 @@ public sealed class ZenviaWhatsAppSenderTests
     {
         var (sender, _, logger) = NewSender(responseBody: """{"id":"zid-abc-123"}""");
 
-        await sender.SendQuotationAsync(Message, TestContext.Current.CancellationToken);
+        await sender.SendQuotationAsync(Channel(), Message, TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain(logger.Messages, message => message.Contains("sig=abc"));
         Assert.DoesNotContain(logger.Messages, message => message.Contains("3001234567"));
@@ -203,7 +202,7 @@ public sealed class ZenviaWhatsAppSenderTests
     {
         var (sender, capture, _) = NewSender();
 
-        await sender.SendOrderAsync(OrderMessage, TestContext.Current.CancellationToken);
+        await sender.SendOrderAsync(Channel(), OrderMessage, TestContext.Current.CancellationToken);
 
         var body = capture.Body();
         Assert.Equal(
@@ -226,10 +225,10 @@ public sealed class ZenviaWhatsAppSenderTests
     [Fact]
     public async Task SendOrderWithoutAnOrderTemplateIsNotConfigured()
     {
-        var (sender, capture, _) = NewSender(orderTemplateId: "");
+        var (sender, capture, _) = NewSender();
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
-            sender.SendOrderAsync(OrderMessage, TestContext.Current.CancellationToken));
+            sender.SendOrderAsync(Channel(orderTemplateId: null), OrderMessage, TestContext.Current.CancellationToken));
 
         Assert.Equal("order.whatsapp.not_configured", error.Code);
         Assert.Equal("{}", capture.Json);
@@ -241,7 +240,7 @@ public sealed class ZenviaWhatsAppSenderTests
         var (sender, _, _) = NewSender();
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
-            sender.SendOrderAsync(OrderMessage with { ToPhone = "  " }, TestContext.Current.CancellationToken));
+            sender.SendOrderAsync(Channel(), OrderMessage with { ToPhone = "  " }, TestContext.Current.CancellationToken));
 
         Assert.Equal("order.whatsapp.recipient_missing", error.Code);
     }
@@ -252,7 +251,7 @@ public sealed class ZenviaWhatsAppSenderTests
         var (sender, _, _) = NewSender(HttpStatusCode.BadRequest, """{"code":"INVALID_TEMPLATE"}""");
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
-            sender.SendOrderAsync(OrderMessage, TestContext.Current.CancellationToken));
+            sender.SendOrderAsync(Channel(), OrderMessage, TestContext.Current.CancellationToken));
 
         Assert.Equal("order.whatsapp.send_failed", error.Code);
         Assert.Contains("INVALID_TEMPLATE", error.Message, StringComparison.Ordinal);
@@ -263,7 +262,7 @@ public sealed class ZenviaWhatsAppSenderTests
     {
         var (sender, _, logger) = NewSender(responseBody: """{"id":"zid-ped-1"}""");
 
-        await sender.SendOrderAsync(OrderMessage, TestContext.Current.CancellationToken);
+        await sender.SendOrderAsync(Channel(), OrderMessage, TestContext.Current.CancellationToken);
 
         Assert.Contains(logger.Messages, message => message.Contains("zid-ped-1") && message.Contains("PED-000123"));
         Assert.DoesNotContain(logger.Messages, message => message.Contains("3001234567"));
@@ -273,21 +272,14 @@ public sealed class ZenviaWhatsAppSenderTests
     private static (IWhatsAppSender Sender, RequestCapture Capture, RecordingLogger Logger)
         NewSender(
             HttpStatusCode status = HttpStatusCode.OK,
-            string responseBody = "{}",
-            string orderTemplateId = OrderTemplateId)
+            string responseBody = "{}")
     {
         var capture = new RequestCapture();
         var logger = new RecordingLogger();
+        // Sólo la URL base: la cuenta (token, número, plantillas) viene del canal en cada envío.
         var options = Options.Create(new QuotationsOptions
         {
-            WhatsApp = new WhatsAppOptions
-            {
-                ApiToken = "token-de-prueba",
-                FromNumber = FromNumber,
-                TemplateId = TemplateId,
-                OrderTemplateId = orderTemplateId,
-                BaseUrl = "https://api.zenvia.com",
-            },
+            WhatsApp = new WhatsAppOptions { BaseUrl = "https://api.zenvia.com" },
         });
 
         return (
@@ -298,6 +290,9 @@ public sealed class ZenviaWhatsAppSenderTests
             capture,
             logger);
     }
+
+    private static WhatsAppChannel Channel(string? orderTemplateId = OrderTemplateId) =>
+        new(Guid.CreateVersion7(), "token-de-prueba", FromNumber, TemplateId, orderTemplateId);
 
     private sealed class RequestCapture
     {

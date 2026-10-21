@@ -249,6 +249,58 @@ public sealed class SendOrderHandlerTests
     private static SendOrderCommand NewCommand(Harness harness, string? recipient = null) =>
         new(TenantId, harness.Order.Id.Value, recipient);
 
+    // Plan 2026-10-21 (Zenvia por tenant).
+    [Fact]
+    public async Task SendsThroughTheOnlyAvailableChannel()
+    {
+        var channel = WhatsAppChannels.Any();
+        var harness = NewHarness(channels: [channel]);
+
+        await harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken);
+
+        Assert.Equal(channel.ConnectionId, harness.Sender.Channel?.ConnectionId);
+    }
+
+    [Fact]
+    public async Task NoChannelIsRejected()
+    {
+        var harness = NewHarness(channels: []);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.whatsapp.no_channel", error.Code);
+        Assert.Equal(0, harness.Renderer.Calls);
+        Assert.Null(harness.Sender.SentOrder);
+    }
+
+    [Fact]
+    public async Task SeveralChannelsRequireAChoice()
+    {
+        var harness = NewHarness(channels: [WhatsAppChannels.Any(), WhatsAppChannels.Any()]);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.whatsapp.channel_required", error.Code);
+        Assert.Equal(0, harness.Renderer.Calls);
+        Assert.Null(harness.Sender.SentOrder);
+    }
+
+    // R4 y Review Focus 4: sin plantilla de pedido no sale ningún pedido, y saberlo no cuesta un PDF.
+    [Fact]
+    public async Task OrderChannelWithoutOrderTemplateIsRejectedBeforeRendering()
+    {
+        var harness = NewHarness(channels: [WhatsAppChannels.Any(orderTemplateId: null)]);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.whatsapp.not_configured", error.Code);
+        Assert.Equal(0, harness.Renderer.Calls);
+        Assert.Null(harness.Sender.SentOrder);
+    }
+
     private sealed record Harness(
         SendOrderHandler Handler,
         Order Order,
@@ -264,7 +316,8 @@ public sealed class SendOrderHandlerTests
         OrderStatus status = OrderStatus.Pending,
         QuotationCustomerRef? customer = null,
         Exception? whatsAppFailure = null,
-        IExecutionContext? executionContext = null)
+        IExecutionContext? executionContext = null,
+        WhatsAppChannel[]? channels = null)
     {
         var order = OrderBuilders.Pending(
             TenantId, AdvisorId, Now.AddDays(-1), clientId: ClientId,
@@ -307,6 +360,7 @@ public sealed class SendOrderHandlerTests
             storage,
             customers,
             whatsAppFailure is null ? sender : new FailingWhatsAppSender(whatsAppFailure),
+            new StubWhatsAppChannelDirectory(channels ?? [WhatsAppChannels.Any()]),
             new StubMembershipDirectory(AdvisorId.Value),
             executionContext ?? new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now));

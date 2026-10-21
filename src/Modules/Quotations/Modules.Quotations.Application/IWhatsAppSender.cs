@@ -2,20 +2,20 @@ namespace Modules.Quotations.Application;
 
 /// <summary>
 /// Envía la cotización al cliente por WhatsApp — plantilla de Zenvia, pedida por el owner con
-/// un `curl` de referencia. A diferencia de <c>IQuotationCustomerLookup</c>, este puerto no
-/// cruza a otro módulo: sólo hace una llamada HTTP saliente, así que la implementación vive en
-/// la Infrastructure de este mismo módulo (`Whatsapp/ZenviaWhatsAppSender.cs`), sin necesidad
-/// de pasar por Bootstrapper.
+/// un `curl` de referencia. Este puerto no cruza a otro módulo: sólo hace una llamada HTTP
+/// saliente, así que la implementación vive en la Infrastructure de este mismo módulo
+/// (`Whatsapp/ZenviaWhatsAppSender.cs`). La cuenta no es suya: llega en cada envío como el
+/// <see cref="WhatsAppChannel"/> del tenant (plan 2026-10-21; ya no hay cuenta global).
 /// </summary>
 public interface IWhatsAppSender
 {
     Task SendQuotationAsync(
-        WhatsAppQuotationMessage message, CancellationToken cancellationToken);
+        WhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken);
 
-    /// <summary>Envía el PDF de un pedido. Plantilla propia (<c>Quotations:WhatsApp:OrderTemplateId</c>):
+    /// <summary>Envía el PDF de un pedido. Plantilla propia (<see cref="WhatsAppChannel.OrderTemplateId"/>):
     /// la de la cotización dice «cotización» y lleva <c>valid_until</c>, que un pedido no tiene.</summary>
     Task SendOrderAsync(
-        WhatsAppOrderMessage message, CancellationToken cancellationToken);
+        WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken);
 }
 
 /// <summary>

@@ -15,9 +15,9 @@ namespace Modules.Quotations.Infrastructure.Whatsapp;
 /// implementación que `InfobipEmailChannel` en Notifications: un `HttpClient` sencillo, sin
 /// `IHttpClientFactory` — este módulo tampoco lo usa en ningún otro lado.
 ///
-/// Sólo se registra cuando `Quotations:WhatsApp:ApiToken`/`FromNumber`/`TemplateId` están
-/// las tres presentes (`QuotationsInfrastructureExtensions.AddWhatsAppSender`) — `LogWhatsAppSender`
-/// es el default en su ausencia, así que acá adentro esas tres claves ya se asumen no vacías.
+/// No guarda ninguna cuenta: el token, el número emisor y las plantillas llegan en cada envío como el
+/// <see cref="WhatsAppChannel"/> del tenant (plan 2026-10-21; la cuenta global se retiró). De la
+/// configuración sólo lee <c>Quotations:WhatsApp:BaseUrl</c>.
 /// </summary>
 internal sealed partial class ZenviaWhatsAppSender(
     HttpClient httpClient,
@@ -57,7 +57,7 @@ internal sealed partial class ZenviaWhatsAppSender(
         ILogger logger, string orderNumber, string messageId);
 
     public async Task SendQuotationAsync(
-        WhatsAppQuotationMessage message, CancellationToken cancellationToken)
+        WhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken)
     {
         var to = NormalizePhone(message.ToPhone);
         if (to is null)
@@ -69,14 +69,14 @@ internal sealed partial class ZenviaWhatsAppSender(
 
         var payload = new
         {
-            from = settings.FromNumber,
+            from = channel.FromNumber,
             to,
             contents = new object[]
             {
                 new
                 {
                     type = "template",
-                    templateId = settings.TemplateId,
+                    templateId = channel.QuotationTemplateId,
                     fields = new
                     {
                         fullname = message.FullName,
@@ -95,7 +95,7 @@ internal sealed partial class ZenviaWhatsAppSender(
             },
         };
 
-        var body = await PostAsync(payload, "quotation.whatsapp.send_failed", cancellationToken);
+        var body = await PostAsync(channel, payload, "quotation.whatsapp.send_failed", cancellationToken);
 
         // El guard es por CA1873: `ReadMessageId` parsea el cuerpo, y el `LoggerMessage`
         // generado sólo descartaría el resultado después de calcularlo.
@@ -107,22 +107,21 @@ internal sealed partial class ZenviaWhatsAppSender(
     }
 
     /// <summary>
-    /// El pedido, por su propia plantilla (<c>Quotations:WhatsApp:OrderTemplateId</c>). Mismo cuerpo
+    /// El pedido, por su propia plantilla (<see cref="WhatsAppChannel.OrderTemplateId"/>). Mismo cuerpo
     /// que la cotización menos <c>valid_until</c>: un pedido no vence. Los códigos son de pedido
     /// (<c>order.whatsapp.*</c>) para que la pantalla del pedido no tenga que traducir los de la
     /// cotización.
     /// </summary>
     public async Task SendOrderAsync(
-        WhatsAppOrderMessage message, CancellationToken cancellationToken)
+        WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken)
     {
-        // Antes que el teléfono: sin plantilla no sale ningún pedido, y decir "falta el teléfono"
-        // mandaría a corregir un dato que no destraba nada. Este sender se registra por las tres claves
-        // de la cotización, así que acá la del pedido puede faltar (README § Plantilla de WhatsApp).
-        if (string.IsNullOrWhiteSpace(settings.OrderTemplateId))
+        // Defensa: `SendOrderHandler` ya lo rechaza al elegir el canal, antes del PDF. Va antes que el
+        // teléfono porque decir "falta el teléfono" mandaría a corregir un dato que no destraba nada.
+        if (string.IsNullOrWhiteSpace(channel.OrderTemplateId))
         {
             throw new QuotationsDomainException(
                 "order.whatsapp.not_configured",
-                "Quotations:WhatsApp:OrderTemplateId is not configured: orders cannot be sent by WhatsApp yet.");
+                "The WhatsApp channel has no order template: orders cannot be sent by WhatsApp yet.");
         }
 
         var to = NormalizePhone(message.ToPhone);
@@ -135,14 +134,14 @@ internal sealed partial class ZenviaWhatsAppSender(
 
         var payload = new
         {
-            from = settings.FromNumber,
+            from = channel.FromNumber,
             to,
             contents = new object[]
             {
                 new
                 {
                     type = "template",
-                    templateId = settings.OrderTemplateId,
+                    templateId = channel.OrderTemplateId,
                     fields = new
                     {
                         fullname = message.FullName,
@@ -154,7 +153,7 @@ internal sealed partial class ZenviaWhatsAppSender(
             },
         };
 
-        var body = await PostAsync(payload, "order.whatsapp.send_failed", cancellationToken);
+        var body = await PostAsync(channel, payload, "order.whatsapp.send_failed", cancellationToken);
 
         if (logger.IsEnabled(LogLevel.Information))
         {
@@ -166,7 +165,7 @@ internal sealed partial class ZenviaWhatsAppSender(
     /// <summary>El POST a Zenvia, compartido por los dos documentos. Devuelve el cuerpo para leer el id
     /// del mensaje; un no-2xx sale como <paramref name="failureCode"/>.</summary>
     private async Task<string> PostAsync(
-        object payload, string failureCode, CancellationToken cancellationToken)
+        WhatsAppChannel channel, object payload, string failureCode, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
@@ -174,7 +173,7 @@ internal sealed partial class ZenviaWhatsAppSender(
         {
             Content = JsonContent.Create(payload),
         };
-        request.Headers.TryAddWithoutValidation("X-API-TOKEN", settings.ApiToken);
+        request.Headers.TryAddWithoutValidation("X-API-TOKEN", channel.ApiToken);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);

@@ -35,6 +35,7 @@ public sealed class SendQuotationHandler(
     IQuotationCustomerLookup customerLookup,
     IQuotationProductLookup productLookup,
     IWhatsAppSender whatsAppSender,
+    IWhatsAppChannelDirectory whatsAppChannels,
     IMembershipDirectory membershipDirectory,
     IQuotationSendFailureLog sendFailureLog,
     IExecutionContext executionContext,
@@ -61,6 +62,11 @@ public sealed class SendQuotationHandler(
         // un envío que falló, es un envío que nunca empezó, y anotarlo en el registro de fallas lo
         // llenaría de ruido que no se arregla mirando una traza.
         quotation.EnsureSendable();
+
+        // Por dónde sale, con el mismo criterio: sin canal, o con varios sin elegir, el envío nunca empezó
+        // (plan 2026-10-21). Antes del PDF, que cuesta una llamada a `qcode-pdf`.
+        var channel = WhatsAppChannelSelection.ForQuotation(
+            await whatsAppChannels.ListAvailableAsync(command.TenantId, cancellationToken));
 
         // Se lee antes de mutar: `Send` deja la cotización en Sent venga de donde venga, así que
         // después de llamarlo ya no hay forma de saber si esto fue el primer envío o un reenvío.
@@ -114,6 +120,7 @@ public sealed class SendQuotationHandler(
 
             stage = QuotationSendStage.WhatsApp;
             await whatsAppSender.SendQuotationAsync(
+                channel,
                 new WhatsAppQuotationMessage(
                     ToPhone: toPhone,
                     FullName: fullName,

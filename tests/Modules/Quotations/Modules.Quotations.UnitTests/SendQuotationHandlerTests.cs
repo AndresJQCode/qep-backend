@@ -350,6 +350,49 @@ public sealed class SendQuotationHandlerTests
         Assert.Null(harness.FailureLog.HistoryEntry);
     }
 
+    // Plan 2026-10-21 (Zenvia por tenant): sale por la conexión del tenant, no por una cuenta global.
+    [Fact]
+    public async Task SendsThroughTheOnlyAvailableChannel()
+    {
+        var channel = WhatsAppChannels.Any();
+        var harness = NewHandler(channels: [channel]);
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(channel.ConnectionId, harness.Sender.Channel?.ConnectionId);
+        Assert.Equal(QuotationStatus.Sent, harness.Repository.Quotation.Status);
+    }
+
+    // R2: sin canal no hay envío. Es uno que nunca empezó: ni PDF, ni registro de falla, ni cambio de estado.
+    [Fact]
+    public async Task NoChannelIsRejectedBeforeAnyExternalEffect()
+    {
+        var harness = NewHandler(channels: []);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.whatsapp.no_channel", error.Code);
+        Assert.Equal(0, harness.Renderer.Calls);
+        Assert.Null(harness.FailureLog.HistoryEntry);
+        Assert.Equal(QuotationStatus.Draft, harness.Repository.Quotation.Status);
+    }
+
+    // R1: con varias, elegir es del plan 3; mientras tanto no se adivina.
+    [Fact]
+    public async Task SeveralChannelsRequireAChoice()
+    {
+        var harness = NewHandler(channels: [WhatsAppChannels.Any(), WhatsAppChannels.Any()]);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.whatsapp.channel_required", error.Code);
+        Assert.Equal(0, harness.Renderer.Calls);
+        Assert.Null(harness.FailureLog.HistoryEntry);
+        Assert.Equal(QuotationStatus.Draft, harness.Repository.Quotation.Status);
+    }
+
     private static SendQuotationCommand NewCommand(string? recipient = null) =>
         new(TenantId, CurrentQuotationId, recipient);
 
@@ -375,13 +418,15 @@ public sealed class SendQuotationHandlerTests
         StubQuotationRepository Repository,
         RecordingQuotationAuditPublisher Audit,
         RecordingQuotationSendFailureLog FailureLog,
-        RecordingQuotationLifecycleEventPublisher Lifecycle);
+        RecordingQuotationLifecycleEventPublisher Lifecycle,
+        CountingPdfRenderer Renderer);
 
     private static Harness NewHandler(
         bool withValidUntil = true,
         bool alreadySent = false,
         Exception? whatsAppFailure = null,
-        QuotationPartyDetails? billing = null)
+        QuotationPartyDetails? billing = null,
+        WhatsAppChannel[]? channels = null)
     {
         var quotation = Quotation.Create(
             QuotationId.New(),
@@ -423,6 +468,7 @@ public sealed class SendQuotationHandlerTests
 
         var failureLog = new RecordingQuotationSendFailureLog();
         var lifecycle = new RecordingQuotationLifecycleEventPublisher();
+        var renderer = new CountingPdfRenderer();
 
         var handler = new SendQuotationHandler(
             repository,
@@ -432,7 +478,7 @@ public sealed class SendQuotationHandlerTests
             new QuotationPdfProvider(
                 repository,
                 new StubQuotationResponseComposer(),
-                new CountingPdfRenderer(),
+                renderer,
                 storage,
                 new FixedTenantClock(Now),
                 new StubQuotationLogoLookup()),
@@ -445,11 +491,12 @@ public sealed class SendQuotationHandlerTests
             whatsAppFailure is null
                 ? sender
                 : new FailingWhatsAppSender(whatsAppFailure),
+            new StubWhatsAppChannelDirectory(channels ?? [WhatsAppChannels.Any()]),
             new StubMembershipDirectory(AdvisorId.Value),
             failureLog,
             new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now));
 
-        return new Harness(handler, sender, storage, repository, audit, failureLog, lifecycle);
+        return new Harness(handler, sender, storage, repository, audit, failureLog, lifecycle, renderer);
     }
 }
