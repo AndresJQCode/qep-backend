@@ -69,6 +69,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// carrera entre dos «predeterminado» sale como 409 <c>default_conflict</c>.</summary>
     public const string BusinessHoursDefaultIndex = "IX_business_hours_tenant_default";
 
+    /// <summary>Spec 2026-10-21 D-H9: sin país no hay festivos automáticos; hoy el único país es Colombia (<c>CO</c>).</summary>
     public const string BusinessHoursCountryCheck = "holiday_country IS NULL OR holiday_country IN ('CO')";
 
     /// <summary>La forma guardada de las franjas: <c>[{"day":1,"ranges":[{"from":480,"to":1080}]}]</c> y

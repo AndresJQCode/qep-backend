@@ -26,12 +26,14 @@ internal sealed class BusinessHoursRepository(MessagingDbContext dbContext, ITen
     public Task<BusinessHoursSchedule?> FindDefaultAsync(Guid tenantId, CancellationToken cancellationToken) =>
         dbContext.BusinessHours.SingleOrDefaultAsync(schedule => schedule.TenantId == tenantId && schedule.IsDefault, cancellationToken);
 
-    // lower() de los dos lados y en SQL: la misma expresión de IX_business_hours_tenant_name.
-    public async Task<bool> NameExistsAsync(Guid tenantId, string name, CancellationToken cancellationToken) =>
-        await dbContext.BusinessHours
-            .FromSql($"SELECT * FROM messaging.business_hours_schedules WHERE tenant_id = {tenantId} AND lower(name) = lower({name})")
-            .AsNoTracking()
-            .AnyAsync(cancellationToken);
+    // ToLowerInvariant() de los dos lados: Npgsql lo traduce a lower(), la misma expresión de IX_business_hours_tenant_name.
+    // Sólo el ToLower() sin argumentos lo traduce Npgsql a lower() (ToLowerInvariant y Equals(OrdinalIgnoreCase) no se traducen); las
+    // reglas de cultura (CA1304, CA1311, CA1862) apuntan a .NET y acá la comparación corre en la base, como el índice.
+#pragma warning disable CA1304, CA1311, CA1862
+    public Task<bool> NameExistsAsync(Guid tenantId, string name, CancellationToken cancellationToken) =>
+        dbContext.BusinessHours.AnyAsync(
+            schedule => schedule.TenantId == tenantId && schedule.Name.ToLower() == name.ToLower(), cancellationToken);
+#pragma warning restore CA1304, CA1311, CA1862
 
     public void Add(BusinessHoursSchedule schedule) => dbContext.BusinessHours.Add(schedule);
 

@@ -86,6 +86,75 @@ public sealed class BusinessHoursPersistenceTests
     }
 
     [Fact]
+    public async Task UpdatingARangeIsPersistedThroughJsonb()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var schedule = NewSchedule(
+            tenantId,
+            "Oficina",
+            [.. EveryDay().Select(day => day.Day == 1 ? new WeekdayHours(1, [new TimeRange(480, 1080)]) : day)],
+            [new DateException(new DateOnly(2026, 12, 24), [new TimeRange(480, 720)])]);
+        await SaveAsync(factory, schedule);
+
+        // Sólo la franja del lunes: un comparador por referencia no vería el cambio y no escribiría la fila.
+        using (var scope = factory.Services.CreateScope())
+        {
+            var loaded = await scope.ServiceProvider.GetRequiredService<IBusinessHoursRepository>().FindAsync(tenantId, schedule.Id, Ct);
+            Assert.NotNull(loaded);
+            loaded.Update(
+                loaded.Name,
+                [.. loaded.Weekly.Select(day => day.Day == 1 ? new WeekdayHours(1, [new TimeRange(480, 1020)]) : day)],
+                loaded.Exceptions,
+                loaded.HolidayCountry,
+                Today,
+                Now.AddMinutes(1));
+            await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        // Sólo las franjas de la excepción.
+        using (var scope = factory.Services.CreateScope())
+        {
+            var loaded = await scope.ServiceProvider.GetRequiredService<IBusinessHoursRepository>().FindAsync(tenantId, schedule.Id, Ct);
+            Assert.NotNull(loaded);
+            Assert.Equal([new TimeRange(480, 1020)], loaded.Weekly.Single(day => day.Day == 1).Ranges);
+            Assert.Equal(2, loaded.Version);
+            loaded.Update(
+                loaded.Name,
+                loaded.Weekly,
+                [new DateException(new DateOnly(2026, 12, 24), [new TimeRange(540, 600)])],
+                loaded.HolidayCountry,
+                Today,
+                Now.AddMinutes(2));
+            await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var reload = factory.Services.CreateScope();
+        var final = await reload.ServiceProvider.GetRequiredService<IBusinessHoursRepository>().FindAsync(tenantId, schedule.Id, Ct);
+        Assert.NotNull(final);
+        Assert.Equal([new TimeRange(480, 1020)], final.Weekly.Single(day => day.Day == 1).Ranges);
+        Assert.Equal([new TimeRange(540, 600)], final.Exceptions.Single().Ranges);
+        Assert.Equal(3, final.Version);
+    }
+
+    [Fact]
+    public async Task NameExistsIgnoresCaseAndIsScopedToTheTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantA = Guid.CreateVersion7();
+        await SaveAsync(factory, NewSchedule(tenantA, "Oficina"));
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IBusinessHoursRepository>();
+
+        Assert.True(await repository.NameExistsAsync(tenantA, "OFICINA", Ct));
+        Assert.False(await repository.NameExistsAsync(tenantA, "Bodega", Ct));
+        Assert.False(await repository.NameExistsAsync(Guid.CreateVersion7(), "Oficina", Ct));
+    }
+
+    [Fact]
     public async Task TheNameIndexIgnoresCaseAndIsTranslatedByName()
     {
         await using var database = await StartDatabaseAsync();
@@ -178,8 +247,8 @@ public sealed class BusinessHoursPersistenceTests
         var tenant = await RegisterTenantAsync(factory);
         var bare = await RegisterTenantAsync(factory);
 
-        var closed = NewSchedule(tenant.TenantId, "Cerrado");
-        var open = NewSchedule(tenant.TenantId, "Abierto", EveryDay(new TimeRange(0, 1440)));
+        var closed = NewSchedule(tenant.TenantId, "Cerrado", EveryDay(new TimeRange(480, 1080)));
+        var open = NewSchedule(tenant.TenantId, "Abierto", EveryDay(new TimeRange(360, 1080)));
         await SaveAsync(baseFactory, closed, open);
         await ExecuteAsync(connectionString, "UPDATE messaging.business_hours_schedules SET is_default = true WHERE id = @id", ("id", open.Id));
         var assigned = Guid.CreateVersion7();
@@ -194,6 +263,15 @@ public sealed class BusinessHoursPersistenceTests
         var statuses = await hours.GetStatusesAsync(tenant.TenantId, [assigned, unassigned], Ct);
         var single = await hours.GetStatusAsync(tenant.TenantId, assigned, Ct);
         var withoutDefault = await hours.GetStatusAsync(bare.TenantId, Guid.CreateVersion7(), Ct);
+
+        // Un horario de otro tenant no se cuela: el tenant sin horarios atiende siempre aunque A tenga predeterminado.
+        var crossTenant = await hours.GetStatusAsync(bare.TenantId, assigned, Ct);
+        Assert.True(crossTenant.IsOpen);
+        Assert.Null(crossTenant.ScheduleId);
+        // 07:00 en Bogotá: la asignada abre a las 08:00 (13:00 UTC) y la predeterminada cierra a las 18:00 (23:00 UTC).
+        Assert.Equal(new DateTimeOffset(2026, 10, 21, 13, 0, 0, TimeSpan.Zero), statuses[assigned].NextChangeAt);
+        Assert.Equal(new DateTimeOffset(2026, 10, 21, 23, 0, 0, TimeSpan.Zero), statuses[unassigned].NextChangeAt);
+        Assert.Null(crossTenant.NextChangeAt);
 
         Assert.False(statuses[assigned].IsOpen);
         Assert.Equal(closed.Id, statuses[assigned].ScheduleId);

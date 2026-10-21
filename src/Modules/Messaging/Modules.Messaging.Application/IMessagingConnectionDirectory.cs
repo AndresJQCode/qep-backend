@@ -48,7 +48,8 @@ public interface IMessagingConnectionDirectory
     Task<IReadOnlyDictionary<Guid, string>> ListNamesAsync(Guid tenantId, CancellationToken cancellationToken);
 
     /// <summary>Todas las conexiones del tenant, en cualquier estado (D-H10): la página de horarios lista y valida contra esto, no contra
-    /// <see cref="ListActiveAsync"/>. WhatsApp primero y después Instagram, cada grupo por nombre.</summary>
+    /// <see cref="ListActiveAsync"/>. Una conexión borrada en Integrations nunca aparece (allá el borrado es físico): para los horarios
+    /// es una asignación huérfana, no una opción. WhatsApp primero y después Instagram, cada grupo por nombre.</summary>
     Task<IReadOnlyList<MessagingConnectionRef>> ListAllAsync(Guid tenantId, CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-11 §5.1: <c>wabaId</c> (<c>WhatsAppCloudFieldKeys.WabaId</c>) y el token en claro de una conexión

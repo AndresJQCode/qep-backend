@@ -93,6 +93,7 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IResolutionReasonNames, ResolutionReasonRepository>();
         // Spec 2026-10-21 §5: los horarios de atención; el repositorio es también el puerto IBusinessHours (misma instancia por scope).
         services.AddScoped<IBusinessHoursRepository, BusinessHoursRepository>();
+        // El cast es a propósito: las dos interfaces tienen que compartir la instancia scoped (un solo repositorio por solicitud).
         services.AddScoped<IBusinessHours>(provider => (BusinessHoursRepository)provider.GetRequiredService<IBusinessHoursRepository>());
         // Spec 2026-10-14 §4.3: el espejo de plantillas.
         services.AddScoped<IMessageTemplateRepository, MessageTemplateRepository>();
