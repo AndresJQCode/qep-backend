@@ -3,8 +3,8 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.Application;
 
 /// <summary>Una línea tal como queda después de la mutación, con la cantidad que el recálculo
-/// debe considerar.</summary>
-public sealed record QuotationPricingLine(Guid ItemId, Guid ProductId, decimal Quantity);
+/// debe considerar. La clave de sus escalas es la variante (spec 2026-10-20 §4).</summary>
+public sealed record QuotationPricingLine(Guid ItemId, Guid VariantId, decimal Quantity);
 
 /// <param name="Origin">De dónde salió el descuento. Viaja a la respuesta: "te lo ganaste
 /// sola", "te lo dieron entre todas" y "te lo dio el piso global" no son lo mismo en pantalla.
@@ -49,6 +49,12 @@ public sealed record QuotationLinePricing(
 /// queda fuera de la clave, así que dos productos con la misma escala agrupan aunque descuenten
 /// distinto, y cada uno conserva el suyo.
 ///
+/// <b>Por variante</b> (spec 2026-10-20 §4): las escalas se buscan por la variante de la línea y
+/// cada variante se comporta como antes un producto. Una escala <b>sin</b> <c>AllowGrouping</c> se
+/// cuenta sólo con la cantidad de su línea —6 M y 6 L no suman 12—; una <b>con</b>
+/// <c>AllowGrouping</c> suma entre variantes, del mismo producto o no, con la misma clave. No hay
+/// regla nueva: sólo cambió la clave del diccionario de escalas.
+///
 /// Nunca lanza. El 422 de <c>PackagingUnit</c> vive en <c>QuotationProductPricingResolver</c>,
 /// sobre la línea que el comando toca — ver <c>QuotationScaleRestrictionRule</c>.
 /// </summary>
@@ -56,14 +62,14 @@ internal static class QuotationScaleGroupPricing
 {
     public static IReadOnlyList<QuotationLinePricing> Resolve(
         IReadOnlyCollection<QuotationPricingLine> lines,
-        IReadOnlyDictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> scalesByProduct,
+        IReadOnlyDictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> scalesByVariant,
         int? globalFloor = null)
     {
-        var groupTotals = GroupTotals(lines, scalesByProduct);
+        var groupTotals = GroupTotals(lines, scalesByVariant);
 
         return lines
             .Select(line => ToPricing(
-                line, ScalesOf(scalesByProduct, line.ProductId), groupTotals, globalFloor))
+                line, ScalesOf(scalesByVariant, line.VariantId), groupTotals, globalFloor))
             .ToArray();
     }
 
@@ -77,13 +83,13 @@ internal static class QuotationScaleGroupPricing
     /// </summary>
     private static Dictionary<(int, int, int), decimal> GroupTotals(
         IReadOnlyCollection<QuotationPricingLine> lines,
-        IReadOnlyDictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> scalesByProduct)
+        IReadOnlyDictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> scalesByVariant)
     {
         var totals = new Dictionary<(int, int, int), decimal>();
 
         foreach (var line in lines)
         {
-            foreach (var scale in ScalesOf(scalesByProduct, line.ProductId))
+            foreach (var scale in ScalesOf(scalesByVariant, line.VariantId))
             {
                 if (!Qualifies(scale, line.Quantity))
                 {
@@ -119,9 +125,9 @@ internal static class QuotationScaleGroupPricing
         && quantity % scale.Multiple!.Value == 0;
 
     private static IReadOnlyCollection<QuotationPriceScaleRef> ScalesOf(
-        IReadOnlyDictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> scalesByProduct,
-        Guid productId) =>
-        scalesByProduct.TryGetValue(productId, out var scales) ? scales : [];
+        IReadOnlyDictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> scalesByVariant,
+        Guid variantId) =>
+        scalesByVariant.TryGetValue(variantId, out var scales) ? scales : [];
 
     /// <summary>
     /// Primero lo que la línea consigue por su cuenta, y recién después si algún tramo agrupable le
@@ -211,8 +217,8 @@ internal static class QuotationScaleGroupPricing
 
     /// <summary>
     /// El tramo que el asesor eligió para toda la cotización, identificado por su piso
-    /// (<c>FromUnit</c>). Las escalas son por producto, así que cada línea busca el tramo con
-    /// ese piso **en su propio producto**: uno que no lo tenga simplemente no participa.
+    /// (<c>FromUnit</c>). Las escalas son por variante, así que cada línea busca el tramo con
+    /// ese piso **en su propia variante**: una que no lo tenga simplemente no participa.
     ///
     /// Sólo reemplaza con un descuento **estrictamente** mayor, igual que <see cref="Upgrade"/>:
     /// el global es un piso y no un techo, y nadie pierde descuento por activarlo.

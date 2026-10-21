@@ -11,11 +11,11 @@ namespace Bootstrapper.UnitTests;
 /// **Las tablas de líneas se crean acá, mínimas, y no por las migraciones.** La columna
 /// <c>variant_id</c> de <c>quotations.quotation_items</c>, <c>quotations.order_items</c> y
 /// <c>pos.sale_lines</c> la agregan las Tareas 10 y 12 (<c>AddVariantToLines</c>,
-/// <c>AddVariantToSaleLines</c>); hasta entonces el esquema real no la tiene. La réplica lleva sólo
-/// las columnas que la consulta lee —el documento dueño con su <c>tenant_id</c> y la línea con su
-/// <c>variant_id</c>— con los mismos nombres de esquema, tabla y columna del plan. Cuando existan
-/// las migraciones, conviene una prueba gemela contra el esquema migrado (ver el reporte de la
-/// Tarea 6): esta no se entera si una de ellas nombra distinto una columna.
+/// <c>AddVariantToSaleLines</c>). La réplica lleva sólo las columnas que la consulta lee —el
+/// documento dueño con su <c>tenant_id</c> y la línea con su <c>variant_id</c>— con los mismos
+/// nombres de esquema, tabla y columna. Esta prueba no se entera si una migración nombra distinto
+/// una columna: eso lo cubren las gemelas contra el esquema migrado,
+/// <c>VariantLinesMigrationTests</c> (Quotations) y <c>SaleLinesVariantMigrationTests</c> (Pos).
 /// </summary>
 public sealed class CatalogVariantUsageCheckerTests
 {

@@ -12,13 +12,18 @@ namespace Modules.Quotations.Application;
 /// La usan la respuesta de cotización y pedido (y con ella el PDF, que sale de esa respuesta) y el
 /// Excel de pedidos. Si cada uno aplicara la regla por su cuenta, tarde o temprano el documento que
 /// recibe el cliente diría otra cosa que la pantalla.
+///
+/// Por variante (spec 2026-10-20 §4): el código es el <c>Code</c> de la variante y el nombre su
+/// nombre visible («Camiseta – M»). Un borrador sigue leyendo en vivo, así que renombrar el producto
+/// o un valor de opción se ve en la línea hasta que la cotización sale del borrador; desde ahí la
+/// foto no se recalcula.
 /// </summary>
 public static class QuotationItemProductLabel
 {
-    public static string CodeOf(string? snapshot, QuotationProductRef? live) =>
+    public static string CodeOf(string? snapshot, QuotationVariantRef? live) =>
         snapshot ?? live?.Code ?? string.Empty;
 
-    public static string NameOf(string? snapshot, QuotationProductRef? live) =>
+    public static string NameOf(string? snapshot, QuotationVariantRef? live) =>
         snapshot ?? live?.Name ?? string.Empty;
 
     /// <summary>
@@ -36,7 +41,7 @@ public static class QuotationItemProductLabel
     {
         var missing = quotation.Items
             .Where(item => item.ProductCode is null)
-            .Select(item => item.ProductId)
+            .Select(item => item.VariantId)
             .Distinct()
             .ToArray();
         if (missing.Length == 0)

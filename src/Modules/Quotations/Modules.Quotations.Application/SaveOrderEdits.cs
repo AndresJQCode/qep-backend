@@ -301,13 +301,13 @@ public sealed class SaveOrderEditsHandler(
     {
         // El nombre de un producto que se quitó se resuelve contra el catálogo: la línea ya no está
         // para decirlo.
-        var removedProductIds = edits
+        var removedVariantIds = edits
             .Where(edit => edit.Kind == OrderItemEditKind.Removed)
-            .Select(edit => edit.ProductId)
+            .Select(edit => edit.VariantId)
             .ToArray();
-        var removedProducts = removedProductIds.Length == 0
-            ? new Dictionary<Guid, QuotationProductRef>()
-            : await productLookup.FindManyAsync(tenantId, removedProductIds, cancellationToken);
+        var removedProducts = removedVariantIds.Length == 0
+            ? new Dictionary<Guid, QuotationVariantRef>()
+            : await productLookup.FindManyAsync(tenantId, removedVariantIds, cancellationToken);
 
         foreach (var edit in edits)
         {
@@ -326,7 +326,7 @@ public sealed class SaveOrderEditsHandler(
             }
             else
             {
-                var productName = removedProducts.TryGetValue(edit.ProductId, out var product)
+                var productName = removedProducts.TryGetValue(edit.VariantId, out var product)
                     ? product.Name
                     : "un producto";
                 summary = OrderChangeSummary.ItemRemoved(productName);

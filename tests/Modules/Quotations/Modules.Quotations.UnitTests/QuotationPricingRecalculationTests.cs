@@ -27,9 +27,9 @@ public sealed class QuotationPricingRecalculationTests
     private static QuotationPriceScaleRef[] FlatTier() =>
         [new(1, 999, 5m, QuotationPriceScaleRestriction.Multiple, 1, [], false)];
 
-    private static QuotationProductPricingRef Product(
+    private static QuotationVariantPricingRef Product(
         Guid id, decimal? cop, decimal? usd, QuotationPriceScaleRef[] scales) =>
-        new(id, TenantId, "Producto", true, PricesOf(cop, usd), scales, 19);
+        new(id, id, TenantId, "Producto", "SKU", true, PricesOf(cop, usd), scales, 19);
 
     // A missing price is a missing key, not a null amount: the catalogue only lists what it has.
     private static Dictionary<string, decimal> PricesOf(decimal? cop, decimal? usd)
@@ -71,7 +71,7 @@ public sealed class QuotationPricingRecalculationTests
 
         // Entra sin descuento a propósito: lo que se prueba es que la pasada lo resuelva, no que
         // el llamador lo haya traído.
-        quotation.AddItem(itemId, productId, quantity, unitPrice, 0m, 19, AdvisorId, Now);
+        quotation.AddItem(itemId, productId, productId, quantity, unitPrice, 0m, 19, AdvisorId, Now);
         return itemId;
     }
 
@@ -306,8 +306,8 @@ public sealed class QuotationPricingRecalculationTests
         var item = AddItem(quotation, product, 2m, 1_000_000m);
 
         await QuotationPricingRecalculation.ApplyAsync(
-            new StubPricingLookup(new QuotationProductPricingRef(
-                product, TenantId, "Producto", true,
+            new StubPricingLookup(new QuotationVariantPricingRef(
+                product, product, TenantId, "Producto", "SKU", true,
                 new Dictionary<string, decimal> { ["EUR"] = 1_000_000m }, FlatTier(), 19)),
             new FixedQuotationSettingsStore(QuotationSettings.Create(
                 6, new Dictionary<string, decimal> { ["COP"] = 500_000m })),
@@ -320,25 +320,25 @@ public sealed class QuotationPricingRecalculationTests
         Assert.Equal(2_000_000m, quotation.Total);
     }
 
-    private sealed class StubPricingLookup(params QuotationProductPricingRef[] products)
+    private sealed class StubPricingLookup(params QuotationVariantPricingRef[] products)
         : IQuotationProductPricingLookup
     {
-        private readonly Dictionary<Guid, QuotationProductPricingRef> _products =
-            products.ToDictionary(product => product.Id);
+        private readonly Dictionary<Guid, QuotationVariantPricingRef> _products =
+            products.ToDictionary(product => product.VariantId);
 
         public int ManyCalls { get; private set; }
 
-        public Task<QuotationProductPricingRef?> FindAsync(
+        public Task<QuotationVariantPricingRef?> FindVariantAsync(
             Guid tenantId, Guid productId, CancellationToken cancellationToken) =>
             Task.FromResult(_products.GetValueOrDefault(productId));
 
-        public Task<IReadOnlyDictionary<Guid, QuotationProductPricingRef>> FindManyAsync(
+        public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
             Guid tenantId,
             IReadOnlyCollection<Guid> productIds,
             CancellationToken cancellationToken)
         {
             ManyCalls++;
-            return Task.FromResult<IReadOnlyDictionary<Guid, QuotationProductPricingRef>>(
+            return Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>>(
                 productIds
                     .Where(_products.ContainsKey)
                     .ToDictionary(id => id, id => _products[id]));

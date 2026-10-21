@@ -30,7 +30,7 @@ public sealed class PosSaleTests
 
         var sale = Sale(
             session,
-            [new(keratina, "7703", "Kit keratina 120 ml", 100m, 35_000m, 33.33m, 19)],
+            [new(keratina, keratina, "7703", "Kit keratina 120 ml", 100m, 35_000m, 33.33m, 19)],
             [Cash(2_333_500m)]);
 
         Assert.Equal(2_333_500m, sale.Total);
@@ -112,8 +112,8 @@ public sealed class PosSaleTests
         var sale = Sale(
             OpenSession(),
             [
-                new(Shampoo, "SH-400", "Shampoo 400 ml", 1m, 11_900m, 10m, 19),
-                new(Shampoo, "SH-400", "Shampoo 400 ml", 1m, 11_900m, 0m, 19),
+                new(Shampoo, Shampoo, "SH-400", "Shampoo 400 ml", 1m, 11_900m, 10m, 19),
+                new(Shampoo, Shampoo, "SH-400", "Shampoo 400 ml", 1m, 11_900m, 0m, 19),
             ],
             [Cash(30_000m)]);
 
@@ -143,7 +143,7 @@ public sealed class PosSaleTests
     {
         var sale = Sale(
             OpenSession(),
-            [new(Shampoo, "SH-400", "Shampoo 400 ml", 1m, 11_900m, 100m, 19)],
+            [new(Shampoo, Shampoo, "SH-400", "Shampoo 400 ml", 1m, 11_900m, 100m, 19)],
             [Cash(0m)]);
 
         Assert.Equal(0m, sale.Total);
@@ -191,7 +191,7 @@ public sealed class PosSaleTests
     {
         var error = Assert.Throws<PosDomainException>(() => Sale(
             OpenSession(),
-            [new(Shampoo, "SH-400", "Shampoo 400 ml", 1m, 11_900m, 100m, 19)],
+            [new(Shampoo, Shampoo, "SH-400", "Shampoo 400 ml", 1m, 11_900m, 100m, 19)],
             [Cash(5_000m)]));
 
         Assert.Equal("pos.sale.tendered_invalid", error.Code);
@@ -214,7 +214,7 @@ public sealed class PosSaleTests
     {
         var error = Assert.Throws<PosDomainException>(() => Sale(
             OpenSession(),
-            [new(Shampoo, "SH-400", "Shampoo 400 ml", 1m, 0m, 0m, 19)],
+            [new(Shampoo, Shampoo, "SH-400", "Shampoo 400 ml", 1m, 0m, 0m, 19)],
             [Card(1m)]));
 
         Assert.Equal("pos.sale.payment_exceeds_total", error.Code);
@@ -231,7 +231,7 @@ public sealed class PosSaleTests
     {
         var error = Assert.Throws<PosDomainException>(() => Sale(
             OpenSession(),
-            [new(Shampoo, "SH-400", "Shampoo 400 ml", D(quantity), 11_900m, D(discount), 19)],
+            [new(Shampoo, Shampoo, "SH-400", "Shampoo 400 ml", D(quantity), 11_900m, D(discount), 19)],
             [Cash(100_000_000m)]));
 
         Assert.Equal(code, error.Code);
@@ -242,18 +242,18 @@ public sealed class PosSaleTests
     public static TheoryData<PosSaleLineInput[]> AmountsThatDoNotFit => new()
     {
         // 99 999 × 20 000 000 = 1,99998e12: la cantidad cabe, el total no.
-        { [new(Shampoo, "SH-400", "Shampoo 400 ml", 99_999m, 20_000_000m, 0m, 19)] },
+        { [new(Shampoo, Shampoo, "SH-400", "Shampoo 400 ml", 99_999m, 20_000_000m, 0m, 19)] },
         // Cada línea cabe; la suma de las dos no.
         {
             [
-                new(Shampoo, "SH-400", "Shampoo 400 ml", 1m, 600_000_000_000m, 0m, 19),
-                new(Avena, "AV-01", "Avena granel (kg)", 1m, 600_000_000_000m, 0m, 0),
+                new(Shampoo, Shampoo, "SH-400", "Shampoo 400 ml", 1m, 600_000_000_000m, 0m, 19),
+                new(Avena, Avena, "AV-01", "Avena granel (kg)", 1m, 600_000_000_000m, 0m, 0),
             ]
         },
         // Con 100 % de descuento el total es 0, pero el descuento también se guarda en (14,2).
-        { [new(Shampoo, "SH-400", "Shampoo 400 ml", 99_999m, 20_000_000m, 100m, 19)] },
+        { [new(Shampoo, Shampoo, "SH-400", "Shampoo 400 ml", 99_999m, 20_000_000m, 100m, 19)] },
         // El total cabe (1e10), pero el precio unitario se guarda tal cual en sale_lines.unit_price.
-        { [new(Shampoo, "SH-400", "Shampoo 400 ml", 0.01m, 1_000_000_000_000m, 0m, 0)] },
+        { [new(Shampoo, Shampoo, "SH-400", "Shampoo 400 ml", 0.01m, 1_000_000_000_000m, 0m, 0)] },
     };
 
     [Theory]
@@ -272,7 +272,7 @@ public sealed class PosSaleTests
     {
         var sale = Sale(
             OpenSession(currency: "USD"),
-            [new(Shampoo, "SH-400", "Shampoo 400 ml", 1m, PosLimits.MaxAmount, 0m, 0)],
+            [new(Shampoo, Shampoo, "SH-400", "Shampoo 400 ml", 1m, PosLimits.MaxAmount, 0m, 0)],
             [Card(PosLimits.MaxAmount)]);
 
         Assert.Equal(999_999_999_999.99m, sale.Total);
@@ -282,7 +282,7 @@ public sealed class PosSaleTests
     public void ASaleNeedsBetweenOneAndTwoHundredLines()
     {
         var none = Assert.Throws<PosDomainException>(() => Sale(OpenSession(), [], [Cash(0m)]));
-        var line = new PosSaleLineInput(Shampoo, "SH-400", "Shampoo 400 ml", 1m, 1m, 0m, 0);
+        var line = new PosSaleLineInput(Shampoo, Shampoo, "SH-400", "Shampoo 400 ml", 1m, 1m, 0m, 0);
         var tooMany = Assert.Throws<PosDomainException>(() =>
             Sale(OpenSession(), Enumerable.Repeat(line, 201).ToArray(), [Cash(1_000m)]));
 
@@ -352,5 +352,26 @@ public sealed class PosSaleTests
         PosSaleStatus status, CashSessionStatus sessionStatus, bool voidable, string? reason)
     {
         Assert.Equal((voidable, reason), PosVoidability.For(status, sessionStatus));
+    }
+
+    // Spec 2026-10-20 §3.4: el nombre visible de una variante puede pasar de los 200 de
+    // pos.sale_lines.product_name. La línea guarda el nombre ya recortado (SnapshotText.Fit), con el
+    // resto de la foto intacta, en vez de dejar que Postgres responda un 500.
+    [Fact]
+    public void ASaleLineStoresTheCutName()
+    {
+        var variant = Guid.CreateVersion7();
+        var product = Guid.CreateVersion7();
+        var longName = new string('c', 195) + " – XL / Azul";
+
+        var sale = Sale(
+            OpenSession(),
+            [new(variant, product, "CAM-XL", longName, 1m, 30_000m, 0m, 19)],
+            [Cash(30_000m)]);
+
+        var line = Assert.Single(sale.Lines);
+        Assert.Equal((variant, product, "CAM-XL"), (line.VariantId, line.ProductId, line.ProductCode));
+        Assert.Equal(PosSaleLine.ProductNameMaxLength, line.ProductName.Length);
+        Assert.Equal(new string('c', 195) + " – X…", line.ProductName);
     }
 }

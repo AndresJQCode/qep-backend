@@ -242,13 +242,21 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         // catálogo entero —coincide con cualquier carácter—, que es lo contrario de filtrar.
         // Lo encontró la revisión de fiabilidad de CAT-02, contra un comentario previo que
         // afirmaba justo lo que no pasaba.
+        //
+        // Variantes, Tarea 12: `search` también encuentra por código de barras de una variante
+        // (spec 2026-10-20 §5, la búsqueda del POS). Lo usan el POS y el `search` del listado y del
+        // combobox de cotizaciones, que también quedan encontrando por código de barras: es la
+        // misma caja de búsqueda y no hay motivo para que un código escaneado no la encuentre.
+        // name/code (las cajas separadas del listado) no cambian.
         var searchPattern = LikePattern(search);
         if (searchPattern is not null)
         {
             query = query.Where(product =>
                 EF.Functions.ILike(product.Name, searchPattern, LikeEscapeCharacter) ||
                 product.Variants.Any(variant =>
-                    EF.Functions.ILike(variant.Code, searchPattern, LikeEscapeCharacter)));
+                    EF.Functions.ILike(variant.Code, searchPattern, LikeEscapeCharacter) ||
+                    (variant.Barcode != null &&
+                        EF.Functions.ILike(variant.Barcode, searchPattern, LikeEscapeCharacter))));
         }
 
         // Las dos cajas separadas del listado (CAT-FILTROS-01), cada una filtra su propia
@@ -313,12 +321,6 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
     // Igualdad exacta y con mayúsculas, servida por IX_product_variants_tenant_code: es la misma
     // comparación del índice único y del agregado (ordinal), así que un código que este método no
     // encuentra es uno que se puede guardar.
-    public Task<Product?> FindByCodeAsync(
-        Guid tenantId,
-        string code,
-        CancellationToken cancellationToken) =>
-        FindVariantByCodeAsync(tenantId, code, cancellationToken);
-
     public Task<Product?> FindVariantByCodeAsync(
         Guid tenantId,
         string code,
@@ -355,25 +357,6 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             .AsNoTracking()
             .Where(product => product.TenantId == tenantId
                 && product.Variants.Any(variant => variantIds.Contains(variant.Id)))
-            .ToListAsync(cancellationToken);
-    }
-
-    // AsNoTracking y con las escalas: quien la llama arma una respuesta de lectura (el detalle
-    // de una cotizacion), no muta el producto.
-    public async Task<IReadOnlyList<Product>> ListByIdsAsync(
-        Guid tenantId,
-        IReadOnlyCollection<ProductId> productIds,
-        CancellationToken cancellationToken)
-    {
-        if (productIds.Count == 0)
-        {
-            return [];
-        }
-
-        return await Aggregates()
-            .AsNoTracking()
-            .Where(product =>
-                product.TenantId == tenantId && productIds.Contains(product.Id))
             .ToListAsync(cancellationToken);
     }
 

@@ -359,12 +359,12 @@ public static class QuotationEndpoints
     // null, y "sin productos" se escribe de una sola forma (OrderEndpoints.cs:370).
     private static QuotationItemAddition[] ToItems(SaveQuotationRequest request) =>
         (request.Items ?? [])
-            .Select(item => new QuotationItemAddition(item.ProductId, item.Quantity))
+            .Select(item => new QuotationItemAddition(item.VariantId, item.Quantity))
             .ToArray();
 
     private static QuotationItemAddition[] ToItems(CreateQuotationRequest request) =>
         (request.Items ?? [])
-            .Select(item => new QuotationItemAddition(item.ProductId, item.Quantity))
+            .Select(item => new QuotationItemAddition(item.VariantId, item.Quantity))
             .ToArray();
 
     // Copia de RoleEndpoints.TryParseVersion (src/Api), igual que OrderEndpoints.cs:435: este
@@ -413,7 +413,7 @@ public static class QuotationEndpoints
         CancellationToken cancellationToken)
     {
         var quotation = await dispatcher.SendAsync(
-            new AddQuotationItemCommand(tenantId, quotationId, request.ProductId, request.Quantity),
+            new AddQuotationItemCommand(tenantId, quotationId, request.VariantId, request.Quantity),
             cancellationToken);
 
         return Results.Created(
@@ -430,7 +430,7 @@ public static class QuotationEndpoints
         CancellationToken cancellationToken)
     {
         var toAdd = request.ToAdd
-            .Select(item => new QuotationItemAddition(item.ProductId, item.Quantity))
+            .Select(item => new QuotationItemAddition(item.VariantId, item.Quantity))
             .ToArray();
 
         var quotation = await dispatcher.SendAsync(

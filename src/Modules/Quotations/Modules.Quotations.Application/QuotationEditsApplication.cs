@@ -59,7 +59,7 @@ internal static class QuotationEditsApplication
                 pricingLookup,
                 tenantId,
                 quotation.Items
-                    .Select(item => (item.ProductId, item.Quantity))
+                    .Select(item => (item.VariantId, item.Quantity))
                     .ToArray(),
                 currency, edits.IsRetail,
                 cancellationToken);

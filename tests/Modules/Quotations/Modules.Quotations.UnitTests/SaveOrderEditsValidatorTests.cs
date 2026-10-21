@@ -53,14 +53,14 @@ public sealed class SaveOrderEditsValidatorTests
         AssertFailsOn(_save.Validate(Command(items: [])), "Items");
 
     [Fact]
-    public void RejectsARepeatedProduct() =>
+    public void RejectsARepeatedVariant() =>
         AssertFailsOn(
             _save.Validate(Command(items: [new OrderItemAddition(ProductId, 1m), new OrderItemAddition(ProductId, 2m)])),
             "Items");
 
     [Fact]
-    public void RejectsAnEmptyProductId() =>
-        AssertFailsOn(_save.Validate(Command(items: [new OrderItemAddition(Guid.Empty, 1m)])), "Items[0].ProductId");
+    public void RejectsAnEmptyVariantId() =>
+        AssertFailsOn(_save.Validate(Command(items: [new OrderItemAddition(Guid.Empty, 1m)])), "Items[0].VariantId");
 
     [Theory]
     [InlineData(0)]

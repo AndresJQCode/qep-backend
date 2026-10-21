@@ -4,14 +4,25 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Pos.Application;
 
-/// <summary>El escaneo: el lector teclea Product.Code (no hay campo EAN, spec decisión 25).</summary>
+/// <summary>
+/// El escaneo (spec 2026-10-20 §5): el lector teclea un código de barras o el cajero un
+/// <c>Code</c>. Se busca primero el código de barras de una variante y después su <c>Code</c>
+/// (IPosProductLookup.FindByCodeAsync); responde la variante con su nombre visible.
+/// </summary>
 public sealed record FindPosProductByCodeQuery(Guid TenantId, string Code) : IQuery<PosProductResponse>;
 
 public sealed class FindPosProductByCodeValidator : AbstractValidator<FindPosProductByCodeQuery>
 {
+    /// <summary>
+    /// El mayor de los dos largos de Catalog: <c>ProductVariant.BarcodeMaxLength</c> (64) y
+    /// <c>CodeMaxLength</c> (60), copiados y no referenciados porque Pos no depende de Catalog.
+    /// Con 60, un código de barras válido de 61 a 64 caracteres daría 422 en vez de encontrarse.
+    /// </summary>
+    private const int ScannedCodeMaxLength = 64;
+
     public FindPosProductByCodeValidator()
     {
-        RuleFor(query => query.Code).NotEmpty().Must(code => !string.IsNullOrWhiteSpace(code)).MaximumLength(60);
+        RuleFor(query => query.Code).NotEmpty().Must(code => !string.IsNullOrWhiteSpace(code)).MaximumLength(ScannedCodeMaxLength);
     }
 }
 

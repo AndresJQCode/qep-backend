@@ -49,7 +49,7 @@ public sealed class QuotationRetailTests
     {
         var quotation = NewQuotation(BillingAccount);
         quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
         quotation.ConvertToOrder(AdvisorId, Now.AddHours(2), QuotationProductSnapshot.None);
 

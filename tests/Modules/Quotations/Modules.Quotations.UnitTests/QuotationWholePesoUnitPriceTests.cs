@@ -109,7 +109,7 @@ public sealed class QuotationWholePesoUnitPriceTests
     {
         var quotation = NewQuotation("USD");
         var productId = Guid.CreateVersion7();
-        quotation.AddItem(QuotationItemId.New(), productId, 100m, 6m, 0m, 19, AdvisorId, Now);
+        quotation.AddItem(QuotationItemId.New(), productId, productId, 100m, 6m, 0m, 19, AdvisorId, Now);
 
         quotation.UpdateDetails(
             new DateOnly(2026, 10, 31),
@@ -180,7 +180,7 @@ public sealed class QuotationWholePesoUnitPriceTests
         Quotation quotation, decimal quantity, decimal unitPrice, decimal discountPercentage, int taxPercentage) =>
         quotation.AddItem(
             QuotationItemId.New(),
-            Guid.CreateVersion7(),
+            Guid.CreateVersion7(), Guid.CreateVersion7(),
             quantity,
             unitPrice,
             discountPercentage,

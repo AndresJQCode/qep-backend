@@ -22,7 +22,7 @@ public sealed class OrderTests
         new(ClientId, Advisor, "COP", "Transferencia", isRetail, null, withRetention, false);
 
     private static OrderLineInput Line(decimal quantity = 2m, decimal unitPrice = 11_900m, decimal discount = 0m) =>
-        new(Guid.CreateVersion7(), quantity, unitPrice, discount, 19, new QuotationProductSnapshot("ABC", "Aceite"));
+        new(Guid.CreateVersion7(), Guid.CreateVersion7(), quantity, unitPrice, discount, 19, new QuotationProductSnapshot("ABC", "Aceite"));
 
     // Por defecto: una línea de 2 × 11.900 con IVA del 19 % → subtotal 20.000, IVA 3.800, neto 23.800.
     private static Order NewOrder(
@@ -227,7 +227,7 @@ public sealed class OrderTests
         var order = NewOrder(OrderPaymentStatus.PaymentPending, proofs: [], lines: [Line()]);
         var first = Assert.Single(order.Items);
 
-        order.AddItem(OrderItemId.New(), Guid.CreateVersion7(), 1m, 5_000m, 0m, 19, ConvertedBy, Now);
+        order.AddItem(OrderItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 5_000m, 0m, 19, ConvertedBy, Now);
         Assert.Equal(2, order.Items.Count);
         Assert.Equal(23_800m + 5_000m, order.Total);
 
@@ -243,7 +243,7 @@ public sealed class OrderTests
         order.Approve(ConvertedBy, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.AddItem(OrderItemId.New(), Guid.CreateVersion7(), 1m, 5_000m, 0m, 19, ConvertedBy, Now));
+            order.AddItem(OrderItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 5_000m, 0m, 19, ConvertedBy, Now));
 
         Assert.Equal("order.order.not_pending", error.Code);
     }
@@ -256,8 +256,8 @@ public sealed class OrderTests
         var frozen = Guid.CreateVersion7();
         var added = Guid.CreateVersion7();
         var order = NewOrder(
-            lines: [new OrderLineInput(frozen, 1m, 1_000m, 0m, 19, new QuotationProductSnapshot("A-001", "Tornillo"))]);
-        order.AddItem(OrderItemId.New(), added, 1m, 1_000m, 0m, 19, ConvertedBy, Now.AddHours(1));
+            lines: [new OrderLineInput(frozen, frozen, 1m, 1_000m, 0m, 19, new QuotationProductSnapshot("A-001", "Tornillo"))]);
+        order.AddItem(OrderItemId.New(), added, added, 1m, 1_000m, 0m, 19, ConvertedBy, Now.AddHours(1));
         var version = order.Version;
 
         order.CaptureProductSnapshots(new Dictionary<Guid, QuotationProductSnapshot>
@@ -365,7 +365,7 @@ public sealed class OrderTests
                 CityId = Guid.CreateVersion7(),
             }),
             Account, "COP", customerWithRetention: true, customerVatSurplus: false, Advisor, Now);
-        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);
+        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>
         {
             [quotation.Items.Single().ProductId] = new("ABC", "Aceite"),

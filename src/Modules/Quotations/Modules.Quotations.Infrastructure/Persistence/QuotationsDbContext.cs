@@ -244,6 +244,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         item.Property(value => value.QuotationId)
             .HasColumnName("quotation_id")
             .HasConversion(id => id.Value, value => new QuotationId(value));
+        // La variante que vende la línea (spec 2026-10-20 §4). Sin FK, igual que product_id: este
+        // módulo no referencia las tablas de Catalog. NOT NULL desde AddVariantToLines, que rellenó
+        // las líneas viejas con product_id (la variante por defecto nació con el id del producto).
+        item.Property(value => value.VariantId).HasColumnName("variant_id");
         item.Property(value => value.ProductId).HasColumnName("product_id");
         // Nulas: un borrador y las líneas enviadas antes de la columna leen el producto en vivo.
         item.Property(value => value.ProductCode)
@@ -274,6 +278,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         item.Property(value => value.CreatedAt).HasColumnName("created_at");
         item.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         item.HasIndex(value => value.QuotationId).HasDatabaseName("IX_quotation_items_quotation");
+        // Para «¿está en uso esta variante?» de Catalog (CatalogVariantUsageChecker en Bootstrapper),
+        // que corre en cada GET y PUT de producto con `variant_id = ANY(@ids)`: sin índice, cada
+        // detalle de producto recorre todas las líneas de todos los tenants.
+        item.HasIndex(value => value.VariantId).HasDatabaseName("IX_quotation_items_variant");
 
         // CASCADE: una linea no tiene sentido sin su cotizacion -- no es catalogo compartido, es
         // parte del mismo agregado. Mismo criterio que PriceScale -> Product en Catalog.
@@ -632,6 +640,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         item.Property(value => value.OrderId)
             .HasColumnName("order_id")
             .HasConversion(id => id.Value, value => new OrderId(value));
+        // Igual que en quotation_items: la variante de la línea, sin FK, NOT NULL desde AddVariantToLines.
+        item.Property(value => value.VariantId).HasColumnName("variant_id");
         item.Property(value => value.ProductId).HasColumnName("product_id");
         item.Property(value => value.ProductCode)
             .HasColumnName("product_code")
@@ -660,6 +670,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         item.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         item.Ignore(value => value.Amounts);
         item.HasIndex(value => value.OrderId).HasDatabaseName("IX_order_items_order");
+        // Mismo motivo que IX_quotation_items_variant: la consulta de uso de Catalog.
+        item.HasIndex(value => value.VariantId).HasDatabaseName("IX_order_items_variant");
 
         item.HasOne<Order>()
             .WithMany(order => order.Items)

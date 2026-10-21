@@ -430,7 +430,7 @@ public sealed class OrderShippingApiTests
             new ExternalOrderDraft(
                 tenantId, OrderSource.Shopify, "#3001", clientId, advisorId.Value, null, null, null,
                 new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-                [new ExternalOrderLine(productId, 2m, 11_900m, 0m, 19)],
+                [new ExternalOrderLine(productId, productId, 2m, 11_900m, 0m, 19)],
                 OrderPaymentStatus.PaymentPending, DateTimeOffset.UtcNow,
                 new ShippingDetails(null, null, FreightChargeMode.Charged, 15_000m, 19, false),
                 $"shop-1:{Guid.CreateVersion7()}", title),

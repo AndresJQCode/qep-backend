@@ -65,12 +65,12 @@ public abstract class OrderEditsValidator<TEdits> : AbstractValidator<TEdits>
             .WithMessage("At least one product is required.");
         RuleForEach(edits => edits.Items).ChildRules(item =>
         {
-            item.RuleFor(line => line.ProductId).NotEmpty();
+            item.RuleFor(line => line.VariantId).NotEmpty();
             item.RuleFor(line => line.Quantity).GreaterThan(0m);
         });
         RuleFor(edits => edits.Items)
-            .Must(items => !HasDuplicates(items.Select(line => line.ProductId)))
-            .WithMessage("The same product cannot appear more than once.");
+            .Must(items => !HasDuplicates(items.Select(line => line.VariantId)))
+            .WithMessage("La misma variante no puede aparecer más de una vez.");
 
         RuleForEach(edits => edits.Proofs.Add).ChildRules(addition =>
         {

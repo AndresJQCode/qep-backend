@@ -189,8 +189,8 @@ public sealed class CreateQuotationHandlerTests
         Assert.Equal("quotation.quotation.freight_charge_mode_disabled", error.Code);
     }
 
-    internal static QuotationProductPricingRef Product(Guid id, string name, decimal price) =>
-        new(id, TenantId, name, true, new Dictionary<string, decimal> { ["COP"] = price }, [], null);
+    internal static QuotationVariantPricingRef Product(Guid id, string name, decimal price) =>
+        new(id, id, TenantId, name, "SKU", true, new Dictionary<string, decimal> { ["COP"] = price }, [], null);
 
     private static CreateQuotationCommand CreateCommand(QuotationBillingAccountRequest? billingAccount) =>
         new(TenantId, ClientId, ValidUntil: null, PaymentMethod: null, Notes: null, Parties: null, billingAccount);
@@ -224,7 +224,7 @@ public sealed class CreateQuotationHandlerTests
             repository ?? EmptyRepository(),
             new NoOpQuotationsUnitOfWork(),
             audit ?? new NoOpQuotationAuditPublisher(),
-            new StubQuotationProductLookup(new Dictionary<Guid, QuotationProductRef>()),
+            new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
             drafts,
             numbers ?? new SequentialQuotationNumberGenerator(),
             new DefaultNumberingFormats(),

@@ -403,6 +403,7 @@ public sealed class Quotation
     /// </summary>
     public void AddItem(
         QuotationItemId itemId,
+        Guid variantId,
         Guid productId,
         decimal quantity,
         decimal unitPrice,
@@ -413,7 +414,7 @@ public sealed class Quotation
     {
         EnsureEditable();
         AddItemCore(
-            itemId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
+            itemId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
             updatedBy, occurredAt);
     }
 
@@ -519,6 +520,7 @@ public sealed class Quotation
 
     private void AddItemCore(
         QuotationItemId itemId,
+        Guid variantId,
         Guid productId,
         decimal quantity,
         decimal unitPrice,
@@ -527,19 +529,21 @@ public sealed class Quotation
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
-        // Un producto por cotizacion: dos lineas del mismo producto son la misma linea con la
-        // cantidad partida, y partida ademas rompe el descuento por escala (cada mitad resuelve
-        // su escala por separado y las dos pagan mas caro que la suma junta). Quien quiera mas
-        // unidades cambia la cantidad de la linea que ya existe.
-        if (_items.Any(existing => existing.ProductId == productId))
+        // Una variante por cotizacion (spec 2026-10-20 §4; antes, un producto): dos lineas de la
+        // misma variante son la misma linea con la cantidad partida, y partida ademas rompe el
+        // descuento por escala (cada mitad resuelve su escala por separado y las dos pagan mas caro
+        // que la suma junta). Quien quiera mas unidades cambia la cantidad de la linea que ya
+        // existe. Dos tallas del mismo producto si son dos lineas. El codigo de error se conserva:
+        // es contrato con el frontend.
+        if (_items.Any(existing => existing.VariantId == variantId))
         {
             throw new QuotationsDomainException(
                 "quotation.item.duplicate_product",
-                "The product is already in the quotation.");
+                "La variante ya está en la cotización.");
         }
 
         var item = QuotationItem.Create(
-            itemId, Id, productId, quantity, unitPrice, discountPercentage, taxPercentage,
+            itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
             _items.Count + 1, Currency, occurredAt);
         _items.Add(item);
         Touch(updatedBy, occurredAt);
@@ -640,7 +644,7 @@ public sealed class Quotation
 
         foreach (var item in _items)
         {
-            if (repricing is null || !repricing.TryGetValue(item.ProductId, out var pricing))
+            if (repricing is null || !repricing.TryGetValue(item.VariantId, out var pricing))
             {
                 throw new QuotationsDomainException(
                     "quotation.quotation.repricing_incomplete",
@@ -731,11 +735,12 @@ public sealed class Quotation
         Version++;
     }
 
+    // Por id de variante: la foto es la de la variante que vende la línea (spec 2026-10-20 §4).
     private void CaptureProductSnapshots(IReadOnlyDictionary<Guid, QuotationProductSnapshot> products)
     {
         foreach (var item in _items)
         {
-            if (products.TryGetValue(item.ProductId, out var product))
+            if (products.TryGetValue(item.VariantId, out var product))
             {
                 item.CaptureProduct(product);
             }

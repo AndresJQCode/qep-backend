@@ -6,10 +6,12 @@ namespace Modules.Catalog.Application;
 /// <summary>
 /// <c>Name</c>/<c>Code</c> son las dos cajas separadas del listado (CAT-FILTROS-01), cada una
 /// filtrando su propia columna con ILIKE — se combinan con AND cuando se llenan las dos.
-/// <c>Search</c> es el criterio OR original (nombre o código): sigue existiendo porque el
-/// combobox de productos de <c>quotes</c> (<c>useQuoteProducts</c>) necesita un único cuadro de
-/// texto libre, no dos — mismo criterio que <c>ListCustomersQuery</c> con el combobox de
-/// clientes.
+/// <c>Search</c> es el criterio OR original: nombre del producto, <c>Code</c> de alguna variante o,
+/// desde la Tarea 12 de variantes, código de barras de alguna variante (la búsqueda del POS usa la
+/// misma consulta, spec 2026-10-20 §5). Sigue existiendo porque el combobox de productos de
+/// <c>quotes</c> (<c>useQuoteProducts</c>) necesita un único cuadro de texto libre, no dos — mismo
+/// criterio que <c>ListCustomersQuery</c> con el combobox de clientes. Las cajas <c>Name</c> y
+/// <c>Code</c> no miran el código de barras.
 ///
 /// <c>IsActive</c> es un filtro real contra la base — antes el `Select` de estado del listado
 /// filtraba en el cliente, sobre el catálogo entero ya traído, algo que dejó de alcanzar en

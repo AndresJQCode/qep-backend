@@ -7,8 +7,8 @@ namespace Modules.Quotations.Application;
 
 /// <summary>Una línea a agregar, dentro de la tanda — mismos dos datos que
 /// <see cref="AddQuotationItemCommand"/>, sin tenant ni cotización porque ya viajan una sola
-/// vez en el comando que la contiene.</summary>
-public sealed record QuotationItemAddition(Guid ProductId, decimal Quantity);
+/// vez en el comando que la contiene. Por variante (spec 2026-10-20 §4).</summary>
+public sealed record QuotationItemAddition(Guid VariantId, decimal Quantity);
 
 /// <summary>
 /// Varias altas y bajas de línea en una sola operación — lo que pide la modal "Agregar
@@ -30,7 +30,7 @@ public sealed class BatchUpdateQuotationItemsValidator
     {
         RuleForEach(command => command.ToAdd).ChildRules(item =>
         {
-            item.RuleFor(addition => addition.ProductId).NotEmpty();
+            item.RuleFor(addition => addition.VariantId).NotEmpty();
             item.RuleFor(addition => addition.Quantity).GreaterThan(0m);
         });
         // Una tanda vacía no es un pedido — es el caso de "Guardar" sin haber cambiado nada,
@@ -85,16 +85,16 @@ public sealed class BatchUpdateQuotationItemsHandler(
         // Los nombres de los productos que se sacan, para el resumen del historial de cada
         // baja — una sola ida al catálogo para toda la tanda en vez de una por línea (mismo
         // criterio que ListQuotationsHandler resolviendo nombres de cliente).
-        var removedProductIds = command.ToRemoveItemIds
+        var removedVariantIds = command.ToRemoveItemIds
             .Select(itemId => quotation.Items.FirstOrDefault(item => item.Id.Value == itemId))
             .Where(item => item is not null)
-            .Select(item => item!.ProductId)
+            .Select(item => item!.VariantId)
             .Distinct()
             .ToArray();
-        var removedProductNames = removedProductIds.Length == 0
-            ? new Dictionary<Guid, QuotationProductRef>()
+        var removedProductNames = removedVariantIds.Length == 0
+            ? new Dictionary<Guid, QuotationVariantRef>()
             : await productLookup.FindManyAsync(
-                command.TenantId, removedProductIds, cancellationToken);
+                command.TenantId, removedVariantIds, cancellationToken);
 
         // Bajas primero: si una alta y una baja compartieran producto —no debería pasar, la
         // modal no lo ofrece— sacar antes que sumar es el orden que no se pisa a sí mismo.
@@ -102,7 +102,7 @@ public sealed class BatchUpdateQuotationItemsHandler(
         {
             var removed = quotation.Items.FirstOrDefault(item => item.Id.Value == itemId);
             var productName = removed is not null
-                && removedProductNames.TryGetValue(removed.ProductId, out var removedProduct)
+                && removedProductNames.TryGetValue(removed.VariantId, out var removedProduct)
                     ? removedProduct.Name
                     : "un producto";
 
@@ -133,14 +133,15 @@ public sealed class BatchUpdateQuotationItemsHandler(
             var pricing = await QuotationProductPricingResolver.ResolveAsync(
                 pricingLookup,
                 command.TenantId,
-                addition.ProductId,
+                addition.VariantId,
                 addition.Quantity,
                 quotation.Currency, quotation.IsRetail,
                 cancellationToken);
 
             quotation.AddItem(
                 QuotationItemId.New(),
-                addition.ProductId,
+                addition.VariantId,
+                pricing.ProductId,
                 addition.Quantity,
                 pricing.Pricing.UnitPrice,
                 pricing.Pricing.DiscountPercentage,

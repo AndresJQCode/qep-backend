@@ -41,8 +41,8 @@ public sealed class ProductAndPreviewHandlersTests
             new SearchPosProductsQuery(TenantId, null, 1, 40), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, page.Total);
-        var shampoo = page.Items.Single(item => item.Code == "SH-400");
-        var cream = page.Items.Single(item => item.Code == "CR-77");
+        var shampoo = page.Items.SelectMany(item => item.Variants).Single(item => item.Code == "SH-400");
+        var cream = page.Items.SelectMany(item => item.Variants).Single(item => item.Code == "CR-77");
         Assert.True(shampoo.Sellable);
         Assert.Null(shampoo.UnsellableReason);
         Assert.Equal(11_900m, shampoo.UnitPrice);
@@ -91,8 +91,78 @@ public sealed class ProductAndPreviewHandlersTests
             new SearchPosProductsQuery(TenantId, null, 1, 61), TestContext.Current.CancellationToken));
         await Assert.ThrowsAsync<ValidationException>(() => ByCode(bed, Seller).HandleAsync(
             new FindPosProductByCodeQuery(TenantId, " "), TestContext.Current.CancellationToken));
+        // El tope es el del código de barras (64), no el del Code (60): un código de barras válido de
+        // 61 a 64 caracteres se busca, y si no existe es 404, no 422.
         await Assert.ThrowsAsync<ValidationException>(() => ByCode(bed, Seller).HandleAsync(
-            new FindPosProductByCodeQuery(TenantId, new string('X', 61)), TestContext.Current.CancellationToken));
+            new FindPosProductByCodeQuery(TenantId, new string('X', 65)), TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<ResourceNotFoundException>(() => ByCode(bed, Seller).HandleAsync(
+            new FindPosProductByCodeQuery(TenantId, new string('X', 64)), TestContext.Current.CancellationToken));
+    }
+
+    // Spec 2026-10-20 §5: el escáner busca primero el código de barras y responde la variante, con
+    // su id, el de su producto y su nombre visible; el carrito la guarda por VariantId.
+    [Fact]
+    public async Task ByCodeReturnsTheVariantWithItsVisibleName()
+    {
+        var bed = new PosTestBed();
+        var shirt = Guid.CreateVersion7();
+        var sizeL = Guid.CreateVersion7();
+        bed.Products.Add("CAM-M", "Camiseta – M", 30_000m, 19, id: shirt, productName: "Camiseta", barcode: "7701234000011");
+        bed.Products.Add("CAM-L", "Camiseta – L", 32_000m, 19, id: sizeL, productId: shirt, barcode: "7701234000028");
+
+        var found = await ByCode(bed, Seller).HandleAsync(
+            new FindPosProductByCodeQuery(TenantId, "7701234000028"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            (sizeL, shirt, "CAM-L", (string?)"7701234000028", "Camiseta – L", (decimal?)32_000m, true),
+            (found.VariantId, found.ProductId, found.Code, found.Barcode, found.Name, found.UnitPrice, found.Sellable));
+    }
+
+    // La cuadrícula recibe productos, cada uno con sus variantes ya resueltas en la moneda de la caja:
+    // el selector de opciones no hace otra llamada (BFF, spec 2026-10-20 §5).
+    [Fact]
+    public async Task SearchReturnsProductsWithTheirVariantsPricedInTheSessionCurrency()
+    {
+        var bed = new PosTestBed();
+        bed.OpenSessionInStore(currency: "USD");
+        var shirt = Guid.CreateVersion7();
+        var sizeL = Guid.CreateVersion7();
+        bed.Products.Add("CAM-M", "Camiseta – M", 30_000m, 19, id: shirt, productName: "Camiseta", priceUsd: 8m, hasOptions: true);
+        bed.Products.Add("CAM-L", "Camiseta – L", 32_000m, 19, id: sizeL, productId: shirt, hasOptions: true);
+        bed.Products.Add("SH-400", "Shampoo 400 ml", 11_900m, 19, id: Shampoo, priceUsd: 3m);
+
+        var page = await Search(bed, Seller).HandleAsync(
+            new SearchPosProductsQuery(TenantId, null, 1, 40), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, page.Total);
+        var card = page.Items.Single(item => item.ProductId == shirt);
+        Assert.Equal(("Camiseta", true), (card.Name, card.HasOptions));
+        Assert.Equal(
+            [(shirt, shirt, "Camiseta – M", (decimal?)8m, true, (string?)null), (sizeL, shirt, "Camiseta – L", null, false, "PriceMissing")],
+            card.Variants.Select(variant => (variant.VariantId, variant.ProductId, variant.Name, variant.UnitPrice, variant.Sellable, variant.UnsellableReason)));
+        var shampoo = page.Items.Single(item => item.ProductId == Shampoo);
+        Assert.False(shampoo.HasOptions);
+        Assert.Equal(Shampoo, Assert.Single(shampoo.Variants).VariantId);
+    }
+
+    // Dos tallas del mismo producto en el carrito son dos líneas del preview, cada una con su precio;
+    // el preview no las junta por producto.
+    [Fact]
+    public async Task PreviewTwoSizesOfTheSameProductAreTwoLines()
+    {
+        var bed = new PosTestBed();
+        var shirt = Guid.CreateVersion7();
+        var sizeL = Guid.CreateVersion7();
+        bed.Products.Add("CAM-M", "Camiseta – M", 30_000m, 19, id: shirt, productName: "Camiseta");
+        bed.Products.Add("CAM-L", "Camiseta – L", 32_000m, 19, id: sizeL, productId: shirt);
+
+        var preview = await Preview(bed, Seller).HandleAsync(
+            new PreviewPosSaleCommand(TenantId, [new(shirt, 1m, 0m), new(sizeL, 2m, 0m)]), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            [(shirt, (Guid?)shirt, "Camiseta – M", 30_000m), (sizeL, shirt, "Camiseta – L", 64_000m)],
+            preview.Lines.Select(line => (line.VariantId, line.ProductId, line.Name, line.LineTotal)));
+        Assert.Equal(94_000m, preview.Total);
     }
 
     [Fact]
@@ -150,6 +220,7 @@ public sealed class ProductAndPreviewHandlersTests
             new[] { (true, (string?)null), (false, "Inactive"), (false, "PriceMissing"), (false, "NotFound") },
             preview.Lines.Select(line => (line.Sellable, line.UnsellableReason)).ToArray());
         var notFound = preview.Lines[3];
+        Assert.Equal((gone, (Guid?)null), (notFound.VariantId, notFound.ProductId));
         Assert.Null(notFound.Code);
         Assert.Null(notFound.Name);
         Assert.Equal(0m, notFound.LineTotal);
@@ -184,8 +255,8 @@ public sealed class ProductAndPreviewHandlersTests
         var page = await Search(bed, Seller).HandleAsync(
             new SearchPosProductsQuery(TenantId, null, 1, 40), TestContext.Current.CancellationToken);
 
-        var shampoo = page.Items.Single(item => item.Code == "SH-400");
-        var cream = page.Items.Single(item => item.Code == "CR-77");
+        var shampoo = page.Items.SelectMany(item => item.Variants).Single(item => item.Code == "SH-400");
+        var cream = page.Items.SelectMany(item => item.Variants).Single(item => item.Code == "CR-77");
         Assert.Equal(10m, shampoo.UnitPrice);
         Assert.True(shampoo.Sellable);
         Assert.Equal((false, "PriceMissing", (decimal?)null), (cream.Sellable, cream.UnsellableReason, cream.UnitPrice));
@@ -354,8 +425,8 @@ public sealed class ProductAndPreviewHandlersTests
         var page = await Search(bed, Seller).HandleAsync(
             new SearchPosProductsQuery(TenantId, null, 1, 40), TestContext.Current.CancellationToken);
 
-        Assert.Equal(9.5m, page.Items.Single(item => item.Code == "SH-400").UnitPrice);
-        var cream = page.Items.Single(item => item.Code == "CR-77");
+        Assert.Equal(9.5m, page.Items.SelectMany(item => item.Variants).Single(item => item.Code == "SH-400").UnitPrice);
+        var cream = page.Items.SelectMany(item => item.Variants).Single(item => item.Code == "CR-77");
         Assert.Equal((false, "PriceMissing", (decimal?)null), (cream.Sellable, cream.UnsellableReason, cream.UnitPrice));
     }
 }

@@ -72,7 +72,7 @@ public sealed class QuotationMinimumPurchaseTests
                 Currency = "COP"
             },
             "COP", customerWithRetention: false, customerVatSurplus: false, advisor, now);
-        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 1m, 150_000m, 0m, 19, advisor, now);
+        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 150_000m, 0m, 19, advisor, now);
         quotation.SetShipping(
             new ShippingDetails(null, null, FreightChargeMode.Charged, 60_000m, 19, false), advisor, now);
         return quotation;
@@ -101,7 +101,7 @@ public sealed class QuotationMinimumPurchaseTests
                 ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
                 "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false)),
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
-            new StubQuotationProductLookup(new Dictionary<Guid, QuotationProductRef>()),
+            new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
             new FixedQuotationSettingsStore(Min200));
 

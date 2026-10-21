@@ -157,10 +157,12 @@ public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbCon
             .HasColumnName("sale_id")
             .HasConversion(id => id.Value, value => new PosSaleId(value));
         line.Property(value => value.Position).HasColumnName("position");
-        // catalog.products(id), sin FK: la venta guarda snapshot y un producto borrado no invalida un ticket.
+        // catalog.product_variants(id) y catalog.products(id), sin FK: la venta guarda snapshot y una
+        // variante o un producto borrados no invalidan un ticket.
+        line.Property(value => value.VariantId).HasColumnName("variant_id");
         line.Property(value => value.ProductId).HasColumnName("product_id");
         line.Property(value => value.ProductCode).HasColumnName("product_code").HasMaxLength(60);
-        line.Property(value => value.ProductName).HasColumnName("product_name").HasMaxLength(200);
+        line.Property(value => value.ProductName).HasColumnName("product_name").HasMaxLength(PosSaleLine.ProductNameMaxLength);
         line.Property(value => value.Quantity).HasColumnName("quantity").HasPrecision(10, 2);
         line.Property(value => value.UnitPrice).HasColumnName("unit_price").HasPrecision(14, 2);
         line.Property(value => value.DiscountPercentage).HasColumnName("discount_percentage").HasPrecision(5, 2);
@@ -170,6 +172,9 @@ public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbCon
         line.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
         line.Ignore(value => value.LineTotal);
         line.HasIndex(value => new { value.SaleId, value.Position }).IsUnique();
+        // La consulta de uso de Catalog (Bootstrapper.CatalogVariantUsageChecker) filtra
+        // pos.sale_lines por variant_id en cada GET y PUT de producto: sin índice recorre todas las líneas.
+        line.HasIndex(value => value.VariantId).HasDatabaseName("IX_sale_lines_variant");
     }
 
     private static void ConfigurePayment(ModelBuilder modelBuilder)

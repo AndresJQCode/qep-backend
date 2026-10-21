@@ -103,7 +103,7 @@ public sealed class QuotationDiscountedUnitPriceWithoutTaxTests
         Quotation quotation, decimal quantity, decimal unitPrice, decimal discountPercentage, int taxPercentage) =>
         quotation.AddItem(
             QuotationItemId.New(),
-            Guid.CreateVersion7(),
+            Guid.CreateVersion7(), Guid.CreateVersion7(),
             quantity,
             unitPrice,
             discountPercentage,

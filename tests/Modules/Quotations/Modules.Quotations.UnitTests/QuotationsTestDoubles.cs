@@ -989,15 +989,15 @@ internal sealed class RecordingPaymentProofPublisher(bool enabled = true) : IPay
 /// <summary>Dobles del Excel de pedidos con ERP (ajuste 2026-09-20): producto, empresa y ciudad de
 /// una parte, resueltos en lote como los reales, pero desde un diccionario sembrado a mano.</summary>
 internal sealed class StubQuotationProductLookup(
-    IReadOnlyDictionary<Guid, QuotationProductRef> products) : IQuotationProductLookup
+    IReadOnlyDictionary<Guid, QuotationVariantRef> products) : IQuotationProductLookup
 {
     public int FindManyCalls { get; private set; }
 
-    public Task<IReadOnlyDictionary<Guid, QuotationProductRef>> FindManyAsync(
+    public Task<IReadOnlyDictionary<Guid, QuotationVariantRef>> FindManyAsync(
         Guid tenantId, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken)
     {
         FindManyCalls++;
-        return Task.FromResult<IReadOnlyDictionary<Guid, QuotationProductRef>>(
+        return Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantRef>>(
             productIds.Where(products.ContainsKey).Distinct().ToDictionary(id => id, id => products[id]));
     }
 }
@@ -1090,7 +1090,7 @@ internal static class OrderBuilders
             QuotationParties.Empty,
             BillingAccount,
             ShippingDetails.None,
-            [new OrderLineInput(Guid.CreateVersion7(), 1m, 119_000m, 0m, 19)],
+            [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 119_000m, 0m, 19)],
             paymentStatus,
             notes: null,
             advisorId,
@@ -1154,17 +1154,17 @@ internal sealed class StubQuotationTaxRateLookup(QuotationTaxRateRef? rate, bool
 
 /// <summary>El catálogo con precio, sembrado a mano. Mismo cuerpo que el privado de
 /// <c>OrderPricingRecalculationTests</c>, que se queda donde está.</summary>
-internal sealed class StubQuotationProductPricingLookup(params QuotationProductPricingRef[] products)
+internal sealed class StubQuotationProductPricingLookup(params QuotationVariantPricingRef[] products)
     : IQuotationProductPricingLookup
 {
-    private readonly Dictionary<Guid, QuotationProductPricingRef> _products = products.ToDictionary(product => product.Id);
+    private readonly Dictionary<Guid, QuotationVariantPricingRef> _products = products.ToDictionary(product => product.VariantId);
 
-    public Task<QuotationProductPricingRef?> FindAsync(Guid tenantId, Guid productId, CancellationToken cancellationToken) =>
+    public Task<QuotationVariantPricingRef?> FindVariantAsync(Guid tenantId, Guid productId, CancellationToken cancellationToken) =>
         Task.FromResult(_products.GetValueOrDefault(productId));
 
-    public Task<IReadOnlyDictionary<Guid, QuotationProductPricingRef>> FindManyAsync(
+    public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
         Guid tenantId, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<Guid, QuotationProductPricingRef>>(
+        Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>>(
             productIds.Where(_products.ContainsKey).ToDictionary(id => id, id => _products[id]));
 }
 

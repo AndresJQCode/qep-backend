@@ -41,7 +41,7 @@ internal static class PosSaleResponses
             sale.Lines
                 .OrderBy(line => line.Position)
                 .Select(line => new PosSaleLineResponse(
-                    line.Position, line.ProductId, line.ProductCode, line.ProductName, line.Quantity, line.UnitPrice,
+                    line.Position, line.VariantId, line.ProductId, line.ProductCode, line.ProductName, line.Quantity, line.UnitPrice,
                     line.DiscountPercentage, line.TaxPercentage, line.DiscountAmount, line.TaxAmount, line.Subtotal,
                     line.LineTotal))
                 .ToArray(),

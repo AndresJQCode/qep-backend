@@ -356,6 +356,33 @@ public sealed class ProductWriteApiTests
         Assert.Empty(percent);
     }
 
+    // Variantes, Tarea 12 (spec 2026-10-20 §5): `search` también encuentra por el código de barras
+    // de una variante —lo pide la búsqueda del POS, que usa esta misma consulta—, en parte y sin
+    // distinguir mayúsculas, como el nombre y el Code. Las cajas separadas (name/code) no lo miran.
+    [Fact]
+    public async Task SearchAlsoFindsByTheBarcodeOfAVariant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        (await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products",
+            ProductBodies.Create("Camiseta", "CAM-001", barcode: "7701234567890"),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        await CreateProductAsync(client, TenantId, "Vela de soja", "VS-001");
+
+        var whole = await ListAsync(client, TenantId, "7701234567890");
+        var part = await ListAsync(client, TenantId, "4567");
+        var byCodeBox = await client.GetFromJsonAsync<ProductsResponse>(
+            $"/api/v1/tenants/{TenantId}/catalog/products?code=7701234567890",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("CAM-001", Assert.Single(whole).Code);
+        Assert.Equal("CAM-001", Assert.Single(part).Code);
+        Assert.Empty(byCodeBox!.Items);
+    }
+
     // Las dos cajas separadas del listado (CAT-FILTROS-01), combinadas con AND cuando se
     // llenan las dos — mismo criterio que ListCombinesTheThreeFiltersWithAnd en Customers.
     [Fact]

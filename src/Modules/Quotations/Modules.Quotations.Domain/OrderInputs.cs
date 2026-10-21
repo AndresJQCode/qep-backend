@@ -12,8 +12,11 @@ public sealed record OrderHeader(
     bool CustomerVatSurplus);
 
 /// <summary>Una línea ya preciada: Application resolvió precio, descuento y tasa contra el catálogo,
-/// igual que hace el cotizador. <see cref="Product"/> es la foto de código y nombre, si ya se tiene.</summary>
+/// igual que hace el cotizador. <see cref="Product"/> es la foto de código y nombre, si ya se tiene.
+/// <see cref="VariantId"/> es la clave de la línea (spec 2026-10-20 §4); <see cref="ProductId"/> es su
+/// producto, para agrupar por producto.</summary>
 public sealed record OrderLineInput(
+    Guid VariantId,
     Guid ProductId,
     decimal Quantity,
     decimal UnitPrice,

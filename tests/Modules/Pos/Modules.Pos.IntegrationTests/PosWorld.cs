@@ -35,14 +35,14 @@ internal sealed record PosWorld(
 
     public object[] WorkedExampleLines() =>
     [
-        new { productId = Shampoo, quantity = 2m, discountPercentage = 10m, expectedUnitPrice = 11_900m, expectedTaxPercentage = 19 },
-        new { productId = Avena, quantity = 1.5m, discountPercentage = 0m, expectedUnitPrice = 5_000m, expectedTaxPercentage = 0 },
-        new { productId = Jabon, quantity = 3m, discountPercentage = 0m, expectedUnitPrice = 2_990m, expectedTaxPercentage = 5 },
+        new { variantId = Shampoo, quantity = 2m, discountPercentage = 10m, expectedUnitPrice = 11_900m, expectedTaxPercentage = 19 },
+        new { variantId = Avena, quantity = 1.5m, discountPercentage = 0m, expectedUnitPrice = 5_000m, expectedTaxPercentage = 0 },
+        new { variantId = Jabon, quantity = 3m, discountPercentage = 0m, expectedUnitPrice = 2_990m, expectedTaxPercentage = 5 },
     ];
 
     public object[] PlainLine(decimal quantity = 1m) =>
     [
-        new { productId = Shampoo, quantity, discountPercentage = 0m, expectedUnitPrice = 11_900m, expectedTaxPercentage = 19 },
+        new { variantId = Shampoo, quantity, discountPercentage = 0m, expectedUnitPrice = 11_900m, expectedTaxPercentage = 19 },
     ];
 
     public static object[] SplitPayments() =>

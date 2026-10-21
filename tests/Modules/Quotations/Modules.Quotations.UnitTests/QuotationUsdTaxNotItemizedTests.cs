@@ -68,7 +68,7 @@ public sealed class QuotationUsdTaxNotItemizedTests
     {
         var quotation = NewQuotation("COP");
         var productId = Guid.CreateVersion7();
-        quotation.AddItem(QuotationItemId.New(), productId, 100m, 24_563m, 0m, 19, AdvisorId, Now);
+        quotation.AddItem(QuotationItemId.New(), productId, productId, 100m, 24_563m, 0m, 19, AdvisorId, Now);
         Assert.NotEqual(0m, quotation.TaxAmount);
 
         Reprice(quotation, "USD", productId, new QuotationItemPricing(24.63m, 5m, 19));
@@ -85,7 +85,7 @@ public sealed class QuotationUsdTaxNotItemizedTests
     {
         var quotation = NewQuotation("USD");
         var productId = Guid.CreateVersion7();
-        quotation.AddItem(QuotationItemId.New(), productId, 100m, 24.63m, 5m, 19, AdvisorId, Now);
+        quotation.AddItem(QuotationItemId.New(), productId, productId, 100m, 24.63m, 5m, 19, AdvisorId, Now);
         Assert.Equal(0m, quotation.TaxAmount);
 
         Reprice(quotation, "COP", productId, new QuotationItemPricing(24_563m, 5m, 19));
@@ -116,7 +116,7 @@ public sealed class QuotationUsdTaxNotItemizedTests
     {
         var quotation = NewQuotation("USD", customerWithRetention: true);
         var productId = Guid.CreateVersion7();
-        quotation.AddItem(QuotationItemId.New(), productId, 1m, 119m, 0m, 19, AdvisorId, Now);
+        quotation.AddItem(QuotationItemId.New(), productId, productId, 1m, 119m, 0m, 19, AdvisorId, Now);
         Assert.Equal(0m, quotation.RetentionAmount);
 
         Reprice(quotation, "COP", productId, new QuotationItemPricing(119_000m, 0m, 19));
@@ -170,7 +170,7 @@ public sealed class QuotationUsdTaxNotItemizedTests
         Quotation quotation, decimal quantity, decimal unitPrice, decimal discountPercentage, int taxPercentage) =>
         quotation.AddItem(
             QuotationItemId.New(),
-            Guid.CreateVersion7(),
+            Guid.CreateVersion7(), Guid.CreateVersion7(),
             quantity,
             unitPrice,
             discountPercentage,

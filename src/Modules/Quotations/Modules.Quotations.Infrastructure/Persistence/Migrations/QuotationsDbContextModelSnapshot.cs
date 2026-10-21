@@ -554,10 +554,17 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
 
+                    b.Property<Guid>("VariantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("variant_id");
+
                     b.HasKey("Id");
 
                     b.HasIndex("OrderId")
                         .HasDatabaseName("IX_order_items_order");
+
+                    b.HasIndex("VariantId")
+                        .HasDatabaseName("IX_order_items_variant");
 
                     b.ToTable("order_items", "quotations");
                 });
@@ -1042,10 +1049,17 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
 
+                    b.Property<Guid>("VariantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("variant_id");
+
                     b.HasKey("Id");
 
                     b.HasIndex("QuotationId")
                         .HasDatabaseName("IX_quotation_items_quotation");
+
+                    b.HasIndex("VariantId")
+                        .HasDatabaseName("IX_quotation_items_variant");
 
                     b.ToTable("quotation_items", "quotations");
                 });

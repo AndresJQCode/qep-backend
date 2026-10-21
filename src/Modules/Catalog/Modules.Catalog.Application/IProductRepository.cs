@@ -59,16 +59,6 @@ public interface IProductRepository
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Los productos de un lote de ids, en una sola consulta. La usa el detalle de una cotizacion
-    /// (via <c>IQuotationProductLookup</c>) para poner nombre, portada y escalas en cada linea sin
-    /// pedir el catalogo entero. Un id que no existe simplemente no aparece.
-    /// </summary>
-    Task<IReadOnlyList<Product>> ListByIdsAsync(
-        Guid tenantId,
-        IReadOnlyCollection<ProductId> productIds,
-        CancellationToken cancellationToken);
-
-    /// <summary>
     /// Los mismos productos que <see cref="FindVariantsByIdsAsync"/> (cada uno con **todas** sus
     /// variantes y sus escalas), pero **con seguimiento**: quien la llama los muta y guarda por
     /// <see cref="ICatalogUnitOfWork"/>. La copia de escalas la usa con el origen y los destinos
@@ -86,18 +76,6 @@ public interface IProductRepository
     Task<Product?> FindAsync(
         Guid tenantId,
         ProductId productId,
-        CancellationToken cancellationToken);
-
-    /// <summary>
-    /// El producto que tiene una variante con ese código. Igualdad exacta, con mayúsculas, servida
-    /// por IX_product_variants_tenant_code (spec 2026-10-07, decisión 30; variantes 2026-10-20).
-    /// Sin respaldo sin mayúsculas: el lector teclea el código tal cual. Activos e inactivos; sin
-    /// rastreo. Mismo resultado que <see cref="FindVariantByCodeAsync"/>, que es el nombre que
-    /// usa el código nuevo.
-    /// </summary>
-    Task<Product?> FindByCodeAsync(
-        Guid tenantId,
-        string code,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -123,7 +101,8 @@ public interface IProductRepository
     /// <summary>
     /// Los productos que contienen alguna de esas variantes, en una sola consulta y sin rastreo;
     /// cada uno trae **todas** sus variantes, y quien llama elige por id. Un id que no existe o es
-    /// de otro tenant simplemente no aparece.
+    /// de otro tenant simplemente no aparece. La usan los adaptadores hacia Quotations y Pos para
+    /// pintar las líneas de un documento sin pedir el catálogo entero.
     /// </summary>
     Task<IReadOnlyList<Product>> FindVariantsByIdsAsync(
         Guid tenantId,

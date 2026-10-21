@@ -2,6 +2,8 @@ namespace Modules.Quotations.Application;
 
 public sealed record QuotationItemDto(
     Guid Id,
+    /// <summary>La variante que vende la línea (spec 2026-10-20 §4); <c>ProductId</c> es su producto.</summary>
+    Guid VariantId,
     Guid ProductId,
     decimal Quantity,
     decimal UnitPrice,
@@ -258,7 +260,7 @@ public sealed record CreateQuotationRequest(
     QuotationBillingAccountRequest? BillingAccount,
     /// <summary>La entrega por envío; null es "sin envío". Ver <see cref="ShippingRequest"/>.</summary>
     ShippingRequest? Shipping = null,
-    /// <summary>Las líneas con producto y cantidad, igual que en el guardado. Null o ausente es "sin líneas".</summary>
+    /// <summary>Las líneas con variante y cantidad, igual que en el guardado. Null o ausente es "sin líneas".</summary>
     IReadOnlyList<QuotationEditItemRequest>? Items = null,
     /// <summary>El piso de escala global; null es "sin piso".</summary>
     int? GlobalScaleFloor = null,
@@ -346,14 +348,16 @@ public sealed record ShippingCarrierResponse(Guid Id, string Name);
 /// </summary>
 public sealed record ChangeQuotationClientRequest(Guid ClientId);
 
-public sealed record AddQuotationItemRequest(Guid ProductId, decimal Quantity);
+/// <summary>Agrega una línea. <c>variantId</c> y no <c>productId</c> (spec 2026-10-20 §4): para un
+/// producto sin opciones, el id de su variante por defecto.</summary>
+public sealed record AddQuotationItemRequest(Guid VariantId, decimal Quantity);
 
 
 public sealed record UpdateQuotationItemRequest(decimal Quantity);
 
 /// <summary>Una línea a agregar, tal como viaja en el request de la tanda — mismo par que
 /// <see cref="AddQuotationItemRequest"/>.</summary>
-public sealed record BatchQuotationItemAdditionRequest(Guid ProductId, decimal Quantity);
+public sealed record BatchQuotationItemAdditionRequest(Guid VariantId, decimal Quantity);
 
 /// <summary>El "Guardar" de la modal de agregar productos: varias altas y bajas de una sola
 /// vez. Ver <see cref="BatchUpdateQuotationItemsCommand"/>.</summary>
@@ -361,10 +365,11 @@ public sealed record BatchUpdateQuotationItemsRequest(
     IReadOnlyList<BatchQuotationItemAdditionRequest> ToAdd,
     IReadOnlyList<Guid> ToRemoveItemIds);
 
-/// <summary>Una línea del estado deseado de la cotización. Se direcciona por <c>productId</c> y no
-/// por <c>itemId</c>: la lista es el estado deseado, y el id de línea sólo lo conoce quien ya la
-/// tiene guardada.</summary>
-public sealed record QuotationEditItemRequest(Guid ProductId, decimal Quantity);
+/// <summary>Una línea del estado deseado de la cotización. Se direcciona por <c>variantId</c> (spec
+/// 2026-10-20 §4; antes <c>productId</c>) y no por <c>itemId</c>: la lista es el estado deseado, y el
+/// id de línea sólo lo conoce quien ya la tiene guardada. Dos tallas del mismo producto son dos
+/// líneas.</summary>
+public sealed record QuotationEditItemRequest(Guid VariantId, decimal Quantity);
 
 /// <summary>
 /// El estado deseado completo de una cotización editable: mismo cuerpo para
@@ -668,10 +673,17 @@ public sealed record GlobalScaleFloorMissResponse(
 
 public sealed record QuotationItemResponse(
     Guid Id,
+    /// <summary>La variante que vende la línea (spec 2026-10-20 §4): es lo que la pantalla manda de
+    /// vuelta como <c>variantId</c> al guardar la lista de líneas, así que viaja aunque el nombre ya
+    /// la describa.</summary>
+    Guid VariantId,
+    /// <summary>El producto dueño de la variante. Viaja para que la pantalla pueda agrupar o enlazar
+    /// al producto sin conocer la variante.</summary>
     Guid ProductId,
-    /// <summary>Nombre, código, portada y escalas del producto, resueltos por el backend. Sin
-    /// esto la pantalla tenía que traerse el catálogo entero para poner un nombre en cada
-    /// línea. Vacíos si el producto ya no existe.</summary>
+    /// <summary>Nombre visible, código, portada y escalas de la variante, resueltos por el backend
+    /// (spec 2026-10-20 §3.4: «Camiseta – M», el <c>Code</c> de la variante, su foto o la principal
+    /// del producto). Sin esto la pantalla tenía que traerse el catálogo entero para poner un nombre
+    /// en cada línea. Vacíos si la variante ya no existe.</summary>
     string ProductName,
     string ProductCode,
     string? ProductImageUrl,

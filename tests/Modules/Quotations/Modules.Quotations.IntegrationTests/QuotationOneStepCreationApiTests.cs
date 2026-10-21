@@ -258,17 +258,17 @@ public sealed class QuotationOneStepCreationApiTests
     }
 
     [Fact]
-    public async Task ARepeatedProductIsAFieldErrorInBothRoutes()
+    public async Task ARepeatedVariantIsAFieldErrorInBothRoutes()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var body = await BaseBodyAsync(client, tenantId);
-        var productId = body.Items![0].ProductId;
+        var variantId = body.Items![0].VariantId;
         var repeated = body with
         {
-            Items = [new QuotationEditItemRequest(productId, 1m), new QuotationEditItemRequest(productId, 2m)],
+            Items = [new QuotationEditItemRequest(variantId, 1m), new QuotationEditItemRequest(variantId, 2m)],
         };
 
         using var create = await PostAsync(client, QuotationsUrl(tenantId), repeated);

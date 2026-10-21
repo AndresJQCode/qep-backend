@@ -249,7 +249,7 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<CloseCashSessionCommand, PosSessionSummaryResponse>,
             CloseCashSessionHandler>();
         services.AddScoped<
-            IQueryHandler<SearchPosProductsQuery, PosPage<PosProductResponse>>,
+            IQueryHandler<SearchPosProductsQuery, PosPage<PosCatalogProductResponse>>,
             SearchPosProductsHandler>();
         services.AddScoped<
             IQueryHandler<FindPosProductByCodeQuery, PosProductResponse>,

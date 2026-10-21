@@ -25,13 +25,13 @@ internal static class QuotationItemEditHistory
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        var removedProductIds = edits
+        var removedVariantIds = edits
             .Where(edit => edit.Kind == QuotationItemEditKind.Removed)
-            .Select(edit => edit.ProductId)
+            .Select(edit => edit.VariantId)
             .ToArray();
-        var removedProducts = removedProductIds.Length == 0
-            ? new Dictionary<Guid, QuotationProductRef>()
-            : await productLookup.FindManyAsync(tenantId, removedProductIds, cancellationToken);
+        var removedProducts = removedVariantIds.Length == 0
+            ? new Dictionary<Guid, QuotationVariantRef>()
+            : await productLookup.FindManyAsync(tenantId, removedVariantIds, cancellationToken);
 
         foreach (var edit in edits)
         {
@@ -50,7 +50,7 @@ internal static class QuotationItemEditHistory
             }
             else
             {
-                var productName = removedProducts.TryGetValue(edit.ProductId, out var product)
+                var productName = removedProducts.TryGetValue(edit.VariantId, out var product)
                     ? product.Name
                     : "un producto";
                 summary = QuotationChangeSummary.ItemRemoved(productName);

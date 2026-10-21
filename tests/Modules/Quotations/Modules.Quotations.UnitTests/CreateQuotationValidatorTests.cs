@@ -37,7 +37,7 @@ public sealed class CreateQuotationValidatorTests
         var result = await new CreateQuotationValidator().ValidateAsync(
             Command(new QuotationItemAddition(Guid.Empty, 1m)), TestContext.Current.CancellationToken);
 
-        Assert.Contains(result.Errors, error => error.PropertyName == "Items[0].ProductId");
+        Assert.Contains(result.Errors, error => error.PropertyName == "Items[0].VariantId");
     }
 
     [Fact]

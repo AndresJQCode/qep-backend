@@ -104,13 +104,13 @@ public sealed class Product
     // PricedCurrencies, que quedó sin llamadores. La Tarea 7 pasó a variantes el historial y la
     // copia de escalas, y retiró ApplyCopiedPriceScales de la única variante. La Tarea 8 pasó a
     // variantes el Excel; ya ningún código de producción llama a PriceIn, pero la prueba de la
-    // semilla (CatalogSeedTests) sí: lo retira la Tarea 15 junto con el sembrador.
+    // semilla (CatalogSeedTests) sí: lo retira la Tarea 15 junto con el sembrador. La Tarea 9 pasó
+    // a variantes los adaptadores de Quotations, Pos y Shopify y retiró Prices. Quedan: Code
+    // (PriceChangeReportSource, Tarea 13) y PriceIn, PriceScales y PackagingUnits (CatalogSeedTests,
+    // Tarea 15).
 
     /// <summary>Transitorio: el <see cref="ProductVariant.Code"/> de la única variante.</summary>
     public string Code => PrimaryVariant.Code;
-
-    /// <summary>Transitorio: los precios de la única variante.</summary>
-    public IReadOnlyCollection<ProductPrice> Prices => PrimaryVariant.Prices;
 
     /// <summary>Transitorio: el precio de la única variante en esa moneda.</summary>
     public decimal? PriceIn(string currency) => PrimaryVariant.PriceIn(currency);

@@ -141,7 +141,7 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
                 draft.BillingAccount.Currency),
             draft.Lines
                 .Select(line => new ExternalOrderLine(
-                    line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage, line.TaxPercentage))
+                    line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage, line.TaxPercentage))
                 .ToArray(),
             // H5: con contraentrega el dominio sólo admite PaymentPending; el importador sincroniza el pago después (D-S26).
             cashOnDelivery ? OrderPaymentStatus.PaymentPending : ToPaymentStatus(Normalize(draft.FinancialStatus)),

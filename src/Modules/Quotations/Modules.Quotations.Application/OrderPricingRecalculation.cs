@@ -35,18 +35,19 @@ internal static class OrderPricingRecalculation
 
         var products = await lookup.FindManyAsync(
             tenantId,
-            order.Items.Select(item => item.ProductId).Distinct().ToArray(),
+            order.Items.Select(item => item.VariantId).Distinct().ToArray(),
             cancellationToken);
-        // A diferencia del cotizador, una línea cuyo producto el catálogo ya no devuelve queda fuera
+        // Por variante, igual que el cotizador (spec 2026-10-20 §4).
+        // A diferencia del cotizador, una línea cuya variante el catálogo ya no devuelve queda fuera
         // de la pasada: el pedido ya está vendido y, sin escalas contra las que recalcular, conserva el
         // descuento con el que se vendió. Darle escalas vacías lo bajaría a 0 % al editar otra línea.
-        var scalesByProduct = products.ToDictionary(entry => entry.Key, entry => entry.Value.Scales);
+        var scalesByVariant = products.ToDictionary(entry => entry.Key, entry => entry.Value.Scales);
         var lines = order.Items
-            .Where(item => scalesByProduct.ContainsKey(item.ProductId))
-            .Select(item => new QuotationPricingLine(item.Id.Value, item.ProductId, item.Quantity))
+            .Where(item => scalesByVariant.ContainsKey(item.VariantId))
+            .Select(item => new QuotationPricingLine(item.Id.Value, item.VariantId, item.Quantity))
             .ToArray();
 
-        var discounts = Apply(order, lines, scalesByProduct, order.GlobalScaleFloor, occurredAt);
+        var discounts = Apply(order, lines, scalesByVariant, order.GlobalScaleFloor, occurredAt);
         var settings = await settingsStore.GetAsync(tenantId, cancellationToken);
         if (QuotationMinimumPurchase.IsMet(order.Items.Sum(item => item.Quantity), order.ProductsTotal, order.Currency, settings))
         {
@@ -55,7 +56,7 @@ internal static class OrderPricingRecalculation
 
         if (order.GlobalScaleFloor is not null)
         {
-            discounts = Apply(order, lines, scalesByProduct, globalFloor: null, occurredAt);
+            discounts = Apply(order, lines, scalesByVariant, globalFloor: null, occurredAt);
             if (QuotationMinimumPurchase.IsMet(order.Items.Sum(item => item.Quantity), order.ProductsTotal, order.Currency, settings))
             {
                 return;
@@ -72,12 +73,12 @@ internal static class OrderPricingRecalculation
     private static Dictionary<OrderItemId, QuotationItemDiscount> Apply(
         Order order,
         IReadOnlyCollection<QuotationPricingLine> lines,
-        IReadOnlyDictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> scalesByProduct,
+        IReadOnlyDictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> scalesByVariant,
         int? globalFloor,
         DateTimeOffset occurredAt)
     {
         var discounts = QuotationScaleGroupPricing
-            .Resolve(lines, scalesByProduct, globalFloor)
+            .Resolve(lines, scalesByVariant, globalFloor)
             .ToDictionary(
                 line => new OrderItemId(line.ItemId),
                 line => new QuotationItemDiscount(line.DiscountPercentage, line.Origin));

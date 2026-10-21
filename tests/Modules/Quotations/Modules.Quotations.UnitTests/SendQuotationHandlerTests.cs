@@ -402,7 +402,7 @@ public sealed class SendQuotationHandlerTests
             AdvisorId,
             Now);
         quotation.AddItem(
-            QuotationItemId.New(), ProductId, quantity: 1m, unitPrice: 1_000m,
+            QuotationItemId.New(), ProductId, ProductId, quantity: 1m, unitPrice: 1_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
         if (alreadySent)
@@ -438,9 +438,9 @@ public sealed class SendQuotationHandlerTests
                 new StubQuotationLogoLookup()),
             storage,
             new StubQuotationCustomerLookup(customer),
-            new StubQuotationProductLookup(new Dictionary<Guid, QuotationProductRef>
+            new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>
             {
-                [ProductId] = new(ProductId, "Tornillo 1/4", "TOR-001", ImageUrl: null, Scales: []),
+                [ProductId] = new(ProductId, ProductId, "Tornillo 1/4", "TOR-001", ImageUrl: null, Scales: []),
             }),
             whatsAppFailure is null
                 ? sender

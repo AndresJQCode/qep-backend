@@ -210,7 +210,7 @@ public sealed class ShopifyOrderImporter(
     }
 
     /// <summary>
-    /// §6.2.2: cada SKU contra un <c>Product.Code</c> activo del tenant. Se resuelven <b>todas</b> las líneas antes de decidir,
+    /// §6.2.2: cada SKU contra el <c>Code</c> de una variante activa del tenant (y de un producto activo). Se resuelven <b>todas</b> las líneas antes de decidir,
     /// para que <c>wait_detail.skus</c> traiga la lista completa. Una línea sin SKU entra a la lista como <c>null</c>: es lo que
     /// trajo, y el frontend la muestra como «línea sin SKU». El SKU se compara recortado (los espacios de la tienda no son parte
     /// del código).
@@ -245,7 +245,8 @@ public sealed class ShopifyOrderImporter(
             }
 
             lines.Add(new ShopifyOrderLineDraft(
-                product.Id,
+                product.VariantId,
+                product.ProductId,
                 line.Quantity,
                 ShopifyPricing.UnitPriceWithVat(line.OriginalUnitPrice, snapshot.TaxesIncluded, product.TaxPercentage, currency),
                 ShopifyPricing.DiscountPercentage(line.DiscountAmount, line.OriginalUnitPrice, line.Quantity),

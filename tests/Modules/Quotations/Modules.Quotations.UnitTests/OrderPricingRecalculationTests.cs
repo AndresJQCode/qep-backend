@@ -22,8 +22,8 @@ public sealed class OrderPricingRecalculationTests
         Currency = "COP",
     };
 
-    private static QuotationProductPricingRef Product(Guid id) =>
-        new(id, TenantId, "Producto", true, new Dictionary<string, decimal> { ["COP"] = 10_000m },
+    private static QuotationVariantPricingRef Product(Guid id) =>
+        new(id, id, TenantId, "Producto", "SKU", true, new Dictionary<string, decimal> { ["COP"] = 10_000m },
             [new QuotationPriceScaleRef(1, 999, 5m, QuotationPriceScaleRestriction.Multiple, 1, [], false)], 19);
 
     // Review Focus 3 a nivel de la pasada completa: editar otra línea no le resetea el descuento a la del producto borrado.
@@ -37,8 +37,8 @@ public sealed class OrderPricingRecalculationTests
             new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, false),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             [
-                new OrderLineInput(gone, 2m, 10_000m, 10m, 19, new QuotationProductSnapshot("OLD", "Viejo")),
-                new OrderLineInput(kept, 10m, 10_000m, 0m, 19),
+                new OrderLineInput(gone, gone, 2m, 10_000m, 10m, 19, new QuotationProductSnapshot("OLD", "Viejo")),
+                new OrderLineInput(kept, kept, 10m, 10_000m, 0m, 19),
             ],
             OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now);
 
@@ -61,7 +61,7 @@ public sealed class OrderPricingRecalculationTests
             OrderId.New(), TenantId, "PED-2026-0002",
             new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, false),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
-            [new OrderLineInput(productId, 1m, 150_000m, 5m, 19)],
+            [new OrderLineInput(productId, productId, 1m, 150_000m, 5m, 19)],
             OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now);
         order.SetShipping(new ShippingDetails(null, null, FreightChargeMode.Charged, 60_000m, 19, false), AdvisorId, Now);
         var settings = QuotationSettings.Create(6, new Dictionary<string, decimal> { ["COP"] = 200_000m });
@@ -73,16 +73,16 @@ public sealed class OrderPricingRecalculationTests
         Assert.Equal(0m, order.Items.Single().DiscountPercentage);
     }
 
-    private sealed class StubPricingLookup(params QuotationProductPricingRef[] products) : IQuotationProductPricingLookup
+    private sealed class StubPricingLookup(params QuotationVariantPricingRef[] products) : IQuotationProductPricingLookup
     {
-        private readonly Dictionary<Guid, QuotationProductPricingRef> _products = products.ToDictionary(product => product.Id);
+        private readonly Dictionary<Guid, QuotationVariantPricingRef> _products = products.ToDictionary(product => product.VariantId);
 
-        public Task<QuotationProductPricingRef?> FindAsync(Guid tenantId, Guid productId, CancellationToken cancellationToken) =>
+        public Task<QuotationVariantPricingRef?> FindVariantAsync(Guid tenantId, Guid productId, CancellationToken cancellationToken) =>
             Task.FromResult(_products.GetValueOrDefault(productId));
 
-        public Task<IReadOnlyDictionary<Guid, QuotationProductPricingRef>> FindManyAsync(
+        public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
             Guid tenantId, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyDictionary<Guid, QuotationProductPricingRef>>(
+            Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>>(
                 productIds.Where(_products.ContainsKey).ToDictionary(id => id, id => _products[id]));
     }
 }

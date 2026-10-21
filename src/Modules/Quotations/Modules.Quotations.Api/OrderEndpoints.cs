@@ -336,7 +336,7 @@ public static class OrderEndpoints
 
     private static OrderItemAddition[] ToAdditions(IReadOnlyList<OrderEditItemRequest>? items) =>
         (items ?? [])
-            .Select(item => new OrderItemAddition(item.ProductId, item.Quantity))
+            .Select(item => new OrderItemAddition(item.VariantId, item.Quantity))
             .ToArray();
 
     private static async Task<IResult> AddOrderItemsAsync(
@@ -348,7 +348,7 @@ public static class OrderEndpoints
         CancellationToken cancellationToken)
     {
         var toAdd = request.ToAdd
-            .Select(item => new OrderItemAddition(item.ProductId, item.Quantity))
+            .Select(item => new OrderItemAddition(item.VariantId, item.Quantity))
             .ToArray();
         var detail = await dispatcher.SendAsync(
             new AddOrderItemsCommand(tenantId, orderId, toAdd),
@@ -403,7 +403,7 @@ public static class OrderEndpoints
         SaveOrderEditsRequest request) =>
         (
             (request.Items ?? [])
-                .Select(item => new OrderItemAddition(item.ProductId, item.Quantity))
+                .Select(item => new OrderItemAddition(item.VariantId, item.Quantity))
                 .ToArray(),
             new OrderEditProofs(
                 (request.Proofs?.Add ?? [])

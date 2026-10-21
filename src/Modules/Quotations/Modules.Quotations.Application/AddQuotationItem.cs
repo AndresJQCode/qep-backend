@@ -6,13 +6,13 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 public sealed record AddQuotationItemCommand(
-    Guid TenantId, Guid QuotationId, Guid ProductId, decimal Quantity) : ICommand<QuotationDto>;
+    Guid TenantId, Guid QuotationId, Guid VariantId, decimal Quantity) : ICommand<QuotationDto>;
 
 public sealed class AddQuotationItemValidator : AbstractValidator<AddQuotationItemCommand>
 {
     public AddQuotationItemValidator()
     {
-        RuleFor(command => command.ProductId).NotEmpty();
+        RuleFor(command => command.VariantId).NotEmpty();
         RuleFor(command => command.Quantity).GreaterThan(0m);
     }
 }
@@ -57,7 +57,7 @@ public sealed class AddQuotationItemHandler(
         var pricing = await QuotationProductPricingResolver.ResolveAsync(
             pricingLookup,
             command.TenantId,
-            command.ProductId,
+            command.VariantId,
             command.Quantity,
             quotation.Currency, quotation.IsRetail,
             cancellationToken);
@@ -68,7 +68,8 @@ public sealed class AddQuotationItemHandler(
         var now = clock.UtcNow;
         quotation.AddItem(
             QuotationItemId.New(),
-            command.ProductId,
+            command.VariantId,
+            pricing.ProductId,
             command.Quantity,
             pricing.Pricing.UnitPrice,
             pricing.Pricing.DiscountPercentage,

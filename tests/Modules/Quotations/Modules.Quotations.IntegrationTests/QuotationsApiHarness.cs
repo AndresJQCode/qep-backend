@@ -420,6 +420,9 @@ internal static class QuotationsApiHarness
     /// cotiza con 0% (RN-013). <paramref name="packagingUnits"/> son los empaques del producto:
     /// desde el 2026-10-01 una escala "packaging_unit" no trae numero propio y usa estos, asi que
     /// toda escala de empaque necesita que se pasen.
+    ///
+    /// Sin opciones, así que su única variante lleva el id del producto (Catalog, <c>Product.Create</c>):
+    /// el id que devuelve sirve tal cual como <c>variantId</c> en las líneas (spec 2026-10-20 §4).
     /// </summary>
     public static async Task<Guid> CreateProductWithScalesAsync(
         HttpClient client,
@@ -651,12 +654,15 @@ internal static class QuotationsApiHarness
         return (body.Id, bankName, accountNumber, currency);
     }
 
+    /// <param name="variantId">La variante de la única línea (spec 2026-10-20 §4). Para un producto sin
+    /// opciones —todo lo que crea <see cref="CreateProductWithScalesAsync"/>— es el id del producto: su
+    /// variante por defecto nace con ese id.</param>
     public static async Task<QuotationResponse> CreateSentQuotationAsync(
         HttpClient client,
         QepApiFactory factory,
         Guid tenantId,
         Guid clientId,
-        Guid productId,
+        Guid variantId,
         string? paymentMethod = "Transferencia",
         QuotationPartiesRequest? parties = null,
         string? notes = null)
@@ -683,7 +689,7 @@ internal static class QuotationsApiHarness
             notes: notes);
         await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
-            new AddQuotationItemRequest(productId, 1m),
+            new AddQuotationItemRequest(variantId, 1m),
             TestContext.Current.CancellationToken);
         var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
         var response = await client.PostAsJsonAsync(

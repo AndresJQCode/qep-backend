@@ -110,7 +110,8 @@ internal sealed class FakeProductLookup : IShopifyProductLookup
 
     public FakeProductLookup With(string sku, int taxPercentage = 19, bool active = true)
     {
-        Products[sku] = new ShopifyProductRef(Guid.CreateVersion7(), sku, active, taxPercentage);
+        // Dos ids distintos a propósito: un intercambio de VariantId y ProductId en el importador tiene que verse.
+        Products[sku] = new ShopifyProductRef(Guid.CreateVersion7(), Guid.CreateVersion7(), sku, active, taxPercentage);
         return this;
     }
 

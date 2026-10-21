@@ -37,7 +37,7 @@ public sealed class ExternalOrderServiceTests
                     tenantId, OrderSource.Shopify, "#1001", incompleteId, advisorId, "shopify_payments",
                     "Shopify #1001", null,
                     new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-                    [new ExternalOrderLine(productId, 2m, 11_900m, 0m, 19)],
+                    [new ExternalOrderLine(productId, productId, 2m, 11_900m, 0m, 19)],
                     OrderPaymentStatus.FullPaymentReceived,
                     DateTimeOffset.UtcNow),
                 TestContext.Current.CancellationToken);
@@ -89,7 +89,7 @@ public sealed class ExternalOrderServiceTests
             new ExternalOrderDraft(
                 tenantId, OrderSource.Shopify, "#1002", clientId, advisorId, null, null, null,
                 new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-                [new ExternalOrderLine(productId, 1m, 11_900m, 0m, 19)],
+                [new ExternalOrderLine(productId, productId, 1m, 11_900m, 0m, 19)],
                 OrderPaymentStatus.PaymentPending,
                 DateTimeOffset.UtcNow),
             TestContext.Current.CancellationToken);
@@ -127,7 +127,7 @@ public sealed class ExternalOrderServiceTests
             new ExternalOrderDraft(
                 tenantId, OrderSource.Shopify, "#1003", clientId, advisorId, null, null, null,
                 new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-                [new ExternalOrderLine(productId, 1m, 11_900m, 0m, 19)],
+                [new ExternalOrderLine(productId, productId, 1m, 11_900m, 0m, 19)],
                 OrderPaymentStatus.PaymentPending,
                 DateTimeOffset.UtcNow),
             TestContext.Current.CancellationToken);
@@ -386,7 +386,7 @@ public sealed class ExternalOrderServiceTests
         string? externalShippingTitle = null) =>
         new(
             setup.TenantId, OrderSource.Shopify, reference, setup.ClientId, setup.AdvisorId, null, null, null,
-            setup.Billing, [new ExternalOrderLine(setup.ProductId, 2m, 11_900m, 0m, 19)],
+            setup.Billing, [new ExternalOrderLine(setup.ProductId, setup.ProductId, 2m, 11_900m, 0m, 19)],
             OrderPaymentStatus.PaymentPending, DateTimeOffset.UtcNow, shipping, externalKey, externalShippingTitle);
 
     // Un scope por llamada, como el worker: cada una con su DbContext.

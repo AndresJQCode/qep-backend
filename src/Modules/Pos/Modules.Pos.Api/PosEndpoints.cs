@@ -53,7 +53,7 @@ public static class PosEndpoints
 
         group.MapGet("/products", SearchProductsAsync)
             .RequireAuthorization(PosPermissions.SaleCreate)
-            .Produces<PosPage<PosProductResponse>>()
+            .Produces<PosPage<PosCatalogProductResponse>>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 

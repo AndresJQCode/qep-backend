@@ -14,7 +14,7 @@ internal static class OrderItemProductLabel
     {
         var missing = order.Items
             .Where(item => item.ProductCode is null)
-            .Select(item => item.ProductId)
+            .Select(item => item.VariantId)
             .Distinct()
             .ToArray();
         if (missing.Length == 0)

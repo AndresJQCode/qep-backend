@@ -809,6 +809,8 @@ public sealed class OrphanUserCleanupTests
         var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
         var convertedBy = new MemberId(convertedByMembershipId);
         var occurredAt = DateTimeOffset.UtcNow;
+        // La variante por defecto lleva el id del producto (spec 2026-10-20 §8).
+        var productId = Guid.CreateVersion7();
         var order = Order.CreateManual(
             OrderId.New(),
             tenantId,
@@ -823,7 +825,7 @@ public sealed class OrphanUserCleanupTests
                 Currency = "COP",
             },
             ShippingDetails.None,
-            [new OrderLineInput(Guid.CreateVersion7(), 1m, 119_000m, 0m, 19)],
+            [new OrderLineInput(productId, productId, 1m, 119_000m, 0m, 19)],
             OrderPaymentStatus.PaymentPending,
             notes: null,
             convertedBy,

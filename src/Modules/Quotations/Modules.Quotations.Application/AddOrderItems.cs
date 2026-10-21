@@ -5,7 +5,8 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
-public sealed record OrderItemAddition(Guid ProductId, decimal Quantity);
+/// <remarks>Por variante (spec 2026-10-20 §4): <c>VariantId</c> es la clave de la línea.</remarks>
+public sealed record OrderItemAddition(Guid VariantId, decimal Quantity);
 
 /// <summary>Suma productos a un pedido pendiente (a pedido, 2026-09). Desde el spec 2026-10-15 §4.5
 /// las líneas son del pedido: la cotización de origen no se toca.</summary>
@@ -20,7 +21,7 @@ public sealed class AddOrderItemsValidator : AbstractValidator<AddOrderItemsComm
     {
         RuleForEach(command => command.ToAdd).ChildRules(item =>
         {
-            item.RuleFor(addition => addition.ProductId).NotEmpty();
+            item.RuleFor(addition => addition.VariantId).NotEmpty();
             item.RuleFor(addition => addition.Quantity).GreaterThan(0m);
         });
         RuleFor(command => command.ToAdd)
@@ -69,10 +70,10 @@ public sealed class AddOrderItemsHandler(
             // Misma resolución que el cotizador: precio en la moneda del pedido, descuento por
             // escala para esa cantidad y tasa del producto.
             var pricing = await QuotationProductPricingResolver.ResolveAsync(
-                pricingLookup, command.TenantId, addition.ProductId, addition.Quantity,
+                pricingLookup, command.TenantId, addition.VariantId, addition.Quantity,
                 order.Currency, order.IsRetail, cancellationToken);
             order.AddItem(
-                OrderItemId.New(), addition.ProductId, addition.Quantity,
+                OrderItemId.New(), addition.VariantId, pricing.ProductId, addition.Quantity,
                 pricing.Pricing.UnitPrice, pricing.Pricing.DiscountPercentage,
                 pricing.Pricing.TaxPercentage, updatedBy, now);
             orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(

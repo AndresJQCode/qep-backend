@@ -143,14 +143,15 @@ public abstract class QuotationEditsValidator<TEdits> : AbstractValidator<TEdits
 
         RuleForEach(edits => edits.Items).ChildRules(item =>
         {
-            item.RuleFor(line => line.ProductId).NotEmpty();
+            item.RuleFor(line => line.VariantId).NotEmpty();
             item.RuleFor(line => line.Quantity).GreaterThan(0m);
         });
-        // El dominio ya prohíbe dos líneas del mismo producto (quotation.item.duplicate_product),
+        // El dominio ya prohíbe dos líneas de la misma variante (quotation.item.duplicate_product),
         // pero acá la lista es la clave del diff: repetida, una de las dos se perdería en silencio.
+        // Por variante (spec 2026-10-20 §4): dos tallas del mismo producto sí pueden venir juntas.
         RuleFor(edits => edits.Items)
-            .Must(items => items.Select(line => line.ProductId).Distinct().Count() == items.Count)
-            .WithMessage("The same product cannot appear more than once.");
+            .Must(items => items.Select(line => line.VariantId).Distinct().Count() == items.Count)
+            .WithMessage("La misma variante no puede aparecer más de una vez.");
     }
 }
 

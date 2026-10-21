@@ -30,7 +30,7 @@ public sealed class CreatePosSaleValidator : AbstractValidator<CreatePosSaleComm
             .Must(lines => lines is null || lines.Count <= PosLimits.MaxLines).WithMessage("A sale cannot have more than 200 lines.");
         RuleForEach(command => command.Lines).NotNull().ChildRules(line =>
         {
-            line.RuleFor(value => value.ProductId).NotEmpty();
+            line.RuleFor(value => value.VariantId).NotEmpty();
             line.RuleFor(value => value.Quantity)
                 .GreaterThan(0m).LessThanOrEqualTo(PosLimits.MaxQuantity)
                 .Must(PosLimits.HasValidScale).WithMessage("The quantity accepts at most 2 decimals.");
@@ -126,7 +126,7 @@ public sealed class CreatePosSaleHandler(
                     "pos.sale.session_mismatch", "The cash session sent is not the cashier's open one.");
             }
 
-            // 4. Productos: el precio y la tasa que se cobran son siempre los del catálogo.
+            // 4. Variantes: el precio y la tasa que se cobran son siempre los del catálogo.
             var lines = await ResolveLinesAsync(command, session, cancellationToken);
 
             // 5. Descuento.
@@ -198,14 +198,17 @@ public sealed class CreatePosSaleHandler(
     private async Task<PosSaleLineInput[]> ResolveLinesAsync(
         CreatePosSaleCommand command, CashSession session, CancellationToken cancellationToken)
     {
+        // Por variante (spec 2026-10-20 §4): dos tallas del mismo producto son dos líneas, cada una
+        // con su precio y su foto. Los códigos pos.sale.product_* se conservan: son contrato con el
+        // frontend.
         var found = await products.FindManyAsync(
-            command.TenantId, command.Lines.Select(line => line.ProductId).Distinct().ToArray(), cancellationToken);
+            command.TenantId, command.Lines.Select(line => line.VariantId).Distinct().ToArray(), cancellationToken);
 
         return command.Lines.Select(line =>
         {
-            if (!found.TryGetValue(line.ProductId, out var product))
+            if (!found.TryGetValue(line.VariantId, out var product))
             {
-                throw new PosDomainException("pos.sale.product_not_found", $"Product '{line.ProductId}' was not found.");
+                throw new PosDomainException("pos.sale.product_not_found", $"Variant '{line.VariantId}' was not found.");
             }
 
             if (!product.IsActive)
@@ -229,7 +232,8 @@ public sealed class CreatePosSaleHandler(
             }
 
             return new PosSaleLineInput(
-                product.Id, product.Code, product.Name, line.Quantity, price, line.DiscountPercentage, product.TaxPercentage);
+                product.VariantId, product.ProductId, product.Code, product.Name, line.Quantity, price,
+                line.DiscountPercentage, product.TaxPercentage);
         }).ToArray();
     }
 

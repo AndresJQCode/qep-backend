@@ -160,7 +160,7 @@ public sealed class RecognizeOrderCarrierHandlerTests
             OrderId.New(), TenantId, "PED-2026-0002",
             new OrderHeader(Guid.CreateVersion7(), Advisor, "COP", null, false, null, false, false),
             new QuotationParties(null, null, IsStorePickup: false), OrderBuilders.BillingAccount,
-            [new OrderLineInput(Guid.CreateVersion7(), 10m, 11_900m, 0m, 19)], paymentStatus, null, Advisor, [], Now,
+            [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19)], paymentStatus, null, Advisor, [], Now,
             OrderSource.Shopify, "#1001", shipping, "shop-1:1001", title);
 
     private static RecognizeOrderCarrierHandler NewHandler(Order order, Carrier carrier) =>

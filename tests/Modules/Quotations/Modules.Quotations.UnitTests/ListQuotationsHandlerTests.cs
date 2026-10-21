@@ -232,7 +232,7 @@ public sealed class ListQuotationsHandlerTests
         {
             quotation.AddItem(
                 QuotationItemId.New(),
-                Guid.CreateVersion7(),
+                Guid.CreateVersion7(), Guid.CreateVersion7(),
                 quantity: 1,
                 unitPrice: 119_000m,
                 discountPercentage: 0m,

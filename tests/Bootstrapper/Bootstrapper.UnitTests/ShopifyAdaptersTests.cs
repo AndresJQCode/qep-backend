@@ -68,8 +68,9 @@ public sealed class ShopifyAdaptersTests
             .GetFreightTaxPercentageAsync(TenantId, Ct));
     }
 
-    // ---- Productos (§6.2.2) ----
+    // ---- Productos (§6.2.2; variantes 2026-10-20 §2.9) ----
 
+    // La variante por defecto lleva el id del producto: un pedido de un producto sin opciones empareja igual que antes.
     [Fact]
     public async Task ProductLookupReadsTaxPercentageByRateId()
     {
@@ -81,9 +82,37 @@ public sealed class ShopifyAdaptersTests
 
         var found = await lookup.FindByCodesAsync(TenantId, ["SH-400", "SH-200", "NO-EXISTE"], Ct);
 
-        Assert.Equal(new ShopifyProductRef(taxed.Id.Value, "SH-400", true, 19), found["SH-400"]);
-        Assert.Equal(new ShopifyProductRef(untaxed.Id.Value, "SH-200", false, 0), found["SH-200"]);
+        Assert.Equal(new ShopifyProductRef(taxed.Id.Value, taxed.Id.Value, "SH-400", true, 19), found["SH-400"]);
+        Assert.Equal(new ShopifyProductRef(untaxed.Id.Value, untaxed.Id.Value, "SH-200", false, 0), found["SH-200"]);
         Assert.False(found.ContainsKey("NO-EXISTE"));
+    }
+
+    // El SKU de la línea es el Code de la variante: «CAM-L» es la L, no la primera variante del producto. Sensible a
+    // mayúsculas, como el índice único: «cam-l» no empareja. Una variante inactiva vuelve, marcada.
+    [Fact]
+    public async Task ShopifyLookupMatchesVariantCodeExactly()
+    {
+        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, Now);
+        var world = VariantWorld.Create(TenantId, Now, taxRateId: rate.Id, largeIsActive: false);
+        var lookup = new ShopifyProductLookup(new FakeProductRepository(world.Product), new FakeTaxRateRepository(rate));
+
+        var found = await lookup.FindByCodesAsync(TenantId, ["CAM-M", "CAM-L", "cam-l"], Ct);
+
+        Assert.Equal(new ShopifyProductRef(world.Medium.Id.Value, world.Product.Id.Value, "CAM-M", true, 19), found["CAM-M"]);
+        Assert.Equal(new ShopifyProductRef(world.Large.Id.Value, world.Product.Id.Value, "CAM-L", false, 19), found["CAM-L"]);
+        Assert.NotEqual(world.Product.Id.Value, found["CAM-L"].VariantId);
+        Assert.False(found.ContainsKey("cam-l"));
+    }
+
+    [Fact]
+    public async Task ShopifyLookupIgnoresVariantsOfAnotherTenant()
+    {
+        var world = VariantWorld.Create(Guid.CreateVersion7(), Now);
+        var lookup = new ShopifyProductLookup(new FakeProductRepository(world.Product), new FakeTaxRateRepository());
+
+        var found = await lookup.FindByCodesAsync(TenantId, ["CAM-M"], Ct);
+
+        Assert.Empty(found);
     }
 
     // ---- Pedido (§6.2.3 y §6.3) ----
@@ -188,7 +217,8 @@ public sealed class ShopifyAdaptersTests
         Assert.Equal(
             new QuotationPartyRequest("Laura Gómez", null, "+573001234567", "laura@verde.co", "Cra 1 # 2-3", shippingParty.DepartmentId, shippingParty.CityId),
             sent.Parties.Shipping);
-        Assert.Equal([new ExternalOrderLine(draft.Lines[0].ProductId, 2m, 11_900m, 10.5m, 19)], sent.Lines);
+        Assert.NotEqual(draft.Lines[0].VariantId, draft.Lines[0].ProductId);
+        Assert.Equal([new ExternalOrderLine(draft.Lines[0].VariantId, draft.Lines[0].ProductId, 2m, 11_900m, 10.5m, 19)], sent.Lines);
         Assert.False(result.AlreadyExisted);
         Assert.Equal(writer.LastResult!.OrderId, result.OrderId);
     }
@@ -661,7 +691,7 @@ public sealed class ShopifyAdaptersTests
             "Shopify #1001",
             null,
             new ShopifyBillingAccountRef(Guid.CreateVersion7(), "Bancolombia", "CTA-1", "COP"),
-            [new ShopifyOrderLineDraft(Guid.CreateVersion7(), 2m, 11_900m, 10.5m, 19)],
+            [new ShopifyOrderLineDraft(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 11_900m, 10.5m, 19)],
             "pending",
             Now,
             null,

@@ -1,7 +1,12 @@
 namespace Modules.Pos.Domain;
 
 /// <summary>Una línea ya resuelta contra el catálogo: el precio y la tasa son los de ahora.</summary>
+/// <param name="VariantId">La variante que se vende (spec 2026-10-20 §4): la línea es por variante.</param>
+/// <param name="ProductId">El producto dueño de la variante, para agrupar por producto en reportes.</param>
+/// <param name="ProductName">El nombre visible de la variante; la línea lo recorta a
+/// <see cref="PosSaleLine.ProductNameMaxLength"/>.</param>
 public sealed record PosSaleLineInput(
+    Guid VariantId,
     Guid ProductId,
     string ProductCode,
     string ProductName,

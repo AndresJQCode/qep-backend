@@ -28,7 +28,7 @@ public sealed class QuotationShippingTests
     private static Quotation QuotationWithALineOf119000()
     {
         var quotation = NewQuotation();
-        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
+        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
         return quotation;
     }
 

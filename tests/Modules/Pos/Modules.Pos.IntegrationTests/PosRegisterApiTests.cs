@@ -28,7 +28,7 @@ public sealed class PosRegisterApiTests
 
         var preview = await world.Admin.PostAsJsonAsync(
             $"{world.Url}/sales/preview",
-            new { lines = new[] { new { productId = world.Shampoo, quantity = 2m, discountPercentage = 10m }, new { productId = world.Avena, quantity = 1.5m, discountPercentage = 0m }, new { productId = world.Jabon, quantity = 3m, discountPercentage = 0m } } },
+            new { lines = new[] { new { variantId = world.Shampoo, quantity = 2m, discountPercentage = 10m }, new { variantId = world.Avena, quantity = 1.5m, discountPercentage = 0m }, new { variantId = world.Jabon, quantity = 3m, discountPercentage = 0m } } },
             TestContext.Current.CancellationToken);
         var previewBody = await preview.Content.ReadFromJsonAsync<PosPreviewResponse>(TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
@@ -96,7 +96,7 @@ public sealed class PosRegisterApiTests
             PosWorld.SaleBody(Guid.CreateVersion7(), session.Id, world.PlainLine(), PosWorld.CashPayment(20_000m)), TestContext.Current.CancellationToken);
         var stale = await world.Admin.PostAsJsonAsync($"{world.Url}/sales",
             PosWorld.SaleBody(Guid.CreateVersion7(), session.Id,
-                [new { productId = world.Shampoo, quantity = 1m, discountPercentage = 0m, expectedUnitPrice = 12_500m, expectedTaxPercentage = 19 }],
+                [new { variantId = world.Shampoo, quantity = 1m, discountPercentage = 0m, expectedUnitPrice = 12_500m, expectedTaxPercentage = 19 }],
                 PosWorld.CashPayment(20_000m)), TestContext.Current.CancellationToken);
         var second = await world.Admin.PostAsJsonAsync($"{world.Url}/sales",
             PosWorld.SaleBody(Guid.CreateVersion7(), session.Id, world.PlainLine(), PosWorld.CashPayment(20_000m)), TestContext.Current.CancellationToken);
@@ -115,14 +115,14 @@ public sealed class PosRegisterApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var world = await PosWorld.ArrangeAsync(factory, database);
         await ExecuteSqlAsync(database, "UPDATE catalog.products SET is_active = false WHERE id = @id", ("id", world.Jabon));
-        await ExecuteSqlAsync(database, "DELETE FROM catalog.product_prices WHERE product_id = @id AND currency = 'COP'", ("id", world.Avena));
-        await ExecuteSqlAsync(database, "INSERT INTO catalog.product_prices (product_id, currency, amount) VALUES (@id, 'USD', 10)", ("id", world.Avena));
+        await ExecuteSqlAsync(database, "DELETE FROM catalog.product_prices WHERE variant_id = @id AND currency = 'COP'", ("id", world.Avena));
+        await ExecuteSqlAsync(database, "INSERT INTO catalog.product_prices (variant_id, currency, amount) VALUES (@id, 'USD', 10)", ("id", world.Avena));
 
         var exact = await world.Admin.GetFromJsonAsync<PosProductResponse>($"{world.Url}/products/by-code?code=SH-400", TestContext.Current.CancellationToken);
         var lower = await world.Admin.GetAsync($"{world.Url}/products/by-code?code=sh-400", TestContext.Current.CancellationToken);
         var inactive = await world.Admin.GetFromJsonAsync<PosProductResponse>($"{world.Url}/products/by-code?code=JB-03", TestContext.Current.CancellationToken);
         var unpriced = await world.Admin.GetFromJsonAsync<PosProductResponse>($"{world.Url}/products/by-code?code=AV-01", TestContext.Current.CancellationToken);
-        var search = await world.Admin.GetFromJsonAsync<PosPage<PosProductResponse>>($"{world.Url}/products?search=sham", TestContext.Current.CancellationToken);
+        var search = await world.Admin.GetFromJsonAsync<PosPage<PosCatalogProductResponse>>($"{world.Url}/products?search=sham", TestContext.Current.CancellationToken);
 
         Assert.True(exact!.Sellable);
         Assert.Equal(19, exact.TaxPercentage);
@@ -130,7 +130,7 @@ public sealed class PosRegisterApiTests
         Assert.Contains("pos.product.not_found", await lower.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
         Assert.Equal(("Inactive", false), (inactive!.UnsellableReason, inactive.Sellable));
         Assert.Equal(("PriceMissing", (decimal?)null), (unpriced!.UnsellableReason, unpriced.UnitPrice));
-        Assert.Equal("SH-400", Assert.Single(search!.Items).Code);
+        Assert.Equal("SH-400", Assert.Single(Assert.Single(search!.Items).Variants).Code);
     }
 
     // Spec, «Integración»: las seis políticas resuelven (403 y no 500 sin el permiso).

@@ -1,9 +1,18 @@
+using BuildingBlocks.Domain;
 using BuildingBlocks.Domain.Pricing;
 
 namespace Modules.Pos.Domain;
 
 public sealed class PosSaleLine
 {
+    /// <summary>
+    /// El largo de <c>pos.sale_lines.product_name</c>, el mismo que <c>Product.NameMaxLength</c> de
+    /// Catalog y <c>QuotationProductSnapshot.NameMaxLength</c> de Quotations, copiado y no
+    /// referenciado porque Pos no depende de esos módulos. El nombre visible de una variante puede
+    /// pasarlo: se recorta con <see cref="SnapshotText.Fit"/>, la regla compartida con Quotations.
+    /// </summary>
+    public const int ProductNameMaxLength = 200;
+
     private PosSaleLine()
     {
         ProductCode = string.Empty;
@@ -16,10 +25,20 @@ public sealed class PosSaleLine
 
     public int Position { get; private set; }
 
+    /// <summary>
+    /// La variante vendida (spec 2026-10-20 §4). Sin FK, como <see cref="ProductId"/>: la venta
+    /// guarda la foto y una variante borrada no invalida un ticket. Las ventas anteriores a las
+    /// variantes la tienen igual a <see cref="ProductId"/> (la variante por defecto nació con el id
+    /// del producto, migración <c>AddVariantToSaleLines</c>).
+    /// </summary>
+    public Guid VariantId { get; private set; }
+
     public Guid ProductId { get; private set; }
 
     public string ProductCode { get; private set; }
 
+    /// <summary>La foto del nombre visible de la variante al vender, recortada a
+    /// <see cref="ProductNameMaxLength"/>. Nunca se recalcula.</summary>
     public string ProductName { get; private set; }
 
     public decimal Quantity { get; private set; }
@@ -69,9 +88,10 @@ public sealed class PosSaleLine
             Id = PosSaleLineId.New(),
             SaleId = saleId,
             Position = position,
+            VariantId = input.VariantId,
             ProductId = input.ProductId,
             ProductCode = input.ProductCode,
-            ProductName = input.ProductName,
+            ProductName = SnapshotText.Fit(input.ProductName, ProductNameMaxLength),
             Quantity = input.Quantity,
             UnitPrice = VatIncludedLine.ChargedListPrice(input.UnitPrice, currency),
             DiscountPercentage = input.DiscountPercentage,

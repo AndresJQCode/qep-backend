@@ -48,7 +48,7 @@ public sealed class QuotationResponseComposer(
 
         var products = await productLookup.FindManyAsync(
             tenantId,
-            quotation.Items.Select(item => item.ProductId).Distinct().ToArray(),
+            quotation.Items.Select(item => item.VariantId).Distinct().ToArray(),
             cancellationToken);
 
         // Here and not in QuotationDto: every quotation response passes through this composer, and it
@@ -145,18 +145,19 @@ public sealed class QuotationResponseComposer(
                         address.IsPrincipal))
                     .ToArray());
 
-    // El producto puede no existir más (se dio de baja y se borró): la línea conserva lo que la
-    // cotización congeló —cantidad, precio, descuento— y el nombre queda vacío, que es lo único
-    // que este lado no puede reconstruir.
+    // La variante puede no existir más (se borró): la línea conserva lo que la cotización
+    // congeló —cantidad, precio, descuento— y el nombre queda vacío, que es lo único que este lado
+    // no puede reconstruir. El diccionario va por id de variante (spec 2026-10-20 §4).
     internal static QuotationItemResponse ToItemResponse(
         QuotationItemDto item,
-        IReadOnlyDictionary<Guid, QuotationProductRef> products,
+        IReadOnlyDictionary<Guid, QuotationVariantRef> products,
         int? globalScaleFloor)
     {
-        products.TryGetValue(item.ProductId, out var product);
+        products.TryGetValue(item.VariantId, out var product);
 
         return new QuotationItemResponse(
             item.Id,
+            item.VariantId,
             item.ProductId,
             // Congelados si la cotización ya salió del borrador; si no, los del catálogo de hoy.
             // Portada y escalas siguen siendo las de hoy: no se congelan.
@@ -210,16 +211,16 @@ public sealed class QuotationResponseComposer(
     /// </summary>
     private static int[] AvailableFloors(
         QuotationDto quotation,
-        IReadOnlyDictionary<Guid, QuotationProductRef> products) =>
+        IReadOnlyDictionary<Guid, QuotationVariantRef> products) =>
         AvailableFloors(quotation.Items, products);
 
     internal static int[] AvailableFloors(
         IReadOnlyCollection<QuotationItemDto> items,
-        IReadOnlyDictionary<Guid, QuotationProductRef> products) =>
+        IReadOnlyDictionary<Guid, QuotationVariantRef> products) =>
         items
-            .Select(item => item.ProductId)
+            .Select(item => item.VariantId)
             .Distinct()
-            .SelectMany(productId => products.TryGetValue(productId, out var product)
+            .SelectMany(variantId => products.TryGetValue(variantId, out var product)
                 ? product.Scales.Select(scale => scale.FromUnit)
                 : Enumerable.Empty<int>())
             .Distinct()

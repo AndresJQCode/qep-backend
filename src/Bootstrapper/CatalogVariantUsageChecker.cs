@@ -21,12 +21,13 @@ namespace Bootstrapper;
 /// toca otro esquema recibe el tenant, aunque los ids de variante ya sean únicos: un id de otro
 /// tenant no puede decir «en uso» acá.
 ///
-/// **Acoplamiento con las Tareas 10 y 12.** La columna <c>variant_id</c> de las tres tablas de
-/// líneas la crean las migraciones <c>AddVariantToLines</c> (Quotations) y
-/// <c>AddVariantToSaleLines</c> (Pos). Hasta que existan, esta consulta falla en ejecución con
-/// <c>42703 undefined_column</c>. El SQL está escrito contra el esquema final del plan a propósito:
-/// una versión intermedia por <c>product_id</c> diría «en uso» por la variante por defecto y no por
-/// la que se vendió, y nadie la volvería a cambiar.
+/// **Acoplamiento con Quotations y Pos.** La columna <c>variant_id</c> de las tres tablas de
+/// líneas y sus índices (<c>IX_quotation_items_variant</c>, <c>IX_order_items_variant</c>,
+/// <c>IX_sale_lines_variant</c>) los crean las migraciones <c>AddVariantToLines</c> (Quotations) y
+/// <c>AddVariantToSaleLines</c> (Pos). Renombrar una columna allá compila y rompe esta consulta en
+/// ejecución con <c>42703 undefined_column</c>: las pruebas gemelas contra el esquema migrado son
+/// <c>VariantLinesMigrationTests</c> y <c>SaleLinesVariantMigrationTests</c>
+/// (<c>TheCatalogUsageQueryFindsTheBackfilledVariant</c>).
 /// </summary>
 internal sealed class CatalogVariantUsageChecker(CatalogDbContext catalog) : IVariantUsageChecker
 {

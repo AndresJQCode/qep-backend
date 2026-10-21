@@ -110,6 +110,7 @@ internal static class OrderMapping
 
     private static QuotationItemDto ToDto(OrderItem item) => new(
         item.Id.Value,
+        item.VariantId,
         item.ProductId,
         item.Quantity,
         item.UnitPrice,

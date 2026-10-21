@@ -44,7 +44,7 @@ public sealed class QuotationGlobalScaleFloorTests
     {
         var quotation = NewQuotation(BillingAccount);
         quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
         quotation.ConvertToOrder(AdvisorId, Now.AddHours(2), QuotationProductSnapshot.None);
 
@@ -120,7 +120,7 @@ public sealed class QuotationGlobalScaleFloorTests
         var quotation = NewQuotation();
         var itemId = QuotationItemId.New();
         quotation.AddItem(
-            itemId, Guid.CreateVersion7(), quantity: 3, unitPrice: 100_000m,
+            itemId, Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 3, unitPrice: 100_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
         quotation.ApplyGroupDiscounts(
@@ -140,7 +140,7 @@ public sealed class QuotationGlobalScaleFloorTests
     {
         var quotation = NewQuotation();
         quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 3, unitPrice: 100_000m,
+            QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 3, unitPrice: 100_000m,
             discountPercentage: 5m, taxPercentage: 19, AdvisorId, Now);
 
         Assert.Equal(QuotationDiscountOrigin.Own, quotation.Items.Single().DiscountOrigin);

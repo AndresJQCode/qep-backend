@@ -275,18 +275,37 @@ internal sealed class FakeCashierLookup : IPosCashierLookup
         Task.FromResult(Names.TryGetValue(membershipId, out var name) ? name : null);
 }
 
+/// <summary>
+/// Variantes de la caja. <c>id</c> es el id de la variante; sin <c>productId</c> es la variante por
+/// defecto, con el mismo id que su producto (como la migración). Para un producto con opciones se
+/// agregan varias con el mismo <c>productId</c> y <c>productName</c>, y con <c>hasOptions</c>.
+/// </summary>
 internal sealed class FakeProductLookup : IPosProductLookup
 {
     public List<(Guid TenantId, PosProductRef Product)> Products { get; } = [];
 
+    private readonly Dictionary<Guid, string> _productNames = [];
+
+    private readonly Dictionary<Guid, bool> _hasOptions = [];
+
     /// <param name="price">The COP price; <paramref name="priceUsd"/> the USD one. <paramref name="prices"/>,
     /// when given, replaces both: the way to put an EUR price on a product.</param>
+    /// <param name="name">El nombre visible de la variante.</param>
+    /// <param name="productName">El nombre del producto, sin opciones; por defecto, <paramref name="name"/>.</param>
+    /// <param name="hasOptions">Si el producto tiene opciones, como <c>OptionIds.Count &gt; 0</c> en el
+    /// adaptador real: lo dice el producto, no el número de variantes (un producto con opciones puede
+    /// tener una sola variante activa). Basta con pasarlo en una de sus variantes.</param>
     public PosProductRef Add(
         string code, string name, decimal? price, int tax, bool active = true, Guid? id = null, Guid? tenantId = null,
-        decimal? priceUsd = null, IReadOnlyDictionary<string, decimal>? prices = null)
+        decimal? priceUsd = null, IReadOnlyDictionary<string, decimal>? prices = null,
+        Guid? productId = null, string? productName = null, string? barcode = null, bool hasOptions = false)
     {
+        var variantId = id ?? Guid.CreateVersion7();
+        var owner = productId ?? variantId;
         var product = new PosProductRef(
-            id ?? Guid.CreateVersion7(), code, name, active, prices ?? PricesOf(price, priceUsd), tax, null);
+            variantId, owner, code, barcode, name, active, prices ?? PricesOf(price, priceUsd), tax, null);
+        _productNames.TryAdd(owner, productName ?? name);
+        _hasOptions[owner] = _hasOptions.GetValueOrDefault(owner) || hasOptions;
         Products.Add((tenantId ?? PosFixtures.TenantId, product));
         return product;
     }
@@ -301,36 +320,44 @@ internal sealed class FakeProductLookup : IPosProductLookup
 
     public void Replace(PosProductRef product)
     {
-        var index = Products.FindIndex(entry => entry.Product.Id == product.Id);
+        var index = Products.FindIndex(entry => entry.Product.VariantId == product.VariantId);
         Products[index] = (Products[index].TenantId, product);
     }
 
-    // Como el adaptador: sólo activos en la búsqueda.
-    public Task<(IReadOnlyList<PosProductRef> Items, int Total)> SearchAsync(
+    // Como el adaptador: productos con alguna variante activa que coincide por nombre del producto,
+    // Code o código de barras, cada uno con sus variantes activas.
+    public Task<(IReadOnlyList<PosCatalogProductRef> Items, int Total)> SearchAsync(
         Guid tenantId, string? search, int page, int pageSize, CancellationToken cancellationToken)
     {
         var matches = Products
             .Where(entry => entry.TenantId == tenantId && entry.Product.IsActive)
             .Select(entry => entry.Product)
-            .Where(product => string.IsNullOrWhiteSpace(search)
-                || product.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
-                || product.Code.Contains(search, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(variant => variant.ProductId)
+            .Where(group => string.IsNullOrWhiteSpace(search)
+                || _productNames[group.Key].Contains(search, StringComparison.OrdinalIgnoreCase)
+                || group.Any(variant => variant.Code.Contains(search, StringComparison.OrdinalIgnoreCase)
+                    || (variant.Barcode?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)))
+            .Select(group => new PosCatalogProductRef(
+                group.Key, _productNames[group.Key], _hasOptions[group.Key], group.First().ImageUrl, group.ToArray()))
             .ToList();
-        return Task.FromResult<(IReadOnlyList<PosProductRef>, int)>(
+        return Task.FromResult<(IReadOnlyList<PosCatalogProductRef>, int)>(
             (matches.Skip((page - 1) * pageSize).Take(pageSize).ToList(), matches.Count));
     }
 
-    public Task<PosProductRef?> FindByCodeAsync(Guid tenantId, string code, CancellationToken cancellationToken) =>
-        Task.FromResult(Products
-            .Where(entry => entry.TenantId == tenantId && string.Equals(entry.Product.Code, code, StringComparison.Ordinal))
-            .Select(entry => entry.Product)
-            .SingleOrDefault());
+    // Como el adaptador: primero el código de barras, después el Code.
+    public Task<PosProductRef?> FindByCodeAsync(Guid tenantId, string code, CancellationToken cancellationToken)
+    {
+        var own = Products.Where(entry => entry.TenantId == tenantId).Select(entry => entry.Product).ToList();
+        return Task.FromResult(
+            own.SingleOrDefault(product => string.Equals(product.Barcode, code, StringComparison.Ordinal))
+            ?? own.SingleOrDefault(product => string.Equals(product.Code, code, StringComparison.Ordinal)));
+    }
 
     public Task<IReadOnlyDictionary<Guid, PosProductRef>> FindManyAsync(
-        Guid tenantId, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken) =>
+        Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyDictionary<Guid, PosProductRef>>(Products
-            .Where(entry => entry.TenantId == tenantId && productIds.Contains(entry.Product.Id))
-            .ToDictionary(entry => entry.Product.Id, entry => entry.Product));
+            .Where(entry => entry.TenantId == tenantId && variantIds.Contains(entry.Product.VariantId))
+            .ToDictionary(entry => entry.Product.VariantId, entry => entry.Product));
 }
 
 /// <summary>Todo lo que un handler del POS necesita, con el cajero del ejemplo ya miembro activo.</summary>

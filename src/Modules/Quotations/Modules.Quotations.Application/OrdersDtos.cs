@@ -116,7 +116,8 @@ public sealed record AddOrderPaymentProofsRequest(
     string? Notes = null,
     IReadOnlyCollection<OrderPaymentProofUpdateRequest>? UpdatedProofs = null);
 
-public sealed record OrderItemAdditionRequest(Guid ProductId, decimal Quantity);
+/// <summary>Una línea a agregar al pedido, por variante (spec 2026-10-20 §4; antes <c>productId</c>).</summary>
+public sealed record OrderItemAdditionRequest(Guid VariantId, decimal Quantity);
 
 public sealed record AddOrderItemsRequest(IReadOnlyList<OrderItemAdditionRequest> ToAdd);
 
@@ -127,7 +128,9 @@ public sealed record CancelOrderRequest(string? Reason);
 /// recordar uno distinto del que llegó de la tienda.</summary>
 public sealed record RecognizeOrderCarrierRequest(Guid CarrierId, bool RememberName);
 
-public sealed record OrderEditItemRequest(Guid ProductId, decimal Quantity);
+/// <summary>Una línea del estado deseado del pedido, por variante (spec 2026-10-20 §4; antes
+/// <c>productId</c>): dos tallas del mismo producto son dos líneas.</summary>
+public sealed record OrderEditItemRequest(Guid VariantId, decimal Quantity);
 
 public sealed record OrderEditProofAddRequest(Guid? FileId, decimal Amount, DateOnly? PaidOn = null);
 

@@ -132,7 +132,7 @@ public sealed class PosRegisterEdgeApiTests
             $"{world.Url}/sales/preview", new { }, TestContext.Current.CancellationToken);
         var tooMany = await world.Admin.PostAsJsonAsync(
             $"{world.Url}/sales/preview",
-            new { lines = Enumerable.Range(0, 201).Select(_ => new { productId = world.Shampoo, quantity = 1m, discountPercentage = 0m }).ToArray() },
+            new { lines = Enumerable.Range(0, 201).Select(_ => new { variantId = world.Shampoo, quantity = 1m, discountPercentage = 0m }).ToArray() },
             TestContext.Current.CancellationToken);
 
         Assert.All(new[] { empty, missing, tooMany }, response => Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode));

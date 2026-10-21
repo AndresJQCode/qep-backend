@@ -17,11 +17,13 @@ public sealed class QuotationProductPricingResolverTests
 
     // La escala incompleta no es la que cubre la cantidad a propósito: el bloqueo es del producto,
     // no del tramo en el que cae la línea.
-    private static QuotationProductPricingRef ProductWithAnIncompleteScale(Guid productId) =>
+    private static QuotationVariantPricingRef ProductWithAnIncompleteScale(Guid productId) =>
         new(
+            productId,
             productId,
             TenantId,
             "Vela de soja",
+            "SKU",
             IsActive: true,
             Prices: new Dictionary<string, decimal> { ["COP"] = 100_000m, ["USD"] = 25m },
             Scales:
@@ -65,8 +67,8 @@ public sealed class QuotationProductPricingResolverTests
     public async Task PricesAProductWhoseScalesAreComplete()
     {
         var productId = Guid.NewGuid();
-        var lookup = new StubPricingLookup(new QuotationProductPricingRef(
-            productId, TenantId, "Vela de soja", true, new Dictionary<string, decimal> { ["COP"] = 100_000m },
+        var lookup = new StubPricingLookup(new QuotationVariantPricingRef(
+            productId, productId, TenantId, "Vela de soja", "SKU", true, new Dictionary<string, decimal> { ["COP"] = 100_000m },
             [new QuotationPriceScaleRef(1, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, [])],
             null));
 
@@ -104,27 +106,27 @@ public sealed class QuotationProductPricingResolverTests
         Assert.Equal(23m, priced.Pricing.UnitPrice);
     }
 
-    private static QuotationProductPricingRef PricedProduct(Guid productId, Dictionary<string, decimal> prices) =>
-        new(productId, TenantId, "Vela de soja", IsActive: true, prices,
+    private static QuotationVariantPricingRef PricedProduct(Guid productId, Dictionary<string, decimal> prices) =>
+        new(productId, productId, TenantId, "Vela de soja", "SKU", IsActive: true, prices,
             [new QuotationPriceScaleRef(1, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, [])],
             TaxPercentage: null);
 
-    private sealed class StubPricingLookup(QuotationProductPricingRef product)
+    private sealed class StubPricingLookup(QuotationVariantPricingRef product)
         : IQuotationProductPricingLookup
     {
-        public Task<QuotationProductPricingRef?> FindAsync(
+        public Task<QuotationVariantPricingRef?> FindVariantAsync(
             Guid tenantId, Guid productId, CancellationToken cancellationToken) =>
-            Task.FromResult<QuotationProductPricingRef?>(
-                productId == product.Id ? product : null);
+            Task.FromResult<QuotationVariantPricingRef?>(
+                productId == product.VariantId ? product : null);
 
-        public Task<IReadOnlyDictionary<Guid, QuotationProductPricingRef>> FindManyAsync(
+        public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
             Guid tenantId,
             IReadOnlyCollection<Guid> productIds,
             CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyDictionary<Guid, QuotationProductPricingRef>>(
-                productIds.Contains(product.Id)
-                    ? new Dictionary<Guid, QuotationProductPricingRef> { [product.Id] = product }
-                    : new Dictionary<Guid, QuotationProductPricingRef>());
+            Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>>(
+                productIds.Contains(product.VariantId)
+                    ? new Dictionary<Guid, QuotationVariantPricingRef> { [product.VariantId] = product }
+                    : new Dictionary<Guid, QuotationVariantPricingRef>());
     }
 
     // ---- Ninguna restriccion de escala bloquea la linea (2026-09-22) ----
@@ -132,11 +134,13 @@ public sealed class QuotationProductPricingResolverTests
     // Decision del developer: una cantidad que no cumple la regla de su escala NO impide guardar
     // la linea; lo unico que pasa es que esa escala no aplica y la linea va sin descuento. Hasta
     // hoy `Multiple` ya se comportaba asi y `PackagingUnit` conservaba un 422, que se quito.
-    private static QuotationProductPricingRef ProductSoldInPackagesOfTwelve(Guid productId) =>
+    private static QuotationVariantPricingRef ProductSoldInPackagesOfTwelve(Guid productId) =>
         new(
+            productId,
             productId,
             TenantId,
             "Vela de soja",
+            "SKU",
             IsActive: true,
             Prices: new Dictionary<string, decimal> { ["COP"] = 100_000m, ["USD"] = 25m },
             Scales:
@@ -211,8 +215,8 @@ public sealed class QuotationProductPricingResolverTests
     public async Task RetailIgnoresAScaleThatWouldHaveGivenADiscount()
     {
         var productId = Guid.NewGuid();
-        var lookup = new StubPricingLookup(new QuotationProductPricingRef(
-            productId, TenantId, "Vela de soja", true, new Dictionary<string, decimal> { ["COP"] = 100_000m },
+        var lookup = new StubPricingLookup(new QuotationVariantPricingRef(
+            productId, productId, TenantId, "Vela de soja", "SKU", true, new Dictionary<string, decimal> { ["COP"] = 100_000m },
             [new QuotationPriceScaleRef(1, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, [])],
             null));
 

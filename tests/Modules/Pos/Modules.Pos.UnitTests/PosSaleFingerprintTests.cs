@@ -77,6 +77,42 @@ public sealed class PosSaleFingerprintTests
         Assert.Equal(3, fingerprints.Distinct(StringComparer.Ordinal).Count());
     }
 
+    // Spec 2026-10-20 §5: la línea es por variante. Otra talla del mismo producto, con la misma
+    // cantidad y el mismo precio, es otro carrito: si la huella siguiera el producto, un reintento
+    // con la talla cambiada se tomaría por repetición y respondería la venta vieja.
+    [Fact]
+    public void FingerprintChangesWhenVariantChanges()
+    {
+        var sizeM = Guid.Parse("01900000-0000-7000-8000-0000000000b1");
+        var sizeL = Guid.Parse("01900000-0000-7000-8000-0000000000b2");
+
+        var withM = PosSaleFingerprint.Compute(Command([new(sizeM, 1m, 0m, 30_000m, 19)]));
+        var withL = PosSaleFingerprint.Compute(Command([new(sizeL, 1m, 0m, 30_000m, 19)]));
+
+        Assert.NotEqual(withM, withL);
+        Assert.Equal(withL, PosSaleFingerprint.Compute(Command([new(sizeL, 1m, 0m, 30_000m, 19)])));
+    }
+
+    // Huella fija de referencia: el JSON canónico se arma a mano con la forma de antes de las
+    // variantes, [cashSessionId, [[id, quantity, discount, price, tax]], [[method, amount, tendered,
+    // reference]]], y se hashea aparte. Sólo cambió qué id va en la primera posición de la línea, así
+    // que una venta migrada (variant_id = product_id, AddVariantToSaleLines) recalcula la misma
+    // huella que guardó con productId y su reintento se sigue reconociendo.
+    [Fact]
+    public void TheCanonicalFormIsTheOneBeforeVariantsWithTheVariantInTheLine()
+    {
+        var migrated = Guid.Parse("01900000-0000-7000-8000-0000000000b1");
+        const string canonical =
+            """["01920000-0000-7000-8000-0000000000aa",[["01900000-0000-7000-8000-0000000000b1","1","0","30000","19"]],[["Card","30000",null,"1234"]]]""";
+        var expected = Convert.ToHexStringLower(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical)));
+
+        var fingerprint = PosSaleFingerprint.Compute(Command(
+            [new(migrated, 1m, 0m, 30_000m, 19)], [new("Card", 30_000m, null, "1234")]));
+
+        Assert.Equal(expected, fingerprint);
+    }
+
     // El id no entra en la huella: la huella dice "qué carrito", el id dice "qué intento".
     [Fact]
     public void TheSaleIdIsNotPartOfTheFingerprint()

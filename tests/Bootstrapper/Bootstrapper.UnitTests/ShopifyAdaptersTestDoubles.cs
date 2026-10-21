@@ -69,67 +69,6 @@ internal sealed class FakeTaxRateRepository(params TaxRate[] rates) : ITaxRateRe
     public void Remove(TaxRate taxRate) => throw new NotSupportedException();
 }
 
-internal sealed class FakeProductRepository(params Product[] products) : IProductRepository
-{
-    public Task<Product?> FindByCodeAsync(Guid tenantId, string code, CancellationToken cancellationToken) =>
-        Task.FromResult(products.FirstOrDefault(product => product.TenantId == tenantId && product.Code == code));
-
-    public Task<Product?> FindVariantByCodeAsync(Guid tenantId, string code, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public Task<Product?> FindVariantByBarcodeAsync(Guid tenantId, string barcode, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public Task<IReadOnlyList<Product>> FindVariantsByIdsAsync(
-        Guid tenantId, IReadOnlyCollection<VariantId> variantIds, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public Task<IReadOnlyList<Product>> ListByIdsAsync(
-        Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public Task<(IReadOnlyList<Product> Items, int Total)> SearchAsync(
-        Guid tenantId, string? search, string? name, string? code, bool? isActive, int page, int pageSize,
-        CancellationToken cancellationToken) => throw new NotSupportedException();
-
-    public Task<IReadOnlyList<Product>> ListForExportAsync(
-        Guid tenantId, string? name, string? code, bool? isActive, int skip, int take,
-        CancellationToken cancellationToken) => throw new NotSupportedException();
-
-    public Task<IReadOnlyList<Product>> FindVariantsByIdsForUpdateAsync(
-        Guid tenantId, IReadOnlyCollection<VariantId> variantIds, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public Task<Product?> FindAsync(Guid tenantId, ProductId productId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public Task<IReadOnlySet<string>> FindExistingCodesAsync(
-        Guid tenantId, IReadOnlyCollection<string> codes, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public Task<IReadOnlySet<string>> FindExistingBarcodesAsync(
-        Guid tenantId, IReadOnlyCollection<string> barcodes, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public Task<(IReadOnlyList<ProductSummary> Items, int Total)> SearchSummariesAsync(
-        Guid tenantId,
-        string? search,
-        string? name,
-        string? code,
-        bool? isActive,
-        int page,
-        int pageSize,
-        CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public void Add(Product product) => throw new NotSupportedException();
-
-    public void AddPriceChanges(IReadOnlyList<ProductPriceChange> changes) => throw new NotSupportedException();
-
-    public Task<bool> AnyWithTaxRateAsync(Guid tenantId, TaxRateId taxRateId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-}
-
 /// <summary>Anota cada llamada; <see cref="OnCreate"/>, <see cref="OnSync"/> y <see cref="OnCancel"/> deciden qué
 /// responde o qué lanza.</summary>
 internal sealed class FakeExternalOrderWriter : IExternalOrderWriter

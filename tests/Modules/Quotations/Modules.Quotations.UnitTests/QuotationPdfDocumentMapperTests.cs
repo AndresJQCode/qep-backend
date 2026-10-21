@@ -414,6 +414,7 @@ public sealed class QuotationPdfDocumentMapperTests
             new QuotationItemResponse(
                 Guid.CreateVersion7(),
                 Guid.CreateVersion7(),
+                Guid.CreateVersion7(),
                 "BRONCEADOR RITUAL DEL SOL",
                 "BRO-01",
                 null,
@@ -431,6 +432,7 @@ public sealed class QuotationPdfDocumentMapperTests
             // 12 x 114.700 = 1.376.400; 15% = 206.460; linea = 1.169.940.
             // IVA contenido = 186.797,14; base = 983.142,86.
             new QuotationItemResponse(
+                Guid.CreateVersion7(),
                 Guid.CreateVersion7(),
                 Guid.CreateVersion7(),
                 "COMBO JALEA REAL 3",

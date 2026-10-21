@@ -3,8 +3,10 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.Application;
 
 /// <summary>
-/// Resuelve un producto contra el catálogo **del tenant de la cotización** y calcula el
-/// descuento por escala para la cantidad pedida (US-3/US-4). Mismo criterio que
+/// Resuelve una variante contra el catálogo **del tenant de la cotización** y calcula el
+/// descuento por escala para la cantidad pedida (US-3/US-4). Por variante desde el spec 2026-10-20
+/// §4: precio, escalas y empaques son de la variante; los códigos de error siguen diciendo
+/// <c>product_*</c> porque son contrato con el frontend. Mismo criterio que
 /// <c>ProductImageResolver</c> en Catalog: sin FK real que respalde la referencia, esta
 /// comprobación es la única red.
 ///
@@ -17,13 +19,13 @@ internal static class QuotationProductPricingResolver
     public static async Task<QuotationPricedProduct> ResolveAsync(
         IQuotationProductPricingLookup lookup,
         Guid tenantId,
-        Guid productId,
+        Guid variantId,
         decimal quantity,
         string currency,
         bool isRetail,
         CancellationToken cancellationToken)
     {
-        var product = await lookup.FindAsync(tenantId, productId, cancellationToken);
+        var product = await lookup.FindVariantAsync(tenantId, variantId, cancellationToken);
 
         // Mismo código para "no existe" y "es de otro tenant" — la frontera de tenant no se
         // distingue desde afuera.
@@ -31,7 +33,7 @@ internal static class QuotationProductPricingResolver
         {
             throw new QuotationsDomainException(
                 "quotation.item.product_not_found",
-                $"Product '{productId}' was not found in this tenant.");
+                $"Variant '{variantId}' was not found in this tenant.");
         }
 
         if (!product.IsActive)
@@ -42,7 +44,7 @@ internal static class QuotationProductPricingResolver
         }
 
         return new QuotationPricedProduct(
-            product.Name, PriceFor(product, quantity, currency, isRetail));
+            product.ProductId, product.Code, product.Name, PriceFor(product, quantity, currency, isRetail));
     }
 
     /// <summary>
@@ -57,7 +59,7 @@ internal static class QuotationProductPricingResolver
     public static async Task<IReadOnlyDictionary<Guid, QuotationItemPricing>> ResolveManyAsync(
         IQuotationProductPricingLookup lookup,
         Guid tenantId,
-        IReadOnlyCollection<(Guid ProductId, decimal Quantity)> lines,
+        IReadOnlyCollection<(Guid VariantId, decimal Quantity)> lines,
         string currency,
         bool isRetail,
         CancellationToken cancellationToken)
@@ -69,27 +71,27 @@ internal static class QuotationProductPricingResolver
 
         var products = await lookup.FindManyAsync(
             tenantId,
-            lines.Select(line => line.ProductId).Distinct().ToArray(),
+            lines.Select(line => line.VariantId).Distinct().ToArray(),
             cancellationToken);
 
         var priced = new Dictionary<Guid, QuotationItemPricing>();
-        foreach (var (productId, quantity) in lines)
+        foreach (var (variantId, quantity) in lines)
         {
-            if (!products.TryGetValue(productId, out var product) || product.TenantId != tenantId)
+            if (!products.TryGetValue(variantId, out var product) || product.TenantId != tenantId)
             {
                 throw new QuotationsDomainException(
                     "quotation.item.product_not_found",
-                    $"Product '{productId}' was not found in this tenant.");
+                    $"Variant '{variantId}' was not found in this tenant.");
             }
 
-            priced[productId] = PriceFor(product, quantity, currency, isRetail);
+            priced[variantId] = PriceFor(product, quantity, currency, isRetail);
         }
 
         return priced;
     }
 
     private static QuotationItemPricing PriceFor(
-        QuotationProductPricingRef product,
+        QuotationVariantPricingRef product,
         decimal quantity,
         string currency,
         bool isRetail)
@@ -130,7 +132,10 @@ internal static class QuotationProductPricingResolver
     }
 }
 
-/// <summary>El producto ya valorizado, con su nombre: el nombre no entra en el cálculo, lo usa
-/// el resumen del historial ("Agregó Bebidas x3") y sale de la misma consulta que el precio.
+/// <summary>La variante ya valorizada, con su producto, su código y su nombre visible: ninguno entra
+/// en el cálculo. El nombre lo usa el resumen del historial ("Agregó Camiseta – M x3"), el producto
+/// lo guarda la línea junto a la variante (la petición sólo trae <c>variantId</c>) y el código lo
+/// usa el pedido para tomar la foto; los tres salen de la misma consulta que el precio.
 /// </summary>
-internal sealed record QuotationPricedProduct(string Name, QuotationItemPricing Pricing);
+internal sealed record QuotationPricedProduct(
+    Guid ProductId, string Code, string Name, QuotationItemPricing Pricing);

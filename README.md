@@ -1448,8 +1448,8 @@ el spec del slice; esta tabla es el inventario.
 | `POST /sessions/{sessionId}/close` | `pos.register.operate` | Cierra la caja con el conteo (`countedCash`, obligatorio); exige `If-Match`      |
 | `GET /sessions`                    | `pos.sale.read`        | Lista paginada de sesiones de caja                                               |
 | `GET /sessions/{sessionId}`        | `pos.sale.read`        | Detalle y arqueo de una sesión                                                   |
-| `GET /products`                    | `pos.sale.create`      | Búsqueda paginada de productos para vender                                       |
-| `GET /products/by-code`            | `pos.sale.create`      | Busca un producto por código exacto (lector de barras)                           |
+| `GET /products`                    | `pos.sale.create`      | Búsqueda paginada por nombre, `Code` o código de barras: productos con sus variantes vendibles |
+| `GET /products/by-code`            | `pos.sale.create`      | El escáner: la variante por código de barras exacto y, si ninguna lo tiene, por su `Code` |
 | `POST /sales/preview`              | `pos.sale.create`      | Calcula totales de un carrito sin guardar nada                                   |
 | `POST /sales`                      | `pos.sale.create`      | Crea la venta; idempotente por el `id` del cliente (201 la primera vez, 200 al repetir) |
 | `GET /sales/{saleId}`              | `pos.sale.read`        | Detalle de una venta                                                             |

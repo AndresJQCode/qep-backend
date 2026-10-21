@@ -33,8 +33,8 @@ public sealed class OrdersExportProcessorTests
         "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false,
         Email: "cliente@ejemplo.co", CityName: "Bogotá", IdentificationNumber: "900123456");
 
-    private static readonly QuotationProductRef DefaultProduct = new(
-        ProductId, "Tornillo hexagonal", "TOR-001", ImageUrl: null, Scales: []);
+    private static readonly QuotationVariantRef DefaultProduct = new(
+        ProductId, ProductId, "Tornillo hexagonal", "TOR-001", ImageUrl: null, Scales: []);
 
     // Las partes del pedido son completas por dominio (`order.*.party_incomplete`), así que las
     // pruebas que sólo miran un campo las arman enteras.
@@ -1897,7 +1897,7 @@ public sealed class OrdersExportProcessorTests
         {
             [ProductId] = new("TOR-VIEJO", "Tornillo viejo"),
         });
-        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationProductRef>
+        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>
         {
             [ProductId] = DefaultProduct,
         });
@@ -2004,7 +2004,7 @@ public sealed class OrdersExportProcessorTests
             shipping ?? ShippingDetails.None,
             (items ?? DefaultItems)
                 .Select(item => new OrderLineInput(
-                    item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage))
+                    item.ProductId, item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage))
                 .ToArray(),
             OrderPaymentStatus.PaymentPending,
             orderNotes,
@@ -2030,10 +2030,10 @@ public sealed class OrdersExportProcessorTests
             layouts ?? new InMemoryOrdersExportLayoutRepository(),
             customers ?? new StubQuotationCustomerLookup(DefaultCustomer),
             products ?? new StubQuotationProductLookup(
-                new Dictionary<Guid, QuotationProductRef>
+                new Dictionary<Guid, QuotationVariantRef>
                 {
                     [ProductId] = DefaultProduct,
-                    [OtherProductId] = DefaultProduct with { Id = OtherProductId, Code = "OTR-002" },
+                    [OtherProductId] = DefaultProduct with { VariantId = OtherProductId, ProductId = OtherProductId, Code = "OTR-002" },
                 }),
             companies ?? new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
             geography ?? new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),

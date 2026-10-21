@@ -4,8 +4,13 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Pos.Application;
 
+/// <summary>
+/// La cuadrícula del POS (spec 2026-10-20 §5): productos activos que coinciden por nombre, por
+/// <c>Code</c> de alguna variante o por código de barras, cada uno con sus variantes vendibles.
+/// <c>Total</c> cuenta productos.
+/// </summary>
 public sealed record SearchPosProductsQuery(Guid TenantId, string? Search, int Page, int PageSize)
-    : IQuery<PosPage<PosProductResponse>>;
+    : IQuery<PosPage<PosCatalogProductResponse>>;
 
 public sealed class SearchPosProductsValidator : AbstractValidator<SearchPosProductsQuery>
 {
@@ -24,9 +29,9 @@ public sealed class SearchPosProductsHandler(
     ITenantDefaultCurrency tenantDefaultCurrency,
     IExecutionContext executionContext,
     IValidator<SearchPosProductsQuery> validator)
-    : IQueryHandler<SearchPosProductsQuery, PosPage<PosProductResponse>>
+    : IQueryHandler<SearchPosProductsQuery, PosPage<PosCatalogProductResponse>>
 {
-    public async Task<PosPage<PosProductResponse>> HandleAsync(
+    public async Task<PosPage<PosCatalogProductResponse>> HandleAsync(
         SearchPosProductsQuery query, CancellationToken cancellationToken)
     {
         PosAuthorization.EnsureAuthorized(executionContext, query.TenantId, PosPermissions.SaleCreate);
@@ -36,7 +41,7 @@ public sealed class SearchPosProductsHandler(
             sessions, membershipDirectory, tenantDefaultCurrency, executionContext, query.TenantId, cancellationToken);
         var (items, total) = await products.SearchAsync(
             query.TenantId, query.Search?.Trim(), query.Page, query.PageSize, cancellationToken);
-        return new PosPage<PosProductResponse>(
+        return new PosPage<PosCatalogProductResponse>(
             items.Select(item => PosProductMapping.ToResponse(item, currency)).ToArray(), query.Page, query.PageSize, total);
     }
 }

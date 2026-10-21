@@ -71,12 +71,12 @@ public abstract class OrderDraftValidator<TDraft> : AbstractValidator<TDraft>
             .WithMessage("At least one product is required.");
         RuleForEach(draft => draft.Items).ChildRules(item =>
         {
-            item.RuleFor(line => line.ProductId).NotEmpty();
+            item.RuleFor(line => line.VariantId).NotEmpty();
             item.RuleFor(line => line.Quantity).GreaterThan(0m);
         });
         RuleFor(draft => draft.Items)
-            .Must(items => items.Select(line => line.ProductId).Distinct().Count() == items.Count)
-            .WithMessage("The same product cannot appear more than once.")
+            .Must(items => items.Select(line => line.VariantId).Distinct().Count() == items.Count)
+            .WithMessage("La misma variante no puede aparecer más de una vez.")
             .When(draft => draft.Items is not null);
         RuleFor(draft => draft.PaymentStatus)
             .Must(status => ValidPaymentStatuses.Contains(status, StringComparer.OrdinalIgnoreCase))

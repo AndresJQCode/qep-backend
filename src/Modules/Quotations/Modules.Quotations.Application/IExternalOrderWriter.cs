@@ -4,9 +4,15 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 /// <summary>Una línea que ya viene preciada por la plataforma de origen: precio unitario con IVA,
-/// descuento y tasa. QEP no la vuelve a preciar contra el catálogo.</summary>
+/// descuento y tasa. QEP no la vuelve a preciar contra el catálogo.
+///
+/// Por variante (spec 2026-10-20 §4): <paramref name="VariantId"/> es la clave de la línea y de su
+/// foto; <paramref name="ProductId"/> es su producto, que la línea guarda para agrupar por producto.
+/// Viajan los dos porque el consumidor ya los tiene (Shopify empareja por el <c>Code</c> de la
+/// variante y su lookup devuelve ambos) y así el pedido no depende de que el catálogo siga
+/// devolviendo la variante para saber de qué producto era.</summary>
 public sealed record ExternalOrderLine(
-    Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage);
+    Guid VariantId, Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage);
 
 /// <summary>
 /// El pedido que trae una integración. <see cref="Shipping"/> es el envío que cobró la plataforma (flete §10): no
@@ -105,15 +111,15 @@ public sealed class ExternalOrderService(
             ?? throw new QuotationsDomainException(
                 "order.billing.account_required", "An order needs a billing account.");
 
-        // La foto del producto se toma del catálogo; el precio no: es el que cobró la plataforma.
+        // La foto de la variante se toma del catálogo; el precio no: es el que cobró la plataforma.
         var products = await productLookup.FindManyAsync(
-            draft.TenantId, draft.Lines.Select(line => line.ProductId).Distinct().ToArray(), cancellationToken);
+            draft.TenantId, draft.Lines.Select(line => line.VariantId).Distinct().ToArray(), cancellationToken);
         var lines = draft.Lines
             .Select(line =>
             {
-                products.TryGetValue(line.ProductId, out var product);
+                products.TryGetValue(line.VariantId, out var product);
                 return new OrderLineInput(
-                    line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage, line.TaxPercentage,
+                    line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage, line.TaxPercentage,
                     product is null ? null : new QuotationProductSnapshot(product.Code, product.Name));
             })
             .ToArray();

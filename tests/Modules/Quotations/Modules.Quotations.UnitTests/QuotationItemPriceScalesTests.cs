@@ -25,7 +25,7 @@ public sealed class QuotationItemPriceScalesTests
         var quotation = NewQuotation();
         quotation.AddItem(
             QuotationItemId.New(),
-            ProductId,
+            ProductId, ProductId,
             quantity: 12m,
             unitPrice: 35_900m,
             discountPercentage: 15m,
@@ -58,9 +58,9 @@ public sealed class QuotationItemPriceScalesTests
                 ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
                 "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false)),
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
-            new StubQuotationProductLookup(new Dictionary<Guid, QuotationProductRef>
+            new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>
             {
-                [ProductId] = new(ProductId, "Tornillo 1/4", "TOR-001", ImageUrl: null, scales)
+                [ProductId] = new(ProductId, ProductId, "Tornillo 1/4", "TOR-001", ImageUrl: null, scales)
             }),
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
             new FixedQuotationSettingsStore());

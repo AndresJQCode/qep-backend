@@ -67,11 +67,23 @@ public sealed record PosSessionSummaryResponse(
 
 public sealed record PosPage<T>(IReadOnlyList<T> Items, int Page, int PageSize, int Total);
 
+/// <summary>
+/// Una variante vendible en la caja (spec 2026-10-20 §5): la respuesta del escáner y cada opción
+/// del selector de un producto de la cuadrícula. Es lo que el carrito guarda y lo que la venta
+/// manda (<see cref="PosSaleLineRequest.VariantId"/>).
+/// </summary>
+/// <param name="VariantId">El id que va en la venta y en el preview: el carrito junta por variante, no por producto.</param>
+/// <param name="ProductId">El producto dueño: la pantalla lo usa para saber qué tarjeta de la cuadrícula es.</param>
+/// <param name="Code">El <c>Code</c> de la variante.</param>
+/// <param name="Barcode">El código de barras de la variante, si tiene.</param>
+/// <param name="Name">El nombre visible ya armado («Camiseta – M / Azul»; el del producto si no tiene opciones). El carrito y el ticket lo pintan tal cual: el frontend no concatena.</param>
 /// <param name="TaxPercentage">Siempre presente: 0 sin tasa o con tasa inexistente (PosProductRef.TaxPercentage es int), igual que el tipo del frontend. Sólo la línea NotFound del preview lo lleva en null.</param>
 /// <param name="UnsellableReason">Inactive, PriceMissing o NotFound (este último sólo en el preview). Un producto no vendible se muestra marcado en vez de esconderse: el cajero escanearía un código existente y vería "no existe".</param>
 public sealed record PosProductResponse(
-    Guid Id,
+    Guid VariantId,
+    Guid ProductId,
     string Code,
+    string? Barcode,
     string Name,
     decimal? UnitPrice,
     int TaxPercentage,
@@ -79,11 +91,32 @@ public sealed record PosProductResponse(
     bool Sellable,
     string? UnsellableReason);
 
-public sealed record PosPreviewLineRequest(Guid ProductId, decimal Quantity, decimal DiscountPercentage);
-
-/// <param name="Code">null con NotFound: la pantalla lo toma del snapshot del carrito.</param>
-public sealed record PosPreviewLineResponse(
+/// <summary>
+/// Un producto de la cuadrícula del POS con sus variantes vendibles (spec 2026-10-20 §5). BFF: la
+/// cuadrícula muestra productos y, al tocar uno con opciones, el selector elige entre
+/// <see cref="Variants"/> sin otra llamada; uno sin opciones manda su única variante directo al
+/// carrito. Por eso cada variante viaja ya resuelta (precio en la moneda de la caja, nombre visible
+/// y si se puede vender), igual que la respuesta del escáner.
+/// </summary>
+/// <param name="Name">El nombre del producto, sin opciones: es el título de la tarjeta.</param>
+/// <param name="HasOptions">true: tocar la tarjeta abre el selector. false: <see cref="Variants"/> trae una sola y va directo al carrito. Viaja aparte para que la pantalla no lo deduzca del número de variantes.</param>
+/// <param name="ImageUrl">La portada del producto (la foto principal).</param>
+/// <param name="Variants">Las variantes activas, en el orden del producto.</param>
+public sealed record PosCatalogProductResponse(
     Guid ProductId,
+    string Name,
+    bool HasOptions,
+    string? ImageUrl,
+    IReadOnlyList<PosProductResponse> Variants);
+
+public sealed record PosPreviewLineRequest(Guid VariantId, decimal Quantity, decimal DiscountPercentage);
+
+/// <param name="ProductId">null con NotFound, como Code y Name.</param>
+/// <param name="Code">null con NotFound: la pantalla lo toma del snapshot del carrito.</param>
+/// <param name="Name">El nombre visible de la variante.</param>
+public sealed record PosPreviewLineResponse(
+    Guid VariantId,
+    Guid? ProductId,
     string? Code,
     string? Name,
     decimal Quantity,
@@ -110,8 +143,9 @@ public sealed record PosPreviewResponse(
     decimal Total,
     bool ZeroTotalNotAllowed);
 
+/// <param name="VariantId">La variante que se vende (spec 2026-10-20 §4): para un producto sin opciones, el id de su variante por defecto.</param>
 public sealed record PosSaleLineRequest(
-    Guid ProductId,
+    Guid VariantId,
     decimal Quantity,
     decimal DiscountPercentage,
     decimal ExpectedUnitPrice,
@@ -126,8 +160,10 @@ public sealed record PosIssuerResponse(string Name, string TaxId, string? Addres
 
 public sealed record PosCustomerResponse(string Name, string? IdentificationType, string IdentificationNumber);
 
+/// <param name="Name">La foto del nombre visible de la variante al vender: es lo que imprime el ticket.</param>
 public sealed record PosSaleLineResponse(
     int Position,
+    Guid VariantId,
     Guid ProductId,
     string Code,
     string Name,

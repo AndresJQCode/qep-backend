@@ -399,7 +399,6 @@ public sealed class ProductVariantTests
 
         var error = Assert.Throws<InvalidOperationException>(() => product.Code);
         Assert.Contains("transitorio", error.Message, StringComparison.Ordinal);
-        Assert.Throws<InvalidOperationException>(() => product.Prices);
         Assert.Throws<InvalidOperationException>(() => product.PriceIn("USD"));
         Assert.Throws<InvalidOperationException>(() => product.PriceScales);
         Assert.Throws<InvalidOperationException>(() => product.PackagingUnits);

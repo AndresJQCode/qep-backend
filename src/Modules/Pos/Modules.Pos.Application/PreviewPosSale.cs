@@ -18,7 +18,7 @@ public sealed class PreviewPosSaleValidator : AbstractValidator<PreviewPosSaleCo
             .WithMessage("A sale cannot have more than 200 lines.");
         RuleForEach(command => command.Lines).NotNull().ChildRules(line =>
         {
-            line.RuleFor(value => value.ProductId).NotEmpty();
+            line.RuleFor(value => value.VariantId).NotEmpty();
             line.RuleFor(value => value.Quantity)
                 .GreaterThan(0m).LessThanOrEqualTo(PosLimits.MaxQuantity)
                 .Must(PosLimits.HasValidScale).WithMessage("The quantity accepts at most 2 decimals.");
@@ -50,9 +50,10 @@ public sealed class PreviewPosSaleHandler(
                 "pos.sale.discount_not_allowed", "Line discounts need the pos.sale.discount permission.");
         }
 
-        // Distinct: el mismo producto puede venir en dos líneas (Review Focus 2).
+        // Distinct: la misma variante puede venir en dos líneas (Review Focus 2). Por variante, no por
+        // producto (spec 2026-10-20 §5): dos tallas del mismo producto son dos líneas con su precio.
         var found = await products.FindManyAsync(
-            command.TenantId, command.Lines.Select(line => line.ProductId).Distinct().ToArray(), cancellationToken);
+            command.TenantId, command.Lines.Select(line => line.VariantId).Distinct().ToArray(), cancellationToken);
 
         var currency = await PosSellingCurrency.ResolveAsync(
             sessions, membershipDirectory, tenantDefaultCurrency, executionContext, command.TenantId, cancellationToken);
@@ -74,10 +75,10 @@ public sealed class PreviewPosSaleHandler(
     private static PosPreviewLineResponse ToLine(
         PosPreviewLineRequest line, IReadOnlyDictionary<Guid, PosProductRef> found, string currency)
     {
-        if (!found.TryGetValue(line.ProductId, out var product))
+        if (!found.TryGetValue(line.VariantId, out var product))
         {
             return new PosPreviewLineResponse(
-                line.ProductId, null, null, line.Quantity, null, null, line.DiscountPercentage,
+                line.VariantId, null, null, null, line.Quantity, null, null, line.DiscountPercentage,
                 0m, 0m, 0m, 0m, false, PosProductMapping.NotFound);
         }
 
@@ -86,14 +87,14 @@ public sealed class PreviewPosSaleHandler(
         if (reason is not null)
         {
             return new PosPreviewLineResponse(
-                line.ProductId, product.Code, product.Name, line.Quantity, price, product.TaxPercentage,
+                line.VariantId, product.ProductId, product.Code, product.Name, line.Quantity, price, product.TaxPercentage,
                 line.DiscountPercentage, 0m, 0m, 0m, 0m, false, reason);
         }
 
         var amounts = VatIncludedLine.Compute(
             line.Quantity, price!.Value, line.DiscountPercentage, product.TaxPercentage, currency);
         return new PosPreviewLineResponse(
-            line.ProductId, product.Code, product.Name, line.Quantity,
+            line.VariantId, product.ProductId, product.Code, product.Name, line.Quantity,
             VatIncludedLine.ChargedListPrice(price.Value, currency), product.TaxPercentage,
             line.DiscountPercentage, amounts.DiscountAmount, amounts.TaxAmount, amounts.Subtotal, amounts.LineTotal,
             true, null);

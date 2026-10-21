@@ -124,7 +124,7 @@ public sealed class OrdersExportProcessor(
         IReadOnlyDictionary<OrderId, IReadOnlyList<OrderItem>> ItemsByOrder,
         IReadOnlyDictionary<OrderId, IReadOnlyList<OrderParty>> PartiesByOrder,
         IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>> ProofsByOrder,
-        IReadOnlyDictionary<Guid, QuotationProductRef> Products,
+        IReadOnlyDictionary<Guid, QuotationVariantRef> Products,
         IReadOnlyDictionary<Guid, QuotationCompanyRef> Companies,
         IReadOnlyDictionary<Guid, string> CityNames,
         IReadOnlyDictionary<Guid, QuotationCustomerRef> Customers,
@@ -142,15 +142,15 @@ public sealed class OrdersExportProcessor(
         var proofsByOrder = await repository.ListPaymentProofsForExportAsync(tenantId, orderIds, cancellationToken);
 
         // Sólo las líneas sin foto consultan el catálogo: la foto es lo que el pedido vendió.
-        var productIds = itemsByOrder.Values
+        var variantIds = itemsByOrder.Values
             .SelectMany(items => items)
             .Where(item => item.ProductCode is null)
-            .Select(item => item.ProductId)
+            .Select(item => item.VariantId)
             .Distinct()
             .ToArray();
-        var products = productIds.Length == 0
-            ? new Dictionary<Guid, QuotationProductRef>()
-            : await productLookup.FindManyAsync(tenantId, productIds, cancellationToken);
+        var products = variantIds.Length == 0
+            ? new Dictionary<Guid, QuotationVariantRef>()
+            : await productLookup.FindManyAsync(tenantId, variantIds, cancellationToken);
 
         // Un pedido guardado siempre tiene cuenta de cobro: sólo el cálculo previo nace sin ella, y no se
         // guarda (Order.Preview). De ahí el `!` acá y en RowsFor.
@@ -267,7 +267,7 @@ public sealed class OrdersExportProcessor(
 
         foreach (var item in items)
         {
-            context.Products.TryGetValue(item.ProductId, out var product);
+            context.Products.TryGetValue(item.VariantId, out var product);
             yield return
             [
                 ExportCell.OfText(empresa),

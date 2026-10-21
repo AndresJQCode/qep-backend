@@ -17,7 +17,7 @@ namespace Modules.Pos.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.11")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -409,7 +409,14 @@ namespace Modules.Pos.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(14,2)")
                         .HasColumnName("unit_price");
 
+                    b.Property<Guid>("VariantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("variant_id");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("VariantId")
+                        .HasDatabaseName("IX_sale_lines_variant");
 
                     b.HasIndex("SaleId", "Position")
                         .IsUnique();

@@ -112,15 +112,16 @@ public sealed class OrderDraftBuilder(
         // tenant o inactivo se rechaza con el código de siempre (ResolveManyAsync deja pasar el
         // inactivo a propósito, porque sirve al cambio de moneda de líneas que ya existen).
         var products = await productLookup.FindManyAsync(
-            input.TenantId, input.Items.Select(item => item.ProductId).Distinct().ToArray(), cancellationToken);
+            input.TenantId, input.Items.Select(item => item.VariantId).Distinct().ToArray(), cancellationToken);
         var lines = new List<OrderLineInput>(input.Items.Count);
         foreach (var item in input.Items)
         {
             var priced = await QuotationProductPricingResolver.ResolveAsync(
-                pricingLookup, input.TenantId, item.ProductId, item.Quantity, currency, input.IsRetail, cancellationToken);
-            products.TryGetValue(item.ProductId, out var product);
+                pricingLookup, input.TenantId, item.VariantId, item.Quantity, currency, input.IsRetail, cancellationToken);
+            products.TryGetValue(item.VariantId, out var product);
             lines.Add(new OrderLineInput(
-                item.ProductId,
+                item.VariantId,
+                priced.ProductId,
                 item.Quantity,
                 priced.Pricing.UnitPrice,
                 priced.Pricing.DiscountPercentage,

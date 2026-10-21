@@ -22,7 +22,15 @@ internal static class PosProductMapping
     {
         var reason = UnsellableReason(product, currency);
         return new PosProductResponse(
-            product.Id, product.Code, product.Name, product.PriceIn(currency), product.TaxPercentage,
-            product.ImageUrl, reason is null, reason);
+            product.VariantId, product.ProductId, product.Code, product.Barcode, product.Name,
+            product.PriceIn(currency), product.TaxPercentage, product.ImageUrl, reason is null, reason);
     }
+
+    public static PosCatalogProductResponse ToResponse(PosCatalogProductRef product, string currency) =>
+        new(
+            product.ProductId,
+            product.Name,
+            product.HasOptions,
+            product.ImageUrl,
+            product.Variants.Select(variant => ToResponse(variant, currency)).ToArray());
 }

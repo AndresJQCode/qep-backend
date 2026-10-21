@@ -54,7 +54,7 @@ public sealed class UpdateQuotationItemHandler(
         }
 
         // Mismo código que Quotation.UpdateItemQuantity usaría si se le pasara un id
-        // desconocido: se busca acá primero porque hace falta el ProductId de la línea antes de
+        // desconocido: se busca acá primero porque hace falta el VariantId de la línea antes de
         // poder resolver su descuento.
         var item = quotation.Items.FirstOrDefault(item => item.Id.Value == command.ItemId)
             ?? throw new QuotationsDomainException(
@@ -68,7 +68,7 @@ public sealed class UpdateQuotationItemHandler(
         var pricing = await QuotationProductPricingResolver.ResolveAsync(
             pricingLookup,
             command.TenantId,
-            item.ProductId,
+            item.VariantId,
             command.Quantity,
             quotation.Currency, quotation.IsRetail,
             cancellationToken);

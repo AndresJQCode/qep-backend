@@ -123,7 +123,7 @@ public sealed class CreatePosSaleHandlerTests
         var command = Command(session);
         var first = await Handler(bed, Discounter).HandleAsync(command, TestContext.Current.CancellationToken);
         session.Close(100_000m, null, Now);
-        var shampoo = bed.Products.Products.Single(entry => entry.Product.Id == Shampoo).Product;
+        var shampoo = bed.Products.Products.Single(entry => entry.Product.VariantId == Shampoo).Product;
         bed.Products.Replace(shampoo with { Prices = new Dictionary<string, decimal> { ["COP"] = 12_500m }, IsActive = false });
 
         var repeat = await Handler(bed, Discounter).HandleAsync(command, TestContext.Current.CancellationToken);
@@ -186,7 +186,7 @@ public sealed class CreatePosSaleHandlerTests
     public async Task ANewPriceOrOnlyANewTaxRateIsPriceChangedAndSpendsNoNumber()
     {
         var (bed, session) = Arrange();
-        var shampoo = bed.Products.Products.Single(entry => entry.Product.Id == Shampoo).Product;
+        var shampoo = bed.Products.Products.Single(entry => entry.Product.VariantId == Shampoo).Product;
 
         bed.Products.Replace(shampoo with { Prices = new Dictionary<string, decimal> { ["COP"] = 12_500m } });
         var price = await Assert.ThrowsAsync<PosDomainException>(() =>
@@ -205,7 +205,7 @@ public sealed class CreatePosSaleHandlerTests
     public async Task InactiveUnpricedAndMissingProductsAreRejected()
     {
         var (bed, session) = Arrange();
-        var shampoo = bed.Products.Products.Single(entry => entry.Product.Id == Shampoo).Product;
+        var shampoo = bed.Products.Products.Single(entry => entry.Product.VariantId == Shampoo).Product;
 
         bed.Products.Replace(shampoo with { IsActive = false });
         var inactive = await Assert.ThrowsAsync<PosDomainException>(() =>
@@ -231,11 +231,57 @@ public sealed class CreatePosSaleHandlerTests
         var session = bed.OpenSessionInStore(currency: "USD");
 
         var result = await Handler(bed, Seller).HandleAsync(
-            Command(session, lines: [new(product.Id, 2m, 0m, 10m, 0)], payments: [new("Card", 20m, null, null)]),
+            Command(session, lines: [new(product.VariantId, 2m, 0m, 10m, 0)], payments: [new("Card", 20m, null, null)]),
             TestContext.Current.CancellationToken);
 
         Assert.Equal("USD", result.Sale.Currency);
         Assert.Equal(20m, result.Sale.Total);
+    }
+
+    // Spec 2026-10-20 §4 y §5: la venta es por variante. Dos tallas del mismo producto son dos
+    // líneas, cada una con su variante, su precio y su foto (código y nombre visible), y las dos con
+    // el mismo producto. La L no es la variante por defecto: su id no es el del producto.
+    [Fact]
+    public async Task TwoSizesOfTheSameProductAreTwoLinesWithTheirVariantAndProduct()
+    {
+        var bed = new PosTestBed();
+        var shirt = Guid.CreateVersion7();
+        var sizeL = Guid.CreateVersion7();
+        bed.Products.Add("CAM-M", "Camiseta – M", 30_000m, 19, id: shirt, productName: "Camiseta");
+        bed.Products.Add("CAM-L", "Camiseta – L", 32_000m, 19, id: sizeL, productId: shirt);
+        var session = bed.OpenSessionInStore();
+
+        var result = await Handler(bed, Seller).HandleAsync(
+            Command(
+                session,
+                lines: [new(shirt, 1m, 0m, 30_000m, 19), new(sizeL, 2m, 0m, 32_000m, 19)],
+                payments: [new("Cash", null, 100_000m, null)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            [(shirt, shirt, "CAM-M", "Camiseta – M", 30_000m), (sizeL, shirt, "CAM-L", "Camiseta – L", 32_000m)],
+            result.Sale.Lines.Select(line => (line.VariantId, line.ProductId, line.Code, line.Name, line.UnitPrice)));
+        var stored = Assert.Single(bed.Sales.Stored);
+        Assert.Equal([shirt, sizeL], stored.Lines.OrderBy(line => line.Position).Select(line => line.VariantId));
+        Assert.Equal(94_000m, result.Sale.Total);
+    }
+
+    // El precio y la tasa se validan por variante: la L se cobra a su precio, no al de la M.
+    [Fact]
+    public async Task TheExpectedPriceIsTheVariantsNotTheFirstOfTheProduct()
+    {
+        var bed = new PosTestBed();
+        var shirt = Guid.CreateVersion7();
+        var sizeL = Guid.CreateVersion7();
+        bed.Products.Add("CAM-M", "Camiseta – M", 30_000m, 19, id: shirt, productName: "Camiseta");
+        bed.Products.Add("CAM-L", "Camiseta – L", 32_000m, 19, id: sizeL, productId: shirt);
+        var session = bed.OpenSessionInStore();
+
+        var exception = await Assert.ThrowsAsync<PosDomainException>(() => Handler(bed, Seller).HandleAsync(
+            Command(session, lines: [new(sizeL, 1m, 0m, 30_000m, 19)], payments: [new("Cash", null, 40_000m, null)]),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("pos.sale.price_changed", exception.Code);
     }
 
     // Nunca cae a la lista COP: cobrar una caja en dólares al precio en pesos es un error de 4000x
@@ -248,7 +294,7 @@ public sealed class CreatePosSaleHandlerTests
         var session = bed.OpenSessionInStore(currency: "USD");
 
         var exception = await Assert.ThrowsAsync<PosDomainException>(() => Handler(bed, Seller).HandleAsync(
-            Command(session, lines: [new(product.Id, 1m, 0m, 40_000m, 0)], payments: [new("Card", 40_000m, null, null)]),
+            Command(session, lines: [new(product.VariantId, 1m, 0m, 40_000m, 0)], payments: [new("Card", 40_000m, null, null)]),
             TestContext.Current.CancellationToken));
 
         Assert.Equal("pos.sale.product_price_unavailable", exception.Code);

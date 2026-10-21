@@ -173,16 +173,17 @@ public interface IShopifyCustomerDirectory
         Guid tenantId, string? name, string? phone, string? email, string? country, CancellationToken cancellationToken);
 }
 
-/// <summary>Un producto de Catalog por su código (§6.2.2): <see cref="TaxPercentage"/> es el de su tasa, 0 si no tiene o si
-/// la tasa no existe (la misma regla con la que cotiza).</summary>
-public sealed record ShopifyProductRef(Guid Id, string Code, bool IsActive, int TaxPercentage);
+/// <summary>Una variante de Catalog por su código (§6.2.2; variantes 2026-10-20 §2.9): <see cref="TaxPercentage"/> es el de la
+/// tasa de su producto, 0 si no tiene o si la tasa no existe (la misma regla con la que cotiza). <see cref="IsActive"/> es
+/// «vendible»: el producto y la variante activos.</summary>
+public sealed record ShopifyProductRef(Guid VariantId, Guid ProductId, string Code, bool IsActive, int TaxPercentage);
 
-/// <summary>Spec 2026-10-15 §6.2.2 (H11): SKU de Shopify = <c>Product.Code</c> de QEP. Adaptador sobre <c>IProductRepository</c> e
-/// <c>ITaxRateRepository</c>.</summary>
+/// <summary>Spec 2026-10-15 §6.2.2 (H11), con variantes (2026-10-20 §2.9): SKU de Shopify = <c>Code</c> de la **variante** de QEP.
+/// Adaptador sobre <c>IProductRepository</c> e <c>ITaxRateRepository</c>.</summary>
 public interface IShopifyProductLookup
 {
-    /// <summary>Por SKU exacto; uno que no existe en el tenant no aparece en el diccionario. Inactivos incluidos: el importador
-    /// los marca <c>product_unmatched</c>.</summary>
+    /// <summary>Por SKU exacto y sensible a mayúsculas; uno que no existe en el tenant no aparece en el diccionario. Inactivas
+    /// incluidas (variante o producto): el importador las marca <c>product_unmatched</c>.</summary>
     Task<IReadOnlyDictionary<string, ShopifyProductRef>> FindByCodesAsync(
         Guid tenantId, IReadOnlyCollection<string> skus, CancellationToken cancellationToken);
 }
@@ -213,9 +214,10 @@ public interface IShopifyShippingLookup
 }
 
 /// <summary>Una línea ya preciada (§6.2.2): precio unitario con IVA, descuento en porcentaje con 4 decimales y la tasa del
-/// producto de QEP.</summary>
+/// producto de QEP. Por variante (spec 2026-10-20 §4): <paramref name="VariantId"/> es la variante cuyo <c>Code</c> es el SKU de
+/// Shopify, y <paramref name="ProductId"/> su producto; viajan los dos porque el pedido guarda ambos en la línea.</summary>
 public sealed record ShopifyOrderLineDraft(
-    Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage);
+    Guid VariantId, Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage);
 
 /// <summary>La parte de envío del pedido (§6.2.3 paso 2, H25), sólo cuando la dirección de Shopify quedó completa.</summary>
 public sealed record ShopifyPartyDraft(

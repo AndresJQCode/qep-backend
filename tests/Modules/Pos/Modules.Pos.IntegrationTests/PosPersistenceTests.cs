@@ -21,7 +21,7 @@ public sealed class PosPersistenceTests
     private static readonly PosPaymentMethod[] ExpectedMethods = [PosPaymentMethod.Card, PosPaymentMethod.Cash];
 
     private static PosSaleLineInput Line(decimal price = 10_000m) =>
-        new(Guid.CreateVersion7(), "SH-400", "Shampoo 400 ml", 1m, price, 0m, 19);
+        new(Guid.CreateVersion7(), Guid.CreateVersion7(), "SH-400", "Shampoo 400 ml", 1m, price, 0m, 19);
 
     private static async Task<(Guid TenantId, PosCompanySnapshot Company)> ArrangeTenantAsync(QepApiFactory factory)
     {
@@ -188,9 +188,12 @@ public sealed class PosPersistenceTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, company) = await ArrangeTenantAsync(factory);
         var session = NewSession(tenantId, company, new MemberId(Guid.CreateVersion7()));
+        // Una variante que no es la por defecto: su id no es el del producto (spec 2026-10-20 §4).
+        var avenaVariant = Guid.CreateVersion7();
+        var avenaProduct = Guid.CreateVersion7();
         var sale = PosSale.Create(
             PosSaleId.New(), new string('e', 64), session,
-            [Line(11_900m), new(Guid.CreateVersion7(), "AV-01", "Avena granel (kg)", 1.5m, 5_000m, 0m, 0)],
+            [Line(11_900m), new(avenaVariant, avenaProduct, "AV-01", "Avena granel (kg)", 1.5m, 5_000m, 0m, 0)],
             [new PosPaymentInput(PosPaymentMethod.Card, 10_000m, null, "1234"), new PosPaymentInput(PosPaymentMethod.Cash, null, 10_000m, null)],
             Now);
         sale.AssignNumber(7);
@@ -213,6 +216,9 @@ public sealed class PosPersistenceTests
         Assert.Equal(19_400m, loaded.Total);
         Assert.Equal(ExpectedPositions, loaded.Lines.OrderBy(l => l.Position).Select(l => l.Position));
         Assert.Equal(1.5m, loaded.Lines.Single(l => l.Position == 2).Quantity);
+        Assert.Equal(
+            (avenaVariant, avenaProduct),
+            (loaded.Lines.Single(l => l.Position == 2).VariantId, loaded.Lines.Single(l => l.Position == 2).ProductId));
         Assert.Equal(ExpectedMethods, loaded.Payments.OrderBy(p => p.Position).Select(p => p.Method));
         Assert.Equal(PosSaleStatus.Voided, loaded.Status);
         Assert.Equal(voidedBy, loaded.VoidedBy);

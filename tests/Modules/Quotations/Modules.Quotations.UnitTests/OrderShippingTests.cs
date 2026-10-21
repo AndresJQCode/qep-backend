@@ -22,7 +22,7 @@ public sealed class OrderShippingTests
     private static OrderHeader Header => new(ClientId, Advisor, "COP", null, false, null, false, false);
 
     private static OrderLineInput Line =>
-        new(Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"));
+        new(Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"));
 
     private static Order NewOrder(
         ShippingDetails shipping,
@@ -39,7 +39,7 @@ public sealed class OrderShippingTests
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 11, 1), null, null,
             QuotationParties.Empty, Account, "COP", customerWithRetention: true, customerVatSurplus: false, Advisor, Now);
-        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
+        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
         var shipping = new ShippingDetails(CarrierId, "Coordinadora", FreightChargeMode.Charged, 15_000m, 19, true);
         quotation.SetShipping(shipping, Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>());
@@ -60,7 +60,7 @@ public sealed class OrderShippingTests
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 11, 1), null, null,
             QuotationParties.Empty, Account, "COP", customerWithRetention: false, customerVatSurplus: false, Advisor, Now);
-        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
+        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
         quotation.SetShipping(new ShippingDetails(null, null, null, 0m, 0, true), Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>());
 
@@ -110,7 +110,7 @@ public sealed class OrderShippingTests
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 11, 1), null, null,
             QuotationParties.Empty, Account, "COP", customerWithRetention: false, customerVatSurplus: false, Advisor, Now);
-        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
+        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
         quotation.SetShipping(new ShippingDetails(null, null, null, 0m, 0, true), Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>());
 

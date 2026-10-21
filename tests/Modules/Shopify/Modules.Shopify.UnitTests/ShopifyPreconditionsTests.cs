@@ -113,6 +113,45 @@ public sealed class ShopifyPreconditionsTests
         Assert.Empty(world.Customers.Completes);
     }
 
+    // Spec 2026-10-20 §2.9: el SKU de la línea es el Code de una variante; el borrador lleva la variante y su producto, cada uno en
+    // su campo (los ids del doble son distintos, así que un intercambio de argumentos no pasa).
+    [Fact]
+    public async Task ImportMatchesLineByVariantCode()
+    {
+        var world = new ImporterWorld();
+        world.Products.With("CAM-M").With("CAM-L");
+        var snapshot = Order(lines: [new ShopifyLine("CAM-L", 3m, 59_500m, 0m), new ShopifyLine("CAM-M", 1m, 59_500m, 0m)]);
+        var row = world.RowFor(snapshot);
+
+        var outcome = await world.ImportAsync(row, snapshot);
+
+        Assert.Equal(ShopifyImportState.Imported, outcome.State);
+        var (draft, _) = Assert.Single(world.Writer.Creates);
+        var large = world.Products.Products["CAM-L"];
+        var medium = world.Products.Products["CAM-M"];
+        Assert.NotEqual(large.VariantId, large.ProductId);
+        Assert.Equal(
+            [(large.VariantId, large.ProductId, 3m), (medium.VariantId, medium.ProductId, 1m)],
+            draft.Lines.Select(line => (line.VariantId, line.ProductId, line.Quantity)).ToArray());
+        Assert.Equal(["CAM-L", "CAM-M"], Assert.Single(world.Products.Requests));
+    }
+
+    // Un SKU que no es el Code de ninguna variante (o que sólo coincide cambiando mayúsculas) sigue sin producto: el pedido
+    // espera con product_unmatched y no se escribe nada, como antes de las variantes.
+    [Fact]
+    public async Task ImportUnmatchedSkuStaysWithoutProduct()
+    {
+        var world = new ImporterWorld();
+        world.Products.With("CAM-M");
+        var snapshot = Order(lines: [new ShopifyLine("CAM-M", 1m, 59_500m, 0m), new ShopifyLine("cam-m", 1m, 59_500m, 0m), new ShopifyLine("CAM-XL", 1m, 59_500m, 0m)]);
+        var row = world.RowFor(snapshot);
+
+        var outcome = await world.ImportAsync(row, snapshot);
+
+        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":["cam-m","CAM-XL"]}""");
+        Assert.Empty(world.Writer.Creates);
+    }
+
     [Fact]
     public async Task LineWithoutSkuProductUnmatchedListsNull()
     {
@@ -214,8 +253,8 @@ public sealed class ShopifyPreconditionsTests
         Assert.Equal(world.Billing.Account, draft.BillingAccount);
         var line = Assert.Single(draft.Lines);
         Assert.Equal(
-            (world.Products.Products["CAM-001"].Id, 2m, 59_500m, 10m, 19),
-            (line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage, line.TaxPercentage));
+            (world.Products.Products["CAM-001"].VariantId, world.Products.Products["CAM-001"].ProductId, 2m, 59_500m, 10m, 19),
+            (line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage, line.TaxPercentage));
         Assert.Equal((row.QepCustomerId, (Guid?)orderId, (decimal?)500m), (draft.ClientId, row.QepOrderId, row.TotalDifference));
         Assert.Equal((ShopifyImportState.Imported, (string?)null), (row.ImportState, row.WaitReason));
     }

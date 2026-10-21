@@ -18,6 +18,7 @@ public sealed class QuotationItem
     private QuotationItem(
         QuotationItemId id,
         QuotationId quotationId,
+        Guid variantId,
         Guid productId,
         decimal quantity,
         decimal unitPrice,
@@ -29,6 +30,7 @@ public sealed class QuotationItem
     {
         Id = id;
         QuotationId = quotationId;
+        VariantId = variantId;
         ProductId = productId;
         Position = position;
         CreatedAt = occurredAt;
@@ -40,12 +42,20 @@ public sealed class QuotationItem
 
     public QuotationId QuotationId { get; private set; }
 
+    /// <summary>La variante que vende la línea (spec 2026-10-20 §4): referencia blanda a
+    /// <c>catalog.product_variants</c>, sin FK por el mismo motivo que <see cref="ProductId"/>. Es la
+    /// clave de la línea: dos tallas del mismo producto son dos líneas, y precio, escalas y foto son
+    /// de la variante. Las líneas anteriores a las variantes la tienen igual al producto, porque la
+    /// variante por defecto nació con el id del producto (migración <c>AddVariantToLines</c>).</summary>
+    public Guid VariantId { get; private set; }
+
     /// <summary>Referencia blanda al catálogo de productos (módulo Catalog). Sin FK a propósito:
-    /// ningún módulo de negocio referencia las tablas de otro.</summary>
+    /// ningún módulo de negocio referencia las tablas de otro. Se conserva junto a
+    /// <see cref="VariantId"/> para que un reporte pueda agrupar por producto.</summary>
     public Guid ProductId { get; private set; }
 
     /// <summary>
-    /// El código del producto congelado cuando la cotización salió del borrador (owner,
+    /// El código de la variante congelado cuando la cotización salió del borrador (owner,
     /// 2026-09-26). Null mientras es borrador —ahí se lee en vivo del catálogo, para que los
     /// cambios del producto se vean— y en las líneas enviadas antes de que la columna existiera,
     /// que se siguen leyendo en vivo: no hay backfill, porque este módulo no lee las tablas de
@@ -53,8 +63,8 @@ public sealed class QuotationItem
     /// </summary>
     public string? ProductCode { get; private set; }
 
-    /// <summary>El nombre del producto, congelado junto con <see cref="ProductCode"/> y con la
-    /// misma regla.</summary>
+    /// <summary>El nombre visible de la variante (spec 2026-10-20 §3.4), congelado junto con
+    /// <see cref="ProductCode"/> y con la misma regla.</summary>
     public string? ProductName { get; private set; }
 
     public decimal Quantity { get; private set; }
@@ -151,6 +161,7 @@ public sealed class QuotationItem
     internal static QuotationItem Create(
         QuotationItemId id,
         QuotationId quotationId,
+        Guid variantId,
         Guid productId,
         decimal quantity,
         decimal unitPrice,
@@ -159,7 +170,7 @@ public sealed class QuotationItem
         int position,
         string currency,
         DateTimeOffset occurredAt) =>
-        new(id, quotationId, productId, quantity, unitPrice, discountPercentage, taxPercentage, position, currency, occurredAt);
+        new(id, quotationId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, position, currency, occurredAt);
 
     /// <summary>
     /// Congela código y nombre si la línea todavía no los tiene. Nunca los pisa: lo que el cliente

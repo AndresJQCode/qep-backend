@@ -307,7 +307,7 @@ public sealed class Order
         foreach (var item in quotation.Items.OrderBy(item => item.Position))
         {
             var copy = OrderItem.Create(
-                OrderItemId.New(), order.Id, item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage,
+                OrderItemId.New(), order.Id, item.VariantId, item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage,
                 item.TaxPercentage, order._items.Count + 1, order.Currency, occurredAt);
             copy.ApplyDiscount(item.DiscountPercentage, item.DiscountOrigin, order.Currency, occurredAt);
             if (item.ProductCode is not null)
@@ -445,7 +445,7 @@ public sealed class Order
         foreach (var line in lines)
         {
             order.AddItemCore(
-                OrderItemId.New(), line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage,
+                OrderItemId.New(), line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage,
                 line.TaxPercentage, line.DiscountOrigin, line.Product, occurredAt);
         }
 
@@ -498,6 +498,7 @@ public sealed class Order
 
     public void AddItem(
         OrderItemId itemId,
+        Guid variantId,
         Guid productId,
         decimal quantity,
         decimal unitPrice,
@@ -508,13 +509,14 @@ public sealed class Order
     {
         EnsurePending("Products can only be added while the order is pending.");
         AddItemCore(
-            itemId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
+            itemId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
             QuotationDiscountOrigin.Own, null, occurredAt);
         Touch(updatedBy, occurredAt);
     }
 
     private void AddItemCore(
         OrderItemId itemId,
+        Guid variantId,
         Guid productId,
         decimal quantity,
         decimal unitPrice,
@@ -524,15 +526,17 @@ public sealed class Order
         QuotationProductSnapshot? product,
         DateTimeOffset occurredAt)
     {
-        if (_items.Any(existing => existing.ProductId == productId))
+        // Una línea por variante (spec 2026-10-20 §4): dos tallas del mismo producto son dos líneas. El
+        // código de error se conserva: es contrato con el frontend.
+        if (_items.Any(existing => existing.VariantId == variantId))
         {
             throw new QuotationsDomainException(
                 "order.item.duplicate_product",
-                "The product is already in the order.");
+                "La variante ya está en el pedido.");
         }
 
         var item = OrderItem.Create(
-            itemId, Id, productId, quantity, unitPrice, discountPercentage, taxPercentage,
+            itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
             _items.Count + 1, Currency, occurredAt);
         if (origin != QuotationDiscountOrigin.Own)
         {
@@ -676,7 +680,7 @@ public sealed class Order
     {
         foreach (var item in _items)
         {
-            if (products.TryGetValue(item.ProductId, out var product))
+            if (products.TryGetValue(item.VariantId, out var product))
             {
                 item.CaptureProduct(product);
             }

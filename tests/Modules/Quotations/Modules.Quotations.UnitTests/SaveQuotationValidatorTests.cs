@@ -71,7 +71,7 @@ public sealed class SaveQuotationValidatorTests
     }
 
     [Fact]
-    public void RejectsARepeatedProduct()
+    public void RejectsARepeatedVariant()
     {
         IReadOnlyList<QuotationItemAddition> items =
             [new QuotationItemAddition(ProductId, 1m), new QuotationItemAddition(ProductId, 2m)];
@@ -81,12 +81,12 @@ public sealed class SaveQuotationValidatorTests
     }
 
     [Fact]
-    public void RejectsAnEmptyProductId()
+    public void RejectsAnEmptyVariantId()
     {
         IReadOnlyList<QuotationItemAddition> items = [new QuotationItemAddition(Guid.Empty, 1m)];
 
-        AssertFailsOn(_save.Validate(Command(items: items)), "Items[0].ProductId");
-        AssertFailsOn(_preview.Validate(Query(items: items)), "Items[0].ProductId");
+        AssertFailsOn(_save.Validate(Command(items: items)), "Items[0].VariantId");
+        AssertFailsOn(_preview.Validate(Query(items: items)), "Items[0].VariantId");
     }
 
     [Theory]

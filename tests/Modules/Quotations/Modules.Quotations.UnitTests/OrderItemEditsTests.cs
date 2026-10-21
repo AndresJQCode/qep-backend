@@ -19,9 +19,9 @@ public sealed class OrderItemEditsTests
         Currency = "COP",
     };
 
-    private static QuotationProductPricingRef Product(
+    private static QuotationVariantPricingRef Product(
         Guid productId, string name, decimal unitPriceCop, bool isActive = true) =>
-        new(productId, TenantId, name, isActive, new Dictionary<string, decimal> { ["COP"] = unitPriceCop }, [], null);
+        new(productId, productId, TenantId, name, "SKU", isActive, new Dictionary<string, decimal> { ["COP"] = unitPriceCop }, [], null);
 
     // Un pedido manual pendiente con esas líneas (sin IVA, para que el total sea la suma de los precios).
     private static Order PendingOrder(params (Guid ProductId, decimal Quantity, decimal UnitPrice, QuotationProductSnapshot? Product)[] lines) =>
@@ -29,7 +29,7 @@ public sealed class OrderItemEditsTests
             OrderId.New(), TenantId, "PED-2026-0001",
             new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, false),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
-            lines.Select(line => new OrderLineInput(line.ProductId, line.Quantity, line.UnitPrice, 0m, 0, line.Product)).ToArray(),
+            lines.Select(line => new OrderLineInput(line.ProductId, line.ProductId, line.Quantity, line.UnitPrice, 0m, 0, line.Product)).ToArray(),
             OrderPaymentStatus.PaymentPending, null, UpdatedBy, [], Now);
 
     private static Task<IReadOnlyList<OrderItemEdit>> ApplyAsync(
@@ -173,26 +173,88 @@ public sealed class OrderItemEditsTests
         Assert.Equal(existing, Assert.Single(order.Items).ProductId);
     }
 
-    private sealed class StubPricingCatalog(params QuotationProductPricingRef[] products)
+    // ---- Por variante (spec 2026-10-20 §4) ----
+
+    private static readonly Guid Camiseta = Guid.CreateVersion7();
+    private static readonly Guid CamisetaM = Guid.CreateVersion7();
+    private static readonly Guid CamisetaL = Guid.CreateVersion7();
+
+    private static QuotationVariantPricingRef Variant(Guid variantId, string size, decimal unitPriceCop) =>
+        new(variantId, Camiseta, TenantId, $"Camiseta – {size}", $"CAM-{size}", true,
+            new Dictionary<string, decimal> { ["COP"] = unitPriceCop }, [], null);
+
+    // Gemela de la de la cotización: con M en el pedido, agregar L es una línea nueva y no una
+    // cantidad más para M.
+    [Fact]
+    public async Task AddItemTwoSizesOfSameProductAreTwoLines()
+    {
+        var order = Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0001",
+            new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, false),
+            QuotationParties.Empty, BillingAccount, ShippingDetails.None,
+            [new OrderLineInput(CamisetaM, Camiseta, 2m, 30_000m, 0m, 0)],
+            OrderPaymentStatus.PaymentPending, null, UpdatedBy, [], Now);
+        var catalog = new StubPricingCatalog(Variant(CamisetaM, "M", 30_000m), Variant(CamisetaL, "L", 32_000m));
+
+        var edits = await ApplyAsync(
+            order, catalog, new OrderItemAddition(CamisetaM, 2m), new OrderItemAddition(CamisetaL, 3m));
+
+        Assert.Equal(new OrderItemEdit(OrderItemEditKind.Added, CamisetaL, "Camiseta – L", null, 3m), Assert.Single(edits));
+        Assert.Equal(
+            [(CamisetaM, Camiseta, 2m), (CamisetaL, Camiseta, 3m)],
+            order.Items.OrderBy(item => item.Position).Select(item => (item.VariantId, item.ProductId, item.Quantity)));
+    }
+
+    [Fact]
+    public void AddItemSameVariantTwiceReturnsDuplicateProductCode()
+    {
+        var order = PendingOrder((CamisetaM, 1m, 30_000m, null));
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.AddItem(OrderItemId.New(), CamisetaM, Camiseta, 2m, 30_000m, 0m, 0, UpdatedBy, Now));
+
+        Assert.Equal("order.item.duplicate_product", error.Code);
+        Assert.Single(order.Items);
+    }
+
+    // Un pedido manual no puede nacer con la misma variante en dos líneas: el dominio lo frena con
+    // el mismo código, aunque el validador de la API ya lo haya frenado antes.
+    [Fact]
+    public void CreateManualRejectsTheSameVariantTwice()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() => Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0001",
+            new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, false),
+            QuotationParties.Empty, BillingAccount, ShippingDetails.None,
+            [
+                new OrderLineInput(CamisetaM, Camiseta, 1m, 30_000m, 0m, 0),
+                new OrderLineInput(CamisetaM, Camiseta, 2m, 30_000m, 0m, 0),
+            ],
+            OrderPaymentStatus.PaymentPending, null, UpdatedBy, [], Now));
+
+        Assert.Equal("order.item.duplicate_product", error.Code);
+    }
+
+    private sealed class StubPricingCatalog(params QuotationVariantPricingRef[] products)
         : IQuotationProductPricingLookup
     {
         public List<Guid> Lookups { get; } = [];
 
-        public Task<QuotationProductPricingRef?> FindAsync(
+        public Task<QuotationVariantPricingRef?> FindVariantAsync(
             Guid tenantId, Guid productId, CancellationToken cancellationToken)
         {
             Lookups.Add(productId);
-            return Task.FromResult<QuotationProductPricingRef?>(
-                products.FirstOrDefault(product => product.Id == productId));
+            return Task.FromResult<QuotationVariantPricingRef?>(
+                products.FirstOrDefault(product => product.VariantId == productId));
         }
 
-        public Task<IReadOnlyDictionary<Guid, QuotationProductPricingRef>> FindManyAsync(
+        public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
             Guid tenantId,
             IReadOnlyCollection<Guid> productIds,
             CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyDictionary<Guid, QuotationProductPricingRef>>(
+            Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>>(
                 products
-                    .Where(product => productIds.Contains(product.Id))
-                    .ToDictionary(product => product.Id));
+                    .Where(product => productIds.Contains(product.VariantId))
+                    .ToDictionary(product => product.VariantId));
     }
 }

@@ -176,7 +176,7 @@ public sealed class PosSaleApiTests
                 firstSend,
                 retry);
             Assert.False(retry.IsCompleted);
-            await ExecuteSqlAsync(database, "UPDATE catalog.product_prices SET amount = 13000 WHERE product_id = @id AND currency = 'COP'", ("id", world.Shampoo));
+            await ExecuteSqlAsync(database, "UPDATE catalog.product_prices SET amount = 13000 WHERE variant_id = @id AND currency = 'COP'", ("id", world.Shampoo));
 
             gate.Release.SetResult();
             var responses = await Task.WhenAll(firstSend, retry);
@@ -232,7 +232,7 @@ public sealed class PosSaleApiTests
 
     private sealed class GatedLookup(IPosProductLookup inner, ProductLookupGate gate) : IPosProductLookup
     {
-        public Task<(IReadOnlyList<PosProductRef> Items, int Total)> SearchAsync(
+        public Task<(IReadOnlyList<PosCatalogProductRef> Items, int Total)> SearchAsync(
             Guid tenantId, string? search, int page, int pageSize, CancellationToken cancellationToken) =>
             inner.SearchAsync(tenantId, search, page, pageSize, cancellationToken);
 
@@ -240,9 +240,9 @@ public sealed class PosSaleApiTests
             inner.FindByCodeAsync(tenantId, code, cancellationToken);
 
         public async Task<IReadOnlyDictionary<Guid, PosProductRef>> FindManyAsync(
-            Guid tenantId, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken)
+            Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
         {
-            var found = await inner.FindManyAsync(tenantId, productIds, cancellationToken);
+            var found = await inner.FindManyAsync(tenantId, variantIds, cancellationToken);
             await gate.PauseOnceAsync(cancellationToken);
             return found;
         }
@@ -380,7 +380,7 @@ public sealed class PosSaleApiTests
             PosWorld.SaleBody(Guid.CreateVersion7(), session.Id, world.PlainLine(), [new { method = "Cash", amount = 11_900m, tendered = 20_000m }]), TestContext.Current.CancellationToken);
         var zeroWithTendered = await world.Admin.PostAsJsonAsync($"{world.Url}/sales",
             PosWorld.SaleBody(Guid.CreateVersion7(), session.Id,
-                [new { productId = world.Shampoo, quantity = 1m, discountPercentage = 100m, expectedUnitPrice = 11_900m, expectedTaxPercentage = 19 }],
+                [new { variantId = world.Shampoo, quantity = 1m, discountPercentage = 100m, expectedUnitPrice = 11_900m, expectedTaxPercentage = 19 }],
                 PosWorld.CashPayment(1_000m)), TestContext.Current.CancellationToken);
         var next = await world.Admin.PostAsJsonAsync($"{world.Url}/sales",
             PosWorld.SaleBody(Guid.CreateVersion7(), session.Id, world.PlainLine(), PosWorld.CashPayment(20_000m)), TestContext.Current.CancellationToken);
@@ -410,11 +410,11 @@ public sealed class PosSaleApiTests
         var id = Guid.CreateVersion7();
 
         var preview = await world.Admin.PostAsJsonAsync($"{world.Url}/sales/preview",
-            new { lines = new[] { new { productId = pricey, quantity = 99_999m, discountPercentage = 0m } } },
+            new { lines = new[] { new { variantId = pricey, quantity = 99_999m, discountPercentage = 0m } } },
             TestContext.Current.CancellationToken);
         var sale = await world.Admin.PostAsJsonAsync($"{world.Url}/sales",
             PosWorld.SaleBody(id, session.Id,
-                [new { productId = pricey, quantity = 99_999m, discountPercentage = 0m, expectedUnitPrice = 20_000_000m, expectedTaxPercentage = 19 }],
+                [new { variantId = pricey, quantity = 99_999m, discountPercentage = 0m, expectedUnitPrice = 20_000_000m, expectedTaxPercentage = 19 }],
                 PosWorld.CashPayment(100_000_000m)),
             TestContext.Current.CancellationToken);
 
@@ -466,7 +466,7 @@ public sealed class PosSaleApiTests
             database, "UPDATE tenancy.tenants SET default_currency = 'COP' WHERE id = @id", ("id", world.Tenant.TenantId));
         var sold = await world.Admin.PostAsJsonAsync($"{world.Url}/sales",
             PosWorld.SaleBody(Guid.CreateVersion7(), session.Id,
-                [new { productId = eurProduct, quantity = 2m, discountPercentage = 0m, expectedUnitPrice = 9.5m, expectedTaxPercentage = 0 }],
+                [new { variantId = eurProduct, quantity = 2m, discountPercentage = 0m, expectedUnitPrice = 9.5m, expectedTaxPercentage = 0 }],
                 PosWorld.CashPayment(20m)),
             TestContext.Current.CancellationToken);
 

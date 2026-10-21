@@ -50,11 +50,11 @@ public sealed class RemoveQuotationItemHandler(
         // que es lo único que sabe a qué producto apuntaba.
         var removed = quotation.Items.FirstOrDefault(item => item.Id.Value == command.ItemId);
         var products = removed is null
-            ? new Dictionary<Guid, QuotationProductRef>()
+            ? new Dictionary<Guid, QuotationVariantRef>()
             : await productLookup.FindManyAsync(
-                command.TenantId, [removed.ProductId], cancellationToken);
+                command.TenantId, [removed.VariantId], cancellationToken);
         var productName = removed is not null
-            && products.TryGetValue(removed.ProductId, out var product)
+            && products.TryGetValue(removed.VariantId, out var product)
                 ? product.Name
                 : "un producto";
 

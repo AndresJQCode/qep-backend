@@ -107,6 +107,7 @@ internal static class QuotationMapping
 
     private static QuotationItemDto ToDto(QuotationItem item) => new(
         item.Id.Value,
+        item.VariantId,
         item.ProductId,
         item.Quantity,
         item.UnitPrice,

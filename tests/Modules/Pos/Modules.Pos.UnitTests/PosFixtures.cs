@@ -38,9 +38,9 @@ internal static class PosFixtures
 
     public static PosSaleLineInput[] WorkedExampleLines() =>
     [
-        new(Shampoo, "SH-400", "Shampoo 400 ml", 2m, 11_900m, 10m, 19),
-        new(Avena, "AV-01", "Avena granel (kg)", 1.5m, 5_000m, 0m, 0),
-        new(Jabon, "JB-03", "Jabón", 3m, 2_990m, 0m, 5),
+        new(Shampoo, Shampoo, "SH-400", "Shampoo 400 ml", 2m, 11_900m, 10m, 19),
+        new(Avena, Avena, "AV-01", "Avena granel (kg)", 1.5m, 5_000m, 0m, 0),
+        new(Jabon, Jabon, "JB-03", "Jabón", 3m, 2_990m, 0m, 5),
     ];
 
     public static PosPaymentInput Cash(decimal tendered) => new(PosPaymentMethod.Cash, null, tendered, null);

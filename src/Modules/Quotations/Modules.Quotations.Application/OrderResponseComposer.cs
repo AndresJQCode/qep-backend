@@ -36,7 +36,7 @@ public sealed class OrderResponseComposer(
             ? await companyLookup.FindAsync(tenantId, billing.CompanyId, cancellationToken)
             : null;
         var products = await productLookup.FindManyAsync(
-            tenantId, order.Items.Select(item => item.ProductId).Distinct().ToArray(), cancellationToken);
+            tenantId, order.Items.Select(item => item.VariantId).Distinct().ToArray(), cancellationToken);
 
         return new OrderDetailResponse(
             OrderResponses.ToResponse(order),

@@ -128,8 +128,8 @@ public sealed class PreviewNewQuotationHandlerTests
         Assert.True(preview.DiscountAmount > 0m);
     }
 
-    private static QuotationProductPricingRef Product(Guid id, string name, decimal price) =>
-        new(id, TenantId, name, true, new Dictionary<string, decimal> { ["COP"] = price }, [], null);
+    private static QuotationVariantPricingRef Product(Guid id, string name, decimal price) =>
+        new(id, id, TenantId, name, "SKU", true, new Dictionary<string, decimal> { ["COP"] = price }, [], null);
 
     private static QuotationCustomerRef Customer(bool isActive = true) =>
         new(ClientId, TenantId, "CUC-001", isActive, "Ferretería El Tornillo",
@@ -173,7 +173,7 @@ public sealed class PreviewNewQuotationHandlerTests
                 new MemberId(MembershipId), Now)),
             new NoOpQuotationsUnitOfWork(),
             new NoOpQuotationAuditPublisher(),
-            new StubQuotationProductLookup(new Dictionary<Guid, QuotationProductRef>()),
+            new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
             Drafts(pricing, null, null),
             new SequentialQuotationNumberGenerator(),
             new DefaultNumberingFormats(),

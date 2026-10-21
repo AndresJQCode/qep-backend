@@ -18,6 +18,7 @@ public sealed class OrderItem
     private OrderItem(
         OrderItemId id,
         OrderId orderId,
+        Guid variantId,
         Guid productId,
         decimal quantity,
         decimal unitPrice,
@@ -29,6 +30,7 @@ public sealed class OrderItem
     {
         Id = id;
         OrderId = orderId;
+        VariantId = variantId;
         ProductId = productId;
         Position = position;
         CreatedAt = occurredAt;
@@ -40,6 +42,11 @@ public sealed class OrderItem
 
     public OrderId OrderId { get; private set; }
 
+    /// <summary>La variante que vende la línea: la clave de la línea, igual que en
+    /// <see cref="QuotationItem.VariantId"/>.</summary>
+    public Guid VariantId { get; private set; }
+
+    /// <summary>El producto dueño de <see cref="VariantId"/>, para agrupar por producto.</summary>
     public Guid ProductId { get; private set; }
 
     public string? ProductCode { get; private set; }
@@ -81,6 +88,7 @@ public sealed class OrderItem
     internal static OrderItem Create(
         OrderItemId id,
         OrderId orderId,
+        Guid variantId,
         Guid productId,
         decimal quantity,
         decimal unitPrice,
@@ -89,7 +97,7 @@ public sealed class OrderItem
         int position,
         string currency,
         DateTimeOffset occurredAt) =>
-        new(id, orderId, productId, quantity, unitPrice, discountPercentage, taxPercentage, position, currency, occurredAt);
+        new(id, orderId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, position, currency, occurredAt);
 
     internal void CaptureProduct(QuotationProductSnapshot product)
     {
