@@ -65,8 +65,9 @@ public sealed class QuotationVariantLinesApiTests
         Assert.Equal("quotation.item.duplicate_product", await CodeOfAsync(response));
     }
 
-    // Enfoque de revisión 5, contra el lookup real: una escala 12-999 sin agrupación no cuenta 6 M
-    // y 6 L como 12.
+    // La regla del conteo, contra el lookup real: una escala 12-999 sin agrupación no cuenta 6 M y 6 L
+    // como 12. Las dos tallas tienen la misma escala, así que esto prueba la regla, no la clave: la
+    // clave la amarra EachSizeIsPricedWithItsOwnScales.
     [Fact]
     public async Task SixMAndSixLDoNotReachADozenScaleWithoutGrouping()
     {
@@ -82,6 +83,29 @@ public sealed class QuotationVariantLinesApiTests
         var updated = await ReadQuotationAsync(await AddItemAsync(client, tenantId, quotation.Id, shirt.L, 6m));
 
         Assert.All(updated.Items, item => Assert.Equal((0m, "Own"), (item.DiscountPercentage, item.DiscountOrigin)));
+    }
+
+    // Enfoque de revisión 5, la clave: M y L tienen escalas distintas (M un tramo de 12 al 10 %, L
+    // ninguno). Con 12 de cada una, M se lleva el 10 % y L no. Si el lookup o la pasada buscaran las
+    // escalas por producto, las dos tallas saldrían con el mismo descuento.
+    [Fact]
+    public async Task EachSizeIsPricedWithItsOwnScales()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var shirt = await CreateShirtInTwoSizesAsync(
+            client, tenantId, DozenScales(multiple: 1, allowGrouping: false), scalesL: NoDiscountScales());
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        await AddItemAsync(client, tenantId, quotation.Id, shirt.M, 12m);
+        var updated = await ReadQuotationAsync(await AddItemAsync(client, tenantId, quotation.Id, shirt.L, 12m));
+
+        Assert.Equal(
+            [(shirt.M, 10m), (shirt.L, 0m)],
+            updated.Items.OrderBy(item => item.Position).Select(item => (item.VariantId, item.DiscountPercentage)));
     }
 
     // La misma escala con agrupación sí suma entre las dos tallas: las dos cumplen el múltiplo de 6
@@ -219,12 +243,13 @@ public sealed class QuotationVariantLinesApiTests
         packagingUnits = Array.Empty<int>()
     };
 
-    /// <summary>«Camiseta» con la opción «Talla» M y L: CAM-M a 30.000 y CAM-L a 32.000 COP, las dos con
-    /// las mismas escalas.</summary>
+    /// <summary>«Camiseta» con la opción «Talla» M y L: CAM-M a 30.000 y CAM-L a 32.000 COP, con las
+    /// mismas escalas salvo que <paramref name="scalesL"/> le dé a L las suyas.</summary>
     private static async Task<Shirt> CreateShirtInTwoSizesAsync(
-        HttpClient client, Guid tenantId, object[]? scales = null)
+        HttpClient client, Guid tenantId, object[]? scales = null, object[]? scalesL = null)
     {
         scales ??= NoDiscountScales();
+        scalesL ??= scales;
         var optionResponse = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/options",
             new { name = "Talla", values = Sizes },
@@ -244,7 +269,7 @@ public sealed class QuotationVariantLinesApiTests
                 variants = new object[]
                 {
                     new { code = "CAM-M", optionValueIds = new[] { valueM }, pricing = Pricing(30_000m, scales) },
-                    new { code = "CAM-L", optionValueIds = new[] { valueL }, pricing = Pricing(32_000m, scales) },
+                    new { code = "CAM-L", optionValueIds = new[] { valueL }, pricing = Pricing(32_000m, scalesL) },
                 }
             },
             TestContext.Current.CancellationToken);

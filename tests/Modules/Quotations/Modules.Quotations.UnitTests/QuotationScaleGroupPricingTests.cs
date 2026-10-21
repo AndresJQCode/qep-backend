@@ -685,8 +685,10 @@ public sealed class QuotationScaleGroupPricingTests
     private static readonly Guid CamisetaM = Guid.NewGuid();
     private static readonly Guid CamisetaL = Guid.NewGuid();
 
-    // Enfoque de revisión 5. Escala 12-999 sin agrupación: 6 M y 6 L no suman 12 (igual que
-    // Shopify B2B). Ninguna de las dos alcanza el piso sola, así que las dos van sin descuento.
+    // La regla del Enfoque de revisión 5. Escala 12-999 sin agrupación: 6 M y 6 L no suman 12 (igual
+    // que Shopify B2B). Ninguna de las dos alcanza el piso sola, así que las dos van sin descuento.
+    // Esta función sólo ve variantes, así que no puede probar la clave: la amarran las pruebas
+    // EachVariantIsPricedWithItsOwnScalesEvenWithinTheSameProduct de las dos pasadas de recálculo.
     [Fact]
     public void ScaleGroupSixMAndSixLDoNotAddUp()
     {

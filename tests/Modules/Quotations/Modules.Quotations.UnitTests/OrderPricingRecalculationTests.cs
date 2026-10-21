@@ -73,6 +73,39 @@ public sealed class OrderPricingRecalculationTests
         Assert.Equal(0m, order.Items.Single().DiscountPercentage);
     }
 
+    // Enfoque de revisión 5 en el pedido: dos tallas del mismo producto con escalas distintas. M tiene un
+    // tramo al 5 % y L ninguno; si la pasada buscara las escalas por producto, las dos saldrían iguales.
+    [Fact]
+    public async Task EachVariantIsPricedWithItsOwnScalesEvenWithinTheSameProduct()
+    {
+        var shirt = Guid.CreateVersion7();
+        var sizeM = Guid.CreateVersion7();
+        var sizeL = Guid.CreateVersion7();
+        var order = Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0003",
+            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, false),
+            QuotationParties.Empty, BillingAccount, ShippingDetails.None,
+            [
+                new OrderLineInput(sizeM, shirt, 6m, 10_000m, 0m, 19),
+                new OrderLineInput(sizeL, shirt, 6m, 10_000m, 0m, 19),
+            ],
+            OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now);
+        var prices = new Dictionary<string, decimal> { ["COP"] = 10_000m };
+
+        await OrderPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(
+                new QuotationVariantPricingRef(
+                    sizeM, shirt, TenantId, "Camiseta – M", "CAM-M", true, prices,
+                    [new QuotationPriceScaleRef(1, 999, 5m, QuotationPriceScaleRestriction.Multiple, 1, [], false)], 19),
+                new QuotationVariantPricingRef(sizeL, shirt, TenantId, "Camiseta – L", "CAM-L", true, prices, [], 19)),
+            new FixedQuotationSettingsStore(), TenantId, order, Now.AddDays(1), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            (5m, 0m),
+            (order.Items.Single(item => item.VariantId == sizeM).DiscountPercentage,
+                order.Items.Single(item => item.VariantId == sizeL).DiscountPercentage));
+    }
+
     private sealed class StubPricingLookup(params QuotationVariantPricingRef[] products) : IQuotationProductPricingLookup
     {
         private readonly Dictionary<Guid, QuotationVariantPricingRef> _products = products.ToDictionary(product => product.VariantId);

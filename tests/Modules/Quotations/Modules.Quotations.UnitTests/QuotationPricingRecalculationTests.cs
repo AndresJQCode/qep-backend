@@ -107,6 +107,36 @@ public sealed class QuotationPricingRecalculationTests
         Assert.Equal(57_000m, quotation.Total);
     }
 
+    // Enfoque de revisión 5 en la pasada completa, que es donde vive la clave: dos tallas del mismo
+    // producto con escalas distintas. M tiene un tramo plano al 5 % y L ninguno. Si la pasada
+    // buscara las escalas por producto, L se llevaría las de M (o ninguna de las dos las tendría).
+    [Fact]
+    public async Task EachVariantIsPricedWithItsOwnScalesEvenWithinTheSameProduct()
+    {
+        var shirt = Guid.CreateVersion7();
+        var sizeM = Guid.CreateVersion7();
+        var sizeL = Guid.CreateVersion7();
+        var quotation = NewQuotation();
+        var lineM = QuotationItemId.New();
+        var lineL = QuotationItemId.New();
+        quotation.AddItem(lineM, sizeM, shirt, 6m, 10_000m, 0m, 19, AdvisorId, Now);
+        quotation.AddItem(lineL, sizeL, shirt, 6m, 10_000m, 0m, 19, AdvisorId, Now);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(
+                new QuotationVariantPricingRef(
+                    sizeM, shirt, TenantId, "Camiseta – M", "CAM-M", true, PricesOf(10_000m, null), FlatTier(), 19),
+                new QuotationVariantPricingRef(
+                    sizeL, shirt, TenantId, "Camiseta – L", "CAM-L", true, PricesOf(10_000m, null), [], 19)),
+            new FixedQuotationSettingsStore(),
+            TenantId,
+            quotation,
+            Now,
+            CancellationToken.None);
+
+        Assert.Equal((5m, 0m), (DiscountOf(quotation, lineM), DiscountOf(quotation, lineL)));
+    }
+
     // Menos de 6 unidades y muy por debajo de los $500.000: la compuerta le quita el descuento a
     // una línea que la escala sí le daba.
     [Fact]
