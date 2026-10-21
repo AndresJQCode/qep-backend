@@ -182,6 +182,10 @@ public static class QuotationsSeeder
         // fija "valor flete" para el ERP y dos visibles no pueden compartir encabezado. Se oculta acá:
         // el ERP del tenant no la espera, y quien la quiera la prende desde la pantalla de columnas.
         "freight_amount",
+        // Spec 2026-10-20 variantes §7: nace oculta en el catálogo, pero la hoja la nombra igual: el ERP no
+        // espera esa columna y Effective la completaría al final de todos modos. Su encabezado ("Variante")
+        // no choca con ninguna visible de la hoja.
+        "variant",
     ];
 
     /// <summary>

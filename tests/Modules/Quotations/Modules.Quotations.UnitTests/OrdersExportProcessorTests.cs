@@ -1908,6 +1908,127 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(0, products.FindManyCalls);
     }
 
+    private static readonly Guid VariantMId = Guid.CreateVersion7();
+
+    // La variante M del producto de DefaultProduct, tal como el catálogo la tenía cuando se vendió, y la
+    // misma después de que alguien le cambiara el código y el nombre.
+    private static readonly QuotationProductSnapshot VariantMPhoto = new("TOR-001-M", "Tornillo hexagonal – M");
+
+    private static readonly QuotationVariantRef VariantMToday = new(
+        VariantMId, ProductId, "Tornillo renombrado – M", "TOR-001-CAMBIADO", ImageUrl: null, Scales: []);
+
+    private static Order NewVariantMRow()
+    {
+        var row = NewRow(
+            "PED-2026-0001",
+            items: [(VariantMId, 2m, 1000m, 0m, 19)],
+            ownerProductId: ProductId);
+        row.CaptureProductSnapshots(new Dictionary<Guid, QuotationProductSnapshot> { [VariantMId] = VariantMPhoto });
+        return row;
+    }
+
+    // Spec 2026-10-20 variantes §7: «Cod. Producto» es el `Code` de la variante que vendió la línea, y sale
+    // de la foto que la línea guardó. Ni el `Code` de hoy de la variante (`TOR-001-CAMBIADO`) ni el del
+    // producto (`TOR-001`) entran en la celda, y con la línea congelada el catálogo ni se consulta.
+    [Fact]
+    public async Task OrdersExportProductCodeIsVariantCode()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>
+        {
+            [ProductId] = DefaultProduct,
+            [VariantMId] = VariantMToday,
+        });
+
+        await NewProcessor(new StubOrderListRepository(NewVariantMRow()), writer, products: products)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Cod. Producto", writer.Columns[1].Header);
+        Assert.Equal(ExportCell.OfText("TOR-001-M"), Assert.Single(writer.Rows)[1]);
+        Assert.Equal(0, products.FindManyCalls);
+    }
+
+    // Una línea sin foto cae al catálogo, pero por el id de la variante: el `Code` que sale es el de la
+    // variante, no el del producto dueño.
+    [Fact]
+    public async Task OrdersExportProductCodeWithoutASnapshotReadsTheVariantNotTheProduct()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001", items: [(VariantMId, 2m, 1000m, 0m, 19)], ownerProductId: ProductId);
+        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>
+        {
+            [ProductId] = DefaultProduct,
+            [VariantMId] = VariantMToday,
+        });
+
+        await NewProcessor(new StubOrderListRepository(row), writer, products: products)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("TOR-001-CAMBIADO"), Assert.Single(writer.Rows)[1]);
+    }
+
+    // «Variante» lleva el nombre visible de la foto de la línea. En una variante por defecto (sin opciones) el
+    // nombre visible es el del producto: la línea no la distingue sin consultar Catalog, así que se repite.
+    [Fact]
+    public async Task OrdersExportVariantColumnCarriesTheVisibleNameFromTheLinePhoto()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow(
+            "PED-2026-0001",
+            items: [(VariantMId, 2m, 1000m, 0m, 19), (ProductId, 1m, 1000m, 0m, 19)],
+            ownerProductId: ProductId);
+        row.CaptureProductSnapshots(new Dictionary<Guid, QuotationProductSnapshot>
+        {
+            [VariantMId] = VariantMPhoto,
+            [ProductId] = new("TOR-001", "Tornillo hexagonal"),
+        });
+        var layouts = StoredLayout(OrdersExportColumnSetting.Catalog("variant", "Variante", visible: true));
+        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>
+        {
+            [VariantMId] = VariantMToday,
+        });
+
+        await NewProcessor(new StubOrderListRepository(row), writer, products: products, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Variante", writer.Columns[0].Header);
+        Assert.Equal(
+            [ExportCell.OfText("Tornillo hexagonal – M"), ExportCell.OfText("Tornillo hexagonal")],
+            writer.Rows.Select(cells => cells[0]));
+    }
+
+    // Una línea sin foto muestra el nombre visible de hoy de su variante, igual que con el código.
+    [Fact]
+    public async Task OrdersExportVariantColumnWithoutASnapshotReadsTheVariantName()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001", items: [(VariantMId, 2m, 1000m, 0m, 19)], ownerProductId: ProductId);
+        var layouts = StoredLayout(OrdersExportColumnSetting.Catalog("variant", "Variante", visible: true));
+        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>
+        {
+            [VariantMId] = VariantMToday,
+        });
+
+        await NewProcessor(new StubOrderListRepository(row), writer, products: products, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("Tornillo renombrado – M"), Assert.Single(writer.Rows)[0]);
+    }
+
+    // Oculta por defecto: sin layout guardado el archivo no gana una columna, y las 43 de siempre siguen
+    // en su sitio (WritesTheErpColumnsInOrder fija la lista entera).
+    [Fact]
+    public async Task OrdersExportVariantColumnIsNotInTheFileWithoutAStoredLayout()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewVariantMRow()), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(writer.Columns, column => column.Header == "Variante");
+        Assert.Equal(43, writer.Columns.Count);
+    }
+
     // Spec 2026-10-15 §6.4: un pedido sin cotización exporta igual, con todo leído del pedido:
     // su dirección de envío, sus observaciones, su cuenta de cobro, su número y su total.
     [Fact]
@@ -1987,7 +2108,10 @@ public sealed class OrdersExportProcessorTests
         // comprobante sin fecha, como uno anterior al campo (2026-10-08).
         IReadOnlyList<DateOnly?>? paidOn = null,
         string? orderNotes = null,
-        ShippingDetails? shipping = null)
+        ShippingDetails? shipping = null,
+        // Spec 2026-10-20 variantes: el producto dueño de las variantes de `items`. Ausente, cada línea se
+        // arma como una variante por defecto (variante y producto con el mismo id), como hasta ahora.
+        Guid? ownerProductId = null)
     {
         var occurredAt = at ?? Now;
         var proofInputs = (proofs ?? [.. (publicKeys ?? []).Select(publicKey => (10_000m, publicKey))])
@@ -2004,7 +2128,7 @@ public sealed class OrdersExportProcessorTests
             shipping ?? ShippingDetails.None,
             (items ?? DefaultItems)
                 .Select(item => new OrderLineInput(
-                    item.ProductId, item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage))
+                    item.ProductId, ownerProductId ?? item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage))
                 .ToArray(),
             OrderPaymentStatus.PaymentPending,
             orderNotes,

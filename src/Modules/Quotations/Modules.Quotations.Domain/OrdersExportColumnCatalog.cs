@@ -119,6 +119,12 @@ public static class OrdersExportColumnCatalog
         new("freight_tax", "IVA Flete", 16, DefaultVisible: false),
         new("freight_charge_mode", "Pago Flete", 16, DefaultVisible: false),
         new("cash_on_delivery", "Contraentrega", 16, DefaultVisible: false),
+        // Spec 2026-10-20 variantes §7: el nombre visible de la variante que vendió la línea («Camiseta – M»;
+        // en un producto sin opciones, el nombre del producto). Sale de la foto de la línea, no del catálogo
+        // de hoy. «Cod. Producto» ya lleva el `Code` de la variante. Oculta por defecto y al final, mismo
+        // criterio que «coordinadora_city»: ningún Excel que ya existe —tampoco la hoja «MIGRACION 1» del ERP,
+        // que importa por encabezado— gana una columna que nadie pidió; el tenant la prende si la quiere.
+        new("variant", "Variante", 36, DefaultVisible: false),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.

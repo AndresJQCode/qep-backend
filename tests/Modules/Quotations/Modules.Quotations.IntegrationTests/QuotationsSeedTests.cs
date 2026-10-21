@@ -99,6 +99,22 @@ public sealed class QuotationsSeedTests
         "Retencion",
     ];
 
+    // Spec 2026-10-20 variantes §7: la columna nueva «Variante» del catálogo no pisa ningún encabezado de
+    // la hoja del ERP («MIGRACION 1»), que importa por encabezado, y nace oculta: la hoja sembrada no
+    // gana una columna que su ERP no espera. La mitad con la fila sembrada es
+    // SeedConfiguresTheOrdersExportLayoutOfTheSeedTenant (todo el catálogo en la lista, sólo
+    // SeededLayoutHeaders visibles). No necesita base de datos.
+    [Fact]
+    public void OrdersExportNewVariantColumnDoesNotCollideWithSeededHeaders()
+    {
+        var variant = Assert.Single(OrdersExportColumnCatalog.Columns, column => column.Key == "variant");
+
+        Assert.False(variant.DefaultVisible);
+        Assert.DoesNotContain(
+            SeededLayoutHeaders,
+            header => string.Equals(header, variant.DefaultHeader, StringComparison.OrdinalIgnoreCase));
+    }
+
     // Ajuste 2026-09-25: el tenant sembrado exporta pedidos con la hoja de su ERP. La fila nace por
     // Replace, así que queda en versión 2 como un primer PUT.
     [Fact]

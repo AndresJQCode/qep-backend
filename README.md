@@ -1385,6 +1385,15 @@ coincide con el de una visible del layout guardado se agrega **oculta**. Consecu
 omite la columna del catálogo y agrega una fija visible con su encabezado se acepta, con la del catálogo
 oculta (el frontend siempre manda la lista completa).
 
+Con las variantes de producto (spec 2026-10-20 §7) `Cod. Producto` (`product_code`) lleva el `Code` de la
+**variante** que vendió la línea, y el catálogo gana una columna más al final, `Variante` (`variant`): el
+nombre visible de esa variante (`Camiseta – M`; en un producto sin opciones, el nombre del producto, porque
+la línea no distingue la variante por defecto sin consultar Catalog). Las dos salen de la foto de la línea,
+no del catálogo de hoy: renombrar o recodificar la variante después no cambia un pedido ya emitido. `Variante`
+**nace oculta** —ningún Excel que ya existe cambia, tampoco «MIGRACION 1»— y el tenant la prende desde su
+configuración; su encabezado cae bajo la regla de choque de arriba. El PDF de la cotización no cambió de
+plantilla: `productName` ya es ese nombre visible.
+
 **Aviso para operadores:** la hoja sembrada «MIGRACION 1» conserva su columna fija `valor flete`, vacía, y
 por eso `Valor Flete` del catálogo queda oculta en ella. Para que el ERP reciba el valor real, en
 Configuración › Excel de pedidos cambia la fija por la columna del catálogo «Valor Flete».

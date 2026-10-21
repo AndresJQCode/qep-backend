@@ -121,6 +121,11 @@ public sealed record QuotationPdfBillingAccount(
 /// Acá no viaja <c>QuotationItem.Subtotal</c>, que es la base <b>sin</b> IVA de la línea. Ese
 /// número es correcto y es lo que el encabezado suma, pero puesto al lado de un unitario que sí
 /// trae impuesto da una fila que no multiplica.
+///
+/// <c>ProductName</c> es el nombre visible de la variante vendida («Camiseta – M»; el nombre del producto si
+/// no tiene opciones), tal como lo resuelve <c>QuotationItemProductLabel</c>: la foto de la línea una vez la
+/// cotización salió del borrador. Conserva el nombre <c>productName</c> para que la plantilla del PDF no cambie
+/// (spec 2026-10-20 variantes §7).
 /// </summary>
 public sealed record QuotationPdfLine(
     string ProductName,

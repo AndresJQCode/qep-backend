@@ -102,6 +102,26 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal(35900m, document.Items[0].UnitPrice);
     }
 
+    // Spec 2026-10-20 variantes §7: el PDF imprime el nombre visible de la variante, sin plantilla nueva. La
+    // respuesta ya lo trae en `ProductName` (lo resuelve QuotationItemProductLabel), y el mapeo lo pasa tal
+    // cual al campo `productName` del documento: sin recortarlo, sin cortarlo en producto y variante.
+    [Fact]
+    public void PdfLineShowsTheVisibleNameOfTheVariant()
+    {
+        var response = Response();
+        var first = response.Items.First() with { ProductName = "Camiseta – M / Rojo" };
+
+        var document = Map(response with { Items = [first, .. response.Items.Skip(1)] });
+
+        Assert.Equal("Camiseta – M / Rojo", document.Items[0].ProductName);
+        Assert.Equal("COMBO JALEA REAL 3", document.Items[1].ProductName);
+        using var payload = System.Text.Json.JsonDocument.Parse(
+            System.Text.Json.JsonSerializer.Serialize(document, PayloadFormat));
+        Assert.Equal(
+            "Camiseta – M / Rojo",
+            payload.RootElement.GetProperty("items")[0].GetProperty("productName").GetString());
+    }
+
     /// <summary>
     /// El invariante que hace honesto al documento. El precio del producto viene **con IVA
     /// adentro** (QuotationItem.Apply), pero `QuotationItemResponse.Subtotal` es la base **sin**

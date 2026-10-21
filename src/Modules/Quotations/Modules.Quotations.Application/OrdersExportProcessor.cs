@@ -268,6 +268,11 @@ public sealed class OrdersExportProcessor(
         foreach (var item in items)
         {
             context.Products.TryGetValue(item.VariantId, out var product);
+            // Spec 2026-10-20 variantes §7: ambas salen de la foto de la línea (la variante que se vendió, con
+            // su `Code` y su nombre visible); el catálogo de hoy sólo responde por una línea sin foto. La
+            // línea no distingue la variante por defecto sin consultar Catalog —que Quotations no referencia—,
+            // así que ahí «Variante» repite el nombre del producto, que es su nombre visible.
+            var variante = ExportCell.OfText(QuotationItemProductLabel.NameOf(item.ProductName, product));
             yield return
             [
                 ExportCell.OfText(empresa),
@@ -307,6 +312,7 @@ public sealed class OrdersExportProcessor(
                 fleteIva,
                 fleteModo,
                 contraentrega,
+                variante,
             ];
         }
     }
