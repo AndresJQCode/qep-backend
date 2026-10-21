@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace Modules.Messaging.Domain;
 
 /// <summary>
@@ -6,7 +8,12 @@ namespace Modules.Messaging.Domain;
 /// </summary>
 public static class ColombianHolidays
 {
-    public static IReadOnlySet<DateOnly> For(int year)
+    // Pura y por año: se calcula una vez (IsOpenAt y NextChangeAt la piden cientos de veces).
+    private static readonly ConcurrentDictionary<int, IReadOnlySet<DateOnly>> Cache = new();
+
+    public static IReadOnlySet<DateOnly> For(int year) => Cache.GetOrAdd(year, Compute);
+
+    private static HashSet<DateOnly> Compute(int year)
     {
         var set = new HashSet<DateOnly>
         {

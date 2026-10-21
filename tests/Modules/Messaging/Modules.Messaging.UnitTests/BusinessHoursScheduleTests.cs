@@ -92,6 +92,29 @@ public sealed class BusinessHoursScheduleTests
     }
 
     [Fact]
+    public void NullRangesAreRejectedWithTheirOwnCode()
+    {
+        var week = Week(_ => []).Select(w => w.Day == 2 ? new WeekdayHours(2, null!) : w).ToList();
+        var weekError = Assert.Throws<MessagingDomainException>(() => Make(weekly: week));
+        Assert.Equal(MessagingErrorCodes.BusinessHoursRangesInvalid, weekError.Code);
+
+        var exceptionError = Assert.Throws<MessagingDomainException>(() =>
+            Make(exceptions: [new DateException(new DateOnly(2026, 12, 24), null!)]));
+        Assert.Equal(MessagingErrorCodes.BusinessHoursExceptionsInvalid, exceptionError.Code);
+    }
+
+    [Fact]
+    public void TheAggregateCopiesTheRangesItReceives()
+    {
+        var ranges = new List<TimeRange> { new(480, 1080) };
+        var schedule = Make(weekly: Week(d => d == 1 ? [new TimeRange(480, 1080)] : []).Select(w => w.Day == 1 ? new WeekdayHours(1, ranges) : w).ToList());
+
+        ranges.Clear();
+
+        Assert.Single(schedule.Weekly[0].Ranges);
+    }
+
+    [Fact]
     public void TouchingRangesAreAccepted()
     {
         var schedule = Make(weekly: Week(d => d == 1 ? [new TimeRange(480, 720), new TimeRange(720, 1080)] : []));
@@ -281,16 +304,17 @@ public sealed class BusinessHoursScheduleTests
         Assert.Equal(expected, BusinessHoursSchedule.DuplicateName(name, attempt));
 
     [Fact]
-    public void DuplicateNameTrimsToSixty()
+    public void DuplicateNameTrimsTheNameAndKeepsTheSuffix()
     {
         var name = new string('a', 58);
 
-        var first = BusinessHoursSchedule.DuplicateName(name, 1);
-        var third = BusinessHoursSchedule.DuplicateName(name, 3);
+        var names = Enumerable.Range(1, 3).Select(attempt => BusinessHoursSchedule.DuplicateName(name, attempt)).ToList();
 
-        Assert.Equal(60, first.Length);
-        Assert.Equal(60, third.Length);
-        Assert.Equal((name + " (copia)")[..60], first);
+        Assert.Equal(3, names.Distinct().Count());
+        Assert.EndsWith(" (copia)", names[0]);
+        Assert.EndsWith(" (copia 2)", names[1]);
+        Assert.EndsWith(" (copia 3)", names[2]);
+        Assert.All(names, n => Assert.True(n.Length <= 60));
     }
 
     [Fact]
@@ -304,7 +328,9 @@ public sealed class BusinessHoursScheduleTests
 
         Assert.Equal(new DateOnly(2026, 12, 8), list[0]);
         Assert.Contains(new DateOnly(2027, 1, 1), list);
-        Assert.DoesNotContain(new DateOnly(2027, 11, 20), list);
+        Assert.DoesNotContain(new DateOnly(2026, 11, 16), list); // antes del inicio
+        Assert.Contains(new DateOnly(2027, 11, 15), list); // último festivo antes del 2027-11-20
+        Assert.DoesNotContain(new DateOnly(2027, 12, 8), list); // pasados los 12 meses
         Assert.True(list.SequenceEqual(list.OrderBy(d => d)));
     }
 }

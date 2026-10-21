@@ -173,8 +173,9 @@ public sealed class BusinessHoursSchedule
     public static string DuplicateName(string name, int attempt)
     {
         var suffix = attempt <= 1 ? " (copia)" : $" (copia {attempt})";
-        var full = name.Trim() + suffix;
-        return full.Length <= NameMaxLength ? full : full[..NameMaxLength];
+        var trimmed = name.Trim();
+        var room = NameMaxLength - suffix.Length;
+        return (trimmed.Length <= room ? trimmed : trimmed[..room].TrimEnd()) + suffix;
     }
 
     private IReadOnlyList<TimeRange> EffectiveRanges(DateOnly date)
@@ -237,7 +238,7 @@ public sealed class BusinessHoursSchedule
         var ordered = weekly.OrderBy(w => w.Day).ToList();
         foreach (var day in ordered)
         {
-            if (!AreValidRanges(day.Ranges))
+            if (day.Ranges is null || !AreValidRanges(day.Ranges))
             {
                 throw new MessagingDomainException(
                     MessagingErrorCodes.BusinessHoursRangesInvalid,
@@ -245,7 +246,8 @@ public sealed class BusinessHoursSchedule
             }
         }
 
-        return ordered;
+        // Copia de las franjas: el agregado es dueño de su estado.
+        return ordered.Select(day => day with { Ranges = [.. day.Ranges] }).ToList();
     }
 
     private static List<DateException> NormalizeExceptions(IReadOnlyList<DateException> exceptions, DateOnly today)
@@ -266,14 +268,14 @@ public sealed class BusinessHoursSchedule
                 $"Un horario admite hasta {MaxExceptions} excepciones vigentes.");
         }
 
-        if (current.Any(e => !AreValidRanges(e.Ranges)))
+        if (current.Any(e => e.Ranges is null || !AreValidRanges(e.Ranges)))
         {
             throw new MessagingDomainException(
                 MessagingErrorCodes.BusinessHoursExceptionsInvalid,
                 $"Las franjas de una excepción no son válidas: máximo {MaxRangesPerDay}, ordenadas, sin solaparse y entre 0 y {MinutesPerDay} minutos.");
         }
 
-        return current;
+        return current.Select(e => e with { Ranges = [.. e.Ranges] }).ToList();
     }
 
     private static bool AreValidRanges(IReadOnlyList<TimeRange> ranges)
