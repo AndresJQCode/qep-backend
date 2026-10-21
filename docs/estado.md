@@ -30,7 +30,7 @@ falla. Ninguno de los dos `develop` se despliega solo hasta que exista el fronte
 | Envío de cotizaciones por el canal del tenant | Spec en borrador para el owner. **Plan 1 de 3 construido** en los dos repos (proveedores habilitados por tenant); planes 2 y 3 sin escribir | [spec](superpowers/specs/2026-10-21-envio-de-cotizaciones-por-canal-del-tenant-design.md), [plan 1](superpowers/plans/2026-10-21-proveedores-habilitados-por-tenant.md) |
 | Shopify: fuente del documento del comprador | Parte 1 **construida** (`d00a20a8`, merge `b7447106`); faltan el endpoint de opciones, el select del frontend y la documentación | [detalle](#shopify-fuente-del-documento-del-comprador) |
 | Shopify: días de historial en «Sincronizar ahora» | Spec commiteado (`42565f98`); sin código en ningún repo | [spec](superpowers/specs/2026-10-21-shopify-historial-dias-design.md) |
-| Onboarding: «Primeros pasos» y bienvenida a invitados | Spec en borrador para el owner (3 rondas de revisión); sin código en ningún repo. Módulo nuevo `Onboarding` en el backend y `/setup` en el frontend. Cierra OD-0106 si se aprueba. §9 suma el onboarding de la tienda de Shopify (cinco pasos después de instalar, con importación de productos) | [spec](superpowers/specs/2026-10-21-onboarding-design.md) |
+| Onboarding: «Primeros pasos» y bienvenida a invitados | **En pausa** (owner, 2026-10-21): spec incompleto, a retomar; ver su sección «Para retomar». Sin código en ningún repo. Módulo nuevo `Onboarding` en el backend y `/setup` en el frontend. Cierra OD-0106 si se aprueba. §9 suma el onboarding de la tienda de Shopify (cinco pasos después de instalar, con importación de productos) | [spec](superpowers/specs/2026-10-21-onboarding-design.md) |
 | Productos desde Shopify | En cola (después de variantes). Diseñado como el paso 4 del onboarding de Shopify (spec de onboarding §9.4 y §9.6, propuesta S-7): importación, emparejamiento por id de variante y webhooks de productos; requiere el scope `read_products` | [spec](superpowers/specs/2026-10-21-onboarding-design.md) |
 | Centro de notificaciones (campanita) | En cola (después del anterior); sin diseño | memoria del proyecto |
 | Alertas de salud de la conexión Shopify | En cola (depende de la campanita); sin diseño | memoria del proyecto |
@@ -70,7 +70,7 @@ conexión del tenant es de los planes 2 y 3.
 | 2026-10-20 variantes de producto | Backend construido; frontend sin empezar | Ver «Trabajo en curso» |
 | 2026-10-21 envío de cotizaciones por canal | Plan 1 de 3 construido | Spec en borrador para el owner |
 | 2026-10-21 Shopify: días de historial | Aprobado en conversación, sin empezar | Tope 30 días, desde `LinkedAt`, en cada pulsación; el cron no cambia. Extiende D-S4 |
-| 2026-10-21 onboarding | Borrador para el owner, sin empezar | Metas por módulo; estado calculado en vivo, sin escribir en el GET; backfill cierra la guía de los tenants existentes |
+| 2026-10-21 onboarding | Incompleto, en pausa; sin empezar | Metas por módulo; estado calculado en vivo, sin escribir en el GET; backfill cierra la guía de los tenants existentes |
 
 Construido sin spec propio: enviar el pedido por WhatsApp (`POST /orders/{id}/send`, `OrderEndpoints.cs:114`; frontend
 `3e7e4c00`), clasificación opcional del cliente, país del tenant, mensajería en tiempo real y filtros de la bandeja.
@@ -89,6 +89,15 @@ historial de `git` los conserva.
   `DefaultForNewTenants`. Falta la verificación manual contra una app y tienda de Shopify reales, y
   `SHOPIFY_APP_CLIENT_ID` / `SHOPIFY_APP_CLIENT_SECRET` en el grupo `Backend-prod`.
 - **Shopify, documento del comprador:** las tiendas con `company` pasan a `shipping_address.company` (ver su sección).
+- **Shopify, tokens que expiran (bloqueante con fecha):** desde el **2027-01-01** toda app pública tiene que usar tokens
+  offline que expiran; a las apps creadas desde el 2026-04-01 ya se los exige. QEP pide el token sin `expiring=1` y no
+  lo refresca (`ShopifyAdminGateway.cs:58`). Detalle en el spec de onboarding §9.10.
+- **Shopify, app «lulo crm»:** QEP reemplaza como backend a la app publicada «lulo crm» en el mismo dominio
+  (`app.lulocrm.com`, `api.lulocrm.com`), cuando tenga la paridad con la v1, guías incluidas (decisión del owner,
+  2026-10-21; spec de onboarding §9.10 y §9.11).
+  - Para el cambio, QEP atiende como alias las rutas de webhooks de la v1.
+  - **Urgente aparte de QEP:** Lulo CRM v1 usa tokens que no expiran. Si no se parchea antes del 2027-01-01, su
+    integración con Shopify se cae ese día.
 - **Pos:** antes de desplegar, comprobar que ningún tenant tenga un rol custom con la clave `cashier`.
 - **`dotnet format`:** roto en `tests/Modules/Messaging/Modules.Messaging.IntegrationTests/ReplyMarksReadApiTests.cs`,
   `WHITESPACE` en las líneas 139 y 208 (comprobado el 2026-10-21).
@@ -106,16 +115,8 @@ historial de `git` los conserva.
 - Onboarding (§6 del [spec](superpowers/specs/2026-10-21-onboarding-design.md)): D-1 sembrar IVA 19 %, 5 % y Exento al
   registrar un tenant de CO; D-2 landing en `/setup` mientras falte la meta principal; D-4 número de WhatsApp de
   soporte; D-5 en qué lugar de la cola entra (la propuesta es el backend en paralelo a variantes).
-- Onboarding de Shopify (§9.8 del mismo spec):
-  - **S-1:** cobro de la app. Desde 2026-04 todo cobro dentro de Shopify pasa por Shopify Billing, incluso si la app no
-    está listada.
-  - **S-2:** quién manda en los productos importados.
-  - **S-3:** emparejar pedidos por el id de la variante de Shopify.
-  - **S-4:** precios sin impuestos incluidos.
-  - **S-5:** pedir `read_products` en las tiendas ya instaladas.
-  - **S-6:** productos en borrador o archivados.
-  - **S-7:** productos desde Shopify dentro de este trabajo.
-  - **S-8:** app embebida o no.
+- Onboarding de Shopify (§9.8 del mismo spec). S-1 a S-7 las decidió el owner el 2026-10-21; queda **S-8**: app
+  embebida o no.
 - Shopify, documento del comprador: migrar el dato de las tiendas con `company` o avisarles; si el select de «Otro…»
   aplica también al tipo de documento; si se importa `billing_address`.
 
@@ -164,6 +165,28 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-21 — El owner pone en pausa el spec de onboarding para priorizar otras tareas. Lo pendiente quedó en la
+  sección «Para retomar» del spec. Las urgencias de los tokens de Shopify (v1 y QEP, 2027-01-01) no esperan a
+  retomarlo.
+- 2026-10-21 — Tres cosas en el spec de onboarding:
+  - **D-6 (decidida por el owner):** al registrar un tenant se crea una empresa que factura por defecto. NIT, ciudad y
+    cuenta pasan a ser opcionales mientras la empresa tenga «datos incompletos».
+  - **Cambio a QEP:** QEP pasa a `app.lulocrm.com` y `api.lulocrm.com` cuando tenga la paridad con Lulo CRM v1,
+    guías incluidas. La categoría de la ficha no cambia.
+  - **Webhooks (§9.11):** QEP atiende las rutas viejas de la v1 como alias y limpia las suscripciones al enlazar. Se
+    encontró que la v1 responde 201 en los webhooks de cumplimiento con cualquier firma, y que no valida el HMAC de
+    los de pedidos.
+- 2026-10-21 — El owner decide que QEP reemplace como backend a la app de Shopify «lulo crm» que ya está publicada,
+  conservando el nombre (spec de onboarding §9.10). Al investigarlo aparece que Shopify exige tokens que expiran a
+  todas las apps públicas desde el 2027-01-01, y QEP no los soporta.
+- 2026-10-21 — El owner decide S-1 a S-5 del onboarding de Shopify (§9.8):
+  - **S-1:** la app es gratis en Shopify y QEP cobra su suscripción como hoy. Falta confirmarlo con Shopify Support.
+  - **S-2:** en los productos importados manda Shopify.
+  - **S-3:** los pedidos se emparejan por el id de la variante de Shopify y después por SKU.
+  - **S-4:** a los precios sin impuestos se les suma el IVA al importar.
+  - **S-5:** `read_products` se pide a las tiendas ya instaladas cuando eligen traer los productos.
+  - **S-6:** los borradores entran inactivos y los archivados no se traen.
+  - **S-7:** «Productos desde Shopify» se construye como parte de este onboarding.
 - 2026-10-21 — Se suma al spec de onboarding la §9, el onboarding de la tienda de Shopify:
   - Shopify no exige un asistente, pero sí OAuth primero, una interfaz que funcione al aceptar los permisos, la
     configuración de la conexión, los webhooks de privacidad y el cobro por Shopify.
