@@ -28,7 +28,7 @@ Archivo vivo: se actualiza al cerrar cada tarea o decisión. Las tareas detallad
 | 10 | Quotations: líneas por variante | Hecha (`34944393`), pruebas sin ejecutar |
 | 11 | Pedidos de Shopify por variante | Hecha (`34944393`), pruebas sin ejecutar |
 | 12 | Punto de venta por variante | Hecha (`34944393`), pruebas sin ejecutar |
-| 13 | Reporte de cambios de precio | Pendiente |
+| 13 | Reporte de cambios de precio | Hecha (`6bfc3ce6`, `3f07515c`), pruebas sin ejecutar |
 | 14 | PDF y Excel de pedidos | Pendiente |
 | 15 | Siembras, documentación y traspaso al frontend | Pendiente |
 
