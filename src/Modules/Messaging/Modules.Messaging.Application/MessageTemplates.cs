@@ -104,8 +104,19 @@ public sealed record BuiltTemplate(TemplateSend Send, string Text, string Detail
 /// <summary>Spec 2026-10-11 §5.2: <c>GET /connections</c>. <c>displayPhoneNumber</c> es <c>null</c> si la conexión no lo guardó.</summary>
 /// <summary>Spec 2026-10-14 §5.2: <c>Channel</c> para que la conversación nueva y las campañas ofrezcan sólo WhatsApp; en Instagram
 /// viaja <c>Username</c> en vez del número.</summary>
+/// <remarks>Spec 2026-10-21 D-H4: <c>BusinessHoursScheduleId</c> y <c>BusinessHoursName</c> son el horario que decide ahora la conexión (su
+/// asignación o, si no tiene, el predeterminado; <c>null</c> = siempre abierta) y <c>OpenNow</c> si atiende en este momento. Viajan
+/// calculados para que el selector de conexión de la bandeja no tenga las reglas de horario. Los tres traen default para que el adaptador
+/// de Integrations, que no los conoce, no cambie.</remarks>
 public sealed record MessagingConnectionDto(
-    Guid Id, string Name, string? DisplayPhoneNumber, string Channel = nameof(ConversationChannel.WhatsApp), string? Username = null);
+    Guid Id,
+    string Name,
+    string? DisplayPhoneNumber,
+    string Channel = nameof(ConversationChannel.WhatsApp),
+    string? Username = null,
+    Guid? BusinessHoursScheduleId = null,
+    string? BusinessHoursName = null,
+    bool OpenNow = true);
 
 public static class TemplateUnsupportedReasons
 {

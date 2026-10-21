@@ -16,6 +16,13 @@ public sealed class ConnectionBusinessHours
 
     public DateTimeOffset AssignedAt { get; private set; }
 
+    /// <summary>Asignar una conexión que ya tenía otro horario: la fila se reutiliza porque la conexión es su clave (D-H10).</summary>
+    public void MoveTo(Guid scheduleId, DateTimeOffset now)
+    {
+        ScheduleId = scheduleId;
+        AssignedAt = now;
+    }
+
     public static ConnectionBusinessHours Create(Guid connectionId, Guid tenantId, Guid scheduleId, DateTimeOffset now) => new()
     {
         ConnectionId = connectionId,

@@ -19,6 +19,10 @@ public interface IMessagingAuditRecorder
     /// transacción que el cambio.</summary>
     void RecordResolutionReason(Guid tenantId, Guid actorId, string action, Guid reasonId, DateTimeOffset occurredAt);
 
+    /// <summary>Spec 2026-10-21 §5: crear, editar, borrar, duplicar, volver predeterminado y reasignar conexiones de un horario de atención, en la
+    /// misma transacción que el cambio. Siempre una persona.</summary>
+    void RecordBusinessHours(Guid tenantId, Guid actorId, string action, Guid scheduleId, DateTimeOffset occurredAt);
+
     /// <summary>Spec 2026-10-14 §4.6: crear, aprovisionar y borrar una plantilla, en la misma transacción que el espejo. Los cambios de
     /// estado que trae el webhook no se auditan (D-T14). <paramref name="changedFields"/> va a <c>changed_fields</c>: la adopción de una
     /// plantilla externa como de cotización manda <c>["kind"]</c>; <c>null</c> es <c>[]</c>, como el resto del módulo.</summary>
@@ -70,6 +74,14 @@ public static class MessagingAuditActions
     public const string ResolutionReasonCreated = "messaging.resolution_reason.created";
     public const string ResolutionReasonRenamed = "messaging.resolution_reason.renamed";
     public const string ResolutionReasonArchived = "messaging.resolution_reason.archived";
+
+    public const string BusinessHoursResourceType = "business_hours_schedule";
+    public const string BusinessHoursCreated = "messaging.business_hours.created";
+    public const string BusinessHoursUpdated = "messaging.business_hours.updated";
+    public const string BusinessHoursDeleted = "messaging.business_hours.deleted";
+    public const string BusinessHoursDuplicated = "messaging.business_hours.duplicated";
+    public const string BusinessHoursDefaultSet = "messaging.business_hours.default_set";
+    public const string BusinessHoursConnectionsAssigned = "messaging.business_hours.connections_assigned";
 
     public const string TemplateResourceType = "message_template";
     public const string TemplateCreated = "messaging.template.created";

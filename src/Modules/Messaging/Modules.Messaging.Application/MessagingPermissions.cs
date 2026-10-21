@@ -29,4 +29,8 @@ public static class MessagingPermissions
     /// (basta <see cref="ConversationManage"/>), y leerlos tampoco (<see cref="ConversationRead"/>). De núcleo y de fábrica en <c>admin</c>
     /// y <c>advisor</c> (decisión del owner).</summary>
     public const string ResolutionReasonManage = "messaging.resolution_reason.manage";
+
+    /// <summary>Spec 2026-10-21 D-H11: crear, editar, duplicar, borrar y asignar los horarios de atención del tenant. Leerlos no lo pide
+    /// (basta <see cref="ConversationRead"/>). De núcleo y de fábrica sólo en <c>admin</c>, como <see cref="CampaignManage"/>.</summary>
+    public const string BusinessHoursManage = "messaging.business_hours.manage";
 }

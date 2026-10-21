@@ -173,12 +173,13 @@ public sealed class CompositionRootTests
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 y <c>messaging.resolution_reason.manage</c> del spec 2026-10-15.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheFiftySevenConstants()
+    public void PermissionDiscoveryFindsTheFiftyEightConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
-        // + el de plantillas (spec 2026-10-14 D-T5) + el de motivos de resolución (spec 2026-10-15 D-R8).
-        Assert.Equal(57, PermissionConstants().Length);
+        // + el de plantillas (spec 2026-10-14 D-T5) + el de motivos de resolución (spec 2026-10-15 D-R8)
+        // + el de horarios de atención (spec 2026-10-21 D-H11).
+        Assert.Equal(58, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-11 §6.4 y decisión 16: de núcleo (el módulo lo revisa cada handler) y de fábrica sólo en <c>admin</c>:
@@ -227,6 +228,24 @@ public sealed class CompositionRootTests
         Assert.Contains(MessagingPermissions.ResolutionReasonManage, catalog.PermissionsFor("advisor"));
         Assert.DoesNotContain(MessagingPermissions.ResolutionReasonManage, catalog.PermissionsFor("billing"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.ResolutionReasonManage);
+        Assert.Equal("Messaging", definition.Category);
+        Assert.Empty(definition.RequiredModules!);
+    }
+
+    /// <summary>Spec 2026-10-21 D-H11: de núcleo y de fábrica sólo en <c>admin</c>: el horario decide cuándo atiende el asistente en nombre
+    /// de la empresa, y lo administra quien administra, no el asesor.</summary>
+    [Fact]
+    public void AdminCarriesBusinessHoursManageAndAdvisorDoesNot()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+
+        Assert.Equal("messaging.business_hours.manage", MessagingPermissions.BusinessHoursManage);
+        Assert.Contains(MessagingPermissions.BusinessHoursManage, catalog.PermissionsFor("admin"));
+        Assert.DoesNotContain(MessagingPermissions.BusinessHoursManage, catalog.PermissionsFor("advisor"));
+        Assert.DoesNotContain(MessagingPermissions.BusinessHoursManage, catalog.PermissionsFor("billing"));
+        Assert.DoesNotContain(MessagingPermissions.BusinessHoursManage, catalog.PermissionsFor("cashier"));
+        var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.BusinessHoursManage);
         Assert.Equal("Messaging", definition.Category);
         Assert.Empty(definition.RequiredModules!);
     }

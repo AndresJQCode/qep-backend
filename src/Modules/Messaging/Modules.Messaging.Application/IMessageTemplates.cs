@@ -18,14 +18,22 @@ public interface IMessageTemplates
 /// <summary>Spec 2026-10-11 §5.2: <c>GET /connections</c>, con el permiso de lectura de la bandeja.</summary>
 public sealed record ListMessagingConnectionsQuery(Guid TenantId) : IQuery<IReadOnlyList<MessagingConnectionDto>>;
 
-public sealed class ListMessagingConnectionsHandler(IMessagingConnectionDirectory connections, ITenantModules tenantModules, IExecutionContext executionContext)
+public sealed class ListMessagingConnectionsHandler(
+    IMessagingConnectionDirectory connections, IBusinessHours businessHours, ITenantModules tenantModules, IExecutionContext executionContext)
     : IQueryHandler<ListMessagingConnectionsQuery, IReadOnlyList<MessagingConnectionDto>>
 {
     public async Task<IReadOnlyList<MessagingConnectionDto>> HandleAsync(ListMessagingConnectionsQuery query, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
         await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, MessagingPermissions.ConversationRead, cancellationToken);
-        return await connections.ListActiveAsync(query.TenantId, cancellationToken);
+        var active = await connections.ListActiveAsync(query.TenantId, cancellationToken);
+        // Spec 2026-10-21: una sola carga de horarios para todas las conexiones, no una consulta por fila.
+        var statuses = await businessHours.GetStatusesAsync(query.TenantId, active.Select(connection => connection.Id).ToArray(), cancellationToken);
+        return active
+            .Select(connection => statuses.TryGetValue(connection.Id, out var status)
+                ? connection with { BusinessHoursScheduleId = status.ScheduleId, BusinessHoursName = status.ScheduleName, OpenNow = status.IsOpen }
+                : connection)
+            .ToArray();
     }
 }
 

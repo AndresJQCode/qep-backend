@@ -70,6 +70,20 @@ internal sealed class MessagingAuditRecorder(MessagingDbContext dbContext) : IMe
             Source,
             occurredAt));
 
+    // Spec 2026-10-21 §5: siempre una persona (el admin en la pantalla de horarios). changed_fields vacío, como el resto del módulo.
+    public void RecordBusinessHours(Guid tenantId, Guid actorId, string action, Guid scheduleId, DateTimeOffset occurredAt) =>
+        dbContext.AuditEntries.Add(AuditEntry.Create(
+            tenantId,
+            actorId,
+            AuditActorType.Human,
+            action,
+            MessagingAuditActions.BusinessHoursResourceType,
+            scheduleId.ToString(),
+            Outcome,
+            NoChangedFields,
+            Source,
+            occurredAt));
+
     // Spec 2026-10-14 §4.6: siempre una persona (el admin en la pantalla de plantillas). changed_fields vacío salvo que quien llama
     // diga qué cambió (la adopción manda ["kind"]).
     public void RecordTemplate(

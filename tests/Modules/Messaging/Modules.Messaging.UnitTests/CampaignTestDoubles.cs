@@ -116,6 +116,10 @@ internal sealed class RecordingAudit : IMessagingAuditRecorder
     {
     }
 
+    public void RecordBusinessHours(Guid tenantId, Guid actorId, string action, Guid scheduleId, DateTimeOffset occurredAt)
+    {
+    }
+
     public void RecordTemplate(
         Guid tenantId, Guid actorId, string action, Guid templateId, DateTimeOffset occurredAt, IReadOnlyCollection<string>? changedFields = null) =>
         Templates.Add(new TemplateAuditCall(tenantId, actorId, action, templateId, changedFields));

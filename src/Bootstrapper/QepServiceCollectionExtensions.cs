@@ -681,6 +681,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<ListResolutionReasonsQuery, IReadOnlyList<ResolutionReasonDto>>, ListResolutionReasonsHandler>();
         services.AddScoped<ICommandHandler<RenameResolutionReasonCommand, ResolutionReasonDto>, RenameResolutionReasonHandler>();
         services.AddScoped<ICommandHandler<ArchiveResolutionReasonCommand, bool>, ArchiveResolutionReasonHandler>();
+        // Spec 2026-10-21: el catálogo de horarios de atención. Sin registrar el handler, la ruta responde 500.
+        services.AddScoped<IQueryHandler<ListBusinessHoursQuery, BusinessHoursListDto>, ListBusinessHoursHandler>();
+        services.AddScoped<ICommandHandler<CreateBusinessHoursCommand, BusinessHoursDto>, CreateBusinessHoursHandler>();
+        services.AddScoped<ICommandHandler<UpdateBusinessHoursCommand, BusinessHoursDto>, UpdateBusinessHoursHandler>();
+        services.AddScoped<ICommandHandler<DeleteBusinessHoursCommand, bool>, DeleteBusinessHoursHandler>();
+        services.AddScoped<ICommandHandler<DuplicateBusinessHoursCommand, BusinessHoursDto>, DuplicateBusinessHoursHandler>();
+        services.AddScoped<ICommandHandler<SetDefaultBusinessHoursCommand, BusinessHoursDto>, SetDefaultBusinessHoursHandler>();
         // Messaging (spec 2026-10-14 §4.3): la pantalla de plantillas de una conexión y su refresco contra Meta.
         services.AddScoped<IQueryHandler<GetTemplateManagementQuery, TemplateManagementDto>, GetTemplateManagementHandler>();
         services.AddScoped<ICommandHandler<SyncTemplatesCommand, TemplateManagementDto>, SyncTemplatesHandler>();
@@ -1103,6 +1110,8 @@ public static class QepServiceCollectionExtensions
                 MessagingPermissions.QuickReplyManage,
                 // Spec 2026-10-15 D-R8: el catálogo de motivos de resolución. El rol vive en código: sin migración.
                 MessagingPermissions.ResolutionReasonManage,
+                // Spec 2026-10-21 D-H11: el horario decide cuándo atiende el asistente en nombre de la empresa; de fábrica sólo en admin.
+                MessagingPermissions.BusinessHoursManage,
                 // Spec 2026-10-14 D-T5: las plantillas de WhatsApp se gestionan desde QEP; de fábrica sólo en admin.
                 MessagingPermissions.TemplateManage,
                 // Spec 2026-10-13 D32: el embudo de ventas completo. De núcleo; la capacidad pipeline la revisa cada handler.
@@ -1605,6 +1614,14 @@ public static class QepServiceCollectionExtensions
             "Messaging",
             "low",
             RequiredModules: []));
+        // Spec 2026-10-21 D-H11: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.BusinessHoursManage,
+            "Administrar horarios de atención",
+            "Permite crear, editar, duplicar y asignar los horarios de atención de los números de la bandeja.",
+            "Messaging",
+            "low",
+            RequiredModules: []));
         // Spec 2026-10-14 §4.6: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
         services.AddSingleton(new PermissionDefinition(
             MessagingPermissions.TemplateManage,
@@ -1939,6 +1956,10 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 MessagingPermissions.ResolutionReasonManage,
                 policy => AddPermissionRequirement(policy, MessagingPermissions.ResolutionReasonManage))
+            // Spec 2026-10-21: sin esta política, RequireAuthorization(BusinessHoursManage) no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
+            .AddPolicy(
+                MessagingPermissions.BusinessHoursManage,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.BusinessHoursManage))
             // Spec 2026-10-14: sin esta política, RequireAuthorization(TemplateManage) no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
             .AddPolicy(
                 MessagingPermissions.TemplateManage,

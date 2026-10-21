@@ -226,6 +226,8 @@ public static class MessagingEndpoints
         // Spec 2026-10-12 §3.6: respuestas rápidas.
         group.MapQuickReplyEndpoints();
         group.MapResolutionReasonEndpoints();
+        // Spec 2026-10-21 §5: horarios de atención.
+        group.MapBusinessHoursEndpoints();
         group.MapTemplateManagementEndpoints();
 
         return endpoints;

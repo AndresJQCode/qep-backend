@@ -210,7 +210,7 @@ internal sealed class MessagingTestBed
         new(Templates, Connections, TenantModules, new FakeExecutionContext(TenantId, SubjectId, permissions));
 
     public ListMessagingConnectionsHandler ListConnectionsHandler(params string[] permissions) =>
-        new(Connections, TenantModules, new FakeExecutionContext(TenantId, SubjectId, permissions));
+        new(Connections, new AlwaysOpenBusinessHours(), TenantModules, new FakeExecutionContext(TenantId, SubjectId, permissions));
 
     public SendAudioMessageHandler SendAudioHandler(Guid? tenantId = null)
     {
@@ -317,6 +317,18 @@ internal sealed class InMemoryConversationQueries : IConversationQueries
 
     public Task<IReadOnlyList<ConversationRow>> FindManyAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<ConversationRow>>(Rows.Where(row => row.TenantId == tenantId && ids.Contains(row.Id)).ToList());
+}
+
+/// <summary>D-H4: sin horarios configurados, toda conexión atiende siempre.</summary>
+internal sealed class AlwaysOpenBusinessHours : IBusinessHours
+{
+    private static readonly BusinessHoursStatus Open = new(true, null, null, null);
+
+    public Task<BusinessHoursStatus> GetStatusAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) => Task.FromResult(Open);
+
+    public Task<IReadOnlyDictionary<Guid, BusinessHoursStatus>> GetStatusesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> connectionIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, BusinessHoursStatus>>(connectionIds.ToDictionary(id => id, _ => Open));
 }
 
 internal sealed record RejectedReport(Guid TenantId, Guid ConnectionId, string FailureCode);

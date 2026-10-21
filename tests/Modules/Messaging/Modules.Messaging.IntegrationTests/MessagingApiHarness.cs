@@ -84,6 +84,11 @@ internal static class MessagingApiHarness
     /// <summary>Spec 2026-10-14 D-T5: sólo el admin de fábrica gestiona plantillas.</summary>
     public static readonly string[] TemplatePermissions = [MessagingPermissions.TemplateManage];
 
+    /// <summary>Spec 2026-10-21 D-H11: leer y gestionar los horarios de atención.</summary>
+    public static readonly string[] BusinessHoursPermissions = [MessagingPermissions.ConversationRead, MessagingPermissions.BusinessHoursManage];
+
+    public static string BusinessHoursUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/messaging/business-hours";
+
     public static string ConversationsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/messaging/conversations";
 
     public static string ConversationUrl(Guid tenantId, Guid conversationId) => $"{ConversationsUrl(tenantId)}/{conversationId}";
