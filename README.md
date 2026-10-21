@@ -267,7 +267,7 @@ a tocar producción.
 ```
 
 Ese comando deja la clave en el historial de PowerShell (`ConsoleHost_history.txt`). Para
-evitarlo, pedila sin eco:
+evitarlo, pídela sin eco:
 
 ```powershell
 $k = Read-Host "clave qep-dev" -AsSecureString
@@ -1280,7 +1280,9 @@ Los errores llegan por dos caminos, y el formulario lee los dos con el mismo map
   una repetida, más de 250 fotos o una repetida, ninguna variante o más de 2.048, el mismo id dos veces en
   `variants`, un `Code` o un código de barras repetido **dentro del cuerpo**, una variante sin un valor por
   opción, una foto de variante que no está en `gallery`, `Code` vacío o de más de 60, código de barras de
-  más de 64 y los de precio, escala y empaque. En la opción: nombre o valor vacío, de más de 60 o repetido.
+  más de 64 y los de precio, escala y empaque. En la opción: nombre o valor vacío, de más de 60 o repetido, y
+  en el `PUT` un `isActive` ausente en la opción o en un valor (`errors["IsActive"]`, `errors["Values[i].IsActive"]`):
+  omitirlo no desactiva.
 - **Contra la base**: con su propio `code` y, cuando señala una fila, también `errors` con el campo:
 
 | Código | Status | Cuándo |
@@ -1293,7 +1295,7 @@ Los errores llegan por dos caminos, y el formulario lee los dos con el mismo map
 | `catalog.variant.combination_duplicate` | 422 | Dos variantes activas con la misma combinación |
 | `catalog.variant.active_required` | 422 | Ninguna variante activa |
 | `catalog.product.code_taken` | 422 | El `Code` ya es de una variante de otro producto (`errors["Variants[i].Code"]`) |
-| `catalog.variant.barcode_taken` | 422 | El código de barras ya es de una variante de otro producto (`errors["Variants[i].Barcode"]`) |
+| `catalog.variant.barcode_taken` | 422 | El código de barras ya lo usa otra variante del tenant: el índice es único en todo el tenant (`errors["Variants[i].Barcode"]`) |
 | `catalog.variant.missing_in_request` | 422 | El `PUT` omite una variante guardada que no está en `deletedVariantIds` |
 | `catalog.variant.duplicated_in_request` | 422 | Un id en `variants` y en `deletedVariantIds` a la vez, o repetido en `deletedVariantIds` |
 | `catalog.variant.not_found` | 422 / 404 | Un id de variante que no es del producto; `404` en la copia de escalas |
@@ -1302,6 +1304,18 @@ Los errores llegan por dos caminos, y el formulario lee los dos con el mismo map
 Los códigos de antes se conservan; `catalog.product.code_taken` ahora habla del `Code` de la variante.
 El contrato completo para el frontend, con los cuerpos y las respuestas, está en
 `docs/superpowers/plans/2026-10-20-variantes-handoff.md`.
+
+**Despliegue: con ventana de corte, backup previo y junto con el frontend.** `AddProductVariants` (Catalog) es
+destructiva: borra `catalog.products.code`, `image_file_id` y `packaging_units` y renombra `product_id` → `variant_id`
+en `catalog.product_prices` y `catalog.product_price_scales`. `AddVariantToLines` (Quotations) y `AddVariantToSaleLines`
+(Pos) dejan `variant_id` `NOT NULL` en las tres tablas de líneas. Las tres corren al arrancar el pod nuevo, y con el
+`RollingUpdate` de `k8s/prod-deployment.yaml` (`maxSurge: 1`, `maxUnavailable: 0`) el pod viejo sigue atendiendo
+contra el esquema nuevo y responde 500. Para esta versión: backup de la base (como mínimo `catalog`, `quotations` y
+`pos`), backend a cero réplicas o estrategia `Recreate`, y backend y frontend en la misma ventana. **Rollback**, con el
+código de esta versión y el backend detenido, en orden **Pos → Quotations → Catalog** (`AddPosCurrency`,
+`AddOrderExternalKey`, `AddProductPrices`); el `Down` de Catalog pierde las variantes que no son la que vuelve, con sus
+precios y escalas, los códigos de barras, la galería salvo la principal y la biblioteca de opciones (el historial de
+precios se queda en el producto, sin la variante). Los comandos y el detalle están en el § 13 del handoff.
 
 ### Código y nombre del producto en cada línea
 

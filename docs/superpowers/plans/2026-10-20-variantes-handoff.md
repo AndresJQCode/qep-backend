@@ -1,6 +1,6 @@
 # Variantes de producto — traspaso al frontend
 
-Fecha: 2026-10-21. Rama del backend: `feature/variantes-producto` (sin mergear a `develop`). Spec:
+Fecha: 2026-10-21. Rama del backend: `feature/variantes-producto`. Spec:
 [`docs/superpowers/specs/2026-10-20-variantes-de-producto-design.md`](../specs/2026-10-20-variantes-de-producto-design.md).
 Plan del backend: [`2026-10-20-variantes-de-producto-backend.md`](2026-10-20-variantes-de-producto-backend.md).
 
@@ -15,6 +15,11 @@ coincide con los DTOs (`CatalogDtos.cs`, `OptionLibraryContracts.cs`, `Quotation
 > `priceScales` y `packagingUnits` por producto. El frontend de `develop` (`9904a7dc`) todavía lee esos
 > campos, así que un backend nuevo con el frontend de hoy rompe el catálogo, el selector de cotizaciones y
 > pedidos y el POS.
+
+> [!CAUTION]
+> **El despliegue tiene ventana de corte y backup previo.** Las migraciones de esta rama son destructivas y el
+> rolling update de `k8s/prod-deployment.yaml` deja el pod viejo roto contra el esquema nuevo. El orden, el
+> backup y el rollback están en el §13.
 
 > [!NOTE]
 > Las pruebas del backend de este proyecto se escribieron pero **no se ejecutaron** (instrucción del owner,
@@ -76,8 +81,8 @@ type OptionResponse = {
 type CreateOptionRequest = { name: string; values?: string[] | null };          // nace activa
 type UpdateOptionRequest = {
   name: string;
-  isActive: boolean;                                         // obligatorio en la práctica: omitirlo la desactiva
-  values: { id?: string | null; name: string; isActive: boolean }[];             // lista completa, en orden
+  isActive: boolean;                                         // obligatorio: omitirlo responde 422, no desactiva
+  values: { id?: string | null; name: string; isActive: boolean }[];             // lista completa, en orden; isActive obligatorio en cada valor
 };
 ```
 
@@ -99,7 +104,7 @@ type UpdateOptionRequest = {
 | `catalog.option.not_found` | 404 | La opción no existe en el tenant |
 | `catalog.option.in_use` | 409 | `DELETE` de una opción usada, o `PUT` que quita un valor usado |
 | `catalog.option.value_not_found` | 422 | Un `id` de valor que no es de la opción, o repetido en el cuerpo |
-| `validation.failed` | 422 | Nombre o valor vacío, de más de 60 o repetido (sin distinguir mayúsculas ni espacios de borde): `errors["Name"]`, `errors["Values[i]"]` (POST) o `errors["Values[i].Name"]` (PUT) |
+| `validation.failed` | 422 | Nombre o valor vacío, de más de 60 o repetido (sin distinguir mayúsculas ni espacios de borde): `errors["Name"]`, `errors["Values[i]"]` (POST) o `errors["Values[i].Name"]` (PUT). En el PUT, `isActive` ausente o `null`: `errors["IsActive"]` (la opción) o `errors["Values[i].IsActive"]` (un valor), sin cambiar nada |
 
 ## 4. Producto: detalle, alta y edición
 
@@ -115,7 +120,7 @@ type UpdateOptionRequest = {
 type ProductResponse = {
   id: string; name: string; isActive: boolean; description: string | null;
   imageFileId: string | null;            // la principal: el archivo de gallery[0]. Derivado
-  imageUrl: string | null;               // null si no está publicada o no es del tenant
+  imageUrl: string | null;               // null si no está publicada, no está disponible (cuarentena) o no es del tenant
   taxRateId: string | null;
   options: { id: string; name: string; values: { id: string; name: string }[] }[];
   // options[].values son sólo los valores que usa alguna variante de ESTE producto, en el orden de la
@@ -157,7 +162,7 @@ type UpdateProductRequest = CreateProductRequest & {
 };
 type ProductVariantRequest = {
   id?: string | null;                    // con id: esa variante guardada; sin id: una nueva
-  code?: string | null;
+  code: string;                          // obligatorio en TODA variante, guardada o nueva (no hay «null = el suyo»)
   barcode?: string | null;               // vacío = sin código de barras
   optionValueIds?: string[] | null;
   pricing?: { prices?: Record<string, number> | null; scales?: PriceScaleRequest[] | null; packagingUnits?: number[] | null } | null;
@@ -182,9 +187,11 @@ cada fila al tocar las opciones:
 - `pricing: null` = deja precio, escalas y empaques como están.
 - `isActive: null` = deja su estado.
 - `barcode` y `galleryFileId` en `null` **limpian** (son reemplazo).
+- `code` no tiene «null = el suyo»: es obligatorio en toda variante, guardada o nueva (`ProductWriteRules`).
+  Mándalo de vuelta tal cual lo leíste; vacío o ausente da `validation.failed` en `Variants[i].Code`.
 
 En una variante **nueva** (sin `id`): `pricing: null` copia precio, escalas y empaques de la guardada que más
-valores comparte con ella; `isActive: null` es activa; `code` es obligatorio.
+valores comparte con ella; `isActive: null` es activa; `code` es obligatorio, como en las guardadas.
 
 **Agregar opciones a un producto que ya se vende** (el caso principal: una «Camiseta» migrada a la que le
 agregas Talla): manda la variante por defecto con su `id` (y, si quieres, sin valores ni precio) y las tallas
@@ -230,7 +237,7 @@ Con su propio `code`:
 | `catalog.variant.combination_duplicate` | 422 | Dos variantes **activas** con la misma combinación | `Variants[i].OptionValueIds` |
 | `catalog.variant.active_required` | 422 | Ninguna variante activa | `Variants` |
 | `catalog.product.code_taken` | 422 | El `code` ya es de una variante de otro producto (activa o no: desactivar no libera el código) | `Variants[i].Code` |
-| `catalog.variant.barcode_taken` | 422 | El código de barras ya es de otra variante del tenant | `Variants[i].Barcode` |
+| `catalog.variant.barcode_taken` | 422 | El código de barras ya lo usa otra variante del tenant: el índice es único en todo el tenant | `Variants[i].Barcode` |
 | `catalog.variant.missing_in_request` | 422 | Falta una variante guardada que no está en `deletedVariantIds` | — |
 | `catalog.variant.duplicated_in_request` | 422 | Un id en `variants` y en `deletedVariantIds`, o repetido en `deletedVariantIds` | — |
 | `catalog.variant.not_found` | 422 | Un id (en `variants` o `deletedVariantIds`) que no es de este producto | — |
@@ -325,11 +332,21 @@ Todas las peticiones que mandaban `productId` en una línea ahora mandan **`vari
   y conserva `productId` (el producto dueño de la variante). `productCode` es el `code` de la variante y
   `productName` su nombre visible. El guardado de la lista completa se direcciona por `variantId`: mándalo de
   vuelta tal cual.
+- **Ojo con `productName`, que no significa lo mismo en todas partes.** En las líneas de cotización y pedido (y
+  en `name` de las líneas del POS) es el **nombre visible de la variante** («Camiseta – M»). En el reporte de
+  cambios de precio (§9) es el **nombre del producto** («Camiseta»), y el visible viaja aparte en `variantName`.
 - **Una línea por variante**: la regla «un producto no se repite» ahora es «una variante no se repite». Los
   códigos se conservan: `quotation.item.duplicate_product` y `order.item.duplicate_product` (422); en las
-  listas completas, una variante repetida llega antes como `validation.failed` con `errors.Items`. El mensaje
-  dice «variante».
-- Una variante vacía da `validation.failed` en **`Items[i].VariantId`** (antes `Items[i].ProductId`).
+  listas completas, una variante repetida llega antes como `validation.failed` con la clave **`errors.Items`**
+  (la lista, no una posición). El mensaje dice «variante».
+- Una variante vacía da `validation.failed`, con la clave según la ruta (antes `ProductId` en el mismo lugar):
+
+  | Ruta | Clave en `errors` |
+  | --- | --- |
+  | `POST /quotations/{id}/items` | `VariantId` |
+  | `POST /quotations/{id}/items/batch` y `POST /orders/{id}/items` | `ToAdd[i].VariantId` |
+  | Listas completas: `POST`/`PUT` de cotización y pedido y sus `preview` | `Items[i].VariantId` |
+  | POS: `POST /pos/sales` y `POST /pos/sales/preview` | `Lines[i].VariantId` (§8) |
 - `quotation.item.product_not_found`, `product_inactive` y `product_price_unavailable` se conservan: ahora
   hablan de la variante (inexistente, inactiva o de un producto inactivo, o sin precio en la moneda).
 - **Escalas por variante**: una escala sin `allowGrouping` cuenta sólo la cantidad de su variante (6 M y 6 L no
@@ -437,7 +454,8 @@ Otras decisiones del backend que conviene que el owner conozca:
 - El nombre visible **se recorta** a 200 en la foto en vez de ensanchar `product_name`.
 - Al **quitar una opción**, las combinaciones repetidas se desactivan, no se borran; para borrarlas, el
   formulario las manda en `deletedVariantIds`.
-- El `PUT` de la opción **no lleva versión** y su `isActive` no es opcional: un cuerpo sin él desactiva.
+- El `PUT` de la opción **no lleva versión**. Su `isActive` (y el de cada valor) es obligatorio: un cuerpo sin
+  él responde `422 validation.failed` con el campo marcado y no cambia nada.
 
 ## 12. Lo que toca cada pantalla (para armar el plan)
 
@@ -452,9 +470,56 @@ Otras decisiones del backend que conviene que el owner conozca:
 - **Selector de cotizaciones y pedidos** (`useQuoteProducts`, `product-picker-dialog`, `add-order-items-dialog`):
   `includeVariants=true`, una opción por variante, `variantId` al agregar.
 - **Editor de cotización y pedido**: mandar `variantId` en las listas y en las altas; las líneas traen
-  `variantId`; claves de error `Items[i].VariantId`.
+  `variantId`; claves de error `VariantId`, `ToAdd[i].VariantId` o `Items[i].VariantId` según la ruta (§7).
 - **POS**: cuadrícula por producto con selector si `hasOptions`, escáner que devuelve una variante, carrito
   agrupado por `variantId`, preview y venta con `variantId`.
 - **Copia de escalas**: elegir variante origen y variantes destino.
 - **Reporte de cambios de precio**: filtro por variante, `variantName` en la tabla, desglose por variante en el
   resumen.
+
+## 13. Despliegue
+
+Este backend **no se despliega con el rolling update de siempre**. Tres migraciones cambian el esquema de forma que el
+código anterior deja de funcionar contra él, y las tres corren al arrancar el pod nuevo (`Program.cs`, un
+`Initialize<Modulo>DatabaseAsync` por módulo):
+
+| Migración | Módulo | Qué rompe para el código anterior |
+| --- | --- | --- |
+| `AddProductVariants` | Catalog | **Destructiva.** Borra `catalog.products.code`, `image_file_id` y `packaging_units` (los copia antes a la variante por defecto y a la galería) y renombra `product_id` → `variant_id` en `catalog.product_prices` y `catalog.product_price_scales`. El código anterior lee esas columnas: el catálogo entero responde 500 (`42703`) |
+| `AddVariantToLines` | Quotations | `variant_id` `NOT NULL` sin default en `quotation_items` y `order_items`. El código anterior no lo escribe: agregar una línea o convertir responde 500 (`23502`) |
+| `AddVariantToSaleLines` | Pos | Lo mismo en `pos.sale_lines`: el código anterior no puede registrar una venta |
+
+`k8s/prod-deployment.yaml` usa `RollingUpdate` con `maxSurge: 1` y `maxUnavailable: 0`: el pod nuevo arranca, migra, y
+mientras se pone listo **el pod viejo sigue atendiendo contra el esquema nuevo**, roto. Y como el frontend de `develop`
+tampoco sabe hablar con este backend (aviso del principio), el corte es de los dos lados. El yaml no se cambia: la
+estrategia de esta versión se decide en el despliegue.
+
+**Orden.**
+
+1. **Backup de la base** justo antes, con lo que use el proveedor o `pg_dump -Fc`. Como mínimo los esquemas `catalog`,
+   `quotations` y `pos`; el `Down` de Catalog pierde datos (abajo), así que el backup es el único rollback sin pérdida.
+2. **Ventana de corte anunciada.** Sin pod viejo vivo durante la migración: escala el backend a cero réplicas antes de
+   desplegar (o cambia la estrategia a `Recreate` sólo para esta versión) y no lo vuelvas a abrir hasta que el pod nuevo
+   esté listo.
+3. **Backend y frontend juntos**, en la misma ventana. El frontend nuevo contra el backend viejo tampoco funciona.
+4. Verificar: el catálogo lista, el detalle de un producto migrado trae una variante con el id del producto, una
+   cotización y una venta del POS se crean.
+
+**Rollback.** Se corre con el código de esta rama (es el que tiene los `Down`), con el backend detenido, y **en este
+orden: Pos → Quotations → Catalog**. Después se despliega la imagen anterior de backend y frontend.
+
+```powershell
+$env:ConnectionStrings__QepDatabase = Read-Host "Cadena de conexión de producción"
+dotnet ef database update AddPosCurrency --project src/Modules/Pos/Modules.Pos.Infrastructure --context PosDbContext
+dotnet ef database update AddOrderExternalKey --project src/Modules/Quotations/Modules.Quotations.Infrastructure --context QuotationsDbContext
+dotnet ef database update AddProductPrices --project src/Modules/Catalog/Modules.Catalog.Infrastructure --context CatalogDbContext
+Remove-Item Env:ConnectionStrings__QepDatabase
+```
+
+- **Pos y Quotations** sólo quitan `variant_id` de las líneas. Una línea que vendió una variante que no era la por
+  defecto conserva su `product_id`, su foto y sus importes: se sigue leyendo.
+- **Catalog pierde datos.** Vuelve una variante por producto —la que lleva el id del producto o, si ya no existe, la
+  primera— con su código, precios, escalas y empaques. **Las demás variantes se pierden con sus precios y escalas**, y
+  también los códigos de barras, la galería salvo la foto principal y la biblioteca de opciones. Su historial de precios
+  no se borra: se queda colgado del producto, sin la variante, mezclado con el de la que vuelve. Si ya hay productos con
+  variantes, el rollback que no pierde nada es restaurar el backup del paso 1.

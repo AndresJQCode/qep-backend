@@ -404,16 +404,21 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `BatchQuotationItemAdditionRequest`, `QuotationEditItemRequest`, `OrderItemAdditionRequest`, `OrderEditItemRequest`,
   `PosSaleLineRequest`, `PosPreviewLineRequest`) llevan `variantId`, y la copia de escalas `sourceVariantId` /
   `targetVariantIds`. Un objeto anónimo con `productId` se deserializa con `VariantId = Guid.Empty` y responde `422
-  validation.failed` por el `VariantId` vacío (`Items[i].VariantId`; `Lines[i].VariantId` en el POS): el síntoma es una prueba que esperaba `Created`, no un error de nombre de
-  campo. Los records tipados se arreglan solos; el barrido es por `new { productId` y por JSON literal.
+  validation.failed` por el `VariantId` vacío, con la clave según la ruta: `VariantId` en `POST /quotations/{id}/items`,
+  `ToAdd[i].VariantId` en el batch y en `POST /orders/{id}/items`, `Items[i].VariantId` en las listas completas
+  (alta, guardado y preview de cotización y pedido) y `Lines[i].VariantId` en el POS. Una variante repetida en una lista
+  completa sale en `errors.Items`, sin posición. El síntoma es una prueba que esperaba `Created`, no un error de nombre
+  de campo. Los records tipados se arreglan solos; el barrido es por `new { productId` y por JSON literal.
 - **`CatalogVariantUsageChecker` lee tablas de Quotations y Pos por nombre.** Es SQL crudo en Bootstrapper sobre
   `quotations.quotation_items`/`order_items` (unidas a `quotations`/`orders` por el tenant) y `pos.sale_lines` (unida a
   `pos.sales`), y corre en la conexión del `PUT` de producto para quedar dentro de su transacción. Renombrar
-  `variant_id` o una de esas tablas compila y pasa todas las pruebas de Catalog —usan un doble del puerto—, y el `GET` y el
-  `PUT` de producto responden 500 (`42703`). Se cambia junto con el checker y sus pruebas: `CatalogVariantUsageCheckerTests`
-  (que arma réplicas mínimas de las tablas) y las dos `TheCatalogUsageQueryFindsTheBackfilledVariant`
-  (`VariantLinesMigrationTests`, `SaleLinesVariantMigrationTests`), que **copian** el SQL en vez de llamarlo: cambiar el
-  checker sin copiarlo ahí las deja pasando contra la consulta vieja.
+  `variant_id` o una de esas tablas compila, y el `GET` y el `PUT` de producto responden 500 (`42703`). Sólo
+  `ProductVariantDeletionApiTests` usa un doble del puerto; el resto de las pruebas de Catalog que leen o guardan un
+  producto corre el checker real contra el esquema migrado y se cae con ese 500, que no se parece a la causa. Se cambia
+  junto con el checker y sus pruebas: `CatalogVariantUsageCheckerTests` (que arma réplicas mínimas de las tablas, a
+  mano: no siguen solas a la migración) y las dos `TheCatalogUsageQueryFindsTheBackfilledVariant`
+  (`VariantLinesMigrationTests`, `SaleLinesVariantMigrationTests`), que resuelven el checker real del contenedor y lo
+  corren contra el esquema de las migraciones.
 - **Borrar una variante es explícito: `deletedVariantIds`. Omitirla del `PUT` responde `catalog.variant.missing_in_request`.**
   No lo «simplifiques» a «la que no viene se borra» (era lo que pedía el plan, y el spec §6 lo corrigió): la tabla de
   variantes llega a 2.048 filas y el formulario la pagina, así que una fila ausente puede ser una página que no se
