@@ -19,8 +19,15 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
     public async Task<IReadOnlyList<AutomationInboxItem>> ClaimAsync(DateTimeOffset now, int batch, CancellationToken cancellationToken)
     {
         var leases = Leases;
+        // Una fila que ya gastó sus intentos y cuyo lease venció es un worker que se cayó o se colgó sin llamar a RetryLaterAsync:
+        // se cierra acá, o se reclamaría para siempre y frenaría su conversación. Con el lease vigente todavía puede estar en curso.
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE messaging.automation_inbox SET processed_at = {now}, outcome = 'failed'
+             WHERE processed_at IS NULL AND attempts >= {MaxAttempts} AND next_attempt_at <= {now}
+            """, cancellationToken);
         // El NOT EXISTS mira también las filas en lease: una pendiente más vieja de la misma conversación frena a las demás hasta que se
-        // cierre. Se desempata por message_id (UUID v7) porque los mensajes de un mismo change comparten created_at.
+        // cierre. created_at es distinto y creciente por mensaje (el procesador del webhook suma un microsegundo por posición); message_id sólo desempata filas de entregas distintas con el mismo instante.
         return await dbContext.Database.SqlQuery<AutomationInboxItem>(
             $"""
             UPDATE messaging.automation_inbox AS inbox

@@ -274,4 +274,69 @@ public sealed class AutomationInboxTests
         Assert.Equal(new InboundMediaForAutomation("image/jpeg", null, false), before.Media);
         Assert.Equal(new InboundMediaForAutomation("image/jpeg", null, true), after!.Media);
     }
+
+    [Fact]
+    public async Task TwoMessagesOfOneChangeAreClaimedInTheOrderMetaSentThem()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await PostAsync(f, MetaPayloads.InboundTwoTexts("111", "573001234567", ("w1", "primero"), ("w2", "segundo"), DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 600));
+        var later = DateTimeOffset.UtcNow.AddMinutes(5);
+
+        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
+        Assert.Equal("primero", (await WithInboxAsync(f, inbox => inbox.ReadInboundAsync(f.Tenant.TenantId, first.MessageId, Ct)))!.Text);
+        await WithInboxAsync(f, async inbox => { await inbox.CompleteAsync(first.MessageId, "handled", Ct); return 0; });
+
+        var second = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
+        Assert.Equal("segundo", (await WithInboxAsync(f, inbox => inbox.ReadInboundAsync(f.Tenant.TenantId, second.MessageId, Ct)))!.Text);
+    }
+
+    [Fact]
+    public async Task APoisonRowIsClosedAsFailedAfterFiveClaimsWithoutRetryLater()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await PostTextAsync(f, "w1");
+        var now = DateTimeOffset.UtcNow.AddMinutes(5);
+
+        // El worker se cuelga: reclama, nunca llama a Complete ni a RetryLater, y el lease vence.
+        for (var attempt = 1; attempt <= 5; attempt++)
+        {
+            Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddHours(attempt), 10, Ct)));
+        }
+
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddHours(6), 10, Ct)));
+        Assert.Equal("failed|true", await ScalarAsync<string>(f.ConnectionString, "SELECT outcome || '|' || (processed_at IS NOT NULL)::text FROM messaging.automation_inbox"));
+    }
+
+    [Fact]
+    public async Task KindsTheEngineDoesNotReadAreNotEnqueued()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        await PostAsync(f, MetaPayloads.Change("messages", MetaPayloads.LocationValue("111", "573001234567", "w1", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 600, 4.6, -74.1, "Casa", "Calle 1")));
+
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 1"));
+        Assert.Equal(0L, await InboxCountAsync(f));
+    }
+
+    [Fact]
+    public async Task AnInstagramDirectMessageIsNotEnqueued()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await SeedInstagramConnectionAsync(f.Host, f.Tenant.TenantId, "Instagram Ventas", InstagramPayloads.DefaultAccountId);
+        f.Factory.MetaHandler.Respond($@"^/v24\.0/{InstagramPayloads.DefaultUserId}\?", System.Net.HttpStatusCode.OK, """{"name":"Laura","username":"laura","id":"1234567890123456"}""");
+
+        await PostInstagramWebhookAsync(f.Client, InstagramPayloads.Text("m1", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 600, "hola"));
+        await DrainDeliveriesAsync(f.Host);
+
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 1"));
+        Assert.Equal(0L, await InboxCountAsync(f));
+    }
 }
