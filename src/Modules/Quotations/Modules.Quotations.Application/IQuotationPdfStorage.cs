@@ -18,6 +18,12 @@ public interface IQuotationPdfStorage
     Task<string> SaveAsync(
         Guid tenantId, QuotationId quotationId, byte[] content, CancellationToken cancellationToken);
 
+    /// <summary>Sube el PDF de un pedido y devuelve su clave. Mismo prefijo `quotations/` que el de la
+    /// cotización, para que lo limpie la misma regla de lifecycle: el del pedido no se cachea (ver
+    /// <see cref="OrderPdfProvider"/>), así que cada envío deja un objeto que nadie vuelve a leer.</summary>
+    Task<string> SaveOrderAsync(
+        Guid tenantId, OrderId orderId, byte[] content, CancellationToken cancellationToken);
+
     /// <summary>
     /// Copia el PDF al bucket público y devuelve su URL, sin firma ni query string.
     ///

@@ -51,6 +51,23 @@ internal sealed class QuotationPdfStorage(
         return key;
     }
 
+    public async Task<string> SaveOrderAsync(
+        Guid tenantId,
+        OrderId orderId,
+        byte[] content,
+        CancellationToken cancellationToken)
+    {
+        // Bajo `quotations/` y no en un prefijo propio: así lo limpia la misma regla de lifecycle, sin
+        // tocar la configuración del bucket. Hace falta que lo limpie: el PDF del pedido no se cachea
+        // (OrderPdfProvider), así que cada envío deja un objeto que nadie vuelve a leer. Clave aleatoria
+        // por el mismo motivo que la de la cotización; el id del pedido no entra en ella.
+        var key = $"{QuotationPrefix}/tenants/{tenantId:N}/orders/" +
+            $"{DateTime.UtcNow:yyyy/MM}/{Guid.CreateVersion7():N}.pdf";
+
+        await objectStorage.UploadAsync(key, content, PdfContentType, cancellationToken);
+        return key;
+    }
+
     public async Task<string> PublishAsync(
         string storageKey, CancellationToken cancellationToken)
     {

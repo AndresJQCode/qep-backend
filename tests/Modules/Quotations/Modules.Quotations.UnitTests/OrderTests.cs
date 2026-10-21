@@ -917,6 +917,32 @@ public sealed class OrderTests
         Assert.Equal(3, order.Version);
     }
 
+    // Mandarle al cliente un pedido anulado se lee como vigente: es lo único que frena el envío.
+    [Fact]
+    public void ACancelledOrderCannotBeSent()
+    {
+        var order = NewOrder();
+        order.Cancel(ConvertedBy, "El cliente desistió", Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(order.EnsureSendable);
+
+        Assert.Equal("order.order.already_cancelled", error.Code);
+    }
+
+    [Fact]
+    public void PendingApprovedAndInvoicedOrdersCanBeSent()
+    {
+        var order = NewOrder();
+        order.EnsureSendable();
+        order.Approve(ConvertedBy, Now);
+        order.EnsureSendable();
+        order.Invoice(ConvertedBy, Now);
+
+        order.EnsureSendable();
+
+        Assert.Equal(OrderStatus.Invoiced, order.Status);
+    }
+
     // Anular dos veces reescribiría quién, cuándo y por qué se anuló.
     [Fact]
     public void CancelTwiceIsRejectedAndKeepsTheFirstCancellation()

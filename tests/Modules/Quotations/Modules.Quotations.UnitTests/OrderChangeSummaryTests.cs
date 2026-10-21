@@ -24,6 +24,13 @@ public sealed class OrderChangeSummaryTests
             OrderChangeSummary.ShippingChanged(with, with with { FreightAmount = 18000m }));
     }
 
+    // El historial dice a quién se le mandó: quien factura no siempre es quien recibe.
+    [Theory]
+    [InlineData(QuotationRecipient.Customer, "Enviado por WhatsApp al cliente.")]
+    [InlineData(QuotationRecipient.Billing, "Enviado por WhatsApp a facturación.")]
+    public void DescribesTheSendWithItsRecipient(QuotationRecipient recipient, string expected) =>
+        Assert.Equal(expected, OrderChangeSummary.Sent(recipient));
+
     [Fact]
     public void AnUnchangedShippingHasNoSummary() =>
         Assert.Null(OrderChangeSummary.ShippingChanged(ShippingDetails.None, ShippingDetails.None));

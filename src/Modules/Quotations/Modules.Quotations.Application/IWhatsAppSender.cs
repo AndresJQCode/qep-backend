@@ -11,6 +11,11 @@ public interface IWhatsAppSender
 {
     Task SendQuotationAsync(
         WhatsAppQuotationMessage message, CancellationToken cancellationToken);
+
+    /// <summary>Envía el PDF de un pedido. Plantilla propia (<c>Quotations:WhatsApp:OrderTemplateId</c>):
+    /// la de la cotización dice «cotización» y lleva <c>valid_until</c>, que un pedido no tiene.</summary>
+    Task SendOrderAsync(
+        WhatsAppOrderMessage message, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -31,4 +36,18 @@ public sealed record WhatsAppQuotationMessage(
     /// <summary>ISO code; the sender prints its catalogue symbol and decimals.</summary>
     string Currency,
     DateOnly ValidUntil,
+    string DocumentUrl);
+
+/// <summary>
+/// Los campos de la plantilla del pedido: los de <see cref="WhatsAppQuotationMessage"/> menos la
+/// vigencia, que un pedido no tiene. Mismo criterio que allá: el total viaja crudo y el formato es del
+/// adaptador; el PDF va como <see cref="DocumentUrl"/>.
+/// </summary>
+public sealed record WhatsAppOrderMessage(
+    string? ToPhone,
+    string FullName,
+    string OrderNumber,
+    decimal Total,
+    /// <summary>ISO code; the sender prints its catalogue symbol and decimals.</summary>
+    string Currency,
     string DocumentUrl);

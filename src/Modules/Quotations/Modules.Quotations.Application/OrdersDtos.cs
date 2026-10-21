@@ -123,6 +123,15 @@ public sealed record AddOrderItemsRequest(IReadOnlyList<OrderItemAdditionRequest
 
 public sealed record CancelOrderRequest(string? Reason);
 
+/// <summary>
+/// <c>POST /orders/{orderId}/send</c>. Mismo contrato que <see cref="SendQuotationRequest"/>:
+/// <paramref name="Recipient"/> es <c>"Customer"</c> (default) o <c>"Billing"</c>, una opción cerrada
+/// que el backend resuelve contra lo que el pedido ya guarda, nunca un teléfono suelto. <b>El cuerpo
+/// entero es opcional</b>: un cuerpo requerido rompió el envío de la cotización con 500
+/// (<c>SendWorksWithoutABody</c>).
+/// </summary>
+public sealed record SendOrderRequest(string? Recipient = null);
+
 /// <summary>«Reconocer este nombre» (spec de Shopify D-S25). Sólo la transportadora y si se recuerda el título:
 /// el título lo pone el pedido (<c>shipping.externalShippingTitle</c>), no la pantalla, así que no se puede
 /// recordar uno distinto del que llegó de la tienda.</summary>

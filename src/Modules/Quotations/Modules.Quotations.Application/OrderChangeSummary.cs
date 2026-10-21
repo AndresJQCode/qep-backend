@@ -41,6 +41,11 @@ public static class OrderChangeSummary
         return changes.Count == 0 ? null : Trim($"Editó {string.Join(", ", changes)}.");
     }
 
+    /// <summary>El PDF salió por WhatsApp. Dice a quién porque quien factura no siempre es quien recibe.</summary>
+    public static string Sent(QuotationRecipient recipient) => recipient == QuotationRecipient.Billing
+        ? "Enviado por WhatsApp a facturación."
+        : "Enviado por WhatsApp al cliente.";
+
     public static string Approved() => "Aprobado.";
 
     public static string Cancelled(string reason) => Trim($"Anulado: {reason}");

@@ -22,6 +22,15 @@ public sealed class ZenviaWhatsAppSenderTests
     // porque Meta no deja editar una aprobada.
     private const string TemplateId = "plantilla-de-prueba";
     private const string FromNumber = "570000000000";
+    private const string OrderTemplateId = "plantilla-de-pedido-de-prueba";
+
+    private static readonly WhatsAppOrderMessage OrderMessage = new(
+        ToPhone: "3001234567",
+        FullName: "Juan Pérez",
+        OrderNumber: "PED-000123",
+        Total: 2450000m,
+        Currency: "COP",
+        DocumentUrl: "https://assets.example.co/quotations/pedido.pdf");
 
     private static readonly WhatsAppQuotationMessage Message = new(
         ToPhone: "3001234567",
@@ -184,8 +193,88 @@ public sealed class ZenviaWhatsAppSenderTests
         Assert.DoesNotContain(logger.Messages, message => message.Contains("3001234567"));
     }
 
+    // ---- El pedido ----
+    //
+    // Plantilla propia: la de la cotización dice «cotización» y pide `valid_until`, que un pedido no
+    // tiene. Las variables son las de la cotización menos esa.
+
+    [Fact]
+    public async Task SendOrderUsesTheOrderTemplateAndItsFields()
+    {
+        var (sender, capture, _) = NewSender();
+
+        await sender.SendOrderAsync(OrderMessage, TestContext.Current.CancellationToken);
+
+        var body = capture.Body();
+        Assert.Equal(
+            (FromNumber, "573001234567", OrderTemplateId),
+            (body.GetProperty("from").GetString(), body.GetProperty("to").GetString(),
+                body.GetProperty("contents")[0].GetProperty("templateId").GetString()));
+        var fields = capture.Fields();
+        Assert.Equal(
+            ["documentUrl", "fullname", "order_number", "total"],
+            fields.EnumerateObject().Select(field => field.Name).Order(StringComparer.Ordinal).ToArray());
+        Assert.Equal(
+            ("Juan Pérez", "PED-000123", "$ 2.450.000", "https://assets.example.co/quotations/pedido.pdf"),
+            (fields.GetProperty("fullname").GetString(), fields.GetProperty("order_number").GetString(),
+                fields.GetProperty("total").GetString(), fields.GetProperty("documentUrl").GetString()));
+        Assert.Equal("token-de-prueba", capture.ApiToken);
+    }
+
+    // La plantilla del pedido todavía no está aprobada: sin su id, el pedido no sale —con código
+    // propio— y la cotización sigue saliendo por la suya.
+    [Fact]
+    public async Task SendOrderWithoutAnOrderTemplateIsNotConfigured()
+    {
+        var (sender, capture, _) = NewSender(orderTemplateId: "");
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            sender.SendOrderAsync(OrderMessage, TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.whatsapp.not_configured", error.Code);
+        Assert.Equal("{}", capture.Json);
+    }
+
+    [Fact]
+    public async Task SendOrderRejectsARecipientWithoutAPhone()
+    {
+        var (sender, _, _) = NewSender();
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            sender.SendOrderAsync(OrderMessage with { ToPhone = "  " }, TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.whatsapp.recipient_missing", error.Code);
+    }
+
+    [Fact]
+    public async Task SendOrderSurfacesAZenviaRejectionAsAnOrderError()
+    {
+        var (sender, _, _) = NewSender(HttpStatusCode.BadRequest, """{"code":"INVALID_TEMPLATE"}""");
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            sender.SendOrderAsync(OrderMessage, TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.whatsapp.send_failed", error.Code);
+        Assert.Contains("INVALID_TEMPLATE", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SendOrderLogsTheZenviaMessageIdButNotThePhoneOrTheUrl()
+    {
+        var (sender, _, logger) = NewSender(responseBody: """{"id":"zid-ped-1"}""");
+
+        await sender.SendOrderAsync(OrderMessage, TestContext.Current.CancellationToken);
+
+        Assert.Contains(logger.Messages, message => message.Contains("zid-ped-1") && message.Contains("PED-000123"));
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("3001234567"));
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("pedido.pdf"));
+    }
+
     private static (IWhatsAppSender Sender, RequestCapture Capture, RecordingLogger Logger)
-        NewSender(HttpStatusCode status = HttpStatusCode.OK, string responseBody = "{}")
+        NewSender(
+            HttpStatusCode status = HttpStatusCode.OK,
+            string responseBody = "{}",
+            string orderTemplateId = OrderTemplateId)
     {
         var capture = new RequestCapture();
         var logger = new RecordingLogger();
@@ -196,6 +285,7 @@ public sealed class ZenviaWhatsAppSenderTests
                 ApiToken = "token-de-prueba",
                 FromNumber = FromNumber,
                 TemplateId = TemplateId,
+                OrderTemplateId = orderTemplateId,
                 BaseUrl = "https://api.zenvia.com",
             },
         });

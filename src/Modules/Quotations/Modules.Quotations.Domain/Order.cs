@@ -693,6 +693,25 @@ public sealed class Order
                 "order.item.not_found",
                 "The order item was not found.");
 
+    /// <summary>
+    /// Si el pedido se le puede mandar al cliente por WhatsApp. Enviar no cambia el pedido —no hay
+    /// estado «enviado»—, así que esto no protege una transición: existe para que el caso de uso lo
+    /// compruebe **antes** de generar el PDF y de entregarle el mensaje a WhatsApp, que no se deshacen.
+    ///
+    /// Sólo frena al anulado: un pedido anulado que le llega al cliente se lee como vigente. Pendiente,
+    /// aprobado y facturado sí se mandan: el cliente puede necesitar el documento en cualquiera de los tres.
+    /// </summary>
+    public void EnsureSendable()
+    {
+        // Mismo código que anular dos veces: para la pantalla es el mismo hecho, el pedido ya no rige.
+        if (Status == OrderStatus.Cancelled)
+        {
+            throw new QuotationsDomainException(
+                "order.order.already_cancelled",
+                "A cancelled order cannot be sent.");
+        }
+    }
+
     public void Approve(MemberId approvedBy, DateTimeOffset occurredAt)
     {
         if (Status != OrderStatus.Pending)

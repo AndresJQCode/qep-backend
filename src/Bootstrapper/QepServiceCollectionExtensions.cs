@@ -490,6 +490,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<RevertOrderInvoicingCommand, OrderDto>,
             RevertOrderInvoicingHandler>();
+        // «Enviar el pedido por WhatsApp»: el PDF del pedido con la plantilla propia del pedido.
+        services.AddScoped<
+            ICommandHandler<SendOrderCommand, OrderDetailDto>,
+            SendOrderHandler>();
         services.AddScoped<
             ICommandHandler<ConvertQuotationToOrderCommand, OrderDetailDto>,
             ConvertQuotationToOrderHandler>();
@@ -876,6 +880,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IExportFileStorage, ExportFileStorage>();
         services.AddScoped<IQuotationPdfStorage, QuotationPdfStorage>();
         services.AddScoped<IQuotationPdfProvider, QuotationPdfProvider>();
+        services.AddScoped<IOrderPdfProvider, OrderPdfProvider>();
 
         // Decisión 9 del spec 2026-09-19: el PDF lee el logo del tenant por Tenancy (el
         // LogoFileId vigente) y Storage (los bytes del original privado).

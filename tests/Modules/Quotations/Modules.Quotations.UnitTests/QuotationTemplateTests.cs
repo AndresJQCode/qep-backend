@@ -178,6 +178,65 @@ public sealed partial class QuotationTemplateTests
             FreightSubtotal = 20m,
         });
 
+    // El pedido usa la misma plantilla (owner: «layout único para cotización y pedido»): compila en
+    // las dos ramas del membrete, con y sin emisor, y sin vigencia.
+    [Fact]
+    public async Task TheTemplateCompilesWithAnOrder() =>
+        await AssertCompilesAsync(Complete() with { Kind = QuotationPdfKind.Order, ValidUntil = null });
+
+    [Fact]
+    public async Task TheTemplateCompilesWithAMinimalOrder() =>
+        await AssertCompilesAsync(Minimal() with { Kind = QuotationPdfKind.Order });
+
+    // Lo único que el pedido cambia: el nombre del documento —membrete y pie— y el renglón de
+    // vigencia, que un pedido no tiene. La prueba de contrato de arriba sólo mira que `data.kind`
+    // exista; esta, que la plantilla decida con él.
+    [Fact]
+    public async Task TheTemplateNamesTheDocumentAfterItsKindAndDropsTheValidityOfAnOrder()
+    {
+        var (source, data, _) = await CapturedRequestAsync(Minimal() with { Kind = QuotationPdfKind.Order });
+
+        Assert.Equal("Order", data.GetProperty("kind").GetString());
+        Assert.Contains("data.kind == \"Order\"", source, StringComparison.Ordinal);
+        Assert.Contains("\"Pedido\"", source, StringComparison.Ordinal);
+        // El nombre del documento sale de una sola variable: ningún "Cotización" suelto queda impreso
+        // fuera de ella (membrete con emisor, membrete sin emisor y pie).
+        Assert.Equal(1, Count(StripComments(source), "Cotización"));
+        Assert.Contains("if not es-pedido [", source, StringComparison.Ordinal);
+    }
+
+    // «Emitida» concuerda con «la cotización»; el pedido es masculino.
+    [Fact]
+    public async Task TheIssueDateAgreesWithTheDocumentGender()
+    {
+        var (source, _, _) = await CapturedRequestAsync(Minimal() with { Kind = QuotationPdfKind.Order });
+
+        Assert.Contains("if es-pedido { \"Emitido\" } else { \"Emitida\" }", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("renglon(\"Emitida\"", source, StringComparison.Ordinal);
+    }
+
+    private static int Count(string text, string value)
+    {
+        var count = 0;
+        for (var index = text.IndexOf(value, StringComparison.Ordinal);
+            index >= 0;
+            index = text.IndexOf(value, index + value.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    private static string StripComments(string source) =>
+        string.Join(
+            '\n',
+            source.Split('\n').Select(line =>
+            {
+                var comment = line.IndexOf("//", StringComparison.Ordinal);
+                return comment < 0 ? line : line[..comment];
+            }));
+
     private static QuotationPdfParty FinalConsumerBilling() => new(
         false,
         FinalConsumer.Name,

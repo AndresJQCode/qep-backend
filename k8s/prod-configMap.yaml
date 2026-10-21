@@ -98,6 +98,12 @@ data:
   # apuntar a su id. Sin esta clave, ese cambio exigiría reconstruir y desplegar la imagen.
   # El token y el número emisor son credenciales y viven en prod-secret.yaml.
   Quotations__WhatsApp__TemplateId: "#{QUOTATIONS_WHATSAPP_TEMPLATE_ID}#"
+  # Id de la plantilla del pedido («Enviar el pedido por WhatsApp»), aparte de la de la cotización. Vacío
+  # hasta que la plantilla esté creada y aprobada en Zenvia/Meta: con vacío, enviar un pedido responde
+  # 422 order.whatsapp.not_configured y la cotización sigue saliendo. Literal y no token del pipeline a
+  # propósito: un token que no está en Backend-prod llega como "#{…}#" y se mandaría a Zenvia como id.
+  # Al aprobarse, pasa a "#{QUOTATIONS_WHATSAPP_ORDER_TEMPLATE_ID}#" junto con la variable en el grupo.
+  Quotations__WhatsApp__OrderTemplateId: ""
   # Spec 2026-10-08 (Integraciones): id (no secreto) de la llave con la que se cifran las credenciales
   # de las conexiones de cada tenant. Rotar = dos despliegues: declarar Keys__k2 con ésta todavía en
   # k1, y después cambiar ésta a k2 (README § Integraciones). La llave vive en prod-secret.yaml.

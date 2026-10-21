@@ -892,6 +892,13 @@ internal static class ReportingApiHarness
             CancellationToken cancellationToken) =>
             Task.FromResult($"quotations/tenants/{tenantId:N}/{Guid.CreateVersion7():N}.pdf");
 
+        public Task<string> SaveOrderAsync(
+            Guid tenantId,
+            OrderId orderId,
+            byte[] content,
+            CancellationToken cancellationToken) =>
+            Task.FromResult($"quotations/tenants/{tenantId:N}/orders/{Guid.CreateVersion7():N}.pdf");
+
         public Task<string> PublishAsync(string storageKey, CancellationToken cancellationToken) =>
             Task.FromResult($"https://assets.example.co/{storageKey}");
 

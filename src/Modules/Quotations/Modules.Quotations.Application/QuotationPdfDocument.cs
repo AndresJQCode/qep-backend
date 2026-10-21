@@ -80,7 +80,22 @@ public sealed record QuotationPdfDocument(
     decimal FreightSubtotal = 0m,
     decimal FreightTaxAmount = 0m,
     /// <summary>Pago contra entrega: la plantilla imprime «Forma de pago: Contraentrega».</summary>
-    bool CashOnDelivery = false);
+    bool CashOnDelivery = false,
+    /// <summary>Qué documento es. Un solo layout para cotización y pedido (owner): la plantilla sólo
+    /// cambia el nombre del documento y omite la vigencia, que un pedido no tiene. Default
+    /// <see cref="QuotationPdfKind.Quotation"/> para que el PDF de la cotización no cambie.</summary>
+    QuotationPdfKind Kind = QuotationPdfKind.Quotation);
+
+/// <summary>
+/// Viaja como texto (<c>"Quotation"</c> / <c>"Order"</c>) en <c>data.kind</c>: la plantilla compara
+/// con el nombre, y un número la ataría al orden de este enum sin que el compilador lo vea.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<QuotationPdfKind>))]
+public enum QuotationPdfKind
+{
+    Quotation,
+    Order
+}
 
 /// <summary>Una parte del documento: a quién se le factura, o a quién se le entrega.</summary>
 /// <param name="SameAsCustomer">
