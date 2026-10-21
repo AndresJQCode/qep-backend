@@ -222,9 +222,6 @@ internal static class IntegrationsApiHarness
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
             builder.UseSetting("Seed:ExportLoad:Quotations", "0");
-            builder.UseSetting("Quotations:WhatsApp:ApiToken", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:FromNumber", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:TemplateId", string.Empty);
             // El signup concede los seis módulos de fábrica, quotations incluido: Zenvia es visible.
             builder.UseSetting("Entitlements:GrantDefaultModulesOnSignup", "true");
             // Spec 2026-10-08, «Pruebas»: "test" es la activa; "k1" —el id que el README sugiere para

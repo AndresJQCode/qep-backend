@@ -834,16 +834,16 @@ internal static class ReportingApiHarness
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
 
-            // Vaciadas, nunca heredadas: `WebApplicationFactory` corre en Development y ahí
-            // `CreateBuilder` carga los user-secrets de quien corre las pruebas. Con Zenvia
-            // configurado, `CreateSentQuotationAsync` le mandaría un WhatsApp de verdad a un
-            // cliente de prueba. Vacías fuerzan `LogWhatsAppSender`, igual que en el harness de
-            // Quotations.
-            builder.UseSetting("Quotations:WhatsApp:ApiToken", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:FromNumber", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:TemplateId", string.Empty);
             builder.ConfigureServices(services =>
             {
+                // `CreateSentQuotationAsync` envía por la conexión de Zenvia del tenant (plan 2026-10-21), y ninguna
+                // prueba llama a Zenvia (spec 2026-10-21 D18): un canal fijo y un sender que no sale a la red,
+                // igual que en el harness de Quotations.
+                services.RemoveAll<IWhatsAppChannelDirectory>();
+                services.AddSingleton<IWhatsAppChannelDirectory, SingleWhatsAppChannel>();
+                services.RemoveAll<IWhatsAppSender>();
+                services.AddSingleton<IWhatsAppSender, NoOpWhatsAppSender>();
+
                 services.RemoveAll<IObjectStorage>();
                 services.AddSingleton<IObjectStorage>(ObjectStorage);
 
@@ -972,4 +972,24 @@ internal static class ReportingApiHarness
 
         public void Upload(string key, byte[] content) => _objects[key] = content.ToArray();
     }
+}
+
+/// <summary>Un canal de Zenvia fijo para las cotizaciones que siembra Reporting (plan 2026-10-21).</summary>
+internal sealed class SingleWhatsAppChannel : IWhatsAppChannelDirectory
+{
+    private static readonly WhatsAppChannel Channel = new(
+        Guid.CreateVersion7(), "token-de-prueba", "570000000000", "d0e79149-ed61-4784-9883-d86807f46ce5", null);
+
+    public Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<WhatsAppChannel>>([Channel]);
+}
+
+/// <summary>Reporting mira lo que el envío deja en la base, no lo que le llega al cliente.</summary>
+internal sealed class NoOpWhatsAppSender : IWhatsAppSender
+{
+    public Task SendQuotationAsync(
+        WhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task SendOrderAsync(
+        WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken) => Task.CompletedTask;
 }
