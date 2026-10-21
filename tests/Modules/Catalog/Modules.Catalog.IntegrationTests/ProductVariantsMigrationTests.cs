@@ -26,6 +26,35 @@ public sealed class ProductVariantsMigrationTests
     private const string ScaleFiftyId = "01900000-0000-7000-8000-00000000d006";
     private const string ChangeId = "01900000-0000-7000-8000-00000000d007";
     private const string AuthorId = "01900000-0000-7000-8000-00000000d008";
+    private const string BlueVariantId = "01900000-0000-7000-8000-00000000d009";
+    private const string BlueScaleId = "01900000-0000-7000-8000-00000000d00a";
+    private const string BlueChangeId = "01900000-0000-7000-8000-00000000d00b";
+    private const string NewKeratinVariantId = "01900000-0000-7000-8000-00000000d00c";
+
+    // Lo que un producto con variantes deja en la base después del Up, para bajar con algo que elegir.
+    // Bronceador: su variante por defecto (con el id del producto) quedó INACTIVA y vende la azul,
+    // activa, con su precio, su escala y un cambio de precio. Keratina: su variante por defecto se
+    // borró y sólo queda una nueva, con otro id.
+    private const string VariantsSql = $"""
+        UPDATE catalog.product_variants SET is_active = false, combination_key = 'r' WHERE id = '{ProductId}';
+        INSERT INTO catalog.product_variants (
+            id, product_id, tenant_id, code, barcode, combination_key, packaging_units, gallery_image_id,
+            is_active, position)
+        VALUES ('{BlueVariantId}', '{ProductId}', '{TenantId}', 'BR-7416-AZ', NULL, 'a', ARRAY[24], NULL, true, 1),
+               ('{NewKeratinVariantId}', '{NoImageProductId}', '{TenantId}', 'KE-7701-N', NULL, '', ARRAY[]::integer[],
+                NULL, true, 1);
+        INSERT INTO catalog.product_prices (variant_id, currency, amount)
+        VALUES ('{BlueVariantId}', 'COP', 41000), ('{NewKeratinVariantId}', 'COP', 120000);
+        INSERT INTO catalog.product_price_scales (
+            id, variant_id, tenant_id, from_unit, to_unit, discount, restriction, multiple, allow_grouping)
+        VALUES ('{BlueScaleId}', '{BlueVariantId}', '{TenantId}', 12, 99, 7, 'Multiple', 12, false);
+        INSERT INTO catalog.product_price_changes (
+            id, tenant_id, product_id, variant_id, field, currency, scale_from_unit, scale_to_unit,
+            previous_value, new_value, changed_by, changed_at)
+        VALUES ('{BlueChangeId}', '{TenantId}', '{ProductId}', '{BlueVariantId}', 'PriceBase', 'COP', NULL, NULL,
+                40000, 41000, '{AuthorId}', '2026-10-21T12:00:00Z');
+        DELETE FROM catalog.product_variants WHERE id = '{NoImageProductId}';
+        """;
 
     private const string LegacySql = $"""
         INSERT INTO catalog.products (
@@ -161,6 +190,51 @@ public sealed class ProductVariantsMigrationTests
                 "FROM catalog.product_prices ORDER BY product_id, currency"));
         Assert.Equal(2L, await ScalarAsync<long>(
             connectionString, $"SELECT count(*) FROM catalog.product_price_scales WHERE product_id = '{ProductId}'"));
+
+        await context.Database.MigrateAsync(TestContext.Current.CancellationToken);
+    }
+
+    // Revisión independiente, 2026-10-21. El Down con más de una variante por producto, que es donde
+    // trabaja su SQL: vuelve la variante ACTIVA (antes ganaba la del id del producto aunque estuviera
+    // apagada, y el producto revivía vendible con su precio), con su código, empaques, precios y
+    // escalas pasados al producto; los precios y escalas de las demás se borran; y el historial de
+    // todas se queda, colgado del producto. Keratina, sin su variante por defecto, vuelve con la nueva.
+    [Fact]
+    public async Task RevertingWithSeveralVariantsBringsBackTheActiveOneAndItsPrices()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await using var context = NewCatalogContext(connectionString);
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync(LastMigrationBeforeVariants, TestContext.Current.CancellationToken);
+        await ExecuteAsync(connectionString, LegacySql);
+        await migrator.MigrateAsync(MigrationId(context, "_AddProductVariants"), TestContext.Current.CancellationToken);
+        await ExecuteAsync(connectionString, VariantsSql);
+
+        await migrator.MigrateAsync(LastMigrationBeforeVariants, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new[] { $"{ProductId}|BR-7416-AZ|{{24}}", $"{NoImageProductId}|KE-7701-N|{{}}" },
+            await RowsAsync(
+                connectionString,
+                "SELECT id::text || '|' || code || '|' || packaging_units::text FROM catalog.products ORDER BY id"));
+        Assert.Equal(
+            new[] { $"{ProductId}|COP|41000.00", $"{NoImageProductId}|COP|120000.00" },
+            await RowsAsync(
+                connectionString,
+                "SELECT product_id::text || '|' || currency || '|' || amount::text " +
+                "FROM catalog.product_prices ORDER BY product_id, currency"));
+        Assert.Equal(
+            new[] { $"{BlueScaleId}|{ProductId}|12|99" },
+            await RowsAsync(
+                connectionString,
+                "SELECT id::text || '|' || product_id::text || '|' || from_unit::text || '|' || to_unit::text " +
+                "FROM catalog.product_price_scales ORDER BY id"));
+        Assert.Equal(
+            new[] { $"{ChangeId}|{ProductId}", $"{BlueChangeId}|{ProductId}" },
+            await RowsAsync(
+                connectionString,
+                "SELECT id::text || '|' || product_id::text FROM catalog.product_price_changes ORDER BY id"));
 
         await context.Database.MigrateAsync(TestContext.Current.CancellationToken);
     }

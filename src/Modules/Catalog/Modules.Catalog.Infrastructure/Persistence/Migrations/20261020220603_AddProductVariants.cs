@@ -423,15 +423,17 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                 nullable: false,
                 defaultValueSql: "'{}'");
 
-            // El modelo de antes tiene una sola variante por producto: vuelve la que lleva el id del
-            // producto (la por defecto, o la que la conservó al agregar opciones) y, si ya no existe,
-            // la primera. Las demás variantes, con sus precios y escalas, no tienen dónde vivir y se
-            // pierden; su historial se queda, colgado del producto.
+            // El modelo de antes tiene una sola variante por producto y no sabe de variantes inactivas:
+            // vuelve una activa, si hay, y entre ellas la que lleva el id del producto (la por defecto,
+            // o la que la conservó al agregar opciones) y después la primera. Sin mirar el estado, una
+            // variante apagada revivía como el precio vendible del producto. Las demás variantes, con
+            // sus precios y escalas, no tienen dónde vivir y se pierden; su historial se queda, colgado
+            // del producto.
             migrationBuilder.Sql("""
                 CREATE TEMP TABLE variant_rollback_choice ON COMMIT DROP AS
                 SELECT DISTINCT ON (product_id) id, product_id, code, packaging_units
                 FROM catalog.product_variants
-                ORDER BY product_id, (id = product_id) DESC, position;
+                ORDER BY product_id, is_active DESC, (id = product_id) DESC, position;
 
                 UPDATE catalog.products p
                 SET code = c.code, packaging_units = c.packaging_units
