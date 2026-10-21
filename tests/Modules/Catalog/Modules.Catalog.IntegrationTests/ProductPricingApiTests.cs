@@ -41,10 +41,10 @@ public sealed class ProductPricingApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-001", pricing: new
-            {
-                prices = new Dictionary<string, decimal> { ["USD"] = 100m, ["COP"] = 400000m },
-                packagingUnits = TwelvePack,
-                scales = new object[]
+        {
+            prices = new Dictionary<string, decimal> { ["USD"] = 100m, ["COP"] = 400000m },
+            packagingUnits = TwelvePack,
+            scales = new object[]
                 {
                     new
                     {
@@ -62,7 +62,7 @@ public sealed class ProductPricingApiTests
                         restriction = "packaging_unit"
                     }
                 }
-            }));
+        }));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await ReadProductAsync(response);
@@ -111,9 +111,9 @@ public sealed class ProductPricingApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-001", pricing: new
-            {
-                prices = new Dictionary<string, decimal> { ["USD"] = 100m },
-                scales = new object[]
+        {
+            prices = new Dictionary<string, decimal> { ["USD"] = 100m },
+            scales = new object[]
                 {
                     new
                     {
@@ -124,16 +124,16 @@ public sealed class ProductPricingApiTests
                         multiple = 3
                     }
                 }
-            })));
+        })));
         Assert.Single(created.Only().PriceScales);
 
         var updated = await ReadProductAsync(await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
             ProductBodies.Update(created, "Vela de soja", "VS-001", pricing: new
-                {
-                    prices = new Dictionary<string, decimal> { ["USD"] = 100m },
-                    packagingUnits = SixPack,
-                    scales = new object[]
+            {
+                prices = new Dictionary<string, decimal> { ["USD"] = 100m },
+                packagingUnits = SixPack,
+                scales = new object[]
                     {
                         new
                         {
@@ -143,7 +143,7 @@ public sealed class ProductPricingApiTests
                             restriction = "packaging_unit"
                         }
                     }
-                }),
+            }),
             TestContext.Current.CancellationToken));
 
         var onlyScale = Assert.Single(updated.Only().PriceScales);
@@ -177,9 +177,9 @@ public sealed class ProductPricingApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-AGR-001", pricing: new
-            {
-                prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
-                scales = new object[]
+        {
+            prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
+            scales = new object[]
                 {
                     new
                     {
@@ -188,7 +188,7 @@ public sealed class ProductPricingApiTests
                         allowGrouping = true
                     }
                 }
-            }));
+        }));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await ReadProductAsync(response);
@@ -203,10 +203,10 @@ public sealed class ProductPricingApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-AGR-002", pricing: new
-            {
-                prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
-                packagingUnits = TwelvePack,
-                scales = new object[]
+        {
+            prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
+            packagingUnits = TwelvePack,
+            scales = new object[]
                 {
                     new
                     {
@@ -215,7 +215,7 @@ public sealed class ProductPricingApiTests
                         allowGrouping = true
                     }
                 }
-            }));
+        }));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
@@ -239,9 +239,9 @@ public sealed class ProductPricingApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Keratina 120 ml", "KR-120", pricing: new
-            {
-                prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
-                scales = new object[]
+        {
+            prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
+            scales = new object[]
                 {
                     new
                     {
@@ -249,7 +249,7 @@ public sealed class ProductPricingApiTests
                         restriction = "packaging_unit"
                     }
                 }
-            }));
+        }));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
@@ -266,10 +266,10 @@ public sealed class ProductPricingApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Keratina 120 ml", "KR-120", pricing: new
-            {
-                prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
-                packagingUnits = DuplicatedPackagingUnits
-            }));
+        {
+            prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
+            packagingUnits = DuplicatedPackagingUnits
+        }));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
@@ -289,10 +289,10 @@ public sealed class ProductPricingApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, ProductBodies.Create("Keratina 120 ml", "KR-120", pricing: new
-            {
-                prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
-                packagingUnits = UnsortedPackagingUnits,
-                scales = new object[]
+        {
+            prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
+            packagingUnits = UnsortedPackagingUnits,
+            scales = new object[]
                 {
                     new
                     {
@@ -300,7 +300,7 @@ public sealed class ProductPricingApiTests
                         restriction = "packaging_unit"
                     }
                 }
-            })));
+        })));
         Assert.Equal([100, 150], created.Only().PackagingUnits);
 
         var fetched = await ReadProductAsync(await client.GetAsync(
@@ -347,10 +347,10 @@ public sealed class ProductPricingApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var product = await ReadProductAsync(await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-EUR", pricing: new
-            {
-                prices = new Dictionary<string, decimal> { ["eur"] = 11.4m, ["COP"] = 45_000m, ["USD"] = 12.5m },
-                scales = new object[] { new { fromUnit = 1, toUnit = 9, discount = 10m, restriction = "multiple", multiple = 1 } }
-            })));
+        {
+            prices = new Dictionary<string, decimal> { ["eur"] = 11.4m, ["COP"] = 45_000m, ["USD"] = 12.5m },
+            scales = new object[] { new { fromUnit = 1, toUnit = 9, discount = 10m, restriction = "multiple", multiple = 1 } }
+        })));
 
         Assert.Equal(new Dictionary<string, decimal> { ["COP"] = 45_000m, ["USD"] = 12.5m, ["EUR"] = 11.4m }, product.Only().Prices);
         Assert.Equal(

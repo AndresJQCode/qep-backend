@@ -137,6 +137,7 @@ public sealed class CopyPriceScalesHandler(
         // Por producto y en el orden en que aparece su primera variante de destino: el agregado
         // cuenta un solo cambio por producto por más variantes que reciban escalas.
         var scalesByProduct = new Dictionary<Product, Dictionary<VariantId, IReadOnlyCollection<PriceScaleInput>>>();
+        var productsInOrder = new List<Product>();
         foreach (var (product, variant) in targets)
         {
             var pricing = PriceScaleCopy.ToPricingFor(source, variant);
@@ -152,14 +153,15 @@ public sealed class CopyPriceScalesHandler(
             {
                 scalesByVariant = [];
                 scalesByProduct.Add(product, scalesByVariant);
+                productsInOrder.Add(product);
             }
 
             scalesByVariant.Add(variant.Id, pricing.Scales);
         }
 
-        foreach (var (product, scalesByVariant) in scalesByProduct)
+        foreach (var product in productsInOrder)
         {
-            product.ApplyCopiedPriceScales(scalesByVariant, now);
+            product.ApplyCopiedPriceScales(scalesByProduct[product], now);
 
             // Una entrada por producto tocado y no una por lote: la auditoría se lee por recurso,
             // y un solo evento con N ids adentro no aparece cuando alguien busca qué le pasó a un
@@ -182,8 +184,8 @@ public sealed class CopyPriceScalesHandler(
 
         // Los productos tocados, cada uno una vez y en el orden en que aparece su primera variante
         // de destino en la petición (no en el que los trajo PostgreSQL, que no está garantizado).
-        // canDelete de cada variante sale de una consulta por lote al IVariantUsageChecker (T6).
-        return await scalesByProduct.Keys
+        // canDelete de cada variante sale de una consulta por lote al IVariantUsageChecker.
+        return await productsInOrder
             .ToDtosAsync(imageLookup, optionRepository, usageChecker, command.TenantId, cancellationToken);
     }
 }

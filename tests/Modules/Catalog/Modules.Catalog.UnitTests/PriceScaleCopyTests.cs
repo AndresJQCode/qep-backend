@@ -173,8 +173,8 @@ public sealed class PriceScaleCopyTests
             Scales = [MultipleScale(discount: 20m)]
         }, "VS-003");
         var target = ProductWith(new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 100m } }, "VS-002");
-        ApplyCopy(target, 
-            CopyPricing(firstSource, target).Scales, Now.AddMinutes(5));
+        ApplyCopy(
+            target, CopyPricing(firstSource, target).Scales, Now.AddMinutes(5));
 
         var pricing = CopyPricing(secondSource, target);
         var changes = ProductPriceChangeDetector.DetectForVariant(
@@ -200,8 +200,8 @@ public sealed class PriceScaleCopyTests
             new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 100m }, Scales = [MultipleScale(fromUnit: 1, toUnit: 9)] },
             "VS-002");
 
-        ApplyCopy(target, 
-            CopyPricing(source, target).Scales, Now.AddMinutes(5));
+        ApplyCopy(
+            target, CopyPricing(source, target).Scales, Now.AddMinutes(5));
 
         var copied = Assert.Single(target.Variants.Single().PriceScales);
         Assert.Equal(10, copied.FromUnit);
@@ -219,8 +219,8 @@ public sealed class PriceScaleCopyTests
         var target = ProductWith(new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 100m } }, "VS-002");
         var sourceScaleId = source.Variants.Single().PriceScales.Single().Id;
 
-        ApplyCopy(target, 
-            CopyPricing(source, target).Scales, Now.AddMinutes(5));
+        ApplyCopy(
+            target, CopyPricing(source, target).Scales, Now.AddMinutes(5));
 
         var copied = Assert.Single(target.Variants.Single().PriceScales);
         Assert.NotEqual(sourceScaleId, copied.Id);
@@ -240,8 +240,8 @@ public sealed class PriceScaleCopyTests
         var version = target.Version;
         var modifiedAt = Now.AddMinutes(5);
 
-        ApplyCopy(target, 
-            CopyPricing(source, target).Scales, modifiedAt);
+        ApplyCopy(
+            target, CopyPricing(source, target).Scales, modifiedAt);
 
         Assert.Equal(version + 1, target.Version);
         Assert.Equal(modifiedAt, target.UpdatedAt);
@@ -260,8 +260,8 @@ public sealed class PriceScaleCopyTests
         target.Deactivate(Now.AddMinutes(1));
 
         var error = Assert.Throws<CatalogDomainException>(() =>
-            ApplyCopy(target, 
-                CopyPricing(source, target).Scales, Now.AddMinutes(5)));
+            ApplyCopy(
+                target, CopyPricing(source, target).Scales, Now.AddMinutes(5)));
 
         Assert.Equal("catalog.product.inactive", error.Code);
     }

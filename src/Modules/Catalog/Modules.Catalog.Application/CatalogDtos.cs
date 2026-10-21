@@ -266,7 +266,7 @@ public sealed record CopyPriceScalesRequest(
 /// <summary>
 /// Los productos que recibieron escalas, ya actualizados, cada uno **una sola vez** y en el orden
 /// en que aparece su primera variante de destino en la petición, con todas sus variantes y su
-/// <c>canDelete</c> (Tarea 6). Es por producto y no por variante porque el formulario repinta el
+/// <c>canDelete</c>. Es por producto y no por variante porque el formulario repinta el
 /// producto entero (su tabla de variantes con las escalas nuevas), y devolverlos evita que el
 /// cliente tenga que releer el listado o cada detalle para pintar el resultado.
 /// </summary>
