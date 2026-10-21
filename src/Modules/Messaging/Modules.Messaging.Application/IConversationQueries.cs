@@ -26,7 +26,12 @@ public sealed record ConversationRow(
     long Version,
     ConversationChannel Channel = ConversationChannel.WhatsApp,
     Guid? ResolutionReasonId = null,
-    DateTimeOffset LastActivityAt = default);
+    DateTimeOffset LastActivityAt = default,
+    ConversationAutomationStatus AutomationStatus = ConversationAutomationStatus.None,
+    DateTimeOffset? AutomationStartedAt = null,
+    DateTimeOffset? AutomationPausedAt = null,
+    Guid? AutomationPausedByMemberId = null,
+    AutomationPauseReason? AutomationPauseReason = null);
 
 /// <summary>Spec 2026-10-10 §5.1: <c>assigned=all|me|none</c>.</summary>
 public enum AssignedFilter
@@ -48,7 +53,17 @@ public sealed record ConversationListFilter(
     ConversationChannel? Channel = null,
     IReadOnlyCollection<Guid>? TagCustomerIds = null,
     bool UnreadOnly = false,
-    ConversationSort Sort = ConversationSort.Newest);
+    ConversationSort Sort = ConversationSort.Newest,
+    AutomationFilter? Automation = null);
+
+/// <summary>Spec 2026-10-21 §4.3: <c>automation=any|active|paused|none</c>; <c>null</c> = sin filtro, <c>Any</c> = cualquiera distinta de <c>None</c>.</summary>
+public enum AutomationFilter
+{
+    Any,
+    Active,
+    Paused,
+    None,
+}
 
 /// <summary>Spec qep-frontend 2026-10-15: más recientes primero (el de siempre) o más antiguas primero, por <c>last_activity_at</c>.</summary>
 public enum ConversationSort

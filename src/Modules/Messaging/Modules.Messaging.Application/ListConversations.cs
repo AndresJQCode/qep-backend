@@ -7,7 +7,7 @@ namespace Modules.Messaging.Application;
 
 public sealed record ListConversationsQuery(
     Guid TenantId, string? Status, string? Search, string? Cursor, int? PageSize, string? Assigned = null, string? Channel = null,
-    Guid? TagId = null, bool? Unread = null, string? Sort = null)
+    Guid? TagId = null, bool? Unread = null, string? Sort = null, string? Automation = null)
     : IQuery<ConversationPageDto>;
 
 /// <summary>Spec §6.4: status ∈ Open|Resolved (default Open), search ≤ 100, pageSize 1–50 (default 30), cursor emitido
@@ -38,6 +38,10 @@ public sealed class ListConversationsValidator : AbstractValidator<ListConversat
         RuleFor(query => query.Sort)
             .Must(value => value is null or "newest" or "oldest")
             .OverridePropertyName("sort").WithMessage("sort must be newest or oldest.");
+        // Spec 2026-10-21 §4.3: ausente = sin filtro.
+        RuleFor(query => query.Automation)
+            .Must(value => value is null or "active" or "paused" or "any" or "none")
+            .OverridePropertyName("automation").WithMessage("automation must be active, paused, any or none.");
     }
 }
 
@@ -78,8 +82,16 @@ public sealed class ListConversationsHandler(
         // Spec qep-frontend 2026-10-15: la etiqueta se resuelve en Customers y filtra por customer_id, como la búsqueda por nombre.
         var tagCustomerIds = query.TagId is { } tagId ? await customers.FindIdsByTagAsync(query.TenantId, tagId, cancellationToken) : null;
         var sort = query.Sort is "oldest" ? ConversationSort.Oldest : ConversationSort.Newest;
+        AutomationFilter? automation = query.Automation switch
+        {
+            "active" => AutomationFilter.Active,
+            "paused" => AutomationFilter.Paused,
+            "any" => AutomationFilter.Any,
+            "none" => AutomationFilter.None,
+            _ => null,
+        };
         var filter = new ConversationListFilter(
-            status, assigned, me, search, customerWaIds, customerIds, channel, tagCustomerIds, query.Unread is true, sort);
+            status, assigned, me, search, customerWaIds, customerIds, channel, tagCustomerIds, query.Unread is true, sort, automation);
 
         ConversationCursor? after = null;
         if (query.Cursor is not null && ConversationCursor.TryDecode(query.Cursor, out var decoded))

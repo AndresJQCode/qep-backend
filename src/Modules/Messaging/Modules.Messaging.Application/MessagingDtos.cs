@@ -45,13 +45,22 @@ public sealed record ConversationSummary(
     /// <summary>Spec 2026-10-15 D-R7 (BFF): el motivo de la resolución vigente, sólo con <c>status = Resolved</c>. Viaja en el resumen
     /// aunque esté en el historial porque el encabezado del hilo dibuja «Resuelta · Venta cerrada» y la fila de resueltas puede mostrarlo
     /// sin pedir los mensajes. <c>null</c> si está abierta o se resolvió sin motivo.</summary>
-    ResolutionReasonRefDto? ResolutionReason = null);
+    ResolutionReasonRefDto? ResolutionReason = null,
+    /// <summary>Spec 2026-10-21 D-A10 (BFF): <c>null</c> cuando la conversación no tiene asistente (<c>None</c>): la bandeja no dibuja nada,
+    /// y así la fila sin asistente no obliga a la pantalla a conocer el enum para saber que no hay qué mostrar.</summary>
+    ConversationAutomationDto? Automation = null);
+
+/// <summary>Spec 2026-10-21 §4.3: el asistente de la conversación. <c>Status</c> ∈ Active|Paused, por nombre. <c>PausedAt</c>,
+/// <c>PausedBy</c> y <c>PauseReason</c> sólo vienen pausada; <c>PausedBy</c> es <c>null</c> si lo pausó el sistema, y si la membresía
+/// ya no está sale como «Miembro eliminado», como <c>AssignedTo</c>.</summary>
+public sealed record ConversationAutomationDto(string Status, DateTimeOffset StartedAt, DateTimeOffset? PausedAt, MemberRefDto? PausedBy, string? PauseReason);
 
 /// <summary><c>Open</c> = conversaciones abiertas del tenant; <c>Unread</c> = la suma de
 /// <c>unread_count</c> del tenant (§5.4: la pantalla lo dibuja como «N sin leer»). Ninguno respeta la
 /// búsqueda: son los números de las pestañas, no de la página. <c>Mine</c> y <c>Unassigned</c> cuentan sólo
-/// abiertas (D-A10): son las pestañas de la cola de trabajo.</summary>
-public sealed record ConversationCountsDto(int Open, int Unread, int Mine, int Unassigned);
+/// abiertas (D-A10): son las pestañas de la cola de trabajo. <c>Automated</c> = abiertas con asistente (activo o pausado); es una
+/// colección de tamaño fijo del BFF: viaja siempre, también en cero, para que la pestaña dibuje «0» sin lógica propia.</summary>
+public sealed record ConversationCountsDto(int Open, int Unread, int Mine, int Unassigned, int Automated);
 
 /// <summary><c>Total</c> es exacto: la consulta infinita del frontend se detiene en
 /// <c>page * pageSize &gt;= total</c>.</summary>
@@ -82,7 +91,7 @@ public sealed record ResolutionReasonRefDto(Guid Id, string Name);
 public sealed record ReplyToDto(Guid Id, string Direction, string Kind, string? Preview);
 
 /// <summary>§5.1 y §6.1.5: <c>actor</c> es null cuando lo hizo el sistema.</summary>
-public sealed record MessageEventDto(string Type, MemberRefDto? Actor, MemberRefDto? Target, MemberRefDto? Previous, ResolutionReasonRefDto? Reason = null);
+public sealed record MessageEventDto(string Type, MemberRefDto? Actor, MemberRefDto? Target, MemberRefDto? Previous, ResolutionReasonRefDto? Reason = null, string? PauseReason = null);
 
 /// <param name="UnsupportedReason">Sólo en un <c>Unsupported</c> cuyo error de Meta tiene texto (<c>131060</c>, <c>131051</c>);
 /// si no, <c>null</c> y la burbuja dibuja la etiqueta del kind. BFF: viaja en español, como <c>failureReason</c>, porque

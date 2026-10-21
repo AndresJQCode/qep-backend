@@ -59,9 +59,11 @@ public sealed class ConversationSummaryBuilder(
             ? new Dictionary<string, CustomerRefDto>()
             : await customers.MatchAsync(tenantId, legacyPhones, cancellationToken);
         var assignees = rows.Where(row => row.AssignedMemberId is not null).Select(row => row.AssignedMemberId!.Value).Distinct().ToArray();
-        var assigneeNames = assignees.Length == 0
+        // Spec 2026-10-21: quien pausó el asistente se resuelve en la misma consulta de nombres que los asignados.
+        var memberIds = assignees.Concat(rows.Where(row => row.AutomationPausedByMemberId is not null).Select(row => row.AutomationPausedByMemberId!.Value)).Distinct().ToArray();
+        var assigneeNames = memberIds.Length == 0
             ? new Dictionary<Guid, string>()
-            : await memberNames.FindAsync(tenantId, assignees, cancellationToken);
+            : await memberNames.FindAsync(tenantId, memberIds, cancellationToken);
         var me = assignees.Length == 0 ? null : await caller.FindAsync(tenantId, cancellationToken);
         // Spec qep-frontend 2026-10-15: los chips, una consulta por página para todos los clientes resueltos.
         var customerIds = byId.Keys.Concat(byPhone.Values.Select(customer => customer.Id)).Distinct().ToArray();
@@ -116,8 +118,22 @@ public sealed class ConversationSummaryBuilder(
             row.Channel.ToString(),
             row.Status == ConversationStatus.Resolved && row.ResolutionReasonId is { } reasonId && reasonNames?.GetValueOrDefault(reasonId) is { } reasonName
                 ? new ResolutionReasonRefDto(reasonId, reasonName)
-                : null);
+                : null,
+            AutomationFrom(row, memberNames));
     }
+
+    /// <summary><c>null</c> en <c>None</c> (D-A10). Una fila a medio escribir sin <c>StartedAt</c> tampoco dibuja nada, nunca un 500.</summary>
+    private static ConversationAutomationDto? AutomationFrom(ConversationRow row, IReadOnlyDictionary<Guid, string> memberNames) =>
+        row is { AutomationStatus: not ConversationAutomationStatus.None, AutomationStartedAt: { } startedAt }
+            ? new ConversationAutomationDto(
+                row.AutomationStatus.ToString(),
+                startedAt,
+                row.AutomationPausedAt,
+                row.AutomationPausedByMemberId is { } pausedBy
+                    ? new MemberRefDto(pausedBy, memberNames.GetValueOrDefault(pausedBy) ?? MessageMapping.DeletedMemberName)
+                    : null,
+                row.AutomationPauseReason?.ToString())
+            : null;
 
     /// <summary>La foto del último mensaje sólo si están sus cinco campos: una fila a medio escribir
     /// sale con <c>lastMessage: null</c>, nunca con un 500.</summary>
@@ -169,7 +185,8 @@ internal static class MessageMapping
                     Member(conversationEvent.Previous, memberNames),
                     conversationEvent.ReasonId is { } reasonId && reasonNames?.GetValueOrDefault(reasonId) is { } reasonName
                         ? new ResolutionReasonRefDto(reasonId, reasonName)
-                        : null),
+                        : null,
+                    conversationEvent.PauseReason?.ToString()),
             row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
             row.Kind == MessageKind.Unsupported ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson)) : null,
             row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson));

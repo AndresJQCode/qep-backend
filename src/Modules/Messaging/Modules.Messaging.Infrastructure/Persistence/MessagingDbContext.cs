@@ -35,6 +35,21 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     public const string IdentityCheck = "user_id IS NOT NULL OR wa_id IS NOT NULL";
     public const string AssignmentCheck = "(assigned_member_id IS NULL) = (assigned_at IS NULL)";
 
+    // Spec 2026-10-21 §4.1: la automatización de la conversación (asistente), seis CHECK con los nombres del spec.
+    public const string AutomationStatusCheck = "automation_status IN ('None','Active','Paused')";
+
+    /// <summary>Pausada si y sólo si tiene cuándo y por qué se pausó.</summary>
+    public const string AutomationPauseCheck = "(automation_status = 'Paused') = (automation_paused_at IS NOT NULL AND automation_pause_reason IS NOT NULL)";
+
+    public const string AutomationStartedCheck = "(automation_status = 'None') = (automation_started_at IS NULL)";
+    public const string AutomationReasonCheck = "automation_pause_reason IS NULL OR automation_pause_reason IN ('AdvisorTook','AdvisorReplied','AdvisorTransferred','Manual','Handoff')";
+
+    /// <summary>I-1: nunca activa con asesor.</summary>
+    public const string AutomationAssignmentCheck = "automation_status <> 'Active' OR assigned_member_id IS NULL";
+
+    /// <summary>I-2 (D-A5): una resuelta no la atiende nadie. Sólo <c>Resolve()</c> lo garantiza en el código; el CHECK es la red.</summary>
+    public const string AutomationResolvedCheck = "status <> 'Resolved' OR automation_status = 'None'";
+
     /// <summary>§7.3: calificada con esquema para no depender del search_path de quien inserte.</summary>
     public const string SearchVectorSql = "to_tsvector('messaging.es_unaccent', coalesce(text, '') || ' ' || coalesce(caption, ''))";
 
@@ -111,6 +126,12 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
             table.HasCheckConstraint("CK_conversations_identity", IdentityCheck);
             table.HasCheckConstraint("CK_conversations_assignment", AssignmentCheck);
             table.HasCheckConstraint("CK_conversations_channel", ChannelCheck);
+            table.HasCheckConstraint("CK_conversations_automation_status", AutomationStatusCheck);
+            table.HasCheckConstraint("CK_conversations_automation_pause", AutomationPauseCheck);
+            table.HasCheckConstraint("CK_conversations_automation_started", AutomationStartedCheck);
+            table.HasCheckConstraint("CK_conversations_automation_reason", AutomationReasonCheck);
+            table.HasCheckConstraint("CK_conversations_automation_assignment", AutomationAssignmentCheck);
+            table.HasCheckConstraint("CK_conversations_automation_resolved", AutomationResolvedCheck);
         });
         conversation.HasKey(value => value.Id);
         conversation.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
@@ -149,6 +170,14 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.Property(value => value.ResolutionReasonId).HasColumnName("resolution_reason_id");
         conversation.HasOne<ResolutionReason>().WithMany().HasForeignKey(value => value.ResolutionReasonId)
             .HasConstraintName("FK_conversations_resolution_reasons").OnDelete(DeleteBehavior.Restrict);
+        // Spec 2026-10-21 §4.1: como channel, con default y centinela para que EF escriba siempre la columna (None es el 0 del enum).
+        // automation_paused_by_member_id es una referencia blanda a la membresía; NULL = lo pausó el sistema.
+        conversation.Property(value => value.AutomationStatus).HasColumnName("automation_status").HasConversion<string>().HasMaxLength(16)
+            .HasDefaultValue(ConversationAutomationStatus.None).HasSentinel((ConversationAutomationStatus)(-1));
+        conversation.Property(value => value.AutomationStartedAt).HasColumnName("automation_started_at");
+        conversation.Property(value => value.AutomationPausedAt).HasColumnName("automation_paused_at");
+        conversation.Property(value => value.AutomationPausedByMemberId).HasColumnName("automation_paused_by_member_id");
+        conversation.Property(value => value.AutomationPauseReason).HasColumnName("automation_pause_reason").HasConversion<string>().HasMaxLength(32);
         conversation.Ignore(value => value.CustomerWindowExpiresAt);
 
         // Todos con el overload con nombre: sin nombre en HasIndex, EF funde los que tienen las mismas columnas
@@ -176,6 +205,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.HasIndex(value => value.WaId, "IX_conversations_wa_id_trgm")
             .HasMethod("gin").HasOperators("gin_trgm_ops");
         conversation.HasIndex(value => value.Username, "IX_conversations_username_trgm").HasMethod("gin").HasOperators("gin_trgm_ops");
+        // Spec 2026-10-21 §4.1: la pestaña y el contador de automatizadas; parcial porque la mayoría no tiene asistente.
+        conversation.HasIndex(value => new { value.TenantId, value.AutomationStatus, value.LastActivityAt }, "IX_conversations_tenant_automation_activity")
+            .IsDescending(false, false, true).HasFilter("automation_status <> 'None'");
         // Spec 2026-10-14 §5.2: el filtro por canal de la lista, con la misma forma que el índice de la lista.
         conversation.HasIndex(value => new { value.TenantId, value.Channel, value.Status, value.LastActivityAt, value.Id }, "IX_conversations_tenant_channel_status_activity")
             .IsDescending(false, false, false, true, true);

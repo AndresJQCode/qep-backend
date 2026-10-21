@@ -57,6 +57,35 @@ public sealed class ConversationListFiltersApiTests
     private static Guid[] Ids(JsonElement page) =>
         [.. page.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetGuid())];
 
+    // Spec 2026-10-21 §4.3: el filtro `automation` y counts.automated. Se activa por SQL: el helper del harness llega después.
+    [Fact]
+    public async Task AutomationFilterAndCountNeedTheHarnessToActivate()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var (active, _) = await IngestAsync(f, "CO.A", "w1", 1760000100, "Ana");
+        var (plain, _) = await IngestAsync(f, "CO.B", "w2", 1760000200, "Beto");
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now() WHERE id = @id", ("id", active));
+
+        var all = await ListAsync(f, "");
+        Assert.Equal([plain, active], Ids(all));
+        Assert.Equal(1, all.GetProperty("counts").GetProperty("automated").GetInt32());
+        var items = all.GetProperty("items").EnumerateArray().ToDictionary(item => item.GetProperty("id").GetGuid());
+        Assert.Equal("Active", items[active].GetProperty("automation").GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, items[plain].GetProperty("automation").ValueKind);
+
+        Assert.Equal([active], Ids(await ListAsync(f, "?automation=active")));
+        Assert.Equal([active], Ids(await ListAsync(f, "?automation=any")));
+        Assert.Equal([plain], Ids(await ListAsync(f, "?automation=none")));
+        Assert.Empty(Ids(await ListAsync(f, "?automation=paused")));
+
+        var invalid = await f.Client.GetAsync($"{ConversationsUrl(f.Tenant.TenantId)}?automation=bot", Ct);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
+        Assert.Equal("validation.failed", (await invalid.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("code").GetString());
+    }
+
     [Fact]
     public async Task TheTagFilterKeepsOnlyConversationsOfCustomersWithThatTagAndTheCountsDoNotMove()
     {

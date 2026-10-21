@@ -235,6 +235,31 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("assigned_member_id");
 
+                    b.Property<string>("AutomationPauseReason")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("automation_pause_reason");
+
+                    b.Property<DateTimeOffset?>("AutomationPausedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("automation_paused_at");
+
+                    b.Property<Guid?>("AutomationPausedByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("automation_paused_by_member_id");
+
+                    b.Property<DateTimeOffset?>("AutomationStartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("automation_started_at");
+
+                    b.Property<string>("AutomationStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("None")
+                        .HasColumnName("automation_status");
+
                     b.Property<string>("Channel")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -367,6 +392,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .IsDescending(false, false, false, true, true)
                         .HasFilter("assigned_member_id IS NOT NULL");
 
+                    b.HasIndex(new[] { "TenantId", "AutomationStatus", "LastActivityAt" }, "IX_conversations_tenant_automation_activity")
+                        .IsDescending(false, false, true)
+                        .HasFilter("automation_status <> 'None'");
+
                     b.HasIndex(new[] { "TenantId", "Channel", "Status", "LastActivityAt", "Id" }, "IX_conversations_tenant_channel_status_activity")
                         .IsDescending(false, false, false, true, true);
 
@@ -402,6 +431,18 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.ToTable("conversations", "messaging", t =>
                         {
                             t.HasCheckConstraint("CK_conversations_assignment", "(assigned_member_id IS NULL) = (assigned_at IS NULL)");
+
+                            t.HasCheckConstraint("CK_conversations_automation_assignment", "automation_status <> 'Active' OR assigned_member_id IS NULL");
+
+                            t.HasCheckConstraint("CK_conversations_automation_pause", "(automation_status = 'Paused') = (automation_paused_at IS NOT NULL AND automation_pause_reason IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_conversations_automation_reason", "automation_pause_reason IS NULL OR automation_pause_reason IN ('AdvisorTook','AdvisorReplied','AdvisorTransferred','Manual','Handoff')");
+
+                            t.HasCheckConstraint("CK_conversations_automation_resolved", "status <> 'Resolved' OR automation_status = 'None'");
+
+                            t.HasCheckConstraint("CK_conversations_automation_started", "(automation_status = 'None') = (automation_started_at IS NULL)");
+
+                            t.HasCheckConstraint("CK_conversations_automation_status", "automation_status IN ('None','Active','Paused')");
 
                             t.HasCheckConstraint("CK_conversations_channel", "channel IN ('WhatsApp','Instagram')");
 

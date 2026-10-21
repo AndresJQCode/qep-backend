@@ -13,7 +13,8 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
         conversation.Id, conversation.TenantId, conversation.ConnectionId, conversation.UserId, conversation.WaId, conversation.Username,
         conversation.ProfileName, conversation.CustomerId, conversation.AssignedMemberId, conversation.Status,
         conversation.UnreadCount, conversation.LastInboundAt, conversation.LastMessageId, conversation.LastMessageDirection, conversation.LastMessageKind,
-        conversation.LastMessagePreview, conversation.LastMessageStatus, conversation.LastMessageAt, conversation.UpdatedAt, conversation.Version, conversation.Channel, conversation.ResolutionReasonId, conversation.LastActivityAt);
+        conversation.LastMessagePreview, conversation.LastMessageStatus, conversation.LastMessageAt, conversation.UpdatedAt, conversation.Version, conversation.Channel, conversation.ResolutionReasonId, conversation.LastActivityAt,
+        conversation.AutomationStatus, conversation.AutomationStartedAt, conversation.AutomationPausedAt, conversation.AutomationPausedByMemberId, conversation.AutomationPauseReason);
 
     public async Task<IReadOnlyList<ConversationRow>> ListAsync(
         Guid tenantId, ConversationListFilter filter, ConversationCursor? after, int take, CancellationToken cancellationToken)
@@ -32,6 +33,16 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
             var taggedIds = tagged.ToArray();
             query = query.Where(conversation => conversation.CustomerId != null && taggedIds.Contains(conversation.CustomerId.Value));
         }
+
+        // Spec 2026-10-21 §4.3: ausente = todas, con y sin asistente.
+        query = filter.Automation switch
+        {
+            AutomationFilter.Any => query.Where(conversation => conversation.AutomationStatus != ConversationAutomationStatus.None),
+            AutomationFilter.Active => query.Where(conversation => conversation.AutomationStatus == ConversationAutomationStatus.Active),
+            AutomationFilter.Paused => query.Where(conversation => conversation.AutomationStatus == ConversationAutomationStatus.Paused),
+            AutomationFilter.None => query.Where(conversation => conversation.AutomationStatus == ConversationAutomationStatus.None),
+            _ => query,
+        };
 
         if (filter.UnreadOnly)
         {
@@ -98,7 +109,11 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
             : 0;
         var unassigned = await dbContext.Conversations.AsNoTracking().CountAsync(
             conversation => conversation.TenantId == tenantId && conversation.AssignedMemberId == null && conversation.Status == ConversationStatus.Open, cancellationToken);
-        return new ConversationCountsDto(open, unread, mine, unassigned);
+        // Misma condición que IX_conversations_tenant_automation_activity (parcial) más el estado abierto.
+        var automated = await dbContext.Conversations.AsNoTracking().CountAsync(
+            conversation => conversation.TenantId == tenantId && conversation.Status == ConversationStatus.Open
+                && conversation.AutomationStatus != ConversationAutomationStatus.None, cancellationToken);
+        return new ConversationCountsDto(open, unread, mine, unassigned, automated);
     }
 
     public Task<ConversationRow?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>

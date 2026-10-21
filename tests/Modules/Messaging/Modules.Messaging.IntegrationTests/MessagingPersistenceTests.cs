@@ -178,6 +178,36 @@ public sealed class MessagingPersistenceTests
         Assert.Equal("IX_conversations_connection_wa_legacy", Assert.IsType<PostgresException>(legacyDuplicate.InnerException).ConstraintName);
     }
 
+    // Spec 2026-10-21 §4.1: los seis CHECK de la automatización. Cada UPDATE viola uno solo: PostgreSQL informa el primero
+    // que falla, así que cada fila cumple los demás.
+    [Fact]
+    public async Task TheAutomationChecksHoldStatusPauseStartedAssignmentAndResolved()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var conversationId = await SeedConversationAsync(factory, tenantId, connectionId, "573001234567");
+
+        async Task<string?> ViolationAsync(string set)
+        {
+            var ex = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connectionString,
+                $"UPDATE messaging.conversations SET {set} WHERE id = @id", ("id", conversationId)));
+            return ex.ConstraintName;
+        }
+
+        Assert.Equal("CK_conversations_automation_status", await ViolationAsync("automation_status = 'Bot', automation_started_at = now()"));
+        Assert.Equal("CK_conversations_automation_pause", await ViolationAsync("automation_status = 'Paused', automation_started_at = now()"));
+        Assert.Equal("CK_conversations_automation_started", await ViolationAsync("automation_status = 'Active'"));
+        Assert.Equal("CK_conversations_automation_reason", await ViolationAsync("automation_status = 'Active', automation_started_at = now(), automation_pause_reason = 'Nope'"));
+        Assert.Equal("CK_conversations_automation_assignment",
+            await ViolationAsync("automation_status = 'Active', automation_started_at = now(), assigned_member_id = gen_random_uuid(), assigned_at = now()"));
+        Assert.Equal("CK_conversations_automation_resolved", await ViolationAsync("status = 'Resolved', automation_status = 'Active', automation_started_at = now()"));
+        Assert.Equal(1, await ExecuteAsync(connectionString,
+            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now() WHERE id = @id", ("id", conversationId)));
+    }
+
     // Spec 2026-10-16 §3.1: responder resta sólo lo que el asesor tenía a la vista y el envío nunca sube version
     // ni updated_at (Fix 1, hallazgo 1), así que el UPDATE tampoco.
     [Fact]

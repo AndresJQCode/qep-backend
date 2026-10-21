@@ -289,6 +289,14 @@ internal sealed class InMemoryConversationQueries : IConversationQueries
                 AssignedFilter.Unassigned => row.AssignedMemberId is null,
                 _ => true,
             })
+            .Where(row => filter.Automation switch
+            {
+                AutomationFilter.Any => row.AutomationStatus != ConversationAutomationStatus.None,
+                AutomationFilter.Active => row.AutomationStatus == ConversationAutomationStatus.Active,
+                AutomationFilter.Paused => row.AutomationStatus == ConversationAutomationStatus.Paused,
+                AutomationFilter.None => row.AutomationStatus == ConversationAutomationStatus.None,
+                _ => true,
+            })
             .ToList();
         return Task.FromResult<IReadOnlyList<ConversationRow>>(items.Take(take).ToList());
     }
@@ -300,7 +308,8 @@ internal sealed class InMemoryConversationQueries : IConversationQueries
             open.Count,
             Rows.Where(row => row.TenantId == tenantId).Sum(row => row.UnreadCount),
             memberId is { } me ? open.Count(row => row.AssignedMemberId == me) : 0,
-            open.Count(row => row.AssignedMemberId is null)));
+            open.Count(row => row.AssignedMemberId is null),
+            open.Count(row => row.AutomationStatus != ConversationAutomationStatus.None)));
     }
 
     public Task<ConversationRow?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
