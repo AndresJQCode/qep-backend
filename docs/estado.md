@@ -37,10 +37,12 @@ falla. Ninguno de los dos `develop` se despliega solo hasta que exista el fronte
 
 Orden acordado con el owner: variantes → productos desde Shopify → campanita → alertas.
 
-**Envío por canal, lo que sigue igual.** «Enviar por WhatsApp» de la cotización sale todavía por la cuenta global de
-Zenvia (`ZenviaWhatsAppSender`, `QuotationsInfrastructureExtensions.AddWhatsAppSender`). El plan 1 sólo deja que el
-operador habilite Zenvia por tenant (`tenancy` con backfill, `integrations.provider.not_enabled`, 403); el envío por la
-conexión del tenant es de los planes 2 y 3.
+**Envío por canal.** La cotización y el pedido salen por la conexión de Zenvia del tenant (plan 2 recortado a Zenvia,
+`07217b94`: `IWhatsAppChannelDirectory`, `QuotationsWhatsAppChannelDirectory`, `WhatsAppChannelSelection`). La cuenta
+global `Quotations:WhatsApp:{ApiToken, FromNumber, TemplateId, OrderTemplateId}` y `LogWhatsAppSender` ya no existen.
+Sin canal el envío responde `quotation.whatsapp.no_channel` / `order.whatsapp.no_channel`; con más de uno,
+`*.whatsapp.channel_required`. Falta el plan 3: envío por Meta, elección del canal (diálogo y Configuración) y la
+copia del frontend para los códigos nuevos.
 
 ## Specs
 
@@ -68,7 +70,7 @@ conexión del tenant es de los planes 2 y 3.
 | 2026-10-17 flete | Construido; backend (`07487ded`) y frontend (`5feba65`) | Pendientes del owner P1/P2 con valor por defecto en el spec |
 | 2026-10-18 layout de documentos | Construido en los dos repos | El spec aún dice «borrador» |
 | 2026-10-20 variantes de producto | Backend construido; frontend sin empezar | Ver «Trabajo en curso» |
-| 2026-10-21 envío de cotizaciones por canal | Plan 1 de 3 construido | Spec en borrador para el owner |
+| 2026-10-21 envío de cotizaciones por canal | Planes 1 y 2 (sólo Zenvia) construidos; falta el 3 | Spec en borrador para el owner; el recorte del plan 2 lo aprobó el owner |
 | 2026-10-21 Shopify: días de historial | Aprobado en conversación, sin empezar | Tope 30 días, desde `LinkedAt`, en cada pulsación; el cron no cambia. Extiende D-S4 |
 | 2026-10-21 onboarding | Incompleto, en pausa; sin empezar | Metas por módulo; estado calculado en vivo, sin escribir en el GET; backfill cierra la guía de los tenants existentes |
 
@@ -99,6 +101,9 @@ historial de `git` los conserva.
   - **Urgente aparte de QEP:** Lulo CRM v1 usa tokens que no expiran. Si no se parchea antes del 2027-01-01, su
     integración con Shopify se cae ese día.
 - **Pos:** antes de desplegar, comprobar que ningún tenant tenga un rol custom con la clave `cashier`.
+- **Zenvia por tenant:** el despliegue deja a Origen Botánico sin envío hasta que se cree su conexión de Zenvia
+  (producción no tiene Integrations antes): el procedimiento está en README § Plantilla de WhatsApp › En producción.
+  Después se borran `QUOTATIONS_WHATSAPP_*` de `Backend-prod` y se comprueba que el Secret vivo ya no las tenga.
 - **`dotnet format`:** roto en `tests/Modules/Messaging/Modules.Messaging.IntegrationTests/ReplyMarksReadApiTests.cs`,
   `WHITESPACE` en las líneas 139 y 208 (comprobado el 2026-10-21).
 - **Meta/Instagram:** V-4 y V-8 sin verificar contra Meta real.
@@ -111,7 +116,8 @@ historial de `git` los conserva.
 - Variantes: las del §11 del [traspaso](superpowers/plans/2026-10-20-variantes-handoff.md) (columna «Variante» en la
   variante por defecto, código de barras de una variante inactiva, borrado con `CASCADE` del historial, carrera de
   borrado, búsqueda por código de barras, `deletedVariantIds`).
-- Envío por canal: la revisión del spec, que sigue en borrador.
+- Envío por canal: la revisión del spec, que sigue en borrador. Y del plan 2: aceptar la ventana sin envío de Origen
+  Botánico tras el despliegue o cerrarla con una siembra de una sola vez desde `QUOTATIONS_WHATSAPP_*`.
 - Onboarding (§6 del [spec](superpowers/specs/2026-10-21-onboarding-design.md)): D-1 sembrar IVA 19 %, 5 % y Exento al
   registrar un tenant de CO; D-2 landing en `/setup` mientras falte la meta principal; D-4 número de WhatsApp de
   soporte; D-5 en qué lugar de la cola entra (la propuesta es el backend en paralelo a variantes).
@@ -132,6 +138,8 @@ historial de `git` los conserva.
 - Un registro de tenant que falla después de aprovisionar deja el usuario en `identity.users` sin membresía
   (`RegistrationEndpoints.cs:89-104`).
 - `develop` de backend y frontend incompatibles por `variantId` (ver «Bloqueante»).
+- Los harness de integración no fijan `Seed:Enabled`: con `Seed:Enabled=true` en los user-secrets del developer caen
+  con `Seed:OwnerEmail is required`. Mientras tanto, se corren con `Seed__Enabled=false`.
 
 ## Shopify: fuente del documento del comprador
 
@@ -165,6 +173,9 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-21 — Mergeado a `develop` el plan 2 del envío por canal, recortado a Zenvia (`bba8ba1b..07217b94`, decisión
+  del owner): la conexión de Zenvia lleva `templateId` y `orderTemplateId`, cotización y pedido salen por la conexión
+  del tenant y se retira la cuenta global. Revisión independiente hecha; tres correcciones en la misma rama.
 - 2026-10-21 — El owner pone en pausa el spec de onboarding para priorizar otras tareas. Lo pendiente quedó en la
   sección «Para retomar» del spec. Las urgencias de los tokens de Shopify (v1 y QEP, 2027-01-01) no esperan a
   retomarlo.
