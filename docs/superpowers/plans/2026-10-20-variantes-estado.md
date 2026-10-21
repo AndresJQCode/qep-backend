@@ -24,10 +24,10 @@ Archivo vivo: se actualiza al cerrar cada tarea o decisión. Las tareas detallad
 | 6 | Borrar o desactivar variantes (puerto de uso) | Hecha (`5bd62b58`, `72e91421`), pruebas sin ejecutar |
 | 7 | Historial de precios y copia de escalas por variante | Hecha (`f870b495`, `09072af1`), pruebas sin ejecutar |
 | 8 | Excel de productos por variante | Hecha (`67f7bb6d`), pruebas sin ejecutar |
-| 9 | Adaptadores hacia Quotations, Pos y Shopify | Pendiente |
-| 10 | Quotations: líneas por variante | Pendiente |
-| 11 | Pedidos de Shopify por variante | Pendiente |
-| 12 | Punto de venta por variante | Pendiente |
+| 9 | Adaptadores hacia Quotations, Pos y Shopify | Hecha (`34944393`, conjunto T9–T12), pruebas sin ejecutar |
+| 10 | Quotations: líneas por variante | Hecha (`34944393`), pruebas sin ejecutar |
+| 11 | Pedidos de Shopify por variante | Hecha (`34944393`), pruebas sin ejecutar |
+| 12 | Punto de venta por variante | Hecha (`34944393`), pruebas sin ejecutar |
 | 13 | Reporte de cambios de precio | Pendiente |
 | 14 | PDF y Excel de pedidos | Pendiente |
 | 15 | Siembras, documentación y traspaso al frontend | Pendiente |
