@@ -63,4 +63,37 @@ public sealed class MessageAuthorshipApiTests
         Assert.Equal($"2|{chatbotId}|", await ScalarAsync<string>(connectionString,
             "SELECT sent_by_kind || '|' || sent_by_chatbot_id || '|' || coalesce(sent_by_member_id::text, '') FROM messaging.messages WHERE id = @id", ("id", draft.MessageId)));
     }
+
+    [Fact]
+    public async Task AFailedMemberRowRetriedByAChatbotEndsAsKindTwoWithoutMember()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        var connectionId = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", "111", "222");
+        var conversationId = await SeedConversationAsync(factory, tenant.TenantId, connectionId, "573001234567");
+        var memberId = await OwnerMembershipIdAsync(connectionString, tenant);
+        var chatbotId = Guid.CreateVersion7();
+        var clientId = Guid.CreateVersion7();
+        var at = DateTimeOffset.UtcNow;
+        var first = new OutboundDraft(Guid.CreateVersion7(), conversationId, tenant.TenantId, connectionId, clientId, "hola", memberId, at);
+        var retry = new OutboundDraft(Guid.CreateVersion7(), conversationId, tenant.TenantId, connectionId, clientId, "hola", null, at, SentByChatbotId: chatbotId);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            await using var claim = await scope.ServiceProvider.GetRequiredService<IOutboundMessages>().ClaimAsync(first, Ct);
+            await claim.CommitFailedAsync(131026, "x", at, null, Ct);
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            await using var claim = await scope.ServiceProvider.GetRequiredService<IOutboundMessages>().ClaimAsync(retry, Ct);
+            Assert.False(claim.Inserted);
+            await claim.CommitSentAsync("wamid.retry", at, null, Ct);
+        }
+
+        Assert.Equal($"2|{chatbotId}||1", await ScalarAsync<string>(connectionString,
+            "SELECT sent_by_kind || '|' || sent_by_chatbot_id || '|' || coalesce(sent_by_member_id::text, '') || '|' || status FROM messaging.messages WHERE id = @id", ("id", first.MessageId)));
+    }
 }

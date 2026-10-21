@@ -67,8 +67,17 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
     }
 
     /// <summary>Los CHECK de la tabla (spec 2026-10-21 §5.5): <c>sent_by_kind = 2</c> si y sólo si hay chatbot, y entonces sin miembro.</summary>
-    private static short AuthorKindOf(OutboundDraft draft) =>
-        (short)(draft.SentByChatbotId is null ? MessageAuthorKind.Member : MessageAuthorKind.Chatbot);
+    private static short AuthorKindOf(OutboundDraft draft)
+    {
+        // Exactamente un autor: con los dos, o con ninguno, los CHECK de la tarea 3 saltarían después (o se escribiría una fila
+        // kind 1 sin miembro); mejor fallar aquí, antes de abrir nada contra la tabla.
+        if ((draft.SentByMemberId is null) == (draft.SentByChatbotId is null))
+        {
+            throw new ArgumentException("A draft needs exactly one author: SentByMemberId or SentByChatbotId.", nameof(draft));
+        }
+
+        return (short)(draft.SentByChatbotId is null ? MessageAuthorKind.Member : MessageAuthorKind.Chatbot);
+    }
 
     private static ExistingOutbound ToExisting(ExistingRow row) =>
         new(row.Id, MessageColumnCodes.ToStatus(row.Status), row.OccurredAt, row.SentByMemberId, row.Text, row.ReplyToMessageId,
