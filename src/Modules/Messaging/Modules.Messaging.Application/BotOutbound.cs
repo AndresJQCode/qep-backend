@@ -33,7 +33,8 @@ public interface IBotOutbound
 /// automatización <c>Active</c>, y dentro de la ventana de 24 h (la ventana se mira antes de reclamar: no deja fila).
 /// </summary>
 public sealed class BotOutbound(
-    IConversationRepository conversations,
+    IConversationQueries conversations,
+    IConversationRepository repository,
     IOutboundMessages outbound,
     IWhatsAppCloudClient meta,
     IMessagingConnectionDirectory connections,
@@ -44,9 +45,21 @@ public sealed class BotOutbound(
     public async Task<BotSendResult> SendAsync(BotSend send, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(send);
+        // Lectura sin seguimiento a propósito: el motor llama varias veces dentro de un mismo scope, y una entidad rastreada
+        // ocultaría un Take del asesor entre dos mensajes del bot.
         var conversation = await conversations.FindAsync(send.TenantId, send.ConversationId, cancellationToken);
-        if (conversation is null
-            || conversation.Status != ConversationStatus.Open
+        if (conversation is null)
+        {
+            return new BotSendResult.NotAutomated();
+        }
+
+        // Lo que ya salió, ya salió, aunque un asesor haya tomado la conversación en el medio (como el envío humano, SendMessage.cs).
+        if (await outbound.FindByClientIdAsync(conversation.Id, send.ClientId, cancellationToken) is { Status: not MessageStatus.Failed } sent)
+        {
+            return new BotSendResult.Sent(sent.Id, AlreadySent: true);
+        }
+
+        if (conversation.Status != ConversationStatus.Open
             || conversation.AssignedMemberId is not null
             || conversation.AutomationStatus != ConversationAutomationStatus.Active
             // Instagram no tiene automatización ni interactivos (D-I1): nunca es del bot.
@@ -55,14 +68,8 @@ public sealed class BotOutbound(
             return new BotSendResult.NotAutomated();
         }
 
-        // Lo que ya salió, ya salió: el motor reintenta con el mismo ClientId y no debe llegar dos veces a Meta.
-        if (await outbound.FindByClientIdAsync(conversation.Id, send.ClientId, cancellationToken) is { Status: not MessageStatus.Failed } sent)
-        {
-            return new BotSendResult.Sent(sent.Id, AlreadySent: true);
-        }
-
         var now = clock.UtcNow;
-        if (!conversation.IsWindowOpen(now))
+        if (conversation.LastInboundAt is not { } lastInbound || lastInbound.Add(Conversation.WindowLength) <= now)
         {
             return new BotSendResult.WindowClosed();
         }
@@ -72,7 +79,8 @@ public sealed class BotOutbound(
             return new BotSendResult.Rejected("messaging.interactive.invalid");
         }
 
-        var text = send.Text ?? send.Interactive?.Body;
+        // Con interactivo, su cuerpo es la única fuente del texto guardado.
+        var text = send.Interactive?.Body ?? send.Text?.Trim();
         if (string.IsNullOrWhiteSpace(text))
         {
             return new BotSendResult.Rejected(MessagingErrorCodes.MessageRejected);
@@ -106,7 +114,7 @@ public sealed class BotOutbound(
             : await meta.SendTextAsync(sender, target, text, callback, null, CancellationToken.None);
         try
         {
-            await new OutboundSettlement(conversations, connections, notifier, receipts, clock)
+            await new OutboundSettlement(repository, connections, notifier, receipts, clock)
                 .SettleAsync(send.TenantId, conversation.ConnectionId, claim, result, clock.UtcNow, metaMediaId: null, afterRollback: null, seen: conversation.UnreadCount);
         }
         catch (MessagingDomainException exception) when (exception.Code == MessagingErrorCodes.ConnectionUnavailable)

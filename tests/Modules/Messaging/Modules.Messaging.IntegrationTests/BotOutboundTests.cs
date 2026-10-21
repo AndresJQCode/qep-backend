@@ -157,4 +157,97 @@ public sealed class BotOutboundTests
         Assert.Equal("messaging.message.rejected", Assert.IsType<BotSendResult.Rejected>(result).Code);
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2 AND status = 4"));
     }
+
+    [Fact]
+    public async Task ATakeBetweenTwoSendsInTheSameScopeIsSeen()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var scope = f.Factory.Services.CreateScope();
+        var bot = scope.ServiceProvider.GetRequiredService<IBotOutbound>();
+        BotSend Next() => new(f.Tenant.TenantId, f.ConversationId, f.ChatbotId, Guid.CreateVersion7(), "Hola", null);
+
+        Assert.IsType<BotSendResult.Sent>(await bot.SendAsync(Next(), Ct));
+        using var client = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ManagePermissions);
+        var version = await ScalarAsync<long>(f.ConnectionString, "SELECT version FROM messaging.conversations");
+        var take = await MessagingApiHarness.SendAsync(client, HttpMethod.Post, $"{ConversationUrl(f.Tenant.TenantId, f.ConversationId)}/take", null, $"\"{version}\"");
+        Assert.Equal(HttpStatusCode.OK, take.StatusCode);
+
+        Assert.IsType<BotSendResult.NotAutomated>(await bot.SendAsync(Next(), Ct));
+        Assert.Equal(1, SendCalls(f));
+    }
+
+    [Theory]
+    [InlineData("UPDATE messaging.conversations SET automation_status = 'Paused', automation_paused_at = now(), automation_pause_reason = 'Manual'")]
+    [InlineData("UPDATE messaging.conversations SET status = 'Resolved', automation_status = 'None', automation_started_at = NULL, automation_chatbot_id = NULL")]
+    public async Task RefusesWhenTheAutomationIsPausedOrTheConversationResolved(string sql)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ExecuteAsync(f.ConnectionString, sql);
+
+        Assert.IsType<BotSendResult.NotAutomated>(await SendAsync(f, "Hola"));
+        Assert.Equal(0, SendCalls(f));
+    }
+
+    [Fact]
+    public async Task AnUnavailableConnectionIsReportedWithoutCallingMeta()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ExecuteAsync(f.ConnectionString, "UPDATE integrations.connections SET status = 'Paused'");
+
+        Assert.IsType<BotSendResult.ConnectionUnavailable>(await SendAsync(f, "Hola"));
+        Assert.Equal(0, SendCalls(f));
+    }
+
+    [Fact]
+    public async Task MetaClosingTheWindowBecomesWindowClosed()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(131047));
+
+        Assert.IsType<BotSendResult.WindowClosed>(await SendAsync(f, "Hola"));
+    }
+
+    [Fact]
+    public async Task AFailedRowWithTheSameClientIdIsResent()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var clientId = Guid.CreateVersion7();
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(131026));
+        Assert.IsType<BotSendResult.Rejected>(await SendAsync(f, "Hola", clientId: clientId));
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK,
+            """{"messaging_product":"whatsapp","contacts":[{"input":"573001234567","wa_id":"573001234567"}],"messages":[{"id":"wamid.retry"}]}""");
+
+        var second = Assert.IsType<BotSendResult.Sent>(await SendAsync(f, "Hola", clientId: clientId));
+
+        Assert.False(second.AlreadySent);
+        Assert.Equal(2, SendCalls(f));
+        Assert.Equal("1|1", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT status || '|' || (SELECT count(*) FROM messaging.messages WHERE direction = 2) FROM messaging.messages WHERE id = @id", ("id", second.MessageId)));
+    }
+
+    [Fact]
+    public async Task ThePostCarriesTheCallbackWithTheMessageId()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        var sent = Assert.IsType<BotSendResult.Sent>(await SendAsync(f, "Hola"));
+
+        var post = Assert.Single(f.Factory.MetaHandler.Requests, r => r.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal) && !IsReadReceipt(r));
+        Assert.Contains($"\"biz_opaque_callback_data\":\"qep:{sent.MessageId}\"", post.Body, StringComparison.Ordinal);
+    }
 }
