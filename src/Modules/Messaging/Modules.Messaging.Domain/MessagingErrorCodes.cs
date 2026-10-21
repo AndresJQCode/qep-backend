@@ -133,4 +133,13 @@ public static class MessagingErrorCodes
 
     /// <summary>§4.8: el <c>templateId</c> no es de esa conexión (404; uuid local, no filtra nada).</summary>
     public const string TemplateNotFound = "messaging.template.not_found";
+
+    /// <summary>Spec 2026-10-21 §4.2: la conversación no admite esa operación del asistente (sin asistente, con asesor o ya pausado).</summary>
+    public const string AutomationNotAvailable = "messaging.automation.not_available";
+
+    /// <summary>Spec 2026-10-21 §4.2: el asistente ya está pausado.</summary>
+    public const string AutomationAlreadyPaused = "messaging.automation.already_paused";
+
+    /// <summary>Spec 2026-10-21 §4.2: el asistente ya está atendiendo la conversación.</summary>
+    public const string AutomationAlreadyActive = "messaging.automation.already_active";
 }

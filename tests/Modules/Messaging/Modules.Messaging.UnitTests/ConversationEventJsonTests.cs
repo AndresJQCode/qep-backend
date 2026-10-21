@@ -61,4 +61,21 @@ public sealed class ConversationEventJsonTests
         Assert.Equal(
             new ConversationEvent(ConversationEventType.Resolved, Actor: Actor),
             ConversationEventJson.Parse($$"""{"type":"Resolved","actor":"{{Actor}}"}"""));
+
+    [Fact]
+    public void ThePauseReasonRoundTripsByName()
+    {
+        var value = new ConversationEvent(ConversationEventType.AutomationPaused, Actor: Actor, PauseReason: AutomationPauseReason.AdvisorReplied);
+
+        var json = ConversationEventJson.Serialize(value);
+
+        Assert.Contains("\"pauseReason\":\"AdvisorReplied\"", json);
+        Assert.Equal(value, ConversationEventJson.Parse(json));
+    }
+
+    [Fact]
+    public void AnUnknownPauseReasonReadsAsNull() =>
+        Assert.Equal(
+            new ConversationEvent(ConversationEventType.AutomationPaused),
+            ConversationEventJson.Parse("""{"type":"AutomationPaused","pauseReason":"Whatever"}"""));
 }

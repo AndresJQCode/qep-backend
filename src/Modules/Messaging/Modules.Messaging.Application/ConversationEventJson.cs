@@ -22,6 +22,11 @@ public static class ConversationEventJson
             WriteId(writer, "customerId", value.CustomerId);
             WriteId(writer, "linkedConversationId", value.LinkedConversationId);
             WriteId(writer, "reasonId", value.ReasonId);
+            if (value.PauseReason is { } pauseReason)
+            {
+                writer.WriteString("pauseReason", pauseReason.ToString());
+            }
+
             writer.WriteEndObject();
         }
 
@@ -48,9 +53,14 @@ public static class ConversationEventJson
                 return null;
             }
 
+            // Un motivo desconocido (de una versión futura) se lee como null: el hilo no puede fallar por eso.
+            AutomationPauseReason? pauseReason = root.TryGetProperty("pauseReason", out var reason) && reason.ValueKind == JsonValueKind.String
+                && Enum.TryParse<AutomationPauseReason>(reason.GetString(), ignoreCase: false, out var parsedReason) && Enum.IsDefined(parsedReason)
+                ? parsedReason : null;
+
             return new ConversationEvent(
                 parsed, ReadId(root, "actor"), ReadId(root, "target"), ReadId(root, "previous"), ReadId(root, "customerId"),
-                ReadId(root, "linkedConversationId"), ReadId(root, "reasonId"));
+                ReadId(root, "linkedConversationId"), ReadId(root, "reasonId"), pauseReason);
         }
         catch (JsonException)
         {

@@ -158,8 +158,8 @@ public sealed class ConversationTests
         var first = conversation.Take(Andres, Now.AddMinutes(1));
         var second = conversation.Take(Beatriz, Now.AddMinutes(2));
 
-        Assert.Equal(new ConversationEvent(ConversationEventType.Taken, Actor: Andres), first);
-        Assert.Equal(new ConversationEvent(ConversationEventType.Taken, Actor: Beatriz, Previous: Andres), second);
+        Assert.Equal(new ConversationEvent(ConversationEventType.Taken, Actor: Andres), Assert.Single(first));
+        Assert.Equal(new ConversationEvent(ConversationEventType.Taken, Actor: Beatriz, Previous: Andres), Assert.Single(second));
         Assert.Equal((Beatriz, Now.AddMinutes(2), 3L), (conversation.AssignedMemberId!.Value, conversation.AssignedAt!.Value, conversation.Version));
     }
 
@@ -171,8 +171,8 @@ public sealed class ConversationTests
 
         Assert.Null(conversation.Release(Andres, Now));
         conversation.Take(Andres, Now);
-        Assert.Null(conversation.Take(Andres, Now.AddMinutes(1)));
-        Assert.Null(conversation.TransferTo(Beatriz, Andres, Now.AddMinutes(1)));   // P8: ya es de Andrés
+        Assert.Empty(conversation.Take(Andres, Now.AddMinutes(1)));
+        Assert.Empty(conversation.TransferTo(Beatriz, Andres, Now.AddMinutes(1)));   // P8: ya es de Andrés
         Assert.Equal(2, conversation.Version);
     }
 
@@ -185,8 +185,8 @@ public sealed class ConversationTests
         var toSelf = conversation.TransferTo(Beatriz, Beatriz, Now.AddMinutes(1));
         var back = conversation.TransferTo(Beatriz, Andres, Now.AddMinutes(2));
 
-        Assert.Equal(new ConversationEvent(ConversationEventType.Taken, Actor: Beatriz, Previous: Andres), toSelf);
-        Assert.Equal(new ConversationEvent(ConversationEventType.Transferred, Actor: Beatriz, Target: Andres, Previous: Beatriz), back);
+        Assert.Equal(new ConversationEvent(ConversationEventType.Taken, Actor: Beatriz, Previous: Andres), Assert.Single(toSelf));
+        Assert.Equal(new ConversationEvent(ConversationEventType.Transferred, Actor: Beatriz, Target: Andres, Previous: Beatriz), Assert.Single(back));
     }
 
     [Fact]
@@ -231,6 +231,169 @@ public sealed class ConversationTests
         Assert.Throws<MessagingDomainException>(() => conversation.Resolve(Now.AddMinutes(2), Guid.CreateVersion7()));
 
         Assert.Equal(first, conversation.ResolutionReasonId);
+    }
+
+    private static Conversation Active()
+    {
+        var conversation = Open();
+        conversation.StartAutomation(Now);
+        return conversation;
+    }
+
+    private static string CodeOf(Action action) => Assert.Throws<MessagingDomainException>(action).Code;
+
+    [Fact]
+    public void StartAutomationNeedsAnOpenUnassignedConversationInNone()
+    {
+        var conversation = Open();
+        conversation.StartAutomation(Now);
+        Assert.Equal(ConversationAutomationStatus.Active, conversation.AutomationStatus);
+        Assert.Equal(Now, conversation.AutomationStartedAt);
+        Assert.Equal(2, conversation.Version);
+
+        var assigned = Open();
+        assigned.Take(Andres, Now);
+        Assert.Equal(MessagingErrorCodes.AutomationNotAvailable, CodeOf(() => assigned.StartAutomation(Now)));
+
+        var resolved = Open();
+        resolved.Resolve(Now);
+        Assert.Equal(MessagingErrorCodes.ConversationNotOpen, CodeOf(() => resolved.StartAutomation(Now)));
+
+        Assert.Equal(MessagingErrorCodes.AutomationAlreadyActive, CodeOf(() => Active().StartAutomation(Now)));
+    }
+
+    [Fact]
+    public void StartAutomationRejectsAPausedOne()
+    {
+        var conversation = Active();
+        conversation.PauseAutomation(Andres, AutomationPauseReason.Manual, Now);
+        Assert.Equal(MessagingErrorCodes.AutomationNotAvailable, CodeOf(() => conversation.StartAutomation(Now)));
+    }
+
+    [Fact]
+    public void TakingAnActiveConversationPausesItWithAdvisorTook()
+    {
+        var conversation = Active();
+        var t = Now.AddMinutes(3);
+
+        var events = conversation.Take(Andres, t);
+
+        Assert.Equal(
+            [new ConversationEvent(ConversationEventType.Taken, Actor: Andres),
+             new ConversationEvent(ConversationEventType.AutomationPaused, Actor: Andres, PauseReason: AutomationPauseReason.AdvisorTook)],
+            events);
+        Assert.Equal(ConversationAutomationStatus.Paused, conversation.AutomationStatus);
+        Assert.Equal(Andres, conversation.AutomationPausedByMemberId);
+        Assert.Equal(t, conversation.AutomationPausedAt);
+        Assert.Equal(AutomationPauseReason.AdvisorTook, conversation.AutomationPauseReason);
+    }
+
+    [Fact]
+    public void TransferringAnActiveConversationPausesItWithAdvisorTransferred()
+    {
+        var conversation = Active();
+
+        var events = conversation.TransferTo(Andres, Beatriz, Now.AddMinutes(1));
+
+        Assert.Equal(
+            [new ConversationEvent(ConversationEventType.Transferred, Actor: Andres, Target: Beatriz),
+             new ConversationEvent(ConversationEventType.AutomationPaused, Actor: Andres, PauseReason: AutomationPauseReason.AdvisorTransferred)],
+            events);
+    }
+
+    [Fact]
+    public void TakingANoneConversationReturnsOnlyTheTakenEvent()
+    {
+        var conversation = Open();
+
+        Assert.Single(conversation.Take(Andres, Now));
+        Assert.Empty(conversation.Take(Andres, Now));
+        Assert.Equal(ConversationAutomationStatus.None, conversation.AutomationStatus);
+    }
+
+    [Fact]
+    public void ReleasingLeavesTheAutomationPaused()
+    {
+        var conversation = Active();
+        conversation.Take(Andres, Now);
+
+        conversation.Release(Andres, Now.AddMinutes(1));
+
+        Assert.Equal(ConversationAutomationStatus.Paused, conversation.AutomationStatus);
+    }
+
+    [Fact]
+    public void ResolvingClearsTheAutomation()
+    {
+        var conversation = Active();
+        conversation.Take(Andres, Now);
+
+        conversation.Resolve(Now.AddMinutes(1));
+
+        Assert.Equal(ConversationAutomationStatus.None, conversation.AutomationStatus);
+        Assert.Null(conversation.AutomationStartedAt);
+        Assert.Null(conversation.AutomationPausedAt);
+        Assert.Null(conversation.AutomationPausedByMemberId);
+        Assert.Null(conversation.AutomationPauseReason);
+    }
+
+    [Fact]
+    public void ResumingWithAnAssigneeReleasesFirst()
+    {
+        var conversation = Active();
+        conversation.Take(Andres, Now);
+
+        var events = conversation.ResumeAutomation(Beatriz, Now.AddMinutes(1));
+
+        Assert.Equal(
+            [new ConversationEvent(ConversationEventType.Released, Actor: Beatriz, Previous: Andres),
+             new ConversationEvent(ConversationEventType.AutomationResumed, Actor: Beatriz)],
+            events);
+        Assert.Null(conversation.AssignedMemberId);
+        Assert.Equal(ConversationAutomationStatus.Active, conversation.AutomationStatus);
+        Assert.Null(conversation.AutomationPausedAt);
+    }
+
+    [Fact]
+    public void ResumingWithoutAnAssigneeReturnsOnlyTheResumedEvent()
+    {
+        var conversation = Active();
+        conversation.PauseAutomation(Andres, AutomationPauseReason.Manual, Now);
+
+        var events = conversation.ResumeAutomation(Beatriz, Now.AddMinutes(1));
+
+        Assert.Equal(new ConversationEvent(ConversationEventType.AutomationResumed, Actor: Beatriz), Assert.Single(events));
+    }
+
+    [Fact]
+    public void ResumingChecksOpenBeforeTheAutomationState()
+    {
+        var conversation = Active();
+        conversation.Resolve(Now);
+
+        Assert.Equal(MessagingErrorCodes.ConversationNotOpen, CodeOf(() => conversation.ResumeAutomation(Andres, Now)));
+    }
+
+    [Fact]
+    public void ResumingRejectsNoneAndActive()
+    {
+        Assert.Equal(MessagingErrorCodes.AutomationNotAvailable, CodeOf(() => Open().ResumeAutomation(Andres, Now)));
+        Assert.Equal(MessagingErrorCodes.AutomationAlreadyActive, CodeOf(() => Active().ResumeAutomation(Andres, Now)));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void PausingManuallyRejectsPausedAndNone(bool paused)
+    {
+        var conversation = paused ? Active() : Open();
+        if (paused)
+        {
+            conversation.PauseAutomation(Andres, AutomationPauseReason.Manual, Now);
+        }
+
+        var expected = paused ? MessagingErrorCodes.AutomationAlreadyPaused : MessagingErrorCodes.AutomationNotAvailable;
+        Assert.Equal(expected, CodeOf(() => conversation.PauseAutomation(Andres, AutomationPauseReason.Manual, Now)));
     }
 }
 

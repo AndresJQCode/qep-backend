@@ -84,6 +84,19 @@ public sealed partial class Conversation
     /// al reabrir (§3.6).</summary>
     public Guid? ResolutionReasonId { get; private set; }
 
+    /// <summary>Spec 2026-10-21 §4.2: <c>None</c> al nacer. Lo mueven <see cref="StartAutomation"/>, <see cref="PauseAutomation"/>,
+    /// <see cref="ResumeAutomation"/>, tomar/transferir (que pausan un asistente activo) y resolver (que lo borra).</summary>
+    public ConversationAutomationStatus AutomationStatus { get; private set; }
+
+    public DateTimeOffset? AutomationStartedAt { get; private set; }
+
+    public DateTimeOffset? AutomationPausedAt { get; private set; }
+
+    /// <summary>Quién pausó; <c>null</c> si lo pausó el sistema (p. ej. <c>Handoff</c>).</summary>
+    public Guid? AutomationPausedByMemberId { get; private set; }
+
+    public AutomationPauseReason? AutomationPauseReason { get; private set; }
+
     public int UnreadCount { get; private set; }
 
     public DateTimeOffset? LastInboundAt { get; private set; }
@@ -216,6 +229,7 @@ public sealed partial class Conversation
         // Spec 2026-10-16 §3.2: resolver es la última palabra del asesor, así que la marca de no leída no sobrevive. Va aquí y no en el
         // handler para que viaje en el mismo SaveChanges (y la misma versión) que la resolución; reabrir no la restaura.
         UnreadCount = 0;
+        ClearAutomation();
         Touch(now);
     }
 
@@ -231,21 +245,22 @@ public sealed partial class Conversation
         Touch(now);
     }
 
-    /// <summary>Spec 2026-10-10 §6.1.3: quien llama la toma, la tenga quien la tenga. Si ya era suya, nada (D-A2).</summary>
-    public ConversationEvent? Take(Guid memberId, DateTimeOffset now)
+    /// <summary>Spec 2026-10-10 §6.1.3: quien llama la toma, la tenga quien la tenga. Si ya era suya, nada (D-A2). Spec 2026-10-21 §4.3:
+    /// si un asistente la atendía, tomarla lo pausa en el mismo cambio y el segundo evento lo cuenta.</summary>
+    public IReadOnlyList<ConversationEvent> Take(Guid memberId, DateTimeOffset now)
     {
         if (AssignedMemberId == memberId)
         {
-            return null;
+            return [];
         }
 
         var previous = AssignedMemberId;
         Assign(memberId, now);
-        return new ConversationEvent(ConversationEventType.Taken, Actor: memberId, Previous: previous);
+        return WithAutomationPause(new ConversationEvent(ConversationEventType.Taken, Actor: memberId, Previous: previous), memberId, Modules.Messaging.Domain.AutomationPauseReason.AdvisorTook, now);
     }
 
     /// <summary>§8.4: transferirse a uno mismo es tomar; transferir a quien ya la tiene, nada (P8).</summary>
-    public ConversationEvent? TransferTo(Guid actorMemberId, Guid targetMemberId, DateTimeOffset now)
+    public IReadOnlyList<ConversationEvent> TransferTo(Guid actorMemberId, Guid targetMemberId, DateTimeOffset now)
     {
         if (targetMemberId == actorMemberId)
         {
@@ -254,12 +269,14 @@ public sealed partial class Conversation
 
         if (AssignedMemberId == targetMemberId)
         {
-            return null;
+            return [];
         }
 
         var previous = AssignedMemberId;
         Assign(targetMemberId, now);
-        return new ConversationEvent(ConversationEventType.Transferred, Actor: actorMemberId, Target: targetMemberId, Previous: previous);
+        return WithAutomationPause(
+            new ConversationEvent(ConversationEventType.Transferred, Actor: actorMemberId, Target: targetMemberId, Previous: previous),
+            actorMemberId, Modules.Messaging.Domain.AutomationPauseReason.AdvisorTransferred, now);
     }
 
     /// <summary>§6.1.3: sin asignar ya, nada (D-A2).</summary>
@@ -274,6 +291,112 @@ public sealed partial class Conversation
         AssignedAt = null;
         Touch(now);
         return new ConversationEvent(ConversationEventType.Released, Actor: actorMemberId, Previous: previous);
+    }
+
+    /// <summary>Spec 2026-10-21 §4.2: arranca el asistente. Sólo sobre una conversación abierta, sin asesor y sin asistente previo:
+    /// el motor no reactiva lo que un humano pausó (eso es <see cref="ResumeAutomation"/>).</summary>
+    public void StartAutomation(DateTimeOffset now)
+    {
+        EnsureOpenForAutomation();
+        if (AssignedMemberId is not null)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.AutomationNotAvailable, "A conversation with an advisor is not attended by the assistant.");
+        }
+
+        switch (AutomationStatus)
+        {
+            case ConversationAutomationStatus.Active:
+                throw new MessagingDomainException(MessagingErrorCodes.AutomationAlreadyActive, "The assistant is already attending the conversation.");
+            case ConversationAutomationStatus.Paused:
+                throw new MessagingDomainException(MessagingErrorCodes.AutomationNotAvailable, "The assistant was paused; resume it instead of starting it.");
+        }
+
+        AutomationStatus = ConversationAutomationStatus.Active;
+        AutomationStartedAt = now;
+        Touch(now);
+    }
+
+    /// <summary>Pausa explícita del asistente. <paramref name="actorMemberId"/> es <c>null</c> cuando la hace el sistema.</summary>
+    public ConversationEvent PauseAutomation(Guid? actorMemberId, AutomationPauseReason reason, DateTimeOffset now)
+    {
+        switch (AutomationStatus)
+        {
+            case ConversationAutomationStatus.Paused:
+                throw new MessagingDomainException(MessagingErrorCodes.AutomationAlreadyPaused, "The assistant is already paused.");
+            case ConversationAutomationStatus.None:
+                throw new MessagingDomainException(MessagingErrorCodes.AutomationNotAvailable, "The conversation has no assistant to pause.");
+        }
+
+        MarkPaused(actorMemberId, reason, now);
+        Touch(now);
+        return new ConversationEvent(ConversationEventType.AutomationPaused, Actor: actorMemberId, PauseReason: reason);
+    }
+
+    /// <summary>Reactiva un asistente pausado. Si hay un asesor asignado se le quita la conversación primero (evento
+    /// <c>Released</c>); el orden de las comprobaciones es: abierta, hay asistente, no está activo.</summary>
+    public IReadOnlyList<ConversationEvent> ResumeAutomation(Guid actorMemberId, DateTimeOffset now)
+    {
+        EnsureOpenForAutomation();
+        switch (AutomationStatus)
+        {
+            case ConversationAutomationStatus.None:
+                throw new MessagingDomainException(MessagingErrorCodes.AutomationNotAvailable, "The conversation has no assistant to resume.");
+            case ConversationAutomationStatus.Active:
+                throw new MessagingDomainException(MessagingErrorCodes.AutomationAlreadyActive, "The assistant is already attending the conversation.");
+        }
+
+        var events = new List<ConversationEvent>(2);
+        if (AssignedMemberId is { } previous)
+        {
+            AssignedMemberId = null;
+            AssignedAt = null;
+            events.Add(new ConversationEvent(ConversationEventType.Released, Actor: actorMemberId, Previous: previous));
+        }
+
+        AutomationStatus = ConversationAutomationStatus.Active;
+        AutomationPausedAt = null;
+        AutomationPausedByMemberId = null;
+        AutomationPauseReason = null;
+        Touch(now);
+        events.Add(new ConversationEvent(ConversationEventType.AutomationResumed, Actor: actorMemberId));
+        return events;
+    }
+
+    private IReadOnlyList<ConversationEvent> WithAutomationPause(ConversationEvent change, Guid actorMemberId, AutomationPauseReason reason, DateTimeOffset now)
+    {
+        if (AutomationStatus != ConversationAutomationStatus.Active)
+        {
+            return [change];
+        }
+
+        // La versión ya subió en Assign: pausar va en el mismo cambio.
+        MarkPaused(actorMemberId, reason, now);
+        return [change, new ConversationEvent(ConversationEventType.AutomationPaused, Actor: actorMemberId, PauseReason: reason)];
+    }
+
+    private void MarkPaused(Guid? actorMemberId, AutomationPauseReason reason, DateTimeOffset now)
+    {
+        AutomationStatus = ConversationAutomationStatus.Paused;
+        AutomationPausedAt = now;
+        AutomationPausedByMemberId = actorMemberId;
+        AutomationPauseReason = reason;
+    }
+
+    private void ClearAutomation()
+    {
+        AutomationStatus = ConversationAutomationStatus.None;
+        AutomationStartedAt = null;
+        AutomationPausedAt = null;
+        AutomationPausedByMemberId = null;
+        AutomationPauseReason = null;
+    }
+
+    private void EnsureOpenForAutomation()
+    {
+        if (Status != ConversationStatus.Open)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.ConversationNotOpen, "The conversation is not open.");
+        }
     }
 
     private void Assign(Guid memberId, DateTimeOffset now)

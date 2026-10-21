@@ -47,12 +47,17 @@ public sealed class ConversationAssignmentSteps(
     public DateTimeOffset Now => clock.UtcNow;
 
     public async Task<ConversationSummary> CommitAsync(
-        Guid tenantId, Conversation conversation, ConversationEvent? change, string auditAction, DateTimeOffset now, CancellationToken cancellationToken)
+        Guid tenantId, Conversation conversation, IReadOnlyList<ConversationEvent> changes, string auditAction, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        if (change is not null)
+        if (changes.Count > 0)
         {
-            events.Record(tenantId, conversation.ConnectionId, conversation.Id, change, now);
-            audit.Record(tenantId, executionContext.SubjectId, auditAction, conversation.Id, now);
+            // La Task 3 reemplaza la acción única por una por evento.
+            foreach (var change in changes)
+            {
+                events.Record(tenantId, conversation.ConnectionId, conversation.Id, change, now);
+                audit.Record(tenantId, executionContext.SubjectId, auditAction, conversation.Id, now);
+            }
+
             await unitOfWork.SaveChangesAsync(cancellationToken);
             // Spec 2026-10-14: después del commit, para que las otras pestañas y el otro asesor relean la asignación.
             await notifier.ConversationChangedAsync(tenantId, conversation.Id, cancellationToken);
@@ -92,7 +97,7 @@ public sealed class TransferConversationHandler(ConversationAssignmentSteps step
         ConversationConcurrency.EnsureVersion(conversation, command.ExpectedVersion);
         var now = steps.Now;
         var change = conversation.TransferTo(member, target, now);
-        var action = change?.Type == ConversationEventType.Taken ? MessagingAuditActions.Taken : MessagingAuditActions.Transferred;
+        var action = change is [{ Type: ConversationEventType.Taken }, ..] ? MessagingAuditActions.Taken : MessagingAuditActions.Transferred;
         return await steps.CommitAsync(command.TenantId, conversation, change, action, now, cancellationToken);
     }
 }
@@ -105,6 +110,8 @@ public sealed class ReleaseConversationHandler(ConversationAssignmentSteps steps
         var (conversation, member) = await steps.LoadAsync(command.TenantId, command.ConversationId, cancellationToken);
         ConversationConcurrency.EnsureVersion(conversation, command.ExpectedVersion);
         var now = steps.Now;
-        return await steps.CommitAsync(command.TenantId, conversation, conversation.Release(member, now), MessagingAuditActions.Released, now, cancellationToken);
+        return await steps.CommitAsync(command.TenantId, conversation, ReleasedAsList(conversation.Release(member, now)), MessagingAuditActions.Released, now, cancellationToken);
     }
+
+    private static IReadOnlyList<ConversationEvent> ReleasedAsList(ConversationEvent? change) => change is null ? [] : [change];
 }
