@@ -528,9 +528,10 @@ public sealed class Product
     // La vuelta de Deactivate, que hasta CAT-07 no existia: un producto inactivo era terminal,
     // porque Update abre con EnsureActive() y ningun metodo devolvia IsActive a true.
     //
-    // No revalida la unicidad del codigo a proposito. IX_products_tenant_code es unico **sin
-    // filtro parcial**, asi que desactivar nunca libero el codigo y reactivar no puede colisionar
-    // con nadie. Si alguien le agrega un filtro parcial al indice, CA-CAT-07-09 se cae y avisa.
+    // No revalida la unicidad del codigo a proposito. IX_product_variants_tenant_code (antes
+    // IX_products_tenant_code) es unico **sin filtro parcial**, asi que desactivar nunca libera el
+    // codigo y reactivar no puede colisionar con nadie. Si alguien le agrega un filtro parcial al
+    // indice, CA-CAT-07-09 se cae y avisa.
     public void Activate(DateTimeOffset occurredAt)
     {
         if (IsActive)

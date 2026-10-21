@@ -37,11 +37,13 @@ public static class ProductPriceChangeDetector
         ArgumentNullException.ThrowIfNull(product);
         ArgumentNullException.ThrowIfNull(variants);
 
+        // Un diccionario y no FirstOrDefault en el bucle: Product.Variants ordena y materializa en cada
+        // lectura, y con 2.048 variantes eso era un ordenamiento entero por fila del PUT.
+        var savedById = product.Variants.ToDictionary(saved => saved.Id.Value);
         var changes = new List<ProductPriceChange>();
         foreach (var input in variants)
         {
-            if (input.Id is not { } id
-                || product.Variants.FirstOrDefault(saved => saved.Id.Value == id) is not { } variant)
+            if (input.Id is not { } id || !savedById.TryGetValue(id, out var variant))
             {
                 continue;
             }
