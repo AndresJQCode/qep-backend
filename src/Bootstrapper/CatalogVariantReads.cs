@@ -49,20 +49,20 @@ internal static class CatalogVariantReads
         Product product,
         ProductVariant variant,
         IReadOnlyDictionary<Guid, string> valueNames) =>
-        DisplayNameOf(product.Name, variant, valueNames);
+        DisplayNameOf(product.Name, variant.OptionValueIds, valueNames);
 
     /// <summary>
-    /// Lo mismo cuando quien llama sólo tiene el nombre del producto y no el agregado (el reporte
-    /// de cambios de precio lee la variante y el nombre por separado, sin cargar el producto con
-    /// su galería y todas sus variantes).
+    /// Lo mismo cuando quien llama sólo tiene el nombre del producto y los ids de los valores, y
+    /// no el agregado ni la variante (el reporte de cambios de precio proyecta esos datos de
+    /// <c>product_variants</c> sin materializar entidades).
     /// </summary>
     public static string DisplayNameOf(
         string productName,
-        ProductVariant variant,
+        IReadOnlyList<Guid> optionValueIds,
         IReadOnlyDictionary<Guid, string> valueNames) =>
         VariantDisplayName.For(
             productName,
-            variant.OptionValueIds.Where(valueNames.ContainsKey).Select(id => valueNames[id]).ToArray());
+            optionValueIds.Where(valueNames.ContainsKey).Select(id => valueNames[id]).ToArray());
 
     /// <summary>
     /// Valor de opción → texto de **toda** la biblioteca del tenant, en una consulta. Para quien

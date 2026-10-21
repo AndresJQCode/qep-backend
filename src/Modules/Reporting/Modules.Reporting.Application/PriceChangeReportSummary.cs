@@ -56,13 +56,15 @@ public sealed record PriceChangeFieldSliceDto(string Field, string? Currency, in
 /// <see cref="PriceChangeReportSummaryDto"/>.
 ///
 /// **El ranking sigue siendo por producto, con el desglose por variante adentro** (spec 2026-10-20
-/// §3.5: el owner pidió las dos cosas). <c>Variants</c> trae **todas** las variantes del producto
-/// que tuvieron cambios en la ventana filtrada, sin tope, y sus <c>Count</c> suman exactamente el
-/// <c>Count</c> del producto: es lo que permite a la pantalla desplegar «Camiseta: 12» en «M: 5,
-/// L: 7» sin pedir otra consulta ni sumar del lado del cliente. Una variante sin cambios en la
-/// ventana no viaja: con un filtro de campo o de moneda activo, listar el resto del producto en cero
-/// sería ruido (y un producto puede tener hasta 2.048 variantes). En la fila "Otros" la colección
-/// viaja vacía, nunca nula: lo plegado no se desglosa.
+/// §3.5: el owner pidió las dos cosas). <c>Variants</c> es una colección de tamaño fijo por
+/// producto y viaja **completa, incluso en cero**: trae **todas** las variantes del producto,
+/// activas e inactivas (las que cuenta <c>VariantCount</c> del catálogo), con <c>Count</c> en cero
+/// las que no tuvieron cambios en la ventana filtrada. Un elemento que desaparece obligaría a la
+/// pantalla a conocer las variantes del producto para dibujar la que falta («M: 5, L: 7, XL: 0»),
+/// y con un filtro activo (<c>variantId</c>, campo o moneda) las demás siguen ahí, en cero, para
+/// que el desglose se lea igual con y sin filtro. Los <c>Count</c> suman exactamente el <c>Count</c>
+/// del producto. En la fila "Otros" la colección viaja vacía, nunca nula: lo plegado no se
+/// desglosa.
 ///
 /// <c>ProductCode</c> es el <c>Code</c> de la única variante del producto, y nulo cuando el
 /// producto tiene varias (mismo criterio que el listado del catálogo): el producto ya no tiene un
@@ -77,7 +79,7 @@ public sealed record PriceChangeProductEntryDto(
     IReadOnlyList<PriceChangeVariantEntryDto> Variants);
 
 /// <summary>
-/// Una variante dentro del desglose de un producto del ranking. <c>Name</c> es el nombre visible
+/// Una variante dentro del desglose de un producto del ranking; <c>Count</c> puede ser cero. <c>Name</c> es el nombre visible
 /// (spec §3.4) y <c>Code</c> el de la variante, que es como se reconoce en el resto del reporte.
 /// Ordenadas como el producto presenta sus variantes, no por cantidad: así la pantalla repinta
 /// M, L, XL en el orden del formulario y el cliente no reordena.

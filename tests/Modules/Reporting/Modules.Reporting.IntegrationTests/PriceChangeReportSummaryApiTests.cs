@@ -133,8 +133,9 @@ public sealed class PriceChangeReportSummaryApiTests
     }
 
     /// <summary>El resumen toma el filtro por variante igual que el listado: sin ella el panel y la
-    /// tabla de la misma pantalla hablarían de conjuntos distintos. El desglose del producto trae
-    /// sólo la variante filtrada.</summary>
+    /// tabla de la misma pantalla hablarían de conjuntos distintos. El desglose del producto sigue
+    /// completo: la variante filtrada con su conteo y las demás en cero, para que se lea igual
+    /// con y sin filtro.</summary>
     [Fact]
     public async Task SummaryFiltersByVariantLikeTheList()
     {
@@ -156,10 +157,76 @@ public sealed class PriceChangeReportSummaryApiTests
         Assert.Equal(1, large?.ProductCount);
         var entry = Assert.Single(large!.ByProduct);
         Assert.Equal(shirt.ProductId, entry.ProductId);
-        var variant = Assert.Single(entry.Variants);
-        Assert.Equal((shirt.Large.Id, "Camiseta – L", 1), (variant.VariantId, variant.Name, variant.Count));
+        Assert.Equal(1, entry.Count);
+        // M no entra en el conjunto filtrado pero viaja, en cero; la suma cierra con el producto.
+        Assert.Equal(
+            [(shirt.Medium.Id, "Camiseta – M", 0), (shirt.Large.Id, "Camiseta – L", 1)],
+            entry.Variants.Select(variant => (variant.VariantId, variant.Name, variant.Count)));
+        Assert.Equal(entry.Count, entry.Variants.Sum(variant => variant.Count));
         Assert.Equal(0, unknown?.ChangeCount);
         Assert.Empty(unknown!.ByProduct);
+    }
+
+    /// <summary>
+    /// El desglose es una colección completa: una variante sin ningún cambio en la ventana aparece
+    /// igual, con <c>Count</c> en cero y en su lugar de presentación, y el código del producto
+    /// sigue sin decirse porque tiene dos variantes (no porque una haya cambiado).
+    /// </summary>
+    [Fact]
+    public async Task SummaryListsAVariantWithoutChangesInZero()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var shirt = await CreateSizedProductAsync(client, tenant.TenantId, baseCop: 100_000m);
+        // Sólo cambia M: L conserva su precio y no deja fila de historial.
+        await SetSizedProductPricesAsync(client, tenant.TenantId, shirt, mediumCop: 110_000m, largeCop: 100_000m);
+
+        var summary = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary", TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, summary?.ChangeCount);
+        var entry = Assert.Single(summary!.ByProduct);
+        Assert.Equal(1, entry.Count);
+        Assert.Null(entry.ProductCode);
+        Assert.Equal(
+            [(shirt.Medium.Id, shirt.Medium.Code, 1), (shirt.Large.Id, shirt.Large.Code, 0)],
+            entry.Variants.Select(variant => (variant.VariantId, variant.Code, variant.Count)));
+    }
+
+    /// <summary>
+    /// Seis productos con un cambio cada uno: el ranking trae cinco y el sexto se pliega en
+    /// «Otros», que no se desglosa (<c>Variants</c> vacío, nunca nulo) y cierra por resta. Los
+    /// cinco nombrados sí traen su desglose.
+    /// </summary>
+    [Fact]
+    public async Task SummaryFoldsTheRestIntoOthersWithAnEmptyBreakdown()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        for (var index = 0; index < 6; index++)
+        {
+            var productId = await CreateProductAsync(client, tenant.TenantId, baseCop: 50_000m);
+            await ChangeProductBaseCopAsync(client, tenant.TenantId, productId, 60_000m);
+        }
+
+        var summary = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(6, summary.ProductCount);
+        Assert.Equal(6, summary.ByProduct.Count);
+        var named = summary.ByProduct.Take(5).ToArray();
+        Assert.All(named, entry => Assert.Single(entry.Variants));
+
+        var others = summary.ByProduct[5];
+        Assert.Null(others.ProductId);
+        Assert.Equal((1, 1), (others.EntityCount, others.Count));
+        Assert.NotNull(others.Variants);
+        Assert.Empty(others.Variants);
     }
 
     /// <summary>

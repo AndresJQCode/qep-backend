@@ -160,8 +160,9 @@ internal sealed class PriceChangeReportSource(
     /// resto sale **por resta contra el total ya calculado**, no con una consulta mas.
     ///
     /// El desglose son dos consultas para el ranking entero, no una por producto: los cambios por
-    /// variante de los productos del ranking, y cuantas variantes tiene cada uno (para saber si su
-    /// codigo se puede decir, ver <see cref="PriceChangeProductEntryDto"/>).
+    /// variante de los productos del ranking, y **todas** las variantes de esos productos, activas
+    /// e inactivas (como cuenta <c>VariantCount</c> del catalogo). Las que no cambiaron en la
+    /// ventana viajan con <c>Count</c> en cero: ver <see cref="PriceChangeProductEntryDto"/>.
     /// </summary>
     private async Task<IReadOnlyList<PriceChangeProductEntryDto>> RankProductsAsync(
         Guid tenantId,
@@ -196,47 +197,48 @@ internal sealed class PriceChangeReportSource(
         // producto porque salen del mismo conjunto.
         var perVariant = await changes
             .Where(change => ids.Contains(change.ProductId))
-            .GroupBy(change => change.VariantId)
-            .Select(group => new { VariantId = group.Key, Count = group.Count() })
+            .GroupBy(change => new { change.ProductId, change.VariantId })
+            .Select(group => new { group.Key.ProductId, group.Key.VariantId, Count = group.Count() })
             .ToListAsync(cancellationToken);
+        var changedCount = perVariant.ToDictionary(entry => entry.VariantId.Value, entry => entry.Count);
+
+        // Todas las variantes de esos productos, no solo las que cambiaron: una coleccion que
+        // viaja completa, aunque venga en cero, no obliga a la pantalla a conocer las variantes
+        // para dibujar la que falta (CLAUDE.md, ReportStatusSliceDto).
+        var productNames = products.ToDictionary(product => product.Key.Value, product => product.Value);
         var labels = await LoadLabelsAsync(
             tenantId,
-            perVariant.Select(entry => entry.VariantId.Value).ToArray(),
-            products.ToDictionary(product => product.Key.Value, product => product.Value),
+            catalog.ProductVariants
+                .AsNoTracking()
+                .Where(variant => variant.TenantId == tenantId && ids.Contains(variant.ProductId)),
+            productNames,
             cancellationToken);
-
-        var variantTotals = await catalog.ProductVariants
-            .AsNoTracking()
-            .Where(variant => variant.TenantId == tenantId && ids.Contains(variant.ProductId))
-            .GroupBy(variant => variant.ProductId)
-            .Select(group => new { ProductId = group.Key, Count = group.Count() })
-            .ToDictionaryAsync(entry => entry.ProductId, entry => entry.Count, cancellationToken);
-
-        var breakdown = perVariant
-            .Where(entry => labels.ContainsKey(entry.VariantId.Value))
-            .Select(entry => (Label: labels[entry.VariantId.Value], entry.Count))
-            .GroupBy(entry => entry.Label.ProductId)
-            .ToDictionary(
-                group => group.Key,
-                group => (IReadOnlyList<PriceChangeVariantEntryDto>)group
-                    .OrderBy(entry => entry.Label.Position)
-                    .ThenBy(entry => entry.Label.VariantId)
-                    .Select(entry => new PriceChangeVariantEntryDto(
-                        entry.Label.VariantId, entry.Label.Name, entry.Label.Code, entry.Count))
-                    .ToArray());
 
         var ranked = top
             .Select(entry =>
             {
-                var variants = breakdown.GetValueOrDefault(entry.ProductId.Value) ?? [];
-                // El codigo del producto es el de su unica variante; con varias no hay uno que
-                // decir. El total sale de product_variants y no del desglose, porque el desglose
-                // solo trae las variantes que cambiaron.
-                var code = variantTotals.GetValueOrDefault(entry.ProductId) == 1 && variants.Count == 1
-                    ? variants[0].Code
-                    : null;
+                var productId = entry.ProductId.Value;
+                var productName = productNames.GetValueOrDefault(productId, string.Empty);
+                var variants = labels.Values
+                    .Where(label => label.ProductId == productId)
+                    .Select(label => (label.Position, label.VariantId, Entry: new PriceChangeVariantEntryDto(
+                        label.VariantId, label.Name, label.Code, changedCount.GetValueOrDefault(label.VariantId))))
+                    // Una variante con cambios que ya no esta en product_variants (borrada entre
+                    // las dos lecturas) no se descarta: la suma tiene que cerrar con el producto.
+                    // Degrada como el listado: nombre del producto y sin codigo.
+                    .Concat(perVariant
+                        .Where(change => change.ProductId == entry.ProductId
+                            && !labels.ContainsKey(change.VariantId.Value))
+                        .Select(change => (Position: int.MaxValue, VariantId: change.VariantId.Value, Entry: new PriceChangeVariantEntryDto(
+                            change.VariantId.Value, productName, string.Empty, change.Count))))
+                    .OrderBy(variant => variant.Position)
+                    .ThenBy(variant => variant.VariantId)
+                    .Select(variant => variant.Entry)
+                    .ToArray();
+                // El codigo del producto es el de su unica variante; con varias no hay uno que decir.
+                var code = variants.Length == 1 ? variants[0].Code : null;
                 return new PriceChangeProductEntryDto(
-                    entry.ProductId.Value,
+                    productId,
                     products.GetValueOrDefault(entry.ProductId),
                     code,
                     EntityCount: 1,
@@ -265,29 +267,42 @@ internal sealed class PriceChangeReportSource(
     /// la biblioteca de opciones (solo si alguna variante tiene valores) y los nombres de producto
     /// que quien llama ya leyo. Un valor cuya opcion no se encontro se omite del nombre, igual que
     /// en el detalle del producto: ver <c>CatalogVariantReads.DisplayNameOf</c>.
+    ///
+    /// Proyecta solo lo que el nombre necesita —id, producto, codigo, posicion y los ids de los
+    /// valores— y no materializa <c>ProductVariant</c>: un producto top puede tener cientos de
+    /// variantes, cada una con sus precios. Los valores se leen por la coleccion owned
+    /// <c>_optionValues</c> (por nombre, porque la propiedad publica es calculada y EF no la
+    /// traduce), que sale en la misma consulta con un LEFT JOIN.
     /// </summary>
     private async Task<IReadOnlyDictionary<Guid, VariantLabel>> LoadLabelsAsync(
         Guid tenantId,
-        Guid[] variantIds,
+        IQueryable<ProductVariant> variants,
         IReadOnlyDictionary<Guid, string> productNames,
         CancellationToken cancellationToken)
     {
-        if (variantIds.Length == 0)
+        var found = await variants
+            .Select(variant => new
+            {
+                variant.Id,
+                variant.ProductId,
+                variant.Code,
+                variant.Position,
+                ValueIds = EF.Property<IEnumerable<ProductVariantOptionValue>>(variant, "_optionValues")
+                    .OrderBy(value => value.Position)
+                    .Select(value => value.OptionValueId)
+                    .ToList(),
+            })
+            .ToListAsync(cancellationToken);
+        if (found.Count == 0)
         {
             return new Dictionary<Guid, VariantLabel>();
         }
 
-        var ids = variantIds.Select(id => new VariantId(id)).ToArray();
-        var variants = await catalog.ProductVariants
-            .AsNoTracking()
-            .Where(variant => variant.TenantId == tenantId && ids.Contains(variant.Id))
-            .ToListAsync(cancellationToken);
-
-        var valueNames = variants.Any(variant => variant.OptionValueIds.Count > 0)
+        var valueNames = found.Any(variant => variant.ValueIds.Count > 0)
             ? await CatalogVariantReads.LoadValueNamesAsync(options, tenantId, cancellationToken)
             : new Dictionary<Guid, string>();
 
-        return variants.ToDictionary(
+        return found.ToDictionary(
             variant => variant.Id.Value,
             variant => new VariantLabel(
                 variant.Id.Value,
@@ -295,7 +310,7 @@ internal sealed class PriceChangeReportSource(
                 variant.Code,
                 CatalogVariantReads.DisplayNameOf(
                     productNames.GetValueOrDefault(variant.ProductId.Value, string.Empty),
-                    variant,
+                    variant.ValueIds,
                     valueNames),
                 variant.Position));
     }
@@ -407,9 +422,12 @@ internal sealed class PriceChangeReportSource(
         var authors = await peopleLookup.EmailsByUserIdAsync(
             rows.Select(row => row.ChangedBy).ToArray(), cancellationToken);
 
+        var variantIds = rows.Select(row => row.VariantId).Distinct().ToArray();
         var labels = await LoadLabelsAsync(
             tenantId,
-            rows.Select(row => row.VariantId.Value).Distinct().ToArray(),
+            catalog.ProductVariants
+                .AsNoTracking()
+                .Where(variant => variant.TenantId == tenantId && variantIds.Contains(variant.Id)),
             rows.DistinctBy(row => row.ProductId).ToDictionary(row => row.ProductId.Value, row => row.ProductName),
             cancellationToken);
 
