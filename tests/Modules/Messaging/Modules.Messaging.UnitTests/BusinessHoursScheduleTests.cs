@@ -122,6 +122,19 @@ public sealed class BusinessHoursScheduleTests
     }
 
     [Fact]
+    public void AnUndefinedHolidayCountryIsRejectedOnCreateAndUpdate()
+    {
+        var onCreate = Assert.Throws<MessagingDomainException>(() => Make(country: (HolidayCountry)99));
+        Assert.Equal(MessagingErrorCodes.BusinessHoursHolidayCountryInvalid, onCreate.Code);
+
+        var schedule = Make();
+        var onUpdate = Assert.Throws<MessagingDomainException>(() => schedule.Update("Oficina", Office(), [], (HolidayCountry)99, Today, Now));
+        Assert.Equal(MessagingErrorCodes.BusinessHoursHolidayCountryInvalid, onUpdate.Code);
+        Assert.Null(schedule.HolidayCountry);
+        Assert.Equal(1L, schedule.Version);
+    }
+
+    [Fact]
     public void RepeatedExceptionDatesAreRejected()
     {
         var date = new DateOnly(2026, 12, 24);

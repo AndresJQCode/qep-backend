@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -261,6 +262,19 @@ public sealed class BusinessHoursApiTests
         Assert.True(items["B"].GetProperty("isDefault").GetBoolean());
         Assert.Equal(2L, items["B"].GetProperty("version").GetInt64());
         Assert.Equal(2L, await AuditCountAsync(f, "messaging.business_hours.default_set"));
+
+        // La otra dirección: A es más antiguo (id v7 menor) que B, el predeterminado actual. EF ordena los UPDATE por clave primaria, así que
+        // el de A (is_default = true) iría antes que el de B (false) y el índice único parcial lo rechazaría si el cambio fuera un solo guardado.
+        var backToA = await SendAsync(f.Client, HttpMethod.Post, $"{aUrl}/default", ifMatch: "\"3\"");
+
+        Assert.Equal(HttpStatusCode.OK, backToA.StatusCode);
+        var swapped = (await ListAsync(f)).GetProperty("items").EnumerateArray().ToDictionary(item => item.GetProperty("name").GetString()!);
+        Assert.True(swapped["A"].GetProperty("isDefault").GetBoolean());
+        Assert.Equal(4L, swapped["A"].GetProperty("version").GetInt64());
+        Assert.False(swapped["B"].GetProperty("isDefault").GetBoolean());
+        Assert.Equal(3L, swapped["B"].GetProperty("version").GetInt64());
+        Assert.Equal(1, swapped.Values.Count(item => item.GetProperty("isDefault").GetBoolean()));
+        Assert.Equal(3L, await AuditCountAsync(f, "messaging.business_hours.default_set"));
     }
 
     [Fact]
@@ -317,6 +331,47 @@ public sealed class BusinessHoursApiTests
         Assert.Equal("2026-12-25", exception.GetProperty("date").GetString());
         var listed = Assert.Single((await ListAsync(f)).GetProperty("items").EnumerateArray().Single().GetProperty("exceptions").EnumerateArray());
         Assert.Equal("2026-12-25", listed.GetProperty("date").GetString());
+    }
+
+    [Fact]
+    public async Task PastExceptionsBeyondTheCapAreAcceptedAfterPruning()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        var today = new DateOnly(2026, 10, 21);
+        var future = Enumerable.Range(1, 100).Select(i => (object)new { date = today.AddDays(i).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), ranges = Array.Empty<object>() });
+        var past = Enumerable.Range(1, 5).Select(i => (object)new { date = today.AddDays(-i).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), ranges = Array.Empty<object>() });
+        var schedule = await CreateOkAsync(f, Office());
+        var url = $"{f.Url}/{schedule.GetProperty("id").GetGuid()}";
+
+        var response = await SendAsync(f.Client, HttpMethod.Put, url, Office(exceptions: [.. future, .. past]), ifMatch: IfMatch(schedule));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var listed = (await ListAsync(f)).GetProperty("items").EnumerateArray().Single().GetProperty("exceptions");
+        Assert.Equal(100, listed.GetArrayLength());
+        Assert.All(listed.EnumerateArray(), exception => Assert.True(DateOnly.Parse(exception.GetProperty("date").GetString()!, CultureInfo.InvariantCulture) > today));
+    }
+
+    [Fact]
+    public async Task AssigningAConnectionOfAnotherScheduleMovesIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        var a = await CreateOkAsync(f, Office("A"));
+        await CreateOkAsync(f, Office("B", connectionIds: [f.C1]));
+        var aId = a.GetProperty("id").GetGuid();
+
+        var response = await SendAsync(f.Client, HttpMethod.Put, $"{f.Url}/{aId}", Office("A", connectionIds: [f.C1]), ifMatch: IfMatch(a));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            aId, await ScalarAsync<Guid>(f.ConnectionString, "SELECT schedule_id FROM messaging.connection_business_hours WHERE connection_id = @c", ("c", f.C1)));
+        var items = (await ListAsync(f)).GetProperty("items").EnumerateArray().ToDictionary(item => item.GetProperty("name").GetString()!);
+        Assert.Equal(f.C1, Assert.Single(items["A"].GetProperty("connections").EnumerateArray()).GetProperty("connectionId").GetGuid());
+        Assert.Equal(0, items["B"].GetProperty("connections").GetArrayLength());
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.connection_business_hours"));
+        // Una al crear B y otra al mover la conexión a A.
+        Assert.Equal(2L, await AuditCountAsync(f, "messaging.business_hours.connections_assigned"));
     }
 
     [Fact]

@@ -217,6 +217,32 @@ public sealed class BusinessHoursPersistenceTests
     }
 
     [Fact]
+    public async Task TwoAssignmentsOfTheSameConnectionAreAConcurrencyConflict()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var first = NewSchedule(tenantId, "Oficina");
+        var second = NewSchedule(tenantId, "Soporte");
+        await SaveAsync(factory, first, second);
+        var connectionId = Guid.CreateVersion7();
+
+        async Task AssignAsync(Guid scheduleId)
+        {
+            using var scope = factory.Services.CreateScope();
+            scope.ServiceProvider.GetRequiredService<IBusinessHoursRepository>()
+                .AddAssignment(ConnectionBusinessHours.Create(connectionId, tenantId, scheduleId, Now));
+            await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        await AssignAsync(first.Id);
+        var error = await Assert.ThrowsAsync<RequestConcurrencyException>(() => AssignAsync(second.Id));
+
+        Assert.Equal("concurrency.conflict", error.Code);
+    }
+
+    [Fact]
     public async Task TheHolidayCountryCheckRejectsOtherCountries()
     {
         await using var database = await StartDatabaseAsync();

@@ -69,6 +69,10 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// carrera entre dos «predeterminado» sale como 409 <c>default_conflict</c>.</summary>
     public const string BusinessHoursDefaultIndex = "IX_business_hours_tenant_default";
 
+    /// <summary>Spec 2026-10-21 D-H10: la PK de <c>connection_business_hours</c> (una conexión, un horario). La carrera entre dos asignaciones de la
+    /// misma conexión sale como <c>concurrency.conflict</c>.</summary>
+    public const string ConnectionBusinessHoursPrimaryKey = "PK_connection_business_hours";
+
     /// <summary>Spec 2026-10-21 D-H9: sin país no hay festivos automáticos; hoy el único país es Colombia (<c>CO</c>).</summary>
     public const string BusinessHoursCountryCheck = "holiday_country IS NULL OR holiday_country IN ('CO')";
 

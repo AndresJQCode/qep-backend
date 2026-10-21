@@ -9,7 +9,7 @@ namespace Modules.Messaging.Infrastructure.Persistence;
 /// <summary>Spec 2026-10-21 §5: los horarios con tracking (la versión es el token de concurrencia) y, además, el puerto
 /// <see cref="IBusinessHours"/>: asignación de la conexión → predeterminado del tenant → siempre abierto (D-H4), evaluado en el huso y a
 /// la hora de <see cref="ITenantClock"/>.</summary>
-internal sealed class BusinessHoursRepository(MessagingDbContext dbContext, ITenantClock tenantClock) : IBusinessHoursRepository, IBusinessHours
+internal sealed class BusinessHoursRepository(MessagingDbContext dbContext, ITenantClock tenantClock, IMessagingAuditRecorder audit) : IBusinessHoursRepository, IBusinessHours
 {
     private static readonly StringComparer NameOrder = StringComparer.Create(CultureInfo.InvariantCulture, CompareOptions.IgnoreCase);
 
@@ -26,14 +26,17 @@ internal sealed class BusinessHoursRepository(MessagingDbContext dbContext, ITen
     public Task<BusinessHoursSchedule?> FindDefaultAsync(Guid tenantId, CancellationToken cancellationToken) =>
         dbContext.BusinessHours.SingleOrDefaultAsync(schedule => schedule.TenantId == tenantId && schedule.IsDefault, cancellationToken);
 
-    // ToLowerInvariant() de los dos lados: Npgsql lo traduce a lower(), la misma expresión de IX_business_hours_tenant_name.
-    // Sólo el ToLower() sin argumentos lo traduce Npgsql a lower() (ToLowerInvariant y Equals(OrdinalIgnoreCase) no se traducen); las
-    // reglas de cultura (CA1304, CA1311, CA1862) apuntan a .NET y acá la comparación corre en la base, como el índice.
+    // La columna usa ToLower() sin argumentos: es la única forma que Npgsql traduce a lower(), la misma expresión de IX_business_hours_tenant_name
+    // (ToLowerInvariant y Equals(OrdinalIgnoreCase) no se traducen). El lado del parámetro se evalúa en .NET, así que va invariante. Las reglas
+    // de cultura (CA1304, CA1311) apuntan a .NET y acá la columna se compara en la base, como el índice; el pragma cubre sólo esa expresión.
+    public Task<bool> NameExistsAsync(Guid tenantId, string name, CancellationToken cancellationToken)
+    {
+        var lowered = name.ToLowerInvariant();
 #pragma warning disable CA1304, CA1311, CA1862
-    public Task<bool> NameExistsAsync(Guid tenantId, string name, CancellationToken cancellationToken) =>
-        dbContext.BusinessHours.AnyAsync(
-            schedule => schedule.TenantId == tenantId && schedule.Name.ToLower() == name.ToLower(), cancellationToken);
+        return dbContext.BusinessHours.AnyAsync(
+            schedule => schedule.TenantId == tenantId && schedule.Name.ToLower() == lowered, cancellationToken);
 #pragma warning restore CA1304, CA1311, CA1862
+    }
 
     public void Add(BusinessHoursSchedule schedule) => dbContext.BusinessHours.Add(schedule);
 
@@ -45,6 +48,25 @@ internal sealed class BusinessHoursRepository(MessagingDbContext dbContext, ITen
     public void AddAssignment(ConnectionBusinessHours row) => dbContext.ConnectionBusinessHours.Add(row);
 
     public void RemoveAssignment(ConnectionBusinessHours row) => dbContext.ConnectionBusinessHours.Remove(row);
+
+    public async Task SwapDefaultAsync(
+        BusinessHoursSchedule? previousDefault, BusinessHoursSchedule target, DateTimeOffset now, Guid actorId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        // Como TryAutoAssignAsync, una transacción explícita dentro del repositorio. Dos guardados: el primero deja al anterior sin
+        // predeterminado y el segundo pone el nuevo, así el índice parcial nunca ve dos a la vez sin importar el orden de los ids.
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        if (previousDefault is not null)
+        {
+            previousDefault.ClearDefault(now);
+            await MessagingSaveChanges.SaveAsync(dbContext, cancellationToken);
+        }
+
+        target.MakeDefault(now);
+        audit.RecordBusinessHours(target.TenantId, actorId, MessagingAuditActions.BusinessHoursDefaultSet, target.Id, now);
+        await MessagingSaveChanges.SaveAsync(dbContext, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
 
     public async Task<BusinessHoursStatus> GetStatusAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         (await GetStatusesAsync(tenantId, [connectionId], cancellationToken))[connectionId];

@@ -14,8 +14,10 @@ public sealed record TimeRangeDto(int From, int To);
 /// <summary>Siempre 7 (lunes a domingo): un día ausente obligaría a la pantalla a conocer el calendario del backend.</summary>
 public sealed record WeekdayHoursDto(int Day, IReadOnlyList<TimeRangeDto> Ranges);
 
+/// <summary>Una fecha con sus franjas; vacías = ese día se cierra. Sólo viajan las vigentes (hoy o después): las pasadas se podan al guardar (D-H15).</summary>
 public sealed record ExceptionHoursDto(DateOnly Date, IReadOnlyList<TimeRangeDto> Ranges);
 
+/// <summary>La conexión asignada al horario, en lo mínimo que la tarjeta del horario dibuja (nombre y canal); el estado y el horario vienen en las opciones de <c>GET</c>.</summary>
 public sealed record BusinessHoursConnectionDto(Guid ConnectionId, string Name, string Channel);
 
 /// <summary>UpcomingHolidays viaja calculada para que el frontend no tenga la Ley 51 (D-H9). OpenNow y NextChangeAt se evalúan con el reloj y el huso del tenant.</summary>
@@ -36,6 +38,8 @@ public sealed record BusinessHoursDto(
 /// <summary>Lleva las conexiones del tenant en cualquier estado con su horario actual: GET /messaging/connections sólo trae las activas y el editor tiene que mostrar también una pausada para no desasignarla en silencio (D-H10).</summary>
 public sealed record BusinessHoursConnectionOptionDto(Guid ConnectionId, string Name, string Channel, string Status, Guid? ScheduleId, string? ScheduleName);
 
+/// <summary><c>TimeZone</c> (id IANA del tenant) viaja para que la página lo muestre de sólo lectura, con un enlace a General donde se cambia:
+/// las franjas son hora local y sin el huso la pantalla no podría decir de qué reloj hablan.</summary>
 public sealed record BusinessHoursListDto(IReadOnlyList<BusinessHoursDto> Items, string TimeZone, IReadOnlyList<BusinessHoursConnectionOptionDto> Connections);
 
 /// <summary>Opcional campo a campo para que un cuerpo incompleto salga 422 con el mapa <c>errors</c>, no 400 del binder.</summary>
@@ -75,11 +79,13 @@ public static class BusinessHoursMessages
 
     public const string RangeBounds = "Las franjas van entre las 00:00 y las 24:00.";
 
-    public const string Exceptions = "Las excepciones traen una sola entrada por fecha y hasta 100.";
+    public const string Exceptions = "Las excepciones traen una sola entrada por fecha.";
 
     public const string HolidayCountry = "Sólo están disponibles los festivos de Colombia.";
 
     public const string ConnectionIds = "Cada conexión se elige una sola vez.";
+
+    public const string ConnectionIdsRequired = "Envía la lista de conexiones, aunque esté vacía.";
 
     public const string UnknownConnection = "Una de las conexiones no es de este negocio.";
 }
@@ -102,7 +108,7 @@ public sealed class SaveBusinessHoursRequestValidator : AbstractValidator<SaveBu
 
         RuleFor(request => request.Exceptions).Cascade(CascadeMode.Stop)
             .NotNull().WithMessage(BusinessHoursMessages.Exceptions)
-            .Must(exceptions => HasUniqueDatesWithinTheCap(exceptions!)).WithMessage(BusinessHoursMessages.Exceptions);
+            .Must(exceptions => HasUniqueDates(exceptions!)).WithMessage(BusinessHoursMessages.Exceptions);
         RuleForEach(request => request.Exceptions!).NotNull().WithMessage(BusinessHoursMessages.Exceptions)
             .SetValidator(new ExceptionHoursValidator());
 
@@ -111,14 +117,16 @@ public sealed class SaveBusinessHoursRequestValidator : AbstractValidator<SaveBu
             .WithMessage(BusinessHoursMessages.HolidayCountry);
 
         RuleFor(request => request.ConnectionIds).Cascade(CascadeMode.Stop)
-            .NotNull().WithMessage(BusinessHoursMessages.ConnectionIds)
+            .NotNull().WithMessage(BusinessHoursMessages.ConnectionIdsRequired)
             .Must(ids => ids!.Distinct().Count() == ids!.Count).WithMessage(BusinessHoursMessages.ConnectionIds);
     }
 
-    private static bool HasUniqueDatesWithinTheCap(IReadOnlyList<ExceptionHoursDto> exceptions)
+    // El tope de 100 no se mira acá: el dominio poda las fechas pasadas y recién entonces lo aplica (D-H15, exceptions_invalid). Contarlas antes
+    // rechazaría un horario envejecido que el dominio sí acepta.
+    private static bool HasUniqueDates(IReadOnlyList<ExceptionHoursDto> exceptions)
     {
         var dates = exceptions.OfType<ExceptionHoursDto>().Select(exception => exception.Date).ToArray();
-        return exceptions.Count <= BusinessHoursSchedule.MaxExceptions && dates.Distinct().Count() == dates.Length;
+        return dates.Distinct().Count() == dates.Length;
     }
 
     private static bool HasTheSevenDays(IReadOnlyList<WeekdayHoursDto> weekly)
@@ -211,7 +219,8 @@ internal static class BusinessHoursSupport
         schedule.Name,
         schedule.IsDefault,
         schedule.Weekly.Select(day => new WeekdayHoursDto(day.Day, ToRangeDtos(day.Ranges))).ToArray(),
-        schedule.Exceptions.Select(exception => new ExceptionHoursDto(exception.Date, ToRangeDtos(exception.Ranges))).ToArray(),
+        // D-H15: el dominio poda las fechas pasadas al guardar, pero una fila envejecida las conserva hasta el siguiente guardado; no llegan al formulario.
+        schedule.Exceptions.Where(exception => exception.Date >= calendar.Today).Select(exception => new ExceptionHoursDto(exception.Date, ToRangeDtos(exception.Ranges))).ToArray(),
         schedule.HolidayCountry?.ToString(),
         schedule.UpcomingHolidays(calendar.Today),
         connections.Select(connection => new BusinessHoursConnectionDto(connection.Id, connection.Name, connection.Channel.ToString())).ToArray(),
@@ -481,12 +490,13 @@ public sealed class DuplicateBusinessHoursHandler(
 }
 
 /// <summary><c>POST /business-hours/{id}/default</c> con <c>If-Match</c>: quita el predeterminado anterior y lo pone en este. Si ya lo es, 200 sin
-/// cambios. Dos peticiones a la vez las arbitra el índice único parcial (409 <c>default_conflict</c>).</summary>
+/// cambios. El cambio lo hace <see cref="IBusinessHoursRepository.SwapDefaultAsync"/> en dos guardados dentro de una transacción: EF ordena los
+/// UPDATE de un mismo <c>SaveChanges</c> por clave primaria (con ids v7, el más viejo primero), no por el orden en que rastrea las entidades, y
+/// el índice único parcial exige que el viejo deje de serlo antes de que el nuevo lo sea. Dos peticiones a la vez las arbitra ese índice
+/// (409 <c>default_conflict</c>).</summary>
 public sealed class SetDefaultBusinessHoursHandler(
     IBusinessHoursRepository repository,
     IMessagingConnectionDirectory connections,
-    IMessagingUnitOfWork unitOfWork,
-    IMessagingAuditRecorder audit,
     ITenantClock tenantClock,
     ITenantModules tenantModules,
     IExecutionContext executionContext)
@@ -496,9 +506,6 @@ public sealed class SetDefaultBusinessHoursHandler(
     {
         ArgumentNullException.ThrowIfNull(command);
         await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.BusinessHoursManage, cancellationToken);
-        // El anterior se carga primero: EF escribe los UPDATE en el orden en que rastrea las entidades, y el índice único parcial exige que
-        // el viejo deje de ser predeterminado antes de que el nuevo lo sea.
-        var previous = await repository.FindDefaultAsync(command.TenantId, cancellationToken);
         var schedule = await repository.FindAsync(command.TenantId, command.ScheduleId, cancellationToken)
             ?? throw BusinessHoursSupport.NotFound(command.ScheduleId);
         BusinessHoursSupport.EnsureVersion(schedule, command.ExpectedVersion);
@@ -506,10 +513,8 @@ public sealed class SetDefaultBusinessHoursHandler(
 
         if (!schedule.IsDefault)
         {
-            previous?.ClearDefault(calendar.UtcNow);
-            schedule.MakeDefault(calendar.UtcNow);
-            audit.RecordBusinessHours(command.TenantId, executionContext.SubjectId, MessagingAuditActions.BusinessHoursDefaultSet, schedule.Id, calendar.UtcNow);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
+            var previous = await repository.FindDefaultAsync(command.TenantId, cancellationToken);
+            await repository.SwapDefaultAsync(previous, schedule, calendar.UtcNow, executionContext.SubjectId, cancellationToken);
         }
 
         var live = await connections.ListAllAsync(command.TenantId, cancellationToken);

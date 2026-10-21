@@ -53,12 +53,12 @@ public sealed class BusinessHoursSchedule
         DateOnly today,
         DateTimeOffset now) => new()
         {
+            HolidayCountry = NormalizeCountry(holidayCountry),
             Id = id,
             TenantId = tenantId,
             Name = NormalizeName(name),
             Weekly = NormalizeWeekly(weekly),
             Exceptions = NormalizeExceptions(exceptions, today),
-            HolidayCountry = holidayCountry,
             CreatedAt = now,
             UpdatedAt = now,
             Version = 1,
@@ -76,11 +76,12 @@ public sealed class BusinessHoursSchedule
         var normalizedName = NormalizeName(name);
         var normalizedWeekly = NormalizeWeekly(weekly);
         var normalizedExceptions = NormalizeExceptions(exceptions, today);
+        var normalizedCountry = NormalizeCountry(holidayCountry);
 
         Name = normalizedName;
         Weekly = normalizedWeekly;
         Exceptions = normalizedExceptions;
-        HolidayCountry = holidayCountry;
+        HolidayCountry = normalizedCountry;
         UpdatedAt = now;
         Version++;
     }
@@ -249,6 +250,11 @@ public sealed class BusinessHoursSchedule
         // Copia de las franjas: el agregado es dueño de su estado.
         return ordered.Select(day => day with { Ranges = [.. day.Ranges] }).ToList();
     }
+
+    private static HolidayCountry? NormalizeCountry(HolidayCountry? holidayCountry) =>
+        holidayCountry is { } country && !Enum.IsDefined(country)
+            ? throw new MessagingDomainException(MessagingErrorCodes.BusinessHoursHolidayCountryInvalid, "Sólo están disponibles los festivos de países soportados.")
+            : holidayCountry;
 
     private static List<DateException> NormalizeExceptions(IReadOnlyList<DateException> exceptions, DateOnly today)
     {

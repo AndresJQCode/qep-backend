@@ -92,12 +92,11 @@ internal static class BusinessHoursEndpoints
     }
 
     private static async Task<IResult> DuplicateAsync(
-        Guid tenantId, Guid scheduleId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+        Guid tenantId, Guid scheduleId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {
         var dto = await dispatcher.SendAsync(new DuplicateBusinessHoursCommand(tenantId, scheduleId), cancellationToken);
-        // La ruta es .../business-hours/{id}/duplicate: el recurso nuevo vive en .../business-hours/{newId}.
-        var collection = httpContext.Request.Path.Value![..httpContext.Request.Path.Value!.LastIndexOf($"/{scheduleId}", StringComparison.OrdinalIgnoreCase)];
-        return Results.Created($"{collection}/{dto.Id}", dto);
+        // El recurso nuevo vive en la colección, no bajo .../{id}/duplicate: el Location se arma con el tenant y el id nuevo.
+        return Results.Created($"/api/v1/tenants/{tenantId}/messaging/business-hours/{dto.Id}", dto);
     }
 
     private static async Task<IResult> SetDefaultAsync(

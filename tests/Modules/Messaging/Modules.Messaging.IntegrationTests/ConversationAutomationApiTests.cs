@@ -98,7 +98,8 @@ public sealed class ConversationAutomationApiTests
         await ActAsync(f, f.Client, "automation/pause", await VersionAsync(f));
         var twice = await ActAsync(f, f.Client, "automation/pause", await VersionAsync(f));
         await ExecuteAsync(f.ConnectionString,
-            "UPDATE messaging.conversations SET automation_status='None', automation_started_at=NULL, automation_paused_at=NULL, automation_paused_by_member_id=NULL, automation_pause_reason=NULL, version=version+1");
+            "UPDATE messaging.conversations SET automation_status='None', automation_started_at=NULL, automation_paused_at=NULL, automation_paused_by_member_id=NULL, automation_pause_reason=NULL, version=version+1 WHERE id = @id",
+            ("id", f.ConversationId));
         var none = await ActAsync(f, f.Client, "automation/pause", await VersionAsync(f));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, twice.StatusCode);

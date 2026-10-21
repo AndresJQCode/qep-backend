@@ -26,6 +26,12 @@ public interface IBusinessHoursRepository
     void AddAssignment(ConnectionBusinessHours row);
 
     void RemoveAssignment(ConnectionBusinessHours row);
+
+    /// <summary>Quita el predeterminado anterior (si hay) y pone <paramref name="target"/>, con su auditoría, en una transacción con dos
+    /// <c>SaveChanges</c>: EF ordena los UPDATE de un mismo guardado por clave primaria y no por rastreo, así que en uno solo el orden de los dos
+    /// depende de los ids y el índice único parcial puede rechazar el cambio. Los errores se traducen como en la unidad de trabajo.</summary>
+    Task SwapDefaultAsync(
+        BusinessHoursSchedule? previousDefault, BusinessHoursSchedule target, DateTimeOffset now, Guid actorId, CancellationToken cancellationToken);
 }
 
 /// <summary>Si una conexión atiende ahora, cuándo cambia y con qué horario se decidió (<c>null</c> = siempre abierto, sin horario).</summary>
