@@ -9,7 +9,8 @@ El alcance ejecutable actual incluye:
 - ciclo de vida completo de memberships: invitación con aprovisionamiento de
   usuarios en Identity, listado, suspensión, remoción, reactivación y roles;
 - registro público de tenants, sesión por cookie y catálogo de autorización;
-- catálogo de productos, con listado, alta, edición y desactivación;
+- catálogo de productos con opciones, variantes y galería de fotos, con listado, alta, edición y
+  desactivación;
 - biblioteca de archivos sobre Cloudflare R2, con carga firmada, escaneo
   antimalware, variantes y publicación;
 - notificaciones por email con proveedor conmutable;
@@ -275,7 +276,7 @@ $k = Read-Host "clave qep-dev" -AsSecureString
     [Runtime.InteropServices.Marshal]::SecureStringToBSTR($k)), "User")
 ```
 
-Después **cerrá VS Code por completo y volvé a abrirlo**: los procesos heredan el entorno al
+Después **cierra VS Code por completo y vuelve a abrirlo**: los procesos heredan el entorno al
 arrancar, así que ni la ventana donde corriste el comando ni una sesión de Claude Code ya
 abierta la ven. Para comprobar que quedó guardada sin imprimirla, en una PowerShell nueva:
 
@@ -412,14 +413,16 @@ slug `qcode` ya es de otro tenant, la semilla no crea QCode, lo advierte con el 
 sigue arrancando.
 
 Es idempotente: el tenant por id, el usuario por email, la membresía por el par
-usuario-tenant y los productos por código. Correrla muchas veces —cada reinicio de pod
+usuario-tenant y los productos por el código de su variante. Cada producto sembrado nace sin
+opciones, con una sola variante —la variante por defecto, con el mismo id que el producto— que
+lleva el `sku` del JSON como código y los precios, escalas y empaques. Correrla muchas veces —cada reinicio de pod
 lo hace— no duplica nada. Tampoco actualiza: cambiar un precio ya sembrado es un `PUT`,
 no una segunda corrida.
 
-Tres campos del archivo de origen no se cargan porque el dominio no los tiene: peso
-neto, peso bruto y unidad de empaque. La imagen tampoco: en el origen es una ruta, y
-`Product.ImageFileId` es un archivo de la [biblioteca](#biblioteca-de-archivos-cloudflare-r2),
-que se sube aparte. Los cuatro quedan en
+Tres campos del archivo de origen no se cargan porque el dominio no los tiene: el id de
+origen, el peso neto y el peso bruto. La imagen tampoco: en el origen es una ruta, y la galería
+del producto guarda archivos de la [biblioteca](#biblioteca-de-archivos-cloudflare-r2), que se
+suben aparte. Los cuatro quedan en
 [`catalog-products.json`](src/Modules/Catalog/Modules.Catalog.Infrastructure/Seed/Data/catalog-products.json)
 bajo `notSeeded`, como referencia.
 
@@ -797,7 +800,8 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/authorization/catalog` | `GET`                                                                                       | `advisorship.read`                                                                    |
 | `/api/v1/tenants/{tenantId}/settings`              | `GET`, `PUT`                                                                                | `tenancy.settings.read` / `.update`                                                          |
 | `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles`, `profile` por membership   | `advisorship.invite` / `.read` / `.manage`                                            |
-| `/api/v1/tenants/{tenantId}/catalog/products`      | `GET`, `POST`, `PUT`, y `deactivate` por producto                                           | `catalog.product.read` / `.manage`                                                           |
+| `/api/v1/tenants/{tenantId}/catalog/products`      | `GET` (`includeVariants`), `POST`, `export`, `price-scales/copy`, y por producto `GET`, `PUT` (`expectedVersion`), `activate`, `deactivate` (ver [Catálogo](#catálogo-opciones-variantes-y-galería)) | `catalog.product.read` / `.manage`                                                           |
+| `/api/v1/tenants/{tenantId}/catalog/options`       | `GET`, `POST`, y por opción `PUT`, `DELETE`                                                 | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 | `/api/v1/tenants/{tenantId}/orders`                | `GET` (filtros, entre ellos `source` y `timeZone`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `approve`, `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`) (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual)) | `quotations.order.read` / `.manage` / `.approve` / `.cancel` / `.invoice` |
 | `/api/v1/tenants/{tenantId}/pos`                   | 12 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void`                               |
@@ -1128,18 +1132,19 @@ nuevo) y el mismo cuerpo, `CreateQuotationRequest`:
   "parties": { "billing": null, "shipping": { … }, "billingUsesBusinessName": false, "isStorePickup": false, "billsToFinalConsumer": false },
   "billingAccount": { "companyId": "…", "bankName": "…", "accountNumber": "…", "currency": "COP" },
   "shipping": { … },
-  "items": [ { "productId": "…", "quantity": 2 } ],
+  "items": [ { "variantId": "…", "quantity": 2 } ],
   "globalScaleFloor": null,
   "isRetail": false
 }
 ```
 
 - `items`, `globalScaleFloor` e `isRetail` son **opcionales**. Ausentes dan lo de antes: `{ clientId }` sigue
-  creando un borrador vacío, en `version` 1 y con una sola fila `Created` en el historial. `items` lleva producto y
-  cantidad, como el guardado; precio, escala, descuentos y tasa los resuelve el backend.
-- Las reglas y los códigos son los del guardado (`PUT /quotations/{id}`): línea repetida, cantidad ≤ 0 o producto
-  vacío dan `422 validation.failed` con `errors`; detal con piso, `quotation.retail.floor_not_allowed`; un producto
-  que no existe en el tenant, `quotation.item.product_not_found`; un modo de flete apagado,
+  creando un borrador vacío, en `version` 1 y con una sola fila `Created` en el historial. `items` lleva variante y
+  cantidad, como el guardado (un producto sin opciones manda el id de su variante por defecto, que es el del
+  producto); precio, escala, descuentos y tasa los resuelve el backend.
+- Las reglas y los códigos son los del guardado (`PUT /quotations/{id}`): variante repetida (`errors.Items`), cantidad
+  ≤ 0 o variante vacía (`errors["Items[i].VariantId"]`) dan `422 validation.failed`; detal con piso,
+  `quotation.retail.floor_not_allowed`; una variante que no existe en el tenant, `quotation.item.product_not_found`; un modo de flete apagado,
   `quotation.quotation.freight_charge_mode_disabled`. La elegibilidad del cliente (`client_not_found`,
   `client_incomplete`, `client_cuc_missing`, `client_inactive`, en ese orden) aplica en las dos rutas. No se exigen
   líneas: eso lo pide la pantalla.
@@ -1196,10 +1201,87 @@ nacen sin datos propios. Antes de volver al código nuevo, esos pedidos se compl
 pasos 4 y 5 de `AddOrderOwnData` acotado a `client_id IS NULL` y se restauran los `NOT NULL` (spec
 2026-10-15 §10).
 
+### Catálogo: opciones, variantes y galería
+
+Spec 2026-10-20 (`docs/superpowers/specs/2026-10-20-variantes-de-producto-design.md`). Un producto tiene
+hasta **3 opciones** (Talla, Color…) y hasta **2.048 variantes**, una por combinación de valores, como
+Shopify. El código, el código de barras, los precios, las escalas y los empaques son de **cada variante**;
+el nombre, la descripción, el IVA y el estado siguen en el producto. Un producto sin opciones tiene
+exactamente una variante, la **variante por defecto**, con el mismo id que el producto: así nacieron los
+productos que existían antes (migración `AddProductVariants`) y así nace uno nuevo. La galería guarda
+hasta **250 fotos** en orden —la primera es la principal— y cada variante puede apuntar a una.
+
+Todas las rutas cuelgan de `/api/v1/tenants/{tenantId}/catalog`, con `catalog.product.read` para leer y
+`catalog.product.manage` para escribir (sin permisos nuevos):
+
+| Método y ruta | Para qué |
+| --- | --- |
+| `GET /options` | La biblioteca de opciones del tenant, con `canDelete` por opción y por valor. El primer `GET` siembra «Talla» y «Color» **inactivas** (una sola vez: una predefinida borrada no vuelve) |
+| `POST /options` | Crea una opción activa con sus valores |
+| `PUT /options/{optionId}` | Reemplaza nombre, estado y la lista de valores en orden; un valor guardado que no viene se borra si ninguna variante lo usa (si alguna lo usa, `409 catalog.option.in_use`) |
+| `DELETE /options/{optionId}` | Borra una opción sin uso; en uso responde `409 catalog.option.in_use` y no cambia nada (se desactiva por el `PUT`) |
+| `GET /products` | El listado sigue siendo por producto: `code` (el de la única variante, `null` con varias), `variantCount` y `priceRange` por moneda. Con `includeVariants=true` trae además `variants[]`, las vendibles, para el selector de cotizaciones y pedidos (página topada en 50). `search` encuentra por nombre, `Code` de variante o código de barras |
+| `GET /products/{productId}` | El detalle: `options[]`, **todas** las `variants[]` en orden (con nombre visible, `canDelete` e `imageUrl` ya resueltos), `gallery[]` y `version` |
+| `POST /products` | Crea producto, opciones, variantes y galería de una vez |
+| `PUT /products/{productId}` | Reemplaza el recurso entero con `expectedVersion` (`412 concurrency.conflict` si cambió). Las variantes se emparejan por `id`; una guardada que no viene responde `422 catalog.variant.missing_in_request`: **omitir no borra**. Borrar es mandar su id en `deletedVariantIds`, y se borra si ninguna línea la usa o se desactiva si alguna sí |
+| `POST /products/price-scales/copy` | Copia las escalas de una variante (`sourceVariantId`) a otras (`targetVariantIds`, hasta 200 variantes) |
+
+- **Nombre visible**: el del producto en la variante por defecto; con opciones,
+  `«{producto} – {valor1} / {valor2} / {valor3}»` (guion largo con espacios). Lo arma el backend y es lo
+  que guardan las líneas, el PDF, el Excel y el POS.
+- **Códigos únicos por tenant**: `Code` (≤ 60) entre todas las variantes, activas o no —desactivar no
+  libera el código, índice `IX_product_variants_tenant_code`—; el código de barras (≤ 64) es opcional y
+  único cuando existe (`IX_product_variants_tenant_barcode`).
+- **Cambiar las opciones de un producto con ventas** conserva la variante: al agregar la primera opción,
+  la variante por defecto se convierte en una de las combinaciones nuevas con su id, código, precios e
+  historial; las demás nacen copiando su precio. Al quitar una opción, las combinaciones que quedan
+  repetidas se desactivan.
+- **En uso** = alguna línea de `quotations.quotation_items`, `quotations.order_items` o `pos.sale_lines`
+  guarda su `variant_id`. Lo consulta `CatalogVariantUsageChecker` (Bootstrapper) dentro de la
+  transacción del `PUT`. Borrar una variante sin uso borra en cascada su historial de precios.
+- **Escalas por variante**: una escala sin agrupación cuenta sólo la cantidad de su variante (6 M y 6 L
+  no suman 12); una con `allowGrouping` suma entre variantes, como antes sumaba entre productos.
+- **Historial de precios** por variante: `GET /reports/price-changes` y `/summary` aceptan `variantId`, y
+  el resumen desglosa cada producto en `variants[]`, todas incluso en cero.
+- **Excel de productos**: una fila por variante (activas e inactivas), con `Código`, `Código de barras`,
+  `Producto` y `Variante` (vacía en la variante por defecto).
+
+Los errores llegan por dos caminos, y el formulario lee los dos con el mismo mapa `errors`:
+
+- **De forma** (lo que se ve en el cuerpo, sin ir a la base): `422 validation.failed`, con el mensaje bajo
+  la clave del campo, por ejemplo `errors["Variants[2].Code"]`. Así salen más de 3 opciones o
+  una repetida, más de 250 fotos o una repetida, ninguna variante o más de 2.048, el mismo id dos veces en
+  `variants`, un `Code` o un código de barras repetido **dentro del cuerpo**, una variante sin un valor por
+  opción, una foto de variante que no está en `gallery`, `Code` vacío o de más de 60, código de barras de
+  más de 64 y los de precio, escala y empaque. En la opción: nombre o valor vacío, de más de 60 o repetido.
+- **Contra la base**: con su propio `code` y, cuando señala una fila, también `errors` con el campo:
+
+| Código | Status | Cuándo |
+| --- | --- | --- |
+| `catalog.option.name_taken` | 422 | Ya existe una opción con ese nombre en el tenant (sin distinguir mayúsculas ni espacios de borde) |
+| `catalog.option.not_found` | 404 / 422 | `404` en `/options/{optionId}`; `422` con `errors["OptionIds[i]"]` cuando el producto nombra una opción que no es del tenant |
+| `catalog.option.in_use` | 409 | Borrar una opción, o quitar un valor, que alguna variante usa |
+| `catalog.option.inactive` / `value_inactive` | 422 | Usar en un producto una opción o un valor inactivo que ese producto no usaba |
+| `catalog.option.value_not_found` | 422 | Un valor que no es de esa opción (`errors["Variants[i].OptionValueIds[j]"]`), o un id de valor desconocido o repetido en el `PUT` de la opción |
+| `catalog.variant.combination_duplicate` | 422 | Dos variantes activas con la misma combinación |
+| `catalog.variant.active_required` | 422 | Ninguna variante activa |
+| `catalog.product.code_taken` | 422 | El `Code` ya es de una variante de otro producto (`errors["Variants[i].Code"]`) |
+| `catalog.variant.barcode_taken` | 422 | El código de barras ya es de una variante de otro producto (`errors["Variants[i].Barcode"]`) |
+| `catalog.variant.missing_in_request` | 422 | El `PUT` omite una variante guardada que no está en `deletedVariantIds` |
+| `catalog.variant.duplicated_in_request` | 422 | Un id en `variants` y en `deletedVariantIds` a la vez, o repetido en `deletedVariantIds` |
+| `catalog.variant.not_found` | 422 / 404 | Un id de variante que no es del producto; `404` en la copia de escalas |
+| `concurrency.conflict` | 412 | `expectedVersion` vieja en el `PUT` del producto |
+
+Los códigos de antes se conservan; `catalog.product.code_taken` ahora habla del `Code` de la variante.
+El contrato completo para el frontend, con los cuerpos y las respuestas, está en
+`docs/superpowers/plans/2026-10-20-variantes-handoff.md`.
+
 ### Código y nombre del producto en cada línea
 
-Una línea de cotización referencia su producto por `productId` (sin FK) y congela precio e IVA al
-agregarse. El **código y el nombre** siguen otra regla (owner, 2026-09-26):
+Una línea de cotización vende una **variante** (spec 2026-10-20 §4): guarda `variant_id` y el
+`product_id` de su producto (los dos sin FK) y congela precio e IVA al agregarse. El **código y el
+nombre** son el `Code` y el nombre visible de la variante (`Camiseta – M`; el del producto en la
+variante por defecto), y siguen otra regla (owner, 2026-09-26):
 
 - Mientras la cotización es **borrador**, se leen en vivo del catálogo: si el producto cambia, la
   cotización lo muestra.
@@ -1214,6 +1296,9 @@ agregarse. El **código y el nombre** siguen otra regla (owner, 2026-09-26):
   (`POST /orders/{id}/items`, `PUT /orders/{id}`) se congelan al sumarlas.
 - Un producto que el catálogo ya no devuelve no frena el envío: esa línea queda sin foto y se sigue
   leyendo en vivo, como antes.
+- El nombre visible se guarda hasta 200 caracteres: uno más largo (producto de 200 más los valores de
+  opción) se recorta a 200 con «…» al congelarse (`SnapshotText.Fit`); el borrador, que lee en vivo, lo
+  muestra entero. El POS guarda el suyo con la misma regla.
 - Las líneas enviadas antes de este cambio no tienen foto y se siguen leyendo en vivo; no hay
   backfill, porque Quotations no lee las tablas de Catalog. Se congelan solas si la cotización se
   reenvía o se convierte.
@@ -1310,7 +1395,7 @@ Los códigos de error nuevos, con lo que los corrige:
 ### Columnas del Excel de pedidos por tenant (homologación)
 
 Cada ERP importa por encabezado con su propia plantilla, así que el tenant puede renombrar,
-reordenar y ocultar las 47 columnas del Excel de pedidos y agregar hasta 40 columnas fijas
+reordenar y ocultar las 55 columnas del catálogo del Excel de pedidos y agregar hasta 40 columnas fijas
 (`Tipo Doc` = `FV`, `Bodega` = `01`), desde su configuración. Una fija cuyo valor es un número
 canónico en cultura invariante (`0.19`, `9999`, `-1`, `901851609`) sale como **número**, que un
 Excel en `es-CO` muestra `0,19` y el ERP lee como cifra; el resto (`02`, `PM`, `1,5`, `+1`, vacío)
@@ -1426,7 +1511,9 @@ que no esté guardada, al final, con su nombre por defecto y visible u oculta se
 y ETag `"1"`. Cada columna viaja con `kind` (`Catalog` | `Fixed`), `key` y
 `defaultHeader`/`defaultPosition`/`defaultVisible` (sólo las del catálogo; `null` en las fijas),
 `header`, `value` (sólo las fijas) y `visible`. `defaultVisible` es `true` en todas menos en
-`coordinadora_city` (2026-10-02), las `payment_method_N` (2026-10-03) y `carrier` (2026-10-05).
+`coordinadora_city` (2026-10-02), las `payment_method_N` (2026-10-03), `carrier` (2026-10-05),
+`freight_without_tax`, `freight_tax`, `freight_charge_mode` y `cash_on_delivery` (2026-10-17) y
+`variant` (2026-10-20).
 
 El `PUT` reemplaza la lista entera con `If-Match` obligatorio (428 sin él; 412 con una versión
 vieja, incluido el choque de dos primeros guardados). No exige el catálogo entero: lo que no
@@ -1459,8 +1546,8 @@ el spec del slice; esta tabla es el inventario.
 | `GET /sessions/{sessionId}`        | `pos.sale.read`        | Detalle y arqueo de una sesión                                                   |
 | `GET /products`                    | `pos.sale.create`      | Búsqueda paginada por nombre, `Code` o código de barras: productos con sus variantes vendibles |
 | `GET /products/by-code`            | `pos.sale.create`      | El escáner: la variante por código de barras exacto y, si ninguna lo tiene, por su `Code` |
-| `POST /sales/preview`              | `pos.sale.create`      | Calcula totales de un carrito sin guardar nada                                   |
-| `POST /sales`                      | `pos.sale.create`      | Crea la venta; idempotente por el `id` del cliente (201 la primera vez, 200 al repetir) |
+| `POST /sales/preview`              | `pos.sale.create`      | Calcula totales de un carrito sin guardar nada; cada línea es una variante (`variantId`) |
+| `POST /sales`                      | `pos.sale.create`      | Crea la venta, con una línea por variante; idempotente por el `id` del cliente (201 la primera vez, 200 al repetir) |
 | `GET /sales/{saleId}`              | `pos.sale.read`        | Detalle de una venta                                                             |
 | `GET /sales`                       | `pos.sale.read`        | Lista paginada de ventas, con filtros                                            |
 | `POST /sales/{saleId}/void`        | `pos.sale.void`        | Anula una venta, con motivo; sólo si su caja sigue abierta                       |

@@ -6,8 +6,9 @@ namespace Modules.Quotations.Application;
 
 /// <summary>
 /// El Excel de pedidos (spec 2026-09-12 y homologación por tenant). Desde el spec 2026-10-15 §6.4 las
-/// 47 columnas conservan clave, encabezado y orden, pero todo sale del pedido: su cuenta de cobro, sus
-/// líneas, sus partes, su cliente, su asesor y sus totales. Un pedido sin cotización exporta igual.
+/// columnas del catálogo (<see cref="OrdersExportColumnCatalog.Columns"/>) conservan clave, encabezado y
+/// orden, pero todo sale del pedido: su cuenta de cobro, sus líneas, sus partes, su cliente, su asesor y
+/// sus totales. Un pedido sin cotización exporta igual.
 /// </summary>
 public sealed class OrdersExportProcessor(
     IOrderRepository repository,

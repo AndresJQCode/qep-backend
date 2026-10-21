@@ -388,6 +388,43 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   configurado: el pod arranca y rechaza cada firma (es el síntoma que la entrada de Instagram atribuye a
   `META_INSTAGRAM_APP_SECRET`). `ShopifyAppOptionsValidator` trata `#{…}` como ausente en `Production` desde `f72c7d1b` (2026-10-18),
   como `DeploymentInfo.Normalize`; un secreto requerido nuevo lleva la misma regla.
+- **La variante por defecto lleva el id del producto, y el relleno de `variant_id` depende de eso** (spec 2026-10-20 §8).
+  `Product.Create` le da a la primera variante el id del producto —también al crear con opciones—, y `AddProductVariants`
+  hizo lo mismo con cada producto que existía. Por eso `AddVariantToLines` (Quotations) y `AddVariantToSaleLines` (Pos)
+  rellenan con `variant_id = product_id` sin consultar `catalog`, que es otro esquema y otro `DbContext`. No cambies
+  `Create` para que estrene un id: las pruebas que mandan el id del producto como `variantId` dejan de valer en silencio.
+  Al revés tampoco sirve: `variant_id = product_id` **no** dice que la variante sea la por defecto (un producto con
+  opciones también tiene una con ese id); eso lo dice `OptionIds` vacío, y fuera de Catalog no se ve.
+- **Un `INSERT` a mano en `quotation_items`, `order_items` o `sale_lines` necesita `variant_id`.** Es `NOT NULL` sin default
+  desde `AddVariantToLines` y `AddVariantToSaleLines`, y va junto con el `product_id` **de esa variante**. Del lado de
+  Catalog, `catalog.products` ya no tiene `code` y `catalog.product_prices` se une por `variant_id`: un SQL que lea el
+  catálogo pasa por `catalog.product_variants` (precedente: `ExportLoadSeeder`). Las pruebas de migración que siembran
+  **antes** de esas migraciones no lo llevan: la migración lo rellena.
+- **Un cuerpo crudo con `productId` ya no sirve en las líneas.** Las de cotización, pedido y POS (`AddQuotationItemRequest`,
+  `BatchQuotationItemAdditionRequest`, `QuotationEditItemRequest`, `OrderItemAdditionRequest`, `OrderEditItemRequest`,
+  `PosSaleLineRequest`, `PosPreviewLineRequest`) llevan `variantId`, y la copia de escalas `sourceVariantId` /
+  `targetVariantIds`. Un objeto anónimo con `productId` se deserializa con `VariantId = Guid.Empty` y responde `422
+  validation.failed` por el `VariantId` vacío (`Items[i].VariantId`; `Lines[i].VariantId` en el POS): el síntoma es una prueba que esperaba `Created`, no un error de nombre de
+  campo. Los records tipados se arreglan solos; el barrido es por `new { productId` y por JSON literal.
+- **`CatalogVariantUsageChecker` lee tablas de Quotations y Pos por nombre.** Es SQL crudo en Bootstrapper sobre
+  `quotations.quotation_items`/`order_items` (unidas a `quotations`/`orders` por el tenant) y `pos.sale_lines` (unida a
+  `pos.sales`), y corre en la conexión del `PUT` de producto para quedar dentro de su transacción. Renombrar
+  `variant_id` o una de esas tablas compila y pasa todas las pruebas de Catalog —usan un doble del puerto—, y el `GET` y el
+  `PUT` de producto responden 500 (`42703`). Se cambia junto con el checker y sus pruebas: `CatalogVariantUsageCheckerTests`
+  (que arma réplicas mínimas de las tablas) y las dos `TheCatalogUsageQueryFindsTheBackfilledVariant`
+  (`VariantLinesMigrationTests`, `SaleLinesVariantMigrationTests`), que **copian** el SQL en vez de llamarlo: cambiar el
+  checker sin copiarlo ahí las deja pasando contra la consulta vieja.
+- **Borrar una variante es explícito: `deletedVariantIds`. Omitirla del `PUT` responde `catalog.variant.missing_in_request`.**
+  No lo «simplifiques» a «la que no viene se borra» (era lo que pedía el plan, y el spec §6 lo corrigió): la tabla de
+  variantes llega a 2.048 filas y el formulario la pagina, así que una fila ausente puede ser una página que no se
+  mandó. La listada se borra si ninguna línea la usa y se desactiva si alguna sí; borrarla se lleva su historial de
+  precios por `CASCADE`.
+- **La regla de recorte de la foto del nombre vive en `BuildingBlocks.Domain/SnapshotText.cs`.** El nombre visible de una
+  variante pasa de los 200 de `product_name` (producto de 200 más hasta tres valores de 60), y
+  `QuotationProductSnapshot` y `PosSaleLine` lo recortan con `SnapshotText.Fit` (200 con «…», sin partir un par
+  sustituto). No copies la regla en un módulo —la copia de Pos ya se retiró una vez—: Quotations y Pos no se ven entre
+  sí, y dos copias divergen sin que nada se ponga rojo. Ensanchar la columna es una migración en cada módulo más su
+  constante (`QuotationProductSnapshot.NameMaxLength`, `PosSaleLine.ProductNameMaxLength`).
 
 ## Verificación
 

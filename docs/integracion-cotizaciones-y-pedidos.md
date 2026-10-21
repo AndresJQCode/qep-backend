@@ -66,7 +66,7 @@ Todo lo que cuelga de `/quotations/{id}/items...` sigue siendo de la cotización
 | `POST` | `/quotations` | `CreateQuotationRequest` (con `items`, `globalScaleFloor`, `isRetail` opcionales) | 201, arranca en `Draft` con las líneas que traiga |
 | `POST` | `/quotations/preview` | `CreateQuotationRequest` | 200 `QuotationResponse` calculado **sin persistir** y sin gastar número: `id` vacío, `quotationNumber: ""`, `version: 0`. La vigencia ausente vuelve resuelta |
 | `PATCH` | `/quotations/{id}` | `UpdateQuotationRequest` | Reemplaza el encabezado entero (no PATCH parcial pese al verbo) |
-| `POST` | `/quotations/{id}/items` | `AddQuotationItemRequest` | Descuento se calcula solo por escala del producto |
+| `POST` | `/quotations/{id}/items` | `AddQuotationItemRequest` | Descuento se calcula solo por escala de la variante |
 | `PUT` | `/quotations/{id}/items/{itemId}` | `UpdateQuotationItemRequest` | Re-resuelve el descuento para la nueva cantidad |
 | `DELETE` | `/quotations/{id}/items/{itemId}` | — | |
 | `POST` | `/quotations/{id}/send` | `SendQuotationRequest` | El PDF ya se subió a Storage antes de este llamado (ver abajo) |
@@ -127,7 +127,9 @@ type ShippingResponse = {
   cashOnDelivery: boolean;
 };
 
-type AddQuotationItemRequest = { productId: string; quantity: number };
+// Spec 2026-10-20 §4: una línea vende una **variante**. Un producto sin opciones manda el id de su
+// variante por defecto, que es el mismo del producto. Ver docs/superpowers/plans/2026-10-20-variantes-handoff.md.
+type AddQuotationItemRequest = { variantId: string; quantity: number };
 type UpdateQuotationItemRequest = { quantity: number };
 
 type SendQuotationRequest = { pdfFileId: string };
@@ -159,7 +161,9 @@ type QuotationResponse = {
   // del último envío) ya está adentro de `canBeConvertedToOrder`; viaja aparte para que el
   // detalle pueda decir *por qué* no se ofrece convertir, en vez de esconder el botón callado.
   canBeSent: boolean; hasChangesSinceSent: boolean; canBeConvertedToOrder: boolean;
-  items: { id, productId, quantity, unitPrice, discountPercentage, discountAmount, subtotal, position }[];
+  // `variantId` es lo que el guardado manda de vuelta; `productId`, el producto dueño de la variante.
+  // `productName` es el nombre visible de la variante («Camiseta – M»), `productCode` su Code.
+  items: { id, variantId, productId, productCode, productName, quantity, unitPrice, discountPercentage, discountAmount, subtotal, position }[];
 };
 
 type CancelOrderRequest = { reason: string }; // obligatorio, se recorta, máx. 500
@@ -176,7 +180,7 @@ type CreateOrderRequest = {
   // Obligatoria en POST /orders (422 validation.failed, errors.BillingAccount). En /orders/preview puede ir
   // null: la pantalla pinta el precio antes de elegir la empresa que factura.
   billingAccount: { companyId: string; bankName: string; accountNumber: string; currency: string } | null;
-  items: { productId: string; quantity: number }[]; // al menos uno, sin productos repetidos
+  items: { variantId: string; quantity: number }[]; // al menos uno, sin variantes repetidas
   paymentStatus: "FullPaymentReceived" | "PartialPaymentReceived" | "PaymentPending";
   paymentProofs: { fileId: string; amount: number; paidOn?: string | null }[]; // vacío sólo con PaymentPending
 };
@@ -211,7 +215,7 @@ type OrderResponse = {
   paymentProofs: { id, fileId, amount, uploadedAt, paidOn: string | null }[];
 };
 
-type AddOrderItemsRequest = { toAdd: { productId: string; quantity: number }[] }; // al menos uno
+type AddOrderItemsRequest = { toAdd: { variantId: string; quantity: number }[] }; // al menos uno
 
 // Spec 2026-10-15 §6.2: la cotización ya no viaja. `items` son las líneas del pedido con su producto
 // resuelto (mismo QuotationItemResponse de la cotización); `sourceQuotation` es null sin cotización.
@@ -282,12 +286,12 @@ URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a a
 | `quotation.quotation.not_sent` | 422 | `void`/convertir sobre algo que no es `Sent` (void también acepta Draft) |
 | `quotation.quotation.changed_since_sent` | 422 | Convertir una cotización editada después de su último envío: hay que reenviarla primero |
 | `quotation.quotation.pdf_not_found` / `pdf_not_available` / `pdf_not_a_pdf` | 422 | Problema con el `pdfFileId` de `send` |
-| `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea, a la cotización o al pedido (también en `POST /quotations` y `/quotations/preview` con `items`, en `POST /orders`, y en `/orders/preview` sin cuenta, contra la moneda por defecto del tenant) |
-| `quotation.item.duplicate_product` | 422 | El producto ya está en la cotización: se cambia la cantidad de su línea, no se agrega otra (en `POST /quotations` y `/quotations/preview`, una línea repetida en `items` llega antes como `validation.failed` con `errors.Items`) |
+| `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Variante inválida (inexistente, inactiva o de un producto inactivo, o sin precio en la moneda) al agregar una línea, a la cotización o al pedido (también en `POST /quotations` y `/quotations/preview` con `items`, en `POST /orders`, y en `/orders/preview` sin cuenta, contra la moneda por defecto del tenant) |
+| `quotation.item.duplicate_product` | 422 | La variante ya está en la cotización: se cambia la cantidad de su línea, no se agrega otra. Dos tallas del mismo producto sí son dos líneas (en `POST /quotations` y `/quotations/preview`, una variante repetida en `items` llega antes como `validation.failed` con `errors.Items`) |
 | `quotation.retail.floor_not_allowed` | 422 | Cotización detal con piso de escala global en el mismo cuerpo (`POST /quotations`, `/quotations/preview`, `PUT /quotations/{id}` y su `/preview`) |
 | `order.order.client_not_found` / `client_inactive` / `client_incomplete` / `client_cuc_missing` | 422 | `POST /orders` (y su `/preview`) con un cliente que no existe en el tenant, inactivo, incompleto o sin CUC |
 | `order.order.items_required` | 422 | `POST /orders` sin líneas |
-| `order.item.duplicate_product` | 422 | El producto ya está en el pedido (`POST /orders`, `PUT /orders/{orderId}`, `POST /orders/{orderId}/items`): se cambia la cantidad de su línea |
+| `order.item.duplicate_product` | 422 | La variante ya está en el pedido (`POST /orders`, `PUT /orders/{orderId}`, `POST /orders/{orderId}/items`): se cambia la cantidad de su línea |
 | `order.billing.account_required` | 422 | Pedido de una integración (Shopify) sin cuenta de cobro (`POST /orders` sin ella responde `validation.failed` con `errors.BillingAccount`) |
 | `order.billing.party_incomplete` / `order.shipping.party_incomplete` | 422 | La parte de facturación o de envío del pedido quedó incompleta |
 | `order.billing.identification_required` | 422 | Una parte de facturación con nombre propio sin documento de identidad |
