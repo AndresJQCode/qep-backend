@@ -25,6 +25,7 @@ public static class MessagingInfrastructureExtensions
             options.UseNpgsql(connectionString, npgsql => npgsql.MigrationsHistoryTable("__ef_migrations_history", MessagingDbContext.Schema)));
 
         services.AddScoped<IConversationRepository, ConversationRepository>();
+        services.AddScoped<IBotOutbound, BotOutbound>();
         // Spec 2026-10-11 decisión 9: abrir la conversación de un cliente desde la plataforma (SQL, como la ingesta).
         services.AddScoped<IConversationOpener, ConversationOpener>();
         services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
