@@ -151,7 +151,7 @@ public sealed class ConnectionLifecycleApiTests
         var renamed = await SendAsync(client, HttpMethod.Put, url, new
         {
             name = "Sede sur",
-            fields = new Dictionary<string, string?> { ["fromNumber"] = FromNumber },
+            fields = new Dictionary<string, string?> { ["fromNumber"] = FromNumber, ["templateId"] = IntegrationsApiHarness.TemplateId },
             secrets = new Dictionary<string, string?>(),
         }, "\"1\"");
         Assert.Equal(HttpStatusCode.OK, renamed.StatusCode);
@@ -161,7 +161,7 @@ public sealed class ConnectionLifecycleApiTests
         var newNumber = await SendAsync(client, HttpMethod.Put, url, new
         {
             name = "Sede sur",
-            fields = new Dictionary<string, string?> { ["fromNumber"] = "573009999999" },
+            fields = new Dictionary<string, string?> { ["fromNumber"] = "573009999999", ["templateId"] = IntegrationsApiHarness.TemplateId },
             secrets = new Dictionary<string, string?> { ["apiToken"] = "   " },
         }, "\"2\"");
         Assert.Equal(HttpStatusCode.OK, newNumber.StatusCode);
@@ -172,7 +172,7 @@ public sealed class ConnectionLifecycleApiTests
         var withoutIfMatch = await SendAsync(client, HttpMethod.Put, url, new
         {
             name = "Sede sur",
-            fields = new Dictionary<string, string?> { ["fromNumber"] = FromNumber },
+            fields = new Dictionary<string, string?> { ["fromNumber"] = FromNumber, ["templateId"] = IntegrationsApiHarness.TemplateId },
             secrets = new Dictionary<string, string?>(),
         });
         Assert.Equal(HttpStatusCode.PreconditionRequired, withoutIfMatch.StatusCode);
@@ -181,7 +181,7 @@ public sealed class ConnectionLifecycleApiTests
         var rejected = await SendAsync(client, HttpMethod.Put, url, new
         {
             name = "Sede sur",
-            fields = new Dictionary<string, string?> { ["fromNumber"] = "573009999999" },
+            fields = new Dictionary<string, string?> { ["fromNumber"] = "573009999999", ["templateId"] = IntegrationsApiHarness.TemplateId },
             secrets = new Dictionary<string, string?> { ["apiToken"] = "otro-token" },
         }, "\"3\"");
         Assert.Equal("integrations.connection.credentials_rejected", (await ProblemAsync(rejected)).Code);
@@ -207,7 +207,7 @@ public sealed class ConnectionLifecycleApiTests
         var update = await SendAsync(degraded, HttpMethod.Put, url, new
         {
             name = "Sede sur",
-            fields = new Dictionary<string, string?> { ["fromNumber"] = FromNumber },
+            fields = new Dictionary<string, string?> { ["fromNumber"] = FromNumber, ["templateId"] = IntegrationsApiHarness.TemplateId },
             secrets = new Dictionary<string, string?>(),
         }, "\"1\"");
         var read = await degraded.GetFromJsonAsync<ConnectionResponse>(url, Ct);

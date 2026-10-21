@@ -6,6 +6,8 @@ public static class ZenviaFieldKeys
 {
     public const string ApiToken = "apiToken";
     public const string FromNumber = "fromNumber";
+    public const string TemplateId = "templateId";
+    public const string OrderTemplateId = "orderTemplateId";
 }
 
 /// <summary>Spec 2026-10-09 §6.1. Los dos primeros son de sólo lectura para la pantalla; los demás son
@@ -62,10 +64,19 @@ public static class IntegrationProviders
     /// <summary>D1: tope de conexiones por tenant y proveedor.</summary>
     public const int DefaultMaxConnections = 20;
 
+    // El id de una plantilla de Zenvia es un UUID (`d0e79149-ed61-4784-9883-d86807f46ce5`).
+    private const string ZenviaTemplateIdPattern =
+        @"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z";
+
+    private const string ZenviaTemplateIdMessage =
+        "Copia el ID de la plantilla tal como aparece en Zenvia (formato xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).";
+
     /// <summary>
-    /// La cuenta de Zenvia y el número emisor. La plantilla de cotización no es campo de la conexión
-    /// (D6): es del consumidor. Los patrones son los de <c>UpdateWhatsAppSettingsValidator</c> de
-    /// <c>6612298</c>: token en ASCII visible y número E.164 sin «+».
+    /// La cuenta de Zenvia, el número emisor y sus plantillas. Las plantillas sí son campos de la conexión
+    /// (spec 2026-10-21 D11, que revisa la D6 del 2026-10-08): en Zenvia una plantilla va atada al número que
+    /// la envía. La de pedido es opcional: sin ella el pedido responde <c>order.whatsapp.not_configured</c>.
+    /// Los patrones de token y número son los de <c>UpdateWhatsAppSettingsValidator</c> de <c>6612298</c>:
+    /// token en ASCII visible y número E.164 sin «+».
     /// </summary>
     public static readonly IntegrationProvider Zenvia = new(
         "zenvia",
@@ -89,6 +100,22 @@ public static class IntegrationProviders
                 maxLength: 15,
                 pattern: @"^[0-9]{10,15}\z",
                 invalidMessage: "Escribe el número con indicativo de país, sólo dígitos y sin '+' (entre 10 y 15)."),
+            new FieldDefinition(
+                ZenviaFieldKeys.TemplateId,
+                "ID de la plantilla de cotización",
+                FieldKind.Text,
+                required: true,
+                maxLength: 36,
+                pattern: ZenviaTemplateIdPattern,
+                invalidMessage: ZenviaTemplateIdMessage),
+            new FieldDefinition(
+                ZenviaFieldKeys.OrderTemplateId,
+                "ID de la plantilla de pedido",
+                FieldKind.Text,
+                required: false,
+                maxLength: 36,
+                pattern: ZenviaTemplateIdPattern,
+                invalidMessage: ZenviaTemplateIdMessage),
         ],
         DefaultMaxConnections,
         // Plan 2026-10-21: el operador habilita Zenvia por tenant; tener quotations no alcanza.

@@ -50,7 +50,7 @@ public sealed class ZenviaConnectionTesterTests : IDisposable
     private Task<ConnectionTestResult> TestAsync(CancellationToken? cancellationToken = null) =>
         _services.GetRequiredService<IConnectionTester>().TestAsync(
             IntegrationProviders.Zenvia,
-            new Dictionary<string, string> { [ZenviaFieldKeys.FromNumber] = "573001234567" },
+            new Dictionary<string, string> { [ZenviaFieldKeys.FromNumber] = "573001234567", [ZenviaFieldKeys.TemplateId] = ConnectionFixtures.TemplateId },
             new Dictionary<string, string> { [ZenviaFieldKeys.ApiToken] = Token },
             cancellationToken ?? TestContext.Current.CancellationToken);
 

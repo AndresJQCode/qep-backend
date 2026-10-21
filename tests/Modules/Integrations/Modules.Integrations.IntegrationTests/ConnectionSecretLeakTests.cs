@@ -305,7 +305,7 @@ public sealed class ConnectionSecretLeakTests
         (await CallAsync(HttpMethod.Put, url, new
         {
             name = "Sede sur",
-            fields = new Dictionary<string, string?> { ["fromNumber"] = "573009999999" },
+            fields = new Dictionary<string, string?> { ["fromNumber"] = "573009999999", ["templateId"] = IntegrationsApiHarness.TemplateId },
             secrets = new Dictionary<string, string?> { ["apiToken"] = SecondSentinel },
         }, "\"1\"")).EnsureSuccessStatusCode();
         (await CallAsync(HttpMethod.Post, $"{url}/test")).EnsureSuccessStatusCode();

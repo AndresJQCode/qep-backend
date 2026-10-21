@@ -26,7 +26,7 @@ public sealed class UpdateConnectionHandlerTests
             connection.Id,
             version ?? connection.Version,
             name,
-            new Dictionary<string, string?> { [ZenviaFieldKeys.FromNumber] = fromNumber },
+            new Dictionary<string, string?> { [ZenviaFieldKeys.FromNumber] = fromNumber, [ZenviaFieldKeys.TemplateId] = ConnectionFixtures.TemplateId },
             secrets ?? []);
 
     private static string StoredToken(IntegrationConnection connection) =>
@@ -223,7 +223,7 @@ public sealed class UpdateConnectionHandlerTests
                 connection.Id,
                 connection.Version,
                 "WhatsApp sede norte",
-                new Dictionary<string, string?> { [ZenviaFieldKeys.FromNumber] = "573009999999" },
+                new Dictionary<string, string?> { [ZenviaFieldKeys.FromNumber] = "573009999999", [ZenviaFieldKeys.TemplateId] = ConnectionFixtures.TemplateId },
                 null),
             Ct);
 
@@ -254,6 +254,7 @@ public sealed class UpdateConnectionHandlerTests
             Fields = new Dictionary<string, string?>
             {
                 [ZenviaFieldKeys.FromNumber] = IntegrationsTestBed.FromNumber,
+                [ZenviaFieldKeys.TemplateId] = ConnectionFixtures.TemplateId,
                 [ZenviaFieldKeys.ApiToken] = "en-claro",
             },
         };

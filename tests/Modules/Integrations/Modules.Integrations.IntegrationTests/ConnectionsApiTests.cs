@@ -117,7 +117,7 @@ public sealed class ConnectionsApiTests
         {
             providerKey = "zenvia",
             name = "a\u0000b",
-            fields = new Dictionary<string, string?> { ["fromNumber"] = "+573001234567", ["apiToken"] = SentinelApiToken },
+            fields = new Dictionary<string, string?> { ["fromNumber"] = "+573001234567", ["templateId"] = IntegrationsApiHarness.TemplateId, ["apiToken"] = SentinelApiToken },
             secrets = new Dictionary<string, string?>(),
         });
         var unknownProvider = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), new

@@ -249,7 +249,7 @@ internal sealed partial class IntegrationsTestBed
             IntegrationProviders.Zenvia,
             tenantId ?? TenantId,
             name,
-            new Dictionary<string, string> { [ZenviaFieldKeys.FromNumber] = FromNumber },
+            new Dictionary<string, string> { [ZenviaFieldKeys.FromNumber] = FromNumber, [ZenviaFieldKeys.TemplateId] = ConnectionFixtures.TemplateId },
             new Dictionary<string, string> { [ZenviaFieldKeys.ApiToken] = Token },
             Protector.Protect,
             MemberId,

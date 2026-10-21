@@ -20,8 +20,17 @@ public sealed class CreateConnectionValidatorTests
             Guid.CreateVersion7(),
             providerKey,
             name,
-            fields ?? new Dictionary<string, string?> { [ZenviaFieldKeys.FromNumber] = "573001234567" },
+            fields ?? new Dictionary<string, string?>
+            {
+                [ZenviaFieldKeys.FromNumber] = "573001234567",
+                [ZenviaFieldKeys.TemplateId] = TemplateId,
+            },
             secrets ?? new Dictionary<string, string?> { [ZenviaFieldKeys.ApiToken] = "zenvia-token-TEST-1" });
+
+    private const string TemplateId = "d0e79149-ed61-4784-9883-d86807f46ce5";
+
+    private const string TemplateIdMessage =
+        "Copia el ID de la plantilla tal como aparece en Zenvia (formato xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).";
 
     private static async Task<List<ValidationFailure>> ErrorsAsync(CreateConnectionCommand command) =>
         (await new CreateConnectionValidator(new IntegrationProviderCatalog())
@@ -76,6 +85,7 @@ public sealed class CreateConnectionValidatorTests
         var errors = await ErrorsAsync(Command(fields: new Dictionary<string, string?>
         {
             [ZenviaFieldKeys.FromNumber] = "573001234567",
+            [ZenviaFieldKeys.TemplateId] = TemplateId,
             [ZenviaFieldKeys.ApiToken] = "zenvia-token-TEST-1",
         }));
 
@@ -90,6 +100,7 @@ public sealed class CreateConnectionValidatorTests
         var errors = await ErrorsAsync(Command(fields: new Dictionary<string, string?>
         {
             [ZenviaFieldKeys.FromNumber] = "573001234567",
+            [ZenviaFieldKeys.TemplateId] = TemplateId,
             ["a.b<script>"] = "x",
         }));
 
@@ -105,7 +116,11 @@ public sealed class CreateConnectionValidatorTests
     public async Task AFromNumberWithoutItsShapeGoesToItsField(string fromNumber, string message)
     {
         var error = Assert.Single(await ErrorsAsync(Command(
-            fields: new Dictionary<string, string?> { [ZenviaFieldKeys.FromNumber] = fromNumber })));
+            fields: new Dictionary<string, string?>
+            {
+                [ZenviaFieldKeys.FromNumber] = fromNumber,
+                [ZenviaFieldKeys.TemplateId] = TemplateId,
+            })));
 
         Assert.Equal("fields.fromNumber", error.PropertyName);
         Assert.Equal(message, error.ErrorMessage);
@@ -118,14 +133,55 @@ public sealed class CreateConnectionValidatorTests
             new CreateConnectionCommand(Guid.CreateVersion7(), "zenvia", "Norte", null, null),
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(["fields.fromNumber", "secrets.apiToken"], errors.Errors.Select(error => error.PropertyName).Order(StringComparer.Ordinal));
+        Assert.Equal(["fields.fromNumber", "fields.templateId", "secrets.apiToken"], errors.Errors.Select(error => error.PropertyName).Order(StringComparer.Ordinal));
     }
+
+    [Fact]
+    public async Task ZenviaWithoutTemplateIdFails()
+    {
+        var error = Assert.Single(await ErrorsAsync(Command(
+            fields: new Dictionary<string, string?> { [ZenviaFieldKeys.FromNumber] = "573001234567" })));
+
+        Assert.Equal("fields.templateId", error.PropertyName);
+    }
+
+    [Theory]
+    [InlineData(ZenviaFieldKeys.TemplateId, "plantilla-1")]
+    [InlineData(ZenviaFieldKeys.TemplateId, "d0e79149ed6147849883d86807f46ce5")]
+    [InlineData(ZenviaFieldKeys.OrderTemplateId, "x")]
+    public async Task ZenviaTemplateIdMustBeAUuid(string key, string value)
+    {
+        var fields = new Dictionary<string, string?>
+        {
+            [ZenviaFieldKeys.FromNumber] = "573001234567",
+            [ZenviaFieldKeys.TemplateId] = TemplateId,
+            [key] = value,
+        };
+
+        var error = Assert.Single(await ErrorsAsync(Command(fields: fields)));
+
+        Assert.Equal($"fields.{key}", error.PropertyName);
+        Assert.Equal(TemplateIdMessage, error.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ZenviaWithOrderTemplateIdPasses() =>
+        Assert.Empty(await ErrorsAsync(Command(fields: new Dictionary<string, string?>
+        {
+            [ZenviaFieldKeys.FromNumber] = "573001234567",
+            [ZenviaFieldKeys.TemplateId] = TemplateId,
+            [ZenviaFieldKeys.OrderTemplateId] = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+        })));
 
     [Fact]
     public async Task NoMessageCarriesTheValueThatWasSent()
     {
         var errors = await ErrorsAsync(Command(
-            fields: new Dictionary<string, string?> { [ZenviaFieldKeys.FromNumber] = "+57SENTINEL" },
+            fields: new Dictionary<string, string?>
+            {
+                [ZenviaFieldKeys.FromNumber] = "+57SENTINEL",
+                [ZenviaFieldKeys.TemplateId] = TemplateId,
+            },
             secrets: new Dictionary<string, string?> { [ZenviaFieldKeys.ApiToken] = "con espacio SENTINEL" }));
 
         Assert.Equal(2, errors.Count);
