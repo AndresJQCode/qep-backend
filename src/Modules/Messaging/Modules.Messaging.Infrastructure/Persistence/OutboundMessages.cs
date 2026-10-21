@@ -20,12 +20,13 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
         {
             // Un segundo request con el mismo clientId espera acá hasta que el primero cierre su transacción.
             var kind = MessageColumnCodes.ToCode(draft.Kind);
+            var authorKind = AuthorKindOf(draft);
             var inserted = await dbContext.Database.SqlQuery<Guid>(
                 $"""
                 INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, caption, client_id, sent_by_member_id, created_at,
-                                                reply_to_message_id, reply_to_wamid, details)
+                                                reply_to_message_id, reply_to_wamid, details, sent_by_kind, sent_by_chatbot_id)
                 VALUES ({draft.MessageId}, {draft.ConversationId}, {draft.TenantId}, {draft.ConnectionId}, {draft.Now}, 2, {kind}, 1, {draft.Text}, {draft.Caption}, {draft.ClientId}, {draft.SentByMemberId}, {draft.Now},
-                        {draft.ReplyToMessageId}, {draft.ReplyToWamid}, {draft.DetailsJson}::jsonb)
+                        {draft.ReplyToMessageId}, {draft.ReplyToWamid}, {draft.DetailsJson}::jsonb, {authorKind}, {draft.SentByChatbotId})
                 ON CONFLICT (conversation_id, client_id) WHERE client_id IS NOT NULL DO NOTHING
                 RETURNING id AS "Value"
                 """).ToListAsync(cancellationToken);
@@ -37,7 +38,7 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             // En una sentencia aparte: así ve la fila que el otro request acaba de commitear.
             var rows = await dbContext.Database.SqlQuery<ExistingRow>(
                 $"""
-                SELECT m.id AS "Id", m.status AS "Status", m.occurred_at AS "OccurredAt", m.sent_by_member_id AS "SentByMemberId", coalesce(m.text, '') AS "Text",
+                SELECT m.id AS "Id", m.status AS "Status", m.occurred_at AS "OccurredAt", m.sent_by_member_id AS "SentByMemberId", m.sent_by_chatbot_id AS "SentByChatbotId", coalesce(m.text, '') AS "Text",
                        m.reply_to_message_id AS "ReplyToMessageId", m.kind AS "Kind", mm.mime_type AS "MediaMimeType", m.details::text AS "DetailsJson",
                        mm.file_name AS "MediaFileName", m.caption AS "Caption"
                 FROM messaging.messages m LEFT JOIN messaging.message_media mm ON mm.message_id = m.id
@@ -56,7 +57,7 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
     {
         var rows = await dbContext.Database.SqlQuery<ExistingRow>(
             $"""
-            SELECT m.id AS "Id", m.status AS "Status", m.occurred_at AS "OccurredAt", m.sent_by_member_id AS "SentByMemberId",
+            SELECT m.id AS "Id", m.status AS "Status", m.occurred_at AS "OccurredAt", m.sent_by_member_id AS "SentByMemberId", m.sent_by_chatbot_id AS "SentByChatbotId",
                    coalesce(m.text, '') AS "Text", m.reply_to_message_id AS "ReplyToMessageId", m.kind AS "Kind", mm.mime_type AS "MediaMimeType", m.details::text AS "DetailsJson",
                    mm.file_name AS "MediaFileName", m.caption AS "Caption"
             FROM messaging.messages m LEFT JOIN messaging.message_media mm ON mm.message_id = m.id
@@ -65,9 +66,13 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
         return rows.Count == 1 ? ToExisting(rows[0]) : null;
     }
 
+    /// <summary>Los CHECK de la tabla (spec 2026-10-21 §5.5): <c>sent_by_kind = 2</c> si y sólo si hay chatbot, y entonces sin miembro.</summary>
+    private static short AuthorKindOf(OutboundDraft draft) =>
+        (short)(draft.SentByChatbotId is null ? MessageAuthorKind.Member : MessageAuthorKind.Chatbot);
+
     private static ExistingOutbound ToExisting(ExistingRow row) =>
         new(row.Id, MessageColumnCodes.ToStatus(row.Status), row.OccurredAt, row.SentByMemberId, row.Text, row.ReplyToMessageId,
-            MessageColumnCodes.ToKind(row.Kind), row.MediaMimeType, row.DetailsJson, row.MediaFileName, row.Caption);
+            MessageColumnCodes.ToKind(row.Kind), row.MediaMimeType, row.DetailsJson, row.MediaFileName, row.Caption, row.SentByChatbotId);
 
     private sealed class ExistingRow
     {
@@ -78,6 +83,8 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
         public DateTimeOffset OccurredAt { get; set; }
 
         public Guid? SentByMemberId { get; set; }
+
+        public Guid? SentByChatbotId { get; set; }
 
         public string Text { get; set; } = string.Empty;
 
@@ -111,10 +118,13 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             // Una imagen o un documento no tienen texto: la foto de la conversación muestra su pie (como la ingesta, Text ?? Caption).
             var preview = PreviewOf(draft.Text ?? draft.Caption);
             var kind = MessageColumnCodes.ToCode(draft.Kind);
+            // Reenviar un Failed puede cambiar de autor: kind, miembro y chatbot se reescriben juntos para no violar los CHECK.
+            var authorKind = AuthorKindOf(draft);
             await dbContext.Database.ExecuteSqlAsync(
                 $"""
                 UPDATE messaging.messages SET status = 1, wamid = {wamid}, occurred_at = {occurredAt}, text = {draft.Text}, caption = {draft.Caption}, kind = {kind},
                     failure_code = NULL, failure_title = NULL, sent_by_member_id = {draft.SentByMemberId},
+                    sent_by_kind = {authorKind}, sent_by_chatbot_id = {draft.SentByChatbotId},
                     reply_to_message_id = {draft.ReplyToMessageId}, reply_to_wamid = {draft.ReplyToWamid}, details = {draft.DetailsJson}::jsonb
                 WHERE id = {MessageId}
                 """, cancellationToken);

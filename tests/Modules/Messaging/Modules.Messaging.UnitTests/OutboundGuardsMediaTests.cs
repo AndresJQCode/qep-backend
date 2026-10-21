@@ -18,7 +18,8 @@ public sealed class OutboundGuardsMediaTests
             new FakeExecutionContext(bed.TenantId, bed.SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
             new FakeClock(bed.Now),
             bed.Notifier,
-            bed.Receipts);
+            bed.Receipts,
+            new FakeChatbotNames());
     }
 
     [Fact]

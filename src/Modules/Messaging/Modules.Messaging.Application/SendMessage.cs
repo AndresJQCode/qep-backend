@@ -56,6 +56,7 @@ public sealed class SendMessageHandler(
     IClock clock,
     IMessagingNotifier notifier,
     ReadReceipts receipts,
+    IAutomationsChatbotNames chatbotNames,
     IValidator<SendMessageCommand> validator)
     : ICommandHandler<SendMessageCommand, MessageDto>
 {
@@ -67,7 +68,7 @@ public sealed class SendMessageHandler(
 
     // CS9124: los parámetros que van a la guarda no se usan en los métodos; el reloj y el reclamo se piden a ella.
     private readonly OutboundGuards _guards = new(
-        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier, receipts);
+        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier, receipts, chatbotNames);
 
     public async Task<MessageDto> HandleAsync(SendMessageCommand command, CancellationToken cancellationToken)
     {

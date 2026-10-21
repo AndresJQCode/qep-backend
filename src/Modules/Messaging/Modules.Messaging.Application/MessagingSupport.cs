@@ -158,7 +158,7 @@ internal static class MessageMapping
 
     public static MessageDto ToDto(
         MessageRow row, Guid tenantId, IReadOnlyDictionary<Guid, string> memberNames, IReadOnlyDictionary<Guid, ReplyTargetRow> replyTargets,
-        IReadOnlyDictionary<Guid, string>? reasonNames = null)
+        IReadOnlyDictionary<Guid, string>? reasonNames = null, IReadOnlyDictionary<Guid, string>? chatbotNames = null)
     {
         ArgumentNullException.ThrowIfNull(row);
         ArgumentNullException.ThrowIfNull(memberNames);
@@ -190,7 +190,18 @@ internal static class MessageMapping
                     conversationEvent.PauseReason?.ToString()),
             row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
             row.Kind == MessageKind.Unsupported ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson)) : null,
-            row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson));
+            row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson),
+            row.SentByChatbotId is { } chatbotId ? new ChatbotRefDto(chatbotId, chatbotNames?.GetValueOrDefault(chatbotId) ?? DeletedChatbotName) : null);
+    }
+
+    /// <summary>Spec 2026-10-21 D-I3: el chatbot que ya no existe (o que el puerto no conoce) firma con este texto.</summary>
+    public const string DeletedChatbotName = "Chatbot";
+
+    /// <summary>Los chatbots que una página necesita con nombre, sin repetir.</summary>
+    public static IReadOnlyCollection<Guid> ChatbotIdsOf(IEnumerable<MessageRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        return rows.Select(row => row.SentByChatbotId).OfType<Guid>().Distinct().ToArray();
     }
 
     /// <summary>Spec 2026-10-14 §6.2: <c>details.deleted = true</c> lo escribe la ingesta de Instagram con <c>is_deleted</c>.</summary>
@@ -244,7 +255,8 @@ internal static class MessageMapping
         var ids = new HashSet<Guid>();
         foreach (var row in rows)
         {
-            if (row.SentByMemberId is { } sender)
+            // Una fila de chatbot no tiene miembro; el CHECK de la tabla lo garantiza, esto lo hace explícito.
+            if (row.SentByChatbotId is null && row.SentByMemberId is { } sender)
             {
                 ids.Add(sender);
             }

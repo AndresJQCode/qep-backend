@@ -31,7 +31,8 @@ internal sealed class OutboundGuards(
     IExecutionContext executionContext,
     IClock clock,
     IMessagingNotifier notifier,
-    ReadReceipts receipts)
+    ReadReceipts receipts,
+    IAutomationsChatbotNames chatbotNames)
 {
     public DateTimeOffset UtcNow => clock.UtcNow;
 
@@ -271,14 +272,17 @@ internal sealed class OutboundGuards(
     public async Task<MessageDto> ToDtoAsync(Guid tenantId, MessageRow row, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(row);
-        var names = row.SentByMemberId is { } member
+        var names = row.SentByChatbotId is null && row.SentByMemberId is { } member
             ? await memberNames.FindAsync(tenantId, [member], cancellationToken)
             : new Dictionary<Guid, string>();
         // §5.1: repetir un clientId devuelve el replyTo guardado, aunque el cuerpo traiga otro.
         var targets = row.ReplyToMessageId is { } quoted
             ? await messages.FindReplyTargetsAsync(tenantId, [quoted], cancellationToken)
             : new Dictionary<Guid, ReplyTargetRow>();
-        return MessageMapping.ToDto(row, tenantId, names, targets);
+        var chatbots = row.SentByChatbotId is { } chatbot
+            ? await chatbotNames.ResolveAsync(tenantId, [chatbot], cancellationToken)
+            : null;
+        return MessageMapping.ToDto(row, tenantId, names, targets, chatbotNames: chatbots);
     }
 
     /// <summary>Spec 2026-10-11 §6.5: una nota de voz guardada vuelve como audio, sin texto y con su medio.</summary>
@@ -291,7 +295,7 @@ internal sealed class OutboundGuards(
             existing.Id, conversationId, MessageDirection.Outbound, existing.Kind, existing.Kind is MessageKind.Text or MessageKind.Template ? existing.Text : null, existing.Caption,
             isTemplate ? existing.DetailsJson : null,
             existing.Status, null, existing.OccurredAt, existing.SentByMemberId, clientId,
-            existing.MediaMimeType is { } mimeType ? new MessageMediaRow(mimeType, existing.MediaFileName) : null, existing.ReplyToMessageId);
+            existing.MediaMimeType is { } mimeType ? new MessageMediaRow(mimeType, existing.MediaFileName) : null, existing.ReplyToMessageId, existing.SentByChatbotId);
     }
 
     // Si Integrations no logra pasar la conexión a NeedsAttention, la respuesta sigue siendo el 422 documentado;

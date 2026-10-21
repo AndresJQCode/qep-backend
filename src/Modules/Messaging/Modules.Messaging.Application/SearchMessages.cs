@@ -36,6 +36,7 @@ public sealed class SearchMessagesHandler(
     IConversationQueries conversations,
     ConversationSummaryBuilder summaries,
     IMessagingMemberNames memberNames,
+    IAutomationsChatbotNames chatbotNames,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IValidator<SearchMessagesQuery> validator)
@@ -91,6 +92,7 @@ public sealed class SearchMessagesHandler(
         var summaryById = (await summaries.BuildAsync(query.TenantId, conversationRows, cancellationToken)).ToDictionary(summary => summary.Id);
         var names = await memberNames.FindAsync(query.TenantId, MessageMapping.MemberIdsOf(page), cancellationToken);
         var targets = await messages.FindReplyTargetsAsync(query.TenantId, MessageMapping.ReplyTargetIdsOf(page), cancellationToken);
+        var chatbots = await chatbotNames.ResolveAsync(query.TenantId, MessageMapping.ChatbotIdsOf(page), cancellationToken);
 
         var hits = new List<MessageHitDto>(page.Length);
         foreach (var row in page)
@@ -101,7 +103,7 @@ public sealed class SearchMessagesHandler(
                 continue;
             }
 
-            var message = MessageMapping.ToDto(row, query.TenantId, names, targets);
+            var message = MessageMapping.ToDto(row, query.TenantId, names, targets, chatbotNames: chatbots);
             hits.Add(new MessageHitDto(
                 message.Id, message.Direction, message.Kind, message.Text, message.Media, message.Location, message.Status, message.FailureReason,
                 message.At, message.SentBy, message.ClientId, row.ConversationId, summary.Contact, summary.Customer, summary.ConnectionName,

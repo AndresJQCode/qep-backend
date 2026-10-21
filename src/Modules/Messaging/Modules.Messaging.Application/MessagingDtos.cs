@@ -115,7 +115,12 @@ public sealed record MessageDto(
     string? UnsupportedReason = null,
     /// <summary>Spec 2026-10-14 §5.2: la persona borró el mensaje en Instagram (<c>is_deleted</c>). El texto se conserva; la burbuja
     /// lo tacha.</summary>
-    bool Deleted = false);
+    bool Deleted = false,
+    /// <summary>Spec 2026-10-21 D-I3: el chatbot que escribió el saliente; excluyente con <c>SentBy</c>.</summary>
+    ChatbotRefDto? SentByChatbot = null);
+
+/// <summary>Spec 2026-10-21 D-I3: el chatbot autor de un mensaje, con el nombre que hoy tiene.</summary>
+public sealed record ChatbotRefDto(Guid ChatbotId, string Name);
 
 /// <summary>Spec 2026-10-11 §5.2: con qué plantilla salió un mensaje <c>Template</c>. El texto ya trae las variables
 /// sustituidas; esto sólo deja a la burbuja rotularlo («Plantilla · nombre»).</summary>

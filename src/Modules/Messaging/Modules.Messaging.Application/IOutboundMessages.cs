@@ -11,12 +11,14 @@ public sealed record OutboundMedia(string MimeType, long SizeBytes, string? Sha2
 /// <summary>§8.3: la fila que se intenta insertar. <c>Text</c> ya viene recortado (<c>null</c> en una nota de voz);
 /// <c>Now</c> es la hora del servidor al reclamar. <c>ReplyToMessageId</c>/<c>ReplyToWamid</c>: el citado ya validado
 /// (spec 2026-10-10 §8.6). <c>Kind</c> y <c>Media</c>: spec 2026-10-11 §6.5; el texto sigue con <c>Text</c> y sin medio.
+/// <c>SentByChatbotId</c> (spec 2026-10-21 D-I3): si viene, el autor es un chatbot y el reclamo escribe <c>sent_by_kind = 2</c> con
+/// <c>SentByMemberId</c> nulo, como lo exigen los CHECK de la tabla.
 /// <c>Caption</c> (messaging-media-reply R11): el pie de una imagen o un documento, en <c>messages.caption</c> y no en
 /// <c>message_media</c>, como lo guarda la ingesta de los entrantes.</summary>
 public sealed record OutboundDraft(
-    Guid MessageId, Guid ConversationId, Guid TenantId, Guid ConnectionId, Guid ClientId, string? Text, Guid SentByMemberId,
+    Guid MessageId, Guid ConversationId, Guid TenantId, Guid ConnectionId, Guid ClientId, string? Text, Guid? SentByMemberId,
     DateTimeOffset Now, Guid? ReplyToMessageId = null, string? ReplyToWamid = null, MessageKind Kind = MessageKind.Text, OutboundMedia? Media = null,
-    string? DetailsJson = null, string? Caption = null);
+    string? DetailsJson = null, string? Caption = null, Guid? SentByChatbotId = null);
 
 /// <summary>La fila que ya existía con ese <c>clientId</c> en la conversación (con <c>FOR UPDATE</c> en el reclamo).
 /// <c>Kind</c> y <c>MediaMimeType</c> (spec 2026-10-11 §6.5): la idempotencia devuelve la burbuja de audio con su
@@ -24,7 +26,7 @@ public sealed record OutboundDraft(
 /// <c>MediaFileName</c> y <c>Caption</c> (messaging-media-reply R5): repetir un clientId devuelve la burbuja con su nombre y su pie.</summary>
 public sealed record ExistingOutbound(
     Guid Id, MessageStatus Status, DateTimeOffset OccurredAt, Guid? SentByMemberId, string Text, Guid? ReplyToMessageId = null,
-    MessageKind Kind = MessageKind.Text, string? MediaMimeType = null, string? DetailsJson = null, string? MediaFileName = null, string? Caption = null);
+    MessageKind Kind = MessageKind.Text, string? MediaMimeType = null, string? DetailsJson = null, string? MediaFileName = null, string? Caption = null, Guid? SentByChatbotId = null);
 
 /// <summary>
 /// §8.3, «Idempotencia sin que la fila a medio enviar se vea»: una transacción abierta con la fila del

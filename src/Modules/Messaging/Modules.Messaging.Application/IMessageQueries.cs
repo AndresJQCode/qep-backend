@@ -18,7 +18,8 @@ public sealed record MessageRow(
     Guid? SentByMemberId,
     Guid? ClientId,
     MessageMediaRow? Media,
-    Guid? ReplyToMessageId = null);
+    Guid? ReplyToMessageId = null,
+    Guid? SentByChatbotId = null);
 
 public sealed record MessageMediaRow(string MimeType, string? FileName);
 

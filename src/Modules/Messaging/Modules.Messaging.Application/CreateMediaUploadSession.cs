@@ -48,6 +48,7 @@ public sealed class CreateMediaUploadSessionHandler(
     IClock clock,
     IMessagingNotifier notifier,
     ReadReceipts receipts,
+    IAutomationsChatbotNames chatbotNames,
     IMessagingUploadStaging staging,
     IValidator<CreateMediaUploadSessionCommand> validator)
     : ICommandHandler<CreateMediaUploadSessionCommand, MediaUploadSessionDto>
@@ -55,7 +56,7 @@ public sealed class CreateMediaUploadSessionHandler(
     // CS9124: las dependencias de la guarda no se usan en los métodos. Pedir una URL nunca liquida un envío, así que el acuse
     // (receipts) no se usa acá; la guarda lo exige igual para que ningún camino que sí liquida pueda olvidarlo.
     private readonly OutboundGuards _guards = new(
-        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier, receipts);
+        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier, receipts, chatbotNames);
 
     public async Task<MediaUploadSessionDto> HandleAsync(CreateMediaUploadSessionCommand command, CancellationToken cancellationToken)
     {

@@ -105,12 +105,13 @@ public sealed class SendTemplateMessageHandler(
     IClock clock,
     IMessagingNotifier notifier,
     ReadReceipts receipts,
+    IAutomationsChatbotNames chatbotNames,
     IValidator<SendTemplateMessageCommand> validator)
     : ICommandHandler<SendTemplateMessageCommand, MessageDto>
 {
     // CS9124: los parámetros que van a la guarda y al envío no se usan en los métodos; todo se pide al pegamento.
     private readonly TemplateOutbound _template = new(
-        new OutboundGuards(conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier, receipts),
+        new OutboundGuards(conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier, receipts, chatbotNames),
         meta, templates, customers);
 
     public async Task<MessageDto> HandleAsync(SendTemplateMessageCommand command, CancellationToken cancellationToken)

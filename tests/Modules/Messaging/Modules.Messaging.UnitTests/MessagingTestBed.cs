@@ -89,6 +89,7 @@ internal sealed class MessagingTestBed
             new FakeClock(Now),
             Notifier,
             Receipts,
+            new FakeChatbotNames(),
             new SendMediaMessageValidator());
     }
 
@@ -109,6 +110,7 @@ internal sealed class MessagingTestBed
             new FakeClock(Now),
             Notifier,
             Receipts,
+            new FakeChatbotNames(),
             Staging,
             new CreateMediaUploadSessionValidator());
     }
@@ -153,6 +155,7 @@ internal sealed class MessagingTestBed
             new FakeClock(Now),
             Notifier,
             Receipts,
+            new FakeChatbotNames(),
             new SendMessageValidator());
     }
 
@@ -176,6 +179,7 @@ internal sealed class MessagingTestBed
             new FakeClock(Now),
             Notifier,
             Receipts,
+            new FakeChatbotNames(),
             new SendTemplateMessageValidator());
     }
 
@@ -203,6 +207,7 @@ internal sealed class MessagingTestBed
             new FakeClock(Now),
             Notifier,
             Receipts,
+            new FakeChatbotNames(),
             new StartConversationValidator());
     }
 
@@ -233,6 +238,7 @@ internal sealed class MessagingTestBed
             new FakeClock(Now),
             Notifier,
             Receipts,
+            new FakeChatbotNames(),
             new SendAudioMessageValidator());
     }
 }
@@ -752,6 +758,13 @@ internal sealed class FakeMessageQueries : IMessageQueries
     public Task<MessageCursor?> FindCursorAsync(Guid conversationId, Guid messageId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<IReadOnlyList<MessageRow>> ListThreadAsync(Guid conversationId, MessageCursor? before, int take, CancellationToken cancellationToken) => throw new NotSupportedException();
+}
+
+/// <summary>Spec 2026-10-21 D-I3: el puerto de nombres de chatbots sin nombres; el mapeo cae a «Chatbot».</summary>
+internal sealed class FakeChatbotNames : IAutomationsChatbotNames
+{
+    public Task<IReadOnlyDictionary<Guid, string>> ResolveAsync(Guid tenantId, IReadOnlyCollection<Guid> chatbotIds, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
 }
 
 internal sealed class FakeMemberNames(Guid memberId) : IMessagingMemberNames

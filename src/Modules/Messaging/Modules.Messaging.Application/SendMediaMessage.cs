@@ -70,6 +70,7 @@ public sealed class SendMediaMessageHandler(
     IClock clock,
     IMessagingNotifier notifier,
     ReadReceipts receipts,
+    IAutomationsChatbotNames chatbotNames,
     IValidator<SendMediaMessageCommand> validator)
     : ICommandHandler<SendMediaMessageCommand, MessageDto>
 {
@@ -84,7 +85,7 @@ public sealed class SendMediaMessageHandler(
 
     // CS9124: los parámetros que van a la guarda no se usan en los métodos; el reloj y el reclamo se piden a ella.
     private readonly OutboundGuards _guards = new(
-        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier, receipts);
+        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier, receipts, chatbotNames);
 
     /// <summary>Lo que quedó de la preparación: el medio ya subido (o la falla de la subida) y los bytes finales si es una imagen.</summary>
     /// <paramref name="Upload"/> es <c>null</c> en Instagram: Meta descarga el adjunto desde R2 (decisión 12), no hay subida previa.</summary>
