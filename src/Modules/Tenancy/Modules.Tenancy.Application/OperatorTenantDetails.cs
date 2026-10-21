@@ -3,7 +3,8 @@ using Modules.Tenancy.Domain;
 
 namespace Modules.Tenancy.Application;
 
-/// <summary>El detalle de §5. Lo usan el GET y, con el estado ya commiteado, los dos POST.</summary>
+/// <summary>El detalle de §5. Lo usan el GET y, con el estado ya commiteado, los POST de módulos, estado y
+/// proveedores.</summary>
 internal static class OperatorTenantDetails
 {
     public static async Task<OperatorTenantDetailDto> LoadAsync(
@@ -33,11 +34,23 @@ internal static class OperatorTenantDetails
                     snapshot.LastModuleReasons.TryGetValue(key, out var reason) ? TenantChangeVocabulary.ToText(reason) : null);
             })
             .ToArray();
+        var providerRows = snapshot.Providers.ToDictionary(provider => provider.Key, StringComparer.Ordinal);
+        var providers = TenantProviderKeys.All
+            .Select(key =>
+            {
+                var row = providerRows.GetValueOrDefault(key);
+                return new OperatorTenantProviderDto(
+                    key,
+                    row is null ? OperatorTenantModuleDto.NoRowStatus : TenantChangeVocabulary.ToText(row.Status),
+                    row?.StatusChangedAt,
+                    snapshot.LastProviderReasons.TryGetValue(key, out var reason) ? TenantChangeVocabulary.ToText(reason) : null);
+            })
+            .ToArray();
 
         return new OperatorTenantDetailDto(
             snapshot.TenantId, snapshot.Slug, snapshot.DisplayName, snapshot.CreatedAt, snapshot.Status.ToString(),
             snapshot.LastStatusChange?.OccurredAt,
             snapshot.LastStatusChange is { } change ? TenantChangeVocabulary.ToText(change.Reason) : null,
-            snapshot.Version, isOperator, modules);
+            snapshot.Version, isOperator, modules, providers);
     }
 }

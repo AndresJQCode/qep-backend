@@ -18,7 +18,7 @@ public interface IOperatorTenantReader
 
     /// <summary>Una página de lotes del historial, del más reciente al más antiguo. Con
     /// <paramref name="moduleKey"/>, los lotes que tocan ese módulo (con todos sus cambios) y ninguno de estado
-    /// del tenant.</summary>
+    /// del tenant ni de proveedor.</summary>
     Task<TenantChangeBatchPage> ListHistoryAsync(
         TenantId tenantId, TenantModuleKey? moduleKey, int page, int pageSize, CancellationToken cancellationToken);
 }
@@ -42,6 +42,8 @@ public sealed record OperatorTenantRow(
 /// <param name="Modules">Sólo los que tienen fila.</param>
 /// <param name="LastModuleReasons">El motivo del último cambio de cada módulo en el historial.</param>
 /// <param name="LastStatusChange">El último cambio de estado del tenant en el historial, o null.</param>
+/// <param name="Providers">Sólo los que tienen fila (plan 2026-10-21).</param>
+/// <param name="LastProviderReasons">El motivo del último cambio de cada proveedor en el historial.</param>
 public sealed record OperatorTenantSnapshot(
     Guid TenantId,
     string Slug,
@@ -51,9 +53,13 @@ public sealed record OperatorTenantSnapshot(
     long Version,
     IReadOnlyList<TenantModuleState> Modules,
     IReadOnlyDictionary<TenantModuleKey, ChangeReason> LastModuleReasons,
-    TenantStatusChange? LastStatusChange);
+    TenantStatusChange? LastStatusChange,
+    IReadOnlyList<TenantProviderState> Providers,
+    IReadOnlyDictionary<string, ChangeReason> LastProviderReasons);
 
 public sealed record TenantModuleState(
     TenantModuleKey Key, TenantModuleStatus Status, DateTimeOffset StatusChangedAt, string Source);
+
+public sealed record TenantProviderState(string Key, TenantModuleStatus Status, DateTimeOffset StatusChangedAt);
 
 public sealed record TenantStatusChange(DateTimeOffset OccurredAt, ChangeReason Reason);

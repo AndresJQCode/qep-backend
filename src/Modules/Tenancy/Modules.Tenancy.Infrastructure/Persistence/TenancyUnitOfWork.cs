@@ -30,6 +30,9 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
     /// <summary>PK de tenant_modules (AddTenantModules). Se reconoce por nombre, no sólo por el 23505.</summary>
     private const string TenantModulesPrimaryKey = "PK_tenant_modules";
 
+    /// <summary>PK de tenant_providers (AddTenantProviders, plan 2026-10-21). Mismo criterio que la de módulos.</summary>
+    private const string TenantProvidersPrimaryKey = "PK_tenant_providers";
+
     public async Task<IUserLifecycleScope> BeginUserLifecycleScopeAsync(
         string email,
         CancellationToken cancellationToken)
@@ -122,6 +125,19 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
             throw new TenantDomainException(
                 TenantModuleChangeBatch.NoChangesCode,
                 "The module row already exists.");
+        }
+        // Lo mismo con los proveedores: dos habilitaciones simultáneas de un proveedor sin fila. El candado de
+        // la consola lo evita; esto cubre a cualquier otro camino que inserte la misma clave.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException
+            {
+                SqlState: UniqueViolation,
+                ConstraintName: TenantProvidersPrimaryKey,
+            })
+        {
+            throw new TenantDomainException(
+                TenantProviderChange.NoChangesCode,
+                "The provider row already exists.");
         }
     }
 }

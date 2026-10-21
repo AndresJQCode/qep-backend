@@ -72,6 +72,23 @@ internal sealed class OperatorTenantReader(TenancyDbContext dbContext) : IOperat
             .DistinctBy(change => change.ModuleKey!)
             .ToDictionary(change => change.ModuleKey!, change => change.Reason);
 
+        var providers = await dbContext.TenantProviders.AsNoTracking()
+            .Where(provider => provider.TenantId == tenantId)
+            .Select(provider => new TenantProviderState(provider.ProviderKey, provider.Status, provider.StatusChangedAt))
+            .ToListAsync(cancellationToken);
+
+        // Mismo criterio que el último motivo por módulo: en memoria y con desempate por Id.
+        var providerChanges = await dbContext.TenantChanges.AsNoTracking()
+            .Where(change => change.TenantId == tenantId && change.Kind == TenantChangeKind.Provider)
+            .OrderByDescending(change => change.OccurredAt)
+            .ThenByDescending(change => change.Id)
+            .Select(change => new { change.ProviderKey, change.Reason })
+            .ToListAsync(cancellationToken);
+        var lastProviderReasons = providerChanges
+            .Where(change => change.ProviderKey is not null)
+            .DistinctBy(change => change.ProviderKey!, StringComparer.Ordinal)
+            .ToDictionary(change => change.ProviderKey!, change => change.Reason, StringComparer.Ordinal);
+
         var lastStatus = await dbContext.TenantChanges.AsNoTracking()
             .Where(change => change.TenantId == tenantId && change.Kind == TenantChangeKind.TenantStatus)
             .OrderByDescending(change => change.OccurredAt)
@@ -81,14 +98,15 @@ internal sealed class OperatorTenantReader(TenancyDbContext dbContext) : IOperat
 
         return new OperatorTenantSnapshot(
             tenantId.Value, tenant.Slug, tenant.DisplayName, tenant.CreatedAt, tenant.Status, tenant.Version,
-            modules, lastReasons, lastStatus);
+            modules, lastReasons, lastStatus, providers, lastProviderReasons);
     }
 
     public async Task<TenantChangeBatchPage> ListHistoryAsync(
         TenantId tenantId, TenantModuleKey? moduleKey, int page, int pageSize, CancellationToken cancellationToken)
     {
         var rows = dbContext.TenantChanges.AsNoTracking().Where(change => change.TenantId == tenantId);
-        // §5: con el filtro, los lotes que tocan ese módulo (con todos sus cambios) y ninguno de estado.
+        // §5: con el filtro, los lotes que tocan ese módulo (con todos sus cambios) y ninguno de estado ni de
+        // proveedor: el Kind lo deja explícito aunque esas filas ya tengan module_key en null.
         var scoped = moduleKey is null
             ? rows
             : rows.Where(change => change.Kind == TenantChangeKind.Module && change.ModuleKey == moduleKey);
@@ -115,6 +133,7 @@ internal sealed class OperatorTenantReader(TenancyDbContext dbContext) : IOperat
         var changes = await rows.Where(change => pageIds.Contains(change.BatchId)).ToListAsync(cancellationToken);
         var byBatch = changes.ToLookup(change => change.BatchId);
         return new TenantChangeBatchPage(
+            // Las filas sin módulo (estado del tenant, proveedor) van primero; un lote es de un solo tipo.
             pageIds
                 .Select(id => (IReadOnlyList<TenantChange>)byBatch[id]
                     .OrderBy(change => change.ModuleKey is null ? -1 : IndexOf(change.ModuleKey))

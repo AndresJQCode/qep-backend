@@ -56,7 +56,8 @@ public sealed class ListTenantHistoryHandler(
                 return new OperatorHistoryBatchDto(
                     head.BatchId, TenantChangeVocabulary.ToText(head.Kind), head.OccurredAt, head.ActorUserId,
                     emails[head.ActorUserId], TenantChangeVocabulary.ToText(head.Reason), head.Note,
-                    batch.Select(change => new OperatorHistoryChangeDto(change.ModuleKey?.Value, change.FromStatus, change.ToStatus))
+                    batch.Select(change => new OperatorHistoryChangeDto(
+                            change.ModuleKey?.Value, change.FromStatus, change.ToStatus, change.ProviderKey))
                         .ToArray());
             })
             .ToArray();

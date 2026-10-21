@@ -127,6 +127,29 @@ public sealed class TenantProvidersPersistenceTests
         Assert.Equal(ChangeReason.Contract, row.Reason);
     }
 
+    // Dos habilitaciones simultáneas de un proveedor sin fila; sin la traducción sería un 500.
+    [Fact]
+    public async Task ADuplicateProviderRowIsNoChangesNotA500()
+    {
+        await using var database = await StartDatabaseAsync();
+        await using var provider = await MigratedServicesAsync(database);
+        var tenantId = await SeedTenantAsync(provider);
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            scope.ServiceProvider.GetRequiredService<ITenantProviderRepository>()
+                .Add(TenantProvider.Create(tenantId, TenantProviderKeys.Zenvia, Now));
+            await scope.ServiceProvider.GetRequiredService<ITenancyUnitOfWork>().SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var late = provider.CreateAsyncScope();
+        late.ServiceProvider.GetRequiredService<ITenantProviderRepository>()
+            .Add(TenantProvider.Create(tenantId, TenantProviderKeys.Zenvia, Now));
+        var error = await Assert.ThrowsAsync<TenantDomainException>(() =>
+            late.ServiceProvider.GetRequiredService<ITenancyUnitOfWork>().SaveChangesAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal("tenancy.providers.no_changes", error.Code);
+    }
+
     [Fact]
     public async Task TheCheckRejectsAnUnknownProviderKey()
     {

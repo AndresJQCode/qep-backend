@@ -82,6 +82,35 @@ public sealed class OperatorReadHandlerTests
         Assert.False(detail.IsOperator);
     }
 
+    // Plan 2026-10-21, Task 3: la lista de proveedores viaja completa, aunque el tenant no tenga fila.
+    [Fact]
+    public async Task TheDetailListsEveryProviderEvenWithoutARow()
+    {
+        var reader = new FixedOperatorTenantReader();
+        reader.Snapshots[Target] = OperatorSnapshots.Of(Target, OperatorSnapshots.Signup());
+
+        var detail = await Detail(reader, new OperatorContext(Operator, OperatorPermissions.TenantsRead))
+            .HandleAsync(new GetOperatorTenantQuery(Operator, Target), TestContext.Current.CancellationToken);
+
+        Assert.Equal([new OperatorTenantProviderDto("zenvia", "none", null, null)], detail.Providers);
+    }
+
+    [Fact]
+    public async Task TheDetailShowsTheProviderStateAndItsLastReason()
+    {
+        var reader = new FixedOperatorTenantReader();
+        var since = new DateTimeOffset(2026, 10, 20, 0, 0, 0, TimeSpan.Zero);
+        reader.Snapshots[Target] = OperatorSnapshots.Of(
+            Target, OperatorSnapshots.Signup(),
+            providers: [new TenantProviderState(TenantProviderKeys.Zenvia, TenantModuleStatus.Inactive, since)],
+            lastProviderReasons: new Dictionary<string, ChangeReason> { [TenantProviderKeys.Zenvia] = ChangeReason.Nonpayment });
+
+        var detail = await Detail(reader, new OperatorContext(Operator, OperatorPermissions.TenantsRead))
+            .HandleAsync(new GetOperatorTenantQuery(Operator, Target), TestContext.Current.CancellationToken);
+
+        Assert.Equal([new OperatorTenantProviderDto("zenvia", "inactive", since, "nonpayment")], detail.Providers);
+    }
+
     [Fact]
     public async Task TheListCarriesTotalModulesTheOperatorMarkAndTheSummary()
     {

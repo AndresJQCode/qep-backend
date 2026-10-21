@@ -232,8 +232,11 @@ public sealed class OperatorConsoleApiTests
             await client.GetStringAsync(Url($"tenants/{tenantId}"), TestContext.Current.CancellationToken));
         var root = json.RootElement;
         Assert.Equal(
-            ["tenantId", "slug", "displayName", "createdAt", "status", "statusChangedAt", "statusReason", "version", "isOperator", "modules"],
+            ["tenantId", "slug", "displayName", "createdAt", "status", "statusChangedAt", "statusReason", "version", "isOperator", "modules", "providers"],
             root.EnumerateObject().Select(property => property.Name));
+        Assert.Equal(
+            ["key", "status", "since", "lastReason"],
+            root.GetProperty("providers")[0].EnumerateObject().Select(property => property.Name));
         var pos = root.GetProperty("modules")[6];
         Assert.Equal(
             ["key", "status", "enabled", "dependencies", "since", "source", "lastReason"],
@@ -513,6 +516,150 @@ public sealed class OperatorConsoleApiTests
             HttpStatusCode.UnprocessableEntity, "validation.failed");
     }
 
+    // Plan 2026-10-21, Task 3 (D2): un tenant nuevo no tiene fila de proveedor, y el detalle igual la lista.
+    [Fact]
+    public async Task TheDetailListsZenviaAsNeverEnabledForANewTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        using var client = OperatorClient(factory);
+
+        var detail = await GetOkAsync<DetailPayload>(client, Url($"tenants/{tenantId}"));
+
+        Assert.Equal([new ProviderPayload("zenvia", "none", null, null)], detail.Providers);
+    }
+
+    [Fact]
+    public async Task TheOperatorEnablesAndDisablesZenvia()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        using var client = OperatorClient(factory);
+
+        var enabled = Assert.Single((await PostProviderAsync(client, tenantId, "active", "contract", "Contrato firmado")).Providers);
+        Assert.Equal(("zenvia", "active", "contract"), (enabled.Key, enabled.Status, enabled.LastReason));
+        Assert.NotNull(enabled.Since);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+            var id = new TenantId(tenantId);
+            var row = await dbContext.TenantProviders.AsNoTracking().SingleAsync(value => value.TenantId == id, TestContext.Current.CancellationToken);
+            Assert.Equal(("zenvia", TenantModuleStatus.Active), (row.ProviderKey, row.Status));
+            var audited = await dbContext.Database.SqlQuery<string>(
+                $"SELECT changed_fields::text AS \"Value\" FROM audit.entries WHERE action = 'tenancy.tenant_providers.changed' AND tenant_id = {tenantId}")
+                .SingleAsync(TestContext.Current.CancellationToken);
+            Assert.Contains("zenvia:none->active", audited, StringComparison.Ordinal);
+            Assert.Contains("reason:contract", audited, StringComparison.Ordinal);
+        }
+
+        var disabled = Assert.Single((await PostProviderAsync(client, tenantId, "inactive", "nonpayment", null)).Providers);
+        Assert.Equal(("inactive", "nonpayment"), (disabled.Status, disabled.LastReason));
+
+        // Review Focus 2 y 3: lo que no cambia nada o el motivo de la otra dirección es 422 con código.
+        await AssertProblemAsync(await SendProviderAsync(client, tenantId, "inactive", "cancellation"),
+            HttpStatusCode.UnprocessableEntity, "tenancy.providers.no_changes");
+        await AssertProblemAsync(await SendProviderAsync(client, tenantId, "active", "nonpayment"),
+            HttpStatusCode.UnprocessableEntity, "tenancy.providers.reason_not_allowed");
+    }
+
+    [Theory]
+    [InlineData("""{"provider":"whatsapp-cloud","status":"active","reason":"contract"}""")]
+    [InlineData("""{"provider":"zenvia","status":"on","reason":"contract"}""")]
+    [InlineData("""{"provider":"zenvia","status":"active"}""")]
+    public async Task AnUnknownProviderShapeIsValidationFailedNot500(string body)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        using var client = OperatorClient(factory);
+        using var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+
+        await AssertProblemAsync(
+            await client.PostAsync(Url($"tenants/{tenantId}/providers/changes"), content, TestContext.Current.CancellationToken),
+            HttpStatusCode.UnprocessableEntity, "validation.failed");
+    }
+
+    [Fact]
+    public async Task TheHistoryShowsTheProviderBatch()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        using var client = OperatorClient(factory);
+        await PostProviderAsync(client, tenantId, "active", "contract", "Contrato firmado");
+
+        var history = await GetOkAsync<HistoryPayload>(client, Url($"tenants/{tenantId}/history"));
+
+        var batch = Assert.Single(history.Items);
+        Assert.Equal(("provider", "contract", "Contrato firmado"), (batch.Kind, batch.Reason, batch.Note));
+        Assert.Equal(new ChangePayload(null, null, "active", "zenvia"), Assert.Single(batch.Changes));
+    }
+
+    // Review Focus 4: el filtro por módulo no trae lotes de proveedor, como no trae los de estado.
+    [Fact]
+    public async Task TheModuleFilterLeavesProviderBatchesOut()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        using var client = OperatorClient(factory);
+        await PostChangesAsync(client, tenantId, "cancellation", null, ("reporting", "inactive"));
+        await PostProviderAsync(client, tenantId, "active", "contract", null);
+
+        Assert.Equal(2, (await GetOkAsync<HistoryPayload>(client, Url($"tenants/{tenantId}/history"))).Total);
+        var catalog = await GetOkAsync<HistoryPayload>(client, Url($"tenants/{tenantId}/history?module=catalog"));
+        Assert.Equal(0, catalog.Total);
+        Assert.Empty(catalog.Items);
+        var reporting = await GetOkAsync<HistoryPayload>(client, Url($"tenants/{tenantId}/history?module=reporting"));
+        Assert.Equal("module", Assert.Single(reporting.Items).Kind);
+    }
+
+    // Spec «Errores y casos borde»: el permiso inyectado por X-Permissions en otro tenant no alcanza.
+    [Fact]
+    public async Task ANonOperatorTenantCannotChangeProviders()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        var otherTenantId = Guid.CreateVersion7();
+        using var client = StubClient(factory, Guid.CreateVersion7(), otherTenantId, AllOperatorPermissions);
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{otherTenantId}/operator/tenants/{tenantId}/providers/changes",
+            new { provider = "zenvia", status = "active", reason = "contract", note = (string?)null },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var id = new TenantId(tenantId);
+        Assert.False(await scope.ServiceProvider.GetRequiredService<TenancyDbContext>().TenantProviders
+            .AnyAsync(value => value.TenantId == id, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task ReadingIsNotEnoughToChangeProviders()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: OperatorTenantId);
+        var (tenantId, _) = await RegisterAsync(factory);
+        using var client = StubClient(factory, Guid.CreateVersion7(), OperatorTenantId, "operator.tenants.read");
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await SendProviderAsync(client, tenantId, "active", "contract")).StatusCode);
+    }
+
+    private static Task<HttpResponseMessage> SendProviderAsync(
+        HttpClient client, Guid tenantId, string status, string reason, string? note = null) =>
+        client.PostAsJsonAsync(
+            Url($"tenants/{tenantId}/providers/changes"),
+            new { provider = "zenvia", status, reason, note },
+            TestContext.Current.CancellationToken);
+
+    private static async Task<DetailPayload> PostProviderAsync(
+        HttpClient client, Guid tenantId, string status, string reason, string? note) =>
+        await ReadDetailAsync(await SendProviderAsync(client, tenantId, status, reason, note));
+
     private static async Task<HttpResponseMessage> PostStatusAsync(
         HttpClient client, Guid tenantId, string? ifMatch, string status, string reason)
     {
@@ -566,9 +713,10 @@ public sealed class OperatorConsoleApiTests
     private sealed record TenantPagePayload(List<TenantItemPayload> Items, int Total, int Page, int PageSize, SummaryPayload Summary);
     private sealed record TenantItemPayload(Guid TenantId, string Slug, string DisplayName, string Status, DateTimeOffset CreatedAt, int ActiveModules, int TotalModules, bool IsOperator);
     private sealed record SummaryPayload(int Total, int WithoutModules, int Inactive);
-    private sealed record DetailPayload(Guid TenantId, string Slug, string DisplayName, DateTimeOffset CreatedAt, string Status, DateTimeOffset? StatusChangedAt, string? StatusReason, long Version, bool IsOperator, List<ModulePayload> Modules);
+    private sealed record DetailPayload(Guid TenantId, string Slug, string DisplayName, DateTimeOffset CreatedAt, string Status, DateTimeOffset? StatusChangedAt, string? StatusReason, long Version, bool IsOperator, List<ModulePayload> Modules, List<ProviderPayload> Providers);
+    private sealed record ProviderPayload(string Key, string Status, DateTimeOffset? Since, string? LastReason);
     private sealed record ModulePayload(string Key, string Status, bool Enabled, string[] Dependencies, DateTimeOffset? Since, string? Source, string? LastReason);
     private sealed record HistoryPayload(List<BatchPayload> Items, int Total, int Page, int PageSize);
     private sealed record BatchPayload(Guid BatchId, string Kind, DateTimeOffset OccurredAt, Guid ActorUserId, string? ActorEmail, string Reason, string? Note, List<ChangePayload> Changes);
-    private sealed record ChangePayload(string? ModuleKey, string? FromStatus, string ToStatus);
+    private sealed record ChangePayload(string? ModuleKey, string? FromStatus, string ToStatus, string? ProviderKey);
 }
