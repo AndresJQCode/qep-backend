@@ -18,11 +18,12 @@ public enum ChangeReason
     Correction = 5,
 }
 
-/// <summary>Un solo historial para módulos y estado del tenant (D12).</summary>
+/// <summary>Un solo historial para módulos, proveedores y estado del tenant (D12).</summary>
 public enum TenantChangeKind
 {
     Module = 1,
     TenantStatus = 2,
+    Provider = 3,
 }
 
 /// <summary>
@@ -64,6 +65,7 @@ public static class TenantChangeVocabulary
     {
         TenantChangeKind.Module => "module",
         TenantChangeKind.TenantStatus => "tenant_status",
+        TenantChangeKind.Provider => "provider",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 
