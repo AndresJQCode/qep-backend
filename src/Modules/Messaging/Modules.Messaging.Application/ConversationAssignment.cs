@@ -51,9 +51,12 @@ public sealed class ConversationAssignmentSteps(
     {
         if (changes.Count > 0)
         {
-            foreach (var change in changes)
+            // Dos eventos del mismo cambio deben leerse en orden; los GUID v7 no lo garantizan dentro del mismo milisegundo,
+            // así que el n-ésimo evento lleva n microsegundos más (la precisión de Postgres).
+            for (var position = 0; position < changes.Count; position++)
             {
-                events.Record(tenantId, conversation.ConnectionId, conversation.Id, change, now);
+                var change = changes[position];
+                events.Record(tenantId, conversation.ConnectionId, conversation.Id, change, now.AddTicks(10 * position));
                 audit.Record(tenantId, executionContext.SubjectId, MessagingAuditActions.ForEvent(change.Type), conversation.Id, now);
             }
 

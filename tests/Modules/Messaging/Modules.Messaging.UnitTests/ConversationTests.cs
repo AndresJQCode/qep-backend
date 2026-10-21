@@ -316,6 +316,16 @@ public sealed class ConversationTests
     }
 
     [Fact]
+    public void PausingChecksOpenBeforeTheAutomationState()
+    {
+        var conversation = Active();
+        conversation.Resolve(Now.AddMinutes(1));
+
+        Assert.Equal(MessagingErrorCodes.ConversationNotOpen,
+            CodeOf(() => conversation.PauseAutomation(Andres, AutomationPauseReason.Manual, Now.AddMinutes(2))));
+    }
+
+    [Fact]
     public void TakingANoneConversationReturnsOnlyTheTakenEvent()
     {
         var conversation = Open();

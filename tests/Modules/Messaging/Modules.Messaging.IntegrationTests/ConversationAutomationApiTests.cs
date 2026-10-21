@@ -47,10 +47,9 @@ public sealed class ConversationAutomationApiTests
     private static Task<long> EventsAsync(Fixture f, string type) =>
         CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 3 AND details->>'type' = @t", ("t", type));
 
-    // Orden alfabético: los dos eventos de un mismo cambio comparten instante y el desempate por id (v7 al azar dentro del
-    // mismo milisegundo) no los ordena; lo que se prueba es qué eventos se escribieron.
+    // Orden del hilo: dos eventos del mismo cambio deben leerse en el orden en que ocurrieron.
     private static Task<string> EventTypesAsync(Fixture f) =>
-        ScalarAsync<string>(f.ConnectionString, "SELECT string_agg(details->>'type', ',' ORDER BY details->>'type') FROM messaging.messages WHERE direction = 3 AND details->>'type' <> 'CustomerCreated'");
+        ScalarAsync<string>(f.ConnectionString, "SELECT string_agg(details->>'type', ',' ORDER BY occurred_at, id) FROM messaging.messages WHERE direction = 3 AND details->>'type' <> 'CustomerCreated'");
 
     private static async Task<JsonElement> ReadAsync(HttpResponseMessage response) =>
         await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
@@ -120,7 +119,7 @@ public sealed class ConversationAutomationApiTests
         var released = await ActAsync(f, f.Client, "release", await VersionAsync(f));
 
         Assert.Equal(("Paused", "AdvisorTook"), (automation.GetProperty("status").GetString(), automation.GetProperty("pauseReason").GetString()));
-        Assert.Equal("AutomationPaused,Released,Taken", await EventTypesAsync(f));
+        Assert.Equal("Taken,AutomationPaused,Released", await EventTypesAsync(f));
         Assert.Equal("Paused", (await ReadAsync(released)).GetProperty("automation").GetProperty("status").GetString());
         Assert.Equal(1L, await AuditAsync(f, "messaging.conversation.taken"));
         Assert.Equal(1L, await AuditAsync(f, "messaging.conversation.automation_paused"));
@@ -140,7 +139,7 @@ public sealed class ConversationAutomationApiTests
         var body = await ReadAsync(response);
         Assert.Equal(JsonValueKind.Null, body.GetProperty("assignedTo").ValueKind);
         Assert.Equal("Active", body.GetProperty("automation").GetProperty("status").GetString());
-        Assert.Equal("AutomationPaused,AutomationResumed,Released,Taken", await EventTypesAsync(f));
+        Assert.Equal("Taken,AutomationPaused,Released,AutomationResumed", await EventTypesAsync(f));
         Assert.Equal(1L, await AuditAsync(f, "messaging.conversation.automation_resumed"));
         Assert.Equal(1L, await AuditAsync(f, "messaging.conversation.released"));
     }
@@ -158,6 +157,33 @@ public sealed class ConversationAutomationApiTests
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal("messaging.conversation.not_open", (await ProblemAsync(response)).Code);
+    }
+
+    [Fact]
+    public async Task PausingAResolvedConversationIsNotOpen()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ActAsync(f, f.Client, "resolve", await VersionAsync(f));
+
+        var response = await ActAsync(f, f.Client, "automation/pause", await VersionAsync(f));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("messaging.conversation.not_open", (await ProblemAsync(response)).Code);
+    }
+
+    [Fact]
+    public async Task ResumingAnActiveConversationIsAlreadyActive()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        var response = await ActAsync(f, f.Client, "automation/resume", await VersionAsync(f));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("messaging.automation.already_active", (await ProblemAsync(response)).Code);
     }
 
     [Fact]

@@ -319,6 +319,7 @@ public sealed partial class Conversation
     /// <summary>Pausa explícita del asistente. <paramref name="actorMemberId"/> es <c>null</c> cuando la hace el sistema.</summary>
     public ConversationEvent PauseAutomation(Guid? actorMemberId, AutomationPauseReason reason, DateTimeOffset now)
     {
+        EnsureOpenForAutomation();
         switch (AutomationStatus)
         {
             case ConversationAutomationStatus.Paused:

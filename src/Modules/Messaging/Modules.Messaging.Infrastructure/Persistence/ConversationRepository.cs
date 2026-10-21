@@ -135,8 +135,10 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
                 audit.Record(tenantId, actorUserId, MessagingAuditActions.AutoTaken, conversationId, at);
                 if (taken[0].PausedNow)
                 {
+                    // Un microsegundo después del AutoTaken: dos eventos del mismo cambio deben leerse en orden y los GUID v7
+                    // no lo garantizan dentro del mismo milisegundo.
                     await Webhook.ConversationEventRows.InsertAsync(dbContext, tenantId, taken[0].ConnectionId, conversationId,
-                        new ConversationEvent(ConversationEventType.AutomationPaused, Actor: memberId, PauseReason: AutomationPauseReason.AdvisorReplied), at, at, cancellationToken);
+                        new ConversationEvent(ConversationEventType.AutomationPaused, Actor: memberId, PauseReason: AutomationPauseReason.AdvisorReplied), at.AddTicks(10), at, cancellationToken);
                     audit.Record(tenantId, actorUserId, MessagingAuditActions.AutomationPaused, conversationId, at);
                 }
 
