@@ -27,6 +27,7 @@ falla. Ninguno de los dos `develop` se despliega solo hasta que exista el fronte
 | Trabajo | Estado | Dónde |
 | --- | --- | --- |
 | Variantes de producto | Backend **construido** (T1–T15 y T14b, revisión final `92f74496`). Pruebas escritas y **sin ejecutar** desde la T4; revisión con Fable pendiente; frontend sin empezar | [estado propio](superpowers/plans/2026-10-20-variantes-estado.md) |
+| Automatizaciones (antes «Asistentes»): spec 1, asistente en la conversación y horarios de atención | Backend **construido y mergeado** (`62cb0aaf`): 7 tareas, revisión final + una ronda de corrección. Nada pone `Active` en producción hasta el spec 4 (motor). Frontend: plan de 9 tareas en `qep-frontend/docs/superpowers/plans/2026-10-21-mensajeria-asistente-y-horarios-frontend.md`, sin empezar. Maquetación visual del módulo en sesión aparte (rama `feature/automatizaciones-maquetacion` del frontend) | [spec](superpowers/specs/2026-10-21-mensajeria-asistente-y-horarios-design.md), [plan backend](superpowers/plans/2026-10-21-mensajeria-asistente-y-horarios-backend.md), [investigación](superpowers/specs/2026-10-21-asistentes-investigacion.md) |
 | Envío de cotizaciones por el canal del tenant | Spec en borrador para el owner. **Plan 1 de 3 construido** en los dos repos (proveedores habilitados por tenant); planes 2 y 3 sin escribir | [spec](superpowers/specs/2026-10-21-envio-de-cotizaciones-por-canal-del-tenant-design.md), [plan 1](superpowers/plans/2026-10-21-proveedores-habilitados-por-tenant.md) |
 | Shopify: fuente del documento del comprador | Parte 1 **construida** (`d00a20a8`, merge `b7447106`); faltan el endpoint de opciones, el select del frontend y la documentación | [detalle](#shopify-fuente-del-documento-del-comprador) |
 | Shopify: días de historial en «Sincronizar ahora» | Spec commiteado (`42565f98`); sin código en ningún repo | [spec](superpowers/specs/2026-10-21-shopify-historial-dias-design.md) |
@@ -73,6 +74,8 @@ copia del frontend para los códigos nuevos.
 | 2026-10-21 envío de cotizaciones por canal | Planes 1 y 2 (sólo Zenvia) construidos; falta el 3 | Spec en borrador para el owner; el recorte del plan 2 lo aprobó el owner |
 | 2026-10-21 Shopify: días de historial | Aprobado en conversación, sin empezar | Tope 30 días, desde `LinkedAt`, en cada pulsación; el cron no cambia. Extiende D-S4 |
 | 2026-10-21 onboarding | Incompleto, en pausa; sin empezar | Metas por módulo; estado calculado en vivo, sin escribir en el GET; backfill cierra la guía de los tenants existentes |
+| 2026-10-21 mensajería: asistente y horarios de atención (Automatizaciones, spec 1) | Backend construido (`62cb0aaf`); frontend sin empezar | `automation/*` y `/messaging/business-hours`; permiso `messaging.business_hours.manage` sólo en `admin`; festivos de Colombia por interruptor (D-H9). El `GET /business-hours` trae `connections` (D-H10 corregido al planear) |
+| 2026-10-21 Automatizaciones: investigación y roadmap | Concepto; specs 2–4 y migración de lulo-chat sin escribir | Orden: interactivos → claves de API y envío proactivo → constructor (motor, editor React Flow, bloque HTTP) → migración. IA diferida |
 
 Construido sin spec propio: enviar el pedido por WhatsApp (`POST /orders/{id}/send`, `OrderEndpoints.cs:114`; frontend
 `3e7e4c00`), clasificación opcional del cliente, país del tenant, mensajería en tiempo real y filtros de la bandeja.
@@ -173,6 +176,11 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-21 — Mergeado a `develop` el backend del spec 1 de Automatizaciones (`62cb0aaf`: asistente en la conversación y
+  horarios de atención), construido con subagentes en 7 tareas. La revisión final encontró un Critical real —mover el
+  predeterminado a un horario más antiguo daba 409 porque EF ordena los `UPDATE` por clave primaria— que se corrigió con
+  `SwapDefaultAsync` en una transacción con orden fijo. Decisiones del developer en la revisión del spec: D-H9 pasa a
+  festivos de Colombia por interruptor; el módulo se renombra «Automatizaciones». Frontend pendiente (plan escrito).
 - 2026-10-21 — Mergeado a `develop` el plan 2 del envío por canal, recortado a Zenvia (`bba8ba1b..07217b94`, decisión
   del owner): la conexión de Zenvia lleva `templateId` y `orderTemplateId`, cotización y pedido salen por la conexión
   del tenant y se retira la cuenta global. Revisión independiente hecha; tres correcciones en la misma rama.
