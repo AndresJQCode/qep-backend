@@ -175,7 +175,10 @@ public sealed class ConnectInstagramHandler(
             [.. ConnectionAudit.KeysOf(connection), InstagramLogin.OnboardingAuditField], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, cancellationToken);
+        // Este proveedor no exige habilitación por tenant (plan 2026-10-21), así que no se consulta: si algún día la
+        // exigiera, este flujo tendría que llamar a ProviderVisibility.EnsureEnabledAsync antes de conectar.
+        return await ConnectionMapping.ToResponseAsync(
+            connection, provider, protector, authorNames, providerEnabled: !provider.RequiresTenantEnablement, cancellationToken);
     }
 
     /// <summary>ISO 8601 en UTC (<c>O</c>): lo que el worker de refresco vuelve a leer. Un <c>expires_in</c> que no

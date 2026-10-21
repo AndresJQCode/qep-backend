@@ -58,7 +58,8 @@ public sealed class CreateConnectionValidator : AbstractValidator<CreateConnecti
 
 /// <summary>
 /// Spec 2026-10-08, <c>POST /connections</c>, en este orden (P18): autoriza (403 antes de leer el
-/// cuerpo), 503 sin llave activa, valida, visibilidad (403 <c>tenancy.module_not_enabled</c>), membresía,
+/// cuerpo), 503 sin llave activa, valida, visibilidad (403 <c>tenancy.module_not_enabled</c>), habilitación del
+/// proveedor (403 <c>integrations.provider.not_enabled</c>, plan 2026-10-21), membresía,
 /// tope (D1), prueba contra el proveedor (decisión 5) y recién ahí crea, audita y guarda.
 /// </summary>
 public sealed class CreateConnectionHandler(
@@ -69,6 +70,7 @@ public sealed class CreateConnectionHandler(
     ISecretProtector protector,
     IConnectionTester tester,
     ITenantModules tenantModules,
+    ITenantProviders tenantProviders,
     IMembershipDirectory membershipDirectory,
     IConnectionAuthorNames authorNames,
     IExecutionContext executionContext,
@@ -85,6 +87,7 @@ public sealed class CreateConnectionHandler(
         // El validador ya garantizó que el proveedor existe.
         var provider = catalog.Find(command.ProviderKey)!;
         await ProviderVisibility.EnsureVisibleAsync(tenantModules, command.TenantId, provider, cancellationToken);
+        await ProviderVisibility.EnsureEnabledAsync(tenantProviders, command.TenantId, provider, cancellationToken);
         var author = await IntegrationsMember.ResolveAsync(membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
         if (await repository.CountAsync(command.TenantId, provider.Key, cancellationToken) >= provider.MaxConnections)
@@ -106,6 +109,6 @@ public sealed class CreateConnectionHandler(
             auditRecorder, executionContext, connection, ConnectionAuditActions.Created, ConnectionAudit.KeysOf(connection), now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, cancellationToken);
+        return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, providerEnabled: true, cancellationToken);
     }
 }

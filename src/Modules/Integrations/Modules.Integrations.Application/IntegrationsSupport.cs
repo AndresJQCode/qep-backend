@@ -73,6 +73,31 @@ internal static class ProviderVisibility
         new(
             TenantModuleGuard.ModuleNotEnabledCode,
             $"The '{providerKey}' integration is not available: none of the modules that use it is enabled for this tenant.");
+
+    /// <summary>Plan 2026-10-21: un proveedor que exige habilitación sólo se usa si el operador lo habilitó para el
+    /// tenant. Sin esa exigencia no consulta nada, para que los consumidores de los demás proveedores (la bandeja de
+    /// Messaging resuelve conexiones en cada envío) no paguen una lectura más.</summary>
+    public static async Task<bool> IsEnabledAsync(
+        ITenantProviders tenantProviders, Guid tenantId, IntegrationProvider provider, CancellationToken cancellationToken) =>
+        !provider.RequiresTenantEnablement
+        || provider.IsEnabledFor(await tenantProviders.FindEnabledAsync(tenantId, cancellationToken));
+
+    /// <summary>Lo exigen crear, editar, probar, pausar y reanudar; leer, listar y borrar no, para que el tenant vea y
+    /// pueda limpiar lo que ya tenía. Va <b>después</b> de <see cref="EnsureVisibleAsync"/>: con el módulo apagado la
+    /// respuesta sigue siendo <c>tenancy.module_not_enabled</c>.</summary>
+    public static async Task EnsureEnabledAsync(
+        ITenantProviders tenantProviders, Guid tenantId, IntegrationProvider provider, CancellationToken cancellationToken)
+    {
+        if (!await IsEnabledAsync(tenantProviders, tenantId, provider, cancellationToken))
+        {
+            throw NotEnabled(provider.Key);
+        }
+    }
+
+    public static RequestForbiddenException NotEnabled(string providerKey) =>
+        new(
+            IntegrationsErrorCodes.ProviderNotEnabled,
+            $"The '{providerKey}' integration is not enabled for this tenant.");
 }
 
 internal static class ConnectionLoader
@@ -93,12 +118,32 @@ internal static class ConnectionLoader
         await ProviderVisibility.EnsureVisibleAsync(tenantModules, tenantId, provider, cancellationToken);
         return (connection, provider);
     }
+
+    /// <summary>Lo de <see cref="LoadVisibleAsync"/> y, además, el proveedor habilitado para el tenant (403
+    /// <c>integrations.provider.not_enabled</c>): el camino de editar, probar, pausar y reanudar.</summary>
+    public static async Task<(IntegrationConnection Connection, IntegrationProvider Provider)> LoadEnabledAsync(
+        IIntegrationConnectionRepository repository,
+        IIntegrationProviderCatalog catalog,
+        ITenantModules tenantModules,
+        ITenantProviders tenantProviders,
+        Guid tenantId,
+        Guid connectionId,
+        CancellationToken cancellationToken)
+    {
+        var loaded = await LoadVisibleAsync(repository, catalog, tenantModules, tenantId, connectionId, cancellationToken);
+        await ProviderVisibility.EnsureEnabledAsync(tenantProviders, tenantId, loaded.Provider, cancellationToken);
+        return loaded;
+    }
 }
 
 internal static class ConnectionMapping
 {
     public static ProviderResponse ToProvider(
-        IntegrationProvider provider, int connectionCount, IMetaAppSettings metaApp, IInstagramAppSettings instagramApp) =>
+        IntegrationProvider provider,
+        int connectionCount,
+        bool platformEnabled,
+        IMetaAppSettings metaApp,
+        IInstagramAppSettings instagramApp) =>
         new(
             provider.Key,
             provider.DisplayName,
@@ -120,24 +165,27 @@ internal static class ConnectionMapping
                 // la tienda, el state y el redirect_uri de cada intento; aquí no hay nada fijo que mandar.
                 ProviderOnboarding.ShopifyOAuth => new ProviderOnboardingResponse(nameof(ProviderOnboarding.ShopifyOAuth), null, null, null),
                 _ => new ProviderOnboardingResponse(nameof(ProviderOnboarding.Form), null, null, null),
-            });
+            },
+            platformEnabled);
 
     public static async Task<ConnectionResponse> ToResponseAsync(
         IntegrationConnection connection,
         IntegrationProvider provider,
         ISecretProtector protector,
         IConnectionAuthorNames authorNames,
+        bool providerEnabled,
         CancellationToken cancellationToken)
     {
         var names = await authorNames.FindAsync(connection.TenantId, [connection.CreatedBy], cancellationToken);
-        return ToResponse(connection, provider, protector, names);
+        return ToResponse(connection, provider, protector, names, providerEnabled);
     }
 
     public static ConnectionResponse ToResponse(
         IntegrationConnection connection,
         IntegrationProvider provider,
         ISecretProtector protector,
-        IReadOnlyDictionary<Guid, string> authorNames) =>
+        IReadOnlyDictionary<Guid, string> authorNames,
+        bool providerEnabled) =>
         new(
             connection.Id,
             connection.ProviderKey,
@@ -157,7 +205,8 @@ internal static class ConnectionMapping
             connection.CreatedAt,
             new ConnectionAuthorResponse(connection.CreatedBy, authorNames.GetValueOrDefault(connection.CreatedBy)),
             connection.UpdatedAt,
-            connection.Version);
+            connection.Version,
+            providerEnabled);
 
     private static SecretStateResponse SecretState(IntegrationConnection connection, string fieldKey, ISecretProtector protector)
     {

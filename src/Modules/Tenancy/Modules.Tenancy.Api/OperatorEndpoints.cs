@@ -40,6 +40,15 @@ public static class OperatorEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Plan 2026-10-21: mismo permiso que los módulos (operator.modules.manage).
+        group.MapPost("/tenants/{targetTenantId:guid}/providers/changes", ChangeProviderAsync)
+            .RequireAuthorization(OperatorPermissions.ModulesManage)
+            .Accepts<ChangeTenantProviderRequest>("application/json")
+            .Produces<OperatorTenantDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPost("/tenants/{targetTenantId:guid}/status", ChangeStatusAsync)
             .RequireAuthorization(OperatorPermissions.TenantsManage)
             .Accepts<ChangeTenantStatusRequest>("application/json")
@@ -113,6 +122,21 @@ public static class OperatorEndpoints
         return Results.Ok(result);
     }
 
+    private static async Task<IResult> ChangeProviderAsync(
+        Guid tenantId,
+        Guid targetTenantId,
+        ChangeTenantProviderRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var result = await dispatcher.SendAsync(
+            new ChangeTenantProviderCommand(
+                new TenantId(tenantId), new TenantId(targetTenantId), request.Provider, request.Status, request.Reason,
+                request.Note),
+            cancellationToken);
+        return Results.Ok(result);
+    }
+
     private static async Task<IResult> ChangeStatusAsync(
         Guid tenantId,
         Guid targetTenantId,
@@ -138,6 +162,11 @@ public static class OperatorEndpoints
 /// <c>note: null</c> cuando la nota queda en blanco.</summary>
 public sealed record ChangeTenantModulesRequest(
     IReadOnlyList<TenantModuleChangeInput>? Changes, string? Reason, string? Note);
+
+/// <summary>Plan 2026-10-21: un proveedor por pedido (<c>provider</c> = <c>zenvia</c>), <c>status</c>
+/// <c>active</c> o <c>inactive</c>. Todo nullable por la misma razón que <see cref="ChangeTenantModulesRequest"/>:
+/// lo ausente o desconocido es 422 del validador, no 400 del binder.</summary>
+public sealed record ChangeTenantProviderRequest(string? Provider, string? Status, string? Reason, string? Note);
 
 /// <summary>Spec 2026-10-08 §5: <c>status</c> es <c>inactive</c> o <c>active</c> (decisión P12 del plan); la
 /// versión viaja en el <c>If-Match</c>, no en el cuerpo.</summary>

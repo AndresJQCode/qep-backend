@@ -20,6 +20,7 @@ public sealed class ResumeConnectionHandler(
     ISecretProtector protector,
     IConnectionTester tester,
     ITenantModules tenantModules,
+    ITenantProviders tenantProviders,
     IConnectionAuthorNames authorNames,
     IExecutionContext executionContext,
     IClock clock)
@@ -28,8 +29,8 @@ public sealed class ResumeConnectionHandler(
     public async Task<ConnectionResponse> HandleAsync(ResumeConnectionCommand command, CancellationToken cancellationToken)
     {
         IntegrationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, IntegrationsPermissions.ConnectionManage);
-        var (connection, provider) = await ConnectionLoader.LoadVisibleAsync(
-            repository, catalog, tenantModules, command.TenantId, command.ConnectionId, cancellationToken);
+        var (connection, provider) = await ConnectionLoader.LoadEnabledAsync(
+            repository, catalog, tenantModules, tenantProviders, command.TenantId, command.ConnectionId, cancellationToken);
         ConcurrencyGuard.EnsureVersion(connection, command.ExpectedVersion);
         connection.EnsurePaused();
 
@@ -47,7 +48,7 @@ public sealed class ResumeConnectionHandler(
 
                 ConnectionAudit.ByMember(auditRecorder, executionContext, connection, ConnectionAuditActions.Resumed, [], now);
                 await unitOfWork.SaveChangesAsync(cancellationToken);
-                return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, cancellationToken);
+                return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, providerEnabled: true, cancellationToken);
 
             case ConnectionTestOutcome.Unreachable:
                 throw ConnectionVerification.Failure(provider, result);

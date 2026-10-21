@@ -21,8 +21,8 @@ public sealed class ConsumerPortsApiTests
         await using var database = await StartDatabaseAsync();
         var connectionString = database.GetConnectionString();
         using var factory = new QepApiFactory(connectionString);
-        var owner = await RegisterTenantAsync(factory);
-        var other = await RegisterTenantAsync(factory);
+        var owner = await RegisterZenviaTenantAsync(factory, connectionString);
+        var other = await RegisterZenviaTenantAsync(factory, connectionString);
         using var client = CreateClient(factory, owner.OwnerUserId, owner.TenantId, ManagePermissions);
         var connection = await CreateConnectionAsync(client, owner.TenantId, "Activa");
 
@@ -57,7 +57,7 @@ public sealed class ConsumerPortsApiTests
         await using var database = await StartDatabaseAsync();
         var connectionString = database.GetConnectionString();
         using var factory = new QepApiFactory(connectionString);
-        var tenant = await RegisterTenantAsync(factory);
+        var tenant = await RegisterZenviaTenantAsync(factory, connectionString);
         using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
         var active = await CreateConnectionAsync(client, tenant.TenantId, "Activa");
         var paused = await CreateConnectionAsync(client, tenant.TenantId, "Pausada");

@@ -20,6 +20,8 @@ internal static class OperatorInput
     public static bool IsModuleKey(string? value) =>
         value is not null && TenantModuleKeys.All.Any(key => string.Equals(key.Value, value, StringComparison.Ordinal));
 
+    public static bool IsProviderKey(string? value) => TenantProviderKeys.IsKnown(value);
+
     /// <summary><c>active</c> o <c>inactive</c>: la dirección de un cambio de módulo o de tenant.</summary>
     public static bool IsDirection(string? value) => TenantChangeVocabulary.TryParseModuleStatus(value, out _);
 

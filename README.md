@@ -674,6 +674,24 @@ nota opcional, quién y cuándo, agrupada por lote; el historial no se edita ni 
 dejaría un módulo activo sin una dependencia se rechaza con
 `422 tenancy.modules.inconsistent_dependencies`: la consola arma la cascada sola.
 
+**Proveedores por tenant.** Un proveedor de Integraciones que exige habilitación (hoy sólo `zenvia`)
+también lo prende y apaga la consola, con `POST …/operator/tenants/{targetTenantId}/providers/changes`
+y el cuerpo `{ "provider": "zenvia", "status": "active" | "inactive", "reason": "…", "note": "…" | null }`.
+Es uno por pedido y no un lote, porque un proveedor no tiene dependencias. Responde 200 con el detalle del
+tenant, pide `operator.modules.manage` (no hay permiso propio) y acepta los mismos motivos que los módulos
+según la dirección: al habilitar, `contract`, `courtesy` o `correction`; al deshabilitar, `nonpayment`,
+`cancellation` o `correction`. Los errores de dominio son `422 tenancy.providers.reason_not_allowed`,
+`422 tenancy.providers.no_changes` (habilitar lo ya activo, o deshabilitar lo inactivo o sin fila) y
+`404 tenancy.tenant.not_found`; una clave de proveedor, dirección o motivo desconocidos son 422 de
+validación. El estado vive en `tenancy.tenant_providers`: un tenant nuevo **no tiene fila** y por tanto
+nace con Zenvia deshabilitado. La migración `AddTenantProviders` habilitó Zenvia a los tenants que ya
+tenían una conexión de Zenvia (en cualquier estado), sin escribir historial.
+
+El detalle (`GET …/operator/tenants/{id}`) trae `providers: [{ key, status, since, lastReason }]`, siempre
+todos los del catálogo aunque no tengan fila: `status` es `active`, `inactive` o `none` (sin fila).
+En `history`, un lote de proveedor llega con `kind: "provider"` y sus cambios llevan `providerKey` (con
+`moduleKey: null`); `?module=` los deja fuera.
+
 **Inactivar un tenant** lo saca del selector de sesión y todo request a ese tenant recibe 403,
 incluso con la sesión ya abierta. No toca sus módulos: reactivarlo deja todo como estaba. Los
 workers, el outbox y los enlaces públicos (PDF, comprobantes) de un tenant inactivo **siguen
@@ -805,7 +823,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 | `/api/v1/tenants/{tenantId}/orders`                | `GET` (filtros, entre ellos `source` y `timeZone`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `approve`, `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`), `send` (`POST`, cuerpo opcional) (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual) y [Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp)) | `quotations.order.read` / `.manage` / `.approve` / `.cancel` / `.invoice` |
 | `/api/v1/tenants/{tenantId}/pos`                   | 12 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void`                               |
-| `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
+| `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
 | `/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup` | `POST` | `integrations.connection.manage` |
 | `/api/v1/tenants/{tenantId}/messaging` | `conversations` (`GET`), por conversación `GET`, `messages` (`GET`, `POST`), `messages/audio` (`POST`, multipart), `read` (`POST`), `resolve` (`POST`, `If-Match`, cuerpo opcional `{ reasonId }` o `{ reasonName }`) y `reopen` (`POST`, `If-Match`); `messages/search` (`GET`); `media/{messageId}` (`GET`) | `messaging.conversation.read` / `.manage` |
@@ -2200,6 +2218,16 @@ tenants con `quotations` activo; un proveedor nuevo es otra entrada de `Integrat
 probador y una migración que cambia el `CHECK` de `provider_key`. Varias conexiones por proveedor
 (tope de 20), cada una con nombre. Cada consumidor las usa en su spec (Messaging ya lo hace con
 `whatsapp-cloud`), por los puertos `IIntegrationConnections` e `IConnectionHealthReporter`.
+
+Además de los módulos, un proveedor puede **exigir habilitación por tenant** (plan 2026-10-21; hoy sólo
+`zenvia`), que se da desde la [consola de operador](#consola-de-operador). Cada proveedor del catálogo
+trae `platformEnabled`: uno que la plataforma no habilitó para el tenant sólo se lista si el tenant ya
+tiene conexiones suyas, y entonces con `platformEnabled: false`, para que la pantalla las agrupe. Cada
+conexión trae `providerEnabled`. Crear, editar, probar, pausar o reanudar una conexión de un proveedor
+deshabilitado responde `403 integrations.provider.not_enabled`; antes va la visibilidad por módulos, así
+que con el módulo apagado la respuesta sigue siendo `tenancy.module_not_enabled`. Leer, listar y eliminar
+siguen funcionando, para que el tenant vea y limpie lo que ya tenía. `IIntegrationConnections.ResolveAsync`
+y `ListActiveAsync` saltan un proveedor deshabilitado, así que ningún consumidor envía por él.
 
 Desde el spec 2026-10-09 el catálogo tiene dos proveedores: **Zenvia (WhatsApp)** y **WhatsApp Business
 (Meta)** (`whatsapp-cloud`, visible con `messaging` activo, tope de 5). El segundo no se conecta por

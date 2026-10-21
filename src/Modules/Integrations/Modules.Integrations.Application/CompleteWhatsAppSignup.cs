@@ -231,7 +231,10 @@ public sealed class CompleteWhatsAppSignupHandler(
         ConnectionAudit.ByMember(auditRecorder, executionContext, connection, ConnectionAuditActions.Created, audited, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, cancellationToken);
+        // Este proveedor no exige habilitación por tenant (plan 2026-10-21), así que no se consulta: si algún día la
+        // exigiera, este flujo tendría que llamar a ProviderVisibility.EnsureEnabledAsync antes de conectar.
+        return await ConnectionMapping.ToResponseAsync(
+            connection, provider, protector, authorNames, providerEnabled: !provider.RequiresTenantEnablement, cancellationToken);
     }
 
     /// <summary>Lo que Graph dice de un número que ya está en la Cloud API: <c>status = CONNECTED</c> y

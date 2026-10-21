@@ -16,6 +16,7 @@ public sealed class PauseConnectionHandler(
     IConnectionEventPublisher eventPublisher,
     ISecretProtector protector,
     ITenantModules tenantModules,
+    ITenantProviders tenantProviders,
     IConnectionAuthorNames authorNames,
     IExecutionContext executionContext,
     IClock clock)
@@ -24,8 +25,8 @@ public sealed class PauseConnectionHandler(
     public async Task<ConnectionResponse> HandleAsync(PauseConnectionCommand command, CancellationToken cancellationToken)
     {
         IntegrationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, IntegrationsPermissions.ConnectionManage);
-        var (connection, provider) = await ConnectionLoader.LoadVisibleAsync(
-            repository, catalog, tenantModules, command.TenantId, command.ConnectionId, cancellationToken);
+        var (connection, provider) = await ConnectionLoader.LoadEnabledAsync(
+            repository, catalog, tenantModules, tenantProviders, command.TenantId, command.ConnectionId, cancellationToken);
         ConcurrencyGuard.EnsureVersion(connection, command.ExpectedVersion);
 
         var now = clock.UtcNow;
@@ -34,6 +35,6 @@ public sealed class PauseConnectionHandler(
         eventPublisher.Publish(ConnectionEvents.Paused, connection, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, cancellationToken);
+        return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, providerEnabled: true, cancellationToken);
     }
 }

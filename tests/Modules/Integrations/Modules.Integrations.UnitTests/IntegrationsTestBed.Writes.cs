@@ -12,11 +12,11 @@ internal sealed partial class IntegrationsTestBed
     public RecordingAuditRecorder Audit { get; } = new();
 
     public CreateConnectionHandler CreateHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, UnitOfWork, Audit, Protector, Tester, Modules, Memberships, AuthorNames,
+        new(Catalog, Repository, UnitOfWork, Audit, Protector, Tester, Modules, Providers, Memberships, AuthorNames,
             context ?? Context(), Clock, new CreateConnectionValidator(Catalog));
 
     public UpdateConnectionHandler UpdateHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, UnitOfWork, Audit, Protector, Tester, Modules, AuthorNames,
+        new(Catalog, Repository, UnitOfWork, Audit, Protector, Tester, Modules, Providers, AuthorNames,
             context ?? Context(), Clock, new UpdateConnectionValidator());
 
     public FakeWhatsAppSignupGateway Gateway { get; } = new();

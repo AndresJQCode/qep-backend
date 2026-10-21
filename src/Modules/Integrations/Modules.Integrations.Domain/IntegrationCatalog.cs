@@ -148,7 +148,8 @@ public sealed class IntegrationProvider
         IReadOnlyList<TenantModuleKey> consumingModules,
         IReadOnlyList<FieldDefinition> fields,
         int maxConnections,
-        ProviderOnboarding onboarding = ProviderOnboarding.Form)
+        ProviderOnboarding onboarding = ProviderOnboarding.Form,
+        bool requiresTenantEnablement = false)
     {
         if (!KeyShape.IsMatch(key))
         {
@@ -176,6 +177,7 @@ public sealed class IntegrationProvider
         SecretFields = Fields.Where(field => field.IsSecret).ToArray();
         MaxConnections = maxConnections;
         Onboarding = onboarding;
+        RequiresTenantEnablement = requiresTenantEnablement;
         CatalogFields = Fields.Where(field => !field.Internal).ToArray();
     }
 
@@ -217,4 +219,17 @@ public sealed class IntegrationProvider
     /// </summary>
     public bool IsVisibleFor(TenantModuleSet? modules) =>
         ConsumingModules.Count > 0 && (modules is null || ConsumingModules.Any(modules.IsEnabled));
+
+    /// <summary>Plan 2026-10-21: además del módulo consumidor, el operador tiene que habilitar el proveedor para el
+    /// tenant (fila <c>active</c> en <c>tenancy.tenant_providers</c>). Su clave tiene que estar en
+    /// <see cref="TenantProviderKeys.All"/>, o nadie podría habilitarlo.</summary>
+    public bool RequiresTenantEnablement { get; }
+
+    /// <summary>
+    /// Plan 2026-10-21: lo que no exige habilitación, siempre; lo demás, si su clave está en las habilitadas. Con el
+    /// stub de desarrollo (<paramref name="enabledProviders"/> en <c>null</c>), todo, como <see cref="IsVisibleFor"/>.
+    /// No reemplaza a la visibilidad: se pregunta después de ella.
+    /// </summary>
+    public bool IsEnabledFor(IReadOnlySet<string>? enabledProviders) =>
+        !RequiresTenantEnablement || enabledProviders is null || enabledProviders.Contains(Key);
 }

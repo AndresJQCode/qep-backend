@@ -29,6 +29,8 @@ public static class TenancyInfrastructureExtensions
         services.AddScoped<ITenantRepository, TenantRepository>();
         services.AddScoped<ITenantModules, TenantModules>();
         services.AddScoped<ITenantModuleRepository, TenantModuleRepository>();
+        services.AddScoped<ITenantProviders, TenantProviders>();
+        services.AddScoped<ITenantProviderRepository, TenantProviderRepository>();
         services.AddScoped<ITenantChangeRepository, TenantChangeRepository>();
         services.AddScoped<IOperatorTenantReader, OperatorTenantReader>();
         services.AddScoped<ITenantDirectory, TenantDirectory>();

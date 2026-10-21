@@ -47,13 +47,34 @@ public sealed class ListTenantHistoryHandlerTests
         Assert.Equal((cascade, "module", "cancellation", "nota", "andres@qcode.co"),
             (first.BatchId, first.Kind, first.Reason, first.Note, first.ActorEmail));
         Assert.Equal(
-            [new OperatorHistoryChangeDto("customers", "active", "inactive"), new OperatorHistoryChangeDto("quotations", "active", "inactive")],
+            [new OperatorHistoryChangeDto("customers", "active", "inactive", null), new OperatorHistoryChangeDto("quotations", "active", "inactive", null)],
             first.Changes);
-        Assert.Equal(("tenant_status", new OperatorHistoryChangeDto(null, "Active", "Suspended")),
+        Assert.Equal(("tenant_status", new OperatorHistoryChangeDto(null, "Active", "Suspended", null)),
             (page.Items[1].Kind, Assert.Single(page.Items[1].Changes)));
         Assert.Null(page.Items[2].ActorEmail);                     // usuario que ya no existe
         Assert.Null(Assert.Single(page.Items[2].Changes).FromStatus);
         Assert.Equal(2, users.Calls);                              // deduplicado por página
+    }
+
+    // Plan 2026-10-21, Task 3: un lote de proveedor lleva su clave y ModuleKey en null.
+    [Fact]
+    public async Task AProviderBatchCarriesItsKeyAndNoModule()
+    {
+        var reader = new FixedOperatorTenantReader
+        {
+            History = new(
+            [
+                [TenantChange.ForProvider(Target, Guid.CreateVersion7(), TenantProviderKeys.Zenvia, null, TenantModuleStatus.Active, ChangeReason.Contract, null, Andres, At)],
+            ], Total: 1),
+        };
+        var users = new CountingUserDirectory(new Dictionary<Guid, string> { [Andres] = "andres@qcode.co" });
+
+        var page = await Handler(reader, users).HandleAsync(
+            new ListTenantHistoryQuery(Operator, Target, null, 1, 25), TestContext.Current.CancellationToken);
+
+        var batch = Assert.Single(page.Items);
+        Assert.Equal(("provider", "contract"), (batch.Kind, batch.Reason));
+        Assert.Equal(new OperatorHistoryChangeDto(null, null, "active", "zenvia"), Assert.Single(batch.Changes));
     }
 
     [Fact]

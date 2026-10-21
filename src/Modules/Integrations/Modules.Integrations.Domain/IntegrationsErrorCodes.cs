@@ -19,6 +19,10 @@ public static class IntegrationsErrorCodes
     public const string NotFound = "integrations.connection.not_found";
     public const string SecretProtectionUnavailable = "integrations.secret_protection.unavailable";
 
+    /// <summary>Plan 2026-10-21, 403: el proveedor exige habilitación y el operador no la dio (o la quitó) para el
+    /// tenant. Se responde después de <c>tenancy.module_not_enabled</c>: con el módulo apagado gana ése.</summary>
+    public const string ProviderNotEnabled = "integrations.provider.not_enabled";
+
     // Spec 2026-10-09 §10.1, los tres de Embedded Signup.
     public const string WhatsAppCodeExchangeFailed = "integrations.whatsapp.code_exchange_failed";
     public const string WhatsAppRegistrationFailed = "integrations.whatsapp.registration_failed";

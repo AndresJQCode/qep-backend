@@ -196,7 +196,10 @@ public sealed class LinkShopifyStoreHandler(
         installs.Remove(install);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, cancellationToken);
+        // Este proveedor no exige habilitación por tenant (plan 2026-10-21), así que no se consulta: si algún día la
+        // exigiera, este flujo tendría que llamar a ProviderVisibility.EnsureEnabledAsync antes de conectar.
+        return await ConnectionMapping.ToResponseAsync(
+            connection, provider, protector, authorNames, providerEnabled: !provider.RequiresTenantEnablement, cancellationToken);
     }
 
     /// <summary>La conexión del mismo tenant para esa tienda, o <c>null</c> si no hay ruta. La ruta es cross-tenant a

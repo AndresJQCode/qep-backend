@@ -70,9 +70,12 @@ internal static class OperatorSnapshots
 {
     public static OperatorTenantSnapshot Of(
         TenantId tenantId, IEnumerable<TenantModuleState> modules, TenantStatus status = TenantStatus.Active,
-        IReadOnlyDictionary<TenantModuleKey, ChangeReason>? lastReasons = null, TenantStatusChange? lastStatus = null) =>
+        IReadOnlyDictionary<TenantModuleKey, ChangeReason>? lastReasons = null, TenantStatusChange? lastStatus = null,
+        IReadOnlyList<TenantProviderState>? providers = null,
+        IReadOnlyDictionary<string, ChangeReason>? lastProviderReasons = null) =>
         new(tenantId.Value, "origen-botanico", "Origen Botánico", DateTimeOffset.UnixEpoch, status, 1,
-            modules.ToArray(), lastReasons ?? new Dictionary<TenantModuleKey, ChangeReason>(), lastStatus);
+            modules.ToArray(), lastReasons ?? new Dictionary<TenantModuleKey, ChangeReason>(), lastStatus,
+            providers ?? [], lastProviderReasons ?? new Dictionary<string, ChangeReason>());
 
     public static IEnumerable<TenantModuleState> Signup() =>
         TenantModuleKeys.DefaultForNewTenants.Select(key =>
@@ -91,6 +94,20 @@ internal sealed class StepsTenantRepository(List<string> steps, params Tenant[] 
     }
 
     public void Add(Tenant tenant) => throw new NotSupportedException();
+}
+
+internal sealed class StepsTenantProviderRepository(List<string> steps, params TenantProvider[] rows) : ITenantProviderRepository
+{
+    public List<TenantProvider> Rows { get; } = [.. rows];
+    public List<TenantProvider> Added { get; } = [];
+
+    public void Add(TenantProvider provider) => Added.Add(provider);
+
+    public Task<IReadOnlyList<TenantProvider>> ListByTenantAsync(TenantId tenantId, CancellationToken cancellationToken)
+    {
+        steps.Add("read-providers");
+        return Task.FromResult<IReadOnlyList<TenantProvider>>(Rows.Where(row => row.TenantId == tenantId).ToList());
+    }
 }
 
 internal sealed class StepsTenantModuleRepository(List<string> steps, params TenantModule[] rows) : ITenantModuleRepository

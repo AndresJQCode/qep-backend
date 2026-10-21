@@ -102,6 +102,15 @@ internal sealed class FakeTenantModules : ITenantModules
         Task.FromResult<TenantModuleSet?>(Sets.TryGetValue(tenantId, out var set) ? set : null);
 }
 
+/// <summary>Plan 2026-10-21. Sin entrada = el stub (<c>null</c>): todo habilitado, como <see cref="FakeTenantModules"/>.</summary>
+internal sealed class FakeTenantProviders : ITenantProviders
+{
+    public Dictionary<Guid, IReadOnlySet<string>> Sets { get; } = [];
+
+    public Task<IReadOnlySet<string>?> FindEnabledAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(Sets.GetValueOrDefault(tenantId));
+}
+
 internal sealed class InMemoryConnectionRepository : IIntegrationConnectionRepository
 {
     public List<IntegrationConnection> Connections { get; } = [];
@@ -217,6 +226,8 @@ internal sealed partial class IntegrationsTestBed
 
     public FakeTenantModules Modules { get; } = new();
 
+    public FakeTenantProviders Providers { get; } = new();
+
     public FakeMembershipDirectory Memberships { get; } = new();
 
     public InMemoryConnectionRepository Repository { get; } = new();
@@ -258,10 +269,10 @@ internal sealed partial class IntegrationsTestBed
     public FakeShopifyAppSettings ShopifyApp { get; } = new();
 
     public GetIntegrationsCatalogHandler CatalogHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, Modules, MetaApp, InstagramApp, ShopifyApp, context ?? Context());
+        new(Catalog, Repository, Modules, Providers, MetaApp, InstagramApp, ShopifyApp, context ?? Context());
 
     public ListConnectionsHandler ListHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, Modules, MetaApp, InstagramApp, ShopifyApp, Protector, AuthorNames, context ?? Context());
+        new(Catalog, Repository, Modules, Providers, MetaApp, InstagramApp, ShopifyApp, Protector, AuthorNames, context ?? Context());
 
     /// <summary>Una conexión de Meta ya creada por Embedded Signup: los campos los escribió el backend.</summary>
     public IntegrationConnection SeedWhatsAppCloud(string name = "Ventas")
@@ -287,5 +298,5 @@ internal sealed partial class IntegrationsTestBed
     }
 
     public GetConnectionHandler GetHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, Modules, Protector, AuthorNames, context ?? Context());
+        new(Catalog, Repository, Modules, Providers, Protector, AuthorNames, context ?? Context());
 }

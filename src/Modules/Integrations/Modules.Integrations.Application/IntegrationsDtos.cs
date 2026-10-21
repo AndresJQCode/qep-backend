@@ -5,11 +5,15 @@ namespace Modules.Integrations.Application;
 // Secret) y en camelCase. Las claves de los diccionarios viajan tal cual (fromNumber, apiToken).
 
 /// <summary>Los proveedores visibles para el tenant, completa aunque esté vacía: la pantalla dibuja
-/// «no hay integraciones para tus módulos» sin preguntar nada más.</summary>
+/// «no hay integraciones para tus módulos» sin preguntar nada más. Un proveedor que exige habilitación (plan
+/// 2026-10-21) y no la tiene sólo sale si el tenant todavía tiene conexiones suyas, con
+/// <c>platformEnabled = false</c>; sin conexiones, no aparece.</summary>
 public sealed record IntegrationsCatalogResponse(IReadOnlyList<ProviderResponse> Providers);
 
 /// <summary><c>connectionCount</c> viaja calculado para que la tarjeta muestre «2 de 20» sin pedir la
-/// lista.</summary>
+/// lista. <c>platformEnabled</c> (plan 2026-10-21) viaja calculado por la misma razón: en <c>false</c> la pantalla
+/// agrupa las conexiones que quedaron bajo un proveedor que el operador deshabilitó y no ofrece «Conectar», sin
+/// saber cuáles proveedores exigen habilitación.</summary>
 public sealed record ProviderResponse(
     string Key,
     string DisplayName,
@@ -17,7 +21,8 @@ public sealed record ProviderResponse(
     IReadOnlyList<ProviderFieldResponse> Fields,
     int MaxConnections,
     int ConnectionCount,
-    ProviderOnboardingResponse Onboarding);
+    ProviderOnboardingResponse Onboarding,
+    bool PlatformEnabled);
 
 /// <summary>BFF: la tarjeta del catálogo decide si abre un formulario, el popup de Meta o la ventana de
 /// Instagram sin conocer el proveedor. <c>appId</c> y <c>configId</c> son públicos (viajan en la URL del
@@ -47,6 +52,9 @@ public sealed record ConnectionsResponse(IReadOnlyList<ConnectionResponse> Items
 /// <summary>
 /// <c>fields</c> y <c>secrets</c> llevan <b>todas</b> las claves del proveedor (P21), para que el
 /// formulario no tenga que cruzar con el catálogo para saber qué falta. Nunca un valor de secreto.
+/// <c>providerEnabled</c> (plan 2026-10-21) va en cada conexión, y no sólo en el catálogo, para que la fila
+/// marque «proveedor deshabilitado» y apague editar, probar, pausar y reanudar —que responderían 403— sin cruzar
+/// con el catálogo; borrar sigue disponible.
 /// </summary>
 public sealed record ConnectionResponse(
     Guid Id,
@@ -61,7 +69,8 @@ public sealed record ConnectionResponse(
     DateTimeOffset CreatedAt,
     ConnectionAuthorResponse CreatedBy,
     DateTimeOffset UpdatedAt,
-    long Version);
+    long Version,
+    bool ProviderEnabled);
 
 /// <summary><c>readable</c> descifra de verdad y descarta el valor: si la llave se retiró o los bytes
 /// se dañaron, la pantalla pide pegar la clave otra vez.</summary>

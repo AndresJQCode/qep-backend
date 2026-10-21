@@ -21,7 +21,7 @@ public sealed class ConnectionsApiTests
         await using var database = await StartDatabaseAsync();
         var connectionString = database.GetConnectionString();
         using var factory = new QepApiFactory(connectionString);
-        var tenant = await RegisterTenantAsync(factory);
+        var tenant = await RegisterZenviaTenantAsync(factory, connectionString);
         using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
 
         var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ZenviaBody());
@@ -71,7 +71,7 @@ public sealed class ConnectionsApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var tenant = await RegisterTenantAsync(factory);
+        var tenant = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
         using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
         factory.ZenviaHandler.Status = HttpStatusCode.Unauthorized;
 
@@ -90,7 +90,7 @@ public sealed class ConnectionsApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var tenant = await RegisterTenantAsync(factory);
+        var tenant = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
         using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
         factory.ZenviaHandler.Throw = new TaskCanceledException("timed out", new TimeoutException());
 
@@ -110,7 +110,7 @@ public sealed class ConnectionsApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var tenant = await RegisterTenantAsync(factory);
+        var tenant = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
         using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
 
         var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), new
@@ -143,8 +143,8 @@ public sealed class ConnectionsApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var tenant = await RegisterTenantAsync(factory);
-        var other = await RegisterTenantAsync(factory);
+        var tenant = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
+        var other = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
         using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
         using var otherClient = CreateClient(factory, other.OwnerUserId, other.TenantId, ManagePermissions);
         await CreateConnectionAsync(client, tenant.TenantId, "WhatsApp Norte");
@@ -164,7 +164,7 @@ public sealed class ConnectionsApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var tenant = await RegisterTenantAsync(factory);
+        var tenant = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
         using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
         for (var index = 1; index <= 20; index++)
         {
@@ -183,8 +183,8 @@ public sealed class ConnectionsApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var a = await RegisterTenantAsync(factory);
-        var b = await RegisterTenantAsync(factory);
+        var a = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
+        var b = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
         using var ownerA = CreateClient(factory, a.OwnerUserId, a.TenantId, ManagePermissions);
         using var ownerB = CreateClient(factory, b.OwnerUserId, b.TenantId, ManagePermissions);
         using var readerA = CreateClient(factory, a.OwnerUserId, a.TenantId, ReadPermissions);
@@ -211,7 +211,7 @@ public sealed class ConnectionsApiTests
         await using var database = await StartDatabaseAsync();
         var connectionString = database.GetConnectionString();
         using var factory = new QepApiFactory(connectionString);
-        var tenant = await RegisterTenantAsync(factory);
+        var tenant = await RegisterZenviaTenantAsync(factory, connectionString);
         using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
         var created = await CreateConnectionAsync(client, tenant.TenantId);
 
@@ -245,7 +245,7 @@ public sealed class ConnectionsApiTests
         await using var database = await StartDatabaseAsync();
         var connectionString = database.GetConnectionString();
         using var factory = new QepApiFactory(connectionString);
-        var tenant = await RegisterTenantAsync(factory);
+        var tenant = await RegisterZenviaTenantAsync(factory, connectionString);
         await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
         using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ReadPermissions);
 

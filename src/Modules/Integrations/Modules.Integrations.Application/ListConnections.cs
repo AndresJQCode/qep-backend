@@ -8,12 +8,14 @@ public sealed record ListConnectionsQuery(Guid TenantId) : IQuery<ConnectionsRes
 
 /// <summary>
 /// Spec 2026-10-08, <c>GET /connections</c>: las del tenant cuyo proveedor es visible, por proveedor y
-/// nombre (P20). Los nombres de los autores se piden en una sola llamada.
+/// nombre (P20). Los nombres de los autores se piden en una sola llamada. Plan 2026-10-21: las de un proveedor
+/// deshabilitado siguen saliendo, con <c>providerEnabled = false</c>.
 /// </summary>
 public sealed class ListConnectionsHandler(
     IIntegrationProviderCatalog catalog,
     IIntegrationConnectionRepository repository,
     ITenantModules tenantModules,
+    ITenantProviders tenantProviders,
     IMetaAppSettings metaApp,
     IInstagramAppSettings instagramApp,
     IShopifyAppSettings shopifyApp,
@@ -34,11 +36,16 @@ public sealed class ListConnectionsHandler(
             .ThenBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(connection => connection.Id)
             .ToArray();
+        var enabled = await tenantProviders.FindEnabledAsync(query.TenantId, cancellationToken);
         var names = await authorNames.FindAsync(
             query.TenantId, connections.Select(connection => connection.CreatedBy).Distinct().ToArray(), cancellationToken);
 
         return new ConnectionsResponse(connections
-            .Select(connection => ConnectionMapping.ToResponse(connection, visible[connection.ProviderKey], protector, names))
+            .Select(connection =>
+            {
+                var provider = visible[connection.ProviderKey];
+                return ConnectionMapping.ToResponse(connection, provider, protector, names, provider.IsEnabledFor(enabled));
+            })
             .ToArray());
     }
 }

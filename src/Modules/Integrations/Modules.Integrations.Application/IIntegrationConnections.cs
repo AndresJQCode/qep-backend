@@ -31,15 +31,16 @@ public sealed record ConnectionListing(Guid Id, string Name, ConnectionStatus St
 /// </summary>
 public interface IIntegrationConnections
 {
-    /// <summary>Sólo Active y visible para el tenant. <c>null</c> si no existe, es de otro tenant, está
-    /// Paused o NeedsAttention, o un secreto no descifra (DECISIÓN-PENDIENTE 1): el consumidor decide qué
-    /// hacer con "no hay conexión".</summary>
+    /// <summary>Sólo Active, visible y con el proveedor habilitado para el tenant (plan 2026-10-21). <c>null</c> si no
+    /// existe, es de otro tenant, está Paused o NeedsAttention, su proveedor está deshabilitado, o un secreto no
+    /// descifra (DECISIÓN-PENDIENTE 1): el consumidor decide qué hacer con "no hay conexión".</summary>
     Task<ResolvedConnection?> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
-    /// <summary>Las Active de un proveedor, para que la pantalla del consumidor deje elegir una.</summary>
+    /// <summary>Las Active de un proveedor, para que la pantalla del consumidor deje elegir una; vacío si el proveedor no
+    /// es visible o no está habilitado para el tenant.</summary>
     Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken);
 
-    /// <summary>Todas las del proveedor en el tenant, por nombre; no filtra por estado ni por visibilidad.</summary>
+    /// <summary>Todas las del proveedor en el tenant, por nombre; no filtra por estado, visibilidad ni habilitación.</summary>
     Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken);
 }
 
@@ -47,6 +48,7 @@ public sealed class IntegrationConnections(
     IIntegrationConnectionRepository repository,
     IIntegrationProviderCatalog catalog,
     ITenantModules tenantModules,
+    ITenantProviders tenantProviders,
     ISecretProtector protector) : IIntegrationConnections
 {
     public async Task<ResolvedConnection?> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
@@ -54,7 +56,8 @@ public sealed class IntegrationConnections(
         var connection = await repository.FindAsync(tenantId, connectionId, cancellationToken);
         if (connection is not { Status: ConnectionStatus.Active }
             || catalog.Find(connection.ProviderKey) is not { } provider
-            || !provider.IsVisibleFor(await tenantModules.FindAsync(tenantId, cancellationToken)))
+            || !provider.IsVisibleFor(await tenantModules.FindAsync(tenantId, cancellationToken))
+            || !await ProviderVisibility.IsEnabledAsync(tenantProviders, tenantId, provider, cancellationToken))
         {
             return null;
         }
@@ -77,7 +80,8 @@ public sealed class IntegrationConnections(
         Guid tenantId, string providerKey, CancellationToken cancellationToken)
     {
         if (catalog.Find(providerKey) is not { } provider
-            || !provider.IsVisibleFor(await tenantModules.FindAsync(tenantId, cancellationToken)))
+            || !provider.IsVisibleFor(await tenantModules.FindAsync(tenantId, cancellationToken))
+            || !await ProviderVisibility.IsEnabledAsync(tenantProviders, tenantId, provider, cancellationToken))
         {
             return [];
         }
