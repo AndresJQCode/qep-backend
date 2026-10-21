@@ -509,7 +509,9 @@ estrategia de esta versión se decide en el despliegue.
 orden: Pos → Quotations → Catalog**. Después se despliega la imagen anterior de backend y frontend.
 
 ```powershell
-$env:ConnectionStrings__QepDatabase = Read-Host "Cadena de conexión de producción"
+$cadena = Read-Host "Cadena de conexión de producción" -AsSecureString
+$env:ConnectionStrings__QepDatabase = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+  [Runtime.InteropServices.Marshal]::SecureStringToBSTR($cadena))
 dotnet ef database update AddPosCurrency --project src/Modules/Pos/Modules.Pos.Infrastructure --context PosDbContext
 dotnet ef database update AddOrderExternalKey --project src/Modules/Quotations/Modules.Quotations.Infrastructure --context QuotationsDbContext
 dotnet ef database update AddProductPrices --project src/Modules/Catalog/Modules.Catalog.Infrastructure --context CatalogDbContext
