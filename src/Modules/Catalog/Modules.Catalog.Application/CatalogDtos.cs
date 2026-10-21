@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Modules.Catalog.Application;
 
 // Variantes, Tarea 5 (spec 2026-10-20 §6). El detalle es lo que el formulario dibuja y lo que
@@ -116,6 +118,13 @@ public sealed record ProductGalleryImageResponse(Guid Id, Guid FileId, string? U
 /// <param name="PriceRange">Por moneda, el menor y el mayor precio entre las variantes
 /// **activas**, en orden de catálogo: con 2.048 variantes posibles, sumar o recorrer del lado del
 /// cliente no es opción. Una sola variante da Min = Max.</param>
+/// <param name="Variants">Sólo con <c>includeVariants=true</c> (el selector de productos de
+/// cotizaciones y pedidos, spec §6); sin el parámetro no viaja, ni siquiera como null, y la grilla
+/// del catálogo no paga el costo. Son las variantes **vendibles** del producto —activas, de un
+/// producto activo— en el orden de presentación; un producto dado de baja trae la lista vacía.
+/// Es BFF a propósito: el selector tiene que agregar una línea (variante, código, escalas y
+/// empaques para la cantidad inicial) sin pedir el detalle de cada producto, y antes de las
+/// variantes todo eso venía en el propio ítem del listado.</param>
 public sealed record ProductListItemDto(
     Guid Id,
     string Name,
@@ -129,9 +138,37 @@ public sealed record ProductListItemDto(
     IReadOnlyDictionary<string, PriceRangeResponse> PriceRange,
     long Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<ProductSellableVariantDto>? Variants = null);
 
 public sealed record PriceRangeResponse(decimal Min, decimal Max);
+
+/// <summary>
+/// Una variante vendible en el selector de productos (<see cref="ProductListItemDto.Variants"/>).
+/// Es lo que el detalle trae de una variante (<see cref="ProductVariantResponse"/>), sin lo que sólo
+/// sirve al formulario de edición: ni <c>CanDelete</c> (exigiría la consulta de uso de cada una) ni
+/// los ids de galería ni <c>IsActive</c> (todas lo son) ni <c>OptionValueIds</c> (el nombre ya
+/// viene armado).
+/// </summary>
+/// <param name="Name">El nombre visible ya armado (spec §3.4), el mismo que guarda la línea: el
+/// selector no concatena producto y valores.</param>
+/// <param name="Prices">En orden de catálogo, como el detalle.</param>
+/// <param name="PriceScales">Ordenadas por <c>FromUnit</c>, con la misma forma que el detalle y que
+/// el antiguo <c>priceScales</c> del producto: <c>quotePriceScalesOf</c> las lee tal cual.</param>
+/// <param name="PackagingUnits">Viajan siempre, vacíos incluidos: una escala
+/// <c>packaging_unit</c> se explica con los empaques de **esta** variante.</param>
+/// <param name="ImageUrl">La foto de la variante o, sin ella, la principal del producto; null si
+/// el archivo no está publicado o no es del tenant.</param>
+public sealed record ProductSellableVariantDto(
+    Guid Id,
+    string Name,
+    string Code,
+    string? Barcode,
+    IReadOnlyDictionary<string, decimal> Prices,
+    IReadOnlyCollection<PriceScaleResponse> PriceScales,
+    IReadOnlyList<int> PackagingUnits,
+    string? ImageUrl);
 
 /// <summary>
 /// Precio y escalas de un producto (CAT-09), tal como los manda el cliente.

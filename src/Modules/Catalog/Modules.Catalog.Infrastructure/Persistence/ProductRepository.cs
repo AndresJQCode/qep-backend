@@ -218,6 +218,123 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         return (items, total);
     }
 
+    // Variantes, Tarea 14b: el selector de cotizaciones y pedidos pide las variantes vendibles de
+    // la página de productos. Peor caso: 50 productos x 2.048 variantes (el listado con variantes
+    // topa la página en 50, ver ProductPaging) = 102.400 filas de variante, otras tantas por
+    // moneda en precios y las escalas de cada una. Por eso no se carga el agregado ni se anida: cada
+    // consulta es plana, filtrada por tenant y por productos de la página, y se junta en memoria.
+    // Un Include/Select anidado sería una sola consulta, pero multiplicaría filas (variante x
+    // precio x escala) en el JOIN.
+    public async Task<IReadOnlyList<SellableVariantSummary>> ListActiveVariantsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ProductId> productIds,
+        CancellationToken cancellationToken)
+    {
+        if (productIds.Count == 0)
+        {
+            return [];
+        }
+
+        var ids = productIds.ToArray();
+        var variants = dbContext.ProductVariants
+            .AsNoTracking()
+            .Where(variant => variant.TenantId == tenantId
+                && variant.IsActive
+                && ids.Contains(variant.ProductId));
+
+        // Los valores se leen por la colección owned `_optionValues` (por nombre, porque la
+        // propiedad pública es calculada y EF no la traduce): ver PriceChangeReportSource.
+        var rows = await variants
+            .Select(variant => new
+            {
+                variant.Id,
+                variant.ProductId,
+                variant.Code,
+                variant.Barcode,
+                variant.Position,
+                variant.GalleryImageId,
+                variant.PackagingUnits,
+                ValueIds = EF.Property<IEnumerable<ProductVariantOptionValue>>(variant, "_optionValues")
+                    .OrderBy(value => value.Position)
+                    .Select(value => value.OptionValueId)
+                    .ToList()
+            })
+            .ToListAsync(cancellationToken);
+        if (rows.Count == 0)
+        {
+            return [];
+        }
+
+        var prices = (await variants
+            .SelectMany(variant => variant.Prices, (variant, price) => new
+            {
+                VariantId = variant.Id,
+                price.Currency,
+                price.Amount
+            })
+            .ToListAsync(cancellationToken))
+            .ToLookup(price => price.VariantId);
+
+        var scales = (await (
+                from scale in dbContext.PriceScales.AsNoTracking()
+                join variant in variants on scale.VariantId equals variant.Id
+                select new
+                {
+                    scale.VariantId,
+                    scale.Id,
+                    scale.FromUnit,
+                    scale.ToUnit,
+                    scale.Discount,
+                    scale.Restriction,
+                    scale.Multiple,
+                    scale.AllowGrouping
+                })
+            .ToListAsync(cancellationToken))
+            .ToLookup(scale => scale.VariantId);
+
+        // La foto propia: sólo se consulta la galería si alguna variante eligió una.
+        var galleryImageIds = rows
+            .Where(row => row.GalleryImageId.HasValue)
+            .Select(row => row.GalleryImageId!.Value)
+            .Distinct()
+            .ToArray();
+        var galleryFiles = galleryImageIds.Length == 0
+            ? new Dictionary<Guid, Guid>()
+            : await dbContext.Products
+                .AsNoTracking()
+                .Where(product => product.TenantId == tenantId && ids.Contains(product.Id))
+                .SelectMany(product => product.Gallery)
+                .Where(image => galleryImageIds.Contains(image.Id))
+                .ToDictionaryAsync(image => image.Id, image => image.FileId, cancellationToken);
+
+        return rows
+            .OrderBy(row => row.ProductId.Value)
+            .ThenBy(row => row.Position)
+            .Select(row => new SellableVariantSummary(
+                row.ProductId,
+                row.Id,
+                row.Code,
+                row.Barcode,
+                row.Position,
+                row.ValueIds,
+                prices[row.Id].ToDictionary(price => price.Currency, price => price.Amount),
+                scales[row.Id]
+                    .Select(scale => new SellableVariantScale(
+                        scale.Id.Value,
+                        scale.FromUnit,
+                        scale.ToUnit,
+                        scale.Discount,
+                        scale.Restriction,
+                        scale.Multiple,
+                        scale.AllowGrouping))
+                    .ToArray(),
+                row.PackagingUnits,
+                row.GalleryImageId is { } imageId && galleryFiles.TryGetValue(imageId, out var fileId)
+                    ? fileId
+                    : null))
+            .ToArray();
+    }
+
     // El filtro y el orden del listado, compartidos por el que trae el agregado (POS) y el que
     // proyecta la fila (listado de productos): que los dos ordenen y cuenten igual es lo que hace
     // que una misma búsqueda dé la misma página en las dos pantallas.

@@ -105,4 +105,109 @@ public sealed class ProductMappingTests
             new Dictionary<string, decimal> { ["COP"] = 18_000m },
             Assert.Single(Assert.Single(copOnly.ToDto(ProductReadLookups.Empty(TenantId)).Variants).PriceScales).Finals);
     }
+
+    private static SellableVariantSummary Sellable(
+        Guid? galleryFileId = null,
+        IReadOnlyList<Guid>? valueIds = null) =>
+        new(
+            new ProductId(Guid.CreateVersion7()),
+            new VariantId(Guid.CreateVersion7()),
+            "CAM-M",
+            "7700000000011",
+            0,
+            valueIds ?? [],
+            // USD primero a propósito: el orden de catálogo es COP, USD.
+            new Dictionary<string, decimal> { ["USD"] = 100m, ["COP"] = 400_000m },
+            [
+                new SellableVariantScale(Guid.CreateVersion7(), 10, 19, 20m, PriceScaleRestriction.PackagingUnit, null, false),
+                new SellableVariantScale(Guid.CreateVersion7(), 1, 9, 10m, PriceScaleRestriction.Multiple, 3, true),
+            ],
+            [6, 12],
+            galleryFileId);
+
+    // Tarea 14b: el selector del listado arma lo mismo que el detalle desde la lectura proyectada:
+    // nombre visible con los valores, precios en orden de catálogo, escalas por FromUnit con sus
+    // finales y el texto de la restricción.
+    [Fact]
+    public void SellableVariantMapsNameAndScalesLikeTheDetail()
+    {
+        var medium = Guid.CreateVersion7();
+        var variant = Sellable(valueIds: [medium]);
+
+        var dto = variant.ToSellableDto(
+            "Camiseta",
+            new Dictionary<Guid, string> { [medium] = "M" },
+            mainImageUrl: null,
+            ProductReadLookups.Empty(TenantId));
+
+        Assert.Equal(variant.Id.Value, dto.Id);
+        Assert.Equal("Camiseta – M", dto.Name);
+        Assert.Equal("CAM-M", dto.Code);
+        Assert.Equal("7700000000011", dto.Barcode);
+        Assert.Equal(["COP", "USD"], dto.Prices.Keys);
+        Assert.Equal([6, 12], dto.PackagingUnits);
+        Assert.Equal([1, 10], dto.PriceScales.Select(scale => scale.FromUnit));
+        var multiple = dto.PriceScales.First();
+        Assert.Equal("multiple", multiple.Restriction);
+        Assert.Equal(3, multiple.Multiple);
+        Assert.True(multiple.AllowGrouping);
+        Assert.Equal(new Dictionary<string, decimal> { ["COP"] = 360_000m, ["USD"] = 90m }, multiple.Finals);
+        Assert.Equal("packaging_unit", dto.PriceScales.Last().Restriction);
+        Assert.Null(dto.PriceScales.Last().Multiple);
+    }
+
+    // Sin foto propia, la principal del producto; con ella, la suya. Una foto propia que no se pudo
+    // resolver no cae a la principal (mismo criterio que el detalle).
+    [Fact]
+    public void SellableVariantImageIsItsOwnPhotoOrTheMainOne()
+    {
+        var fileId = Guid.CreateVersion7();
+        var lookups = ProductReadLookups.Empty(TenantId) with
+        {
+            Images = new Dictionary<Guid, ProductImageRef>
+            {
+                [fileId] = new(fileId, TenantId, "image/png", true, "https://cdn.qep.test/own.png")
+            }
+        };
+        var names = new Dictionary<Guid, string>();
+
+        Assert.Equal(
+            "https://cdn.qep.test/own.png",
+            Sellable(galleryFileId: fileId).ToSellableDto("Camiseta", names, "https://cdn.qep.test/main.png", lookups).ImageUrl);
+        Assert.Equal(
+            "https://cdn.qep.test/main.png",
+            Sellable().ToSellableDto("Camiseta", names, "https://cdn.qep.test/main.png", lookups).ImageUrl);
+        Assert.Null(
+            Sellable(galleryFileId: Guid.CreateVersion7())
+                .ToSellableDto("Camiseta", names, "https://cdn.qep.test/main.png", lookups).ImageUrl);
+    }
+
+    // Un valor sin nombre (la opción ya no está en la biblioteca) no rompe el selector: el nombre
+    // queda corto, como en el detalle.
+    [Fact]
+    public void SellableVariantOmitsAValueWithoutName()
+    {
+        var known = Guid.CreateVersion7();
+        var variant = Sellable(valueIds: [known, Guid.CreateVersion7()]);
+
+        var dto = variant.ToSellableDto(
+            "Camiseta",
+            new Dictionary<Guid, string> { [known] = "M" },
+            mainImageUrl: null,
+            ProductReadLookups.Empty(TenantId));
+
+        Assert.Equal("Camiseta – M", dto.Name);
+    }
+
+    // El listado con variantes topa la página en 50 (peor caso 102.400 variantes); sin ellas, el
+    // tope sigue en 200. Lo topado es la página, no el pedido: la respuesta trae el pageSize aplicado.
+    [Fact]
+    public void PageSizeWithVariantsIsCappedAtFifty()
+    {
+        Assert.Equal(50, ProductPaging.NormalizePageSize(200, includeVariants: true));
+        Assert.Equal(40, ProductPaging.NormalizePageSize(40, includeVariants: true));
+        Assert.Equal(50, ProductPaging.NormalizePageSize(0, includeVariants: true));
+        Assert.Equal(200, ProductPaging.NormalizePageSize(500));
+        Assert.Equal(200, ProductPaging.NormalizePageSize(200));
+    }
 }

@@ -13,6 +13,11 @@ namespace Modules.Catalog.Application;
 /// criterio que <c>ListCustomersQuery</c> con el combobox de clientes. Las cajas <c>Name</c> y
 /// <c>Code</c> no miran el código de barras.
 ///
+/// <c>IncludeVariants</c> (Tarea 14b, spec §6) agrega a cada ítem sus variantes vendibles para el
+/// selector de productos de cotizaciones y pedidos, que así elige y agrega la línea sin otra
+/// llamada. Es opt-in: la grilla del catálogo no necesita las variantes y no paga su costo. Con
+/// el parámetro, la página se topa en <see cref="ProductPaging.MaxPageSizeWithVariants"/>.
+///
 /// <c>IsActive</c> es un filtro real contra la base — antes el `Select` de estado del listado
 /// filtraba en el cliente, sobre el catálogo entero ya traído, algo que dejó de alcanzar en
 /// cuanto el listado empezó a paginar server-side.
@@ -24,7 +29,8 @@ public sealed record ListProductsQuery(
     string? Code,
     bool? IsActive,
     int Page,
-    int PageSize) : IQuery<ProductPage>;
+    int PageSize,
+    bool IncludeVariants = false) : IQuery<ProductPage>;
 
 /// <summary>Una página de productos con el total que la UI necesita para paginar.</summary>
 public sealed record ProductPage(
@@ -41,19 +47,33 @@ public static class ProductPaging
 
     public const int MaxPageSize = 200;
 
+    /// <summary>
+    /// El tope cuando el listado trae las variantes. Un producto puede tener 2.048 variantes, cada
+    /// una con sus precios y escalas: 200 productos serían más de 400.000 variantes en una
+    /// respuesta. Con 50 el peor caso es 102.400, y el selector pide 40 (<c>QUOTE_PRODUCT_PAGE_SIZE</c>
+    /// en el frontend). Lo que se topa es la página, no el pedido: la respuesta trae el
+    /// <c>pageSize</c> aplicado.
+    /// </summary>
+    public const int MaxPageSizeWithVariants = 50;
+
     public static int NormalizePage(int page) => page < 1 ? 1 : page;
 
-    public static int NormalizePageSize(int pageSize) => pageSize switch
+    public static int NormalizePageSize(int pageSize, bool includeVariants = false)
     {
-        < 1 => DefaultPageSize,
-        > MaxPageSize => MaxPageSize,
-        _ => pageSize
-    };
+        var max = includeVariants ? MaxPageSizeWithVariants : MaxPageSize;
+        return pageSize switch
+        {
+            < 1 => DefaultPageSize,
+            _ when pageSize > max => max,
+            _ => pageSize
+        };
+    }
 }
 
 public sealed class ListProductsHandler(
     IProductRepository repository,
     IProductImageLookup imageLookup,
+    IOptionDefinitionRepository optionRepository,
     IExecutionContext executionContext)
     : IQueryHandler<ListProductsQuery, ProductPage>
 {
@@ -65,7 +85,7 @@ public sealed class ListProductsHandler(
             executionContext, query.TenantId, CatalogPermissions.ProductRead);
 
         var page = ProductPaging.NormalizePage(query.Page);
-        var pageSize = ProductPaging.NormalizePageSize(query.PageSize);
+        var pageSize = ProductPaging.NormalizePageSize(query.PageSize, query.IncludeVariants);
 
         var (products, total) = await repository.SearchSummariesAsync(
             query.TenantId,
@@ -77,10 +97,24 @@ public sealed class ListProductsHandler(
             pageSize,
             cancellationToken);
 
-        // Las URLs se resuelven en una sola consulta para toda la página, y se vuelve a comparar el
-        // tenant de cada archivo: ver ProductMapping.ToDtosAsync.
+        // Las variantes vendibles de los productos activos de la página, en una lectura proyectada
+        // (ver IProductRepository.ListActiveVariantsAsync). Un producto dado de baja no se vende,
+        // así que ni se consulta: trae la lista vacía.
+        var variantsByProduct = query.IncludeVariants
+            ? (await repository.ListActiveVariantsAsync(
+                    query.TenantId,
+                    products.Where(product => product.IsActive).Select(product => product.Id).ToArray(),
+                    cancellationToken))
+                .GroupBy(variant => variant.ProductId)
+                .ToDictionary(group => group.Key, group => group.ToArray())
+            : null;
+
+        // Las URLs se resuelven en una sola consulta para toda la página —las principales y las
+        // fotos propias de las variantes—, y se vuelve a comparar el tenant de cada archivo: ver
+        // ProductMapping.ToDtosAsync.
         var imageIds = products
             .Select(product => product.ImageFileId)
+            .Concat(variantsByProduct?.Values.SelectMany(group => group).Select(variant => variant.GalleryFileId) ?? [])
             .OfType<Guid>()
             .Distinct()
             .ToArray();
@@ -88,6 +122,12 @@ public sealed class ListProductsHandler(
             ? new Dictionary<Guid, ProductImageRef>()
             : await imageLookup.FindManyAsync(imageIds, cancellationToken);
         var lookups = ProductReadLookups.Empty(query.TenantId) with { Images = images };
+
+        // Los nombres de los valores de opción sólo se piden si alguna variante tiene valores.
+        var valueNames = variantsByProduct is not null
+            && variantsByProduct.Values.Any(group => group.Any(variant => variant.OptionValueIds.Count > 0))
+            ? await ProductMapping.LoadValueNamesAsync(optionRepository, query.TenantId, cancellationToken)
+            : new Dictionary<Guid, string>();
 
         var items = products
             .Select(product => new ProductListItemDto(
@@ -106,7 +146,13 @@ public sealed class ListProductsHandler(
                     .ToDictionary(range => range.Currency, range => new PriceRangeResponse(range.Min, range.Max)),
                 product.Version,
                 product.CreatedAt,
-                product.UpdatedAt))
+                product.UpdatedAt,
+                variantsByProduct is null
+                    ? null
+                    : variantsByProduct.GetValueOrDefault(product.Id, [])
+                        .Select(variant => variant.ToSellableDto(
+                            product.Name, valueNames, lookups.UrlOf(product.ImageFileId), lookups))
+                        .ToArray()))
             .ToArray();
 
         return new ProductPage(items, total, page, pageSize);

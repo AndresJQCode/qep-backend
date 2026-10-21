@@ -65,6 +65,10 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
         Guid tenantId, IReadOnlyCollection<string> barcodes, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task<IReadOnlyList<SellableVariantSummary>> ListActiveVariantsAsync(
+        Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<(IReadOnlyList<ProductSummary> Items, int Total)> SearchSummariesAsync(
         Guid tenantId,
         string? search,

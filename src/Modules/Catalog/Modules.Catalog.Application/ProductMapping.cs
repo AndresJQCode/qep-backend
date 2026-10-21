@@ -190,9 +190,7 @@ internal static class ProductMapping
 
         return new ProductVariantResponse(
             variant.Id.Value,
-            VariantDisplayName.For(
-                product.Name,
-                variant.OptionValueIds.Where(valueNames.ContainsKey).Select(id => valueNames[id]).ToArray()),
+            DisplayNameOf(product.Name, variant.OptionValueIds, valueNames),
             variant.Code,
             variant.Barcode,
             variant.OptionValueIds,
@@ -215,16 +213,92 @@ internal static class ProductMapping
     // Catalogue order (spec D10), not insertion order: the form and the product table paint one
     // column per currency in that order.
     private static Dictionary<string, decimal> PricesOf(ProductVariant variant) =>
-        variant.Prices
-            .OrderBy(price => Currencies.OrderOf(price.Currency))
-            .ToDictionary(price => price.Currency, price => price.Amount);
+        InCatalogueOrder(variant.Prices.Select(price => KeyValuePair.Create(price.Currency, price.Amount)));
 
-    private static PriceScaleResponse ToResponse(PriceScale scale, ProductVariant variant) => new(
+    private static Dictionary<string, decimal> InCatalogueOrder(IEnumerable<KeyValuePair<string, decimal>> prices) =>
+        prices
+            .OrderBy(price => Currencies.OrderOf(price.Key))
+            .ToDictionary(price => price.Key, price => price.Value);
+
+    private static PriceScaleResponse ToResponse(PriceScale scale, ProductVariant variant) => ToResponse(
         scale.Id.Value, scale.FromUnit, scale.ToUnit, scale.Discount,
-        scale.Restriction?.ToWireValue(), scale.Multiple,
-        scale.AllowGrouping,
-        // Derived, never stored (spec D4): one final per currency the variant has.
-        variant.Prices
-            .OrderBy(price => Currencies.OrderOf(price.Currency))
-            .ToDictionary(price => price.Currency, price => PriceScale.FinalFor(price.Amount, scale.Discount)!.Value));
+        scale.Restriction, scale.Multiple, scale.AllowGrouping,
+        PricesOf(variant));
+
+    // Derived, never stored (spec D4): one final per currency the variant has. `prices` ya viene en
+    // orden de catálogo.
+    private static PriceScaleResponse ToResponse(
+        Guid id,
+        int fromUnit,
+        int toUnit,
+        decimal discount,
+        PriceScaleRestriction? restriction,
+        int? multiple,
+        bool allowGrouping,
+        Dictionary<string, decimal> prices) => new(
+        id, fromUnit, toUnit, discount,
+        restriction?.ToWireValue(), multiple,
+        allowGrouping,
+        prices.ToDictionary(price => price.Key, price => PriceScale.FinalFor(price.Value, discount)!.Value));
+
+    /// <summary>
+    /// El nombre visible (spec §3.4) de una variante a partir de los ids de sus valores. Un valor
+    /// sin nombre (una opción que la lectura no encontró) se omite: el nombre queda corto, no se
+    /// rompe la pantalla. Lo comparten el detalle y el selector del listado.
+    /// </summary>
+    public static string DisplayNameOf(
+        string productName,
+        IEnumerable<Guid> optionValueIds,
+        IReadOnlyDictionary<Guid, string> valueNames) =>
+        VariantDisplayName.For(
+            productName,
+            optionValueIds.Where(valueNames.ContainsKey).Select(id => valueNames[id]).ToArray());
+
+    /// <summary>
+    /// Valor de opción → texto de **toda** la biblioteca del tenant, en una consulta. Para quien lee
+    /// variantes sin haber cargado sus productos y por eso no sabe qué opciones usan: la biblioteca
+    /// de un tenant son pocas opciones, así que pedirla entera cuesta menos que descubrir cuáles
+    /// hacen falta. Mismo criterio que <c>CatalogVariantReads</c> en Bootstrapper, que Catalog no
+    /// puede referenciar.
+    /// </summary>
+    public static async Task<IReadOnlyDictionary<Guid, string>> LoadValueNamesAsync(
+        IOptionDefinitionRepository optionRepository,
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        var library = await optionRepository.ListAsync(tenantId, cancellationToken);
+        return library
+            .SelectMany(option => option.Values)
+            .ToDictionary(value => value.Id, value => value.Value);
+    }
+
+    /// <summary>
+    /// La variante del selector (<see cref="ProductListItemDto.Variants"/>) desde su lectura
+    /// proyectada. La foto es la propia o, sin ella, la principal del producto, igual que en el
+    /// detalle; las escalas y los precios salen en el mismo orden y con los mismos finales.
+    /// </summary>
+    public static ProductSellableVariantDto ToSellableDto(
+        this SellableVariantSummary variant,
+        string productName,
+        IReadOnlyDictionary<Guid, string> valueNames,
+        string? mainImageUrl,
+        ProductReadLookups lookups)
+    {
+        var prices = InCatalogueOrder(variant.Prices);
+
+        return new ProductSellableVariantDto(
+            variant.Id.Value,
+            DisplayNameOf(productName, variant.OptionValueIds, valueNames),
+            variant.Code,
+            variant.Barcode,
+            prices,
+            variant.Scales
+                .OrderBy(scale => scale.FromUnit)
+                .Select(scale => ToResponse(
+                    scale.Id, scale.FromUnit, scale.ToUnit, scale.Discount,
+                    scale.Restriction, scale.Multiple, scale.AllowGrouping, prices))
+                .ToArray(),
+            variant.PackagingUnits.ToArray(),
+            variant.GalleryFileId is { } fileId ? lookups.UrlOf(fileId) : mainImageUrl);
+    }
 }

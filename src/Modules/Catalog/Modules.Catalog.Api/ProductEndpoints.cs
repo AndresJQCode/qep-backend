@@ -122,10 +122,11 @@ public static class ProductEndpoints
         string? code = null,
         bool? isActive = null,
         int page = 1,
-        int pageSize = ProductPaging.DefaultPageSize)
+        int pageSize = ProductPaging.DefaultPageSize,
+        bool includeVariants = false)
     {
         var result = await dispatcher.QueryAsync(
-            new ListProductsQuery(tenantId, search, name, code, isActive, page, pageSize),
+            new ListProductsQuery(tenantId, search, name, code, isActive, page, pageSize, includeVariants),
             cancellationToken);
 
         return Results.Ok(new ProductsResponse(

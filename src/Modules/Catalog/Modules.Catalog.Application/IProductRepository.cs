@@ -38,6 +38,20 @@ public interface IProductRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Las variantes **activas** de esos productos con lo que el selector de cotizaciones y pedidos
+    /// necesita para agregar una línea (código, precios, escalas, empaques y la foto propia), en
+    /// orden de producto y de <see cref="ProductVariant.Position"/>. Proyecta en la base sin cargar
+    /// el agregado: una consulta de variantes, una de precios, una de escalas y, sólo si alguna
+    /// variante tiene foto propia, una de galería; con 2.048 variantes por producto, el agregado
+    /// de una página entera serían cientos de miles de objetos para pintar una lista. El producto
+    /// activo lo decide quien llama, que ya tiene la fila.
+    /// </summary>
+    Task<IReadOnlyList<SellableVariantSummary>> ListActiveVariantsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ProductId> productIds,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Todos los productos que coinciden con el filtro, sin paginar y con sus variantes y las
     /// escalas de cada una (sin la galería: el Excel no la pinta) — para la
     /// exportacion, que saca el catalogo completo que el filtro deja a la vista y no la pagina
@@ -178,3 +192,29 @@ public sealed record ProductSummary(
     DateTimeOffset UpdatedAt);
 
 public sealed record ProductPriceRange(string Currency, decimal Min, decimal Max);
+
+/// <summary>Una variante activa como la lee el selector (<see cref="IProductRepository.ListActiveVariantsAsync"/>).</summary>
+/// <param name="OptionValueIds">En el orden de las opciones del producto; vacío en la por defecto.</param>
+/// <param name="Prices">Moneda → monto, sin orden garantizado: el mapeo los pone en orden de catálogo.</param>
+/// <param name="Scales">Sin orden garantizado: el mapeo las ordena por <c>FromUnit</c>.</param>
+/// <param name="GalleryFileId">El archivo de la foto propia de la variante; null si usa la principal.</param>
+public sealed record SellableVariantSummary(
+    ProductId ProductId,
+    VariantId Id,
+    string Code,
+    string? Barcode,
+    int Position,
+    IReadOnlyList<Guid> OptionValueIds,
+    IReadOnlyDictionary<string, decimal> Prices,
+    IReadOnlyList<SellableVariantScale> Scales,
+    IReadOnlyList<int> PackagingUnits,
+    Guid? GalleryFileId);
+
+public sealed record SellableVariantScale(
+    Guid Id,
+    int FromUnit,
+    int ToUnit,
+    decimal Discount,
+    PriceScaleRestriction? Restriction,
+    int? Multiple,
+    bool AllowGrouping);
