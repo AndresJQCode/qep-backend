@@ -9,6 +9,12 @@ namespace Modules.Catalog.Application;
 /// Exporta el catalogo del tenant a un Excel, lo deja en el almacenamiento de objetos y encola el
 /// correo con el enlace de descarga. Gemelo de <c>ExportCustomersCommand</c>, con el mismo flujo.
 ///
+/// Una fila por **variante** (spec 2026-10-20 §7), agrupadas por producto y en el orden de la
+/// variante (`Position`). Se exportan tambien las variantes inactivas, marcadas "Inactivo": el
+/// Excel es una foto del catalogo, no del surtido vendible, y el filtro `IsActive` ya es el que
+/// decide si se ven los productos inactivos. La fila "Activo" es la que se puede vender: el
+/// producto y la variante estan activos.
+///
 /// Los filtros son los mismos que <see cref="ListProductsQuery"/> a proposito: se exporta lo que se
 /// esta viendo en la grilla. Sin ninguno, se exporta el catalogo entero. <c>Search</c> queda afuera:
 /// ese criterio existe para el combobox de cotizaciones, no para el listado desde donde se exporta.
@@ -20,7 +26,8 @@ public sealed record ExportProductsCommand(
     bool? IsActive) : ICommand<ExportProductsResult>;
 
 /// <summary>
-/// Lo que el request devuelve. **No lleva el enlace**: el contrato de esta operacion es que el
+/// Lo que el request devuelve. `ProductCount` cuenta **productos**, no filas: es lo que el correo
+/// dice ("N productos") y lo que el filtro dejo a la vista. **No lleva el enlace**: el contrato de esta operacion es que el
 /// archivo llega por correo, y devolverlo tambien aca duplicaria el canal de entrega — el frontend
 /// tomaria el atajo y el camino del correo quedaria sin ejercitar hasta que fallara en produccion.
 /// </summary>
@@ -32,6 +39,7 @@ public sealed record ExportProductsResult(
 public sealed class ExportProductsHandler(
     IProductRepository repository,
     ITaxRateRepository taxRateRepository,
+    IOptionDefinitionRepository optionRepository,
     IProductExportWorkbookBuilder exportBuilder,
     IProductExportStorage exportStorage,
     IProductExportEventPublisher exportEventPublisher,
@@ -49,9 +57,10 @@ public sealed class ExportProductsHandler(
     private const int BatchSize = 500;
 
     /// <summary>
-    /// Tope duro de filas. El workbook se arma completo en memoria antes de subirse, asi que sin
-    /// limite un tenant grande tumba el proceso en vez de devolver un error. Cuando alguien lo
-    /// alcance, la respuesta correcta no es subirlo sino acotar la exportacion con los filtros.
+    /// Tope duro de filas, que son **variantes** (un producto puede tener 2.048). El workbook se
+    /// arma completo en memoria antes de subirse, asi que sin limite un tenant grande tumba el
+    /// proceso en vez de devolver un error. Cuando alguien lo alcance, la respuesta correcta no es
+    /// subirlo sino acotar la exportacion con los filtros.
     /// </summary>
     private const int MaxExportRows = 20_000;
 
@@ -80,7 +89,13 @@ public sealed class ExportProductsHandler(
         var taxRates = await taxRateRepository.ListAsync(command.TenantId, cancellationToken);
         var taxRateNames = taxRates.ToDictionary(rate => rate.Id, rate => rate.Name);
 
-        var rows = products.Select(product => ToRow(product, taxRateNames)).ToList();
+        // Los nombres de los valores de opcion, tambien de una vez para todo el lote: el nombre
+        // visible de una variante sale de la biblioteca, no del agregado.
+        var valueNames = await LoadValueNamesAsync(products, command.TenantId, cancellationToken);
+
+        var rows = products
+            .SelectMany(product => ToRows(product, taxRateNames, valueNames))
+            .ToList();
         var fileName = FileNameFor(calendar.ToLocal(occurredAt));
 
         // Only the currencies in use (spec D10): a column for a currency nobody prices in is noise.
@@ -99,7 +114,7 @@ public sealed class ExportProductsHandler(
             executionContext.SubjectId,
             upload.DownloadUrl,
             fileName,
-            rows.Count,
+            products.Count,
             upload.ExpiresAt,
             occurredAt);
 
@@ -108,12 +123,12 @@ public sealed class ExportProductsHandler(
             executionContext.SubjectId,
             "catalog.product.exported",
             fileName,
-            $"success:{rows.Count}",
+            $"success:{products.Count}",
             occurredAt);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return new ExportProductsResult(fileName, rows.Count, upload.ExpiresAt);
+        return new ExportProductsResult(fileName, products.Count, upload.ExpiresAt);
     }
 
     // Por lotes y no de una: SearchAsync pagina con un tope que existe para proteger la respuesta
@@ -123,6 +138,7 @@ public sealed class ExportProductsHandler(
         CancellationToken cancellationToken)
     {
         var all = new List<Product>();
+        var rowCount = 0;
         while (true)
         {
             var batch = await repository.ListForExportAsync(
@@ -135,12 +151,13 @@ public sealed class ExportProductsHandler(
                 cancellationToken);
 
             all.AddRange(batch);
+            rowCount += batch.Sum(product => product.Variants.Count);
 
-            if (all.Count > MaxExportRows)
+            if (rowCount > MaxExportRows)
             {
                 throw new CatalogDomainException(
                     "catalog.export.too_many_rows",
-                    $"The export cannot exceed {MaxExportRows} products. Narrow it with filters.");
+                    $"The export cannot exceed {MaxExportRows} rows (one per variant). Narrow it with filters.");
             }
 
             if (batch.Count < BatchSize)
@@ -150,18 +167,57 @@ public sealed class ExportProductsHandler(
         }
     }
 
-    private static ProductExportRow ToRow(
-        Product product, IReadOnlyDictionary<TaxRateId, string> taxRateNames) =>
-        new(
-            product.Code,
+    /// <summary>Valor de opcion -> nombre, de las opciones de todos los productos del lote, en una
+    /// sola consulta (ninguna si ninguno tiene opciones). Mismo criterio que el detalle: un valor
+    /// cuya opcion ya no esta en la biblioteca no rompe la exportacion, el nombre visible lo omite.</summary>
+    private async Task<IReadOnlyDictionary<Guid, string>> LoadValueNamesAsync(
+        IReadOnlyList<Product> products, Guid tenantId, CancellationToken cancellationToken)
+    {
+        var optionIds = products
+            .SelectMany(product => product.OptionIds)
+            .Distinct()
+            .Select(id => new OptionDefinitionId(id))
+            .ToArray();
+        if (optionIds.Length == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        var options = await optionRepository.ListByIdsAsync(tenantId, optionIds, cancellationToken);
+        return options
+            .SelectMany(option => option.Values)
+            .ToDictionary(value => value.Id, value => value.Value);
+    }
+
+    private static IEnumerable<ProductExportRow> ToRows(
+        Product product,
+        IReadOnlyDictionary<TaxRateId, string> taxRateNames,
+        IReadOnlyDictionary<Guid, string> valueNames)
+    {
+        var taxRateName = ResolveTaxRateName(product.TaxRateId, taxRateNames);
+
+        // `Variants` ya viene por `Position`: es el orden del formulario y el de la tabla.
+        return product.Variants.Select(variant => new ProductExportRow(
+            variant.Code,
+            variant.Barcode,
             product.Name,
+            // La variante por defecto no se distingue por opciones: su nombre ya esta en Producto.
+            variant.OptionValueIds.Count == 0
+                ? null
+                : VariantDisplayName.For(
+                    product.Name,
+                    variant.OptionValueIds
+                        .Where(valueNames.ContainsKey)
+                        .Select(id => valueNames[id])
+                        .ToArray()),
             product.Description,
-            product.IsActive,
-            product.Prices.ToDictionary(price => price.Currency, price => price.Amount),
-            ResolveTaxRateName(product.TaxRateId, taxRateNames),
-            product.PriceScales
+            product.IsActive && variant.IsActive,
+            variant.Prices.ToDictionary(price => price.Currency, price => price.Amount),
+            taxRateName,
+            variant.PriceScales
                 .Select(scale => new ProductExportScale(scale.FromUnit, scale.ToUnit, scale.Discount))
-                .ToList());
+                .ToList()));
+    }
 
     /// <summary>`TaxRateId` es un struct nullable, asi que se desenvuelve antes de buscar: el
     /// diccionario esta tipado con el valor, no con el nullable.</summary>

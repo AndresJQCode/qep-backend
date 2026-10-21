@@ -38,7 +38,8 @@ public interface IProductRepository
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Todos los productos que coinciden con el filtro, sin paginar y con sus escalas — para la
+    /// Todos los productos que coinciden con el filtro, sin paginar y con sus variantes y las
+    /// escalas de cada una (sin la galería: el Excel no la pinta) — para la
     /// exportacion, que saca el catalogo completo que el filtro deja a la vista y no la pagina
     /// que se esta mirando. Es una consulta aparte y no <see cref="SearchAsync"/> con un
     /// pageSize enorme: el listado tiene un tope de pagina a proposito, y estirarlo para que

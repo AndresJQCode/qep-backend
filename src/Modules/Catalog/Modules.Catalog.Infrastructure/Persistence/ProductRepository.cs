@@ -42,9 +42,16 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         int take,
         CancellationToken cancellationToken)
     {
-        // Mismo Include que SearchAsync y por el mismo motivo: sin el, las escalas llegan
-        // vacias y el export perderia justamente sus columnas.
-        var query = Aggregates()
+        // Variantes con sus escalas y nada más (los precios, los valores de opción y los empaques son
+        // owned y vienen solos): el Excel no pinta la galería, y con hasta 2.048 variantes por
+        // producto el lote de 500 productos ya es pesado sin traer además sus fotos. No se proyecta
+        // a un tipo de lectura a propósito: las escalas y los precios son colecciones anidadas y la
+        // columna de cada moneda y de cada escala sale del conjunto completo, así que reescribir
+        // el grafo como proyección cambiaría la consulta más de lo que ahorra.
+        var query = dbContext.Products
+            .Include(product => product.Variants)
+                .ThenInclude(variant => variant.PriceScales)
+            .AsSplitQuery()
             .AsNoTracking()
             .Where(product => product.TenantId == tenantId);
 
@@ -72,8 +79,9 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         // Orden estable antes de paginar: sin el, dos lotes consecutivos pueden repetir o
         // saltear filas. Por codigo y no por relevancia — el export no tiene termino contra el
         // cual medirla, y una planilla se compara en un orden previsible.
-        // Con variantes, el código menor del producto: la fila por variante del Excel es de la
-        // Tarea 8, que decide su orden dentro del producto.
+        // Con variantes, el código menor del producto: el Excel escribe una fila por variante y
+        // las agrupa por producto, así que el orden entre productos es éste y dentro de cada uno
+        // lo da `Position`.
         return await query
             .OrderBy(product => product.Variants.Min(variant => variant.Code))
             .ThenBy(product => product.Id)

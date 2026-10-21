@@ -97,12 +97,14 @@ public sealed class Product
 
     // --- Transitorio (variantes, Tarea 2). Code, precios, escalas y empaques son de la variante;
     // estos accesos leen la única variante (y fallan si hay más de una) para que los llamadores que todavía piensan en "un
-    // producto, un código" (persistencia, adaptadores de Bootstrapper, Excel) compilen hasta que
-    // sus tareas los pasen a variantes (T8, T9). En un
+    // producto, un código" (adaptadores de Bootstrapper, Quotations, sembrador) compilen hasta que
+    // sus tareas los pasen a variantes (T9, T15). En un
     // producto sin opciones es exactamente lo de antes. Código nuevo no los usa: lee Variants.
     // La Tarea 5 pasó a variantes el mapeo del detalle, el listado y el detector del PUT, y retiró
     // PricedCurrencies, que quedó sin llamadores. La Tarea 7 pasó a variantes el historial y la
-    // copia de escalas, y retiró ApplyCopiedPriceScales de la única variante.
+    // copia de escalas, y retiró ApplyCopiedPriceScales de la única variante. La Tarea 8 pasó a
+    // variantes el Excel; ya ningún código de producción llama a PriceIn, pero la prueba de la
+    // semilla (CatalogSeedTests) sí: lo retira la Tarea 15 junto con el sembrador.
 
     /// <summary>Transitorio: el <see cref="ProductVariant.Code"/> de la única variante.</summary>
     public string Code => PrimaryVariant.Code;

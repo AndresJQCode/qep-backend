@@ -8,6 +8,11 @@ namespace Modules.Catalog.Infrastructure.Excel;
 /// <summary>
 /// Arma el Excel del catalogo con ClosedXML.
 ///
+/// Una fila por **variante** (spec 2026-10-20 §7): Codigo y Codigo de barras son de la variante;
+/// Producto, Descripcion y Tasa de impuesto repiten los del producto en cada una de sus filas, y
+/// Variante lleva el nombre visible (vacio en la variante por defecto, que no se distingue por
+/// opciones). Los precios y las escalas tambien son de la variante.
+///
 /// Lo particular del formato son las escalas: en vez de una fila por escala (que repetiria el
 /// producto y obligaria a leer la planilla agrupando a mano), cada escala distinta del catalogo
 /// es **una columna**. "Distinta" es el par desde-hasta: dos productos que comparten el tramo
@@ -35,19 +40,21 @@ internal sealed class ClosedXmlProductExportBuilder : IProductExportWorkbookBuil
 
     private static readonly string[] FixedHeaders =
     [
-        "Codigo",
-        "Nombre",
-        "Descripcion",
+        "Código",
+        "Código de barras",
+        "Producto",
+        "Variante",
+        "Descripción",
         "Estado",
         "Tasa de impuesto",
     ];
 
-    public byte[] Build(IReadOnlyList<ProductExportRow> products, IReadOnlyList<CurrencyInfo> currencies)
+    public byte[] Build(IReadOnlyList<ProductExportRow> rows, IReadOnlyList<CurrencyInfo> currencies)
     {
-        // Las columnas de escala salen del catalogo entero, no de cada producto: es lo que hace
+        // Las columnas de escala salen del catalogo entero, no de cada variante: es lo que hace
         // que una escala compartida ocupe una sola columna.
-        var scaleColumns = products
-            .SelectMany(product => product.Scales)
+        var scaleColumns = rows
+            .SelectMany(row => row.Scales)
             .Select(scale => (scale.FromUnit, scale.ToUnit))
             .Distinct()
             .OrderBy(scale => scale.FromUnit)
@@ -72,32 +79,34 @@ internal sealed class ClosedXmlProductExportBuilder : IProductExportWorkbookBuil
 
         sheet.Row(1).Style.Font.Bold = true;
 
-        for (var rowIndex = 0; rowIndex < products.Count; rowIndex++)
+        for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
         {
-            var product = products[rowIndex];
+            var variant = rows[rowIndex];
             var row = rowIndex + 2;
 
-            sheet.Cell(row, 1).Value = product.Code;
-            sheet.Cell(row, 2).Value = product.Name;
-            sheet.Cell(row, 3).Value = product.Description ?? string.Empty;
-            sheet.Cell(row, 4).Value = product.IsActive ? "Activo" : "Inactivo";
-            sheet.Cell(row, 5).Value = product.TaxRateName ?? string.Empty;
+            sheet.Cell(row, 1).Value = variant.Code;
+            sheet.Cell(row, 2).Value = variant.Barcode ?? string.Empty;
+            sheet.Cell(row, 3).Value = variant.ProductName;
+            sheet.Cell(row, 4).Value = variant.VariantName ?? string.Empty;
+            sheet.Cell(row, 5).Value = variant.Description ?? string.Empty;
+            sheet.Cell(row, 6).Value = variant.IsActive ? "Activo" : "Inactivo";
+            sheet.Cell(row, 7).Value = variant.TaxRateName ?? string.Empty;
 
             var column = FixedHeaders.Length + 1;
             foreach (var currency in currencies)
             {
-                SetMoney(sheet.Cell(row, column++), PriceOf(product, currency), currency);
+                SetMoney(sheet.Cell(row, column++), PriceOf(variant, currency), currency);
             }
 
             // Indexer and not ToDictionary: a repeated range must not throw from inside an
             // export; the last one wins, as in ProductPriceChangeDetector.
             var discounts = new Dictionary<(int, int), decimal>();
-            foreach (var scale in product.Scales)
+            foreach (var scale in variant.Scales)
             {
                 discounts[(scale.FromUnit, scale.ToUnit)] = scale.DiscountPercent;
             }
 
-            // A product without the range leaves the discount and every final empty.
+            // A variant without the range leaves the discount and every final empty.
             foreach (var range in scaleColumns)
             {
                 var hasScale = discounts.TryGetValue(range, out var discount);
@@ -110,7 +119,7 @@ internal sealed class ClosedXmlProductExportBuilder : IProductExportWorkbookBuil
                 column++;
                 foreach (var currency in currencies)
                 {
-                    var final = hasScale ? PriceScale.FinalFor(PriceOf(product, currency), discount) : null;
+                    var final = hasScale ? PriceScale.FinalFor(PriceOf(variant, currency), discount) : null;
                     SetMoney(sheet.Cell(row, column++), final, currency);
                 }
             }
@@ -127,8 +136,8 @@ internal sealed class ClosedXmlProductExportBuilder : IProductExportWorkbookBuil
         return stream.ToArray();
     }
 
-    private static decimal? PriceOf(ProductExportRow product, CurrencyInfo currency) =>
-        product.Prices.TryGetValue(currency.Code, out var amount) ? amount : null;
+    private static decimal? PriceOf(ProductExportRow row, CurrencyInfo currency) =>
+        row.Prices.TryGetValue(currency.Code, out var amount) ? amount : null;
 
     /// <summary>
     /// Leaves the cell untouched without a value: 0 would read as "free in this tier". The format

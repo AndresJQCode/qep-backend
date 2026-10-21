@@ -32,6 +32,11 @@ public sealed class ProductExportApiTests
         CatalogPermissions.ProductRead, CatalogPermissions.ProductManage
     ];
 
+    private static readonly string[] ExpectedHeaders =
+        ["Código", "Código de barras", "Producto", "Variante", "Descripción", "Estado", "Tasa de impuesto", "Precio base COP"];
+
+    private static readonly string[] SizeValues = ["S", "M", "L"];
+
     private static string ExportUrl() =>
         $"/api/v1/tenants/{TenantId}/catalog/products/export";
 
@@ -76,17 +81,19 @@ public sealed class ProductExportApiTests
         using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
         var sheet = workbook.Worksheets.First();
 
-        // Header per scale (discount, then the final in each currency in use), ordered by from
-        // unit: 1-9 appears once even though two products share it. The products are COP-only.
-        Assert.Equal("Precio base COP", sheet.Cell(1, 6).GetString());
+        // Seven fixed columns (code, barcode, product, variant, description, status, tax rate), then
+        // one base price per currency, so the COP price is column 8. Header per scale (discount,
+        // then the final in each currency in use), ordered by from unit: 1-9 appears once even
+        // though two products share it. The products are COP-only.
+        Assert.Equal("Precio base COP", sheet.Cell(1, 8).GetString());
         Assert.Equal(
             [
                 "Descuento 1-9 (%)", "Final 1-9 COP",
                 "Descuento 10-19 (%)", "Final 10-19 COP",
                 "Descuento 20-99 (%)", "Final 20-99 COP",
             ],
-            Enumerable.Range(7, 6).Select(column => sheet.Cell(1, column).GetString()).ToArray());
-        Assert.Empty(sheet.Cell(1, 13).GetString());
+            Enumerable.Range(9, 6).Select(column => sheet.Cell(1, column).GetString()).ToArray());
+        Assert.Empty(sheet.Cell(1, 15).GetString());
 
         // Rows are ordered by code: AAA-1, BBB-2, CCC-3.
         Assert.Equal("AAA-1", sheet.Cell(2, 1).GetString());
@@ -94,23 +101,23 @@ public sealed class ProductExportApiTests
         Assert.Equal("CCC-3", sheet.Cell(4, 1).GetString());
 
         // A has 1-9 and 10-19, and leaves 20-99 empty.
-        Assert.Equal(10m, sheet.Cell(2, 7).GetValue<decimal>());
-        Assert.Equal(45_000m, sheet.Cell(2, 8).GetValue<decimal>());
-        Assert.Equal(15m, sheet.Cell(2, 9).GetValue<decimal>());
-        Assert.Equal(42_500m, sheet.Cell(2, 10).GetValue<decimal>());
-        Assert.True(sheet.Cell(2, 11).IsEmpty());
-        Assert.True(sheet.Cell(2, 12).IsEmpty());
+        Assert.Equal(10m, sheet.Cell(2, 9).GetValue<decimal>());
+        Assert.Equal(45_000m, sheet.Cell(2, 10).GetValue<decimal>());
+        Assert.Equal(15m, sheet.Cell(2, 11).GetValue<decimal>());
+        Assert.Equal(42_500m, sheet.Cell(2, 12).GetValue<decimal>());
+        Assert.True(sheet.Cell(2, 13).IsEmpty());
+        Assert.True(sheet.Cell(2, 14).IsEmpty());
 
         // B shares 1-9 with A, leaves 10-19 empty and has 20-99.
-        Assert.Equal(40m, sheet.Cell(3, 7).GetValue<decimal>());
-        Assert.Equal(30_000m, sheet.Cell(3, 8).GetValue<decimal>());
-        Assert.True(sheet.Cell(3, 9).IsEmpty());
-        Assert.True(sheet.Cell(3, 10).IsEmpty());
-        Assert.Equal(50m, sheet.Cell(3, 11).GetValue<decimal>());
-        Assert.Equal(25_000m, sheet.Cell(3, 12).GetValue<decimal>());
+        Assert.Equal(40m, sheet.Cell(3, 9).GetValue<decimal>());
+        Assert.Equal(30_000m, sheet.Cell(3, 10).GetValue<decimal>());
+        Assert.True(sheet.Cell(3, 11).IsEmpty());
+        Assert.True(sheet.Cell(3, 12).IsEmpty());
+        Assert.Equal(50m, sheet.Cell(3, 13).GetValue<decimal>());
+        Assert.Equal(25_000m, sheet.Cell(3, 14).GetValue<decimal>());
 
         // C has no scale: every scale cell empty, not zeros.
-        for (var column = 7; column <= 12; column++)
+        for (var column = 9; column <= 14; column++)
         {
             Assert.True(sheet.Cell(4, column).IsEmpty());
         }
@@ -118,6 +125,102 @@ public sealed class ProductExportApiTests
         // El correo no se manda en el request: queda encolado como evento de integracion.
         var events = await OutboxEventNamesAsync(database.GetConnectionString());
         Assert.Contains("catalog.product-export-ready.v1", events);
+    }
+
+    /// <summary>
+    /// Variantes, Tarea 8: una fila por variante, con el nombre visible armado desde la biblioteca de
+    /// opciones. Camiseta tiene tres variantes (la tercera, inactiva) que se crean en el orden S, M, L
+    /// —no el alfabetico de sus codigos—; Vela es un producto sin opciones. Cubre el orden (producto
+    /// por su codigo menor, variantes por posicion), el codigo de barras, la columna Variante vacia
+    /// en la variante por defecto, el estado por variante y que `productCount` cuenta productos.
+    /// </summary>
+    [Fact]
+    public async Task ExportWritesOneRowPerVariantWithVisibleName()
+    {
+        await using var database = await StartDatabaseAsync();
+        var storage = new CapturingExportStorage();
+        using var factory = new QepApiFactory(database.GetConnectionString(), storage);
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await SeedTenantAsync(factory);
+
+        var optionResponse = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/options",
+            new { name = "Talla", values = SizeValues },
+            TestContext.Current.CancellationToken);
+        optionResponse.EnsureSuccessStatusCode();
+        var talla = await optionResponse.Content.ReadFromJsonAsync<OptionResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(talla);
+
+        object Variant(string code, string? barcode, string size, decimal cop, bool isActive = true) => new
+        {
+            code,
+            barcode,
+            optionValueIds = new[] { talla.Values.Single(value => value.Name == size).Id },
+            pricing = new { prices = new Dictionary<string, decimal> { ["COP"] = cop } },
+            isActive,
+        };
+
+        var camiseta = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products",
+            new
+            {
+                name = "Camiseta básica",
+                description = "Algodón",
+                optionIds = new[] { talla.Id },
+                variants = new[]
+                {
+                    Variant("CAM-S", "7701234567890", "S", 40_000m),
+                    Variant("CAM-M", null, "M", 45_000m),
+                    Variant("CAM-L", null, "L", 50_000m, isActive: false),
+                },
+            },
+            TestContext.Current.CancellationToken);
+        camiseta.EnsureSuccessStatusCode();
+        await CreateProductAsync(client, "VS-001", "Vela de soja", []);
+
+        var response = await client.PostAsync(
+            ExportUrl(), content: null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<ExportResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        // Dos productos, cuatro filas: el correo dice "2 productos".
+        Assert.Equal(2, body.ProductCount);
+
+        Assert.NotNull(storage.Content);
+        using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
+        var sheet = workbook.Worksheets.First();
+
+        Assert.Equal(
+            ExpectedHeaders,
+            Enumerable.Range(1, 8).Select(column => sheet.Cell(1, column).GetString()).ToArray());
+        Assert.Equal(5, sheet.LastRowUsed()!.RowNumber());
+
+        string[] RowOf(int row) =>
+            Enumerable.Range(1, 6).Select(column => sheet.Cell(row, column).GetString()).ToArray();
+
+        // Camiseta primero (su codigo menor, CAM-L, va antes que VS-001) y sus variantes en el orden
+        // en que se crearon (S, M, L), no en el de sus codigos.
+        Assert.Equal(
+            ["CAM-S", "7701234567890", "Camiseta básica", "Camiseta básica – S", "Algodón", "Activo"],
+            RowOf(2));
+        Assert.Equal(
+            ["CAM-M", "", "Camiseta básica", "Camiseta básica – M", "Algodón", "Activo"],
+            RowOf(3));
+        // La variante inactiva tambien se exporta, marcada.
+        Assert.Equal(
+            ["CAM-L", "", "Camiseta básica", "Camiseta básica – L", "Algodón", "Inactivo"],
+            RowOf(4));
+        // La variante por defecto no repite el nombre: Variante queda vacia.
+        Assert.Equal(["VS-001", "", "Vela de soja", "", "", "Activo"], RowOf(5));
+
+        // El precio es de la variante, no del producto.
+        Assert.Equal(40_000m, sheet.Cell(2, 8).GetValue<decimal>());
+        Assert.Equal(45_000m, sheet.Cell(3, 8).GetValue<decimal>());
+        Assert.Equal(50_000m, sheet.Cell(4, 8).GetValue<decimal>());
+        Assert.Equal(BaseCop, sheet.Cell(5, 8).GetValue<decimal>());
     }
 
     // Spec 2026-09-17, punto 8a: el nombre del archivo lleva la hora del tenant. Con el reloj en el 31
