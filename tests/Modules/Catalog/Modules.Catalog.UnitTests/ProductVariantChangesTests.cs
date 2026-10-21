@@ -193,6 +193,70 @@ public sealed class ProductVariantChangesTests
         Assert.Equal(22m, change.NewValue);
     }
 
+    // Revisión independiente, 2026-10-21. Una escala copiada sin completar (la deja
+    // POST /products/price-scales/copy, sin restricción) no impide guardar con pricing: null, que es
+    // «deja precio, escalas y empaques como están»: la escala sigue ahí, incompleta. Es también el
+    // camino de una variante en uso pedida en deletedVariantIds, que se desactiva con su precio.
+    [Fact]
+    public void SavingWithoutPricingKeepsAnIncompleteCopiedScale()
+    {
+        var product = Product.Create(
+            ProductId.New(),
+            TenantId,
+            "Aceite",
+            ProductDetails.Empty,
+            new ProductVariantInput { Code = "ACE-1", Pricing = Pricing(25m, packagingUnits: []) },
+            [],
+            Now);
+        var variant = product.Variants.Single().Id;
+        product.ApplyCopiedPriceScales(
+            new Dictionary<VariantId, IReadOnlyCollection<PriceScaleInput>>
+            {
+                [variant] = [new PriceScaleInput(10, 49, 5m, null, null)],
+            },
+            Now);
+
+        var inputs = Resolve(
+            product, [], new ProductVariantRequest(variant.Value, "ACE-1", null, null, null, null, IsActive: false));
+        product.Update("Aceite", ProductDetails.Empty, [], inputs, [], Now.AddMinutes(1));
+
+        var saved = product.Variants.Single();
+        Assert.False(saved.IsActive);
+        var scale = Assert.Single(saved.PriceScales);
+        Assert.Equal((10, 49, 5m, (PriceScaleRestriction?)null), (scale.FromUnit, scale.ToUnit, scale.Discount, scale.Restriction));
+    }
+
+    // La otra mitad: el formulario que manda pricing explícito con una escala sin restricción sigue
+    // recibiendo restriction_required. Lo incompleto sólo se conserva, nunca se pide.
+    [Fact]
+    public void AnExplicitScaleWithoutRestrictionIsStillRejected()
+    {
+        var product = Product.Create(
+            ProductId.New(),
+            TenantId,
+            "Aceite",
+            ProductDetails.Empty,
+            new ProductVariantInput { Code = "ACE-1", Pricing = Pricing(25m, packagingUnits: []) },
+            [],
+            Now);
+        var variant = product.Variants.Single().Id;
+
+        var inputs = Resolve(
+            product,
+            [],
+            new ProductVariantRequest(
+                variant.Value, "ACE-1", null, null,
+                new ProductPricingRequest(
+                    new Dictionary<string, decimal> { ["USD"] = 25m },
+                    [new PriceScaleRequest(10, 49, 5m, null, null, null)],
+                    null),
+                null, null));
+
+        var error = Assert.Throws<CatalogDomainException>(() =>
+            product.Update("Aceite", ProductDetails.Empty, [], inputs, [], Now.AddMinutes(1)));
+        Assert.Equal("catalog.product.price_scale.restriction_required", error.Code);
+    }
+
     private IReadOnlyList<ProductVariantInput> Resolve(
         Product product,
         IReadOnlyList<Guid> optionIds,

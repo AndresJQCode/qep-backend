@@ -147,6 +147,53 @@ public sealed class ProductVariantDeletionApiTests
         Assert.Equal(1, await CountVariantRowsAsync(database, medium.Id));
     }
 
+    // Revisión independiente, 2026-10-21. Una variante en uso con una escala copiada sin completar (la
+    // deja la copia de escalas, sin restricción) se puede pedir para borrar: se desactiva con su escala
+    // tal cual, incompleta. Antes respondía 422 price_scale.restriction_required sin campo, y el
+    // formulario no tenía cómo desactivarla por este camino.
+    [Fact]
+    public async Task PutUsedVariantWithAnIncompleteCopiedScaleIsDeactivated()
+    {
+        await using var database = await StartDatabaseAsync();
+        var usage = new ScriptedUsage();
+        using var factory = new QepApiFactory(database.GetConnectionString(), usage);
+        using var client = CreateClient(factory);
+
+        var (talla, created) = await CreateSizesAsync(client);
+        var (small, medium, large) = (created.Variants[0], created.Variants[1], created.Variants[2]);
+        var source = await ReadProductAsync(await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products",
+            ProductBodies.Create("Fuente", "SRC-1", new
+            {
+                prices = new Dictionary<string, decimal> { ["USD"] = 10m },
+                scales = new[] { new { fromUnit = 10, toUnit = 49, discount = 5m, restriction = "multiple", multiple = 1 } }
+            }),
+            TestContext.Current.CancellationToken));
+        var copy = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/price-scales/copy",
+            new { sourceVariantId = source.Only().Id, targetVariantIds = new[] { medium.Id } },
+            TestContext.Current.CancellationToken);
+        Assert.True(copy.IsSuccessStatusCode, await copy.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var current = await GetAsync(client, created.Id);
+        Assert.Null(Assert.Single(current.Variants[1].PriceScales).Restriction);
+        usage.Used.Add(medium.Id);
+
+        var response = await PutAsync(client, created.Id, new
+        {
+            expectedVersion = current.Version,
+            name = "Camiseta",
+            optionIds = new[] { talla },
+            variants = new[] { new { id = small.Id, code = small.Code }, new { id = large.Id, code = large.Code } },
+            deletedVariantIds = new[] { medium.Id }
+        });
+
+        var updated = await ReadProductAsync(response);
+        var kept = updated.Variants.Single(variant => variant.Id == medium.Id);
+        Assert.False(kept.IsActive);
+        var scale = Assert.Single(kept.PriceScales);
+        Assert.Equal((10, 49, 5m, (string?)null), (scale.FromUnit, scale.ToUnit, scale.Discount, scale.Restriction));
+    }
+
     // deletedVariantIds sólo nombra guardadas de este producto que no vienen en el cuerpo.
     [Fact]
     public async Task PutDeletedVariantIdsRejectsOneInTheBodyAndOneOfAnotherProduct()

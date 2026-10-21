@@ -20,6 +20,15 @@ public sealed record ProductPricing
     /// validated together in the same POST/PUT. See <see cref="ProductVariant.PackagingUnits"/>.
     /// </summary>
     public IReadOnlyCollection<int> PackagingUnits { get; init; } = [];
+
+    /// <summary>
+    /// True sólo cuando este precio es la copia del que la variante ya tenía guardado (el PUT que
+    /// manda <c>pricing: null</c>, o la variante en uso que se desactiva por
+    /// <c>deletedVariantIds</c>). Entonces una escala sin restricción —la incompleta que deja la copia
+    /// de escalas— se conserva incompleta en vez de rechazarse: «deja las escalas como están». Lo que
+    /// manda el formulario nunca la trae, así que ahí la restricción se sigue exigiendo.
+    /// </summary>
+    public bool KeepsIncompleteScales { get; init; }
 }
 
 /// <summary>

@@ -202,7 +202,7 @@ public sealed class ProductVariant
         ReplacePrices(pricing.Prices);
         PackagingUnits = NormalizePackagingUnits(pricing.PackagingUnits);
 
-        ReplaceScales(pricing.Scales);
+        ReplaceScales(pricing.Scales, pricing.KeepsIncompleteScales);
 
         // Después de las escalas y no antes: un error propio de una escala (rango, descuento,
         // múltiplo) dice más que éste, que sólo aplica si la escala ya es válida por su cuenta.
@@ -234,12 +234,14 @@ public sealed class ProductVariant
         }
     }
 
-    private void ReplaceScales(IReadOnlyCollection<PriceScaleInput> scales)
+    private void ReplaceScales(IReadOnlyCollection<PriceScaleInput> scales, bool keepsIncompleteScales)
     {
         _priceScales.Clear();
         foreach (var scale in scales)
         {
-            _priceScales.Add(PriceScale.Create(Id, TenantId, scale));
+            _priceScales.Add(keepsIncompleteScales && scale.Restriction is null
+                ? PriceScale.CreateIncomplete(Id, TenantId, scale)
+                : PriceScale.Create(Id, TenantId, scale));
         }
     }
 

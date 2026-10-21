@@ -133,15 +133,15 @@ internal static class ProductVariantChanges
     private static ProductPricing PricingOf(ProductVariant variant) => new()
     {
         Prices = variant.Prices.ToDictionary(price => price.Currency, price => price.Amount, StringComparer.Ordinal),
-        // Una escala incompleta (la que deja la copia de escalas) no se puede volver a crear como
-        // completa: el agregado responde price_scale.restriction_required, que es lo mismo que pasa
-        // hoy al guardar un producto con escalas copiadas sin completar.
+        // Una escala incompleta (la que deja la copia de escalas) se conserva incompleta: es la copia
+        // de lo guardado, no lo que mandó el formulario (KeepsIncompleteScales).
         Scales = variant.PriceScales
             .OrderBy(scale => scale.FromUnit)
             .Select(scale => new PriceScaleInput(
                 scale.FromUnit, scale.ToUnit, scale.Discount, scale.Restriction, scale.Multiple, scale.AllowGrouping))
             .ToArray(),
         PackagingUnits = variant.PackagingUnits.ToArray(),
+        KeepsIncompleteScales = true,
     };
 
     private static List<ProductVariantInput> DeactivateRepeatedCombinations(List<ProductVariantInput> inputs)
