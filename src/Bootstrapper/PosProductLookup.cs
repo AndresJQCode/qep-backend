@@ -46,23 +46,35 @@ internal sealed class PosProductLookup(
     // Enfoque de revisión 4: un texto que es el código de barras de una variante y el Code de otra
     // es el de barras. El lector de la caja lee códigos de barras; el Code lo teclea el cajero, y
     // un código de barras guardado es una afirmación más fuerte sobre qué unidad tiene en la mano.
+    //
+    // Salvo que esa variante esté inactiva y el Code sea de una activa (decisión del owner,
+    // 2026-10-21): sin esto, un código de barras puesto en una variante que después se apagó le
+    // escondía a la caja un Code que antes encontraba (anti-objetivo §1 del spec). Si las dos están
+    // inactivas, gana el código de barras, como siempre. «Activa» es variante y producto activos; el
+    // precio en la moneda de la caja no se mira acá, porque el lookup no la conoce.
     public async Task<PosProductRef?> FindByCodeAsync(Guid tenantId, string code, CancellationToken cancellationToken)
     {
         var byBarcode = await products.FindVariantByBarcodeAsync(tenantId, code, cancellationToken);
+        PosProductRef? barcodeRef = null;
         if (byBarcode is not null)
         {
             var variant = byBarcode.Variants.Single(candidate => candidate.Barcode == code);
-            return (await MapAsync(tenantId, [byBarcode], [(byBarcode, variant)], [], cancellationToken)).Refs[0];
+            barcodeRef = (await MapAsync(tenantId, [byBarcode], [(byBarcode, variant)], [], cancellationToken)).Refs[0];
+            if (barcodeRef.IsActive)
+            {
+                return barcodeRef;
+            }
         }
 
         var byCode = await products.FindVariantByCodeAsync(tenantId, code, cancellationToken);
         if (byCode is null)
         {
-            return null;
+            return barcodeRef;
         }
 
         var coded = byCode.Variants.Single(candidate => candidate.Code == code);
-        return (await MapAsync(tenantId, [byCode], [(byCode, coded)], [], cancellationToken)).Refs[0];
+        var codeRef = (await MapAsync(tenantId, [byCode], [(byCode, coded)], [], cancellationToken)).Refs[0];
+        return barcodeRef is null || codeRef.IsActive ? codeRef : barcodeRef;
     }
 
     public async Task<IReadOnlyDictionary<Guid, PosProductRef>> FindManyAsync(

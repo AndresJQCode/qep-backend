@@ -99,6 +99,37 @@ public sealed class PosProductLookupTests
         Assert.Equal(0, repository.CodeLookups);
     }
 
+    // Decisión del owner, 2026-10-21 (anti-objetivo §1: el escáner no deja de encontrar lo que hoy
+    // encuentra). Si el código de barras cae en una variante inactiva y el mismo texto es el Code de una
+    // variante activa, gana la activa: antes la caja devolvía la inactiva y nunca encontraba la otra.
+    [Fact]
+    public async Task PosLookupInactiveBarcodeYieldsToAnActiveCode()
+    {
+        var world = VariantWorld.Create(TenantId, Now, largeBarcode: "7702000000017", largeIsActive: false);
+        var shampoo = NewProduct(imageFileId: null, code: "7702000000017");
+        var lookup = Lookup(new FakeProductRepository(shampoo, world.Product), new FakeOptionDefinitionRepository(world.Size));
+
+        var found = await lookup.FindByCodeAsync(TenantId, "7702000000017", Ct);
+
+        Assert.NotNull(found);
+        Assert.Equal((shampoo.Variants.Single().Id.Value, true), (found.VariantId, found.IsActive));
+    }
+
+    // Si las dos están inactivas, sigue ganando el código de barras: la caja la muestra marcada.
+    [Fact]
+    public async Task PosLookupInactiveBarcodeWinsWhenTheCodeIsInactiveToo()
+    {
+        var world = VariantWorld.Create(TenantId, Now, largeBarcode: "7702000000017", largeIsActive: false);
+        var shampoo = NewProduct(imageFileId: null, code: "7702000000017");
+        shampoo.Deactivate(Now);
+        var lookup = Lookup(new FakeProductRepository(shampoo, world.Product), new FakeOptionDefinitionRepository(world.Size));
+
+        var found = await lookup.FindByCodeAsync(TenantId, "7702000000017", Ct);
+
+        Assert.NotNull(found);
+        Assert.Equal((world.Large.Id.Value, false), (found.VariantId, found.IsActive));
+    }
+
     [Fact]
     public async Task PosLookupFindsByCodeWhenNoBarcodeMatches()
     {
