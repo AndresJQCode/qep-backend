@@ -69,17 +69,23 @@ public sealed class ConversationListFiltersApiTests
         await ExecuteAsync(f.ConnectionString,
             "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now() WHERE id = @id", ("id", active));
 
+        var (paused, _) = await IngestAsync(f, "CO.C", "w3", 1760000300, "Caro");
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.conversations SET automation_status = 'Paused', automation_started_at = now(), automation_paused_at = now(), automation_pause_reason = 'Manual' WHERE id = @id", ("id", paused));
+
         var all = await ListAsync(f, "");
-        Assert.Equal([plain, active], Ids(all));
-        Assert.Equal(1, all.GetProperty("counts").GetProperty("automated").GetInt32());
+        Assert.Equal([paused, plain, active], Ids(all));
+        Assert.Equal(2, all.GetProperty("counts").GetProperty("automated").GetInt32());
+        Assert.Equal("Paused", all.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == paused)
+            .GetProperty("automation").GetProperty("status").GetString());
         var items = all.GetProperty("items").EnumerateArray().ToDictionary(item => item.GetProperty("id").GetGuid());
         Assert.Equal("Active", items[active].GetProperty("automation").GetProperty("status").GetString());
         Assert.Equal(JsonValueKind.Null, items[plain].GetProperty("automation").ValueKind);
 
         Assert.Equal([active], Ids(await ListAsync(f, "?automation=active")));
-        Assert.Equal([active], Ids(await ListAsync(f, "?automation=any")));
+        Assert.Equal([paused, active], Ids(await ListAsync(f, "?automation=any")));
         Assert.Equal([plain], Ids(await ListAsync(f, "?automation=none")));
-        Assert.Empty(Ids(await ListAsync(f, "?automation=paused")));
+        Assert.Equal([paused], Ids(await ListAsync(f, "?automation=paused")));
 
         var invalid = await f.Client.GetAsync($"{ConversationsUrl(f.Tenant.TenantId)}?automation=bot", Ct);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);

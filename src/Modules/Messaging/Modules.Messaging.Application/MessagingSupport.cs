@@ -61,7 +61,7 @@ public sealed class ConversationSummaryBuilder(
         var assignees = rows.Where(row => row.AssignedMemberId is not null).Select(row => row.AssignedMemberId!.Value).Distinct().ToArray();
         // Spec 2026-10-21: quien pausó el asistente se resuelve en la misma consulta de nombres que los asignados.
         var memberIds = assignees.Concat(rows.Where(row => row.AutomationPausedByMemberId is not null).Select(row => row.AutomationPausedByMemberId!.Value)).Distinct().ToArray();
-        var assigneeNames = memberIds.Length == 0
+        var resolvedNames = memberIds.Length == 0
             ? new Dictionary<Guid, string>()
             : await memberNames.FindAsync(tenantId, memberIds, cancellationToken);
         var me = assignees.Length == 0 ? null : await caller.FindAsync(tenantId, cancellationToken);
@@ -76,7 +76,7 @@ public sealed class ConversationSummaryBuilder(
         var reasonIds = rows.Where(row => row.Status == ConversationStatus.Resolved && row.ResolutionReasonId is not null)
             .Select(row => row.ResolutionReasonId!.Value).Distinct().ToArray();
         var reasons = reasonIds.Length == 0 ? null : await reasonNames.FindAsync(tenantId, reasonIds, cancellationToken);
-        return rows.Select(row => ToSummary(row, names, tagged, taggedByPhone, assigneeNames, me, reasons)).ToArray();
+        return rows.Select(row => ToSummary(row, names, tagged, taggedByPhone, resolvedNames, me, reasons)).ToArray();
     }
 
     private static CustomerRefDto WithTags(CustomerRefDto customer, IReadOnlyDictionary<Guid, IReadOnlyList<MessagingTagRef>> tags) =>
@@ -122,7 +122,8 @@ public sealed class ConversationSummaryBuilder(
             AutomationFrom(row, memberNames));
     }
 
-    /// <summary><c>null</c> en <c>None</c> (D-A10). Una fila a medio escribir sin <c>StartedAt</c> tampoco dibuja nada, nunca un 500.</summary>
+    /// <summary><c>null</c> en <c>None</c> (D-A10). La guarda de <c>StartedAt</c> es inalcanzable por <c>CK_conversations_automation_started</c>;
+    /// sólo evita un 500 si alguna vez llegara una fila a medio escribir.</summary>
     private static ConversationAutomationDto? AutomationFrom(ConversationRow row, IReadOnlyDictionary<Guid, string> memberNames) =>
         row is { AutomationStatus: not ConversationAutomationStatus.None, AutomationStartedAt: { } startedAt }
             ? new ConversationAutomationDto(
