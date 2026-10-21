@@ -38,7 +38,7 @@ public sealed class ListConversationsValidator : AbstractValidator<ListConversat
         RuleFor(query => query.Sort)
             .Must(value => value is null or "newest" or "oldest")
             .OverridePropertyName("sort").WithMessage("sort must be newest or oldest.");
-        // Spec 2026-10-21 §4.3: ausente = sin filtro.
+        // Spec 2026-10-21 §4.5: ausente = sin filtro.
         RuleFor(query => query.Automation)
             .Must(value => value is null or "active" or "paused" or "any" or "none")
             .OverridePropertyName("automation").WithMessage("automation must be active, paused, any or none.");

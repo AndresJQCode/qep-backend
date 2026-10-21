@@ -2433,52 +2433,6 @@ renombrar cambia el nombre también en el historial pasado. Administrar el catá
 sesión, como con todo permiso nuevo. Spec:
 [`2026-10-15-mensajeria-motivo-de-resolucion-design.md`](docs/superpowers/specs/2026-10-15-mensajeria-motivo-de-resolucion-design.md).
 
-### Asistente en la conversación
-
-Cada conversación lleva `automation_status` (`None` | `Active` | `Paused`) y, mientras no sea `None`, `automation_started_at`,
-`automation_paused_at`, `automation_paused_by_member_id` y `automation_pause_reason` (`AdvisorTook` | `AdvisorReplied` |
-`AdvisorTransferred` | `Manual` | `Handoff`). `ConversationSummary.automation` es `null` cuando es `None`, el conteo `counts.automated`
-suma las conversaciones con asistente (activo o en pausa) y `GET …/conversations?automation=active|paused|any|none` filtra por él.
-
-`POST …/conversations/{id}/automation/pause` y `…/automation/resume` piden `messaging.conversation.manage` y `If-Match` (428 sin él,
-412 si la versión cambió), y responden 200 con el `ConversationSummary`. Los 422: `messaging.conversation.not_open` (se revisa primero),
-`messaging.automation.not_available` (la conversación no tiene asistente), `messaging.automation.already_paused` y
-`messaging.automation.already_active`.
-
-Tomar, transferir y responder una conversación pausan el asistente (`AdvisorTook`, `AdvisorTransferred`, `AdvisorReplied`); soltarla lo
-deja en pausa; reanudarlo libera al asesor asignado; resolver lo devuelve a `None`. Cada cambio deja el evento `AutomationPaused` /
-`AutomationResumed` (con `pauseReason`) en el hilo y la auditoría `messaging.conversation.automation_paused` / `automation_resumed`. Los
-eventos de un mismo cambio llevan `occurred_at` estrictamente creciente (+1 µs por posición) para que el hilo se lea en orden.
-
-**Nada pone `Active` en producción todavía:** el motor del bot llega con el spec 4. Hoy sólo lo hace el harness de pruebas
-(`MessagingApiHarness.ActivateAutomationAsync`).
-
-### Horarios de atención
-
-Un tenant define horarios semanales y los asigna a sus conexiones de WhatsApp (spec 2026-10-21 §5). Viven en
-`messaging.business_hours_schedules` (`weekly` y `exceptions` en `jsonb`, `holiday_country` `'CO'` o `null`, nombre único por tenant sin
-distinguir mayúsculas y un solo predeterminado por tenant) y `messaging.connection_business_hours` (un horario por conexión).
-
-| Ruta (bajo `…/messaging/business-hours`) | `If-Match` | Respuesta | Errores propios |
-| ---------------------------------------- | ---------- | --------- | --------------- |
-| `GET /` | no | `items`, `timeZone` y `connections` (todas las conexiones del tenant, en cualquier estado, con su horario actual) | |
-| `POST /` | no | 201 | 409 `messaging.business_hours.name_taken` |
-| `PUT /{id}` | sí (412 / 428) | 200; reemplaza el horario y sus conexiones | 404 `not_found`, 409 `name_taken` y `default_conflict` |
-| `DELETE /{id}` | sí (412 / 428) | 204 | 404 `not_found`, 422 `in_use` (tiene conexiones vivas) o `is_default` |
-| `POST /{id}/duplicate` | no | 201, nombre «… (copia)», «… (copia 2)»… | 404 `not_found`, 409 `name_taken` |
-| `POST /{id}/default` | sí (412 / 428) | 200; sube la versión de este y del predeterminado anterior | 404 `not_found`, 409 `default_conflict` |
-
-Todos los códigos propios llevan el prefijo `messaging.business_hours.`. Escribir pide `messaging.business_hours.manage` (de fábrica sólo
-en `admin`); leer, `messaging.conversation.read`. El 422 `validation.failed` trae el mapa `errors` con las claves `Name`, `Weekly`,
-`Exceptions`, `HolidayCountry` y `ConnectionIds`, y anidadas `Weekly[i].Ranges[j].To`: una franja que cruza la medianoche se rechaza
-(«divídela en dos días»). Las excepciones pasadas se podan al guardar. Auditoría: `messaging.business_hours.created`, `updated`,
-`deleted`, `duplicated`, `default_set` y `connections_assigned`.
-
-**Qué horario aplica a una conexión:** su asignación; si no tiene, el predeterminado del tenant; si tampoco hay, siempre abierta (D-H4).
-Un festivo (`holidayCountry = "CO"`, Ley 51 de 1983, calculados por `ColombianHolidays`) cierra el día completo, salvo que exista una
-excepción con franjas para esa fecha: la excepción gana. `GET …/messaging/connections` devuelve por conexión `businessHoursScheduleId`,
-`businessHoursName` y `openNow`.
-
 **Búsqueda.** `GET …/messaging/messages/search?q=` busca por palabra en texto y leyendas con la
 configuración `messaging.es_unaccent` (español sin acentos ni flexiones, prefijo con 3+ letras) y el
 índice GIN `IX_messages_tenant_search`; el servidor arma la `tsquery` (nunca la persona) y corta a los
@@ -2696,6 +2650,52 @@ conexión, status, `code` de Graph y motivo, nunca el token).
    *Actualizar* (`GET /templates?refresh=true`) o con el `POST …/sync` del admin. El webhook
    `message_template_status_update` sólo cambia el estado de las que el espejo ya tiene; una plantilla que no tiene
    fila deja un log y la trae el siguiente refresco.
+
+#### Asistente en la conversación
+
+Cada conversación lleva `automation_status` (`None` | `Active` | `Paused`) y, mientras no sea `None`, `automation_started_at`,
+`automation_paused_at`, `automation_paused_by_member_id` y `automation_pause_reason` (`AdvisorTook` | `AdvisorReplied` |
+`AdvisorTransferred` | `Manual` | `Handoff`). `ConversationSummary.automation` es `null` cuando es `None`, el conteo `counts.automated`
+suma las conversaciones con asistente (activo o en pausa) y `GET …/conversations?automation=active|paused|any|none` filtra por él.
+
+`POST …/conversations/{id}/automation/pause` y `…/automation/resume` piden `messaging.conversation.manage` y `If-Match` (428 sin él,
+412 si la versión cambió), y responden 200 con el `ConversationSummary`. Los 422: `messaging.conversation.not_open` (se revisa primero),
+`messaging.automation.not_available` (la conversación no tiene asistente), `messaging.automation.already_paused` y
+`messaging.automation.already_active`.
+
+Tomar, transferir y responder una conversación pausan el asistente (`AdvisorTook`, `AdvisorTransferred`, `AdvisorReplied`); soltarla lo
+deja en pausa; reanudarlo libera al asesor asignado; resolver lo devuelve a `None`. Cada cambio deja el evento `AutomationPaused` /
+`AutomationResumed` (con `pauseReason`) en el hilo y la auditoría `messaging.conversation.automation_paused` / `automation_resumed`. Los
+eventos de un mismo cambio llevan `occurred_at` estrictamente creciente (+1 µs por posición) para que el hilo se lea en orden.
+
+**Nada pone `Active` en producción todavía:** el motor del bot llega con el spec 4. Hoy sólo lo hace el harness de pruebas
+(`MessagingApiHarness.ActivateAutomationAsync`).
+
+#### Horarios de atención
+
+Un tenant define horarios semanales y los asigna a sus conexiones de WhatsApp e Instagram (spec 2026-10-21 §5). Viven en
+`messaging.business_hours_schedules` (`weekly` y `exceptions` en `jsonb`, `holiday_country` `'CO'` o `null`, nombre único por tenant sin
+distinguir mayúsculas y un solo predeterminado por tenant) y `messaging.connection_business_hours` (un horario por conexión).
+
+| Ruta (bajo `…/messaging/business-hours`) | `If-Match` | Respuesta | Errores propios |
+| ---------------------------------------- | ---------- | --------- | --------------- |
+| `GET /` | no | `items`, `timeZone` y `connections` (todas las conexiones del tenant, en cualquier estado, con su horario actual) | |
+| `POST /` | no | 201 | 409 `messaging.business_hours.name_taken` |
+| `PUT /{id}` | sí (412 / 428) | 200; reemplaza el horario y sus conexiones | 404 `not_found`, 409 `name_taken` |
+| `DELETE /{id}` | sí (412 / 428) | 204 | 404 `not_found`, 422 `in_use` (tiene conexiones vivas) o `is_default` |
+| `POST /{id}/duplicate` | no | 201, nombre «… (copia)», «… (copia 2)»… | 404 `not_found`, 409 `name_taken` |
+| `POST /{id}/default` | sí (412 / 428) | 200; sube la versión de este y del predeterminado anterior | 404 `not_found`, 409 `default_conflict` |
+
+Todos los códigos propios llevan el prefijo `messaging.business_hours.`. Escribir pide `messaging.business_hours.manage` (de fábrica sólo
+en `admin`); leer, `messaging.conversation.read`. El 422 `validation.failed` trae el mapa `errors` con las claves `Name`, `Weekly`,
+`Exceptions`, `HolidayCountry` y `ConnectionIds`, y anidadas `Weekly[i].Ranges[j].To`: una franja que cruza la medianoche se rechaza
+(«divídela en dos días»). Las excepciones pasadas se podan al guardar. Auditoría: `messaging.business_hours.created`, `updated`,
+`deleted`, `duplicated`, `default_set` y `connections_assigned`.
+
+**Qué horario aplica a una conexión:** su asignación; si no tiene, el predeterminado del tenant; si tampoco hay, siempre abierta (D-H4).
+Un festivo (`holidayCountry = "CO"`, Ley 51 de 1983, calculados por `ColombianHolidays`) cierra el día completo, salvo que exista una
+excepción con franjas para esa fecha: la excepción gana. `GET …/messaging/connections` devuelve por conexión `businessHoursScheduleId`,
+`businessHoursName` y `openNow`.
 
 ### Mensajería (Instagram)
 

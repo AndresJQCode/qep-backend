@@ -56,7 +56,7 @@ public sealed record ConversationListFilter(
     ConversationSort Sort = ConversationSort.Newest,
     AutomationFilter? Automation = null);
 
-/// <summary>Spec 2026-10-21 §4.3: <c>automation=any|active|paused|none</c>; <c>null</c> = sin filtro, <c>Any</c> = cualquiera distinta de <c>None</c>.</summary>
+/// <summary>Spec 2026-10-21 §4.5: <c>automation=any|active|paused|none</c>; <c>null</c> = sin filtro, <c>Any</c> = cualquiera distinta de <c>None</c>.</summary>
 public enum AutomationFilter
 {
     Any,

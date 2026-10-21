@@ -50,7 +50,7 @@ public sealed record ConversationSummary(
     /// y así la fila sin asistente no obliga a la pantalla a conocer el enum para saber que no hay qué mostrar.</summary>
     ConversationAutomationDto? Automation = null);
 
-/// <summary>Spec 2026-10-21 §4.3: el asistente de la conversación. <c>Status</c> ∈ Active|Paused, por nombre. <c>PausedAt</c>,
+/// <summary>Spec 2026-10-21 §4.5: el asistente de la conversación. <c>Status</c> ∈ Active|Paused, por nombre. <c>PausedAt</c>,
 /// <c>PausedBy</c> y <c>PauseReason</c> sólo vienen pausada; <c>PausedBy</c> es <c>null</c> si lo pausó el sistema, y si la membresía
 /// ya no está sale como «Miembro eliminado», como <c>AssignedTo</c>.</summary>
 public sealed record ConversationAutomationDto(string Status, DateTimeOffset StartedAt, DateTimeOffset? PausedAt, MemberRefDto? PausedBy, string? PauseReason);

@@ -7,7 +7,7 @@ public sealed record PauseAutomationCommand(Guid TenantId, Guid ConversationId, 
 
 public sealed record ResumeAutomationCommand(Guid TenantId, Guid ConversationId, long ExpectedVersion) : ICommand<ConversationSummary>;
 
-/// <summary>Spec 2026-10-21 §4.3: pausar a mano el asistente. Mismo orden que tomar (tenant y permiso → 404 → membresía → If-Match),
+/// <summary>Spec 2026-10-21 §4.4: pausar a mano el asistente. Mismo orden que tomar (tenant y permiso → 404 → membresía → If-Match),
 /// y el evento y la auditoría salen en la misma transacción que el cambio.</summary>
 public sealed class PauseAutomationHandler(ConversationAssignmentSteps steps) : ICommandHandler<PauseAutomationCommand, ConversationSummary>
 {
@@ -22,7 +22,7 @@ public sealed class PauseAutomationHandler(ConversationAssignmentSteps steps) : 
     }
 }
 
-/// <summary>Spec 2026-10-21 §4.3: devolverle la conversación al asistente. Si un asesor la tiene, la libera primero (dos eventos).</summary>
+/// <summary>Spec 2026-10-21 §4.4: devolverle la conversación al asistente. Si un asesor la tiene, la libera primero (dos eventos).</summary>
 public sealed class ResumeAutomationHandler(ConversationAssignmentSteps steps) : ICommandHandler<ResumeAutomationCommand, ConversationSummary>
 {
     public async Task<ConversationSummary> HandleAsync(ResumeAutomationCommand command, CancellationToken cancellationToken)

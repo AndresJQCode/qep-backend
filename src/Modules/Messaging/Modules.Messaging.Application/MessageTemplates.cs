@@ -106,7 +106,8 @@ public sealed record BuiltTemplate(TemplateSend Send, string Text, string Detail
 /// viaja <c>Username</c> en vez del número.</summary>
 /// <remarks>Spec 2026-10-21 D-H4: <c>BusinessHoursScheduleId</c> y <c>BusinessHoursName</c> son el horario que decide ahora la conexión (su
 /// asignación o, si no tiene, el predeterminado; <c>null</c> = siempre abierta) y <c>OpenNow</c> si atiende en este momento. Viajan
-/// calculados para que el selector de conexión de la bandeja no tenga las reglas de horario. Los tres traen default para que el adaptador
+/// calculados para que el selector de conexión de la bandeja no tenga las reglas de horario. Ojo: es el horario EFECTIVO (el predeterminado
+/// incluido); <c>BusinessHoursConnectionOptionDto</c> lleva en cambio la asignación EXPLÍCITA (<c>null</c> = sin asignar), y no se unifican. Los tres traen default para que el adaptador
 /// de Integrations, que no los conoce, no cambie.</remarks>
 public sealed record MessagingConnectionDto(
     Guid Id,

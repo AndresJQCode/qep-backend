@@ -171,14 +171,14 @@ public sealed class CompositionRootTests
     /// entitlements, las 6 de POS, las tres <c>operator.*</c> y las dos <c>integrations.*</c> de los
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
-    /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 y <c>messaging.resolution_reason.manage</c> del spec 2026-10-15.</summary>
+    /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21.</summary>
     [Fact]
     public void PermissionDiscoveryFindsTheFiftyEightConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
         // + el de plantillas (spec 2026-10-14 D-T5) + el de motivos de resolución (spec 2026-10-15 D-R8)
-        // + el de horarios de atención (spec 2026-10-21 D-H11).
+        // + el de horarios de atención (spec 2026-10-21 D-H8).
         Assert.Equal(58, PermissionConstants().Length);
     }
 
@@ -232,7 +232,7 @@ public sealed class CompositionRootTests
         Assert.Empty(definition.RequiredModules!);
     }
 
-    /// <summary>Spec 2026-10-21 D-H11: de núcleo y de fábrica sólo en <c>admin</c>: el horario decide cuándo atiende el asistente en nombre
+    /// <summary>Spec 2026-10-21 D-H8: de núcleo y de fábrica sólo en <c>admin</c>: el horario decide cuándo atiende el asistente en nombre
     /// de la empresa, y lo administra quien administra, no el asesor.</summary>
     [Fact]
     public void AdminCarriesBusinessHoursManageAndAdvisorDoesNot()

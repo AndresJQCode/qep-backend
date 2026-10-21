@@ -111,7 +111,7 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
         for (var attempt = 0; attempt < 2; attempt++)
         {
             await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-            // Spec 2026-10-21 §6: si el asistente estaba activo, la misma sentencia lo pausa (AdvisorReplied): asignar sin pausar
+            // Spec 2026-10-21 §4.4: si el asistente estaba activo, la misma sentencia lo pausa (AdvisorReplied): asignar sin pausar
             // viola CK_conversations_automation_assignment. Los CASE miran el valor ANTERIOR de automation_status; RETURNING ve
             // el nuevo, y por eso PausedNow se deduce de la razón y la hora que acaba de escribir (COALESCE: sin asistente son NULL).
             var taken = await dbContext.Database.SqlQuery<AutoAssignRow>(

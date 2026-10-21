@@ -1110,7 +1110,7 @@ public static class QepServiceCollectionExtensions
                 MessagingPermissions.QuickReplyManage,
                 // Spec 2026-10-15 D-R8: el catálogo de motivos de resolución. El rol vive en código: sin migración.
                 MessagingPermissions.ResolutionReasonManage,
-                // Spec 2026-10-21 D-H11: el horario decide cuándo atiende el asistente en nombre de la empresa; de fábrica sólo en admin.
+                // Spec 2026-10-21 D-H8: el horario decide cuándo atiende el asistente en nombre de la empresa; de fábrica sólo en admin.
                 MessagingPermissions.BusinessHoursManage,
                 // Spec 2026-10-14 D-T5: las plantillas de WhatsApp se gestionan desde QEP; de fábrica sólo en admin.
                 MessagingPermissions.TemplateManage,
@@ -1614,7 +1614,7 @@ public static class QepServiceCollectionExtensions
             "Messaging",
             "low",
             RequiredModules: []));
-        // Spec 2026-10-21 D-H11: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
+        // Spec 2026-10-21 D-H8: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
         services.AddSingleton(new PermissionDefinition(
             MessagingPermissions.BusinessHoursManage,
             "Administrar horarios de atención",

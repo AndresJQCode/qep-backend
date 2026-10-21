@@ -34,7 +34,7 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
             query = query.Where(conversation => conversation.CustomerId != null && taggedIds.Contains(conversation.CustomerId.Value));
         }
 
-        // Spec 2026-10-21 §4.3: ausente = todas, con y sin asistente.
+        // Spec 2026-10-21 §4.5: ausente = todas, con y sin asistente.
         query = filter.Automation switch
         {
             AutomationFilter.Any => query.Where(conversation => conversation.AutomationStatus != ConversationAutomationStatus.None),
