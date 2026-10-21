@@ -205,7 +205,8 @@
     #v(3pt, weak: true)
     #par(leading: 0.6em)[
       #if hay-emisor [#renglon("N.°", data.quotationNumber) \ ]
-      #renglon("Emitida", fecha(data.issuedOn)) \
+      // Concuerda con el documento: «la cotización», emitida; «el pedido», emitido.
+      #renglon(if es-pedido { "Emitido" } else { "Emitida" }, fecha(data.issuedOn)) \
       // Un pedido no vence: "Sin vencimiento" se leería como una condición comercial que nadie pactó.
       #if not es-pedido [
         #renglon(

@@ -84,6 +84,39 @@ public sealed class OrderPdfDocumentMapperTests
                 document.FreightSubtotal, document.FreightTaxAmount, document.CashOnDelivery));
     }
 
+    // Spec de Shopify §6.2.5: la tienda nombró un envío que QEP no reconoció como transportadora. El
+    // documento imprime ese nombre en vez de callar: sin él no dice cómo viaja el pedido.
+    [Fact]
+    public void AShopifyOrderWithoutARecognizedCarrierPrintsTheStoreShippingName()
+    {
+        var detail = Detail();
+        var document = Map(detail with
+        {
+            Order = detail.Order with
+            {
+                Shipping = detail.Order.Shipping with { Carrier = null, ExternalShippingTitle = "Envío express" },
+            },
+        });
+
+        Assert.Equal("Envío express", document.CarrierName);
+    }
+
+    // Reconocida la transportadora, manda ella: el título de la tienda es lo que había antes de elegirla.
+    [Fact]
+    public void ARecognizedCarrierWinsOverTheStoreShippingName()
+    {
+        var detail = Detail();
+        var document = Map(detail with
+        {
+            Order = detail.Order with
+            {
+                Shipping = detail.Order.Shipping with { ExternalShippingTitle = "Envío express" },
+            },
+        });
+
+        Assert.Equal("Servientrega", document.CarrierName);
+    }
+
     [Fact]
     public void ABillingPartyWithItsOwnDataIsPrintedAndShippingFallsBackToTheCustomer()
     {

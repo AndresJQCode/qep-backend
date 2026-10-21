@@ -106,7 +106,9 @@ public static class QuotationPdfDocumentMapper
             header.NetTotal,
             header.CustomerVatSurplus,
             logo,
-            header.Shipping.Carrier?.Name,
+            // Sin transportadora reconocida, el nombre con el que la tienda llamó al envío (spec de
+            // Shopify §6.2.5): es lo único que dice cómo viaja el pedido. La pantalla lo muestra igual.
+            header.Shipping.Carrier?.Name ?? header.Shipping.ExternalShippingTitle,
             header.Shipping.ChargeMode,
             header.Shipping.FreightAmount,
             header.Shipping.FreightTaxPercentage,

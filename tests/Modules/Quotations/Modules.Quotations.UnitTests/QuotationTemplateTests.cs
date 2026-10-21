@@ -205,6 +205,16 @@ public sealed partial class QuotationTemplateTests
         Assert.Contains("if not es-pedido [", source, StringComparison.Ordinal);
     }
 
+    // «Emitida» concuerda con «la cotización»; el pedido es masculino.
+    [Fact]
+    public async Task TheIssueDateAgreesWithTheDocumentGender()
+    {
+        var (source, _, _) = await CapturedRequestAsync(Minimal() with { Kind = QuotationPdfKind.Order });
+
+        Assert.Contains("if es-pedido { \"Emitido\" } else { \"Emitida\" }", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("renglon(\"Emitida\"", source, StringComparison.Ordinal);
+    }
+
     private static int Count(string text, string value)
     {
         var count = 0;
