@@ -1,8 +1,10 @@
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
+using Modules.Messaging.Infrastructure.Options;
 using Modules.Messaging.Infrastructure.Persistence;
 
 namespace Modules.Messaging.Infrastructure.Webhook;
@@ -25,6 +27,7 @@ internal sealed partial class WebhookDeliveryProcessor(
     IClock clock,
     MarketingOptOutButtons optOutButtons,
     IMessagingNotifier notifier,
+    IOptions<MessagingAutomationOptions> automationOptions,
     ILogger<WebhookDeliveryProcessor> logger)
 {
     [LoggerMessage(Level = LogLevel.Warning, Message = "Webhook delivery {DeliveryId}: the realtime notification for conversation {ConversationId} failed; the delivery is processed anyway.")]
@@ -143,7 +146,7 @@ internal sealed partial class WebhookDeliveryProcessor(
             foreach (var message in change.Messages)
             {
                 var context = await PrepareAsync(route.TenantId, route.ConnectionId, message, cancellationToken);
-                var ingested = await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, cancellationToken);
+                var ingested = await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, automationOptions.Value.Enqueue, cancellationToken);
                 if (ingested is not null)
                 {
                     // Spec 2026-10-14: ya commiteado; un reenvío de Meta (null) no avisa nada.

@@ -146,6 +146,24 @@ internal static class MetaPayloads
         return Messages(phoneNumberId, "15550000000", UserIdFor(waId), waId, "Laura", message);
     }
 
+    /// <summary>Spec 2026-10-21 D-M1: la respuesta a un botón (<c>button_reply</c>) o a una lista (<c>list_reply</c>), con la forma
+    /// literal de Meta: el objeto <c>interactive</c> lleva el <c>id</c> y el <c>title</c> de lo elegido.</summary>
+    public static string InboundButtonReply(string phoneNumberId, string waId, string wamid, long timestamp, string replyId, string title) =>
+        Messages(
+            phoneNumberId,
+            "15550000000",
+            UserIdFor(waId),
+            waId,
+            "Laura",
+            new
+            {
+                from = waId,
+                id = wamid,
+                timestamp = Seconds(timestamp),
+                type = "interactive",
+                interactive = new { type = "button_reply", button_reply = new { id = replyId, title } },
+            });
+
     /// <summary>El <c>value</c> de un <c>messages</c> con un mensaje <c>location</c>, para pasarlo a
     /// <see cref="Change"/>.</summary>
     public static string LocationValue(

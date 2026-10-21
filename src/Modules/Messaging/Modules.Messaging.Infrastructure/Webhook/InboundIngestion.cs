@@ -17,18 +17,20 @@ internal static class InboundIngestion
 
     /// <returns>El mensaje insertado con su conversación y su asignado (spec 2026-10-14: a quién le suena), o <c>null</c> si
     /// Meta lo reenvió (ya estaba).</returns>
+    /// <param name="enqueueAutomation">Spec 2026-10-21 D-M1: deja el entrante en <c>automation_inbox</c>, en esta misma transacción, si
+    /// quedó sin asesor, con la automatización en None o Active y de un tipo que el motor entiende. Instagram pasa <c>false</c> (D-M6).</param>
     /// <param name="channel">Spec 2026-10-14 decisión 4: lo escribe la conversación al nacer; después no cambia.</param>
     public static async Task<IngestedInbound?> IngestAsync(
         MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now,
-        CancellationToken cancellationToken, ConversationChannel channel = ConversationChannel.WhatsApp)
+        bool enqueueAutomation, CancellationToken cancellationToken, ConversationChannel channel = ConversationChannel.WhatsApp)
     {
         try
         {
-            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, channel, cancellationToken);
+            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, channel, enqueueAutomation, cancellationToken);
         }
         catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UniqueViolation && exception.ConstraintName == ConnectionUserIndex)
         {
-            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, channel, cancellationToken);
+            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, channel, enqueueAutomation, cancellationToken);
         }
     }
 
@@ -62,7 +64,7 @@ internal static class InboundIngestion
         }
 
         var preview = Preview(message);
-        var assignedMemberId = (await dbContext.Database.SqlQuery<Guid?>(
+        var echoState = (await dbContext.Database.SqlQuery<EchoState>(
             $"""
             UPDATE messaging.conversations SET
                 customer_id            = COALESCE(customer_id, {context.CustomerId}),
@@ -76,7 +78,7 @@ internal static class InboundIngestion
                 updated_at             = {now},
                 version                = version + 1
             WHERE id = {conversationId}
-            RETURNING assigned_member_id AS "Value"
+            RETURNING assigned_member_id AS "AssignedMemberId", automation_status AS "AutomationStatus"
             """).ToListAsync(cancellationToken)).Single();
 
         if (message.Media is { } media)
@@ -85,12 +87,13 @@ internal static class InboundIngestion
         }
 
         await transaction.CommitAsync(cancellationToken);
-        return new IngestedInbound(messageId, conversationId, assignedMemberId);
+        // Un eco nunca encola: no es un entrante, y Opened sólo tiene sentido para uno.
+        return new IngestedInbound(messageId, conversationId, echoState.AssignedMemberId, echoState.AutomationStatus, Opened: false);
     }
 
     private static async Task<IngestedInbound?> IngestOnceAsync(
         MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now,
-        ConversationChannel channel, CancellationToken cancellationToken)
+        ConversationChannel channel, bool enqueueAutomation, CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
@@ -149,12 +152,27 @@ internal static class InboundIngestion
                 version            = version + 1
             FROM old
             WHERE id = {conversationId}
-            RETURNING old.old_status AS "OldStatus", old.old_customer_id AS "OldCustomerId", assigned_member_id AS "AssignedMemberId"
+            RETURNING old.old_status AS "OldStatus", old.old_customer_id AS "OldCustomerId", assigned_member_id AS "AssignedMemberId",
+                      automation_status AS "AutomationStatus"
             """).ToListAsync(cancellationToken)).Single();
 
         if (message.Media is { } media)
         {
             await InsertMediaAsync(dbContext, messageId, media, now, cancellationToken);
+        }
+
+        // Spec 2026-10-21 D-M1/D-M16: después del dedupe por wamid (un reenvío ya salió con null arriba) y en la misma transacción que
+        // el UPDATE de la conversación; la PK por message_id es la red por si aun así se repitiera. «Abrió» incluye la conversación recién
+        // creada: nace Open, así que su estado «de antes» no la delata.
+        var opened = conversation.Created || before.OldStatus == nameof(ConversationStatus.Resolved);
+        if (enqueueAutomation && ShouldEnqueue(message.Kind, before))
+        {
+            await dbContext.Database.ExecuteSqlAsync(
+                $"""
+                INSERT INTO messaging.automation_inbox (message_id, tenant_id, connection_id, conversation_id, opened, created_at, attempts, next_attempt_at)
+                VALUES ({messageId}, {tenantId}, {connectionId}, {conversationId}, {opened}, {now}, 0, {now})
+                ON CONFLICT (message_id) DO NOTHING
+                """, cancellationToken);
         }
 
         // Spec 2026-10-10 §8.7: justo antes del mensaje que los causó, cada uno con su propio milisegundo para que el
@@ -187,8 +205,15 @@ internal static class InboundIngestion
         }
 
         await transaction.CommitAsync(cancellationToken);
-        return new IngestedInbound(messageId, conversationId, before.AssignedMemberId);
+        return new IngestedInbound(messageId, conversationId, before.AssignedMemberId, before.AutomationStatus, opened);
     }
+
+    /// <summary>Spec 2026-10-21 §5.1: los tipos que el motor puede leer. Stickers, ubicaciones, contactos y reacciones no encolan.</summary>
+    private static bool ShouldEnqueue(MessageKind kind, PreviousState state) =>
+        state.AssignedMemberId is null
+        && state.AutomationStatus is "None" or "Active"
+        && kind is MessageKind.Text or MessageKind.Interactive or MessageKind.Image or MessageKind.Document
+            or MessageKind.Video or MessageKind.Audio or MessageKind.Unsupported;
 
     /// <summary>§8.6: un id que no cabe en la columna haría fallar el INSERT y con él el mensaje entero. El mensaje entra; el medio
     /// queda rendido de una vez, con el motivo, y el worker nunca lo reclama. Spec 2026-10-14 §6.2: un adjunto de Instagram no tiene
@@ -265,8 +290,10 @@ internal static class InboundIngestion
         return source is null ? null : source.Length <= PreviewMaxLength ? source : source[..PreviewMaxLength];
     }
 
-    private sealed record PreviousState(string OldStatus, Guid? OldCustomerId, Guid? AssignedMemberId);
+    private sealed record PreviousState(string OldStatus, Guid? OldCustomerId, Guid? AssignedMemberId, string AutomationStatus);
+
+    private sealed record EchoState(Guid? AssignedMemberId, string AutomationStatus);
 }
 
 /// <summary>Lo que la ingesta dejó commiteado, para el aviso en tiempo real (spec 2026-10-14).</summary>
-internal sealed record IngestedInbound(Guid MessageId, Guid ConversationId, Guid? AssignedMemberId);
+internal sealed record IngestedInbound(Guid MessageId, Guid ConversationId, Guid? AssignedMemberId, string AutomationStatus, bool Opened);

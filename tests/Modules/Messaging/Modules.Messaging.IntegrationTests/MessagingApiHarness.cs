@@ -209,7 +209,7 @@ internal static class MessagingApiHarness
         }
     }
 
-    public sealed class QepApiFactory(string connectionString) : WebApplicationFactory<Program>
+    public sealed class QepApiFactory(string connectionString, bool enqueueAutomation = false) : WebApplicationFactory<Program>
     {
         /// <summary>Lo que sale hacia Graph —desde Integrations y desde Messaging— lo ve este handler.</summary>
         public FakeMetaGraphHandler MetaHandler { get; } = new();
@@ -252,6 +252,12 @@ internal static class MessagingApiHarness
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:CampaignPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:PurgeIntervalHours", "24");
+            // Spec 2026-10-21 D-M1: apagado por defecto; sólo las pruebas de la cola lo prenden.
+            if (enqueueAutomation)
+            {
+                builder.UseSetting("Messaging:Automation:Enqueue", "true");
+            }
+
             builder.ConfigureTestServices(services =>
             {
                 services.AddHttpClient(IntegrationsGraphClientName)
