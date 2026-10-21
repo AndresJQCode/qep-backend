@@ -560,12 +560,14 @@ public sealed class QuotationItemApiTests
         Assert.Equal(100_000m, minimum.GetProperty("missingTotal").GetDecimal());
     }
 
+    // Variantes, Tarea 7: la copia es de variante a variantes. Estos productos no tienen opciones y
+    // su única variante lleva el id del producto, así que el id del producto es el de la variante.
     private static async Task CopyScalesAsync(
         HttpClient client, Guid tenantId, Guid sourceProductId, Guid targetProductId)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products/price-scales/copy",
-            new { sourceProductId, targetProductIds = new[] { targetProductId } },
+            new { sourceVariantId = sourceProductId, targetVariantIds = new[] { targetProductId } },
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
     }

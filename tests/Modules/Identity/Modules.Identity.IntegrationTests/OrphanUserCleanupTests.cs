@@ -889,8 +889,9 @@ public sealed class OrphanUserCleanupTests
             new ProductVariantInput { Code = $"VS-{Guid.NewGuid():N}"[..12], Pricing = new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 100m } } }, [],
             occurredAt);
         dbContext.Products.Add(product);
-        dbContext.ProductPriceChanges.AddRange(ProductPriceChangeDetector.Detect(
+        dbContext.ProductPriceChanges.AddRange(ProductPriceChangeDetector.DetectForVariant(
             product,
+            product.Variants.Single(),
             new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 120m } },
             changedByUserId,
             occurredAt));

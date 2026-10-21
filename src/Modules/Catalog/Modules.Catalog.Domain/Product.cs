@@ -97,11 +97,12 @@ public sealed class Product
 
     // --- Transitorio (variantes, Tarea 2). Code, precios, escalas y empaques son de la variante;
     // estos accesos leen la única variante (y fallan si hay más de una) para que los llamadores que todavía piensan en "un
-    // producto, un código" (persistencia, adaptadores de Bootstrapper, Excel, historial y copia de
-    // escalas) compilen hasta que sus tareas los pasen a variantes (T7, T8, T9). En un
+    // producto, un código" (persistencia, adaptadores de Bootstrapper, Excel) compilen hasta que
+    // sus tareas los pasen a variantes (T8, T9). En un
     // producto sin opciones es exactamente lo de antes. Código nuevo no los usa: lee Variants.
     // La Tarea 5 pasó a variantes el mapeo del detalle, el listado y el detector del PUT, y retiró
-    // PricedCurrencies, que quedó sin llamadores.
+    // PricedCurrencies, que quedó sin llamadores. La Tarea 7 pasó a variantes el historial y la
+    // copia de escalas, y retiró ApplyCopiedPriceScales de la única variante.
 
     /// <summary>Transitorio: el <see cref="ProductVariant.Code"/> de la única variante.</summary>
     public string Code => PrimaryVariant.Code;
@@ -493,27 +494,47 @@ public sealed class Product
     }
 
     /// <summary>
-    /// Reemplaza **sólo** las escalas: los precios base y el resto de los datos maestros
-    /// quedan como estaban. Es lo que necesita copiar las escalas de otro producto.
+    /// Reemplaza **sólo** las escalas de las variantes indicadas: los precios base y el resto de los
+    /// datos maestros quedan como estaban. Es lo que necesita copiar las escalas de otra variante
+    /// (spec 2026-10-20 §4).
     ///
     /// No pasa por <see cref="Update"/> a propósito. Ese verbo reemplaza el producto entero,
     /// así que el caso de uso tendría que reenviarle nombre, variantes y galería para no
     /// borrarlos — y un lote que arrastre mal cualquiera de esos campos los limpia en todos los
     /// destinos de una vez. Acá no hay nada que arrastrar.
     ///
+    /// Recibe **todas** las variantes del producto que la copia toca de una vez, y no una por
+    /// llamada, para que el producto cuente un solo cambio (una sola subida de <see cref="Version"/>)
+    /// por más variantes que reciban escalas. Una variante que no es de este producto da
+    /// <c>catalog.variant.not_found</c>.
+    ///
     /// Y quedan **incompletas**: sin restricción, múltiplo, empaque ni agrupación
     /// (<see cref="PriceScale.CreateIncomplete"/>). Es el único camino que las produce.
-    ///
-    /// Transitorio (variantes, Tarea 2): copia sobre la única variante y falla si hay más de una.
-    /// La copia por variante es de la Tarea 7.
     /// </summary>
     public void ApplyCopiedPriceScales(
-        IReadOnlyCollection<PriceScaleInput> scales,
+        IReadOnlyDictionary<VariantId, IReadOnlyCollection<PriceScaleInput>> scalesByVariant,
         DateTimeOffset occurredAt)
     {
+        ArgumentNullException.ThrowIfNull(scalesByVariant);
         EnsureActive();
 
-        PrimaryVariant.ApplyCopiedPriceScales(scales);
+        // Primero resolver todas, después mutar: una variante ajena no deja a las anteriores
+        // copiadas a medias en un agregado que el llamador aún podría guardar.
+        var targets = new List<(ProductVariant Variant, IReadOnlyCollection<PriceScaleInput> Scales)>(
+            scalesByVariant.Count);
+        foreach (var (variantId, scales) in scalesByVariant)
+        {
+            var variant = _variants.Find(saved => saved.Id == variantId)
+                ?? throw new CatalogDomainException(
+                    "catalog.variant.not_found",
+                    "The variant does not belong to this product.");
+            targets.Add((variant, scales));
+        }
+
+        foreach (var (variant, scales) in targets)
+        {
+            variant.ApplyCopiedPriceScales(scales);
+        }
 
         Version++;
         UpdatedAt = occurredAt;

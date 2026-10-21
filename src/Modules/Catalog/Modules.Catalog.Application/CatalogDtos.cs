@@ -246,17 +246,29 @@ public sealed record ProductVariantRequest(
     bool? IsActive);
 
 /// <summary>
-/// El cuerpo de la copia de escalas: de dónde salen y a quiénes van. No lleva las escalas
+/// El cuerpo de la copia de escalas: de qué variante salen y a cuáles van. No lleva las escalas
 /// mismas a propósito — el backend las lee del origen. Que las mandara el cliente es lo que
 /// permitía copiar algo distinto de lo que la pantalla mostró.
 /// </summary>
+/// <param name="SourceVariantId">La variante que da las escalas. Es una **variante** y no un
+/// producto porque cada variante tiene las suyas (spec 2026-10-20 §4): copiar las de «Camiseta – M»
+/// a «Camiseta – L» es un caso corriente, y un producto con varias variantes no tiene «unas»
+/// escalas que copiar. Para un producto sin opciones el frontend manda el id de su única variante,
+/// que es el mismo del producto.</param>
+/// <param name="TargetVariantIds">Las variantes que las reciben, de uno o de varios productos, y
+/// **contadas en variantes** contra el tope de 200 (<see cref="PriceScaleCopyLimits.MaxTargets"/>):
+/// la pantalla de copia deja marcar variantes sueltas de productos distintos, y un tope por
+/// productos dejaría pasar un lote de miles de filas. Sin repetidos ni el origen.</param>
 public sealed record CopyPriceScalesRequest(
-    Guid SourceProductId,
-    IReadOnlyList<Guid> TargetProductIds);
+    Guid SourceVariantId,
+    IReadOnlyList<Guid> TargetVariantIds);
 
 /// <summary>
-/// Los destinos ya actualizados, en el orden en que se pidieron. Devolverlos evita que el
-/// cliente tenga que releer el listado para pintar el resultado.
+/// Los productos que recibieron escalas, ya actualizados, cada uno **una sola vez** y en el orden
+/// en que aparece su primera variante de destino en la petición, con todas sus variantes y su
+/// <c>canDelete</c> (Tarea 6). Es por producto y no por variante porque el formulario repinta el
+/// producto entero (su tabla de variantes con las escalas nuevas), y devolverlos evita que el
+/// cliente tenga que releer el listado o cada detalle para pintar el resultado.
 /// </summary>
 public sealed record CopyPriceScalesResponse(
     IReadOnlyCollection<ProductResponse> Products);

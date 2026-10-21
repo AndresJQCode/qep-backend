@@ -58,9 +58,10 @@ public static class ProductEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         // Un recurso propio y no un PUT por destino: la operación es "copiar estas escalas a
-        // estos productos", y partirla en N escrituras deja al cliente orquestando una
-        // transacción que no puede cerrar. Bajo /products y no bajo el producto origen porque
-        // escribe en los destinos, que son varios — el origen es un dato del cuerpo.
+        // estas variantes", y partirla en N escrituras deja al cliente orquestando una
+        // transacción que no puede cerrar. Bajo /products y no bajo la variante origen porque
+        // escribe en los destinos, que son varios y de varios productos — el origen es un dato
+        // del cuerpo (spec 2026-10-20 §4).
         group.MapPost("/products/price-scales/copy", CopyPriceScalesAsync)
             .RequireAuthorization(CatalogPermissions.ProductManage)
             .Accepts<CopyPriceScalesRequest>("application/json")
@@ -202,8 +203,8 @@ public static class ProductEndpoints
         var products = await dispatcher.SendAsync(
             new CopyPriceScalesCommand(
                 tenantId,
-                request.SourceProductId,
-                request.TargetProductIds ?? []),
+                request.SourceVariantId,
+                request.TargetVariantIds ?? []),
             cancellationToken);
 
         return Results.Ok(new CopyPriceScalesResponse(

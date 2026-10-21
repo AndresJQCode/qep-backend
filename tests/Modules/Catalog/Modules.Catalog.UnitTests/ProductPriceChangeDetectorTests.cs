@@ -19,7 +19,7 @@ public sealed class ProductPriceChangeDetectorTests
     {
         var product = ProductWith(Prices(("USD", 100m), ("COP", 400000m)), ScaleOf(1, 9, 10m));
 
-        var changes = ProductPriceChangeDetector.Detect(
+        var changes = DetectOnly(
             product,
             PricingOf(Prices(("USD", 100m), ("COP", 400000m)), ScaleOf(1, 9, 10m)),
             ChangedBy,
@@ -33,7 +33,7 @@ public sealed class ProductPriceChangeDetectorTests
     {
         var product = ProductWith(Prices(("USD", 100m)));
 
-        var change = Assert.Single(ProductPriceChangeDetector.Detect(
+        var change = Assert.Single(DetectOnly(
             product, PricingOf(Prices(("USD", 120m))), ChangedBy, Now));
 
         Assert.Equal(ProductPriceField.PriceBase, change.Field);
@@ -47,7 +47,7 @@ public sealed class ProductPriceChangeDetectorTests
     {
         var product = ProductWith(Prices(("COP", 400000m)));
 
-        var change = Assert.Single(ProductPriceChangeDetector.Detect(
+        var change = Assert.Single(DetectOnly(
             product, PricingOf(Prices(("COP", 450000m))), ChangedBy, Now));
 
         Assert.Equal(ProductPriceField.PriceBase, change.Field);
@@ -63,7 +63,7 @@ public sealed class ProductPriceChangeDetectorTests
     {
         var product = ProductWith(Prices(("COP", 400000m)));
 
-        var change = Assert.Single(ProductPriceChangeDetector.Detect(
+        var change = Assert.Single(DetectOnly(
             product, PricingOf(Prices(("USD", 100m), ("COP", 400000m))), ChangedBy, Now));
 
         Assert.Equal(ProductPriceField.PriceBase, change.Field);
@@ -79,7 +79,7 @@ public sealed class ProductPriceChangeDetectorTests
     {
         var product = ProductWith(Prices(("USD", 100m), ("COP", 400000m)));
 
-        var change = Assert.Single(ProductPriceChangeDetector.Detect(
+        var change = Assert.Single(DetectOnly(
             product, PricingOf(Prices(("COP", 400000m))), ChangedBy, Now));
 
         Assert.Equal(ProductPriceField.PriceBase, change.Field);
@@ -96,7 +96,7 @@ public sealed class ProductPriceChangeDetectorTests
     {
         var product = ProductWith(Prices(("USD", 100m)));
 
-        Assert.Empty(ProductPriceChangeDetector.Detect(
+        Assert.Empty(DetectOnly(
             product, PricingOf(Prices(("USD", 100.00m))), ChangedBy, Now));
     }
 
@@ -105,7 +105,7 @@ public sealed class ProductPriceChangeDetectorTests
     {
         var product = ProductWith(Prices(("USD", 100m)), ScaleOf(1, 9, 10m));
 
-        var change = Assert.Single(ProductPriceChangeDetector.Detect(
+        var change = Assert.Single(DetectOnly(
             product,
             PricingOf(Prices(("USD", 100m)), ScaleOf(1, 9, 25m)),
             ChangedBy,
@@ -123,7 +123,7 @@ public sealed class ProductPriceChangeDetectorTests
     {
         var product = ProductWith(Prices(("USD", 100m)), ScaleOf(1, 9, 10m));
 
-        Assert.Empty(ProductPriceChangeDetector.Detect(
+        Assert.Empty(DetectOnly(
             product,
             PricingOf(Prices(("USD", 100m)), ScaleOf(1, 9, 10m)),
             ChangedBy,
@@ -137,7 +137,7 @@ public sealed class ProductPriceChangeDetectorTests
     {
         var product = ProductWith(Prices(("USD", 100m)), ScaleOf(1, 9, 10m));
 
-        var changes = ProductPriceChangeDetector.Detect(
+        var changes = DetectOnly(
             product,
             PricingOf(Prices(("USD", 100m)), ScaleOf(1, 9, 10m), ScaleOf(10, 50, 30m)),
             ChangedBy,
@@ -156,7 +156,7 @@ public sealed class ProductPriceChangeDetectorTests
     {
         var product = ProductWith(Prices(("USD", 100m)), ScaleOf(1, 9, 10m), ScaleOf(10, 50, 30m));
 
-        var changes = ProductPriceChangeDetector.Detect(
+        var changes = DetectOnly(
             product,
             PricingOf(Prices(("USD", 100m)), ScaleOf(1, 9, 10m)),
             ChangedBy,
@@ -180,7 +180,7 @@ public sealed class ProductPriceChangeDetectorTests
             ScaleOf(1, 9, 10m),
             ScaleOf(10, 50, 30m));
 
-        var changes = ProductPriceChangeDetector.Detect(
+        var changes = DetectOnly(
             product,
             PricingOf(
                 Prices(("USD", 120m), ("COP", 450000m)),
@@ -206,14 +206,14 @@ public sealed class ProductPriceChangeDetectorTests
         Assert.Equal(40m, added.NewValue);
     }
 
-    // Sin tenant, producto, autor y fecha en cada fila el histórico no se puede reportar ni
+    // Sin tenant, producto, variante, autor y fecha en cada fila el histórico no se puede reportar ni
     // aislar por tenant, que es de lo que existe.
     [Fact]
-    public void DetectStampsTenantProductAuthorAndInstantOnEveryRow()
+    public void DetectStampsTenantProductVariantAuthorAndInstantOnEveryRow()
     {
         var product = ProductWith(Prices(("USD", 100m), ("COP", 400000m)), ScaleOf(1, 9, 10m));
 
-        var changes = ProductPriceChangeDetector.Detect(
+        var changes = DetectOnly(
             product,
             PricingOf(Prices(("USD", 120m), ("COP", 450000m)), ScaleOf(1, 9, 15m)),
             ChangedBy,
@@ -224,6 +224,7 @@ public sealed class ProductPriceChangeDetectorTests
         {
             Assert.Equal(TenantId, change.TenantId);
             Assert.Equal(product.Id, change.ProductId);
+            Assert.Equal(product.Variants.Single().Id, change.VariantId);
             Assert.Equal(ChangedBy, change.ChangedBy);
             Assert.Equal(Now, change.ChangedAt);
             Assert.NotEqual(Guid.Empty, change.Id.Value);
@@ -237,7 +238,7 @@ public sealed class ProductPriceChangeDetectorTests
     {
         var product = ProductWith(Prices(("USD", 100m)));
 
-        var change = Assert.Single(ProductPriceChangeDetector.Detect(
+        var change = Assert.Single(DetectOnly(
             product, PricingOf(Prices(("USD", 120m))), ChangedBy, Now));
 
         Assert.Null(change.ScaleFromUnit);
@@ -249,7 +250,7 @@ public sealed class ProductPriceChangeDetectorTests
     {
         var product = ProductWith(Prices(("COP", 400_000m), ("USD", 100m)));
 
-        var changes = ProductPriceChangeDetector.Detect(
+        var changes = DetectOnly(
             product, PricingOf(Prices(("COP", 450_000m), ("USD", 100m))), ChangedBy, Now);
 
         var change = Assert.Single(changes);
@@ -264,7 +265,7 @@ public sealed class ProductPriceChangeDetectorTests
     {
         var product = ProductWith(Prices(("COP", 400_000m)));
 
-        var changes = ProductPriceChangeDetector.Detect(
+        var changes = DetectOnly(
             product, PricingOf(Prices(("EUR", 95m))), ChangedBy, Now);
 
         // Ordinal order, so the same PUT always writes the same rows in the same order.
@@ -279,7 +280,7 @@ public sealed class ProductPriceChangeDetectorTests
     {
         var product = ProductWith(Prices(("COP", 100_000m)), ScaleOf(1, 9, 10m));
 
-        var change = Assert.Single(ProductPriceChangeDetector.Detect(
+        var change = Assert.Single(DetectOnly(
             product, PricingOf(Prices(("COP", 100_000m)), ScaleOf(1, 9, 15m)), ChangedBy, Now));
 
         Assert.Equal(ProductPriceField.ScaleDiscount, change.Field);
@@ -323,6 +324,112 @@ public sealed class ProductPriceChangeDetectorTests
         Assert.Equal(30m, change.PreviousValue);
         Assert.Equal(35m, change.NewValue);
     }
+
+    // Variantes, Tarea 7: el cambio se registra por variante. Dos tallas que cambian de precio
+    // dejan una fila cada una, con su propio VariantId y su propio valor anterior; el producto es
+    // el mismo en las dos.
+    [Fact]
+    public void DetectorRecordsOneChangePerVariant()
+    {
+        var (product, small, medium) = TwoSizeProduct(usdSmall: 20m, usdMedium: 30m);
+
+        var changes = ProductPriceChangeDetector.Detect(
+            product,
+            [
+                new ProductVariantInput { Id = small.Id.Value, Code = "CAM-S", OptionValueIds = small.OptionValueIds, Pricing = PricingOf(Prices(("USD", 22m))) },
+                new ProductVariantInput { Id = medium.Id.Value, Code = "CAM-M", OptionValueIds = medium.OptionValueIds, Pricing = PricingOf(Prices(("USD", 35m))) },
+            ],
+            ChangedBy,
+            Now);
+
+        Assert.Equal(2, changes.Count);
+        var smallChange = Assert.Single(changes, change => change.VariantId == small.Id);
+        Assert.Equal(((decimal?)20m, (decimal?)22m), (smallChange.PreviousValue, smallChange.NewValue));
+        var mediumChange = Assert.Single(changes, change => change.VariantId == medium.Id);
+        Assert.Equal(((decimal?)30m, (decimal?)35m), (mediumChange.PreviousValue, mediumChange.NewValue));
+        Assert.All(changes, change => Assert.Equal(product.Id, change.ProductId));
+    }
+
+    // Una variante cuyo precio y escalas llegan iguales no deja filas aunque la hermana sí cambie:
+    // el histórico registra cambios de precio, no guardados.
+    [Fact]
+    public void DetectorIgnoresUnchangedVariants()
+    {
+        var (product, small, medium) = TwoSizeProduct(usdSmall: 20m, usdMedium: 30m);
+
+        var changes = ProductPriceChangeDetector.Detect(
+            product,
+            [
+                new ProductVariantInput { Id = small.Id.Value, Code = "CAM-S", OptionValueIds = small.OptionValueIds, Pricing = PricingOf(Prices(("USD", 20.00m))) },
+                new ProductVariantInput { Id = medium.Id.Value, Code = "CAM-M", OptionValueIds = medium.OptionValueIds, Pricing = PricingOf(Prices(("USD", 31m))) },
+            ],
+            ChangedBy,
+            Now);
+
+        var change = Assert.Single(changes);
+        Assert.Equal(medium.Id, change.VariantId);
+
+        Assert.Empty(ProductPriceChangeDetector.Detect(
+            product,
+            [new ProductVariantInput { Id = small.Id.Value, Code = "CAM-S", OptionValueIds = small.OptionValueIds, Pricing = PricingOf(Prices(("USD", 20m))) }],
+            ChangedBy,
+            Now));
+    }
+
+    // La copia de escalas compara sólo la variante destino: la hermana no entra en el historial
+    // aunque tenga un precio distinto del pricing entrante.
+    [Fact]
+    public void DetectForVariantComparesOnlyThatVariant()
+    {
+        var (product, small, medium) = TwoSizeProduct(usdSmall: 20m, usdMedium: 30m);
+
+        var change = Assert.Single(ProductPriceChangeDetector.DetectForVariant(
+            product, medium, PricingOf(Prices(("USD", 32m))), ChangedBy, Now));
+
+        Assert.Equal(medium.Id, change.VariantId);
+        Assert.Equal(((decimal?)30m, (decimal?)32m), (change.PreviousValue, change.NewValue));
+        Assert.NotEqual(small.Id, change.VariantId);
+    }
+
+    // Una variante de otro producto marcaría las filas con un producto que no es el suyo: error
+    // de programación, no un 422.
+    [Fact]
+    public void DetectForVariantRejectsAVariantOfAnotherProduct()
+    {
+        var (product, _, _) = TwoSizeProduct(usdSmall: 20m, usdMedium: 30m);
+        var (other, otherSmall, _) = TwoSizeProduct(usdSmall: 20m, usdMedium: 30m);
+
+        Assert.NotEqual(product.Id, other.Id);
+        Assert.Throws<ArgumentException>(() => ProductPriceChangeDetector.DetectForVariant(
+            product, otherSmall, PricingOf(Prices(("USD", 99m))), ChangedBy, Now));
+    }
+
+    private static (Product Product, ProductVariant Small, ProductVariant Medium) TwoSizeProduct(
+        decimal usdSmall, decimal usdMedium)
+    {
+        var talla = Guid.CreateVersion7();
+        var (small, medium) = (Guid.CreateVersion7(), Guid.CreateVersion7());
+        var product = Product.Create(
+            ProductId.New(),
+            TenantId,
+            "Camiseta",
+            ProductDetails.Empty,
+            [talla],
+            [
+                new ProductVariantInput { Code = "CAM-S", OptionValueIds = [small], Pricing = PricingOf(Prices(("USD", usdSmall))) },
+                new ProductVariantInput { Code = "CAM-M", OptionValueIds = [medium], Pricing = PricingOf(Prices(("USD", usdMedium))) },
+            ],
+            [],
+            Now);
+        return (product, product.Variants[0], product.Variants[1]);
+    }
+
+    // La única variante del producto contra un pricing entrante: lo que hace la copia de escalas
+    // con cada destino (el PUT pasa por la sobrecarga de variantes).
+    private static IReadOnlyList<ProductPriceChange> DetectOnly(
+        Product product, ProductPricing newPricing, Guid changedBy, DateTimeOffset occurredAt) =>
+        ProductPriceChangeDetector.DetectForVariant(
+            product, Assert.Single(product.Variants), newPricing, changedBy, occurredAt);
 
     private static Product ProductWith(
         IReadOnlyDictionary<string, decimal> prices,

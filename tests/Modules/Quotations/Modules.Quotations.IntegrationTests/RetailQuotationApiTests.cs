@@ -443,7 +443,8 @@ public sealed class RetailQuotationApiTests
         var target = await CreateProductWithScalesAsync(client, tenantId, scales: []);
         var copied = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products/price-scales/copy",
-            new { sourceProductId = source, targetProductIds = new[] { target } },
+            // Variantes, Tarea 7: la única variante de un producto sin opciones lleva el id del producto.
+            new { sourceVariantId = source, targetVariantIds = new[] { target } },
             TestContext.Current.CancellationToken);
         copied.EnsureSuccessStatusCode();
         return target;

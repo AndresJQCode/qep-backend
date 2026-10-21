@@ -369,20 +369,20 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             .ToListAsync(cancellationToken);
     }
 
-    // Sin AsNoTracking, al revés que ListByIdsAsync: la copia de escalas muta lo que trae.
-    public async Task<IReadOnlyList<Product>> ListByIdsForUpdateAsync(
+    // Sin AsNoTracking, al revés que FindVariantsByIdsAsync: la copia de escalas muta lo que trae.
+    public async Task<IReadOnlyList<Product>> FindVariantsByIdsForUpdateAsync(
         Guid tenantId,
-        IReadOnlyCollection<ProductId> productIds,
+        IReadOnlyCollection<VariantId> variantIds,
         CancellationToken cancellationToken)
     {
-        if (productIds.Count == 0)
+        if (variantIds.Count == 0)
         {
             return [];
         }
 
         return await Aggregates()
-            .Where(product =>
-                product.TenantId == tenantId && productIds.Contains(product.Id))
+            .Where(product => product.TenantId == tenantId
+                && product.Variants.Any(variant => variantIds.Contains(variant.Id)))
             .ToListAsync(cancellationToken);
     }
 

@@ -1,9 +1,10 @@
 namespace Modules.Catalog.Domain;
 
 /// <summary>
-/// Compara el precio que un <see cref="Product"/> tiene hoy contra el que trae un
+/// Compara el precio que una variante de un <see cref="Product"/> tiene hoy contra el que trae un
 /// <see cref="ProductPricing"/> entrante, y devuelve una fila de histórico por cada valor que
-/// cambió.
+/// cambió. Cada fila lleva la variante cuyo precio cambió (spec 2026-10-20 §3.5): un cambio se
+/// registra **por variante**, y una variante cuyo precio no cambió no deja filas.
 ///
 /// **Puro y estático a propósito.** No toca el producto, no lee la base y no depende del reloj
 /// ni del usuario —los dos llegan por parámetro—, así que se prueba entero en memoria. Y tiene
@@ -12,6 +13,12 @@ namespace Modules.Catalog.Domain;
 /// </summary>
 public static class ProductPriceChangeDetector
 {
+    /// <summary>
+    /// El historial del PUT con variantes (Tarea 5): compara cada variante **guardada** que viene
+    /// en el cuerpo contra su propio precio de hoy. Una variante nueva (sin id) no deja filas: nace
+    /// con su precio, igual que un producto nuevo no deja historial al crearse. Una variante
+    /// guardada que no viene no se compara: el agregado la rechaza o la resuelve por su cuenta.
+    /// </summary>
     /// <param name="changedBy">
     /// El sujeto que hace el cambio, que el caso de uso saca de <c>IExecutionContext</c>. No lo
     /// resuelve el dominio: el dominio no sabe quién está pidiendo nada.
@@ -21,27 +28,6 @@ public static class ProductPriceChangeDetector
     /// <c>DateTimeOffset.UtcNow</c> de adentro: dos relojes distintos dejarían el histórico y el
     /// producto discrepando por milisegundos.
     /// </param>
-    public static IReadOnlyList<ProductPriceChange> Detect(
-        Product product,
-        ProductPricing newPricing,
-        Guid changedBy,
-        DateTimeOffset occurredAt)
-    {
-        ArgumentNullException.ThrowIfNull(product);
-        ArgumentNullException.ThrowIfNull(newPricing);
-
-        // Transitorio (variantes): la copia de escalas todavía copia sobre la única variante del
-        // destino; compararla por variante es de la Tarea 7. Con más de una variante, Single()
-        // falla en voz alta en vez de anotar el cambio en otra talla.
-        return DetectFor(product, product.Variants.Single(), newPricing, changedBy, occurredAt);
-    }
-
-    /// <summary>
-    /// El historial del PUT con variantes (Tarea 5): compara cada variante **guardada** que viene
-    /// en el cuerpo contra su propio precio de hoy. Una variante nueva (sin id) no deja filas: nace
-    /// con su precio, igual que un producto nuevo no deja historial al crearse. Una variante
-    /// guardada que no viene no se compara: el agregado la rechaza o la resuelve por su cuenta.
-    /// </summary>
     public static IReadOnlyList<ProductPriceChange> Detect(
         Product product,
         IReadOnlyList<ProductVariantInput> variants,
@@ -60,13 +46,39 @@ public static class ProductPriceChangeDetector
                 continue;
             }
 
-            changes.AddRange(DetectFor(product, variant, input.Pricing, changedBy, occurredAt));
+            changes.AddRange(BuildChanges(product, variant, input.Pricing, changedBy, occurredAt));
         }
 
         return changes;
     }
 
-    private static List<ProductPriceChange> DetectFor(
+    /// <summary>
+    /// El historial de **una** variante: la que la copia de escalas está por pisar. La copia
+    /// trabaja de variante a variantes de uno o varios productos, así que no tiene una lista de
+    /// <see cref="ProductVariantInput"/> que comparar sino el <see cref="ProductPricing"/> que
+    /// <see cref="PriceScaleCopy.ToPricingFor"/> armó para cada destino. <paramref name="variant"/>
+    /// tiene que ser una variante de <paramref name="product"/>: las filas llevan el id de las dos.
+    /// </summary>
+    public static IReadOnlyList<ProductPriceChange> DetectForVariant(
+        Product product,
+        ProductVariant variant,
+        ProductPricing newPricing,
+        Guid changedBy,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(product);
+        ArgumentNullException.ThrowIfNull(variant);
+        ArgumentNullException.ThrowIfNull(newPricing);
+
+        if (variant.ProductId != product.Id)
+        {
+            throw new ArgumentException("The variant does not belong to the product.", nameof(variant));
+        }
+
+        return BuildChanges(product, variant, newPricing, changedBy, occurredAt);
+    }
+
+    private static List<ProductPriceChange> BuildChanges(
         Product product,
         ProductVariant variant,
         ProductPricing newPricing,

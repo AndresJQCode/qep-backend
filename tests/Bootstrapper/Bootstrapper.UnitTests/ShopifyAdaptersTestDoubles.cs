@@ -96,8 +96,8 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
         Guid tenantId, string? name, string? code, bool? isActive, int skip, int take,
         CancellationToken cancellationToken) => throw new NotSupportedException();
 
-    public Task<IReadOnlyList<Product>> ListByIdsForUpdateAsync(
-        Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken) =>
+    public Task<IReadOnlyList<Product>> FindVariantsByIdsForUpdateAsync(
+        Guid tenantId, IReadOnlyCollection<VariantId> variantIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
     public Task<Product?> FindAsync(Guid tenantId, ProductId productId, CancellationToken cancellationToken) =>

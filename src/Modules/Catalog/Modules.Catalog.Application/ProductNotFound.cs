@@ -10,3 +10,10 @@ internal static class ProductNotFound
     public static ResourceNotFoundException For(Guid productId) =>
         new("catalog.product.not_found", $"Product '{productId}' was not found.");
 }
+
+// Misma regla que ProductNotFound: acotada al tenant del llamador.
+internal static class VariantNotFound
+{
+    public static ResourceNotFoundException For(Guid variantId) =>
+        new("catalog.variant.not_found", $"Variant '{variantId}' was not found.");
+}
