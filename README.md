@@ -2175,14 +2175,26 @@ No hay claves de Zenvia en el ConfigMap ni en el Secret: la cuenta es de cada te
 conexión (`Integrations:SecretProtection`). Al desplegar el cambio que retiró la cuenta global (plan
 2026-10-21):
 
-1. **Antes**, cada tenant que envía cotizaciones —hoy Origen Botánico— tiene su conexión de Zenvia con
-   token, número y `templateId` (los de la cuenta que estaba en `QUOTATIONS_WHATSAPP_*`), y el operador
-   le habilitó Zenvia. Sin eso, ese tenant pierde el envío el día del despliegue.
-2. **Después**, se borran del grupo `Backend-prod` las variables `QUOTATIONS_WHATSAPP_API_TOKEN`,
-   `QUOTATIONS_WHATSAPP_FROM_NUMBER` y `QUOTATIONS_WHATSAPP_TEMPLATE_ID`: ningún manifiesto las lee.
+1. **La conexión no se puede crear antes.** Producción no tiene todavía el módulo Integrations ni el campo
+   `templateId`: llegan en el mismo despliegue que retira la cuenta global. Desde que el pod nuevo arranca
+   hasta que existe la conexión, «Enviar» de Origen Botánico —hoy el único tenant que envía— responde
+   `422 quotation.whatsapp.no_channel` (la cotización queda en borrador; no se pierde nada).
+2. **Inmediatamente después**, con el frontend de Integraciones desplegado: el operador habilita Zenvia para
+   Origen Botánico y se crea su conexión con el token, el número y el `templateId` de la cuenta que estaba en
+   `QUOTATIONS_WHATSAPP_*` (se copian del grupo `Backend-prod` o de la consola de Zenvia, nunca con
+   `kubectl get secret`).
+3. **Después**, se borran del grupo `Backend-prod` las variables `QUOTATIONS_WHATSAPP_API_TOKEN`,
+   `QUOTATIONS_WHATSAPP_FROM_NUMBER` y `QUOTATIONS_WHATSAPP_TEMPLATE_ID`, que ningún manifiesto lee, y se
+   comprueba con `kubectl -n prod-qep-backend describe secret qep-backend-secret` (nombres, sin valores) que
+   el Secret vivo ya no tenga `Quotations__WhatsApp__ApiToken` ni `…FromNumber`: quitar una clave del
+   manifiesto no siempre la borra del Secret aplicado.
 
-Una conexión de Zenvia creada antes de este cambio no tiene `templateId` y no cuenta como canal hasta que
-se edite.
+> **Decisión pendiente (owner):** aceptar la ventana del paso 1 o cerrarla con una siembra de una sola vez
+> que cree la conexión desde `QUOTATIONS_WHATSAPP_*` al arrancar (por el protector de secretos, nunca con
+> SQL plano). Hasta que se decida, vale el procedimiento de arriba.
+
+Una conexión de Zenvia creada antes de este cambio (en un ambiente que ya tenía Integrations) no tiene
+`templateId` y no cuenta como canal hasta que se edite.
 
 ### Generación del PDF (`qcode-pdf`)
 
