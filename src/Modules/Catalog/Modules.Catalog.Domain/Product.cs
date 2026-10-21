@@ -95,41 +95,9 @@ public sealed class Product
     public Guid? ImageFileId =>
         _gallery.Count == 0 ? null : _gallery.MinBy(image => image.Position)!.FileId;
 
-    // --- Transitorio (variantes, Tarea 2). Code, precios, escalas y empaques son de la variante;
-    // estos accesos leen la única variante (y fallan si hay más de una) para que los llamadores que todavía piensan en "un
-    // producto, un código" (adaptadores de Bootstrapper, Quotations, sembrador) compilen hasta que
-    // sus tareas los pasen a variantes (T9, T15). En un
-    // producto sin opciones es exactamente lo de antes. Código nuevo no los usa: lee Variants.
-    // La Tarea 5 pasó a variantes el mapeo del detalle, el listado y el detector del PUT, y retiró
-    // PricedCurrencies, que quedó sin llamadores. La Tarea 7 pasó a variantes el historial y la
-    // copia de escalas, y retiró ApplyCopiedPriceScales de la única variante. La Tarea 8 pasó a
-    // variantes el Excel; ya ningún código de producción llama a PriceIn, pero la prueba de la
-    // semilla (CatalogSeedTests) sí: lo retira la Tarea 15 junto con el sembrador. La Tarea 9 pasó
-    // a variantes los adaptadores de Quotations, Pos y Shopify y retiró Prices. La Tarea 13 pasó a
-    // variantes el reporte de cambios de precio (PriceChangeReportSource), el último llamador de
-    // producción de Code. Quedan sólo en pruebas: Code (CatalogSeedTests y ProductVariantTests) y
-    // PriceIn, PriceScales y PackagingUnits (CatalogSeedTests); los retira la Tarea 15.
-
-    /// <summary>Transitorio: el <see cref="ProductVariant.Code"/> de la única variante.</summary>
-    public string Code => PrimaryVariant.Code;
-
-    /// <summary>Transitorio: el precio de la única variante en esa moneda.</summary>
-    public decimal? PriceIn(string currency) => PrimaryVariant.PriceIn(currency);
-
-    /// <summary>Transitorio: las escalas de la única variante.</summary>
-    public IReadOnlyCollection<PriceScale> PriceScales => PrimaryVariant.PriceScales;
-
-    /// <summary>Transitorio: los empaques de la única variante.</summary>
-    public IReadOnlyList<int> PackagingUnits => PrimaryVariant.PackagingUnits;
-
-    // Falla en voz alta con más de una variante: devolver una sola en silencio le daría a un
-    // llamador sin migrar el código o el precio de otra talla. Con una sola es lo de antes.
-    private ProductVariant PrimaryVariant => _variants.Count switch
-    {
-        1 => _variants[0],
-        0 => throw new InvalidOperationException("A product always has at least one variant."),
-        _ => throw new InvalidOperationException("transitorio: llamador sin migrar a variantes"),
-    };
+    // Código, código de barras, precios, escalas y empaques son de cada variante (spec 2026-10-20
+    // §3.2): el producto no los expone. Un producto sin opciones los lee de Variants[0], su variante
+    // por defecto, que lleva el mismo id que el producto.
 
     /// <summary>
     /// Token de concurrencia optimista, como en <c>Tenant</c> y <c>Membership</c>. Cada mutación
@@ -174,8 +142,8 @@ public sealed class Product
     }
 
     /// <summary>
-    /// Crea un producto con sus opciones y todas sus variantes de una vez (el POST del formulario,
-    /// Tarea 5), con <c>Version = 1</c> como cualquier producto nuevo. La primera variante toma el
+    /// Crea un producto con sus opciones y todas sus variantes de una vez (el POST del
+    /// formulario), con <c>Version = 1</c> como cualquier producto nuevo. La primera variante toma el
     /// id del producto, igual que la variante por defecto de <see cref="Create(ProductId, Guid, string, ProductDetails, ProductVariantInput, IReadOnlyList{Guid}, DateTimeOffset)"/>;
     /// el resto nace con id nuevo. Los <c>Id</c> que traigan las variantes se ignoran: en un
     /// producto nuevo no hay ninguna guardada con la cual emparejar.
@@ -219,7 +187,7 @@ public sealed class Product
     /// escalas, empaques de una variante— deja el agregado a medias, como antes de las variantes:
     /// la excepción aborta la unidad de trabajo y nada se guarda.
     /// </summary>
-    /// <param name="deletedVariantIds">Variantes guardadas que se borran (spec §3.3, Tarea 6). El
+    /// <param name="deletedVariantIds">Variantes guardadas que se borran (spec §3.3). El
     /// agregado no sabe si una variante está en uso —las líneas viven en otros módulos—, así que
     /// sólo borra las que el llamador le nombra después de comprobarlo; una ausente que no está
     /// acá sigue siendo <c>missing_in_request</c>. Una variante en uso no llega por este camino:

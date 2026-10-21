@@ -93,10 +93,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasOperators("gin_trgm_ops");
 
         // Variantes (spec 2026-10-20): código, precios, escalas, empaques e imagen viven en la
-        // variante o en la galería. Los accesos transitorios de Product que los leen no se mapean.
-        product.Ignore(value => value.Code);
-        product.Ignore(value => value.PriceScales);
-        product.Ignore(value => value.PackagingUnits);
+        // variante o en la galería. ImageFileId y OptionIds son derivados y no se mapean.
         product.Ignore(value => value.ImageFileId);
         product.Ignore(value => value.OptionIds);
 

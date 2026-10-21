@@ -379,38 +379,31 @@ public sealed class ProductVariantTests
         Assert.False(product.Variants[1].IsActive);
     }
 
-    // Los accesos transitorios de Product (Code, precios, escalas, empaques) sólo valen para un
-    // producto de una variante: con más, un llamador sin migrar leería una sola en silencio.
+    // El producto ya no expone código ni precio: cada variante tiene los suyos. Al agregar una
+    // opción, la variante por defecto conserva su id y la nueva no hereda su código.
     [Fact]
-    public void TransitionalAccessorsFailLoudlyWithMoreThanOneVariant()
+    public void EachVariantKeepsItsOwnCodeAndPrice()
     {
-        var product = NewProduct();
+        var product = NewProduct(Variant("CAM-001", pricing: PricedIn(25m)));
         var talla = Guid.CreateVersion7();
         product.Update(
             "Camiseta básica",
             ProductDetails.Empty,
             [talla],
             [
-                Variant("CAM-M", [Guid.CreateVersion7()], id: product.Id.Value),
-                Variant("CAM-L", [Guid.CreateVersion7()]),
+                Variant("CAM-M", [Guid.CreateVersion7()], id: product.Id.Value, pricing: PricedIn(25m)),
+                Variant("CAM-L", [Guid.CreateVersion7()], pricing: PricedIn(32m)),
             ],
             [],
             Now.AddMinutes(5));
 
-        var error = Assert.Throws<InvalidOperationException>(() => product.Code);
-        Assert.Contains("transitorio", error.Message, StringComparison.Ordinal);
-        Assert.Throws<InvalidOperationException>(() => product.PriceIn("USD"));
-        Assert.Throws<InvalidOperationException>(() => product.PriceScales);
-        Assert.Throws<InvalidOperationException>(() => product.PackagingUnits);
-    }
-
-    [Fact]
-    public void TransitionalAccessorsReadTheOnlyVariant()
-    {
-        var product = NewProduct(Variant("CAM-001", pricing: PricedIn(25m)));
-
-        Assert.Equal("CAM-001", product.Code);
-        Assert.Equal(25m, product.PriceIn("USD"));
+        Assert.Equal(2, product.Variants.Count);
+        Assert.Equal(product.Id.Value, product.Variants[0].Id.Value);
+        Assert.Equal("CAM-M", product.Variants[0].Code);
+        Assert.Equal(25m, product.Variants[0].PriceIn("USD"));
+        Assert.NotEqual(product.Id.Value, product.Variants[1].Id.Value);
+        Assert.Equal("CAM-L", product.Variants[1].Code);
+        Assert.Equal(32m, product.Variants[1].PriceIn("USD"));
     }
 
     [Fact]

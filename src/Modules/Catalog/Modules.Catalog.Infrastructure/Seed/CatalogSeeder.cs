@@ -9,11 +9,13 @@ namespace Modules.Catalog.Infrastructure.Seed;
 
 /// <summary>
 /// La mitad de Catalog de la semilla de arranque. Construye los agregados con
-/// <c>TaxRate.Create</c> y <c>Product.Create</c> —cada producto con sus cinco escalas de
-/// precio por cantidad—, así que todos los invariantes del dominio siguen valiendo — lo único
-/// que se saltea respecto de un POST es la capa HTTP.
+/// <c>TaxRate.Create</c> y <c>Product.Create</c> —cada producto sin opciones, con su variante
+/// por defecto y las cinco escalas de precio por cantidad de esa variante—, así que todos los
+/// invariantes del dominio siguen valiendo — lo único que se saltea respecto de un POST es la
+/// capa HTTP. La variante por defecto toma el id del producto (<c>Product.Create</c>) y el
+/// <c>sku</c> del JSON como <c>Code</c>.
 ///
-/// Idempotente por código de producto y por nombre de tasa, mismo criterio que
+/// Idempotente por el <c>Code</c> de la variante y por nombre de tasa, mismo criterio que
 /// <c>GeographySeeder</c> con <c>DivipolaCode</c>. Sólo crea: un producto que ya existe no se
 /// toca, ni siquiera para completarle escalas que le falten.
 /// </summary>

@@ -10,12 +10,13 @@ internal sealed record CatalogSeedFile(
 internal sealed record CatalogSeedTaxRate(string Name, int Percentage);
 
 internal sealed record CatalogSeedProduct(
+    // El Code de la variante por defecto: cada producto de la semilla nace sin opciones.
     string Sku,
     string Name,
     // Base price per currency code, VAT included. The seeder normalises the keys with
     // Currencies.Normalize, so a typo fails at startup instead of seeding an unsellable product.
     IReadOnlyDictionary<string, decimal> Prices,
-    // Los empaques son del producto, no de la escala: una escala "packaging_unit" usa estos.
+    // Los empaques son de la variante, no de la escala: una escala "packaging_unit" usa estos.
     // Nullable porque un producto sin empaques puede omitir la clave; el seeder lo lee como vacío.
     IReadOnlyList<int>? PackagingUnits,
     IReadOnlyList<CatalogSeedScale> Scales);

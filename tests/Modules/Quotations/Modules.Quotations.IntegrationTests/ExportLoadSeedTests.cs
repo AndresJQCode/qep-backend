@@ -193,6 +193,68 @@ public sealed class ExportLoadSeedTests
             connectionString, "SELECT count(*) FROM quotations.quotations WHERE tenant_id = @tenant"));
     }
 
+    // Spec 2026-10-20 §4: una línea vende una variante. variant_id es NOT NULL desde AddVariantToLines,
+    // así que un INSERT que no lo nombre ni siquiera siembra; esta prueba fija además que el id sea el
+    // de una variante del producto de la línea, y que el precio salga de esa variante.
+    [Fact]
+    public async Task TheLoadLinesSellAVariantOfTheirProductAtItsPrice()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var connectionString = database.GetConnectionString();
+
+        var result = await factory.Services.SeedExportLoadAsync(
+            OwnerEmail, 50, TestContext.Current.CancellationToken);
+
+        Assert.True(result.Seeded);
+        // Cada línea apunta a una variante activa del tenant cuyo producto es el product_id de la línea.
+        Assert.Equal(0L, await ScalarAsync<long>(connectionString, """
+            SELECT count(*) FROM quotations.quotation_items AS item
+            JOIN quotations.quotations AS quotation ON quotation.id = item.quotation_id
+            WHERE quotation.tenant_id = @tenant
+              AND NOT EXISTS (
+                  SELECT 1 FROM catalog.product_variants AS variant
+                  WHERE variant.id = item.variant_id
+                    AND variant.product_id = item.product_id
+                    AND variant.tenant_id = @tenant
+                    AND variant.is_active)
+            """));
+        // El precio unitario es el COP de la variante (catalog.product_prices.variant_id), no otro.
+        Assert.Equal(0L, await ScalarAsync<long>(connectionString, """
+            SELECT count(*) FROM quotations.quotation_items AS item
+            JOIN quotations.quotations AS quotation ON quotation.id = item.quotation_id
+            LEFT JOIN catalog.product_prices AS price
+                ON price.variant_id = item.variant_id AND price.currency = 'COP'
+            WHERE quotation.tenant_id = @tenant
+              AND item.unit_price IS DISTINCT FROM price.amount
+            """));
+        // El catálogo de la carga es el de CatalogSeeder: productos sin opciones, cuya variante por
+        // defecto lleva el id del producto. Si eso cambia, el relleno de AddVariantToLines también miente.
+        Assert.Equal(0L, await ScalarAsync<long>(connectionString, """
+            SELECT count(*) FROM quotations.quotation_items AS item
+            JOIN quotations.quotations AS quotation ON quotation.id = item.quotation_id
+            WHERE quotation.tenant_id = @tenant AND item.variant_id <> item.product_id
+            """));
+        // La carga reparte las líneas entre el catálogo, no repite una sola variante.
+        Assert.True(await ScalarAsync<long>(connectionString, """
+            SELECT count(DISTINCT item.variant_id) FROM quotations.quotation_items AS item
+            JOIN quotations.quotations AS quotation ON quotation.id = item.quotation_id
+            WHERE quotation.tenant_id = @tenant
+            """) > 1);
+        // Las líneas del pedido copian variante y producto de la línea de su cotización.
+        Assert.Equal(0L, await ScalarAsync<long>(connectionString, """
+            SELECT count(*) FROM quotations.order_items AS item
+            JOIN quotations.orders AS o ON o.id = item.order_id
+            WHERE o.tenant_id = @tenant
+              AND NOT EXISTS (
+                  SELECT 1 FROM quotations.quotation_items AS source
+                  WHERE source.quotation_id = o.quotation_id
+                    AND source.position = item.position
+                    AND source.variant_id = item.variant_id
+                    AND source.product_id = item.product_id)
+            """));
+    }
+
     [Fact]
     public async Task TheListsAndTheExportsReadTheLoad()
     {
@@ -357,6 +419,7 @@ public sealed class ExportLoadSeedTests
             "quotations.orders", "quotations.quotations", "quotations.quotation_number_counters",
             "quotations.order_number_counters", "quotations.export_jobs", "customers.customers",
             "customers.client_classifications", "customers.cuc_counters", "catalog.products",
+            "catalog.product_variants", "catalog.option_definitions", "catalog.option_library_provisions",
             "catalog.tax_rates", "tenancy.memberships",
         ];
         foreach (var table in tenantTables)

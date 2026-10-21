@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Bootstrapper.Seeding;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -5,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Domain;
 using Modules.Catalog.Infrastructure.Persistence;
+using Modules.Catalog.Infrastructure.Seed;
 using Modules.Identity.Infrastructure.Persistence;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
@@ -30,7 +32,7 @@ public sealed class CatalogSeedTests
         Assert.Equal(19, taxRate.Percentage);
 
         // Include explícito: CatalogDbContext.PriceScales es internal y las escalas no se
-        // cargan solas con el producto.
+        // cargan solas con la variante.
         var products = await dbContext.Products
             .Include(product => product.Variants).ThenInclude(variant => variant.PriceScales)
             .ToListAsync(TestContext.Current.CancellationToken);
@@ -39,20 +41,37 @@ public sealed class CatalogSeedTests
         // sin esto la sobrecarga que elige el compilador compara por object y la aserción miente.
         Assert.All(products, product => Assert.Equal(taxRate.Id, product.TaxRateId!.Value));
         Assert.All(products, product => Assert.True(product.IsActive));
-        Assert.All(products, product => Assert.Equal(5, product.PriceScales.Count));
 
-        var bronceador = products.Single(product => product.Code == "7416");
+        // Cada producto de la semilla es un producto sin opciones: una sola variante, la variante
+        // por defecto, con el mismo id que el producto (spec 2026-10-20 §8; el relleno de
+        // variant_id en las líneas depende de eso) y el `sku` del JSON como Code.
+        Assert.All(products, product =>
+        {
+            Assert.Empty(product.OptionIds);
+            var variant = Assert.Single(product.Variants);
+            Assert.Equal(product.Id.Value, variant.Id.Value);
+            Assert.Empty(variant.OptionValueIds);
+            Assert.Null(variant.Barcode);
+            Assert.True(variant.IsActive);
+            Assert.Equal(5, variant.PriceScales.Count);
+        });
+        Assert.Equal(
+            ReadSeedSkus().Order(StringComparer.Ordinal),
+            products.Select(product => product.Variants.Single().Code).Order(StringComparer.Ordinal));
+
+        var bronceador = DefaultVariantOf(products, "7416");
         Assert.Equal(35900m, bronceador.PriceIn("COP"));
         Assert.Equal(9.97m, bronceador.PriceIn("USD"));
         // Ocho de los diecinueve nombres llevan tilde; si el recurso embebido se lee con la
         // codificación equivocada, esta es la aserción que lo detecta.
         Assert.Equal(
             "COMBO ROSADO RITUAL DE SEDUCCIÓN",
-            products.Single(product => product.Code == "3001").Name);
+            products.Single(product => product.Variants.Single().Code == "3001").Name);
 
-        // Finals are derived, never stored (spec D4): PriceScale.FinalFor over the product prices.
+        // Finals are derived, never stored (spec D4): PriceScale.FinalFor over the variant prices.
         // 9.97 × 0.85 = 8.4745 → 8.47; 35900 × 0.85 = 30515.
         var bronceadorFirst = bronceador.PriceScales.Single(scale => scale.FromUnit == 6);
+        Assert.Equal(bronceador.Id, bronceadorFirst.VariantId);
         Assert.Equal(48, bronceadorFirst.ToUnit);
         Assert.Equal(15m, bronceadorFirst.Discount);
         Assert.Equal(PriceScaleRestriction.Multiple, bronceadorFirst.Restriction);
@@ -67,7 +86,7 @@ public sealed class CatalogSeedTests
         Assert.Equal(35m, bronceadorLast.Discount);
         Assert.Equal(PriceScaleRestriction.PackagingUnit, bronceadorLast.Restriction);
         Assert.Null(bronceadorLast.Multiple);
-        // El empaque es del producto desde el 2026-10-01, no de la escala.
+        // El empaque es de la variante (antes del producto, y antes aún de la escala).
         Assert.Equal([108], bronceador.PackagingUnits);
         Assert.False(bronceadorLast.AllowGrouping);
         Assert.Equal(6.48m, PriceScale.FinalFor(bronceador.PriceIn("USD"), bronceadorLast.Discount));
@@ -75,7 +94,7 @@ public sealed class CatalogSeedTests
 
         // KIT KERATINA tiene su propia columna de descuentos. 33.33 es el 0.6667 de la hoja:
         // 39.47 × 0.6667 = 26.3146… → 26.31; 150000 × 0.6667 = 100005.
-        var keratina = products.Single(product => product.Code == "7701");
+        var keratina = DefaultVariantOf(products, "7701");
         var keratinaThird = keratina.PriceScales.Single(scale => scale.FromUnit == 100);
         Assert.Equal(299, keratinaThird.ToUnit);
         Assert.Equal(33.33m, keratinaThird.Discount);
@@ -103,8 +122,11 @@ public sealed class CatalogSeedTests
         var identity = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
 
         Assert.Equal(19, await catalog.Products.CountAsync(TestContext.Current.CancellationToken));
+        // Una variante por producto: la segunda corrida no agrega variantes a un producto que ya
+        // existe, porque el seeder es create-only por el Code de la variante.
+        Assert.Equal(19, await catalog.ProductVariants.CountAsync(TestContext.Current.CancellationToken));
         // 19 productos × 5 escalas: la segunda corrida no duplica escalas porque el seeder es
-        // create-only por código y no vuelve a tocar un producto que ya existe.
+        // create-only por el Code de la variante y no vuelve a tocar un producto que ya existe.
         Assert.Equal(
             95, await catalog.Set<PriceScale>().CountAsync(TestContext.Current.CancellationToken));
         Assert.Equal(1, await catalog.TaxRates.CountAsync(TestContext.Current.CancellationToken));
@@ -117,6 +139,23 @@ public sealed class CatalogSeedTests
             1,
             await identity.Users.CountAsync(
                 user => user.Email == "semilla@qcode.co", TestContext.Current.CancellationToken));
+    }
+
+    private static ProductVariant DefaultVariantOf(IEnumerable<Product> products, string code) =>
+        products.Select(product => product.Variants.Single()).Single(variant => variant.Code == code);
+
+    // Los `sku` del JSON embebido, leídos aparte del seeder: la prueba no depende de su
+    // deserializador (CatalogSeedFile es internal) para decir qué códigos tienen que existir.
+    private static List<string> ReadSeedSkus()
+    {
+        var assembly = typeof(CatalogSeeder).Assembly;
+        var resourceName = assembly.GetManifestResourceNames()
+            .Single(name => name.EndsWith("Seed.Data.catalog-products.json", StringComparison.Ordinal));
+        using var stream = assembly.GetManifestResourceStream(resourceName)!;
+        using var document = JsonDocument.Parse(stream);
+        return document.RootElement.GetProperty("products").EnumerateArray()
+            .Select(product => product.GetProperty("sku").GetString()!)
+            .ToList();
     }
 
     private static async Task<PostgreSqlContainer> StartDatabaseAsync()

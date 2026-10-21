@@ -117,7 +117,7 @@ public static class ExportLoadSeeder
         if (seededQuotations != quotations)
         {
             throw new InvalidOperationException(
-                $"Export load seed expected {quotations} quotations and inserted {seededQuotations}: the load tenant has no active products.");
+                $"Export load seed expected {quotations} quotations and inserted {seededQuotations}: the load tenant has no active variants of active products.");
         }
 
         var seededItems = await ExecuteAsync(connection, transaction, ItemsSql, cancellationToken);
@@ -242,6 +242,7 @@ public static class ExportLoadSeeder
             id uuid NOT NULL,
             quotation_id uuid NOT NULL,
             position integer NOT NULL,
+            variant_id uuid NOT NULL,
             product_id uuid NOT NULL,
             quantity numeric(10,2) NOT NULL,
             unit_price numeric(14,2) NOT NULL,
@@ -288,9 +289,15 @@ public static class ExportLoadSeeder
     // Las fórmulas del dominio sin descuento: el precio incluye IVA, así que el impuesto sale de adentro
     // de la línea (tax = round(line * t / (100 + t), 2)) y el subtotal es la base. round(x, 2) de
     // Postgres redondea alejando del cero, igual que la app.
+    //
+    // Una línea vende una variante (spec 2026-10-20 §4): los candidatos son las variantes activas de
+    // productos activos, con el precio COP de la variante, y la línea guarda variant_id y product_id.
+    // El catálogo de la carga lo siembra CatalogSeeder por el dominio (productos sin opciones), así que
+    // cada variante es la por defecto y su id es el del producto; el SQL igual lee los dos ids de
+    // catalog.product_variants y no lo da por hecho.
     private const string LoadItemsSql = """
-        INSERT INTO load_items (id, quotation_id, position, product_id, quantity, unit_price, tax, tax_amount, subtotal, created_at)
-        SELECT gen_random_uuid(), line.quotation_id, line.position, line.product_id, line.quantity, line.unit_price,
+        INSERT INTO load_items (id, quotation_id, position, variant_id, product_id, quantity, unit_price, tax, tax_amount, subtotal, created_at)
+        SELECT gen_random_uuid(), line.quotation_id, line.position, line.variant_id, line.product_id, line.quantity, line.unit_price,
                line.tax,
                round(line.line_total * line.tax / (100 + line.tax), 2),
                line.line_total - round(line.line_total * line.tax / (100 + line.tax), 2),
@@ -299,27 +306,30 @@ public static class ExportLoadSeeder
             SELECT quotation.id AS quotation_id,
                    quotation.created_at,
                    slot AS position,
-                   product.id AS product_id,
+                   variant.variant_id,
+                   variant.product_id,
                    (1 + (quotation.n + slot) % 5)::numeric AS quantity,
-                   product.unit_price,
-                   product.tax,
-                   round((1 + (quotation.n + slot) % 5)::numeric * product.unit_price, 2) AS line_total
+                   variant.unit_price,
+                   variant.tax,
+                   round((1 + (quotation.n + slot) % 5)::numeric * variant.unit_price, 2) AS line_total
             FROM load_quotations AS quotation
             CROSS JOIN generate_series(1, @itemsPerQuotation) AS slot
             JOIN (
-                SELECT candidate.id,
-                       -- The COP row of catalog.product_prices: the legacy price_base_cop column is
-                       -- no longer written by the app (spec 2026-10-08) and the load quotations are COP.
+                SELECT candidate.id AS variant_id,
+                       candidate.product_id,
+                       -- La fila COP de catalog.product_prices, que desde las variantes es de la
+                       -- variante (variant_id). Las cotizaciones de la carga son en COP.
                        coalesce(cop_price.amount, 100000.00) AS unit_price,
                        coalesce(rate.percentage, 0) AS tax,
                        row_number() OVER (ORDER BY candidate.code) - 1 AS position,
                        count(*) OVER () AS total
-                FROM catalog.products AS candidate
+                FROM catalog.product_variants AS candidate
+                JOIN catalog.products AS product ON product.id = candidate.product_id
                 LEFT JOIN catalog.product_prices AS cop_price
-                    ON cop_price.product_id = candidate.id AND cop_price.currency = 'COP'
-                LEFT JOIN catalog.tax_rates AS rate ON rate.id = candidate.tax_rate_id
-                WHERE candidate.tenant_id = @tenant AND candidate.is_active
-            ) AS product ON product.position = (quotation.n * @itemsPerQuotation + slot) % product.total
+                    ON cop_price.variant_id = candidate.id AND cop_price.currency = 'COP'
+                LEFT JOIN catalog.tax_rates AS rate ON rate.id = product.tax_rate_id
+                WHERE candidate.tenant_id = @tenant AND candidate.is_active AND product.is_active
+            ) AS variant ON variant.position = (quotation.n * @itemsPerQuotation + slot) % variant.total
         ) AS line
         """;
 
@@ -355,11 +365,12 @@ public static class ExportLoadSeeder
         ) AS totals ON totals.quotation_id = quotation.id
         """;
 
+    // variant_id es NOT NULL desde AddVariantToLines: un INSERT que no lo nombre falla.
     private const string ItemsSql = """
         INSERT INTO quotations.quotation_items (
-            id, quotation_id, product_id, quantity, unit_price, discount_percentage, discount_amount,
+            id, quotation_id, variant_id, product_id, quantity, unit_price, discount_percentage, discount_amount,
             subtotal, tax_percentage, tax_amount, position, created_at, updated_at)
-        SELECT id, quotation_id, product_id, quantity, unit_price, 0, 0,
+        SELECT id, quotation_id, variant_id, product_id, quantity, unit_price, 0, 0,
                subtotal, tax, tax_amount, position, created_at, created_at
         FROM load_items
         """;
@@ -407,9 +418,9 @@ public static class ExportLoadSeeder
     // Las líneas y las partes del pedido son copia de las de su cotización (mismo SQL que AddOrderOwnData).
     private const string OrderItemsSql = """
         INSERT INTO quotations.order_items (
-            id, order_id, product_id, product_code, product_name, quantity, unit_price, discount_origin,
+            id, order_id, variant_id, product_id, product_code, product_name, quantity, unit_price, discount_origin,
             discount_percentage, discount_amount, subtotal, tax_percentage, tax_amount, position, created_at, updated_at)
-        SELECT gen_random_uuid(), o.id, i.product_id, i.product_code, i.product_name, i.quantity, i.unit_price,
+        SELECT gen_random_uuid(), o.id, i.variant_id, i.product_id, i.product_code, i.product_name, i.quantity, i.unit_price,
                i.discount_origin, i.discount_percentage, i.discount_amount, i.subtotal, i.tax_percentage, i.tax_amount,
                i.position, i.created_at, i.updated_at
         FROM quotations.orders AS o
