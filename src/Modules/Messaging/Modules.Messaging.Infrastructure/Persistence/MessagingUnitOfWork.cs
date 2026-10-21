@@ -49,6 +49,24 @@ internal sealed class MessagingUnitOfWork(MessagingDbContext dbContext) : IMessa
             throw new ResourceConflictException(
                 MessagingErrorCodes.ResolutionReasonNameTaken, "Another active resolution reason in this tenant already uses that name.", exception);
         }
+        // Spec 2026-10-21 §5.1: 409 y no 422, como el motivo de resolución. El nombre repetido (sin distinguir mayúsculas) y la carrera entre
+        // dos «predeterminado» son índices distintos: se discrimina por nombre para no mandar a corregir el campo equivocado.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.BusinessHoursNameIndex, StringComparison.Ordinal))
+        {
+            throw new ResourceConflictException(
+                MessagingErrorCodes.BusinessHoursNameTaken, "Another business hours schedule in this tenant already uses that name.", exception);
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.BusinessHoursDefaultIndex, StringComparison.Ordinal))
+        {
+            throw new ResourceConflictException(
+                MessagingErrorCodes.BusinessHoursDefaultConflict, "This tenant already has another default business hours schedule.", exception);
+        }
         // Spec 2026-10-14 §4.1: nombre e idioma repetidos en la misma conexión son name_taken (422, sin mapa errors, como shortcut_taken).
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException postgres &&

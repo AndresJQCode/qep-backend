@@ -92,6 +92,64 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Messaging.Domain.BusinessHoursSchedule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Exceptions")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("exceptions");
+
+                    b.Property<string>("HolidayCountry")
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("holiday_country");
+
+                    b.Property<bool>("IsDefault")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_default");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.Property<string>("Weekly")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("weekly");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("business_hours_schedules", "messaging", t =>
+                        {
+                            t.HasCheckConstraint("CK_business_hours_holiday_country", "holiday_country IS NULL OR holiday_country IN ('CO')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Messaging.Domain.Campaign", b =>
                 {
                     b.Property<Guid>("Id")
@@ -219,6 +277,31 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_campaigns_status", "status IN ('Draft','Scheduled','Sending','Completed','Cancelled','Failed')");
                         });
+                });
+
+            modelBuilder.Entity("Modules.Messaging.Domain.ConnectionBusinessHours", b =>
+                {
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<DateTimeOffset>("AssignedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("assigned_at");
+
+                    b.Property<Guid>("ScheduleId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("schedule_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("ConnectionId");
+
+                    b.HasIndex(new[] { "ScheduleId" }, "IX_connection_business_hours_schedule");
+
+                    b.ToTable("connection_business_hours", "messaging");
                 });
 
             modelBuilder.Entity("Modules.Messaging.Domain.Conversation", b =>
@@ -1049,6 +1132,16 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasFilter("processed_at IS NULL");
 
                     b.ToTable("webhook_deliveries", "messaging");
+                });
+
+            modelBuilder.Entity("Modules.Messaging.Domain.ConnectionBusinessHours", b =>
+                {
+                    b.HasOne("Modules.Messaging.Domain.BusinessHoursSchedule", null)
+                        .WithMany()
+                        .HasForeignKey("ScheduleId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_connection_business_hours_schedule");
                 });
 
             modelBuilder.Entity("Modules.Messaging.Domain.Conversation", b =>

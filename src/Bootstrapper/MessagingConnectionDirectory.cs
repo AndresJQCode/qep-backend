@@ -111,6 +111,17 @@ internal sealed class MessagingConnectionDirectory(
             .Concat(await connections.ListByProviderAsync(tenantId, InstagramProvider, cancellationToken))
             .ToDictionary(listing => listing.Id, listing => listing.Name);
 
+    public async Task<IReadOnlyList<MessagingConnectionRef>> ListAllAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var whatsApp = (await connections.ListByProviderAsync(tenantId, Provider, cancellationToken))
+            .Select(listing => new MessagingConnectionRef(listing.Id, listing.Name, ConversationChannel.WhatsApp, listing.Status.ToString()));
+        var instagram = (await connections.ListByProviderAsync(tenantId, InstagramProvider, cancellationToken))
+            .Select(listing => new MessagingConnectionRef(listing.Id, listing.Name, ConversationChannel.Instagram, listing.Status.ToString()));
+        return whatsApp.OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase)
+            .Concat(instagram.OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase))
+            .ToArray();
+    }
+
     public Task ReportRejectedAsync(Guid tenantId, Guid connectionId, string failureCode, CancellationToken cancellationToken) =>
         healthReporter.ReportCredentialsRejectedAsync(tenantId, connectionId, failureCode, cancellationToken);
 

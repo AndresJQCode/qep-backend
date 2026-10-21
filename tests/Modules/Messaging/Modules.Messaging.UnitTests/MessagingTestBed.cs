@@ -327,6 +327,12 @@ internal sealed class FakeConnectionDirectory : IMessagingConnectionDirectory
 
     public List<RejectedReport> Reported { get; } = [];
 
+    /// <summary>Lo que devuelve <c>ListAllAsync</c> (todas las conexiones, en cualquier estado).</summary>
+    public List<MessagingConnectionRef> AllConnections { get; } = [];
+
+    public Task<IReadOnlyList<MessagingConnectionRef>> ListAllAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<MessagingConnectionRef>>([.. AllConnections]);
+
     public Task<MessagingRoute?> FindRouteAsync(string phoneNumberId, CancellationToken cancellationToken) =>
         Task.FromResult<MessagingRoute?>(null);
 

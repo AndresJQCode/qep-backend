@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
@@ -60,6 +61,20 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// no modela índices por expresión— y <c>MessagingUnitOfWork</c> lo traduce por este nombre a 409 <c>name_taken</c>.</summary>
     public const string ResolutionReasonNameIndex = "IX_resolution_reasons_tenant_name";
 
+    /// <summary>Spec 2026-10-21 §5.1: único por <c>(tenant_id, lower(name))</c>. Va en la migración con SQL —EF no modela índices por
+    /// expresión— y <c>MessagingUnitOfWork</c> lo traduce por este nombre a 409 <c>name_taken</c>.</summary>
+    public const string BusinessHoursNameIndex = "IX_business_hours_tenant_name";
+
+    /// <summary>Spec 2026-10-21 §5.1: a lo sumo un predeterminado por tenant (<c>(tenant_id) WHERE is_default</c>, también por SQL). La
+    /// carrera entre dos «predeterminado» sale como 409 <c>default_conflict</c>.</summary>
+    public const string BusinessHoursDefaultIndex = "IX_business_hours_tenant_default";
+
+    public const string BusinessHoursCountryCheck = "holiday_country IS NULL OR holiday_country IN ('CO')";
+
+    /// <summary>La forma guardada de las franjas: <c>[{"day":1,"ranges":[{"from":480,"to":1080}]}]</c> y
+    /// <c>[{"date":"2026-11-02","ranges":[]}]</c> (camelCase; <c>DateOnly</c> como <c>yyyy-MM-dd</c>).</summary>
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
     /// <summary>Spec 2026-10-14 §4.1: los dos únicos del espejo. La unidad de trabajo los traduce por nombre.</summary>
     public const string MessageTemplateMetaIdIndex = "UX_message_templates_meta_id";
 
@@ -93,6 +108,12 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-15 §3.1: el catálogo de motivos de resolución.</summary>
     public DbSet<ResolutionReason> ResolutionReasons => Set<ResolutionReason>();
 
+    /// <summary>Spec 2026-10-21 §5.1: los horarios de atención del tenant.</summary>
+    public DbSet<BusinessHoursSchedule> BusinessHours => Set<BusinessHoursSchedule>();
+
+    /// <summary>Spec 2026-10-21 §5.1: qué horario atiende cada conexión.</summary>
+    public DbSet<ConnectionBusinessHours> ConnectionBusinessHours => Set<ConnectionBusinessHours>();
+
     /// <summary>Spec 2026-10-14 §4.1: el espejo de plantillas.</summary>
     public DbSet<MessageTemplate> MessageTemplates => Set<MessageTemplate>();
 
@@ -111,6 +132,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureCampaignRecipient(modelBuilder);
         ConfigureQuickReply(modelBuilder);
         ConfigureResolutionReason(modelBuilder);
+        ConfigureBusinessHours(modelBuilder);
         ConfigureMessageTemplate(modelBuilder);
         ConfigureTemplateMirrorSync(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
@@ -403,6 +425,62 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         reason.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
         reason.Ignore(value => value.IsArchived);
     }
+
+    /// <summary>Spec 2026-10-21 §5.1. Los dos únicos (nombre sin distinguir mayúsculas y un predeterminado por tenant) van en la migración
+    /// con SQL, así que acá no se declaran. La conexión es de Integrations (otro schema): <c>connection_id</c> es referencia blanda.</summary>
+    private static void ConfigureBusinessHours(ModelBuilder modelBuilder)
+    {
+        var schedule = modelBuilder.Entity<BusinessHoursSchedule>();
+        schedule.ToTable("business_hours_schedules", Schema, table =>
+            table.HasCheckConstraint("CK_business_hours_holiday_country", BusinessHoursCountryCheck));
+        schedule.HasKey(value => value.Id);
+        schedule.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        schedule.Property(value => value.TenantId).HasColumnName("tenant_id");
+        schedule.Property(value => value.Name).HasColumnName("name").HasMaxLength(BusinessHoursSchedule.NameMaxLength);
+        schedule.Property(value => value.IsDefault).HasColumnName("is_default").HasDefaultValue(false);
+        schedule.Property(value => value.Weekly).HasColumnName("weekly").HasColumnType("jsonb")
+            .HasConversion(
+                value => JsonSerializer.Serialize(value, JsonOptions),
+                value => JsonSerializer.Deserialize<List<WeekdayHours>>(value, JsonOptions)!,
+                new ValueComparer<IReadOnlyList<WeekdayHours>>(
+                    (left, right) => SameWeekly(left, right),
+                    value => value.Count,
+                    value => value.Select(day => new WeekdayHours(day.Day, day.Ranges.ToArray())).ToList()));
+        schedule.Property(value => value.Exceptions).HasColumnName("exceptions").HasColumnType("jsonb")
+            .HasConversion(
+                value => JsonSerializer.Serialize(value, JsonOptions),
+                value => JsonSerializer.Deserialize<List<DateException>>(value, JsonOptions)!,
+                new ValueComparer<IReadOnlyList<DateException>>(
+                    (left, right) => SameExceptions(left, right),
+                    value => value.Count,
+                    value => value.Select(exception => new DateException(exception.Date, exception.Ranges.ToArray())).ToList()));
+        schedule.Property(value => value.HolidayCountry).HasColumnName("holiday_country").HasMaxLength(2).HasConversion<string>();
+        schedule.Property(value => value.CreatedAt).HasColumnName("created_at");
+        schedule.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        schedule.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
+
+        var assignment = modelBuilder.Entity<ConnectionBusinessHours>();
+        assignment.ToTable("connection_business_hours", Schema);
+        assignment.HasKey(value => value.ConnectionId);
+        assignment.Property(value => value.ConnectionId).HasColumnName("connection_id").ValueGeneratedNever();
+        assignment.Property(value => value.TenantId).HasColumnName("tenant_id");
+        assignment.Property(value => value.ScheduleId).HasColumnName("schedule_id");
+        assignment.Property(value => value.AssignedAt).HasColumnName("assigned_at");
+        // RESTRICT: borrar un horario asignado falla en la base; es la red de business_hours.in_use.
+        assignment.HasOne<BusinessHoursSchedule>().WithMany().HasForeignKey(value => value.ScheduleId)
+            .HasConstraintName("FK_connection_business_hours_schedule").OnDelete(DeleteBehavior.Restrict);
+        assignment.HasIndex(value => value.ScheduleId, "IX_connection_business_hours_schedule");
+    }
+
+    private static bool SameWeekly(IReadOnlyList<WeekdayHours>? left, IReadOnlyList<WeekdayHours>? right) =>
+        ReferenceEquals(left, right) ||
+        (left is not null && right is not null && left.Count == right.Count &&
+         left.Zip(right).All(pair => pair.First.Day == pair.Second.Day && pair.First.Ranges.SequenceEqual(pair.Second.Ranges)));
+
+    private static bool SameExceptions(IReadOnlyList<DateException>? left, IReadOnlyList<DateException>? right) =>
+        ReferenceEquals(left, right) ||
+        (left is not null && right is not null && left.Count == right.Count &&
+         left.Zip(right).All(pair => pair.First.Date == pair.Second.Date && pair.First.Ranges.SequenceEqual(pair.Second.Ranges)));
 
     /// <summary>Spec 2026-10-14 §4.1. Sin FK a la conexión: es de Integrations, otro schema (como el cubo de envío).</summary>
     private static void ConfigureMessageTemplate(ModelBuilder modelBuilder)

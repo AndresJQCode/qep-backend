@@ -46,6 +46,11 @@ public sealed class WebhookRoutingTests
 
         public int Calls { get; private set; }
 
+        public List<MessagingConnectionRef> AllConnections { get; } = [];
+
+        public Task<IReadOnlyList<MessagingConnectionRef>> ListAllAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<MessagingConnectionRef>>([.. AllConnections]);
+
         public Task<MessagingRoute?> FindRouteAsync(string phoneNumberId, CancellationToken cancellationToken)
         {
             Calls++;

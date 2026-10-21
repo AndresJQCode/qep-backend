@@ -24,6 +24,10 @@ public sealed record InstagramSender(string IgUserId, string AccessToken)
     public override string ToString() => $"InstagramSender {{ IgUserId = {IgUserId} }}";
 }
 
+/// <summary>Spec 2026-10-21 D-H10: una conexión del tenant en cualquier estado. <c>Status</c> es el nombre del estado de Integrations
+/// (<c>Active</c>, <c>Paused</c>, …): Messaging no referencia Integrations.</summary>
+public sealed record MessagingConnectionRef(Guid Id, string Name, ConversationChannel Channel, string Status);
+
 /// <summary>
 /// Spec 2026-10-09 §6.4: lo que Messaging necesita de Integrations, con adaptador en Bootstrapper sobre
 /// <c>IConnectionRoutes</c>, <c>IIntegrationConnections</c> e <c>IConnectionHealthReporter</c>. La caché
@@ -42,6 +46,10 @@ public interface IMessagingConnectionDirectory
 
     /// <summary>Nombre de cada conexión whatsapp-cloud del tenant, Active o no.</summary>
     Task<IReadOnlyDictionary<Guid, string>> ListNamesAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Todas las conexiones del tenant, en cualquier estado (D-H10): la página de horarios lista y valida contra esto, no contra
+    /// <see cref="ListActiveAsync"/>. WhatsApp primero y después Instagram, cada grupo por nombre.</summary>
+    Task<IReadOnlyList<MessagingConnectionRef>> ListAllAsync(Guid tenantId, CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-11 §5.1: <c>wabaId</c> (<c>WhatsAppCloudFieldKeys.WabaId</c>) y el token en claro de una conexión
     /// <c>Active</c> del tenant; <c>null</c> si no existe, es de otro tenant, no está activa o no tiene <c>wabaId</c>.</summary>
