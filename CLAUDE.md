@@ -70,6 +70,13 @@ repo es un **estado**, no la autoridad. Antes de concluir que algo falta ahí:
 - **Prohibido mergear a `main`** (decisión del owner, 2026-10-10). Los merges de un agente
   terminan en `develop`; llevar `develop` a `main` lo hace el owner, nunca un agente. Un pedido de
   "mergear" o "publicar" sin destino significa `develop`.
+- **[`docs/estado.md`](docs/estado.md) se actualiza en `develop`, al mergear.** Es el estado global
+  del proyecto, y sin esta regla se queda viejo. El 2026-10-21, a un día de creado, decía «sin empezar» para
+  variantes con el backend ya mergeado, y once specs construidos seguían en «Por verificar». Cada merge a
+  `develop`, decisión del owner o despliegue actualiza la fila que corresponde y el Registro, en el mismo
+  merge o en un commit `docs:` inmediatamente después. **Las ramas de feature no lo tocan:** si cada rama lo
+  edita, dos ramas en paralelo chocan ahí en cada merge. Nada pasa a «Construido» sin evidencia en el código:
+  la clase, la ruta o el commit.
 
 ## Entorno de desarrollo
 
