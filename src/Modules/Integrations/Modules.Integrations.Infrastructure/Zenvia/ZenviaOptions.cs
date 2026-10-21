@@ -2,8 +2,7 @@ namespace Modules.Integrations.Infrastructure.Zenvia;
 
 /// <summary>
 /// La sección <c>Integrations:Zenvia</c> (spec 2026-10-08, «Probar la credencial»). Sólo la usa la
-/// prueba de la credencial: el sender global de Quotations sigue leyendo <c>Quotations:WhatsApp:BaseUrl</c>
-/// hasta el spec del consumidor.
+/// prueba de la credencial: el sender de Quotations lee su propia <c>Quotations:WhatsApp:BaseUrl</c>.
 /// </summary>
 public sealed class ZenviaOptions
 {

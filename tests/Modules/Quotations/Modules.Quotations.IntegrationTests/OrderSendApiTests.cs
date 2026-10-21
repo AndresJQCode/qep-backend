@@ -8,8 +8,9 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>
-/// <c>POST /orders/{orderId}/send</c>: «Enviar el pedido por WhatsApp». El host de pruebas no configura
-/// Zenvia, así que el envío sale por <c>LogWhatsAppSender</c>; el PDF lo dibuja el doble del harness
+/// <c>POST /orders/{orderId}/send</c>: «Enviar el pedido por WhatsApp». El host de pruebas no llama a
+/// Zenvia: el canal y el sender son dobles del harness (<see cref="RecordingWhatsAppChannelDirectory"/>,
+/// <see cref="RecordingWhatsAppSender"/>, plan 2026-10-21); el PDF lo dibuja el doble del harness
 /// (<see cref="StubPdfRenderer"/>) y la copia pública la publica <c>StubPdfStorage</c>, como en el
 /// envío de la cotización.
 /// </summary>
@@ -163,6 +164,28 @@ public sealed class OrderSendApiTests
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.Contains("order.order.not_found", body, StringComparison.Ordinal);
+    }
+
+    // Plan 2026-10-21 (Zenvia por tenant): sin canal el pedido no sale y su historial no cambia.
+    [Fact]
+    public async Task OrderSendWithoutChannelResponds422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        // El pedido nace de una cotización enviada: ese envío ya quedó en el sender.
+        var order = await CreateOrderAsync(client, factory, tenantId);
+        var sentBefore = factory.WhatsAppSender.Sent.Count;
+        factory.WhatsAppChannels.Channels.Clear();
+
+        var response = await client.PostAsJsonAsync(
+            SendUrl(tenantId, order.Id), new SendOrderRequest("Customer"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("order.whatsapp.no_channel", json.RootElement.GetProperty("code").GetString());
+        Assert.Equal(sentBefore, factory.WhatsAppSender.Sent.Count);
     }
 
     private static async Task<OrderResponse> CreateOrderAsync(

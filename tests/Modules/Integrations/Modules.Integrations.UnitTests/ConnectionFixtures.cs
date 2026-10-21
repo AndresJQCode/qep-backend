@@ -12,9 +12,10 @@ internal static class ConnectionFixtures
     public static readonly Guid MemberId = Guid.CreateVersion7();
     public const string Token = "zenvia-token-TEST-1";
     public const string FromNumber = "573001234567";
+    public const string TemplateId = "d0e79149-ed61-4784-9883-d86807f46ce5";
 
     public static Dictionary<string, string> Fields(string fromNumber = FromNumber) =>
-        new(StringComparer.Ordinal) { [ZenviaFieldKeys.FromNumber] = fromNumber };
+        new(StringComparer.Ordinal) { [ZenviaFieldKeys.FromNumber] = fromNumber, [ZenviaFieldKeys.TemplateId] = TemplateId };
 
     public static Dictionary<string, string> Secrets(string token = Token) =>
         new(StringComparer.Ordinal) { [ZenviaFieldKeys.ApiToken] = token };

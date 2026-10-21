@@ -940,6 +940,12 @@ internal static class QuotationsApiHarness
         /// <c>publicPaymentProofLinks</c>, como el adaptador real sólo lo está con bucket público.</summary>
         public InMemoryPublicObjectStorage PublicObjectStorage { get; } = new() { IsConfigured = publicPaymentProofLinks };
 
+        /// <summary>Los canales de WhatsApp del tenant (plan 2026-10-21): uno por defecto; la prueba los cambia.</summary>
+        public RecordingWhatsAppChannelDirectory WhatsAppChannels { get; } = new();
+
+        /// <summary>Lo que el envío le entregó al sender, sin salir a Zenvia.</summary>
+        public RecordingWhatsAppSender WhatsAppSender { get; } = new();
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
@@ -976,18 +982,15 @@ internal static class QuotationsApiHarness
             // prenden con WithWebHostBuilder, que se aplica después y gana.
             builder.UseSetting("Seed:ExportLoad:Quotations", "0");
 
-            // Mismo criterio, y por el mismo motivo: `WebApplicationFactory` corre en
-            // Development y ahí `CreateBuilder` carga los user-secrets del developer. Si esa
-            // persona configuró Zenvia para probar el envío a mano, el registro condicional ve
-            // las tres claves, monta `ZenviaWhatsAppSender` y estas pruebas empiezan a mandarle
-            // WhatsApps de verdad a clientes de prueba sin teléfono -- que fallan con
-            // `quotation.whatsapp.recipient_missing` en aserciones que no tienen nada que ver.
-            // Vaciarlas fuerza `LogWhatsAppSender`, que es lo que estas pruebas quieren.
-            builder.UseSetting("Quotations:WhatsApp:ApiToken", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:FromNumber", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:TemplateId", string.Empty);
             builder.ConfigureServices(services =>
             {
+                // El envío sale por la conexión de Zenvia del tenant (plan 2026-10-21), y ninguna prueba llama a
+                // Zenvia (spec 2026-10-21 D18): el canal y el sender son dobles, sólo de este host.
+                services.RemoveAll<IWhatsAppChannelDirectory>();
+                services.AddSingleton<IWhatsAppChannelDirectory>(WhatsAppChannels);
+                services.RemoveAll<IWhatsAppSender>();
+                services.AddSingleton<IWhatsAppSender>(WhatsAppSender);
+
                 services.RemoveAll<IObjectStorage>();
                 services.AddSingleton<IObjectStorage>(ObjectStorage);
 

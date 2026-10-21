@@ -13,12 +13,28 @@ namespace Modules.Quotations.UnitTests;
 internal sealed class FailingWhatsAppSender(Exception failure) : IWhatsAppSender
 {
     public Task SendQuotationAsync(
-        WhatsAppQuotationMessage message, CancellationToken cancellationToken) =>
+        WhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken) =>
         Task.FromException(failure);
 
     public Task SendOrderAsync(
-        WhatsAppOrderMessage message, CancellationToken cancellationToken) =>
+        WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken) =>
         Task.FromException(failure);
+}
+
+/// <summary>Los canales de Zenvia del tenant, fijos por prueba (spec 2026-10-21, plan Zenvia por tenant).</summary>
+internal sealed class StubWhatsAppChannelDirectory(params WhatsAppChannel[] channels) : IWhatsAppChannelDirectory
+{
+    public Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<WhatsAppChannel>>(channels);
+}
+
+internal static class WhatsAppChannels
+{
+    public const string OrderTemplateId = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+
+    public static WhatsAppChannel Any(Guid? connectionId = null, string? orderTemplateId = OrderTemplateId) =>
+        new(connectionId ?? Guid.CreateVersion7(), "token-de-prueba", "570000000000",
+            "d0e79149-ed61-4784-9883-d86807f46ce5", orderTemplateId);
 }
 
 internal sealed class RecordingQuotationSendFailureLog : IQuotationSendFailureLog
@@ -38,9 +54,12 @@ internal sealed class RecordingWhatsAppSender : IWhatsAppSender
 {
     public WhatsAppQuotationMessage? Sent { get; private set; }
 
+    public WhatsAppChannel? Channel { get; private set; }
+
     public Task SendQuotationAsync(
-        WhatsAppQuotationMessage message, CancellationToken cancellationToken)
+        WhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken)
     {
+        Channel = channel;
         Sent = message;
         return Task.CompletedTask;
     }
@@ -48,8 +67,9 @@ internal sealed class RecordingWhatsAppSender : IWhatsAppSender
     public WhatsAppOrderMessage? SentOrder { get; private set; }
 
     public Task SendOrderAsync(
-        WhatsAppOrderMessage message, CancellationToken cancellationToken)
+        WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken)
     {
+        Channel = channel;
         SentOrder = message;
         return Task.CompletedTask;
     }
@@ -316,6 +336,22 @@ internal sealed class NoOpQuotationAuditPublisher : IQuotationAuditPublisher
         Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt)
     {
     }
+}
+
+/// <summary>Un sujeto sin membresía activa en el tenant: <see cref="QuotationAdvisorResolver"/> responde 403.</summary>
+internal sealed class NoMembershipDirectory : IMembershipDirectory
+{
+    public Task<IReadOnlyCollection<string>?> FindActiveRolesAsync(
+        Guid userId, Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyCollection<string>?>(null);
+
+    public Task<Guid?> FindActiveMembershipIdAsync(
+        Guid userId, Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<Guid?>(null);
+
+    public Task<IReadOnlyList<Guid>> ListMembershipIdsByUserAsync(
+        Guid userId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Guid>>([]);
 }
 
 internal sealed class StubMembershipDirectory(Guid membershipId) : IMembershipDirectory

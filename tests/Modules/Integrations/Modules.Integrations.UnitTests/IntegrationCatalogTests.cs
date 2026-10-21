@@ -133,7 +133,7 @@ public sealed class IntegrationCatalogTests
         Assert.Equal(IntegrationCategory.Messaging, zenvia.Category);
         Assert.Equal([TenantModuleKeys.Quotations], zenvia.ConsumingModules);
         Assert.Equal(20, zenvia.MaxConnections);
-        Assert.Equal(["apiToken", "fromNumber"], zenvia.Fields.Select(field => field.Key));
+        Assert.Equal(["apiToken", "fromNumber", "templateId", "orderTemplateId"], zenvia.Fields.Select(field => field.Key));
 
         var apiToken = zenvia.FindField(ZenviaFieldKeys.ApiToken);
         Assert.NotNull(apiToken);
@@ -148,7 +148,20 @@ public sealed class IntegrationCatalogTests
         Assert.True(fromNumber.Required);
         Assert.Equal(15, fromNumber.MaxLength);
 
-        Assert.Equal(["fromNumber"], zenvia.PublicFields.Select(field => field.Key));
+        // Spec 2026-10-21 D11: la plantilla va atada al número emisor, así que es de la conexión.
+        var templateId = zenvia.FindField(ZenviaFieldKeys.TemplateId);
+        Assert.NotNull(templateId);
+        Assert.Equal(FieldKind.Text, templateId.Kind);
+        Assert.True(templateId.Required);
+        Assert.Equal(36, templateId.MaxLength);
+
+        var orderTemplateId = zenvia.FindField(ZenviaFieldKeys.OrderTemplateId);
+        Assert.NotNull(orderTemplateId);
+        Assert.Equal(FieldKind.Text, orderTemplateId.Kind);
+        Assert.False(orderTemplateId.Required);
+        Assert.Equal(36, orderTemplateId.MaxLength);
+
+        Assert.Equal(["fromNumber", "templateId", "orderTemplateId"], zenvia.PublicFields.Select(field => field.Key));
         Assert.Equal(["apiToken"], zenvia.SecretFields.Select(field => field.Key));
     }
 

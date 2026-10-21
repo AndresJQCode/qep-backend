@@ -197,7 +197,7 @@ public sealed class IntegrationsPersistenceTests
                 IntegrationProviders.Zenvia,
                 tenantId,
                 "Norte",
-                new Dictionary<string, string> { [ZenviaFieldKeys.FromNumber] = FromNumber },
+                new Dictionary<string, string> { [ZenviaFieldKeys.FromNumber] = FromNumber, [ZenviaFieldKeys.TemplateId] = IntegrationsApiHarness.TemplateId },
                 new Dictionary<string, string> { [ZenviaFieldKeys.ApiToken] = SentinelApiToken },
                 services.GetRequiredService<ISecretProtector>().Protect,
                 Guid.CreateVersion7(),

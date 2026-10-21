@@ -20,7 +20,7 @@ public sealed class CreateConnectionHandlerTests
             bed.TenantId,
             "zenvia",
             name,
-            new Dictionary<string, string?> { [ZenviaFieldKeys.FromNumber] = IntegrationsTestBed.FromNumber },
+            new Dictionary<string, string?> { [ZenviaFieldKeys.FromNumber] = IntegrationsTestBed.FromNumber, [ZenviaFieldKeys.TemplateId] = ConnectionFixtures.TemplateId },
             new Dictionary<string, string?> { [ZenviaFieldKeys.ApiToken] = IntegrationsTestBed.Token });
 
     [Fact]
@@ -47,7 +47,7 @@ public sealed class CreateConnectionHandlerTests
         Assert.Equal("success", audit.Outcome);
         Assert.Equal(AuditActorType.Human, audit.ActorType);
         Assert.Equal(bed.SubjectId, audit.ActorId);
-        Assert.Equal(["apiToken", "fromNumber", "name"], audit.ChangedFields);
+        Assert.Equal(["apiToken", "fromNumber", "name", "templateId"], audit.ChangedFields);
     }
 
     [Fact]
@@ -174,7 +174,7 @@ public sealed class CreateConnectionHandlerTests
             new CreateConnectionCommand(bed.TenantId, "zenvia", "WhatsApp sede norte", null, null), Ct));
 
         Assert.Equal(
-            ["fields.fromNumber", "secrets.apiToken"],
+            ["fields.fromNumber", "fields.templateId", "secrets.apiToken"],
             error.Errors.Select(failure => failure.PropertyName).Order(StringComparer.Ordinal));
         Assert.Empty(bed.Tester.Calls);
         Assert.Empty(bed.Repository.Connections);

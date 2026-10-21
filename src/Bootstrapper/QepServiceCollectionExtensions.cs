@@ -920,6 +920,8 @@ public static class QepServiceCollectionExtensions
         // Mismo patron (CAT-05) entre `quotations` y `geography`: resuelve la ciudad de una parte
         // con datos propios para el Excel de pedidos.
         services.AddScoped<IQuotationGeographyLookup, QuotationGeographyLookup>();
+        // Plan 2026-10-21: la cotización y el pedido salen por la conexión de Zenvia del tenant, que vive en Integrations.
+        services.AddScoped<IWhatsAppChannelDirectory, QuotationsWhatsAppChannelDirectory>();
         // Arma la respuesta de una cotizacion con todo lo que su pantalla muestra, para que el
         // navegador no tenga que pedir cliente, miembros y catalogo por separado.
         services.AddScoped<IQuotationResponseComposer, QuotationResponseComposer>();

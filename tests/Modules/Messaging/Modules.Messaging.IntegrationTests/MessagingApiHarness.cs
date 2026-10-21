@@ -231,9 +231,6 @@ internal static class MessagingApiHarness
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
             builder.UseSetting("Seed:ExportLoad:Quotations", "0");
-            builder.UseSetting("Quotations:WhatsApp:ApiToken", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:FromNumber", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:TemplateId", string.Empty);
             builder.UseSetting("Entitlements:GrantDefaultModulesOnSignup", "true");
             builder.UseSetting("Integrations:SecretProtection:ActiveKeyId", "test");
             builder.UseSetting("Integrations:SecretProtection:Keys:test", TestSecretProtectionKey);

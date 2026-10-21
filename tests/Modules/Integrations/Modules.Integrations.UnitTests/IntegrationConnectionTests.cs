@@ -36,7 +36,7 @@ public sealed class IntegrationConnectionTests
         Assert.Equal(MemberId, connection.CreatedBy);
         Assert.Equal(Now, connection.CreatedAt);
         Assert.Equal(Now, connection.UpdatedAt);
-        Assert.Equal(["fromNumber"], connection.Fields.Keys);
+        Assert.Equal(["fromNumber", "templateId"], connection.Fields.Keys);
         Assert.Equal(FromNumber, connection.Fields[ZenviaFieldKeys.FromNumber]);
         Assert.Null(connection.LastFailureCode);
         var secret = Assert.Single(connection.Secrets);
@@ -105,7 +105,7 @@ public sealed class IntegrationConnectionTests
         var withSecretInFields = Fields();
         withSecretInFields[ZenviaFieldKeys.ApiToken] = Token;
         var withUnknownField = Fields();
-        withUnknownField["templateId"] = "x";
+        withUnknownField["senderName"] = "x";
         var withPublicInSecrets = Secrets();
         withPublicInSecrets[ZenviaFieldKeys.FromNumber] = FromNumber;
 

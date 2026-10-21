@@ -174,9 +174,6 @@ internal static class ShopifyApiHarness
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
             builder.UseSetting("Seed:ExportLoad:Quotations", "0");
-            builder.UseSetting("Quotations:WhatsApp:ApiToken", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:FromNumber", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:TemplateId", string.Empty);
             builder.UseSetting("Entitlements:GrantDefaultModulesOnSignup", "true");
             // Los workers de Messaging no corren solos durante una prueba de Shopify.
             builder.UseSetting("Messaging:Workers:DeliveryPollSeconds", "3600");

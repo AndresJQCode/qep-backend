@@ -42,6 +42,7 @@ internal static class IntegrationsApiHarness
     public const string SentinelMetaVerifyToken = "meta-verify-token-SENTINEL-6b5a4f-0123456789";
 
     public const string FromNumber = "573001234567";
+    public const string TemplateId = "d0e79149-ed61-4784-9883-d86807f46ce5";
 
     /// <summary>Spec 2026-10-14 (V-1 cerrada): el caso de uso Instagram tiene su propio id y su propio secreto.</summary>
     public const string InstagramAppId = "700800900";
@@ -221,9 +222,6 @@ internal static class IntegrationsApiHarness
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
             builder.UseSetting("Seed:ExportLoad:Quotations", "0");
-            builder.UseSetting("Quotations:WhatsApp:ApiToken", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:FromNumber", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:TemplateId", string.Empty);
             // El signup concede los seis módulos de fábrica, quotations incluido: Zenvia es visible.
             builder.UseSetting("Entitlements:GrantDefaultModulesOnSignup", "true");
             // Spec 2026-10-08, «Pruebas»: "test" es la activa; "k1" —el id que el README sugiere para
@@ -319,12 +317,13 @@ internal static class IntegrationsApiHarness
 
     /// <summary>Objeto anónimo a propósito: así una prueba manda exactamente lo que quiere.</summary>
     public static object ZenviaBody(
-        string name = "WhatsApp sede norte", string? apiToken = SentinelApiToken, string? fromNumber = FromNumber) =>
+        string name = "WhatsApp sede norte", string? apiToken = SentinelApiToken, string? fromNumber = FromNumber,
+        string? templateId = TemplateId) =>
         new
         {
             providerKey = "zenvia",
             name,
-            fields = new Dictionary<string, string?> { ["fromNumber"] = fromNumber },
+            fields = new Dictionary<string, string?> { ["fromNumber"] = fromNumber, ["templateId"] = templateId },
             secrets = new Dictionary<string, string?> { ["apiToken"] = apiToken },
         };
 
@@ -466,7 +465,7 @@ internal static class IntegrationsApiHarness
             IntegrationProviders.Zenvia,
             tenantId,
             name,
-            new Dictionary<string, string> { [ZenviaFieldKeys.FromNumber] = FromNumber },
+            new Dictionary<string, string> { [ZenviaFieldKeys.FromNumber] = FromNumber, [ZenviaFieldKeys.TemplateId] = IntegrationsApiHarness.TemplateId },
             new Dictionary<string, string> { [ZenviaFieldKeys.ApiToken] = apiToken },
             protector.Protect,
             Guid.CreateVersion7(),

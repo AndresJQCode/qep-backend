@@ -39,6 +39,7 @@ public sealed class SendOrderHandler(
     IQuotationPdfStorage pdfStorage,
     IQuotationCustomerLookup customerLookup,
     IWhatsAppSender whatsAppSender,
+    IWhatsAppChannelDirectory whatsAppChannels,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock)
@@ -64,6 +65,11 @@ public sealed class SendOrderHandler(
         // ese registro.
         var sentBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
+
+        // Por dónde sale (plan 2026-10-21), también fuera y después de saber quién envía: sin canal, con
+        // varios o sin plantilla de pedido, el envío nunca empezó, y saberlo no cuesta un PDF.
+        var channel = WhatsAppChannelSelection.ForOrder(
+            await whatsAppChannels.ListAvailableAsync(command.TenantId, cancellationToken));
 
         // El paso en curso, para que la falla diga dónde se cayó: el teléfono del cliente, `qcode-pdf`,
         // R2 o Zenvia se destraban en lados distintos. Los pasos son los de la cotización.
@@ -104,6 +110,7 @@ public sealed class SendOrderHandler(
             // historial dice que el documento llegó, así que no se escribe si Zenvia falla.
             stage = QuotationSendStage.WhatsApp;
             await whatsAppSender.SendOrderAsync(
+                channel,
                 new WhatsAppOrderMessage(
                     ToPhone: toPhone,
                     FullName: fullName,

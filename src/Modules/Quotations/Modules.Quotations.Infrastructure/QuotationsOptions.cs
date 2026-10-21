@@ -21,24 +21,13 @@ public sealed class QuotationsOptions
 }
 
 /// <summary>
-/// Credenciales de Zenvia (envío de la cotización por WhatsApp, ver `ZenviaWhatsAppSender`).
-/// `QuotationsInfrastructureExtensions.AddWhatsAppSender` registra `ZenviaWhatsAppSender` sólo
-/// cuando las tres están presentes y cae a `LogWhatsAppSender` (no-op) en su ausencia, mismo
-/// criterio que `Notifications:EmailProvider` con Infobip — así ningún `WebApplicationFactory`
-/// de las pruebas de integración necesita configurar esto para que "Enviar" les siga
-/// funcionando.
-///
-/// Ese fallback vale en cualquier ambiente **menos** en producción, donde
-/// `QuotationsOptionsValidator` exige las tres con `ValidateOnStart`: ahí el no-op no se
-/// distingue de un envío real —200, cotización en `Sent`, ningún error— y el mensaje que el
-/// cliente esperaba no sale nunca.
+/// Lo que el envío por WhatsApp necesita y no es de ninguna cuenta. La cuenta de Zenvia —token,
+/// número emisor y plantillas— es de cada tenant y vive en su conexión de Integrations (plan
+/// 2026-10-21; spec 2026-10-21 D1 y D11): llega a `ZenviaWhatsAppSender` en cada envío como el
+/// `WhatsAppChannel` del tenant.
 /// </summary>
 public sealed class WhatsAppOptions
 {
-    public string ApiToken { get; init; } = string.Empty;
-
-    public string FromNumber { get; init; } = string.Empty;
-
     /// <summary>Vida del enlace del PDF que se le entrega a WhatsApp. Propia, y en horas y no
     /// en los minutos de <c>Storage:PresignedUrlMinutes</c>, por el mismo motivo que
     /// <c>Storage:ExportUrlHours</c>: aquellas URLs las consume un navegador que ya está en
@@ -47,18 +36,6 @@ public sealed class WhatsAppOptions
     /// chat aunque el enlace ya haya vencido. El techo lo pone SigV4, que no firma más de 7
     /// días.</summary>
     public int DocumentUrlHours { get; init; } = 24;
-
-    /// <summary>Id de la plantilla en Zenvia. No es un secreto — es un id de configuración,
-    /// mismo criterio que `Infobip:SenderEmail` — así que vive en `appsettings.json` en vez de
-    /// en `user-secrets`, a menos que el owner decida lo contrario más adelante.</summary>
-    public string TemplateId { get; init; } = string.Empty;
-
-    /// <summary>Id de la plantilla del pedido en Zenvia, aparte de <see cref="TemplateId"/>: la de la
-    /// cotización dice «cotización» y pide <c>valid_until</c>, que un pedido no tiene. Vacía por defecto
-    /// y **no** la exige <c>QuotationsOptionsValidator</c>: la plantilla todavía tiene que crearse y
-    /// aprobarse en Zenvia/Meta, y exigirla frenaría todo despliegue hasta entonces. Sin ella, enviar un
-    /// pedido responde <c>order.whatsapp.not_configured</c>; la cotización sigue saliendo.</summary>
-    public string OrderTemplateId { get; init; } = string.Empty;
 
     public string BaseUrl { get; init; } = "https://api.zenvia.com";
 }
