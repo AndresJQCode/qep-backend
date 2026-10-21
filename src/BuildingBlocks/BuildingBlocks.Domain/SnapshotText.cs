@@ -4,7 +4,7 @@ namespace BuildingBlocks.Domain;
 /// El recorte de un texto que se congela como foto en una columna de largo fijo. Con variantes,
 /// el nombre visible «{producto} – {v1} / {v2} / {v3}» (spec 2026-10-20 §3.4) puede pasar de la
 /// columna <c>product_name</c>: el producto llega a 200 caracteres y cada valor de opción a 60. Se
-/// decidió recortar y no ensanchar la columna (T10, 2026-10-21).
+/// decidió recortar y no ensanchar la columna (2026-10-21; handoff de variantes, §11).
 ///
 /// Vive acá, y no copiado en cada módulo, por el mismo motivo que <c>VatIncludedLine</c>: la usan
 /// Quotations (<c>QuotationProductSnapshot</c>) y Pos (<c>PosSaleLine</c>), que no se referencian

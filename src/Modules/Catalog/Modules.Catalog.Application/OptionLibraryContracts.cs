@@ -3,12 +3,12 @@ using Modules.Catalog.Domain;
 
 namespace Modules.Catalog.Application;
 
-// Variantes, Tarea 4: la biblioteca de opciones del tenant (spec 2026-10-20 §3.1).
+// La biblioteca de opciones del tenant (spec 2026-10-20 §3.1).
 //
 // BFF: cada opción y cada valor llevan CanDelete. La pantalla ofrece «Eliminar» o «Desactivar» sin
 // adivinar —una opción o un valor que alguna variante usa no se borra— y sin pedir el borrado para
 // enterarse por el 409. Un valor viaja como { id, name } y no { id, value } para que se lea igual
-// que las opciones del producto (ProductResponse.options[].values, Tarea 5).
+// que las opciones del producto (ProductResponse.options[].values).
 public sealed record OptionsResponse(IReadOnlyList<OptionResponse> Items);
 
 public sealed record OptionResponse(
@@ -31,12 +31,16 @@ public sealed record CreateOptionRequest(string Name, IReadOnlyList<string>? Val
 // variante lo usa, 409 catalog.option.in_use: se desactiva con IsActive = false). Desactivar la
 // opción también va por acá, con IsActive, y no por un endpoint aparte: el formulario ya tiene el
 // cuerpo entero y repinta lo que vuelve.
+//
+// IsActive es bool? y el validador lo exige (NotNull), en la opción y en cada valor: con bool, un
+// cuerpo que lo omite llegaba como false y desactivaba en silencio la opción o el valor. Así sale
+// 422 validation.failed con errors["IsActive"] o errors["Values[i].IsActive"] y no cambia nada.
 public sealed record UpdateOptionRequest(
     string Name,
-    bool IsActive,
+    bool? IsActive,
     IReadOnlyList<OptionValueRequest>? Values);
 
-public sealed record OptionValueRequest(Guid? Id, string Name, bool IsActive);
+public sealed record OptionValueRequest(Guid? Id, string Name, bool? IsActive);
 
 /// <summary>
 /// Qué opciones y valores usa alguna variante del tenant. «En uso» es una consulta dentro de
@@ -60,8 +64,8 @@ public interface IOptionDefinitionRepository
 
     /// <summary>
     /// Las opciones de esos ids, con sus valores, sin rastreo y sólo del tenant: un id que no existe
-    /// o es de otro tenant no aparece. Variantes, Tarea 5: el producto valida sus opciones y arma
-    /// los nombres visibles con esto.
+    /// o es de otro tenant no aparece. El producto valida sus opciones y arma los nombres visibles
+    /// con esto.
     /// </summary>
     Task<IReadOnlyList<OptionDefinition>> ListByIdsAsync(
         Guid tenantId,

@@ -113,7 +113,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         return (items, total);
     }
 
-    // Variantes, Tarea 5: el listado de productos no trae el agregado (con 2.048 variantes por
+    // Con variantes, el listado de productos no trae el agregado (con 2.048 variantes por
     // producto y sus escalas, una página de 200 serían cientos de miles de filas para pintar una
     // grilla). Proyecta lo que la fila muestra y, en una segunda consulta agrupada en la base, el
     // rango de precios de las variantes activas de la página.
@@ -218,7 +218,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         return (items, total);
     }
 
-    // Variantes, Tarea 14b: el selector de cotizaciones y pedidos pide las variantes vendibles de
+    // El selector de cotizaciones y pedidos pide las variantes vendibles de
     // la página de productos. Peor caso: 50 productos x 2.048 variantes (el listado con variantes
     // topa la página en 50, ver ProductPaging) = 102.400 filas de variante, otras tantas por
     // moneda en precios y las escalas de cada una. Por eso no se carga el agregado ni se anida: cada
@@ -360,7 +360,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         // Lo encontró la revisión de fiabilidad de CAT-02, contra un comentario previo que
         // afirmaba justo lo que no pasaba.
         //
-        // Variantes, Tarea 12: `search` también encuentra por código de barras de una variante
+        // Con variantes, `search` también encuentra por código de barras de una variante
         // (spec 2026-10-20 §5, la búsqueda del POS). Lo usan el POS y el `search` del listado y del
         // combobox de cotizaciones, que también quedan encontrando por código de barras: es la
         // misma caja de búsqueda y no hay motivo para que un código escaneado no la encuentre.

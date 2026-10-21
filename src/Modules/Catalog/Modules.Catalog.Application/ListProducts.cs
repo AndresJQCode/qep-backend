@@ -7,13 +7,13 @@ namespace Modules.Catalog.Application;
 /// <c>Name</c>/<c>Code</c> son las dos cajas separadas del listado (CAT-FILTROS-01), cada una
 /// filtrando su propia columna con ILIKE — se combinan con AND cuando se llenan las dos.
 /// <c>Search</c> es el criterio OR original: nombre del producto, <c>Code</c> de alguna variante o,
-/// desde la Tarea 12 de variantes, código de barras de alguna variante (la búsqueda del POS usa la
+/// desde las variantes, código de barras de alguna variante (la búsqueda del POS usa la
 /// misma consulta, spec 2026-10-20 §5). Sigue existiendo porque el combobox de productos de
 /// <c>quotes</c> (<c>useQuoteProducts</c>) necesita un único cuadro de texto libre, no dos — mismo
 /// criterio que <c>ListCustomersQuery</c> con el combobox de clientes. Las cajas <c>Name</c> y
 /// <c>Code</c> no miran el código de barras.
 ///
-/// <c>IncludeVariants</c> (Tarea 14b, spec §6) agrega a cada ítem sus variantes vendibles para el
+/// <c>IncludeVariants</c> (spec 2026-10-20 §6) agrega a cada ítem sus variantes vendibles para el
 /// selector de productos de cotizaciones y pedidos, que así elige y agrega la línea sin otra
 /// llamada. Es opt-in: la grilla del catálogo no necesita las variantes y no paga su costo. Con
 /// el parámetro, la página se topa en <see cref="ProductPaging.MaxPageSizeWithVariants"/>.

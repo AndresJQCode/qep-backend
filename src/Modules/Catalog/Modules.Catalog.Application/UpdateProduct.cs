@@ -95,7 +95,8 @@ public sealed class UpdateProductHandler(
         // el adaptador corre sobre la conexión de Catalog, así que su consulta queda adentro. Una
         // línea que apareció entre las dos comprobaciones convierte el borrado en desactivación:
         // nunca una línea con variant_id huérfano. Lo que queda abierto —una línea que se guarda
-        // después de esta consulta y antes del commit— está en el reporte de la Tarea 6.
+        // después de esta consulta y antes del commit— es un riesgo aceptado: ver el handoff de
+        // variantes (docs/superpowers/plans/2026-10-20-variantes-handoff.md, §11.4).
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         if (deletedIds.Count > 0)
         {
@@ -126,7 +127,7 @@ public sealed class UpdateProductHandler(
             // de A) pasa esta comprobación —los dos códigos son del propio producto— pero choca con
             // IX_product_variants_tenant_code al guardar, porque PostgreSQL revisa el índice fila por
             // fila y el índice no es diferible. Sale 422 catalog.product.code_taken aunque el estado
-            // final sea válido. No se resuelve acá (Tarea 3): el usuario lo hace en dos guardados.
+            // final sea válido. No se resuelve acá: el usuario lo hace en dos guardados.
             await ProductVariantReferences.EnsureCodesAvailableAsync(
                 repository, command.TenantId, product, variants, cancellationToken);
         }

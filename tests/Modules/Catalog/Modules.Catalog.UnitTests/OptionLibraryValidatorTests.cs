@@ -4,7 +4,7 @@ using Modules.Catalog.Application;
 namespace Modules.Catalog.UnitTests;
 
 /// <summary>
-/// Tarea 4: el dominio ya rechaza estos casos con un código; el validador existe para que el 422
+/// Biblioteca de opciones: el dominio ya rechaza estos casos con un código; el validador existe para que el 422
 /// lleve el mapa <c>errors</c> por campo y el formulario marque el input culpable. Cada regla
 /// lleva como código de error el mismo código del dominio.
 /// </summary>
@@ -89,6 +89,25 @@ public sealed class OptionLibraryValidatorTests
             .WithErrorCode("catalog.option.value_required");
         result.ShouldHaveValidationErrorFor("Values[3].Name")
             .WithErrorCode("catalog.option.value_too_long");
+    }
+
+    // Con bool, omitir isActive llegaba como false y desactivaba en silencio. Ahora el validador lo
+    // exige en la opción y en cada valor, y marca la posición del valor que no lo trae.
+    [Fact]
+    public void UpdateRequiresIsActiveOnTheOptionAndOnEachValue()
+    {
+        var result = new UpdateOptionValidator().TestValidate(new UpdateOptionCommand(
+            TenantId,
+            Guid.CreateVersion7(),
+            "Talla",
+            null,
+            [new OptionValueRequest(null, "S", true), new OptionValueRequest(null, "M", null)]));
+
+        result.ShouldHaveValidationErrorFor(command => command.IsActive)
+            .WithErrorCode("catalog.option.active_required");
+        result.ShouldHaveValidationErrorFor("Values[1].IsActive")
+            .WithErrorCode("catalog.option.value_active_required");
+        result.ShouldNotHaveValidationErrorFor("Values[0].IsActive");
     }
 
     [Fact]

@@ -13,18 +13,17 @@ using Testcontainers.PostgreSql;
 namespace Modules.Catalog.IntegrationTests;
 
 /// <summary>
-/// Variantes, Tarea 6 (spec 2026-10-20 §3.3 y §6): una variante guardada se elimina sólo si el PUT
+/// Variantes (spec 2026-10-20 §3.3 y §6): una variante guardada se elimina sólo si el PUT
 /// la nombra en <c>deletedVariantIds</c>; se borra si ninguna línea la vende y se desactiva si
 /// alguna sí. Omitirla sin nombrarla responde 422 <c>missing_in_request</c>: el formulario pagina
 /// hasta 2.048 filas, y una página que no se mandó no es una orden de borrar. <c>canDelete</c>
 /// anticipa qué pasará.
 ///
-/// **El uso entra por un doble de <see cref="IVariantUsageChecker"/>, no por líneas reales.** Las
-/// columnas <c>variant_id</c> de <c>quotation_items</c>, <c>order_items</c> y <c>sale_lines</c> las
-/// crean las Tareas 10 y 12; hasta entonces el adaptador real no puede correr, y armar una
-/// cotización, un pedido o una venta del POS a mano desde Catalog es justo el cuerpo crudo que
-/// CLAUDE.md pide evitar. El SQL del adaptador tiene su propia prueba
-/// (<c>Bootstrapper.UnitTests.CatalogVariantUsageCheckerTests</c>). El doble va por scope, sobre el
+/// **El uso entra por un doble de <see cref="IVariantUsageChecker"/>, no por líneas reales.** Armar
+/// una cotización, un pedido o una venta del POS a mano desde Catalog es justo el cuerpo crudo que
+/// CLAUDE.md pide evitar, y el doble deja guionar la carrera entre las dos comprobaciones. El SQL
+/// del adaptador real tiene su propia prueba (<c>Bootstrapper.UnitTests.CatalogVariantUsageCheckerTests</c>
+/// y las de migración de Quotations y Pos). El doble va por scope, sobre el
 /// <see cref="CatalogDbContext"/> de la petición, para poder afirmar en qué llamada había una
 /// transacción abierta.
 /// </summary>
@@ -224,6 +223,53 @@ public sealed class ProductVariantDeletionApiTests
         Assert.False(usage.Calls[0].InTransaction);
         Assert.Equal(new[] { medium.Id }, usage.Calls[1].Ids);
         Assert.True(usage.Calls[1].InTransaction);
+    }
+
+    // Borrar M (sin uso) y crear en el mismo PUT una variante nueva con su código. El índice
+    // IX_product_variants_tenant_code es único, sin filtro y no diferible, y PostgreSQL lo revisa
+    // fila por fila: el guardado tiene que mandar el DELETE de M antes que el INSERT de la nueva.
+    // EF Core ordena así los comandos que liberan y toman el mismo valor de un índice único del
+    // modelo (CommandBatchPreparer); con el orden al revés esto saldría 422 catalog.product.code_taken
+    // traducido por CatalogUnitOfWork. La comprobación previa del handler no lo frena: CAM-M es un
+    // código del propio producto.
+    [Fact]
+    public async Task PutDeletingAVariantAndCreatingAnotherWithItsCodeSucceeds()
+    {
+        await using var database = await StartDatabaseAsync();
+        var usage = new ScriptedUsage();
+        using var factory = new QepApiFactory(database.GetConnectionString(), usage);
+        using var client = CreateClient(factory);
+
+        var (talla, created) = await CreateSizesAsync(client);
+        var (small, medium, large) = (created.Variants[0], created.Variants[1], created.Variants[2]);
+        var mediumValue = Assert.Single(medium.OptionValueIds);
+
+        var response = await PutAsync(client, created.Id, new
+        {
+            expectedVersion = created.Version,
+            name = "Camiseta",
+            optionIds = new[] { talla },
+            variants = new object[]
+            {
+                new { id = small.Id, code = small.Code },
+                new { id = large.Id, code = large.Code },
+                new { code = "CAM-M", optionValueIds = new[] { mediumValue } },
+            },
+            deletedVariantIds = new[] { medium.Id }
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await ReadProductAsync(response);
+        Assert.Equal(["CAM-S", "CAM-L", "CAM-M"], updated.Variants.Select(variant => variant.Code));
+        var replacement = updated.Variants[2];
+        Assert.NotEqual(medium.Id, replacement.Id);
+        Assert.True(replacement.IsActive);
+        Assert.Equal([mediumValue], replacement.OptionValueIds);
+        Assert.Equal(0, await CountVariantRowsAsync(database, medium.Id));
+        Assert.Equal(1, await CountVariantRowsAsync(database, replacement.Id));
+        Assert.Equal(
+            "CAM-M",
+            Assert.Single((await GetAsync(client, created.Id)).Variants, variant => variant.Id == replacement.Id).Code);
     }
 
     // Camiseta con Talla S/M/L: tres variantes, en ese orden.

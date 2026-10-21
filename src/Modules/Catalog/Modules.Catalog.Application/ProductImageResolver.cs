@@ -39,7 +39,7 @@ internal static class ProductImageResolver
     }
 
     /// <summary>
-    /// Variantes, Tarea 5: la galería entera, con las mismas tres reglas por archivo y en una
+    /// La galería entera, con las mismas tres reglas por archivo y en una
     /// sola consulta al puerto (hasta 250 fotos; una vuelta por foto se pagaría en cada guardado).
     /// Cada archivo es referencia blanda igual que la portada de antes: sin esto, una foto de
     /// otro tenant entra con 201. Falla en la primera foto inválida, en el orden de la galería.

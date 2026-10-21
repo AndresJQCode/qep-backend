@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Catalog.Application;
 using Modules.Quotations.Infrastructure.Persistence;
 using Npgsql;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
@@ -103,33 +105,39 @@ public sealed class VariantLinesMigrationTests
             "AND indexname IN ('IX_quotation_items_variant', 'IX_order_items_variant')"));
     }
 
-    // La consulta de uso de Catalog, tal como la escribe CatalogVariantUsageChecker, corre contra el
-    // esquema migrado y encuentra la variante por las dos tablas: el acoplamiento de nombres entre los dos
-    // módulos queda amarrado acá.
+    // El CatalogVariantUsageChecker real, resuelto del contenedor de la app, contra el esquema migrado:
+    // encuentra la variante rellenada en las líneas de la cotización y del pedido, y no la ve desde otro
+    // tenant. Es el adaptador mismo y no una copia de su SQL, así que el acoplamiento de nombres entre los
+    // módulos (variant_id, el JOIN al documento dueño, el filtro por tenant_id) queda amarrado acá: si
+    // Quotations renombra la columna, esto sale 42703 en vez de un 500 en el PUT de producto.
     [Fact]
     public async Task TheCatalogUsageQueryFindsTheBackfilledVariant()
     {
         await using var database = await StartDatabaseAsync();
         var connectionString = database.GetConnectionString();
-        await using var context = NewContext(connectionString);
-        var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync(LastMigrationBeforeTheOrderOwnData, TestContext.Current.CancellationToken);
-        await ExecuteAsync(connectionString, QuotationAndOrderSql);
-        await migrator.MigrateAsync(MigrationId(context, "_AddVariantToLines"), TestContext.Current.CancellationToken);
+        await using (var context = NewContext(connectionString))
+        {
+            var migrator = context.GetService<IMigrator>();
+            await migrator.MigrateAsync(LastMigrationBeforeTheOrderOwnData, TestContext.Current.CancellationToken);
+            await ExecuteAsync(connectionString, QuotationAndOrderSql);
+            await migrator.MigrateAsync(MigrationId(context, "_AddVariantToLines"), TestContext.Current.CancellationToken);
+        }
 
-        Assert.Equal(1L, await ScalarAsync<long>(
-            connectionString,
-            $"""
-            SELECT count(*) FROM (
-                SELECT qi.variant_id FROM quotations.quotation_items qi
-                JOIN quotations.quotations q ON q.id = qi.quotation_id
-                WHERE q.tenant_id = '{TenantId}' AND qi.variant_id = ANY(ARRAY['{ProductId}'::uuid])
-                UNION
-                SELECT oi.variant_id FROM quotations.order_items oi
-                JOIN quotations.orders o ON o.id = oi.order_id
-                WHERE o.tenant_id = '{TenantId}' AND oi.variant_id = ANY(ARRAY['{ProductId}'::uuid])
-            ) used
-            """));
+        // El host migra al arrancar los módulos que faltan: la consulta del adaptador también lee
+        // pos.sale_lines y corre sobre el CatalogDbContext. Quotations ya quedó en AddVariantToLines con la
+        // cotización y el pedido sembrados.
+        await using var factory = new QepApiFactory(connectionString);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var checker = scope.ServiceProvider.GetRequiredService<IVariantUsageChecker>();
+        var variantId = Guid.Parse(ProductId);
+
+        var used = await checker.FindUsedAsync(
+            Guid.Parse(TenantId), [variantId], TestContext.Current.CancellationToken);
+        var fromAnotherTenant = await checker.FindUsedAsync(
+            Guid.CreateVersion7(), [variantId], TestContext.Current.CancellationToken);
+
+        Assert.Equal(variantId, Assert.Single(used));
+        Assert.Empty(fromAnotherTenant);
     }
 
     private static QuotationsDbContext NewContext(string connectionString) =>

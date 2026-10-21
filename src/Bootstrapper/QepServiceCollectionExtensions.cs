@@ -208,7 +208,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeleteTaxRateCommand, TaxRateDeletedResult>,
             DeleteTaxRateHandler>();
-        // Variantes, Tarea 4: la biblioteca de opciones. Mismo registro a mano que las tasas.
+        // La biblioteca de opciones de Catalog. Mismo registro a mano que las tasas.
         services.AddScoped<IQueryHandler<ListOptionsQuery, OptionsResponse>, ListOptionsHandler>();
         services.AddScoped<ICommandHandler<CreateOptionCommand, OptionResponse>, CreateOptionHandler>();
         services.AddScoped<ICommandHandler<UpdateOptionCommand, OptionResponse>, UpdateOptionHandler>();
@@ -823,7 +823,7 @@ public static class QepServiceCollectionExtensions
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
         // dos AddXInfrastructure porque el adaptador depende de servicios que ellos registran.
         services.AddScoped<IProductImageLookup, ProductImageLookup>();
-        // Variantes, Tarea 6: «¿alguna línea vende esta variante?» mira Quotations y Pos, que
+        // Variantes: «¿alguna línea vende esta variante?» mira Quotations y Pos, que
         // Catalog no referencia. Scoped como el CatalogDbContext sobre el que corre, para que la
         // consulta comparta la transacción del PUT.
         services.AddScoped<IVariantUsageChecker, CatalogVariantUsageChecker>();

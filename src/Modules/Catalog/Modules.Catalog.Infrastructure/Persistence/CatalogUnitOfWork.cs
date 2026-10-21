@@ -87,7 +87,7 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
                 "catalog.tax_rate.name_taken",
                 "Another tax rate in this tenant already uses that name.");
         }
-        // Variantes, Tarea 4. Otro índice único, otro código: el nombre de la opción ya existe en
+        // La biblioteca de opciones. Otro índice único, otro código: el nombre de la opción ya existe en
         // el tenant (sin mayúsculas: el índice es sobre lower(name)). Sin consulta previa en el
         // handler; el índice es lo único que cierra la carrera de dos POST a la vez.
         catch (DbUpdateException exception)
@@ -106,7 +106,7 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
         // se estaba guardando era el borrado de una opción o de un valor: es la carrera entre el
         // «¿está en uso?» del handler y el commit, y sale con el mismo 409 que la consulta. Si la
         // misma FK salta escribiendo un producto (una opción que no existe), ese caso no es éste
-        // y no se traduce acá: lo resuelve la validación del producto (Tarea 5).
+        // y no se traduce acá: lo resuelve la validación del producto (ProductVariantReferences).
         catch (DbUpdateException exception)
             when (IsOptionReferenceViolation(exception) && IsDeletingAnOptionOrValue())
         {

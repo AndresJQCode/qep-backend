@@ -102,7 +102,7 @@ internal static class ProductVariantReferences
             }
         }
 
-        // Decisión de la Tarea 5: el dominio no lo exige, pero un producto activo sin ninguna
+        // Decisión de las variantes (2026-10-20): el dominio no lo exige, pero un producto activo sin ninguna
         // variante activa no se puede vender y no se distingue de uno inactivo. Para eso está
         // /deactivate.
         if (!variants.Any(variant => variant.IsActive))

@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Catalog.Application;
 using Modules.Pos.Infrastructure.Persistence;
 using Npgsql;
 using static Modules.Pos.IntegrationTests.PosApiHarness;
@@ -79,8 +81,9 @@ public sealed class SaleLinesVariantMigrationTests
             "SELECT count(*) FROM pg_indexes WHERE schemaname = 'pos' AND indexname = 'IX_sale_lines_variant'"));
     }
 
-    // La parte de Pos de la consulta de uso de Catalog, tal como la escribe CatalogVariantUsageChecker,
-    // corre contra el esquema migrado y encuentra la variante rellenada: el acoplamiento de nombres
+    // El CatalogVariantUsageChecker real, resuelto del contenedor de la app, contra el esquema migrado:
+    // encuentra la variante rellenada en la línea de la venta y no la ve desde otro tenant. Es el
+    // adaptador mismo y no una copia de su SQL, así que el acoplamiento de nombres
     // (pos.sale_lines.variant_id, JOIN a pos.sales por sale_id, filtro por tenant_id) queda amarrado acá.
     [Fact]
     public async Task TheCatalogUsageQueryFindsTheBackfilledVariant()
@@ -88,28 +91,27 @@ public sealed class SaleLinesVariantMigrationTests
         await using var database = await StartDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateEverythingAsync(connectionString);
-        await using var context = NewContext(connectionString);
-        var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync(MigrationId(context, "_AddPosCurrency"), TestContext.Current.CancellationToken);
-        await ExecuteAsync(connectionString, SaleSql);
-        await migrator.MigrateAsync(MigrationId(context, "_AddVariantToSaleLines"), TestContext.Current.CancellationToken);
+        await using (var context = NewContext(connectionString))
+        {
+            var migrator = context.GetService<IMigrator>();
+            await migrator.MigrateAsync(MigrationId(context, "_AddPosCurrency"), TestContext.Current.CancellationToken);
+            await ExecuteAsync(connectionString, SaleSql);
+            await migrator.MigrateAsync(MigrationId(context, "_AddVariantToSaleLines"), TestContext.Current.CancellationToken);
+        }
 
-        Assert.Equal(1L, await ScalarAsync<long>(
-            connectionString,
-            $"""
-            SELECT count(*) FROM (
-                SELECT sl.variant_id FROM pos.sale_lines sl
-                JOIN pos.sales s ON s.id = sl.sale_id
-                WHERE s.tenant_id = '{TenantId}' AND sl.variant_id = ANY(ARRAY['{ProductId}'::uuid])
-            ) used
-            """));
-        Assert.Equal(0L, await ScalarAsync<long>(
-            connectionString,
-            $"""
-            SELECT count(*) FROM pos.sale_lines sl
-            JOIN pos.sales s ON s.id = sl.sale_id
-            WHERE s.tenant_id = '{Guid.CreateVersion7()}' AND sl.variant_id = ANY(ARRAY['{ProductId}'::uuid])
-            """));
+        // Un host nuevo sobre la base ya migrada: no le queda nada pendiente y sólo presta el contenedor.
+        await using var factory = new QepApiFactory(connectionString);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var checker = scope.ServiceProvider.GetRequiredService<IVariantUsageChecker>();
+        var variantId = Guid.Parse(ProductId);
+
+        var used = await checker.FindUsedAsync(
+            Guid.Parse(TenantId), [variantId], TestContext.Current.CancellationToken);
+        var fromAnotherTenant = await checker.FindUsedAsync(
+            Guid.CreateVersion7(), [variantId], TestContext.Current.CancellationToken);
+
+        Assert.Equal(variantId, Assert.Single(used));
+        Assert.Empty(fromAnotherTenant);
     }
 
     /// <summary>Arranca el host una vez: Program migra todos los módulos a la última.</summary>

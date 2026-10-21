@@ -125,7 +125,7 @@ public sealed class ProductMappingTests
             [6, 12],
             galleryFileId);
 
-    // Tarea 14b: el selector del listado arma lo mismo que el detalle desde la lectura proyectada:
+    // El selector del listado arma lo mismo que el detalle desde la lectura proyectada:
     // nombre visible con los valores, precios en orden de catálogo, escalas por FromUnit con sus
     // finales y el texto de la restricción.
     [Fact]
@@ -180,6 +180,67 @@ public sealed class ProductMappingTests
         Assert.Null(
             Sellable(galleryFileId: Guid.CreateVersion7())
                 .ToSellableDto("Camiseta", names, "https://cdn.qep.test/main.png", lookups).ImageUrl);
+    }
+
+    // Un archivo en cuarentena o pendiente tiene PublicUrl si alguna vez se publicó, pero no se
+    // muestra: misma regla que CatalogVariantReads.ImageUrlOf, que usan las líneas y el POS. Uno de
+    // otro tenant tampoco. El disponible y del tenant sí.
+    [Fact]
+    public void UrlOfHidesAFileThatIsNotAvailableOrIsFromAnotherTenant()
+    {
+        var available = Guid.CreateVersion7();
+        var quarantined = Guid.CreateVersion7();
+        var foreign = Guid.CreateVersion7();
+        var lookups = ProductReadLookups.Empty(TenantId) with
+        {
+            Images = new Dictionary<Guid, ProductImageRef>
+            {
+                [available] = new(available, TenantId, "image/png", true, "https://cdn.qep.test/ok.png"),
+                [quarantined] = new(quarantined, TenantId, "image/png", false, "https://cdn.qep.test/bad.png"),
+                [foreign] = new(foreign, Guid.CreateVersion7(), "image/png", true, "https://cdn.qep.test/other.png"),
+            }
+        };
+
+        Assert.Equal("https://cdn.qep.test/ok.png", lookups.UrlOf(available));
+        Assert.Null(lookups.UrlOf(quarantined));
+        Assert.Null(lookups.UrlOf(foreign));
+        Assert.Null(lookups.UrlOf(null));
+    }
+
+    // En el detalle: la principal en cuarentena no da URL ni a la portada, ni a su fila de galería,
+    // ni a la variante que cae a la principal; el fileId sigue viajando para el PUT.
+    [Fact]
+    public void TheDetailDoesNotExposeAQuarantinedMainPhoto()
+    {
+        var quarantined = Guid.CreateVersion7();
+        var product = Product.Create(
+            ProductId.New(),
+            TenantId,
+            "Vela de soja",
+            ProductDetails.Empty,
+            new ProductVariantInput
+            {
+                Code = "VS-001",
+                Pricing = new ProductPricing { Prices = new Dictionary<string, decimal> { ["COP"] = 45_000m } }
+            },
+            [quarantined],
+            Now);
+        var lookups = ProductReadLookups.Empty(TenantId) with
+        {
+            Images = new Dictionary<Guid, ProductImageRef>
+            {
+                [quarantined] = new(quarantined, TenantId, "image/png", false, "https://cdn.qep.test/bad.png"),
+            }
+        };
+
+        var dto = product.ToDto(lookups);
+
+        Assert.Equal(quarantined, dto.ImageFileId);
+        Assert.Null(dto.ImageUrl);
+        var image = Assert.Single(dto.Gallery);
+        Assert.Equal(quarantined, image.FileId);
+        Assert.Null(image.Url);
+        Assert.Null(Assert.Single(dto.Variants).ImageUrl);
     }
 
     // Un valor sin nombre (la opción ya no está en la biblioteca) no rompe el selector: el nombre

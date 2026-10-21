@@ -5,7 +5,7 @@
 namespace Modules.Catalog.Infrastructure.Persistence.Migrations
 {
     /// <summary>
-    /// Variantes, Tarea 4: la marca de que la biblioteca de opciones de un tenant ya se sembró
+    /// Variantes: la marca de que la biblioteca de opciones de un tenant ya se sembró
     /// (<c>OptionLibraryProvisioner</c>). Sin ella, borrar «Talla» sin uso la haría volver en el
     /// siguiente listado. Tabla fuera del modelo de EF a propósito: sólo la toca el SQL crudo del
     /// aprovisionador, así que el snapshot no cambia.

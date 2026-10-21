@@ -14,7 +14,7 @@ namespace Modules.Catalog.Domain;
 public static class ProductPriceChangeDetector
 {
     /// <summary>
-    /// El historial del PUT con variantes (Tarea 5): compara cada variante **guardada** que viene
+    /// El historial del PUT con variantes: compara cada variante **guardada** que viene
     /// en el cuerpo contra su propio precio de hoy. Una variante nueva (sin id) no deja filas: nace
     /// con su precio, igual que un producto nuevo no deja historial al crearse. Una variante
     /// guardada que no viene no se compara: el agregado la rechaza o la resuelve por su cuenta.

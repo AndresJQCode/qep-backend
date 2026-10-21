@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace Modules.Catalog.Application;
 
-// Variantes, Tarea 5 (spec 2026-10-20 §6). El detalle es lo que el formulario dibuja y lo que
+// Variantes (spec 2026-10-20 §6). El detalle es lo que el formulario dibuja y lo que
 // vuelve del PUT, entero, para que lo repinte sin otra lectura.
 //
 // Decisiones de forma (BFF; el backend no ve la pantalla que las pidió):
@@ -248,7 +248,7 @@ public sealed record ProductsResponse(
 // Description/TaxRateId son opcionales, y en el PUT mandarlos en null los **limpia** — el verbo
 // reemplaza el recurso entero. Lo mismo OptionIds y Gallery: null es lista vacía.
 //
-// Variantes, Tarea 5: Code y Pricing salieron del producto hacia cada variante, y ImageFileId hacia
+// Con las variantes, Code y Pricing salieron del producto hacia cada variante, y ImageFileId hacia
 // Gallery (la primera foto es la principal). Un producto sin opciones manda una sola variante, sin
 // OptionValueIds.
 public sealed record CreateProductRequest(

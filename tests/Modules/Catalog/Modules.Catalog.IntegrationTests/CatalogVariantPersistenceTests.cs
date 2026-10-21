@@ -1,9 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
+using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
 using Modules.Catalog.Infrastructure.Persistence;
@@ -12,9 +14,10 @@ using Testcontainers.PostgreSql;
 namespace Modules.Catalog.IntegrationTests;
 
 /// <summary>
-/// Variantes, Tarea 3: el mapeo de variantes, galería y biblioteca de opciones, y la traducción de
-/// los índices únicos de product_variants **por nombre**. El código de barras todavía no entra por
-/// HTTP (es de la Tarea 5), así que su traducción se prueba en la unidad de trabajo.
+/// Variantes: el mapeo de variantes, galería y biblioteca de opciones, y la traducción de los
+/// índices únicos de product_variants **por nombre**. Por HTTP, la comprobación previa del handler
+/// frena el código y el código de barras repetidos antes del índice, así que la traducción se prueba
+/// en la unidad de trabajo.
 /// </summary>
 public sealed class CatalogVariantPersistenceTests
 {
@@ -22,7 +25,7 @@ public sealed class CatalogVariantPersistenceTests
     private const string SubjectId = "01900000-0000-7000-8000-00000000e002";
     private static readonly DateTimeOffset Now = new(2026, 10, 20, 12, 0, 0, TimeSpan.Zero);
 
-    // Desde la Tarea 5 este camino HTTP lo frena la comprobación previa del handler
+    // Este camino HTTP lo frena la comprobación previa del handler
     // (ProductVariantReferences.EnsureCodesAvailableAsync), con el campo marcado, antes de llegar
     // al índice. La traducción del índice por nombre la cubre SavingATakenCodeThrowsCodeTaken.
     [Fact]
@@ -182,11 +185,15 @@ public sealed class CatalogVariantPersistenceTests
         Assert.Equal(product.Id, Assert.Single(byIds).Id);
     }
 
+    // CatalogUnitOfWork sella UpdatedAt con el IClock al guardar una opción modificada. Con un reloj
+    // fijo distinto de Now, la prueba distingue el sello del reloj de cualquier otro valor: un
+    // «UpdatedAt > Now» pasaría también con DateTimeOffset.UtcNow escrito a mano en el dominio.
     [Fact]
     public async Task SavingAChangedOptionStampsItsUpdatedAt()
     {
         await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var stampedAt = new DateTimeOffset(2026, 10, 21, 9, 30, 0, TimeSpan.Zero);
+        using var factory = new QepApiFactory(database.GetConnectionString(), utcNow: stampedAt);
         var option = OptionDefinition.Create(Guid.Parse(TenantId), "Talla", ["M"], isActive: false, Now);
         await using (var scope = factory.Services.CreateAsyncScope())
         {
@@ -212,7 +219,7 @@ public sealed class CatalogVariantPersistenceTests
         Assert.True(reloaded.IsActive);
         Assert.Equal("M", Assert.Single(reloaded.Values).Value);
         Assert.Equal(Now, reloaded.CreatedAt);
-        Assert.True(reloaded.UpdatedAt > Now);
+        Assert.Equal(stampedAt, reloaded.UpdatedAt);
     }
 
     private static Product NewProduct(Guid tenantId, string code, string? barcode) =>
@@ -285,7 +292,12 @@ public sealed class CatalogVariantPersistenceTests
         return database;
     }
 
-    private sealed class QepApiFactory(string connectionString)
+    private sealed class FixedClock(DateTimeOffset utcNow) : IClock
+    {
+        public DateTimeOffset UtcNow { get; } = utcNow;
+    }
+
+    private sealed class QepApiFactory(string connectionString, DateTimeOffset? utcNow = null)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -303,6 +315,15 @@ public sealed class CatalogVariantPersistenceTests
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
+            // Reloj fijo sólo para la prueba que lo pide, como en ProductExportApiTests.
+            if (utcNow is { } fixedNow)
+            {
+                builder.ConfigureServices(services =>
+                {
+                    services.RemoveAll<IClock>();
+                    services.AddScoped<IClock>(_ => new FixedClock(fixedNow));
+                });
+            }
         }
     }
 }

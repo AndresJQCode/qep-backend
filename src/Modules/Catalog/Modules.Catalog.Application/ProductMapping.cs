@@ -26,10 +26,16 @@ internal sealed record ProductReadLookups(
 
     public bool CanDelete(Guid variantId) => UsedVariantIds is { } used && !used.Contains(variantId);
 
-    // Un archivo que desapareció de Storage, que nunca se publicó, o que es de otro tenant, deja la
-    // foto sin URL — no sin foto. El fileId sigue viajando: el cliente lo necesita para el PUT.
+    // Un archivo que desapareció de Storage, que nunca se publicó, que es de otro tenant o que no
+    // está disponible (en cuarentena o pendiente) deja la foto sin URL — no sin foto. El fileId sigue
+    // viajando: el cliente lo necesita para el PUT. Misma regla que CatalogVariantReads.ImageUrlOf
+    // (Bootstrapper), para que el detalle, la grilla y el selector no muestren un archivo que las
+    // líneas, el POS y el PDF esconden.
     public string? UrlOf(Guid? fileId) =>
-        fileId is { } id && Images.TryGetValue(id, out var image) && image.TenantId == TenantId
+        fileId is { } id
+            && Images.TryGetValue(id, out var image)
+            && image.TenantId == TenantId
+            && image.IsAvailable
             ? image.PublicUrl
             : null;
 }
@@ -68,8 +74,8 @@ internal static class ProductMapping
     /// los nombres de opción en **una sola** consulta a la biblioteca.
     ///
     /// Es la razón de ser de `CAT-05b`: sin esto, el cliente que pinta N productos tiene que pedir
-    /// N URLs de descarga. Con la galería (Tarea 5) el lote son todas las fotos de todos los
-    /// productos; un catálogo sin imágenes no paga nada.
+    /// N URLs de descarga. Con la galería el lote son todas las fotos de todos los productos; un
+    /// catálogo sin imágenes no paga nada.
     ///
     /// **Recibe el `tenantId` y vuelve a comprobarlo, aunque el resolver ya lo haya hecho en la
     /// escritura.** No es redundancia: `CAT-05a` cerró la escritura, pero **no borra lo que ya

@@ -14,7 +14,7 @@ using Testcontainers.PostgreSql;
 namespace Modules.Catalog.IntegrationTests;
 
 /// <summary>
-/// Variantes, Tarea 4: la biblioteca de opciones por tenant (spec 2026-10-20 §3.1). Siembra
+/// Variantes: la biblioteca de opciones por tenant (spec 2026-10-20 §3.1). Siembra
 /// «Talla» y «Color» inactivas en el primer acceso, una sola vez; una opción o un valor que
 /// alguna variante usa no se borra (409 <c>catalog.option.in_use</c>), uno sin uso sí.
 /// </summary>
@@ -164,6 +164,33 @@ public sealed class OptionLibraryApiTests
         Assert.False(updated.Values[1].IsActive);
         var reloaded = (await ListAsync(client, TenantId)).Items.Single(option => option.Id == talla.Id);
         Assert.Equal(["Mediana", "S", "3XL"], reloaded.Values.Select(value => value.Name));
+    }
+
+    // isActive es obligatorio en la opción y en cada valor: un cuerpo que lo omite no desactiva en
+    // silencio, responde 422 con el campo marcado y deja la opción como estaba.
+    [Fact]
+    public async Task UpdateWithoutIsActiveIsRejectedWithTheErrorsMapAndChangesNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, Manage);
+        var created = await ReadAsync<OptionResponse>(await CreateAsync(client, TenantId, "Material", ["Algodón"]));
+        var cotton = created.Values.Single();
+
+        var response = await UpdateAsync(client, TenantId, created.Id, new
+        {
+            name = "Material",
+            values = new object[] { new { id = cotton.Id, name = cotton.Name } },
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await BodyAsync(response);
+        Assert.Contains("validation.failed", body, StringComparison.Ordinal);
+        Assert.Contains("\"IsActive\"", body, StringComparison.Ordinal);
+        Assert.Contains("\"Values[0].IsActive\"", body, StringComparison.Ordinal);
+        var reloaded = (await ListAsync(client, TenantId)).Items.Single(option => option.Id == created.Id);
+        Assert.True(reloaded.IsActive);
+        Assert.True(Assert.Single(reloaded.Values).IsActive);
     }
 
     [Fact]

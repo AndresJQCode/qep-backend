@@ -6,7 +6,7 @@ using Modules.Catalog.Application;
 
 namespace Modules.Catalog.Api;
 
-// Variantes, Tarea 4: la biblioteca de opciones del tenant (spec 2026-10-20 §3.1). Bajo el mismo
+// La biblioteca de opciones del tenant (spec 2026-10-20 §3.1). Bajo el mismo
 // prefijo que productos y tasas; sin permisos propios: leer es catalog.product.read y administrar
 // catalog.product.manage, cuyas políticas ya existen.
 public static class OptionEndpoints

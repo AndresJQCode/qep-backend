@@ -136,8 +136,8 @@ public interface IProductRepository
 
     /// <summary>
     /// Como <see cref="FindExistingCodesAsync"/>, para los códigos de barras (igualdad exacta, como
-    /// <c>IX_product_variants_tenant_barcode</c>). Variantes, Tarea 5: el PUT marca el campo antes
-    /// de que choque el índice.
+    /// <c>IX_product_variants_tenant_barcode</c>). El PUT marca el campo antes de que choque el
+    /// índice.
     /// </summary>
     Task<IReadOnlySet<string>> FindExistingBarcodesAsync(
         Guid tenantId,
