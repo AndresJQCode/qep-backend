@@ -31,7 +31,7 @@ Archivo vivo: se actualiza al cerrar cada tarea o decisión. Las tareas detallad
 | 13 | Reporte de cambios de precio | Hecha (`6bfc3ce6`, `3f07515c`), pruebas sin ejecutar |
 | 14 | PDF y Excel de pedidos | Hecha (`62cbbf73`), pruebas sin ejecutar |
 | 14b | Variantes vendibles en el listado para el selector (agregada, spec §6) | Hecha (`ca1146e1`), pruebas sin ejecutar |
-| 15 | Siembras, documentación y traspaso al frontend | Pendiente |
+| 15 | Siembras, documentación y traspaso al frontend | Hecha (`37045a68`, `27d037b5`), pruebas sin ejecutar |
 
 Estados: Pendiente · En curso · Hecha (con SHA del commit) · Bloqueada (con motivo).
 
