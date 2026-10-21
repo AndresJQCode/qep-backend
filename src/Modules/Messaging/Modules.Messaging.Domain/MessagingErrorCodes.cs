@@ -142,4 +142,31 @@ public static class MessagingErrorCodes
 
     /// <summary>Spec 2026-10-21 §4.2: el asistente ya está atendiendo la conversación.</summary>
     public const string AutomationAlreadyActive = "messaging.automation.already_active";
+
+    /// <summary>Spec 2026-10-21 §5: el horario no existe en el tenant (404).</summary>
+    public const string BusinessHoursNotFound = "messaging.business_hours.not_found";
+
+    /// <summary>Spec 2026-10-21 §5: el nombre va de 1 a 60 caracteres.</summary>
+    public const string BusinessHoursNameInvalid = "messaging.business_hours.name_invalid";
+
+    /// <summary>Spec 2026-10-21 §5: franjas fuera de 0..1440, solapadas, desordenadas, más de tres por día o semana incompleta.</summary>
+    public const string BusinessHoursRangesInvalid = "messaging.business_hours.ranges_invalid";
+
+    /// <summary>Spec 2026-10-21 §5: fechas de excepción repetidas, más de 100 vigentes o franjas inválidas.</summary>
+    public const string BusinessHoursExceptionsInvalid = "messaging.business_hours.exceptions_invalid";
+
+    /// <summary>Spec 2026-10-21 §5: el país de festivos no es null ni CO.</summary>
+    public const string BusinessHoursHolidayCountryInvalid = "messaging.business_hours.holiday_country_invalid";
+
+    /// <summary>Spec 2026-10-21 §5: ya hay un horario con ese nombre en el tenant.</summary>
+    public const string BusinessHoursNameTaken = "messaging.business_hours.name_taken";
+
+    /// <summary>Spec 2026-10-21 §5: ya hay otro horario predeterminado en el tenant.</summary>
+    public const string BusinessHoursDefaultConflict = "messaging.business_hours.default_conflict";
+
+    /// <summary>Spec 2026-10-21 §5: el horario tiene conexiones asignadas.</summary>
+    public const string BusinessHoursInUse = "messaging.business_hours.in_use";
+
+    /// <summary>Spec 2026-10-21 §5: el horario predeterminado no se borra.</summary>
+    public const string BusinessHoursIsDefault = "messaging.business_hours.is_default";
 }
