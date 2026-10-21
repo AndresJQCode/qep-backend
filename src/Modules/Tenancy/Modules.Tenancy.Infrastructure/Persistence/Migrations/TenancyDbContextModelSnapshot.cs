@@ -311,6 +311,11 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("occurred_at");
 
+                    b.Property<string>("ProviderKey")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("provider_key");
+
                     b.Property<string>("Reason")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -335,9 +340,11 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
 
                     b.ToTable("tenant_changes", "tenancy", t =>
                         {
-                            t.HasCheckConstraint("CK_tenant_changes_kind", "kind IN ('module','tenant_status')");
+                            t.HasCheckConstraint("CK_tenant_changes_kind", "kind IN ('module','tenant_status','provider')");
 
-                            t.HasCheckConstraint("CK_tenant_changes_module_key", "(kind = 'module' AND module_key IS NOT NULL) OR (kind = 'tenant_status' AND module_key IS NULL)");
+                            t.HasCheckConstraint("CK_tenant_changes_module_key", "(kind = 'module') = (module_key IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_tenant_changes_provider_key", "(kind = 'provider') = (provider_key IS NOT NULL) AND (provider_key IS NULL OR provider_key IN ('zenvia'))");
 
                             t.HasCheckConstraint("CK_tenant_changes_reason", "reason IN ('contract','courtesy','nonpayment','cancellation','correction')");
                         });
@@ -392,6 +399,41 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_tenant_modules_source", "source IN ('backfill','signup','seed','manual','operator')");
 
                             t.HasCheckConstraint("CK_tenant_modules_status", "status IN ('active','inactive')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Tenancy.Domain.TenantProvider", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("ProviderKey")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("provider_key");
+
+                    b.Property<DateTimeOffset>("EnabledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("enabled_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("StatusChangedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("status_changed_at");
+
+                    b.HasKey("TenantId", "ProviderKey");
+
+                    b.ToTable("tenant_providers", "tenancy", t =>
+                        {
+                            t.HasCheckConstraint("CK_tenant_providers_provider_key", "provider_key IN ('zenvia')");
+
+                            t.HasCheckConstraint("CK_tenant_providers_status", "status IN ('active','inactive')");
                         });
                 });
 
@@ -511,6 +553,15 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                 });
 
             modelBuilder.Entity("Modules.Tenancy.Domain.TenantModule", b =>
+                {
+                    b.HasOne("Modules.Tenancy.Domain.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Tenancy.Domain.TenantProvider", b =>
                 {
                     b.HasOne("Modules.Tenancy.Domain.Tenant", null)
                         .WithMany()

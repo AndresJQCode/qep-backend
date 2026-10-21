@@ -14,6 +14,8 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
 
     public DbSet<TenantModule> TenantModules => Set<TenantModule>();
 
+    public DbSet<TenantProvider> TenantProviders => Set<TenantProvider>();
+
     public DbSet<TenantChange> TenantChanges => Set<TenantChange>();
 
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
@@ -29,6 +31,7 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
     {
         ConfigureTenant(modelBuilder);
         ConfigureTenantModule(modelBuilder);
+        ConfigureTenantProvider(modelBuilder);
         ConfigureTenantChange(modelBuilder);
         ConfigureMembership(modelBuilder);
         // audit.entries es propiedad del módulo Audit; acá se mapea como proyección de
@@ -150,7 +153,40 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
             .OnDelete(DeleteBehavior.Cascade);
     }
 
-    // Spec 2026-10-08 §3 (D12): un solo historial para módulos y estado del tenant. La FK va en el
+    // Plan 2026-10-21: mismo molde que tenant_modules, sin source ni note (el porqué vive en tenant_changes) y
+    // sin DEFAULT en status: la tabla es nueva, así que no hay pods viejos que inserten sin la columna. La FK
+    // va en el modelo por la misma razón que en tenant_modules: que EF ordene los INSERT si tenant y proveedor
+    // viajan en el mismo SaveChanges. La clave es texto y no un tipo: Tenancy no conoce el catálogo de Integrations, y el CHECK
+    // es el que rechaza una clave desconocida.
+    private static void ConfigureTenantProvider(ModelBuilder modelBuilder)
+    {
+        var provider = modelBuilder.Entity<TenantProvider>();
+        provider.ToTable("tenant_providers", "tenancy", table =>
+        {
+            table.HasCheckConstraint("CK_tenant_providers_provider_key", "provider_key IN ('zenvia')");
+            table.HasCheckConstraint("CK_tenant_providers_status", "status IN ('active','inactive')");
+        });
+        provider.HasKey(value => new { value.TenantId, value.ProviderKey });
+        provider.Property(value => value.TenantId)
+            .HasColumnName("tenant_id")
+            .HasConversion(id => id.Value, value => new TenantId(value));
+        provider.Property(value => value.ProviderKey)
+            .HasColumnName("provider_key")
+            .HasMaxLength(TenantProvider.ProviderKeyMaxLength);
+        provider.Property(value => value.Status)
+            .HasColumnName("status")
+            .HasMaxLength(TenantModule.StatusMaxLength)
+            .HasConversion(
+                status => TenantChangeVocabulary.ToText(status),
+                text => TenantChangeVocabulary.ParseModuleStatus(text));
+        provider.Property(value => value.EnabledAt).HasColumnName("enabled_at");
+        provider.Property(value => value.StatusChangedAt).HasColumnName("status_changed_at");
+        provider.HasOne<Tenant>().WithMany()
+            .HasForeignKey(value => value.TenantId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    // Spec 2026-10-08 §3 (D12): un solo historial para módulos, proveedores (plan 2026-10-21) y estado del tenant. La FK va en el
     // modelo por la misma razón que tenant_modules: que EF ordene los INSERT del mismo SaveChanges. Sin
     // navegación en Tenant.
     private static void ConfigureTenantChange(ModelBuilder modelBuilder)
@@ -158,10 +194,13 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         var change = modelBuilder.Entity<TenantChange>();
         change.ToTable("tenant_changes", "tenancy", table =>
         {
-            table.HasCheckConstraint("CK_tenant_changes_kind", "kind IN ('module','tenant_status')");
+            table.HasCheckConstraint("CK_tenant_changes_kind", "kind IN ('module','tenant_status','provider')");
+            // Plan 2026-10-21: cada clave va en su tipo de fila y sólo ahí. La forma de antes nombraba
+            // tenant_status y rechazaba toda fila de proveedor.
+            table.HasCheckConstraint("CK_tenant_changes_module_key", "(kind = 'module') = (module_key IS NOT NULL)");
             table.HasCheckConstraint(
-                "CK_tenant_changes_module_key",
-                "(kind = 'module' AND module_key IS NOT NULL) OR (kind = 'tenant_status' AND module_key IS NULL)");
+                "CK_tenant_changes_provider_key",
+                "(kind = 'provider') = (provider_key IS NOT NULL) AND (provider_key IS NULL OR provider_key IN ('zenvia'))");
             table.HasCheckConstraint(
                 "CK_tenant_changes_reason",
                 "reason IN ('contract','courtesy','nonpayment','cancellation','correction')");
@@ -181,6 +220,9 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
             .HasColumnName("module_key")
             .HasMaxLength(32)
             .HasConversion(key => key!.Value, value => TenantModuleKey.Parse(value));
+        change.Property(value => value.ProviderKey)
+            .HasColumnName("provider_key")
+            .HasMaxLength(TenantProvider.ProviderKeyMaxLength);
         change.Property(value => value.FromStatus).HasColumnName("from_status").HasMaxLength(TenantChange.StatusMaxLength);
         change.Property(value => value.ToStatus).HasColumnName("to_status").HasMaxLength(TenantChange.StatusMaxLength);
         change.Property(value => value.Reason)
