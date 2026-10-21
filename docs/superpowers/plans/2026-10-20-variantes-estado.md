@@ -10,7 +10,7 @@ Archivo vivo: se actualiza al cerrar cada tarea o decisión. Las tareas detallad
 | Diseño | Aprobado por el owner (2026-10-20), en `develop` local, sin push | `ea383771` |
 | Plan backend | Escrito, en `develop` local, sin push; **ejecución: subagentes, en sesión nueva** | `e0d7756f` |
 | Implementación backend | Hecha y mergeada a `develop` local con ff-only (2026-10-21), sin push. **Pruebas escritas y sin ejecutar desde la T4** (instrucción del owner) | `feature/variantes-producto`, desde `95dbdd0c` |
-| Revisión independiente | Pendiente: sesión con Fable, prompt en [`2026-10-20-variantes-revision-fable.md`](2026-10-20-variantes-revision-fable.md) | — |
+| Revisión independiente | Hecha (2026-10-21), sin Críticos; arreglos en `fix/variantes-revision-fable`, mergeados a `develop` local con ff-only, sin push. Pruebas de integración nuevas **sin ejecutar** | prompt en [`2026-10-20-variantes-revision-fable.md`](2026-10-20-variantes-revision-fable.md) |
 | Plan y trabajo de frontend | No iniciado; el contrato está en el [traspaso](2026-10-20-variantes-handoff.md) (sale en la misma ventana que el backend) | — |
 
 ## Tareas del plan (backend)
@@ -46,6 +46,14 @@ Estados: Pendiente · En curso · Hecha (con SHA del commit) · Bloqueada (con m
 
 ## Pendientes y riesgos abiertos
 
+- **Revisión independiente (2026-10-21).** Arreglado: `OrderTests` indexaba la foto por producto (la única prueba
+  unitaria roja); las pruebas de escalas por variante no detectaban la clave por producto (nuevas en las dos pasadas
+  de recálculo y de punta a punta); `pricing: null` rechazaba escalas copiadas sin completar y una variante en uso
+  con ellas no se podía desactivar por `deletedVariantIds`; el `Down` de Catalog devolvía una variante inactiva y su
+  prueba no ejercitaba más de una variante por producto. Corrida la unitaria de Catalog, Quotations, Pos, Reporting,
+  Shopify, Bootstrapper (sin el checker) y ArchitectureTests: todas verdes. Quedan para el owner: el escáner con una
+  variante inactiva (abajo), `code` del listado cuando un producto sin opciones conserva variantes inactivas, y el
+  desempeño de `ShopifyProductLookup` y la cuadrícula del POS, que traen agregados completos.
 - **Correr las pruebas.** Desde la T4 se escribieron y no se ejecutaron (sólo `build` y `format`). Hay que correrlas por
   módulo antes de llevar nada a `main`: Catalog, Quotations, Pos, Reporting, Shopify, Identity, `Bootstrapper.UnitTests`
   y `ArchitectureTests`. Las 18 consultas LINQ de riesgo se verificaron con `ToQueryString` y traducen.

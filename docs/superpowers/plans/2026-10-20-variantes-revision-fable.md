@@ -126,4 +126,5 @@ Cada una dice lo que cuesta si es incorrecta.
   sigue en uso y una nueva reusa su código.
 - Borrar una variante borra su historial de precios (CASCADE). El `Down` de Catalog no lo borra: deja las filas sin
   variante.
-- `AddProductVariants.Down` puede devolver como variante única una que esté inactiva.
+- ~~`AddProductVariants.Down` puede devolver como variante única una que esté inactiva.~~ Cerrado en la revisión
+  independiente (2026-10-21): prefiere una activa.

@@ -34,9 +34,12 @@ coincide con los DTOs (`CatalogDtos.cs`, `OptionLibraryContracts.cs`, `Quotation
   `code` (≤ 60, único en el tenant entre todas las variantes), `barcode` (opcional, ≤ 64, único cuando
   existe), `prices`, `priceScales`, `packagingUnits`, una foto de la galería y su estado. Hasta **2.048**
   por producto.
-- Un **producto sin opciones** tiene exactamente una variante, la **variante por defecto**, con el **mismo
-  id que el producto**. Todo producto que existía antes quedó así. Para venderlo, mandas como `variantId`
-  el id de esa variante (que coincide con el del producto, pero léelo de `variants[0].id`, no lo asumas).
+- Un **producto sin opciones** tiene exactamente una variante **activa**, la **variante por defecto**. Todo
+  producto que existía antes quedó así, con una sola variante y el **mismo id que el producto**. Para
+  venderlo, mandas como `variantId` el id de esa variante (que coincide con el del producto, pero léelo de
+  la respuesta, no lo asumas). **Ojo:** si a un producto le quitas todas sus opciones, quedan una activa y
+  las demás **inactivas**, todas con `optionValueIds: []`. Busca la activa (`isActive`), no tomes
+  `variants[0]`, y en ese caso el listado trae `code: null` y `variantCount` mayor que 1.
 - El **nombre visible** lo arma el backend: el del producto en la variante por defecto, y
   `«{producto} – {valor1} / {valor2} / {valor3}»` (guion largo con espacios) con opciones. Viaja en
   `name` de cada variante. **No lo concatenes en el frontend**: es el mismo texto que guardan las líneas, el
@@ -184,7 +187,9 @@ cada fila al tocar las opciones:
 
 - `optionValueIds: null` = «los suyos», proyectados a las opciones nuevas: si quitaste una opción, suelta su
   valor; si agregaste una, toma su primer valor activo.
-- `pricing: null` = deja precio, escalas y empaques como están.
+- `pricing: null` = deja precio, escalas y empaques como están, **incluidas las escalas incompletas** que dejó
+  la copia de escalas (`restriction: null`): se conservan así, sin error. Si mandas `pricing`, cada escala
+  tiene que traer su `restriction`.
 - `isActive: null` = deja su estado.
 - `barcode` y `galleryFileId` en `null` **limpian** (son reemplazo).
 - `code` no tiene «null = el suyo»: es obligatorio en toda variante, guardada o nueva (`ProductWriteRules`).
@@ -236,15 +241,20 @@ Con su propio `code`:
 | `catalog.variant.value_count_mismatch` | 422 | No hay un valor por cada opción | `Variants[i].OptionValueIds` |
 | `catalog.variant.combination_duplicate` | 422 | Dos variantes **activas** con la misma combinación | `Variants[i].OptionValueIds` |
 | `catalog.variant.active_required` | 422 | Ninguna variante activa | `Variants` |
-| `catalog.product.code_taken` | 422 | El `code` ya es de una variante de otro producto (activa o no: desactivar no libera el código) | `Variants[i].Code` |
-| `catalog.variant.barcode_taken` | 422 | El código de barras ya lo usa otra variante del tenant: el índice es único en todo el tenant | `Variants[i].Barcode` |
+| `catalog.product.code_taken` | 422 | El `code` ya es de una variante de otro producto (activa o no: desactivar no libera el código) | `Variants[i].Code`, salvo cuando lo frena el índice (ver abajo) |
+| `catalog.variant.barcode_taken` | 422 | El código de barras ya lo usa otra variante del tenant: el índice es único en todo el tenant | `Variants[i].Barcode`, salvo cuando lo frena el índice (ver abajo) |
 | `catalog.variant.missing_in_request` | 422 | Falta una variante guardada que no está en `deletedVariantIds` | — |
 | `catalog.variant.duplicated_in_request` | 422 | Un id en `variants` y en `deletedVariantIds`, o repetido en `deletedVariantIds` | — |
-| `catalog.variant.not_found` | 422 | Un id (en `variants` o `deletedVariantIds`) que no es de este producto | — |
+| `catalog.variant.not_found` | 422 | Un id (en `variants` o `deletedVariantIds`) que no es de este producto. Si además viene con `optionValueIds: null` en un producto con opciones, sale antes `catalog.variant.value_count_mismatch` | — |
 | `catalog.product.image_not_found` / `image_not_available` / `image_not_an_image` | 422 | Una foto de `gallery` que no existe en el tenant, no está disponible o no es imagen | — (todavía no marca la posición) |
 | `catalog.product.not_found` | 404 | El producto no existe en el tenant | — |
 | `catalog.product.inactive` | 422 | Editar un producto desactivado | — |
 | `concurrency.conflict` | 412 | `expectedVersion` vieja | — |
+
+**`code_taken` y `barcode_taken` pueden llegar sin `errors`.** El backend los comprueba antes de guardar y marca
+el campo; pero si dos `PUT` chocan a la vez, o si intercambias los códigos de dos variantes del mismo producto en un
+solo `PUT`, los frena el índice único de la base, que no sabe qué fila del cuerpo fue. Muestra el error general
+del formulario cuando falte el campo.
 
 Se conservan sin cambio de significado `catalog.product.name_*`, `description_too_long`, `tax_rate_not_found`,
 `price_required`, `price_negative`, `price_scale.*`, `packaging_units*`, `already_active` / `already_inactive`.
@@ -520,8 +530,9 @@ Remove-Item Env:ConnectionStrings__QepDatabase
 
 - **Pos y Quotations** sólo quitan `variant_id` de las líneas. Una línea que vendió una variante que no era la por
   defecto conserva su `product_id`, su foto y sus importes: se sigue leyendo.
-- **Catalog pierde datos.** Vuelve una variante por producto —la que lleva el id del producto o, si ya no existe, la
-  primera— con su código, precios, escalas y empaques. **Las demás variantes se pierden con sus precios y escalas**, y
+- **Catalog pierde datos.** Vuelve una variante por producto —una **activa** si hay; entre ellas, la que lleva el id
+  del producto y si no la primera— con su código, precios, escalas y empaques. **Las demás variantes se pierden con sus precios y escalas**, y
   también los códigos de barras, la galería salvo la foto principal y la biblioteca de opciones. Su historial de precios
-  no se borra: se queda colgado del producto, sin la variante, mezclado con el de la que vuelve. Si ya hay productos con
+  no se borra: se queda colgado del producto, sin la variante, mezclado con el de la que vuelve, así que el reporte
+  de cambios de precio muestra como del producto cambios de variantes que ya no existen. Si ya hay productos con
   variantes, el rollback que no pierde nada es restaurar el backup del paso 1.
