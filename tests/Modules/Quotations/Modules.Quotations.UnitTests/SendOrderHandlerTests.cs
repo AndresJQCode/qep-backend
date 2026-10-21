@@ -301,6 +301,17 @@ public sealed class SendOrderHandlerTests
         Assert.Null(harness.Sender.SentOrder);
     }
 
+    // Revisión final: quien no es miembro activo es un 403 aunque el tenant tampoco tenga canal; el canal no
+    // puede adelantarse a la pregunta de quién envía.
+    [Fact]
+    public async Task ANonMemberIsForbiddenEvenWithoutAChannel()
+    {
+        var harness = NewHarness(channels: [], membership: new NoMembershipDirectory());
+
+        await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken));
+    }
+
     private sealed record Harness(
         SendOrderHandler Handler,
         Order Order,
@@ -317,7 +328,8 @@ public sealed class SendOrderHandlerTests
         QuotationCustomerRef? customer = null,
         Exception? whatsAppFailure = null,
         IExecutionContext? executionContext = null,
-        WhatsAppChannel[]? channels = null)
+        WhatsAppChannel[]? channels = null,
+        IMembershipDirectory? membership = null)
     {
         var order = OrderBuilders.Pending(
             TenantId, AdvisorId, Now.AddDays(-1), clientId: ClientId,
@@ -361,7 +373,7 @@ public sealed class SendOrderHandlerTests
             customers,
             whatsAppFailure is null ? sender : new FailingWhatsAppSender(whatsAppFailure),
             new StubWhatsAppChannelDirectory(channels ?? [WhatsAppChannels.Any()]),
-            new StubMembershipDirectory(AdvisorId.Value),
+            membership ?? new StubMembershipDirectory(AdvisorId.Value),
             executionContext ?? new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now));
 

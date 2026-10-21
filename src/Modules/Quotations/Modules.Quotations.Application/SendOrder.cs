@@ -60,16 +60,16 @@ public sealed class SendOrderHandler(
         // `Quotation.EnsureSendable`: un anulado no es un envío que falló, es uno que nunca empezó.
         order.EnsureSendable();
 
-        // Por dónde sale (plan 2026-10-21), también fuera: sin canal, con varios o sin plantilla de pedido,
-        // el envío nunca empezó, y saberlo no cuesta un PDF.
-        var channel = WhatsAppChannelSelection.ForOrder(
-            await whatsAppChannels.ListAvailableAsync(command.TenantId, cancellationToken));
-
         // También fuera: quien no es miembro del tenant es un 403, no "no se pudo enviar". En la
         // cotización va adentro porque su registro de fallas necesita saber quién intentó; acá no hay
         // ese registro.
         var sentBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
+
+        // Por dónde sale (plan 2026-10-21), también fuera y después de saber quién envía: sin canal, con
+        // varios o sin plantilla de pedido, el envío nunca empezó, y saberlo no cuesta un PDF.
+        var channel = WhatsAppChannelSelection.ForOrder(
+            await whatsAppChannels.ListAvailableAsync(command.TenantId, cancellationToken));
 
         // El paso en curso, para que la falla diga dónde se cayó: el teléfono del cliente, `qcode-pdf`,
         // R2 o Zenvia se destraban en lados distintos. Los pasos son los de la cotización.

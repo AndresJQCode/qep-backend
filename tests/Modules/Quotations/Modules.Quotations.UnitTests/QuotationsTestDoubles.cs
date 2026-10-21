@@ -338,6 +338,22 @@ internal sealed class NoOpQuotationAuditPublisher : IQuotationAuditPublisher
     }
 }
 
+/// <summary>Un sujeto sin membresía activa en el tenant: <see cref="QuotationAdvisorResolver"/> responde 403.</summary>
+internal sealed class NoMembershipDirectory : IMembershipDirectory
+{
+    public Task<IReadOnlyCollection<string>?> FindActiveRolesAsync(
+        Guid userId, Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyCollection<string>?>(null);
+
+    public Task<Guid?> FindActiveMembershipIdAsync(
+        Guid userId, Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<Guid?>(null);
+
+    public Task<IReadOnlyList<Guid>> ListMembershipIdsByUserAsync(
+        Guid userId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Guid>>([]);
+}
+
 internal sealed class StubMembershipDirectory(Guid membershipId) : IMembershipDirectory
 {
     public Task<IReadOnlyCollection<string>?> FindActiveRolesAsync(
