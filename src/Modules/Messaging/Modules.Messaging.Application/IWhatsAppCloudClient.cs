@@ -46,6 +46,11 @@ public interface IWhatsAppCloudClient
     Task<SendResult> SendTextAsync(
         MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-21 D-I1: <c>type: "interactive"</c> (botones, lista o botón con URL) por el mismo <c>MessagePayload</c> del
+    /// texto; mismo <see cref="SendResult"/>. Sólo WhatsApp y sólo dentro de la ventana de 24 h.</summary>
+    Task<SendResult> SendInteractiveAsync(
+        MessagingSender sender, SendTarget target, InteractiveSend send, string callbackData, string? contextWamid, CancellationToken cancellationToken);
+
     /// <summary>Spec 2026-10-11 §6.4: <c>POST /{phone_number_id}/media</c> en multipart; devuelve el <c>id</c> del
     /// medio en Meta. Una falla lleva el status (0 = no hubo respuesta) y el <c>error.code</c> si vino.</summary>
     Task<MessagingGraphResult<string>> UploadMediaAsync(

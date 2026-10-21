@@ -73,6 +73,10 @@ internal sealed partial class WhatsAppCloudClient(
         MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken) =>
         PostMessageAsync(sender, MessagePayload(target, "text", new JsonObject { ["body"] = body }, callbackData, contextWamid), cancellationToken);
 
+    public Task<SendResult> SendInteractiveAsync(
+        MessagingSender sender, SendTarget target, InteractiveSend send, string callbackData, string? contextWamid, CancellationToken cancellationToken) =>
+        PostMessageAsync(sender, MessagePayload(target, "interactive", InteractiveSendJson.ToMetaObject(send), callbackData, contextWamid), cancellationToken);
+
     public Task<SendResult> SendAudioAsync(
         MessagingSender sender, SendTarget target, string mediaId, bool voice, string callbackData, string? contextWamid, CancellationToken cancellationToken)
     {

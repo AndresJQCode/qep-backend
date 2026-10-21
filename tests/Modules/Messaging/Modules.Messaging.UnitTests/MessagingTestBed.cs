@@ -497,6 +497,10 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
 
     public List<SentVideo> VideoSends { get; } = [];
 
+    public Task<SendResult> SendInteractiveAsync(
+        MessagingSender sender, SendTarget target, InteractiveSend send, string callbackData, string? contextWamid, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     /// <summary>Como <see cref="SendImageAsync"/>.</summary>
     public Task<SendResult> SendVideoAsync(
         MessagingSender sender, SendTarget target, string mediaId, string? caption, string callbackData, string? contextWamid, CancellationToken cancellationToken)
