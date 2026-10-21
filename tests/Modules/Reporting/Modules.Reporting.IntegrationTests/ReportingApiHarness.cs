@@ -444,6 +444,126 @@ internal static class ReportingApiHarness
         response.EnsureSuccessStatusCode();
     }
 
+    private static readonly string[] SizeValues = ["M", "L"];
+
+    /// <summary>
+    /// Un producto con la opción «Talla camiseta» y dos variantes, M y L, en ese orden de
+    /// presentación (spec 2026-10-20 §3.3). Es la siembra del reporte de cambios de precio por
+    /// variante: <see cref="CreateProductAsync"/> sólo arma productos sin opciones.
+    ///
+    /// Los códigos llevan un sufijo aleatorio porque son únicos por tenant entre todas las
+    /// variantes, y el nombre visible de cada una es «Camiseta – M» / «Camiseta – L».
+    /// </summary>
+    public static async Task<SeededSizedProduct> CreateSizedProductAsync(
+        HttpClient client, Guid tenantId, decimal baseCop = 100_000m)
+    {
+        var optionResponse = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/options",
+            new { name = "Talla camiseta", values = SizeValues },
+            TestContext.Current.CancellationToken);
+        optionResponse.EnsureSuccessStatusCode();
+        var option = await optionResponse.Content.ReadFromJsonAsync<OptionResponseDto>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(option);
+        var mediumValueId = option.Values.Single(value => value.Name == "M").Id;
+        var largeValueId = option.Values.Single(value => value.Name == "L").Id;
+
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var mediumCode = $"CM-M-{suffix}";
+        var largeCode = $"CM-L-{suffix}";
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/products",
+            new
+            {
+                name = "Camiseta",
+                optionIds = new[] { option.Id },
+                variants = new object[]
+                {
+                    new
+                    {
+                        code = mediumCode,
+                        optionValueIds = new[] { mediumValueId },
+                        pricing = CopPricing(baseCop)
+                    },
+                    new
+                    {
+                        code = largeCode,
+                        optionValueIds = new[] { largeValueId },
+                        pricing = CopPricing(baseCop)
+                    }
+                }
+            },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var product = await response.Content.ReadFromJsonAsync<ProductDetailResponseDto>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(product);
+
+        return new SeededSizedProduct(
+            product.Id,
+            option.Id,
+            new SeededVariant(product.Variants.Single(variant => variant.Code == mediumCode).Id, mediumCode, mediumValueId),
+            new SeededVariant(product.Variants.Single(variant => variant.Code == largeCode).Id, largeCode, largeValueId));
+    }
+
+    /// <summary>
+    /// Fija el precio base en COP de **cada** variante del producto de
+    /// <see cref="CreateSizedProductAsync"/> en un solo <c>PUT</c>. El <c>PUT</c> reemplaza el
+    /// recurso entero, así que las dos variantes viajan siempre; las que mantienen su precio no
+    /// dejan fila en <c>catalog.product_price_changes</c>, y cada una que lo cambia deja una, con
+    /// su <c>variant_id</c>.
+    /// </summary>
+    public static async Task SetSizedProductPricesAsync(
+        HttpClient client, Guid tenantId, SeededSizedProduct product,
+        decimal mediumCop, decimal largeCop)
+    {
+        var current = await client.GetFromJsonAsync<ProductDetailResponseDto>(
+            $"/api/v1/tenants/{tenantId}/catalog/products/{product.ProductId}",
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(current);
+
+        var response = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/products/{product.ProductId}",
+            new
+            {
+                expectedVersion = current.Version,
+                name = current.Name,
+                optionIds = new[] { product.OptionId },
+                variants = new object[]
+                {
+                    new
+                    {
+                        id = product.Medium.Id,
+                        code = product.Medium.Code,
+                        optionValueIds = new[] { product.Medium.ValueId },
+                        pricing = CopPricing(mediumCop)
+                    },
+                    new
+                    {
+                        id = product.Large.Id,
+                        code = product.Large.Code,
+                        optionValueIds = new[] { product.Large.ValueId },
+                        pricing = CopPricing(largeCop)
+                    }
+                }
+            },
+            TestContext.Current.CancellationToken);
+        Assert.True(
+            response.IsSuccessStatusCode,
+            $"Se esperaba 2xx y llegó {(int)response.StatusCode}: " +
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+    }
+
+    private static object CopPricing(decimal cop) =>
+        new
+        {
+            prices = new Dictionary<string, decimal> { ["COP"] = cop },
+            scales = new object[]
+            {
+                new { fromUnit = 1, toUnit = 999_999, discount = 0m, restriction = "multiple", multiple = 1 }
+            }
+        };
+
     /// <summary>
     /// Siembra una cotización enviada. La vigencia es obligatoria para enviar desde
     /// "feat(quotations): exigir vigencia antes de enviar una cotización": sin
@@ -676,6 +796,17 @@ internal static class ReportingApiHarness
         Guid Id, string Name, long Version, IReadOnlyList<ProductVariantDetailDto> Variants);
 
     internal sealed record ProductVariantDetailDto(Guid Id, string Code);
+
+    private sealed record OptionResponseDto(Guid Id, IReadOnlyList<OptionValueResponseDto> Values);
+
+    private sealed record OptionValueResponseDto(Guid Id, string Name);
+
+    /// <summary>Un producto sembrado por <see cref="CreateSizedProductAsync"/>: su opción y sus
+    /// dos variantes, M y L.</summary>
+    public sealed record SeededSizedProduct(
+        Guid ProductId, Guid OptionId, SeededVariant Medium, SeededVariant Large);
+
+    public sealed record SeededVariant(Guid Id, string Code, Guid ValueId);
 
     private sealed record UploadSessionResponseDto(
         Guid FileResourceId, string UploadUrl, string StorageKey);

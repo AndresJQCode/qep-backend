@@ -103,12 +103,16 @@ public interface IPriceChangeReportSource
         CancellationToken cancellationToken);
 }
 
-/// <summary>Una fila del historico tal como esta guardada, sin la diferencia calculada.</summary>
+/// <summary>Una fila del historico tal como esta guardada, sin la diferencia calculada.
+/// <c>ProductCode</c> es el codigo de la variante y <c>VariantName</c> su nombre visible: ver
+/// <see cref="PriceChangeReportItemDto"/>.</summary>
 public sealed record PriceChangeReportRow(
     Guid ChangeId,
     Guid ProductId,
+    Guid VariantId,
     string ProductCode,
     string ProductName,
+    string VariantName,
     PriceChangeField Field,
     string? Currency,
     int? ScaleFromUnit,

@@ -78,8 +78,88 @@ public sealed class PriceChangeReportSummaryApiTests
         Assert.Equal(1, product.EntityCount);
         Assert.Equal(2, product.Count);
 
+        // Un producto sin opciones se desglosa en su única variante, que lleva el nombre del
+        // producto y el código que el producto muestra.
+        var variant = Assert.Single(product.Variants);
+        Assert.Equal(("Vela de soja", product.ProductCode, 2), (variant.Name, variant.Code, variant.Count));
+
         // Sin rango de fechas no hay ventana anterior contra la cual comparar.
         Assert.Null(summary.Previous);
+    }
+
+    /// <summary>
+    /// Spec 2026-10-20 §3.5: el ranking sigue siendo por producto y cada uno trae adentro el
+    /// desglose por variante, con los conteos que suman el del producto. La camiseta (M dos veces,
+    /// L una) le gana a la vela (una) y se desglosa en el orden de presentación; la vela, de una
+    /// sola variante, conserva su código, y la camiseta, de dos, no tiene uno que decir.
+    /// </summary>
+    [Fact]
+    public async Task SummaryGroupsByProductWithVariantBreakdown()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var shirt = await CreateSizedProductAsync(client, tenant.TenantId, baseCop: 100_000m);
+        await SetSizedProductPricesAsync(client, tenant.TenantId, shirt, mediumCop: 110_000m, largeCop: 130_000m);
+        await SetSizedProductPricesAsync(client, tenant.TenantId, shirt, mediumCop: 120_000m, largeCop: 130_000m);
+        var candle = await CreateProductAsync(client, tenant.TenantId, baseCop: 50_000m);
+        await ChangeProductBaseCopAsync(client, tenant.TenantId, candle, 60_000m);
+
+        var summary = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(4, summary.ChangeCount);
+        // Tres variantes tocadas en dos productos: el denominador sigue siendo el producto.
+        Assert.Equal(2, summary.ProductCount);
+
+        Assert.Equal(2, summary.ByProduct.Count);
+        var shirtEntry = summary.ByProduct[0];
+        Assert.Equal(shirt.ProductId, shirtEntry.ProductId);
+        Assert.Equal("Camiseta", shirtEntry.ProductName);
+        Assert.Equal(3, shirtEntry.Count);
+        Assert.Null(shirtEntry.ProductCode);
+        Assert.Equal(
+            [(shirt.Medium.Id, "Camiseta – M", shirt.Medium.Code, 2), (shirt.Large.Id, "Camiseta – L", shirt.Large.Code, 1)],
+            shirtEntry.Variants.Select(variant => (variant.VariantId, variant.Name, variant.Code, variant.Count)));
+        Assert.Equal(shirtEntry.Count, shirtEntry.Variants.Sum(variant => variant.Count));
+
+        var candleEntry = summary.ByProduct[1];
+        Assert.Equal(candle, candleEntry.ProductId);
+        Assert.Equal(1, candleEntry.Count);
+        var candleVariant = Assert.Single(candleEntry.Variants);
+        Assert.Equal(("Vela de soja", candleEntry.ProductCode, 1), (candleVariant.Name, candleVariant.Code, candleVariant.Count));
+    }
+
+    /// <summary>El resumen toma el filtro por variante igual que el listado: sin ella el panel y la
+    /// tabla de la misma pantalla hablarían de conjuntos distintos. El desglose del producto trae
+    /// sólo la variante filtrada.</summary>
+    [Fact]
+    public async Task SummaryFiltersByVariantLikeTheList()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var shirt = await CreateSizedProductAsync(client, tenant.TenantId, baseCop: 100_000m);
+        await SetSizedProductPricesAsync(client, tenant.TenantId, shirt, mediumCop: 110_000m, largeCop: 130_000m);
+
+        var large = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?variantId={shirt.Large.Id}",
+            TestContext.Current.CancellationToken);
+        var unknown = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?variantId={Guid.CreateVersion7()}",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, large?.ChangeCount);
+        Assert.Equal(1, large?.ProductCount);
+        var entry = Assert.Single(large!.ByProduct);
+        Assert.Equal(shirt.ProductId, entry.ProductId);
+        var variant = Assert.Single(entry.Variants);
+        Assert.Equal((shirt.Large.Id, "Camiseta – L", 1), (variant.VariantId, variant.Name, variant.Count));
+        Assert.Equal(0, unknown?.ChangeCount);
+        Assert.Empty(unknown!.ByProduct);
     }
 
     /// <summary>

@@ -81,12 +81,23 @@ public sealed record QuotationsReportItemDto(
 /// <c>ScaleDiscount</c>: los precios base son del producto entero y no tienen rango.
 ///
 /// <c>ChangedByName</c> es el email del autor. Ver <see cref="OrdersReportItemDto"/>.
+///
+/// **El cambio es de una variante** (spec 2026-10-20 §3.5) y la fila lo dice con los cuatro campos
+/// que la pantalla pinta, para que no tenga que cruzar con el catálogo: <c>VariantId</c> (lo que
+/// manda de vuelta al filtro <c>variantId</c>), <c>ProductCode</c> (el <c>Code</c> de **esa
+/// variante**; el nombre se conserva porque es el que la tabla ya pintaba y el producto dejó de
+/// tener código propio), <c>ProductName</c> (el del producto, para agrupar sin partir un texto) y
+/// <c>VariantName</c> (el nombre visible de §3.4, «Camiseta – M / Azul»; en un producto sin
+/// opciones es igual a <c>ProductName</c>). Se leen vivos, no son foto: a diferencia de una línea
+/// de cotización, una fila del histórico describe el catálogo de hoy.
 /// </summary>
 public sealed record PriceChangeReportItemDto(
     Guid ChangeId,
     Guid ProductId,
+    Guid VariantId,
     string ProductCode,
     string ProductName,
+    string VariantName,
     string Field,
     string? Currency,
     int? ScaleFromUnit,

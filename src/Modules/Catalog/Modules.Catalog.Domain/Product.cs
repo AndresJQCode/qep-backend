@@ -105,9 +105,10 @@ public sealed class Product
     // copia de escalas, y retiró ApplyCopiedPriceScales de la única variante. La Tarea 8 pasó a
     // variantes el Excel; ya ningún código de producción llama a PriceIn, pero la prueba de la
     // semilla (CatalogSeedTests) sí: lo retira la Tarea 15 junto con el sembrador. La Tarea 9 pasó
-    // a variantes los adaptadores de Quotations, Pos y Shopify y retiró Prices. Quedan: Code
-    // (PriceChangeReportSource, Tarea 13) y PriceIn, PriceScales y PackagingUnits (CatalogSeedTests,
-    // Tarea 15).
+    // a variantes los adaptadores de Quotations, Pos y Shopify y retiró Prices. La Tarea 13 pasó a
+    // variantes el reporte de cambios de precio (PriceChangeReportSource), el último llamador de
+    // producción de Code. Quedan sólo en pruebas: Code (CatalogSeedTests y ProductVariantTests) y
+    // PriceIn, PriceScales y PackagingUnits (CatalogSeedTests); los retira la Tarea 15.
 
     /// <summary>Transitorio: el <see cref="ProductVariant.Code"/> de la única variante.</summary>
     public string Code => PrimaryVariant.Code;

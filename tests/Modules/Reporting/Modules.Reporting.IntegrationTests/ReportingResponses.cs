@@ -51,8 +51,10 @@ internal sealed record QuotationsReportItem(
 internal sealed record PriceChangeReportItem(
     Guid ChangeId,
     Guid ProductId,
+    Guid VariantId,
     string ProductCode,
     string ProductName,
+    string VariantName,
     string Field,
     string? Currency,
     int? ScaleFromUnit,
@@ -177,7 +179,10 @@ internal sealed record PriceChangeProductEntry(
     string? ProductName,
     string? ProductCode,
     int EntityCount,
-    int Count);
+    int Count,
+    IReadOnlyList<PriceChangeVariantEntry> Variants);
+
+internal sealed record PriceChangeVariantEntry(Guid VariantId, string Name, string Code, int Count);
 
 internal sealed record PriceChangeComparison(int ChangeCount);
 

@@ -36,6 +36,10 @@ public sealed class PriceChangeReportApiTests
         Assert.Equal(productId, item.ProductId);
         Assert.Equal("Vela de soja", item.ProductName);
         Assert.NotEmpty(item.ProductCode);
+        // Spec 2026-10-20 §3.5: el cambio es de una variante. En un producto sin opciones la
+        // variante por defecto lleva el nombre del producto, y la fila trae su id.
+        Assert.NotEqual(Guid.Empty, item.VariantId);
+        Assert.Equal("Vela de soja", item.VariantName);
         Assert.Equal(100_000m, item.PreviousValue);
         Assert.Equal(120_000m, item.NewValue);
         Assert.Equal(20_000m, item.Difference);
@@ -44,6 +48,62 @@ public sealed class PriceChangeReportApiTests
         Assert.Null(item.ScaleToUnit);
         Assert.Equal(tenant.OwnerUserId, item.ChangedById);
         Assert.Equal(tenant.OwnerEmail, item.ChangedByName);
+    }
+
+    /// <summary>
+    /// El filtro por variante (spec 2026-10-20 §3.5): una camiseta con M y L cuyos dos precios
+    /// cambian deja dos filas, y <c>variantId</c> deja la de esa variante, con su código y su nombre
+    /// visible. Combinado con <c>productId</c> es un Y, y un id que no es de nadie da una página
+    /// vacía, no un error.
+    /// </summary>
+    [Fact]
+    public async Task ReportFiltersByVariant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var shirt = await CreateSizedProductAsync(client, tenant.TenantId, baseCop: 100_000m);
+        await SetSizedProductPricesAsync(client, tenant.TenantId, shirt, mediumCop: 110_000m, largeCop: 130_000m);
+        var otherProduct = await CreateProductAsync(client, tenant.TenantId, baseCop: 50_000m);
+        await ChangeProductBaseCopAsync(client, tenant.TenantId, otherProduct, 60_000m);
+        var url = $"{ReportsUrl(tenant.TenantId)}/price-changes";
+
+        var all = await client.GetFromJsonAsync<ReportPageDto<PriceChangeReportItem>>(
+            url, TestContext.Current.CancellationToken);
+        var medium = await client.GetFromJsonAsync<ReportPageDto<PriceChangeReportItem>>(
+            $"{url}?variantId={shirt.Medium.Id}", TestContext.Current.CancellationToken);
+        var largeOfItsProduct = await client.GetFromJsonAsync<ReportPageDto<PriceChangeReportItem>>(
+            $"{url}?productId={shirt.ProductId}&variantId={shirt.Large.Id}",
+            TestContext.Current.CancellationToken);
+        var largeOfAnotherProduct = await client.GetFromJsonAsync<ReportPageDto<PriceChangeReportItem>>(
+            $"{url}?productId={otherProduct}&variantId={shirt.Large.Id}",
+            TestContext.Current.CancellationToken);
+        var unknown = await client.GetFromJsonAsync<ReportPageDto<PriceChangeReportItem>>(
+            $"{url}?variantId={Guid.CreateVersion7()}", TestContext.Current.CancellationToken);
+
+        // Dos variantes de la camiseta y la única del otro producto: tres cambios.
+        Assert.Equal(3, all?.Total);
+        Assert.Equal(
+            ["Camiseta – L", "Camiseta – M", "Vela de soja"],
+            all!.Items.Select(row => row.VariantName).Order(StringComparer.Ordinal));
+
+        var mediumRow = Assert.Single(medium!.Items);
+        Assert.Equal(1, medium.Total);
+        Assert.Equal(shirt.Medium.Id, mediumRow.VariantId);
+        Assert.Equal(shirt.ProductId, mediumRow.ProductId);
+        Assert.Equal("Camiseta – M", mediumRow.VariantName);
+        Assert.Equal("Camiseta", mediumRow.ProductName);
+        Assert.Equal(shirt.Medium.Code, mediumRow.ProductCode);
+        Assert.Equal((100_000m, 110_000m), (mediumRow.PreviousValue, mediumRow.NewValue));
+
+        var largeRow = Assert.Single(largeOfItsProduct!.Items);
+        Assert.Equal(shirt.Large.Id, largeRow.VariantId);
+        Assert.Equal("Camiseta – L", largeRow.VariantName);
+        Assert.Equal((100_000m, 130_000m), (largeRow.PreviousValue, largeRow.NewValue));
+
+        Assert.Equal(0, largeOfAnotherProduct?.Total);
+        Assert.Equal(0, unknown?.Total);
     }
 
     [Fact]

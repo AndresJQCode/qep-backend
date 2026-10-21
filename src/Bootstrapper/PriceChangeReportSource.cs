@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
 using Modules.Catalog.Infrastructure.Persistence;
 using Modules.Reporting.Application;
@@ -9,8 +10,15 @@ namespace Bootstrapper;
 
 /// <summary>
 /// El origen del reporte de cambios de precio: <c>catalog.product_price_changes</c>, con el
-/// nombre y el codigo del producto resueltos por join. Ver <see cref="OrdersReportSource"/> sobre
-/// por que los adaptadores de <c>reporting</c> viven en el composition root.
+/// nombre del producto resuelto por join y el codigo y el nombre visible de la variante leidos
+/// aparte, en lote. Ver <see cref="OrdersReportSource"/> sobre por que los adaptadores de
+/// <c>reporting</c> viven en el composition root.
+///
+/// **El cambio es de una variante** (spec 2026-10-20 §3.5). El producto ya no tiene codigo (vive
+/// en <c>product_variants</c>), asi que el codigo y el nombre salen de la variante; el nombre
+/// visible se arma con <see cref="CatalogVariantReads"/>, el mismo camino de las lineas y el POS,
+/// para que un reporte no nombre distinto a la variante. No se cargan los agregados <c>Product</c>:
+/// con galeria y hasta 2.048 variantes cada uno, una pagina de 50 filas seria desproporcionada.
 ///
 /// **Es el historico del catalogo, no el de las cotizaciones.** Sigue el precio base en cada moneda del
 /// producto y el descuento de una escala; los precios de una linea de cotizacion no pasan por
@@ -22,6 +30,7 @@ namespace Bootstrapper;
 /// </summary>
 internal sealed class PriceChangeReportSource(
     CatalogDbContext catalog,
+    IOptionDefinitionRepository options,
     ReportingPeopleLookup peopleLookup) : IPriceChangeReportSource
 {
     public async Task<(IReadOnlyList<PriceChangeReportRow> Rows, int Total)> ListAsync(
@@ -37,7 +46,7 @@ internal sealed class PriceChangeReportSource(
             .Take(pageSize)
             .ToListAsync(cancellationToken);
 
-        return (await ResolveAuthorsAsync(rows, cancellationToken), total);
+        return (await ResolveRowsAsync(criteria.TenantId, rows, cancellationToken), total);
     }
 
     public async Task<PriceChangeReportAggregate> SummarizeAsync(
@@ -82,7 +91,7 @@ internal sealed class PriceChangeReportSource(
         var monthly = await SummarizeByMonthAsync(changes, criteria.Period.TimeZone, cancellationToken);
         var byField = await SummarizeByFieldAsync(changes, cancellationToken);
         var byProduct = await RankProductsAsync(
-            changes, rankSize, totals.Count, productCount, cancellationToken);
+            criteria.TenantId, changes, rankSize, totals.Count, productCount, cancellationToken);
 
         return new PriceChangeReportAggregate(
             totals.Count, productCount, totals.Increase, totals.Decrease,
@@ -140,7 +149,8 @@ internal sealed class PriceChangeReportSource(
     }
 
     /// <summary>
-    /// Los productos mas retocados, con el resto plegado en una fila "Otros".
+    /// Los productos mas retocados, con el resto plegado en una fila "Otros" y, dentro de cada
+    /// producto, el desglose por variante.
     ///
     /// Desempate por id: sin un orden total, dos productos con la misma cantidad de cambios pueden
     /// intercambiarse entre dos llamadas identicas y el ranking "parpadea".
@@ -148,8 +158,13 @@ internal sealed class PriceChangeReportSource(
     /// El plegado no reusa <c>ReportRankFolding</c> porque esa fila lleva un <c>Total</c> de
     /// dinero que este reporte no puede sumar; la regla que si se copia es la que importa: el
     /// resto sale **por resta contra el total ya calculado**, no con una consulta mas.
+    ///
+    /// El desglose son dos consultas para el ranking entero, no una por producto: los cambios por
+    /// variante de los productos del ranking, y cuantas variantes tiene cada uno (para saber si su
+    /// codigo se puede decir, ver <see cref="PriceChangeProductEntryDto"/>).
     /// </summary>
     private async Task<IReadOnlyList<PriceChangeProductEntryDto>> RankProductsAsync(
+        Guid tenantId,
         IQueryable<ProductPriceChange> changes,
         int rankSize,
         int totalCount,
@@ -174,16 +189,60 @@ internal sealed class PriceChangeReportSource(
         var products = await catalog.Products
             .AsNoTracking()
             .Where(product => ids.Contains(product.Id))
-            .Select(product => new { product.Id, product.Name, product.Code })
-            .ToDictionaryAsync(product => product.Id, cancellationToken);
+            .Select(product => new { product.Id, product.Name })
+            .ToDictionaryAsync(product => product.Id, product => product.Name, cancellationToken);
+
+        // Sobre `changes`, que ya trae todos los filtros: los Count de las variantes suman el del
+        // producto porque salen del mismo conjunto.
+        var perVariant = await changes
+            .Where(change => ids.Contains(change.ProductId))
+            .GroupBy(change => change.VariantId)
+            .Select(group => new { VariantId = group.Key, Count = group.Count() })
+            .ToListAsync(cancellationToken);
+        var labels = await LoadLabelsAsync(
+            tenantId,
+            perVariant.Select(entry => entry.VariantId.Value).ToArray(),
+            products.ToDictionary(product => product.Key.Value, product => product.Value),
+            cancellationToken);
+
+        var variantTotals = await catalog.ProductVariants
+            .AsNoTracking()
+            .Where(variant => variant.TenantId == tenantId && ids.Contains(variant.ProductId))
+            .GroupBy(variant => variant.ProductId)
+            .Select(group => new { ProductId = group.Key, Count = group.Count() })
+            .ToDictionaryAsync(entry => entry.ProductId, entry => entry.Count, cancellationToken);
+
+        var breakdown = perVariant
+            .Where(entry => labels.ContainsKey(entry.VariantId.Value))
+            .Select(entry => (Label: labels[entry.VariantId.Value], entry.Count))
+            .GroupBy(entry => entry.Label.ProductId)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<PriceChangeVariantEntryDto>)group
+                    .OrderBy(entry => entry.Label.Position)
+                    .ThenBy(entry => entry.Label.VariantId)
+                    .Select(entry => new PriceChangeVariantEntryDto(
+                        entry.Label.VariantId, entry.Label.Name, entry.Label.Code, entry.Count))
+                    .ToArray());
 
         var ranked = top
-            .Select(entry => new PriceChangeProductEntryDto(
-                entry.ProductId.Value,
-                products.GetValueOrDefault(entry.ProductId)?.Name,
-                products.GetValueOrDefault(entry.ProductId)?.Code,
-                EntityCount: 1,
-                entry.Count))
+            .Select(entry =>
+            {
+                var variants = breakdown.GetValueOrDefault(entry.ProductId.Value) ?? [];
+                // El codigo del producto es el de su unica variante; con varias no hay uno que
+                // decir. El total sale de product_variants y no del desglose, porque el desglose
+                // solo trae las variantes que cambiaron.
+                var code = variantTotals.GetValueOrDefault(entry.ProductId) == 1 && variants.Count == 1
+                    ? variants[0].Code
+                    : null;
+                return new PriceChangeProductEntryDto(
+                    entry.ProductId.Value,
+                    products.GetValueOrDefault(entry.ProductId),
+                    code,
+                    EntityCount: 1,
+                    entry.Count,
+                    variants);
+            })
             .ToList();
 
         var remaining = productCount - ranked.Count;
@@ -194,10 +253,51 @@ internal sealed class PriceChangeReportSource(
                 ProductName: null,
                 ProductCode: null,
                 remaining,
-                totalCount - ranked.Sum(entry => entry.Count)));
+                totalCount - ranked.Sum(entry => entry.Count),
+                Variants: []));
         }
 
         return ranked;
+    }
+
+    /// <summary>
+    /// El codigo y el nombre visible de esas variantes, en lote: una consulta de variantes, una de
+    /// la biblioteca de opciones (solo si alguna variante tiene valores) y los nombres de producto
+    /// que quien llama ya leyo. Un valor cuya opcion no se encontro se omite del nombre, igual que
+    /// en el detalle del producto: ver <c>CatalogVariantReads.DisplayNameOf</c>.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<Guid, VariantLabel>> LoadLabelsAsync(
+        Guid tenantId,
+        Guid[] variantIds,
+        IReadOnlyDictionary<Guid, string> productNames,
+        CancellationToken cancellationToken)
+    {
+        if (variantIds.Length == 0)
+        {
+            return new Dictionary<Guid, VariantLabel>();
+        }
+
+        var ids = variantIds.Select(id => new VariantId(id)).ToArray();
+        var variants = await catalog.ProductVariants
+            .AsNoTracking()
+            .Where(variant => variant.TenantId == tenantId && ids.Contains(variant.Id))
+            .ToListAsync(cancellationToken);
+
+        var valueNames = variants.Any(variant => variant.OptionValueIds.Count > 0)
+            ? await CatalogVariantReads.LoadValueNamesAsync(options, tenantId, cancellationToken)
+            : new Dictionary<Guid, string>();
+
+        return variants.ToDictionary(
+            variant => variant.Id.Value,
+            variant => new VariantLabel(
+                variant.Id.Value,
+                variant.ProductId.Value,
+                variant.Code,
+                CatalogVariantReads.DisplayNameOf(
+                    productNames.GetValueOrDefault(variant.ProductId.Value, string.Empty),
+                    variant,
+                    valueNames),
+                variant.Position));
     }
 
     private static PriceChangeFieldSliceDto[] EmptyFieldSlices() => FieldSlices(_ => 0);
@@ -228,7 +328,7 @@ internal sealed class PriceChangeReportSource(
             .Select(row => new ChangeRow(
                 row.change.Id,
                 row.change.ProductId,
-                row.product.Code,
+                row.change.VariantId,
                 row.product.Name,
                 row.change.Field,
                 row.change.Currency,
@@ -266,6 +366,12 @@ internal sealed class PriceChangeReportSource(
             changes = changes.Where(change => change.ProductId == product);
         }
 
+        if (criteria.VariantId is { } variantId)
+        {
+            var variant = new VariantId(variantId);
+            changes = changes.Where(change => change.VariantId == variant);
+        }
+
         if (criteria.ChangedBy is { } changedBy)
         {
             changes = changes.Where(change => change.ChangedBy == changedBy);
@@ -285,8 +391,9 @@ internal sealed class PriceChangeReportSource(
         return changes;
     }
 
-    // Una consulta de emails para toda la pagina, no una por fila.
-    private async Task<IReadOnlyList<PriceChangeReportRow>> ResolveAuthorsAsync(
+    // Una consulta de emails y una de variantes para toda la pagina, no una por fila.
+    private async Task<IReadOnlyList<PriceChangeReportRow>> ResolveRowsAsync(
+        Guid tenantId,
         IReadOnlyList<ChangeRow> rows,
         CancellationToken cancellationToken)
     {
@@ -300,21 +407,36 @@ internal sealed class PriceChangeReportSource(
         var authors = await peopleLookup.EmailsByUserIdAsync(
             rows.Select(row => row.ChangedBy).ToArray(), cancellationToken);
 
+        var labels = await LoadLabelsAsync(
+            tenantId,
+            rows.Select(row => row.VariantId.Value).Distinct().ToArray(),
+            rows.DistinctBy(row => row.ProductId).ToDictionary(row => row.ProductId.Value, row => row.ProductName),
+            cancellationToken);
+
         return rows
-            .Select(row => new PriceChangeReportRow(
-                row.ChangeId.Value,
-                row.ProductId.Value,
-                row.ProductCode,
-                row.ProductName,
-                MapField(row.Field),
-                row.Currency?.Trim(),
-                row.ScaleFromUnit,
-                row.ScaleToUnit,
-                row.PreviousValue,
-                row.NewValue,
-                row.ChangedBy,
-                authors.GetValueOrDefault(row.ChangedBy),
-                row.ChangedAt))
+            .Select(row =>
+            {
+                // La FK variant_id -> product_variants es real y en cascada: una fila sin su
+                // variante solo existe si se borro entre las dos lecturas, y ese borrado se llevo
+                // tambien la fila. Se degrada al nombre del producto antes que tumbar la pagina.
+                labels.TryGetValue(row.VariantId.Value, out var label);
+                return new PriceChangeReportRow(
+                    row.ChangeId.Value,
+                    row.ProductId.Value,
+                    row.VariantId.Value,
+                    label?.Code ?? string.Empty,
+                    row.ProductName,
+                    label?.Name ?? row.ProductName,
+                    MapField(row.Field),
+                    row.Currency?.Trim(),
+                    row.ScaleFromUnit,
+                    row.ScaleToUnit,
+                    row.PreviousValue,
+                    row.NewValue,
+                    row.ChangedBy,
+                    authors.GetValueOrDefault(row.ChangedBy),
+                    row.ChangedAt);
+            })
             .ToArray();
     }
 
@@ -336,7 +458,7 @@ internal sealed class PriceChangeReportSource(
     private sealed record ChangeRow(
         ProductPriceChangeId ChangeId,
         ProductId ProductId,
-        string ProductCode,
+        VariantId VariantId,
         string ProductName,
         ProductPriceField Field,
         string? Currency,
@@ -346,4 +468,6 @@ internal sealed class PriceChangeReportSource(
         decimal? NewValue,
         Guid ChangedBy,
         DateTimeOffset ChangedAt);
+
+    private sealed record VariantLabel(Guid VariantId, Guid ProductId, string Code, string Name, int Position);
 }

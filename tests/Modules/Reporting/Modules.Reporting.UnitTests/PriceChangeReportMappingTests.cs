@@ -12,6 +12,8 @@ public sealed class PriceChangeReportMappingTests
     private static readonly DateTimeOffset ChangedAt =
         new(2026, 9, 3, 10, 0, 0, TimeSpan.Zero);
 
+    private static readonly Guid VariantId = Guid.Parse("01900000-0000-7000-8000-0000000000a4");
+
     [Fact]
     public void CarriesTheRowThroughAndComputesTheDifference()
     {
@@ -23,6 +25,9 @@ public sealed class PriceChangeReportMappingTests
         Assert.Equal(200m, dto.Difference);
         Assert.Equal("Vela de soja", dto.ProductName);
         Assert.Equal("VS-001", dto.ProductCode);
+        // Spec 2026-10-20 §3.5: la fila dice de qué variante es el cambio y cómo se llama.
+        Assert.Equal(VariantId, dto.VariantId);
+        Assert.Equal("Vela de soja – Lavanda", dto.VariantName);
         Assert.Equal("asesora@qcode.co", dto.ChangedByName);
         Assert.Equal(ChangedAt, dto.ChangedAt);
     }
@@ -96,8 +101,10 @@ public sealed class PriceChangeReportMappingTests
         new(
             Guid.Parse("01900000-0000-7000-8000-0000000000a1"),
             Guid.Parse("01900000-0000-7000-8000-0000000000a2"),
+            VariantId,
             "VS-001",
             "Vela de soja",
+            "Vela de soja – Lavanda",
             field,
             field == PriceChangeField.PriceBase ? "COP" : null,
             ScaleFromUnit: null,

@@ -11,8 +11,10 @@ public static class PriceChangeReportMapping
         new(
             row.ChangeId,
             row.ProductId,
+            row.VariantId,
             row.ProductCode,
             row.ProductName,
+            row.VariantName,
             row.Field.ToString(),
             // Same reasoning as the range below: the contract describes the response, not the table.
             row.Field == PriceChangeField.PriceBase ? row.Currency : null,

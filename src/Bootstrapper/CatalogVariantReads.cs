@@ -49,9 +49,37 @@ internal static class CatalogVariantReads
         Product product,
         ProductVariant variant,
         IReadOnlyDictionary<Guid, string> valueNames) =>
+        DisplayNameOf(product.Name, variant, valueNames);
+
+    /// <summary>
+    /// Lo mismo cuando quien llama sólo tiene el nombre del producto y no el agregado (el reporte
+    /// de cambios de precio lee la variante y el nombre por separado, sin cargar el producto con
+    /// su galería y todas sus variantes).
+    /// </summary>
+    public static string DisplayNameOf(
+        string productName,
+        ProductVariant variant,
+        IReadOnlyDictionary<Guid, string> valueNames) =>
         VariantDisplayName.For(
-            product.Name,
+            productName,
             variant.OptionValueIds.Where(valueNames.ContainsKey).Select(id => valueNames[id]).ToArray());
+
+    /// <summary>
+    /// Valor de opción → texto de **toda** la biblioteca del tenant, en una consulta. Para quien
+    /// lee variantes sin haber cargado sus productos y por eso no sabe qué opciones usan: la
+    /// biblioteca de un tenant son pocas opciones (<see cref="IOptionDefinitionRepository.ListAsync"/>
+    /// la recorre entera), así que pedirla completa cuesta menos que descubrir cuáles hacen falta.
+    /// </summary>
+    public static async Task<IReadOnlyDictionary<Guid, string>> LoadValueNamesAsync(
+        IOptionDefinitionRepository options,
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        var library = await options.ListAsync(tenantId, cancellationToken);
+        return library
+            .SelectMany(option => option.Values)
+            .ToDictionary(value => value.Id, value => value.Value);
+    }
 
     /// <summary>
     /// El archivo de la foto de la variante; sin foto propia, el de la principal del producto.
