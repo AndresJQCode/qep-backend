@@ -49,7 +49,7 @@ public sealed class ConnectionSecretLeakTests
         using var factory = new QepApiFactory(connectionString);
         var logs = new CapturedLogs();
         using var host = factory.WithCapturedLogs(logs);
-        var tenant = await RegisterTenantAsync(host);
+        var tenant = await RegisterZenviaTenantAsync(host, connectionString);
         using var client = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
 
         var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ZenviaBody(name: new string('x', 81)));
@@ -70,7 +70,7 @@ public sealed class ConnectionSecretLeakTests
         using var factory = new QepApiFactory(connectionString);
         var logs = new CapturedLogs();
         using var host = factory.WithSecretProtection(string.Empty).WithCapturedLogs(logs);
-        var tenant = await RegisterTenantAsync(host);
+        var tenant = await RegisterZenviaTenantAsync(host, connectionString);
         using var client = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
 
         var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ZenviaBody());
@@ -94,7 +94,7 @@ public sealed class ConnectionSecretLeakTests
         using var host = factory.WithCapturedLogs(logs);
         factory.ZenviaHandler.Status = HttpStatusCode.Unauthorized;
         factory.ZenviaHandler.Body = JsonSerializer.Serialize(new { message = SentinelZenviaBody, echo = SentinelApiToken });
-        var tenant = await RegisterTenantAsync(host);
+        var tenant = await RegisterZenviaTenantAsync(host, connectionString);
         using var client = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
 
         var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ZenviaBody());
@@ -119,7 +119,7 @@ public sealed class ConnectionSecretLeakTests
         using var factory = new QepApiFactory(connectionString);
         var logs = new CapturedLogs();
         using var host = factory.WithCapturedLogs(logs);
-        var tenant = await RegisterTenantAsync(host);
+        var tenant = await RegisterZenviaTenantAsync(host, connectionString);
         using var client = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
 
         var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ZenviaBody());
@@ -141,7 +141,7 @@ public sealed class ConnectionSecretLeakTests
         var logs = new CapturedLogs();
         using var host = factory.WithCapturedLogs(logs);
         factory.ZenviaHandler.Throw = new HttpRequestException($"connection refused for token {SentinelApiToken}");
-        var tenant = await RegisterTenantAsync(host);
+        var tenant = await RegisterZenviaTenantAsync(host, connectionString);
         using var client = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
 
         var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ZenviaBody());
@@ -164,7 +164,7 @@ public sealed class ConnectionSecretLeakTests
         using var host = factory.WithCapturedLogs(logs);
         factory.ZenviaHandler.Status = HttpStatusCode.BadGateway;
         factory.ZenviaHandler.Body = JsonSerializer.Serialize(new { message = SentinelZenviaBody, echo = SentinelApiToken });
-        var tenant = await RegisterTenantAsync(host);
+        var tenant = await RegisterZenviaTenantAsync(host, connectionString);
         using var client = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
 
         var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ZenviaBody());
@@ -184,7 +184,7 @@ public sealed class ConnectionSecretLeakTests
         await using var database = await StartDatabaseAsync();
         var connectionString = database.GetConnectionString();
         using var factory = new QepApiFactory(connectionString);
-        var tenant = await RegisterTenantAsync(factory);
+        var tenant = await RegisterZenviaTenantAsync(factory, connectionString);
         using var creator = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
         var created = await CreateConnectionAsync(creator, tenant.TenantId);
         var otherKey = Convert.ToBase64String(Enumerable.Range(200, 32).Select(index => (byte)index).ToArray());
@@ -288,7 +288,7 @@ public sealed class ConnectionSecretLeakTests
         using var factory = new QepApiFactory(connectionString);
         var logs = new CapturedLogs();
         using var host = factory.WithCapturedLogs(logs);
-        var tenant = await RegisterTenantAsync(host);
+        var tenant = await RegisterZenviaTenantAsync(host, connectionString);
         using var client = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
         var bodies = new List<string>();
 

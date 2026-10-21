@@ -9,13 +9,13 @@ internal sealed partial class IntegrationsTestBed
     public RecordingEventPublisher Events { get; } = new();
 
     public TestConnectionHandler TestHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, UnitOfWork, Audit, Events, Protector, Tester, Modules, AuthorNames, context ?? Context(), Clock);
+        new(Catalog, Repository, UnitOfWork, Audit, Events, Protector, Tester, Modules, Providers, AuthorNames, context ?? Context(), Clock);
 
     public PauseConnectionHandler PauseHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, UnitOfWork, Audit, Events, Protector, Modules, AuthorNames, context ?? Context(), Clock);
+        new(Catalog, Repository, UnitOfWork, Audit, Events, Protector, Modules, Providers, AuthorNames, context ?? Context(), Clock);
 
     public ResumeConnectionHandler ResumeHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, UnitOfWork, Audit, Events, Protector, Tester, Modules, AuthorNames, context ?? Context(), Clock);
+        new(Catalog, Repository, UnitOfWork, Audit, Events, Protector, Tester, Modules, Providers, AuthorNames, context ?? Context(), Clock);
 
     public DeleteConnectionHandler DeleteHandler(IExecutionContext? context = null) =>
         new(Catalog, Repository, UnitOfWork, Audit, Events, Modules, context ?? Context(), Clock);

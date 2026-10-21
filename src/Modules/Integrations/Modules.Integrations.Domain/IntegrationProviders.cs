@@ -90,7 +90,9 @@ public static class IntegrationProviders
                 pattern: @"^[0-9]{10,15}\z",
                 invalidMessage: "Escribe el número con indicativo de país, sólo dígitos y sin '+' (entre 10 y 15)."),
         ],
-        DefaultMaxConnections);
+        DefaultMaxConnections,
+        // Plan 2026-10-21: el operador habilita Zenvia por tenant; tener quotations no alcanza.
+        requiresTenantEnablement: true);
 
     /// <summary>Spec 2026-10-09 §6.1: WhatsApp Business (Meta). Lo consume <c>messaging</c>; tope 5 por
     /// tenant. <c>displayPhoneNumber</c> no lleva el patrón E.164 de Zenvia: Meta lo devuelve formateado

@@ -49,6 +49,7 @@ public sealed class UpdateConnectionHandler(
     ISecretProtector protector,
     IConnectionTester tester,
     ITenantModules tenantModules,
+    ITenantProviders tenantProviders,
     IConnectionAuthorNames authorNames,
     IExecutionContext executionContext,
     IClock clock,
@@ -61,8 +62,8 @@ public sealed class UpdateConnectionHandler(
         SecretProtectionGuard.EnsureAvailable(protector);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
-        var (connection, provider) = await ConnectionLoader.LoadVisibleAsync(
-            repository, catalog, tenantModules, command.TenantId, command.ConnectionId, cancellationToken);
+        var (connection, provider) = await ConnectionLoader.LoadEnabledAsync(
+            repository, catalog, tenantModules, tenantProviders, command.TenantId, command.ConnectionId, cancellationToken);
         ConcurrencyGuard.EnsureVersion(connection, command.ExpectedVersion);
 
         // Un fields null conserva los campos guardados; un secrets null no trae secretos nuevos.
@@ -92,7 +93,7 @@ public sealed class UpdateConnectionHandler(
             provider, command.Name!, fields, replacedSecrets, protector.Protect, now, verified: mustTest);
         if (changed.Count == 0)
         {
-            return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, cancellationToken);
+            return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, providerEnabled: true, cancellationToken);
         }
 
         ConnectionAudit.ByMember(auditRecorder, executionContext, connection, ConnectionAuditActions.Updated, changed, now);
@@ -102,7 +103,7 @@ public sealed class UpdateConnectionHandler(
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, cancellationToken);
+        return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, providerEnabled: true, cancellationToken);
     }
 
     private static bool SameValues(IReadOnlyDictionary<string, string> current, Dictionary<string, string> next) =>

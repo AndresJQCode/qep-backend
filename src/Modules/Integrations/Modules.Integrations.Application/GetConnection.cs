@@ -9,6 +9,7 @@ public sealed class GetConnectionHandler(
     IIntegrationProviderCatalog catalog,
     IIntegrationConnectionRepository repository,
     ITenantModules tenantModules,
+    ITenantProviders tenantProviders,
     ISecretProtector protector,
     IConnectionAuthorNames authorNames,
     IExecutionContext executionContext)
@@ -19,6 +20,8 @@ public sealed class GetConnectionHandler(
         IntegrationsAuthorization.EnsureAuthorized(executionContext, query.TenantId, IntegrationsPermissions.ConnectionRead);
         var (connection, provider) = await ConnectionLoader.LoadVisibleAsync(
             repository, catalog, tenantModules, query.TenantId, query.ConnectionId, cancellationToken);
-        return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, cancellationToken);
+        // Leer no exige la habilitación (plan 2026-10-21): la pantalla muestra la conexión, marcada.
+        var providerEnabled = await ProviderVisibility.IsEnabledAsync(tenantProviders, query.TenantId, provider, cancellationToken);
+        return await ConnectionMapping.ToResponseAsync(connection, provider, protector, authorNames, providerEnabled, cancellationToken);
     }
 }

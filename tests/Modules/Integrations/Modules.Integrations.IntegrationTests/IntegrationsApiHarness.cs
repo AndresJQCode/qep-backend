@@ -390,6 +390,37 @@ internal static class IntegrationsApiHarness
             ("tenantId", tenantId),
             ("moduleKey", moduleKey));
 
+    /// <summary>Plan 2026-10-21: el operador habilita un proveedor (fila <c>active</c> en <c>tenancy.tenant_providers</c>).
+    /// Sin fila, un tenant real tiene Zenvia deshabilitado (D2).</summary>
+    public static Task<int> EnableProviderAsync(string connectionString, Guid tenantId, string providerKey) =>
+        SetProviderStatusAsync(connectionString, tenantId, providerKey, "active");
+
+    /// <summary>Deshabilitar no borra: la fila queda <c>inactive</c>, como en la consola.</summary>
+    public static Task<int> DisableProviderAsync(string connectionString, Guid tenantId, string providerKey) =>
+        SetProviderStatusAsync(connectionString, tenantId, providerKey, "inactive");
+
+    private static Task<int> SetProviderStatusAsync(string connectionString, Guid tenantId, string providerKey, string status) =>
+        ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO tenancy.tenant_providers (tenant_id, provider_key, status, enabled_at, status_changed_at)
+            VALUES (@tenantId, @providerKey, @status, now(), now())
+            ON CONFLICT (tenant_id, provider_key) DO UPDATE SET status = excluded.status, status_changed_at = now()
+            """,
+            ("tenantId", tenantId),
+            ("providerKey", providerKey),
+            ("status", status));
+
+    /// <summary>Un tenant real con Zenvia habilitado: el arreglo de toda prueba que crea o usa una conexión de Zenvia
+    /// por la API (plan 2026-10-21). Las que prueban el caso deshabilitado usan <see cref="RegisterTenantAsync"/>.</summary>
+    public static async Task<RegisteredTenant> RegisterZenviaTenantAsync(
+        WebApplicationFactory<Program> factory, string connectionString)
+    {
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableProviderAsync(connectionString, tenant.TenantId, IntegrationProviders.Zenvia.Key);
+        return tenant;
+    }
+
     public static async Task<T> ScalarAsync<T>(
         string connectionString, string sql, params (string Name, object Value)[] parameters)
     {
