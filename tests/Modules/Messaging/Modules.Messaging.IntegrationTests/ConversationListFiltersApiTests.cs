@@ -67,11 +67,11 @@ public sealed class ConversationListFiltersApiTests
         var (active, _) = await IngestAsync(f, "CO.A", "w1", 1760000100, "Ana");
         var (plain, _) = await IngestAsync(f, "CO.B", "w2", 1760000200, "Beto");
         await ExecuteAsync(f.ConnectionString,
-            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now() WHERE id = @id", ("id", active));
+            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now(), automation_chatbot_id = gen_random_uuid() WHERE id = @id", ("id", active));
 
         var (paused, _) = await IngestAsync(f, "CO.C", "w3", 1760000300, "Caro");
         await ExecuteAsync(f.ConnectionString,
-            "UPDATE messaging.conversations SET automation_status = 'Paused', automation_started_at = now(), automation_paused_at = now(), automation_pause_reason = 'Manual' WHERE id = @id", ("id", paused));
+            "UPDATE messaging.conversations SET automation_status = 'Paused', automation_started_at = now(), automation_paused_at = now(), automation_pause_reason = 'Manual', automation_chatbot_id = gen_random_uuid() WHERE id = @id", ("id", paused));
 
         var all = await ListAsync(f, "");
         Assert.Equal([paused, plain, active], Ids(all));

@@ -97,6 +97,13 @@ public sealed partial class Conversation
 
     public AutomationPauseReason? AutomationPauseReason { get; private set; }
 
+    /// <summary>Spec 2026-10-21 §4.2: el chatbot que atiende (referencia blanda, otro módulo). Obligatorio mientras
+    /// <see cref="AutomationStatus"/> no sea <c>None</c> (<c>CK_conversations_automation_chatbot</c>).</summary>
+    public Guid? AutomationChatbotId { get; private set; }
+
+    /// <summary>El paso del flujo donde va la conversación; lo escribe el motor.</summary>
+    public string? AutomationStep { get; private set; }
+
     public int UnreadCount { get; private set; }
 
     public DateTimeOffset? LastInboundAt { get; private set; }

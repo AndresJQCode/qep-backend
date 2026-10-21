@@ -51,6 +51,17 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>I-2 (D-A5): una resuelta no la atiende nadie. Sólo <c>Resolve()</c> lo garantiza en el código; el CHECK es la red.</summary>
     public const string AutomationResolvedCheck = "status <> 'Resolved' OR automation_status = 'None'";
 
+    /// <summary>Spec 2026-10-21 §4.2: un asistente en curso (o pausado) siempre sabe qué chatbot es.</summary>
+    public const string AutomationChatbotCheck = "automation_status = 'None' OR automation_chatbot_id IS NOT NULL";
+
+    public const string SentByKindCheck = "sent_by_kind IN (1,2)";
+
+    /// <summary>El autor es chatbot si y sólo si hay chatbot.</summary>
+    public const string SentByChatbotCheck = "(sent_by_kind = 2) = (sent_by_chatbot_id IS NOT NULL)";
+
+    /// <summary>Un mensaje del chatbot no lleva miembro.</summary>
+    public const string SentByOneCheck = "sent_by_kind <> 2 OR sent_by_member_id IS NULL";
+
     /// <summary>§7.3: calificada con esquema para no depender del search_path de quien inserte.</summary>
     public const string SearchVectorSql = "to_tsvector('messaging.es_unaccent', coalesce(text, '') || ' ' || coalesce(caption, ''))";
 
@@ -124,6 +135,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
 
     internal DbSet<TemplateMirrorSyncRecord> TemplateMirrorSyncs => Set<TemplateMirrorSyncRecord>();
 
+    /// <summary>Spec 2026-10-21 §4.2: la cola del motor de chatbots.</summary>
+    internal DbSet<AutomationInboxRecord> AutomationInbox => Set<AutomationInboxRecord>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -138,6 +152,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureQuickReply(modelBuilder);
         ConfigureResolutionReason(modelBuilder);
         ConfigureBusinessHours(modelBuilder);
+        ConfigureAutomationInbox(modelBuilder);
         ConfigureMessageTemplate(modelBuilder);
         ConfigureTemplateMirrorSync(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
@@ -159,6 +174,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
             table.HasCheckConstraint("CK_conversations_automation_reason", AutomationReasonCheck);
             table.HasCheckConstraint("CK_conversations_automation_assignment", AutomationAssignmentCheck);
             table.HasCheckConstraint("CK_conversations_automation_resolved", AutomationResolvedCheck);
+            table.HasCheckConstraint("CK_conversations_automation_chatbot", AutomationChatbotCheck);
         });
         conversation.HasKey(value => value.Id);
         conversation.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
@@ -205,6 +221,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.Property(value => value.AutomationPausedAt).HasColumnName("automation_paused_at");
         conversation.Property(value => value.AutomationPausedByMemberId).HasColumnName("automation_paused_by_member_id");
         conversation.Property(value => value.AutomationPauseReason).HasColumnName("automation_pause_reason").HasConversion<string>().HasMaxLength(32);
+        conversation.Property(value => value.AutomationChatbotId).HasColumnName("automation_chatbot_id");
+        conversation.Property(value => value.AutomationStep).HasColumnName("automation_step").HasMaxLength(120);
         conversation.Ignore(value => value.CustomerWindowExpiresAt);
 
         // Todos con el overload con nombre: sin nombre en HasIndex, EF funde los que tienen las mismas columnas
@@ -251,6 +269,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
             table.HasCheckConstraint("CK_messages_inbound_not_failed", "direction = 2 OR status <> 4");
             table.HasCheckConstraint("CK_messages_system_is_event", SystemIsEventCheck);
             table.HasCheckConstraint("CK_messages_event_shape", EventShapeCheck);
+            table.HasCheckConstraint("CK_messages_sent_by_kind", SentByKindCheck);
+            table.HasCheckConstraint("CK_messages_sent_by_chatbot", SentByChatbotCheck);
+            table.HasCheckConstraint("CK_messages_sent_by_one", SentByOneCheck);
         });
         message.HasKey(value => value.Id);
         message.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
@@ -270,6 +291,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         message.Property(value => value.Wamid).HasColumnName("wamid");
         message.Property(value => value.ClientId).HasColumnName("client_id");
         message.Property(value => value.SentByMemberId).HasColumnName("sent_by_member_id");
+        message.Property(value => value.SentByKind).HasColumnName("sent_by_kind").HasColumnType("smallint").HasConversion<short>()
+            .HasDefaultValue(MessageAuthorKind.Member).HasSentinel((MessageAuthorKind)0);
+        message.Property(value => value.SentByChatbotId).HasColumnName("sent_by_chatbot_id");
         message.Property(value => value.ReplyToMessageId).HasColumnName("reply_to_message_id");
         message.Property(value => value.ReplyToWamid).HasColumnName("reply_to_wamid");
         message.Property(value => value.FailureCode).HasColumnName("failure_code");
@@ -433,6 +457,27 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
 
     /// <summary>Spec 2026-10-21 §5.1. Los dos únicos (nombre sin distinguir mayúsculas y un predeterminado por tenant) van en la migración
     /// con SQL, así que acá no se declaran. La conexión es de Integrations (otro schema): <c>connection_id</c> es referencia blanda.</summary>
+    /// <summary>Spec 2026-10-21 §4.2: la cola de entrantes que el motor de chatbots procesa. <c>connection_id</c> y
+    /// <c>conversation_id</c> son referencias blandas (sin FK), como el resto de la tabla.</summary>
+    private static void ConfigureAutomationInbox(ModelBuilder modelBuilder)
+    {
+        var inbox = modelBuilder.Entity<AutomationInboxRecord>();
+        inbox.ToTable("automation_inbox", Schema);
+        inbox.HasKey(value => value.MessageId);
+        inbox.Property(value => value.MessageId).HasColumnName("message_id").ValueGeneratedNever();
+        inbox.Property(value => value.TenantId).HasColumnName("tenant_id");
+        inbox.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        inbox.Property(value => value.ConversationId).HasColumnName("conversation_id");
+        inbox.Property(value => value.Opened).HasColumnName("opened");
+        inbox.Property(value => value.CreatedAt).HasColumnName("created_at");
+        inbox.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue((short)0);
+        inbox.Property(value => value.NextAttemptAt).HasColumnName("next_attempt_at");
+        inbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        inbox.Property(value => value.Outcome).HasColumnName("outcome").HasMaxLength(24);
+        inbox.HasIndex(value => value.NextAttemptAt, "IX_automation_inbox_pending").HasFilter("processed_at IS NULL");
+        inbox.HasIndex(value => new { value.ConversationId, value.CreatedAt }, "IX_automation_inbox_conversation").HasFilter("processed_at IS NULL");
+    }
+
     private static void ConfigureBusinessHours(ModelBuilder modelBuilder)
     {
         var schedule = modelBuilder.Entity<BusinessHoursSchedule>();

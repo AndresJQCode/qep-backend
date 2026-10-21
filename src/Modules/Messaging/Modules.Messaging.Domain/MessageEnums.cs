@@ -14,6 +14,13 @@ public enum ConversationChannel
     Instagram,
 }
 
+/// <summary>Spec 2026-10-21 §4.2: quién redactó un saliente. En <c>messages</c> viaja como smallint (Member = 1, Chatbot = 2).</summary>
+public enum MessageAuthorKind
+{
+    Member = 1,
+    Chatbot = 2,
+}
+
 /// <summary>Spec 2026-10-09 §7.1: en <c>messages</c> viajan como smallint con estos valores (excepción
 /// documentada a los enums por texto). La API sigue mandando los nombres.</summary>
 public enum MessageDirection

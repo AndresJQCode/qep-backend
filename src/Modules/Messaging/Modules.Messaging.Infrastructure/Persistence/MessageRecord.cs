@@ -21,6 +21,12 @@ internal sealed class MessageRecord
     public Guid? ClientId { get; set; }
     public Guid? SentByMemberId { get; set; }
 
+    /// <summary>Spec 2026-10-21 §4.2: quién lo redactó. Los salientes anteriores al motor son todos de un miembro (default 1).</summary>
+    public MessageAuthorKind SentByKind { get; set; } = MessageAuthorKind.Member;
+
+    /// <summary>Referencia blanda al chatbot (otro módulo, sin FK); presente si y sólo si <see cref="SentByKind"/> es Chatbot.</summary>
+    public Guid? SentByChatbotId { get; set; }
+
     /// <summary>Spec 2026-10-10 §7.1: el mensaje citado, si QEP lo tiene. Sin FK (§7.1).</summary>
     public Guid? ReplyToMessageId { get; set; }
 

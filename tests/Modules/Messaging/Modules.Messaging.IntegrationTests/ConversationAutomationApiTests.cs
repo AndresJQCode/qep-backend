@@ -29,7 +29,7 @@ public sealed class ConversationAutomationApiTests
 
         var (beatriz, beatrizUser) = await SeedMemberAsync(connectionString, tenant.TenantId, "Beatriz", "advisor");
         var conversationId = await ScalarAsync<Guid>(connectionString, "SELECT id FROM messaging.conversations");
-        await ActivateAutomationAsync(connectionString, conversationId);
+        await ActivateAutomationAsync(connectionString, conversationId, Guid.CreateVersion7());
         return new Fixture(factory, connectionString, tenant, conversationId, await OwnerMembershipIdAsync(connectionString, tenant), beatriz, beatrizUser,
             CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions));
     }

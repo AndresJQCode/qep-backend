@@ -719,12 +719,13 @@ internal static class MessagingApiHarness
         return await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
-    /// <summary>Spec 2026-10-21: deja la conversación abierta y sin asesor con el asistente activo (el motor de bots llega después).</summary>
-    public static async Task ActivateAutomationAsync(string connectionString, Guid conversationId) =>
+    /// <summary>Spec 2026-10-21: deja la conversación abierta y sin asesor con el asistente activo (el motor de bots llega después). Desde
+    /// <c>CK_conversations_automation_chatbot</c> una conversación activa necesita su chatbot.</summary>
+    public static async Task ActivateAutomationAsync(string connectionString, Guid conversationId, Guid chatbotId) =>
         Assert.Equal(1, await ExecuteAsync(
             connectionString,
-            "UPDATE messaging.conversations SET automation_status='Active', automation_started_at=now(), version=version+1, updated_at=now() WHERE id=@id AND status='Open' AND assigned_member_id IS NULL",
-            ("id", conversationId)));
+            "UPDATE messaging.conversations SET automation_status='Active', automation_started_at=now(), automation_chatbot_id=@chatbotId, version=version+1, updated_at=now() WHERE id=@id AND status='Open' AND assigned_member_id IS NULL",
+            ("id", conversationId), ("chatbotId", chatbotId)));
 
     /// <summary>Un proveedor de logs más: LoggerFactory recibe todos los ILoggerProvider registrados.</summary>
     public static WebApplicationFactory<Program> WithCapturedLogs(

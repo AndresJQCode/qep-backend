@@ -190,8 +190,10 @@ public sealed class MessagingPersistenceTests
         var connectionId = Guid.CreateVersion7();
         var conversationId = await SeedConversationAsync(factory, tenantId, connectionId, "573001234567");
 
+        // Desde CK_conversations_automation_chatbot toda fila no-None lleva chatbot; se lo ponemos para que cada caso pruebe su propio CHECK.
         async Task<string?> ViolationAsync(string set)
         {
+            set = set.Contains("automation_status", StringComparison.Ordinal) ? $"{set}, automation_chatbot_id = gen_random_uuid()" : set;
             var ex = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connectionString,
                 $"UPDATE messaging.conversations SET {set} WHERE id = @id", ("id", conversationId)));
             return ex.ConstraintName;
@@ -205,7 +207,7 @@ public sealed class MessagingPersistenceTests
             await ViolationAsync("automation_status = 'Active', automation_started_at = now(), assigned_member_id = gen_random_uuid(), assigned_at = now()"));
         Assert.Equal("CK_conversations_automation_resolved", await ViolationAsync("status = 'Resolved', automation_status = 'Active', automation_started_at = now()"));
         Assert.Equal(1, await ExecuteAsync(connectionString,
-            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now() WHERE id = @id", ("id", conversationId)));
+            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now(), automation_chatbot_id = gen_random_uuid() WHERE id = @id", ("id", conversationId)));
     }
 
     // Spec 2026-10-16 §3.1: responder resta sólo lo que el asesor tenía a la vista y el envío nunca sube version

@@ -318,6 +318,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("assigned_member_id");
 
+                    b.Property<Guid?>("AutomationChatbotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("automation_chatbot_id");
+
                     b.Property<string>("AutomationPauseReason")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
@@ -342,6 +346,11 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(16)")
                         .HasDefaultValue("None")
                         .HasColumnName("automation_status");
+
+                    b.Property<string>("AutomationStep")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("automation_step");
 
                     b.Property<string>("Channel")
                         .IsRequired()
@@ -516,6 +525,8 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_conversations_assignment", "(assigned_member_id IS NULL) = (assigned_at IS NULL)");
 
                             t.HasCheckConstraint("CK_conversations_automation_assignment", "automation_status <> 'Active' OR assigned_member_id IS NULL");
+
+                            t.HasCheckConstraint("CK_conversations_automation_chatbot", "automation_status = 'None' OR automation_chatbot_id IS NOT NULL");
 
                             t.HasCheckConstraint("CK_conversations_automation_pause", "(automation_status = 'Paused') = (automation_paused_at IS NOT NULL AND automation_pause_reason IS NOT NULL)");
 
@@ -718,6 +729,62 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("resolution_reasons", "messaging");
+                });
+
+            modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.AutomationInboxRecord", b =>
+                {
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<short>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("smallint")
+                        .HasDefaultValue((short)0)
+                        .HasColumnName("attempts");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at");
+
+                    b.Property<bool>("Opened")
+                        .HasColumnType("boolean")
+                        .HasColumnName("opened");
+
+                    b.Property<string>("Outcome")
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("outcome");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("MessageId");
+
+                    b.HasIndex(new[] { "ConversationId", "CreatedAt" }, "IX_automation_inbox_conversation")
+                        .HasFilter("processed_at IS NULL");
+
+                    b.HasIndex(new[] { "NextAttemptAt" }, "IX_automation_inbox_pending")
+                        .HasFilter("processed_at IS NULL");
+
+                    b.ToTable("automation_inbox", "messaging");
                 });
 
             modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.CampaignRecipientRecord", b =>
@@ -995,6 +1062,16 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnName("search_vector")
                         .HasComputedColumnSql("to_tsvector('messaging.es_unaccent', coalesce(text, '') || ' ' || coalesce(caption, ''))", true);
 
+                    b.Property<Guid?>("SentByChatbotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("sent_by_chatbot_id");
+
+                    b.Property<short>("SentByKind")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("smallint")
+                        .HasDefaultValue((short)1)
+                        .HasColumnName("sent_by_kind");
+
                     b.Property<Guid?>("SentByMemberId")
                         .HasColumnType("uuid")
                         .HasColumnName("sent_by_member_id");
@@ -1045,6 +1122,12 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_messages_inbound_not_failed", "direction = 2 OR status <> 4");
 
                             t.HasCheckConstraint("CK_messages_kind", "kind BETWEEN 1 AND 14");
+
+                            t.HasCheckConstraint("CK_messages_sent_by_chatbot", "(sent_by_kind = 2) = (sent_by_chatbot_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_messages_sent_by_kind", "sent_by_kind IN (1,2)");
+
+                            t.HasCheckConstraint("CK_messages_sent_by_one", "sent_by_kind <> 2 OR sent_by_member_id IS NULL");
 
                             t.HasCheckConstraint("CK_messages_status", "status BETWEEN 1 AND 4");
 
