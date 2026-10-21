@@ -144,6 +144,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                     .OrderBy(image => image.Position)
                     .Select(image => (Guid?)image.FileId)
                     .FirstOrDefault(),
+                HasOptions = EF.Property<IEnumerable<ProductOption>>(product, "_options").Any(),
                 product.Version,
                 product.CreatedAt,
                 product.UpdatedAt
@@ -157,8 +158,8 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
 
         var productIds = rows.Select(row => row.Id).ToArray();
 
-        // Cuántas variantes tiene cada producto (activas e inactivas) y, para el que tiene una sola,
-        // su código: con una, el mínimo es ése.
+        // Cuántas variantes tiene cada producto, en total y activas, y el menor código de cada grupo: con
+        // una sola, el menor es el suyo. ProductListCode decide cuál muestra la fila.
         var variantStats = await dbContext.ProductVariants
             .AsNoTracking()
             .Where(variant => variant.TenantId == tenantId && productIds.Contains(variant.ProductId))
@@ -167,7 +168,9 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             {
                 ProductId = group.Key,
                 Count = group.Count(),
-                Code = group.Min(variant => variant.Code)
+                Code = group.Min(variant => variant.Code),
+                ActiveCount = group.Count(variant => variant.IsActive),
+                ActiveCode = group.Where(variant => variant.IsActive).Min(variant => variant.Code)
             })
             .ToDictionaryAsync(stat => stat.ProductId, cancellationToken);
         var ranges = await dbContext.ProductVariants
@@ -208,7 +211,11 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 row.TaxRateId,
                 row.ImageFileId,
                 variantStats.GetValueOrDefault(row.Id)?.Count ?? 0,
-                variantStats.GetValueOrDefault(row.Id) is { Count: 1 } single ? single.Code : null,
+                variantStats.GetValueOrDefault(row.Id) is { } stats
+                    ? ProductListCode.For(
+                        row.HasOptions,
+                        new ProductVariantCodeStats(stats.Count, stats.Code, stats.ActiveCount, stats.ActiveCode))
+                    : null,
                 rangesByProduct.GetValueOrDefault(row.Id) ?? [],
                 row.Version,
                 row.CreatedAt,

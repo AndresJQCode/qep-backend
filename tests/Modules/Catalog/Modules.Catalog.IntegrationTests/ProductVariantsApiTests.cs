@@ -373,6 +373,37 @@ public sealed class ProductVariantsApiTests
         Assert.Equal(new PriceRangeResponse(20m, 30m), listed.PriceRange["USD"]);
     }
 
+    // Decisión del owner, 2026-10-21: quitarle todas las opciones a un producto deja una variante activa
+    // (S, la primera) y la otra inactiva. Se vende como un producto simple, así que el listado muestra el
+    // código de la activa y no «2 variantes» sin código.
+    [Fact]
+    public async Task ListShowsTheActiveCodeOfAProductWhoseOptionsWereRemoved()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        var talla = await CreateOptionAsync(client, TenantId, "Talla", "S", "M");
+        var created = await ReadProductAsync(await PostProductAsync(client, TenantId, new
+        {
+            name = "Camiseta",
+            optionIds = new[] { talla.Id },
+            variants = new object[] { VariantBody("CAM-S", ValueOf(talla, "S")), VariantBody("CAM-M", ValueOf(talla, "M")) }
+        }));
+        var updated = await ReadProductAsync(await PutProductAsync(client, TenantId, created.Id, new
+        {
+            expectedVersion = created.Version,
+            name = "Camiseta",
+            optionIds = Array.Empty<Guid>(),
+            variants = created.Variants.Select(variant => new { id = variant.Id, code = variant.Code }).ToArray()
+        }));
+        Assert.Equal([true, false], updated.Variants.Select(variant => variant.IsActive));
+
+        var listed = Assert.Single((await ListAsync(client, TenantId)).Items);
+
+        Assert.Equal((2, "CAM-S"), (listed.VariantCount, listed.Code));
+    }
+
     private static object VariantBody(string code, params Guid[] values) => VariantBody(code, 10m, values);
 
     private static object VariantBody(string code, decimal usd, params Guid[] values) =>

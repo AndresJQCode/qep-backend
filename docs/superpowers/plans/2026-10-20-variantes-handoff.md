@@ -39,7 +39,8 @@ coincide con los DTOs (`CatalogDtos.cs`, `OptionLibraryContracts.cs`, `Quotation
   venderlo, mandas como `variantId` el id de esa variante (que coincide con el del producto, pero léelo de
   la respuesta, no lo asumas). **Ojo:** si a un producto le quitas todas sus opciones, quedan una activa y
   las demás **inactivas**, todas con `optionValueIds: []`. Busca la activa (`isActive`), no tomes
-  `variants[0]`, y en ese caso el listado trae `code: null` y `variantCount` mayor que 1.
+  `variants[0]`. En ese caso el listado trae el `code` de la activa y `variantCount` cuenta también las
+  inactivas, así que no uses `variantCount > 1` para decidir si mostrar «N variantes»: usa `code === null`.
 - El **nombre visible** lo arma el backend: el del producto en la variante por defecto, y
   `«{producto} – {valor1} / {valor2} / {valor3}»` (guion largo con espacios) con opciones. Viaja en
   `name` de cada variante. **No lo concatenes en el frontend**: es el mismo texto que guardan las líneas, el
@@ -274,7 +275,7 @@ principal. La guía `docs/integracion-imagenes-de-producto.md` que cita el READM
 type ProductsResponse = { items: ProductListItemDto[]; total: number; page: number; pageSize: number };
 type ProductListItemDto = {
   id: string; name: string;
-  code: string | null;                   // el de la única variante; null si tiene varias
+  code: string | null;                   // el de la única variante; sin opciones, el de su única activa; si no, null
   isActive: boolean; description: string | null;
   imageFileId: string | null; imageUrl: string | null; taxRateId: string | null;
   variantCount: number;                  // activas e inactivas
@@ -399,7 +400,8 @@ type PosSaleLineRequest = { variantId: string; quantity: number; discountPercent
   Dos tallas del mismo producto son dos líneas, cada una con su precio.
 - **Escáner**: busca primero por **código de barras exacto** y, si ninguna variante lo tiene, por `code` exacto
   (sensible a mayúsculas). Si un texto es el código de barras de una variante y el `code` de otra, gana el
-  código de barras. Una variante inactiva vuelve con `sellable: false` y `unsellableReason: "Inactive"`. Sin
+  código de barras, **salvo que esa variante esté inactiva y la del `code` activa**: entonces gana la activa (si
+  las dos están inactivas, sigue ganando el código de barras). Una variante inactiva vuelve con `sellable: false` y `unsellableReason: "Inactive"`. Sin
   coincidencia: `404 pos.product.not_found`.
 - El tope de `code` en `by-code` sube de **60 a 64** (el largo de un código de barras). De 61 a 64 caracteres,
   antes daba 422 y ahora busca.
@@ -443,9 +445,8 @@ los DTOs de arriba salvo donde se dice.
 1. **`Variante` vacía o con nombre en la variante por defecto.** El Excel de productos la deja **vacía**; el
    Excel de pedidos lleva el **nombre del producto**, porque la línea no sabe si su variante es la por defecto
    sin consultar Catalog. Igualarlas exige guardar en la línea una marca «sin opciones».
-2. **El código de barras de una variante inactiva gana al escanear.** Si el código de barras de A (inactiva) es
-   el `code` de B (activa), el escáner devuelve A marcada como no vendible. Ninguna variante migrada tiene
-   código de barras, así que hoy no pasa con nada de lo que ya se escanea.
+2. ~~El código de barras de una variante inactiva gana al escanear.~~ **Decidido por el owner (2026-10-21):** si
+   el código de barras de A (inactiva) es el `code` de B (activa), el escáner devuelve B.
 3. **Borrar una variante borra su historial de precios** (`CASCADE`). Coherente con «no está en uso», pero el
    reporte de cambios de precio pierde esas filas. La alternativa es `SET NULL`.
 4. **Riesgo aceptado en la carrera del borrado.** Si una línea se confirma en la ventana de milisegundos entre

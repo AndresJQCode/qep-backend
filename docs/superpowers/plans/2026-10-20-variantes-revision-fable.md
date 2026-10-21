@@ -110,8 +110,8 @@ Cada una dice lo que cuesta si es incorrecta.
   enviado; el borrador lo muestra completo.
 - **Shopify**: una línea sin variante emparejada deja el pedido en espera con `product_unmatched`, como hoy. El plan
   decía que entraba sin producto, pero describía mal el comportamiento actual.
-- **Escáner del POS**: el código de barras gana aunque su variante esté inactiva. Costo: si el tenant le pone a A un
-  código de barras igual al `Code` de B y desactiva A, la caja devuelve A, marcada como inactiva.
+- ~~**Escáner del POS**: el código de barras gana aunque su variante esté inactiva.~~ Cambiado por el owner
+  (2026-10-21): si la variante del código de barras está inactiva y el `Code` es de una activa, gana la activa.
 - **Contrato del POS sin compatibilidad**: `variantId` en ventas y vista previa, `GET /pos/products` con variantes,
   `by-code` admite hasta 64 caracteres (antes 60). El carrito del frontend agrupa por `variantId`.
 - **Reporte de cambios de precio**: el desglose por variante trae todas las variantes del producto, también en cero;

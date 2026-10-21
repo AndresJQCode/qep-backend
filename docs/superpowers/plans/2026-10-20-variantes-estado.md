@@ -51,16 +51,17 @@ Estados: Pendiente · En curso · Hecha (con SHA del commit) · Bloqueada (con m
   de recálculo y de punta a punta); `pricing: null` rechazaba escalas copiadas sin completar y una variante en uso
   con ellas no se podía desactivar por `deletedVariantIds`; el `Down` de Catalog devolvía una variante inactiva y su
   prueba no ejercitaba más de una variante por producto. Corrida la unitaria de Catalog, Quotations, Pos, Reporting,
-  Shopify, Bootstrapper (sin el checker) y ArchitectureTests: todas verdes. Quedan para el owner: el escáner con una
-  variante inactiva (abajo), `code` del listado cuando un producto sin opciones conserva variantes inactivas, y el
-  desempeño de `ShopifyProductLookup` y la cuadrícula del POS, que traen agregados completos.
+  Shopify, Bootstrapper (sin el checker) y ArchitectureTests: todas verdes. Decididos por el owner el mismo día y hechos:
+  el escáner prefiere un `Code` activo a un código de barras inactivo, y el listado muestra el `code` de la única
+  activa de un producto sin opciones. El desempeño de `ShopifyProductLookup` y de la cuadrícula del POS (traen
+  agregados completos) queda como requisito del proyecto 2, productos desde Shopify.
 - **Correr las pruebas.** Desde la T4 se escribieron y no se ejecutaron (sólo `build` y `format`). Hay que correrlas por
   módulo antes de llevar nada a `main`: Catalog, Quotations, Pos, Reporting, Shopify, Identity, `Bootstrapper.UnitTests`
   y `ArchitectureTests`. Las 18 consultas LINQ de riesgo se verificaron con `ToQueryString` y traducen.
 - **Despliegue destructivo.** `AddProductVariants` borra columnas de `catalog.products`: backup, ventana de corte y orden
   de vuelta atrás en el [traspaso §13](2026-10-20-variantes-handoff.md). Backend y frontend salen juntos.
 - **Decisiones que el owner debe confirmar** (detalle en el traspaso §11): columna «Variante» con nombre o vacía en la
-  variante por defecto; el código de barras de una variante inactiva gana al escanear; borrar una variante borra su
+  variante por defecto; borrar una variante borra su
   historial (CASCADE); carrera de borrado aceptada (`variant_id` huérfano); la búsqueda del listado también encuentra
   por código de barras; borrar es explícito con `deletedVariantIds`.
 - Plan del frontend: no existe; sale del traspaso.
