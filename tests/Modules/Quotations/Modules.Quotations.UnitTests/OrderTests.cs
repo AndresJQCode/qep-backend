@@ -368,7 +368,7 @@ public sealed class OrderTests
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>
         {
-            [quotation.Items.Single().ProductId] = new("ABC", "Aceite"),
+            [quotation.Items.Single().VariantId] = new("ABC", "Aceite"),
         });
 
         return quotation;
