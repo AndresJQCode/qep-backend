@@ -13,6 +13,12 @@
 // sin acento de color que le ponga la marca de nadie a un documento comercial ajeno.
 #let data = json(sys.inputs.data)
 
+// Un solo layout para cotización y pedido (decisión del owner). Lo único que cambia es el nombre del
+// documento —membrete y pie— y el renglón de vigencia, que un pedido no tiene. `kind` llega como texto
+// ("Quotation" / "Order", `QuotationPdfKind`); cualquier otro valor se imprime como cotización.
+#let es-pedido = data.kind == "Order"
+#let documento = if es-pedido { "Pedido" } else { "Cotización" }
+
 #let tinta = rgb("#14181F")
 // 5.8:1 sobre blanco. Los rótulos van en 7pt y a esa medida un gris "de diseño" deja de leerse.
 #let apagado = rgb("#5F6672")
@@ -143,7 +149,7 @@
     #grid(
       columns: (1fr, auto),
       text(size: 7.5pt, fill: apagado)[
-        Cotización #data.quotationNumber#if data.billingAccount != none [ · #data.billingAccount.companyName]
+        #documento #data.quotationNumber#if data.billingAccount != none [ · #data.billingAccount.companyName]
       ],
       text(size: 7.5pt, fill: apagado)[
         Página #counter(page).display() de #counter(page).final().first()
@@ -187,12 +193,12 @@
         \ #text(size: 8.5pt, fill: apagado)[Teléfono: #data.billingAccount.companyPhone]
       ]
     ] else [
-      #text(size: 14pt, weight: "bold", tracking: -0.01em)[Cotización]
+      #text(size: 14pt, weight: "bold", tracking: -0.01em)[#documento]
     ]
   ],
   block[
     #if hay-emisor [
-      #text(size: 12pt, weight: "bold")[Cotización]
+      #text(size: 12pt, weight: "bold")[#documento]
     ] else [
       #text(size: 12pt, weight: "bold")[#data.quotationNumber]
     ]
@@ -200,10 +206,13 @@
     #par(leading: 0.6em)[
       #if hay-emisor [#renglon("N.°", data.quotationNumber) \ ]
       #renglon("Emitida", fecha(data.issuedOn)) \
-      #renglon(
-        "Válida hasta",
-        if data.validUntil == none { text(fill: apagado)[Sin vencimiento] } else { fecha(data.validUntil) },
-      ) \
+      // Un pedido no vence: "Sin vencimiento" se leería como una condición comercial que nadie pactó.
+      #if not es-pedido [
+        #renglon(
+          "Válida hasta",
+          if data.validUntil == none { text(fill: apagado)[Sin vencimiento] } else { fecha(data.validUntil) },
+        ) \
+      ]
       #renglon("Asesor", if data.advisorLabel == "" { vacio } else { data.advisorLabel }) \
       #renglon("Cliente", if data.customerName == "" { vacio } else { data.customerName })
       #if data.customerCuc != "" [ \ #renglon("NIT / CUC", data.customerCuc)]

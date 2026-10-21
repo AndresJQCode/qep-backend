@@ -799,7 +799,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles`, `profile` por membership   | `advisorship.invite` / `.read` / `.manage`                                            |
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET`, `POST`, `PUT`, y `deactivate` por producto                                           | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
-| `/api/v1/tenants/{tenantId}/orders`                | `GET` (filtros, entre ellos `source` y `timeZone`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `approve`, `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`) (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual)) | `quotations.order.read` / `.manage` / `.approve` / `.cancel` / `.invoice` |
+| `/api/v1/tenants/{tenantId}/orders`                | `GET` (filtros, entre ellos `source` y `timeZone`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `approve`, `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`), `send` (`POST`, cuerpo opcional) (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual) y [Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp)) | `quotations.order.read` / `.manage` / `.approve` / `.cancel` / `.invoice` |
 | `/api/v1/tenants/{tenantId}/pos`                   | 12 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void`                               |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
@@ -1195,6 +1195,33 @@ Con el código viejo, un pedido manual o externo da 500 al leerlo, y los pedidos
 nacen sin datos propios. Antes de volver al código nuevo, esos pedidos se completan con el SQL del
 pasos 4 y 5 de `AddOrderOwnData` acotado a `client_id IS NULL` y se restauran los `NOT NULL` (spec
 2026-10-15 §10).
+
+### Enviar el pedido por WhatsApp
+
+`POST /api/v1/tenants/{tenantId}/orders/{orderId}/send` le manda al cliente el PDF del pedido por
+WhatsApp, como `POST /quotations/{id}/send` lo hace con la cotización. Contrato completo y códigos de
+error en [`docs/integracion-cotizaciones-y-pedidos.md`](docs/integracion-cotizaciones-y-pedidos.md).
+
+- **Permiso** `quotations.order.manage`. **Cuerpo opcional** `{ "recipient": "Customer" | "Billing" }`
+  (default `Customer`): el teléfono lo resuelve el backend — el del cliente, o el de la facturación
+  propia del pedido (`order.order.billing_phone_missing` si no la tiene).
+- **Responde el `OrderDetailResponse` entero**, con la entrada `Sent` en el historial.
+- **No cambia el pedido**: ni estado ni `version`. Se manda en `Pending`, `Approved` e `Invoiced`; un
+  anulado responde `order.order.already_cancelled` antes de cualquier efecto externo. Deja historial
+  (`OrderHistoryEventType.Sent`, que se guarda como texto: sin migración) y auditoría
+  `quotation.order.sent`. No exige cliente completo: un pedido de Shopify puede tenerlo incompleto.
+- **El PDF es el de la cotización** (`quotation.typ`, layout único por decisión del owner) con
+  `kind: "Order"`: dice «Pedido» en el membrete y el pie, no imprime «Válida hasta» y el archivo se
+  llama `Pedido-<número>.pdf`. Sale del detalle del pedido (`QuotationPdfDocumentMapper.FromOrder`),
+  nunca de la cotización de origen, que puede no existir.
+- **Sin caché ni migración**: se genera en cada envío y se guarda bajo `quotations/tenants/…/orders/`
+  (lo limpia la misma regla de lifecycle), y la copia pública para Meta sale como la de la cotización.
+  Cachearlo pediría una tabla invalidada por `Order.Version`, y enviar un pedido es raro.
+- **Sin registro propio de fallas**: el log de fallas de la API guarda la excepción, y `order.send.failed`
+  nombra el paso.
+- **Plantilla propia en Zenvia** (`Quotations:WhatsApp:OrderTemplateId`), ver
+  [Plantilla de WhatsApp](#plantilla-de-whatsapp-zenvia). Mientras esté vacía, enviar un pedido responde
+  `order.whatsapp.not_configured` (fuera de producción, sin Zenvia, sale por `LogWhatsAppSender`).
 
 ### Código y nombre del producto en cada línea
 
@@ -1933,6 +1960,26 @@ repite, para que no haya dos versiones de la verdad. Sus variables son las que
 | `total` | `Quotation.Total`, formateado `C0` en `es-CO` |
 | `valid_until` | `Quotation.ValidUntil`, formateado `d 'de' MMMM 'de' yyyy` en `es-CO` |
 
+**El pedido usa una segunda plantilla** (`POST /orders/{id}/send`, ver
+[Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp)), y
+`Quotations:WhatsApp:OrderTemplateId` apunta a ella. Sus variables son las de la cotización menos
+`valid_until` —un pedido no vence—, con el documento como header `MEDIA_DOCUMENT`:
+
+| Variable | De dónde sale |
+| --- | --- |
+| `documentUrl` | URL pública de la copia del PDF del pedido (`SendOrder.cs`) |
+| `fullname` | `Customer.Name`, o el nombre de la facturación propia del pedido con `recipient: "Billing"` |
+| `order_number` | `Order.OrderNumber` |
+| `total` | `Order.Total`, con el mismo formato que la cotización |
+
+> **Decisión pendiente (owner):** el texto de la plantilla del pedido, su `name` y su aprobación en
+> Zenvia/Meta. No existe todavía: por eso `OrderTemplateId` está vacía en `appsettings.json` y en el
+> ConfigMap, y `QuotationsOptionsValidator` **no** la exige (exigirla frenaría todo despliegue hasta que
+> Meta la apruebe). Mientras tanto el endpoint existe y responde `order.whatsapp.not_configured`. Al
+> aprobarse: el `id` va a `OrderTemplateId` —en producción, el ConfigMap pasa del `""` literal al token
+> `#{QUOTATIONS_WHATSAPP_ORDER_TEMPLATE_ID}#`, junto con la variable en `Backend-prod`—, y se crea con el
+> mismo procedimiento de abajo, cambiando `components.body.text` y quitando `valid_until` de `examples`.
+
 **Cambiar el texto de la plantilla no se hace acá: se crea una plantilla nueva en Zenvia y se
 apunta `Quotations:WhatsApp:TemplateId` al `id` que devuelva.** Meta no permite editar una
 plantilla aprobada. Si además cambian las variables, hay que tocar
@@ -1996,12 +2043,13 @@ ejemplo por su cuenta, así que sortea los tres últimos puntos.
 
 #### En producción
 
-Las tres claves se inyectan por entorno y se resuelven desde el variable group
+Las claves se inyectan por entorno y se resuelven desde el variable group
 `Backend-<env>` de Azure DevOps:
 
 | Clave | Manifiesto | Token del pipeline |
 | --- | --- | --- |
 | `Quotations__WhatsApp__TemplateId` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_WHATSAPP_TEMPLATE_ID` |
+| `Quotations__WhatsApp__OrderTemplateId` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | ninguno todavía: `""` literal hasta que la plantilla del pedido esté aprobada (ver arriba) |
 | `Quotations__WhatsApp__ApiToken` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_WHATSAPP_API_TOKEN` |
 | `Quotations__WhatsApp__FromNumber` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_WHATSAPP_FROM_NUMBER` |
 

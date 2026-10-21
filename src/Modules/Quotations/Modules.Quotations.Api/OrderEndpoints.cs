@@ -108,6 +108,17 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // «Enviar el pedido por WhatsApp». Mismo contrato que POST /quotations/{id}/send: el cuerpo es
+        // opcional de verdad (un cuerpo inferido como requerido rompió aquel envío con 500), y responde el
+        // detalle entero para que la pantalla repinte el historial con la entrada nueva.
+        collection.MapPost("/{orderId:guid}/send", SendOrderAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Accepts<SendOrderRequest>(isOptional: true, "application/json")
+            .Produces<OrderDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         collection.MapPost("/{orderId:guid}/proofs", AddOrderPaymentProofsAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
             .Accepts<AddOrderPaymentProofsRequest>("application/json")
@@ -266,6 +277,22 @@ public static class OrderEndpoints
         return Results.Created(
             $"/api/v1/tenants/{tenantId}/orders/{detail.Order.Id}",
             await composer.ComposeAsync(tenantId, detail, cancellationToken));
+    }
+
+    /// <summary>El cuerpo es <b>opcional</b>, como en el envío de la cotización: de ahí el parámetro
+    /// anulable con default (ver <c>SendWorksWithoutABody</c>).</summary>
+    private static async Task<IResult> SendOrderAsync(
+        Guid tenantId,
+        Guid orderId,
+        IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
+        CancellationToken cancellationToken,
+        SendOrderRequest? request = null)
+    {
+        var detail = await dispatcher.SendAsync(
+            new SendOrderCommand(tenantId, orderId, request?.Recipient),
+            cancellationToken);
+        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
 
     private static async Task<IResult> AddOrderPaymentProofsAsync(

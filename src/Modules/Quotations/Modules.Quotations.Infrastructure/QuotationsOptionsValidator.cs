@@ -70,6 +70,11 @@ internal sealed class QuotationsOptionsValidator(IHostEnvironment environment)
         {
             yield return Required(nameof(WhatsAppOptions.TemplateId));
         }
+
+        // `OrderTemplateId` no se exige, a propósito: la plantilla del pedido todavía tiene que crearse
+        // y aprobarse en Zenvia/Meta, y exigirla frenaría todo despliegue hasta entonces. Su ausencia
+        // tampoco es la trampa silenciosa de arriba: enviar un pedido sin ella responde
+        // `order.whatsapp.not_configured`, ruidoso, y no deja historial de un envío que no ocurrió.
     }
 
     private static string Required(string key) =>

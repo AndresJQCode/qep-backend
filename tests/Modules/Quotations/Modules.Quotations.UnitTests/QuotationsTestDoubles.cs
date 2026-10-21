@@ -15,6 +15,10 @@ internal sealed class FailingWhatsAppSender(Exception failure) : IWhatsAppSender
     public Task SendQuotationAsync(
         WhatsAppQuotationMessage message, CancellationToken cancellationToken) =>
         Task.FromException(failure);
+
+    public Task SendOrderAsync(
+        WhatsAppOrderMessage message, CancellationToken cancellationToken) =>
+        Task.FromException(failure);
 }
 
 internal sealed class RecordingQuotationSendFailureLog : IQuotationSendFailureLog
@@ -38,6 +42,15 @@ internal sealed class RecordingWhatsAppSender : IWhatsAppSender
         WhatsAppQuotationMessage message, CancellationToken cancellationToken)
     {
         Sent = message;
+        return Task.CompletedTask;
+    }
+
+    public WhatsAppOrderMessage? SentOrder { get; private set; }
+
+    public Task SendOrderAsync(
+        WhatsAppOrderMessage message, CancellationToken cancellationToken)
+    {
+        SentOrder = message;
         return Task.CompletedTask;
     }
 }
@@ -574,6 +587,16 @@ internal sealed class RecordingPdfStorage(string downloadUrl) : IQuotationPdfSto
         return Task.FromResult($"quotations/tenants/{tenantId:N}/{Saves}.pdf");
     }
 
+    /// <summary>El pedido de cada PDF de pedido guardado, en orden.</summary>
+    public List<OrderId> SavedOrders { get; } = [];
+
+    public Task<string> SaveOrderAsync(
+        Guid tenantId, OrderId orderId, byte[] content, CancellationToken cancellationToken)
+    {
+        SavedOrders.Add(orderId);
+        return Task.FromResult($"quotations/tenants/{tenantId:N}/orders/{SavedOrders.Count}.pdf");
+    }
+
     /// <summary>La URL publica que se le entrega a Meta. Distinta de la firmada a proposito:
     /// asi una prueba puede afirmar cual de las dos salio hacia WhatsApp.</summary>
     public const string PublicUrl = "https://assets-qep.example.co/quotations/abc.pdf";
@@ -1081,13 +1104,14 @@ internal static class OrderBuilders
         Guid? clientId = null,
         OrderPaymentStatus paymentStatus = OrderPaymentStatus.PaymentPending,
         IReadOnlyCollection<OrderPaymentProofInput>? proofs = null,
-        string orderNumber = "PED-2026-0001") =>
+        string orderNumber = "PED-2026-0001",
+        QuotationParties? parties = null) =>
         Order.CreateManual(
             OrderId.New(),
             tenantId,
             orderNumber,
             new OrderHeader(clientId ?? Guid.CreateVersion7(), advisorId, "COP", null, IsRetail: false, null, false, false),
-            QuotationParties.Empty,
+            parties ?? QuotationParties.Empty,
             BillingAccount,
             ShippingDetails.None,
             [new OrderLineInput(Guid.CreateVersion7(), 1m, 119_000m, 0m, 19)],

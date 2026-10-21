@@ -11,5 +11,9 @@ public enum OrderHistoryEventType
     Cancelled,
     Invoiced,
     InvoicingReverted,
-    PaymentProofsChanged
+    PaymentProofsChanged,
+
+    /// <summary>El PDF del pedido se le mandó al cliente por WhatsApp. Al final a propósito: la columna
+    /// guarda el nombre (<c>HasConversion&lt;string&gt;()</c>), pero el orden no se reescribe.</summary>
+    Sent
 }

@@ -53,6 +53,13 @@ public sealed class WhatsAppOptions
     /// en `user-secrets`, a menos que el owner decida lo contrario más adelante.</summary>
     public string TemplateId { get; init; } = string.Empty;
 
+    /// <summary>Id de la plantilla del pedido en Zenvia, aparte de <see cref="TemplateId"/>: la de la
+    /// cotización dice «cotización» y pide <c>valid_until</c>, que un pedido no tiene. Vacía por defecto
+    /// y **no** la exige <c>QuotationsOptionsValidator</c>: la plantilla todavía tiene que crearse y
+    /// aprobarse en Zenvia/Meta, y exigirla frenaría todo despliegue hasta entonces. Sin ella, enviar un
+    /// pedido responde <c>order.whatsapp.not_configured</c>; la cotización sigue saliendo.</summary>
+    public string OrderTemplateId { get; init; } = string.Empty;
+
     public string BaseUrl { get; init; } = "https://api.zenvia.com";
 }
 

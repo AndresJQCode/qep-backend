@@ -50,6 +50,12 @@ internal sealed partial class ZenviaWhatsAppSender(
     private static partial void LogAccepted(
         ILogger logger, string orderNumber, string messageId);
 
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "WhatsApp order {OrderNumber} accepted by Zenvia as message {MessageId}.")]
+    private static partial void LogOrderAccepted(
+        ILogger logger, string orderNumber, string messageId);
+
     public async Task SendQuotationAsync(
         WhatsAppQuotationMessage message, CancellationToken cancellationToken)
     {
@@ -89,6 +95,79 @@ internal sealed partial class ZenviaWhatsAppSender(
             },
         };
 
+        var body = await PostAsync(payload, "quotation.whatsapp.send_failed", cancellationToken);
+
+        // El guard es por CA1873: `ReadMessageId` parsea el cuerpo, y el `LoggerMessage`
+        // generado sólo descartaría el resultado después de calcularlo.
+        if (logger.IsEnabled(LogLevel.Information))
+        {
+            var messageId = ReadMessageId(body);
+            LogAccepted(logger, message.OrderNumber, messageId);
+        }
+    }
+
+    /// <summary>
+    /// El pedido, por su propia plantilla (<c>Quotations:WhatsApp:OrderTemplateId</c>). Mismo cuerpo
+    /// que la cotización menos <c>valid_until</c>: un pedido no vence. Los códigos son de pedido
+    /// (<c>order.whatsapp.*</c>) para que la pantalla del pedido no tenga que traducir los de la
+    /// cotización.
+    /// </summary>
+    public async Task SendOrderAsync(
+        WhatsAppOrderMessage message, CancellationToken cancellationToken)
+    {
+        // Antes que el teléfono: sin plantilla no sale ningún pedido, y decir "falta el teléfono"
+        // mandaría a corregir un dato que no destraba nada. Este sender se registra por las tres claves
+        // de la cotización, así que acá la del pedido puede faltar (README § Plantilla de WhatsApp).
+        if (string.IsNullOrWhiteSpace(settings.OrderTemplateId))
+        {
+            throw new QuotationsDomainException(
+                "order.whatsapp.not_configured",
+                "Quotations:WhatsApp:OrderTemplateId is not configured: orders cannot be sent by WhatsApp yet.");
+        }
+
+        var to = NormalizePhone(message.ToPhone);
+        if (to is null)
+        {
+            throw new QuotationsDomainException(
+                "order.whatsapp.recipient_missing",
+                "The recipient has no phone number to send the order to.");
+        }
+
+        var payload = new
+        {
+            from = settings.FromNumber,
+            to,
+            contents = new object[]
+            {
+                new
+                {
+                    type = "template",
+                    templateId = settings.OrderTemplateId,
+                    fields = new
+                    {
+                        fullname = message.FullName,
+                        order_number = message.OrderNumber,
+                        total = FormatTotal(message.Total, message.Currency),
+                        documentUrl = message.DocumentUrl,
+                    },
+                },
+            },
+        };
+
+        var body = await PostAsync(payload, "order.whatsapp.send_failed", cancellationToken);
+
+        if (logger.IsEnabled(LogLevel.Information))
+        {
+            var messageId = ReadMessageId(body);
+            LogOrderAccepted(logger, message.OrderNumber, messageId);
+        }
+    }
+
+    /// <summary>El POST a Zenvia, compartido por los dos documentos. Devuelve el cuerpo para leer el id
+    /// del mensaje; un no-2xx sale como <paramref name="failureCode"/>.</summary>
+    private async Task<string> PostAsync(
+        object payload, string failureCode, CancellationToken cancellationToken)
+    {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
             $"{settings.BaseUrl.TrimEnd('/')}/v2/channels/whatsapp/messages")
@@ -102,17 +181,11 @@ internal sealed partial class ZenviaWhatsAppSender(
         if (!response.IsSuccessStatusCode)
         {
             throw new QuotationsDomainException(
-                "quotation.whatsapp.send_failed",
+                failureCode,
                 $"Zenvia responded {(int)response.StatusCode}: {body}");
         }
 
-        // El guard es por CA1873: `ReadMessageId` parsea el cuerpo, y el `LoggerMessage`
-        // generado sólo descartaría el resultado después de calcularlo.
-        if (logger.IsEnabled(LogLevel.Information))
-        {
-            var messageId = ReadMessageId(body);
-            LogAccepted(logger, message.OrderNumber, messageId);
-        }
+        return body;
     }
 
     // Tolerante a propósito: un 2xx sin un `id` reconocible sigue siendo un envío aceptado, y

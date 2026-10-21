@@ -16,10 +16,24 @@ internal sealed partial class LogWhatsAppSender(ILogger<LogWhatsAppSender> logge
         Message = "WhatsApp (dev sender) quotation {OrderNumber} to {ToPhone}")]
     private static partial void LogMessage(ILogger logger, string orderNumber, string? toPhone);
 
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "WhatsApp (dev sender) order {OrderNumber} to {ToPhone}")]
+    private static partial void LogOrderMessage(ILogger logger, string orderNumber, string? toPhone);
+
     public Task SendQuotationAsync(
         WhatsAppQuotationMessage message, CancellationToken cancellationToken)
     {
         LogMessage(logger, message.OrderNumber, message.ToPhone);
+        return Task.CompletedTask;
+    }
+
+    // Tampoco exige `OrderTemplateId`: sin Zenvia no hay plantilla que elegir, y el envío del pedido
+    // tiene que andar en local y en las pruebas de integración igual que el de la cotización.
+    public Task SendOrderAsync(
+        WhatsAppOrderMessage message, CancellationToken cancellationToken)
+    {
+        LogOrderMessage(logger, message.OrderNumber, message.ToPhone);
         return Task.CompletedTask;
     }
 }
