@@ -98,9 +98,9 @@ public static class QuotationsInfrastructureExtensions
 
     /// <summary>
     /// Siempre Zenvia, sin cuenta propia: el token, el número y las plantillas llegan en cada envío
-    /// como el canal del tenant (plan 2026-10-21). Ya no hay `LogWhatsAppSender`: sin canal el envío
-    /// responde `quotation.whatsapp.no_channel`, y las pruebas registran dobles sólo en su host (spec
-    /// 2026-10-21 D18).
+    /// como el canal del tenant (plan 2026-10-21). No hay sender de log ni cuenta global: sin canal el
+    /// envío responde `quotation.whatsapp.no_channel`, y las pruebas registran dobles sólo en su host
+    /// (spec 2026-10-21 D18).
     /// </summary>
     private static void AddWhatsAppSender(IServiceCollection services) =>
         // `new HttpClient()` directo, sin `IHttpClientFactory` — mismo criterio que

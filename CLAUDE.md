@@ -201,7 +201,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   arranca sin credenciales. Producción lo pisa con `infobip` desde `k8s/prod-configMap.yaml`, y
   `NotificationsOptionsValidator` **rechaza `log` en `Production`** con `ValidateOnStart`: sin esa
   mitad, olvidarse la clave dejaría las invitaciones marcadas como entregadas sin que salga un
-  correo, sin error y sin log. Mismo par que `Quotations:WhatsApp:*` con Zenvia. Hasta el
+  correo, sin error y sin log. Hasta el
   2026-09-06 el default era `infobip`, así que una factoría de integración que no fijara la clave
   mataba **todas** las pruebas de su archivo en el arranque; ya no, pero todas la fijan igual y
   conviene seguir haciéndolo: deja explícito qué canal ejerce la prueba.
@@ -251,11 +251,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   ejemplo. Costó cuatro intentos el 2026-09-04. El procedimiento entero está en
   [README § Plantilla de WhatsApp](README.md#plantilla-de-whatsapp-zenvia).
 - **El texto de la plantilla no se edita: se crea otra.** Meta no permite modificar una plantilla
-  aprobada, así que cambiar una coma implica plantilla nueva, aprobación nueva y apuntar
-  `Quotations:WhatsApp:TemplateId` al `id` nuevo. Si además cambian las variables, se toca
-  `WhatsAppQuotationMessage` y `ZenviaWhatsAppSender` — y el `TemplateId` viaja en **el mismo
-  commit** que ese código: apuntar a una plantilla cuyas variables no coinciden con las que el
-  backend manda rompe el envío en producción sin error de compilación.
+  aprobada, así que cambiar una coma implica plantilla nueva, aprobación nueva y editar el
+  `templateId` de la conexión de Zenvia de cada tenant (no hay cuenta global desde el plan
+  2026-10-21). Si además cambian las variables, se toca `WhatsAppQuotationMessage` y
+  `ZenviaWhatsAppSender` — y el `templateId` de las conexiones se actualiza en **el mismo
+  despliegue** que ese código: una plantilla cuyas variables no coinciden con las que el backend
+  manda rompe el envío en producción sin error de compilación.
 - **`Pos` necesita la capacidad `pos` y no viene con el signup.** `GrantDefaultModulesOnSignup`
   concede siete módulos (los seis base y `shopify`) sin `pos`, así que en un tenant nuevo todo `/pos/*`
   da 403 aunque el rol tenga los permisos: se prende con la fila de `tenancy.tenant_modules` (spec de entitlements,

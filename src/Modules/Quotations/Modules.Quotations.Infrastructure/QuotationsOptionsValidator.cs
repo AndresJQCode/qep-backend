@@ -16,21 +16,13 @@ internal sealed class QuotationsOptionsValidator(IHostEnvironment environment)
             failures.Add("Quotations:ExpirationSweepMinutes must be greater than zero.");
         }
 
-        // Sin las tres claves, AddWhatsAppSender cae a LogWhatsAppSender, que registra el
-        // mensaje y no lo manda. Fuera de producción ese no-op es el que deja "Enviar"
-        // funcionando sin aprovisionar Zenvia (todas las pruebas de integración incluidas).
-        // En producción es una trampa silenciosa: la API responde 200, la cotización pasa a
-        // Sent y el cliente nunca recibe nada — sin excepción, sin log de error y sin forma de
-        // distinguirlo de un envío real. Se prefiere que el arranque falle a que el negocio
-        // pierda pedidos sin enterarse.
+        // WhatsApp no se exige: la cuenta de Zenvia es de cada tenant y vive en su conexión (plan
+        // 2026-10-21). Un tenant sin ella recibe `quotation.whatsapp.no_channel`, que es ruidoso.
         if (environment.IsProduction())
         {
-            failures.AddRange(MissingWhatsAppKeys(options.WhatsApp));
-
-            // A diferencia de WhatsApp, acá no hay fallback: sin la key `qcode-pdf` responde
-            // 401 y el envío falla con `quotation.pdf.render_failed`, que es ruidoso. Se exige
-            // igual al arrancar porque descubrirlo cuando una asesora aprieta Enviar es mucho
-            // más caro que un proceso que no levanta.
+            // Sin la key `qcode-pdf` responde 401 y el envío falla con `quotation.pdf.render_failed`,
+            // que es ruidoso. Se exige igual al arrancar porque descubrirlo cuando una asesora
+            // aprieta Enviar es mucho más caro que un proceso que no levanta.
             if (string.IsNullOrWhiteSpace(options.Pdf.ApiKey))
             {
                 failures.Add(
@@ -53,31 +45,4 @@ internal sealed class QuotationsOptionsValidator(IHostEnvironment environment)
             ? ValidateOptionsResult.Fail(failures)
             : ValidateOptionsResult.Success;
     }
-
-    private static IEnumerable<string> MissingWhatsAppKeys(WhatsAppOptions whatsApp)
-    {
-        if (string.IsNullOrWhiteSpace(whatsApp.ApiToken))
-        {
-            yield return Required(nameof(WhatsAppOptions.ApiToken));
-        }
-
-        if (string.IsNullOrWhiteSpace(whatsApp.FromNumber))
-        {
-            yield return Required(nameof(WhatsAppOptions.FromNumber));
-        }
-
-        if (string.IsNullOrWhiteSpace(whatsApp.TemplateId))
-        {
-            yield return Required(nameof(WhatsAppOptions.TemplateId));
-        }
-
-        // `OrderTemplateId` no se exige, a propósito: la plantilla del pedido todavía tiene que crearse
-        // y aprobarse en Zenvia/Meta, y exigirla frenaría todo despliegue hasta entonces. Su ausencia
-        // tampoco es la trampa silenciosa de arriba: enviar un pedido sin ella responde
-        // `order.whatsapp.not_configured`, ruidoso, y no deja historial de un envío que no ocurrió.
-    }
-
-    private static string Required(string key) =>
-        $"Quotations:WhatsApp:{key} is required in Production: without it the quotation is "
-        + "marked as sent but no WhatsApp message leaves the system.";
 }

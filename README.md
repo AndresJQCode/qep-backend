@@ -139,7 +139,7 @@ local y por variable de entorno en k8s
 | `Integrations:SecretProtection:ActiveKeyId`            | ausente (user-secrets en local)                                                               | Id de la llave con la que se cifran las credenciales de las conexiones (`^[a-z0-9]{1,32}$`). **En `Production` es obligatoria**, y su llave tiene que existir y ser de 32 bytes en base64: sin ella la API no arranca. Fuera de producción, sin ella la API arranca y crear o editar una conexión responde `503 integrations.secret_protection.unavailable`. Ver [Integraciones](#integraciones-conexiones-del-tenant) |
 | `Integrations:SecretProtection:Keys:<id>`              | user-secrets                                                                                  | Llave AES-256 (32 bytes en base64). Es un secreto: en k8s va en el Secret, nunca en el ConfigMap |
 | `Integrations:SecretProtection:RekeyIntervalMinutes`   | `60`                                                                                          | Cada cuánto el worker re-cifra con la llave activa, además de al arrancar. Entre 1 y 1440 |
-| `Integrations:Zenvia:BaseUrl`                          | `https://api.zenvia.com`                                                                      | URL de la prueba de credenciales de Zenvia (`GET /v2/templates`). HTTPS absoluta. El sender global de cotizaciones sigue usando `Quotations:WhatsApp:BaseUrl` |
+| `Integrations:Zenvia:BaseUrl`                          | `https://api.zenvia.com`                                                                      | URL de la prueba de credenciales de Zenvia (`GET /v2/templates`). HTTPS absoluta. El envío de cotizaciones y pedidos usa la suya, `Quotations:WhatsApp:BaseUrl` |
 | `Meta:App:AppId`, `Meta:App:ConfigId`                | ausentes (user-secrets en local)                                                              | La app de Meta de toda la plataforma (spec 2026-10-09). Públicos: viajan en el popup de Embedded Signup. **En `Production` son obligatorios** junto con los tres de abajo (`MetaAppOptionsValidator`); fuera, sin ellos `whatsapp-cloud` no sale en el catálogo y el webhook responde 403/401 |
 | `Meta:App:GraphApiVersion`                           | `v24.0` (sólo fuera de `Production`)                                                          | Versión de Graph; patrón `^v\d+\.\d+$`. **También es obligatoria en `Production`** (`MetaAppOptionsValidator` exige las cinco claves: AppId, ConfigId, GraphApiVersion, AppSecret, WebhookVerifyToken); el ConfigMap de k8s la fija en `v24.0` |
 | `Meta:App:AppSecret`, `Meta:App:WebhookVerifyToken`  | user-secrets                                                                                  | Secretos: el `AppSecret` canjea el `code` y firma el webhook; el token verifica la suscripción (aleatorio, ≥ 32 caracteres). En k8s van en el Secret |
@@ -195,19 +195,16 @@ dotnet user-secrets set "Notifications:Infobip:ApiKey"  "<infobip-api-key>"     
 > `Notifications:Infobip:ApiKey is required` sin pista de que el problema es el
 > prefijo.
 
-Zenvia (envío de la cotización por WhatsApp, `SendQuotation.cs` — "de momento" con estas dos
-variables). Sin configurar, `AddWhatsAppSender` cae a `LogWhatsAppSender` (registra el mensaje,
-no llama a nada externo): "Enviar" sigue funcionando igual que hoy, sólo que sin mandar el
-WhatsApp real hasta que esto se aprovisione:
+Zenvia (envío de la cotización y del pedido por WhatsApp) **no va en user-secrets**: no hay cuenta
+global. Cada tenant configura la suya como conexión de Zenvia en Integraciones —token, número emisor,
+ID de la plantilla de cotización y, opcional, el de la de pedido— (plan 2026-10-21). En local:
 
-```powershell
-dotnet user-secrets set "Quotations:WhatsApp:ApiToken"    "<zenvia-api-token>"    --project src/Api
-dotnet user-secrets set "Quotations:WhatsApp:FromNumber"  "<zenvia-from-number>" --project src/Api
-```
+1. El operador habilita Zenvia para el tenant (consola de Plataforma, «Proveedores»).
+2. Con `Integrations:SecretProtection:*` configurado (ver [Integraciones](#integraciones-conexiones-del-tenant)),
+   se crea la conexión desde Integraciones con los datos de una cuenta de Zenvia real.
 
-> `TemplateId` no es secreto — vive en `appsettings.json`, mismo criterio que
-> `SenderEmail` en Infobip. Pisarlo por ambiente es opcional
-> (`Quotations:WhatsApp:TemplateId`).
+Sin conexión, «Enviar» responde `422 quotation.whatsapp.no_channel`; no existe un envío de mentira
+que registre el mensaje y lo dé por enviado.
 
 Cloudflare R2 (object storage obligatorio, ADR 0020):
 
@@ -1242,9 +1239,10 @@ error en [`docs/integracion-cotizaciones-y-pedidos.md`](docs/integracion-cotizac
   Cachearlo pediría una tabla invalidada por `Order.Version`, y enviar un pedido es raro.
 - **Sin registro propio de fallas**: el log de fallas de la API guarda la excepción, y `order.send.failed`
   nombra el paso.
-- **Plantilla propia en Zenvia** (`Quotations:WhatsApp:OrderTemplateId`), ver
-  [Plantilla de WhatsApp](#plantilla-de-whatsapp-zenvia). Mientras esté vacía, enviar un pedido responde
-  `order.whatsapp.not_configured` (fuera de producción, sin Zenvia, sale por `LogWhatsAppSender`).
+- **Plantilla propia en Zenvia**: el `orderTemplateId` de la conexión de Zenvia del tenant, ver
+  [Plantilla de WhatsApp](#plantilla-de-whatsapp-zenvia). Sin él, enviar un pedido responde
+  `order.whatsapp.not_configured` antes de generar el PDF; sin conexión, `order.whatsapp.no_channel`, y con
+  más de una, `order.whatsapp.channel_required`.
 
 ### Catálogo: opciones, variantes y galería
 
@@ -2075,9 +2073,11 @@ todavía no se adjuntaron o no se movieron: no debe haber ninguna.
 ### Plantilla de WhatsApp (Zenvia)
 
 Enviar una cotización (`POST /quotations/{id}/send`) manda un WhatsApp al cliente con el PDF
-adjunto, a través de una plantilla aprobada por Meta. Cuál es la plantilla vigente lo dice
-`Quotations:WhatsApp:TemplateId` en [`appsettings.json`](src/Api/appsettings.json) — acá no se
-repite, para que no haya dos versiones de la verdad. Sus variables son las que
+adjunto, a través de una plantilla aprobada por Meta. Sale por **la conexión de Zenvia del tenant**
+(Integraciones, plan 2026-10-21): cuál es la plantilla vigente lo dice su campo `templateId`, y el
+número emisor, su `fromNumber`. No hay cuenta ni plantilla global. Un tenant sin conexión disponible
+recibe `422 quotation.whatsapp.no_channel`, y uno con más de una, `quotation.whatsapp.channel_required`
+(elegir entre varias es del plan 3 del spec 2026-10-21). Las variables de la plantilla son las que
 `ZenviaWhatsAppSender` completa en runtime:
 
 | Variable | De dónde sale |
@@ -2089,8 +2089,8 @@ repite, para que no haya dos versiones de la verdad. Sus variables son las que
 | `valid_until` | `Quotation.ValidUntil`, formateado `d 'de' MMMM 'de' yyyy` en `es-CO` |
 
 **El pedido usa una segunda plantilla** (`POST /orders/{id}/send`, ver
-[Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp)), y
-`Quotations:WhatsApp:OrderTemplateId` apunta a ella. Sus variables son las de la cotización menos
+[Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp)), y el campo `orderTemplateId` de la
+conexión apunta a ella. Sus variables son las de la cotización menos
 `valid_until` —un pedido no vence—, con el documento como header `MEDIA_DOCUMENT`:
 
 | Variable | De dónde sale |
@@ -2101,17 +2101,17 @@ repite, para que no haya dos versiones de la verdad. Sus variables son las que
 | `total` | `Order.Total`, con el mismo formato que la cotización |
 
 > **Decisión pendiente (owner):** el texto de la plantilla del pedido, su `name` y su aprobación en
-> Zenvia/Meta. No existe todavía: por eso `OrderTemplateId` está vacía en `appsettings.json` y en el
-> ConfigMap, y `QuotationsOptionsValidator` **no** la exige (exigirla frenaría todo despliegue hasta que
-> Meta la apruebe). Mientras tanto el endpoint existe y responde `order.whatsapp.not_configured`. Al
-> aprobarse: el `id` va a `OrderTemplateId` —en producción, el ConfigMap pasa del `""` literal al token
-> `#{QUOTATIONS_WHATSAPP_ORDER_TEMPLATE_ID}#`, junto con la variable en `Backend-prod`—, y se crea con el
-> mismo procedimiento de abajo, cambiando `components.body.text` y quitando `valid_until` de `examples`.
+> Zenvia/Meta. Por eso `orderTemplateId` es opcional en la conexión: sin él, el endpoint responde
+> `order.whatsapp.not_configured`. Se crea con el mismo procedimiento de abajo, cambiando
+> `components.body.text` y quitando `valid_until` de `examples`, y su `id` se carga en la conexión de cada
+> tenant.
 
 **Cambiar el texto de la plantilla no se hace acá: se crea una plantilla nueva en Zenvia y se
-apunta `Quotations:WhatsApp:TemplateId` al `id` que devuelva.** Meta no permite editar una
-plantilla aprobada. Si además cambian las variables, hay que tocar
-`WhatsAppQuotationMessage` y `ZenviaWhatsAppSender`.
+edita el `templateId` de la conexión de Zenvia del tenant con el `id` que devuelva.** Meta no permite
+editar una plantilla aprobada, y en Zenvia la plantilla va atada al número emisor: cada tenant usa la
+que creó con su propia cuenta. Si además cambian las variables, hay que tocar
+`WhatsAppQuotationMessage` y `ZenviaWhatsAppSender`, y actualizar el `templateId` de las conexiones en
+el mismo despliegue.
 
 #### Crear una plantilla nueva
 
@@ -2120,7 +2120,7 @@ curl --location 'https://api.zenvia.com/v2/templates' --header 'X-API-TOKEN: <ze
   "channel": "WHATSAPP",
   "name": "cotizacion_pdf_cliente",
   "locale": "es",
-  "senderId": "<el mismo valor de Quotations:WhatsApp:FromNumber>",
+  "senderId": "<el fromNumber de la conexión de Zenvia del tenant>",
   "category": "UTILITY",
   "components": {
     "header": { "type": "MEDIA_DOCUMENT" },
@@ -2147,7 +2147,7 @@ Reglas que no se deducen del schema y que rebotan la plantilla:
 
 - **El PDF viaja como `documentUrl` dentro de `fields`**, no como un contenido aparte de tipo
   `file`. La misma clave se usa en `examples` (`imageUrl`/`videoUrl` para los otros medios).
-- **`senderId` es el número emisor**, el mismo valor que `Quotations:WhatsApp:FromNumber`. El
+- **`senderId` es el número emisor**, el mismo valor que el `fromNumber` de la conexión. El
   ejemplo con forma de UUID que trae la referencia de Zenvia es del parámetro genérico de
   filtrado, compartido por todos los canales. No existe un endpoint `/senders`: para leerlo,
   `GET /v2/templates/{id}` de una plantilla existente.
@@ -2171,24 +2171,18 @@ ejemplo por su cuenta, así que sortea los tres últimos puntos.
 
 #### En producción
 
-Las claves se inyectan por entorno y se resuelven desde el variable group
-`Backend-<env>` de Azure DevOps:
+No hay claves de Zenvia en el ConfigMap ni en el Secret: la cuenta es de cada tenant y viaja cifrada en su
+conexión (`Integrations:SecretProtection`). Al desplegar el cambio que retiró la cuenta global (plan
+2026-10-21):
 
-| Clave | Manifiesto | Token del pipeline |
-| --- | --- | --- |
-| `Quotations__WhatsApp__TemplateId` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_WHATSAPP_TEMPLATE_ID` |
-| `Quotations__WhatsApp__OrderTemplateId` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | ninguno todavía: `""` literal hasta que la plantilla del pedido esté aprobada (ver arriba) |
-| `Quotations__WhatsApp__ApiToken` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_WHATSAPP_API_TOKEN` |
-| `Quotations__WhatsApp__FromNumber` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_WHATSAPP_FROM_NUMBER` |
+1. **Antes**, cada tenant que envía cotizaciones —hoy Origen Botánico— tiene su conexión de Zenvia con
+   token, número y `templateId` (los de la cuenta que estaba en `QUOTATIONS_WHATSAPP_*`), y el operador
+   le habilitó Zenvia. Sin eso, ese tenant pierde el envío el día del despliegue.
+2. **Después**, se borran del grupo `Backend-prod` las variables `QUOTATIONS_WHATSAPP_API_TOKEN`,
+   `QUOTATIONS_WHATSAPP_FROM_NUMBER` y `QUOTATIONS_WHATSAPP_TEMPLATE_ID`: ningún manifiesto las lee.
 
-El `TemplateId` va al ConfigMap aunque repita el valor por defecto de la imagen: cambiar el
-texto del mensaje no toca código, pero exige una plantilla nueva —Meta no permite editar una
-aprobada— y sin esta clave ese cambio obligaría a reconstruir y desplegar la imagen.
-
-**Si el token o el número faltan, no hay error.** `AddWhatsAppSender` registra
-`LogWhatsAppSender`, el endpoint responde 200, la cotización queda `Sent` y el cliente no recibe
-nada. Es el mismo criterio que `Notifications:EmailProvider` con Infobip, y el precio de que las
-pruebas de integración no necesiten credenciales.
+Una conexión de Zenvia creada antes de este cambio no tiene `templateId` y no cuenta como canal hasta que
+se edite.
 
 ### Generación del PDF (`qcode-pdf`)
 
@@ -2316,7 +2310,8 @@ Nunca se retira una llave a la que todavía apunta algún secreto.
    bóveda). Sin ella, el pod nuevo entra en crash-loop por `SecretProtectionOptionsValidator`: es a
    propósito.
 2. Backend: código, migración `InitialIntegrations`, la línea del Secret y la del ConfigMap, en el mismo
-   merge. `Quotations__WhatsApp__*` se quedan: el sender global sigue hasta el spec del consumidor.
+   merge. La cuenta global de Zenvia (`Quotations__WhatsApp__*`) se retiró después, con el plan 2026-10-21:
+   ver [Plantilla de WhatsApp § En producción](#en-producción).
 3. Frontend, después. **Rollback del backend:** el frontend muestra la tarjeta y la API responde 404;
    nada se corrompe porque ningún consumidor depende del módulo.
 
