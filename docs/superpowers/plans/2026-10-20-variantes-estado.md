@@ -22,7 +22,7 @@ Archivo vivo: se actualiza al cerrar cada tarea o decisión. Las tareas detallad
 | 4 | Biblioteca de opciones: casos de uso y API | Hecha (`13d50f02`), pruebas escritas y sin ejecutar |
 | 5 | Producto con variantes: crear, ver, listar, editar | Hecha (`852cd6c5`, `3f9497b9`), pruebas sin ejecutar |
 | 6 | Borrar o desactivar variantes (puerto de uso) | Hecha (`5bd62b58`, `72e91421`), pruebas sin ejecutar |
-| 7 | Historial de precios y copia de escalas por variante | Pendiente |
+| 7 | Historial de precios y copia de escalas por variante | Hecha (`f870b495`, `09072af1`), pruebas sin ejecutar |
 | 8 | Excel de productos por variante | Pendiente |
 | 9 | Adaptadores hacia Quotations, Pos y Shopify | Pendiente |
 | 10 | Quotations: líneas por variante | Pendiente |
