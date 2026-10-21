@@ -9,8 +9,9 @@ Archivo vivo: se actualiza al cerrar cada tarea o decisión. Las tareas detallad
 | --- | --- | --- |
 | Diseño | Aprobado por el owner (2026-10-20), en `develop` local, sin push | `ea383771` |
 | Plan backend | Escrito, en `develop` local, sin push; **ejecución: subagentes, en sesión nueva** | `e0d7756f` |
-| Implementación backend | En curso, rama `feature/variantes-producto` (worktree `../qep-backend-variantes`) | — |
-| Plan y trabajo de frontend | No iniciado (sale en la misma ventana que el backend) | — |
+| Implementación backend | Hecha y mergeada a `develop` local con ff-only (2026-10-21), sin push. **Pruebas escritas y sin ejecutar desde la T4** (instrucción del owner) | `feature/variantes-producto`, desde `95dbdd0c` |
+| Revisión independiente | Pendiente: sesión con Fable, prompt en [`2026-10-20-variantes-revision-fable.md`](2026-10-20-variantes-revision-fable.md) | — |
+| Plan y trabajo de frontend | No iniciado; el contrato está en el [traspaso](2026-10-20-variantes-handoff.md) (sale en la misma ventana que el backend) | — |
 
 ## Tareas del plan (backend)
 
@@ -45,13 +46,22 @@ Estados: Pendiente · En curso · Hecha (con SHA del commit) · Bloqueada (con m
 
 ## Pendientes y riesgos abiertos
 
-- Método elegido por el owner (2026-10-20): `superpowers:subagent-driven-development`, en sesión nueva. Falta crear la rama `feature/variantes-producto` desde `develop`, preferiblemente en un worktree (el árbol se comparte entre sesiones).
-- Plan del frontend: no existe; parte del traspaso de la tarea 15.
-- T9–T12 cambian contratos entre módulos y se commitean juntas.
-- Antes de desplegar: backend y frontend juntos; probar el escáner del POS con códigos de barras reales.
+- **Correr las pruebas.** Desde la T4 se escribieron y no se ejecutaron (sólo `build` y `format`). Hay que correrlas por
+  módulo antes de llevar nada a `main`: Catalog, Quotations, Pos, Reporting, Shopify, Identity, `Bootstrapper.UnitTests`
+  y `ArchitectureTests`. Las 18 consultas LINQ de riesgo se verificaron con `ToQueryString` y traducen.
+- **Despliegue destructivo.** `AddProductVariants` borra columnas de `catalog.products`: backup, ventana de corte y orden
+  de vuelta atrás en el [traspaso §13](2026-10-20-variantes-handoff.md). Backend y frontend salen juntos.
+- **Decisiones que el owner debe confirmar** (detalle en el traspaso §11): columna «Variante» con nombre o vacía en la
+  variante por defecto; el código de barras de una variante inactiva gana al escanear; borrar una variante borra su
+  historial (CASCADE); carrera de borrado aceptada (`variant_id` huérfano); la búsqueda del listado también encuentra
+  por código de barras; borrar es explícito con `deletedVariantIds`.
+- Plan del frontend: no existe; sale del traspaso.
+- Antes de desplegar: probar el escáner del POS con códigos de barras reales.
 - Proyectos siguientes (orden acordado): 2 productos desde Shopify → 3 campanita → 4 alertas de la conexión Shopify.
 
 ## Registro
 
 - 2026-10-20 — Diseño aprobado y mergeado a `develop`; plan escrito.
 - 2026-10-20 — El owner elige ejecutar por subagentes en una sesión nueva.
+- 2026-10-21 — Implementación por subagentes: tareas 1–15 y la 14b agregada (selector, spec §6); T9–T12 en un commit
+  (`34944393`); revisión final con dos arreglos importantes (integrar `develop`, despliegue). Mergeada a `develop` local.
