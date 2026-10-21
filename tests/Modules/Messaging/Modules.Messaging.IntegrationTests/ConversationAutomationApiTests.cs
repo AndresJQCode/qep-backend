@@ -63,7 +63,7 @@ public sealed class ConversationAutomationApiTests
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
-        var chatbotId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT automation_chatbot_id FROM messaging.conversations");
+        var chatbotId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT automation_chatbot_id FROM messaging.conversations WHERE id = @id", ("id", f.ConversationId));
         await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET automation_step = 'Número de documento' WHERE id = @id", ("id", f.ConversationId));
 
         var response = await SendAsync(f.Client, HttpMethod.Get, ConversationUrl(f.Tenant.TenantId, f.ConversationId));

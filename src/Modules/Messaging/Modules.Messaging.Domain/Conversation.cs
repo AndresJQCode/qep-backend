@@ -326,7 +326,19 @@ public sealed partial class Conversation
 
     /// <summary>Spec 2026-10-21 D-M14: el paso del flujo donde va la conversación. No hace <c>Touch</c>: lo escribe el motor en cada
     /// avance y no es un cambio que el asesor deba ver como actividad ni que mueva la versión por sí solo.</summary>
-    public void SetAutomationStep(string? stepTitle) => AutomationStep = stepTitle;
+    public void SetAutomationStep(string? stepTitle)
+    {
+        // D-M11: el paso vive sólo mientras hay asistente; sin él quedaría un paso huérfano.
+        if (AutomationStatus == ConversationAutomationStatus.None)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.AutomationNotAvailable, "There is no assistant to hold a step.");
+        }
+
+        // La columna es de 120: el título de un nodo más largo no debe tumbar el SaveChanges a mitad de un flujo.
+        AutomationStep = Truncate(stepTitle, AutomationStepMaxLength);
+    }
+
+    private const int AutomationStepMaxLength = 120;
 
     /// <summary>Spec 2026-10-21 D-M11: el flujo terminó. Sólo desde <c>Active</c>: una pausada la decide una persona y se devuelve con
     /// <see cref="ResumeAutomation"/>. Sin evento: el cierre de un flujo no es un hecho de asignación que mostrar en el hilo.</summary>

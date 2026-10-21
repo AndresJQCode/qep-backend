@@ -61,4 +61,52 @@ public sealed class ConversationAutomationTests
         Assert.Null(conversation.AutomationChatbotId);
         Assert.Null(conversation.AutomationStep);
     }
+
+    [Fact]
+    public void SetAutomationStepNeedsAnAssistant()
+    {
+        Assert.Equal(MessagingErrorCodes.AutomationNotAvailable, Assert.Throws<MessagingDomainException>(() => Open().SetAutomationStep("Paso")).Code);
+    }
+
+    [Fact]
+    public void SetAutomationStepTruncatesTo120AndLeavesVersionAndUpdatedAt()
+    {
+        var conversation = Open();
+        conversation.StartAutomation(ChatbotId, Now);
+        var version = conversation.Version;
+        var updatedAt = conversation.UpdatedAt;
+
+        conversation.SetAutomationStep(new string('a', 200));
+
+        Assert.Equal(120, conversation.AutomationStep!.Length);
+        Assert.Equal(version, conversation.Version);
+        Assert.Equal(updatedAt, conversation.UpdatedAt);
+    }
+
+    [Fact]
+    public void StartAndEndBumpVersionAndUpdatedAt()
+    {
+        var later = Now.AddMinutes(5);
+        var conversation = Open();
+        var version = conversation.Version;
+
+        conversation.StartAutomation(ChatbotId, later);
+        Assert.Equal((version + 1, later), (conversation.Version, conversation.UpdatedAt));
+
+        conversation.EndAutomation(later.AddMinutes(1));
+        Assert.Equal((version + 2, later.AddMinutes(1)), (conversation.Version, conversation.UpdatedAt));
+    }
+
+    [Fact]
+    public void PausingKeepsChatbotAndStep()
+    {
+        var conversation = Open();
+        conversation.StartAutomation(ChatbotId, Now);
+        conversation.SetAutomationStep("Número de documento");
+
+        conversation.PauseAutomation(null, AutomationPauseReason.Manual, Now);
+
+        Assert.Equal(ChatbotId, conversation.AutomationChatbotId);
+        Assert.Equal("Número de documento", conversation.AutomationStep);
+    }
 }
