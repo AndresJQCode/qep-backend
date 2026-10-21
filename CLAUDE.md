@@ -343,6 +343,22 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   del triage se cierra con el índice único `IX_triage_decisions_conversation_inbound`, que
   `PipelineUnitOfWork` traduce a `pipeline.triage.already_decided` **por nombre de índice**: no la muevas a una
   comprobación previa en el handler, que dejaría dos negocios.
+- **EF ordena los `UPDATE` de un `SaveChanges` por clave primaria, no por el orden en que tocaste las entidades.**
+  Con un índice único parcial que admite una sola fila (`IX_business_hours_tenant_default`, `WHERE is_default`), «quitar
+  el predeterminado al anterior y ponérselo al nuevo» en un solo `SaveChanges` falla con 409 cada vez que el nuevo tiene
+  un id **menor** (GUID v7 más antiguo): su `UPDATE … true` corre antes que el `… false` del anterior. La prueba que sólo
+  mueve el predeterminado del más viejo al más nuevo pasa por casualidad. La solución es dos `SaveChanges` en una
+  transacción explícita con el orden fijo (`BusinessHoursRepository.SwapDefaultAsync`, 2026-10-21), como
+  `TryAutoAssignAsync`; y cualquier `SaveChanges` fuera de `MessagingUnitOfWork` pasa por `MessagingSaveChanges.SaveAsync`,
+  que es donde viven las traducciones por nombre de índice —un `SaveChanges` directo del `DbContext` responde 500 donde
+  tocaba 409 o 412. Un intercambio parecido en otro módulo (un «único activo» por tenant) tiene el mismo problema.
+- **Dos eventos del mismo cambio en el hilo necesitan `occurred_at` distinto.** `MessageQueries` ordena por
+  `occurred_at, id` y los GUID v7 **no** están ordenados dentro del mismo milisegundo, así que «pausó el asistente» salía
+  antes que «tomó la conversación». `ConversationAssignmentSteps.CommitAsync` y `TryAutoAssignAsync` escriben el evento
+  n-ésimo de un cambio en `now + n µs`; una prueba que compare los tipos sin orden esconde la regresión.
+- **En esta máquina las pruebas de integración necesitan `$env:Seed__Enabled = "false"`.** Los user-secrets traen
+  `Seed:*` y el host de pruebas falla en el arranque con `Seed:OwnerEmail is required when Seed:Enabled is true`. No es
+  del código: es la configuración local del developer (2026-10-21).
 - **Un `FromSql` crudo debe listar todas las columnas mapeadas de la entidad.** El `SELECT … FOR UPDATE` de
   `QuotationSettingsStore` no se puede componer (EF lo envolvería en una subconsulta), así que EF no completa
   las columnas que falten: al agregar `freight_tax_rate_id` a `tenant_quotation_settings`, guardar el mínimo de

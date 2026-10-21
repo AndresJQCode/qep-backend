@@ -38,6 +38,20 @@ falla. Ninguno de los dos `develop` se despliega solo hasta que exista el fronte
 
 Orden acordado con el owner: variantes → productos desde Shopify → campanita → alertas.
 
+**Automatizaciones: siguiente paso (instrucción para la próxima sesión, 2026-10-21).** El backend del spec 1 está en
+`develop`; falta su frontend. Se ejecuta en `qep-frontend` desde `develop` (verificar la rama primero), en un worktree
+con rama `feature/mensajeria-asistente-y-horarios`, con el plan
+`qep-frontend/docs/superpowers/plans/2026-10-21-mensajeria-asistente-y-horarios-frontend.md` (9 tareas `AH-01..AH-09`,
+subagentes, revisión por tarea y final), y sólo con el «arranca» del developer. El contrato del backend que consume está
+en ese plan y en la §4.5/§5.3 del spec (ya en `develop` de este repo). Dos decisiones ya tomadas que el frontend debe
+respetar: el copy de la conversación sigue diciendo «asistente» (el módulo se llama «Automatizaciones»), y el editor de
+horarios toma las conexiones de `connections` del `GET /business-hours`, no de `GET /messaging/connections`. En paralelo,
+la maquetación visual del módulo (lista de chatbots, nuevo, editor, plantillas) va en otra sesión y otra rama del
+frontend (`feature/automatizaciones-maquetacion`), sin backend. Después del frontend siguen, en orden: spec 2
+(interactivos salientes), spec 3 (claves de API y envío proactivo), spec 4 (constructor: motor y simulador → editor React
+Flow con plantillas públicas → bloque HTTP y conexión «API externa»), y al final la migración de lulo-chat
+(`docs/superpowers/specs/2026-10-21-migracion-lulo-chat-design.md`, sin commitear, con 10 preguntas abiertas en §4).
+
 **Envío por canal.** La cotización y el pedido salen por la conexión de Zenvia del tenant (plan 2 recortado a Zenvia,
 `07217b94`: `IWhatsAppChannelDirectory`, `QuotationsWhatsAppChannelDirectory`, `WhatsAppChannelSelection`). La cuenta
 global `Quotations:WhatsApp:{ApiToken, FromNumber, TemplateId, OrderTemplateId}` y `LogWhatsAppSender` ya no existen.
