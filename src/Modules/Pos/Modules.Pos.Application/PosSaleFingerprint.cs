@@ -14,13 +14,17 @@ namespace Modules.Pos.Application;
 /// imita otro reparto de campos. Se eligió la huella y no "total + líneas" porque dos carritos
 /// distintos pueden dar el mismo total. Desde las variantes (spec 2026-10-20 §5) la línea se
 /// identifica por su variante: el mismo id de venta con otra talla del mismo producto es otro
-/// carrito, no una repetición.
+/// carrito, no una repetición. Con cliente identificado (spec 2026-10-14, decisión 6) se agrega un
+/// cuarto elemento, el customerId en "D", y SÓLO cuando viene: sin cliente el arreglo sigue siendo de
+/// tres elementos y la huella es byte a byte la de antes, así un reintento en vuelo durante el
+/// despliegue (cuerpo viejo, sin customerId) no falla con pos.sale.id_conflict. Con cliente, otro
+/// cliente es otro carrito.
 /// </summary>
 internal static class PosSaleFingerprint
 {
     public static string Compute(CreatePosSaleCommand command)
     {
-        object?[] canonical =
+        List<object?> canonical =
         [
             command.CashSessionId.ToString("D"),
             command.Lines
@@ -43,6 +47,11 @@ internal static class PosSaleFingerprint
                 })
                 .ToArray(),
         ];
+
+        if (command.CustomerId is { } customerId)
+        {
+            canonical.Add(customerId.ToString("D"));
+        }
 
         var json = JsonSerializer.Serialize(canonical);
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(json)));

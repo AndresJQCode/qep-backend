@@ -10,13 +10,15 @@ public sealed class PosSaleFingerprintTests
     private static readonly Guid ProductB = Guid.Parse("01900000-0000-7000-8000-0000000000a2");
 
     private static CreatePosSaleCommand Command(
-        PosSaleLineRequest[]? lines = null, PosPaymentRequest[]? payments = null, Guid? id = null) =>
+        PosSaleLineRequest[]? lines = null, PosPaymentRequest[]? payments = null, Guid? id = null,
+        Guid? customerId = null) =>
         new(
             PosFixtures.TenantId,
             id ?? Guid.Parse("6f1c2a52-8a3e-4c4e-9d55-3c2b1e0f7a11"),
             Session,
             lines ?? [new(ProductA, 2m, 10m, 11_900m, 19), new(ProductB, 1.5m, 0m, 5_000m, 0)],
-            payments ?? [new("Card", 20_000m, null, "1234"), new("Cash", null, 20_000m, null)]);
+            payments ?? [new("Card", 20_000m, null, "1234"), new("Cash", null, 20_000m, null)],
+            customerId);
 
     [Fact]
     public void TheSameBodyGivesTheSameLowercaseSha256()
@@ -120,5 +122,42 @@ public sealed class PosSaleFingerprintTests
         Assert.Equal(
             PosSaleFingerprint.Compute(Command(id: Guid.CreateVersion7())),
             PosSaleFingerprint.Compute(Command(id: Guid.CreateVersion7())));
+    }
+
+    // Valor calculado fuera de línea con el JSON canónico del Command() por defecto, antes del cambio: un reintento en
+    // vuelo durante el despliegue manda el cuerpo viejo (sin customerId) y su huella debe ser idéntica byte a byte, o
+    // falla con pos.sale.id_conflict (spec decisión 6).
+    [Fact]
+    public void WithoutACustomerTheFingerprintIsTheLiteralFromBeforeTheChange()
+    {
+        Assert.Equal(
+            "91c8970aedd0a55f6f42f3bda80eff7dce36cc5e6a940932b72b858e8fa5b23e",
+            PosSaleFingerprint.Compute(Command()));
+    }
+
+    [Fact]
+    public void ACustomerChangesTheFingerprintAndTwoCustomersDiffer()
+    {
+        var customerA = Guid.Parse("01930000-0000-7000-8000-0000000000c1");
+        var customerB = Guid.Parse("01930000-0000-7000-8000-0000000000c2");
+
+        string[] fingerprints =
+        [
+            PosSaleFingerprint.Compute(Command()),
+            PosSaleFingerprint.Compute(Command(customerId: customerA)),
+            PosSaleFingerprint.Compute(Command(customerId: customerB)),
+        ];
+
+        Assert.Equal(fingerprints.Length, fingerprints.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    [Fact]
+    public void TheSameCustomerGivesTheSameFingerprint()
+    {
+        var customer = Guid.Parse("01930000-0000-7000-8000-0000000000c1");
+
+        Assert.Equal(
+            PosSaleFingerprint.Compute(Command(customerId: customer)),
+            PosSaleFingerprint.Compute(Command(customerId: customer)));
     }
 }

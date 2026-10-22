@@ -7,12 +7,14 @@ using Modules.Tenancy.Application;
 namespace Modules.Pos.Application;
 
 /// <param name="Id">Lo genera el cliente al abrir el cobro: es la clave de idempotencia.</param>
+/// <param name="CustomerId">Cliente identificado de la venta; opcional y al final para que lo construido sin él compile igual.</param>
 public sealed record CreatePosSaleCommand(
     Guid TenantId,
     Guid Id,
     Guid CashSessionId,
     IReadOnlyList<PosSaleLineRequest> Lines,
-    IReadOnlyList<PosPaymentRequest> Payments) : ICommand<PosSaleCreation>;
+    IReadOnlyList<PosPaymentRequest> Payments,
+    Guid? CustomerId = null) : ICommand<PosSaleCreation>;
 
 /// <param name="Created">false en una repetición reconocida: el endpoint responde 200 en vez de 201.</param>
 public sealed record PosSaleCreation(PosSaleResponse Sale, bool Created);

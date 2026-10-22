@@ -206,7 +206,8 @@ public static class PosEndpoints
         Guid tenantId, CreatePosSaleRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {
         var creation = await dispatcher.SendAsync(
-            new CreatePosSaleCommand(tenantId, request.Id, request.CashSessionId, request.Lines ?? [], request.Payments ?? []),
+            new CreatePosSaleCommand(tenantId, request.Id, request.CashSessionId, request.Lines ?? [], request.Payments ?? [],
+                request.CustomerId),
             cancellationToken);
 
         // 201 la primera vez; 200 en la repetición reconocida, con el mismo cuerpo (spec, «Crear venta»).
@@ -266,7 +267,8 @@ public sealed record CreatePosSaleRequest(
     Guid Id,
     Guid CashSessionId,
     IReadOnlyList<PosSaleLineRequest>? Lines,
-    IReadOnlyList<PosPaymentRequest>? Payments);
+    IReadOnlyList<PosPaymentRequest>? Payments,
+    Guid? CustomerId = null);
 
 public sealed record VoidPosSaleRequest(string? Reason);
 
