@@ -355,6 +355,51 @@ public sealed class Customer
     }
 
     /// <summary>
+    /// Spec «Dominio de Customers»: la ficha que da de alta la caja del POS para identificar al comprador. Nombre,
+    /// documento y, si lo hay, teléfono; sin CUC (lo emite <see cref="Complete"/> cuando alguien la completa), sin
+    /// clasificación, ciudad, correo ni libreta. El país es el del formulario web (<see cref="ColombiaCountryCode"/>):
+    /// la caja no lo pregunta y el teléfono se normaliza contra esa región. Todo se valida antes de armar la ficha.
+    /// </summary>
+    public static Customer CreateFromRegister(
+        CustomerId id,
+        Guid tenantId,
+        string name,
+        CustomerIdentification identification,
+        string? phone,
+        DateTimeOffset now,
+        IPhoneNumberNormalizer phoneNormalizer)
+    {
+        ArgumentNullException.ThrowIfNull(identification);
+        ArgumentNullException.ThrowIfNull(phoneNormalizer);
+        var normalizedName = NormalizeName(name);
+        var normalizedIdentification = identification.Normalized();
+        var normalizedPhone = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim();
+        if (normalizedPhone?.Length > CustomerContactInfo.PhoneMaxLength)
+        {
+            throw new CustomersDomainException(
+                "customers.customer.phone_too_long",
+                $"The customer phone cannot exceed {CustomerContactInfo.PhoneMaxLength} characters.");
+        }
+
+        var customer = new Customer
+        {
+            Id = id,
+            TenantId = tenantId,
+            Name = normalizedName,
+            Phone = normalizedPhone,
+            Country = ColombiaCountryCode,
+            PhoneE164 = normalizedPhone is null ? null : phoneNormalizer.ToE164(normalizedPhone, ColombiaCountryCode),
+            Completeness = CustomerCompleteness.Incomplete,
+            IsActive = true,
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        customer.Assign(normalizedIdentification);
+        return customer;
+    }
+
+    /// <summary>
     /// Spec 2026-10-10 §6.2: el <c>PUT</c> sobre un incompleto. Mismas reglas que <see cref="Create"/> (la
     /// libreta nace igual) más el CUC que el handler acaba de emitir. Todo se valida antes de asignar: un
     /// 422 deja la ficha como estaba.

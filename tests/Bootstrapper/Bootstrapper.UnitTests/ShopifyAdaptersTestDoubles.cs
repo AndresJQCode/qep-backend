@@ -250,6 +250,10 @@ internal sealed class FakeCustomerProvisioning : ICustomerProvisioning
         LastId = Guid.CreateVersion7();
         return Task.FromResult(new ProvisionedCustomer(LastId, false, true, true));
     }
+
+    public Task<ProvisionedCustomer> CreateFromRegisterAsync(
+        Guid tenantId, Guid actorId, RegisterCustomerData data, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 /// <summary>Una tienda Shopify enlazada en el estado que pide la prueba, con su ruta y el módulo prendido o no. El

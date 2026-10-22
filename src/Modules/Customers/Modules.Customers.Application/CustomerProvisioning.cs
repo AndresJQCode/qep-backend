@@ -25,10 +25,14 @@ public sealed record CompleteCustomerData(
     string? CityName,
     Guid ClassificationId);
 
+/// <summary>Lo que la caja del POS sabe del comprador al darlo de alta: nombre, documento y, si lo dio, teléfono.</summary>
+public sealed record RegisterCustomerData(string Name, string IdentificationType, string IdentificationNumber, string? Phone);
+
 /// <summary>
-/// Altas de clientes que hace el sistema por una integración, sin persona detrás (spec de Shopify §6.2.1 pasos 3 y 4).
-/// No pasa por <c>IExecutionContext</c> ni por permisos: el que llama ya resolvió el tenant (la tienda conectada) y
-/// el aislamiento lo da el <c>tenantId</c> que llega a cada consulta.
+/// Altas de clientes que hace el sistema, casi todas por una integración sin persona detrás (spec de Shopify §6.2.1
+/// pasos 3 y 4): no pasan por <c>IExecutionContext</c> ni por permisos, el que llama ya resolvió el tenant (la tienda
+/// conectada) y el aislamiento lo da el <c>tenantId</c> que llega a cada consulta. La excepción es
+/// <see cref="CreateFromRegisterAsync"/>: la caja da el alta con una persona detrás, y esa persona es el actor.
 /// </summary>
 public interface ICustomerProvisioning
 {
@@ -50,6 +54,17 @@ public interface ICustomerProvisioning
 
     Task<ProvisionedCustomer> CreateIncompleteAsync(
         Guid tenantId, string? name, string? phone, string? email, string? country, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// La ficha incompleta que da de alta la caja: nombre y documento, sin CUC. A diferencia de
+    /// <see cref="CreateCompleteAsync"/>, la carrera del documento no se traga: si otra alta ganó, el llamador tiene que
+    /// enterarse para volver a buscar al cliente que quedó.
+    /// </summary>
+    /// <exception cref="CustomersDomainException">Con <c>customers.customer.identification_type_invalid</c> si el tipo de
+    /// documento no existe; con el código de la regla rota si el nombre, el documento o el teléfono no valen; o con
+    /// <c>customers.customer.identification_taken</c> si el documento ya lo tiene otro cliente del tenant.</exception>
+    Task<ProvisionedCustomer> CreateFromRegisterAsync(
+        Guid tenantId, Guid actorId, RegisterCustomerData data, CancellationToken cancellationToken);
 }
 
 public sealed class CustomerProvisioning(
@@ -173,6 +188,26 @@ public sealed class CustomerProvisioning(
         auditPublisher.PublishByIntegration(tenantId, CustomerAuditActions.Created, customer.Id.ToString(), Success, now);
         // Sin índice único que pueda chocar: un incompleto no tiene documento, CUC, BSUID ni IGSID. Dos pedidos del mismo
         // comprador sin datos crean dos fichas; el llamador lo evita anotando el cliente antes del pedido (D-S24).
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return new ProvisionedCustomer(customer.Id.Value, IsComplete: false, IsActive: true, Created: true);
+    }
+
+    public async Task<ProvisionedCustomer> CreateFromRegisterAsync(
+        Guid tenantId, Guid actorId, RegisterCustomerData data, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        var now = clock.UtcNow;
+        var customer = Customer.CreateFromRegister(
+            CustomerId.New(),
+            tenantId,
+            data.Name,
+            CustomerMapping.ToIdentification(data.IdentificationType, data.IdentificationNumber),
+            data.Phone,
+            now,
+            phoneNormalizer);
+        repository.Add(customer);
+        // Hay una persona detrás (el cajero), así que va como Human y no por PublishByIntegration.
+        auditPublisher.Publish(tenantId, actorId, CustomerAuditActions.Created, customer.Id.ToString(), Success, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return new ProvisionedCustomer(customer.Id.Value, IsComplete: false, IsActive: true, Created: true);
     }

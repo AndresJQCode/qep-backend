@@ -988,6 +988,91 @@ public sealed class CustomerTests
         public string? RegionOf(string? e164) => null;
     }
 
+    // Spec «Dominio de Customers»: la ficha que da de alta la caja. Documento sí, CUC no: el CUC lo emite Complete.
+    [Fact]
+    public void CreateFromRegisterIsAnActiveIncompleteWithDocumentAndNoCuc()
+    {
+        var customer = Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "  Laura Gómez ",
+            new CustomerIdentification { Type = IdentificationType.Cc, Number = " 1020304050 " },
+            " 3001234567 ", Now, new StubPhoneNormalizer());
+
+        Assert.Equal("Laura Gómez", customer.Name);
+        Assert.Equal(IdentificationType.Cc, customer.IdentificationType);
+        Assert.Equal("1020304050", customer.IdentificationNumber);
+        Assert.Equal(CustomerCompleteness.Incomplete, customer.Completeness);
+        Assert.True(customer.IsActive);
+        Assert.Null(customer.Cuc);
+        Assert.Equal("CO", customer.Country);
+        Assert.Equal("3001234567", customer.Phone);
+        Assert.Equal("+573001234567", customer.PhoneE164);
+        Assert.Null(customer.ClassificationId);
+        Assert.Null(customer.Address);
+        Assert.Null(customer.Email);
+        Assert.Empty(customer.Addresses);
+        Assert.Equal(1, customer.Version);
+    }
+
+    [Fact]
+    public void CreateFromRegisterWithoutPhoneHasNoPhoneE164()
+    {
+        var customer = Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "Laura Gómez", Identification(IdentificationType.Cc, "1020304050"),
+            "  ", Now, new StubPhoneNormalizer());
+
+        Assert.Null(customer.Phone);
+        Assert.Null(customer.PhoneE164);
+    }
+
+    [Fact]
+    public void CreateFromRegisterRejectsABadName()
+    {
+        var blank = Assert.Throws<CustomersDomainException>(() => Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "  ", Identification(IdentificationType.Cc, "1020304050"), null, Now, new StubPhoneNormalizer()));
+        var tooLong = Assert.Throws<CustomersDomainException>(() => Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, new string('a', Customer.NameMaxLength + 1), Identification(IdentificationType.Cc, "1020304050"), null, Now, new StubPhoneNormalizer()));
+
+        Assert.Equal("customers.customer.name_required", blank.Code);
+        Assert.Equal("customers.customer.name_too_long", tooLong.Code);
+    }
+
+    [Fact]
+    public void CreateFromRegisterRejectsAnEmptyOrTooLongDocument()
+    {
+        var empty = Assert.Throws<CustomersDomainException>(() => Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "Laura", Identification(IdentificationType.Cc, ""), null, Now, new StubPhoneNormalizer()));
+        var tooLong = Assert.Throws<CustomersDomainException>(() => Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "Laura", Identification(IdentificationType.Cc, new string('1', 33)), null, Now, new StubPhoneNormalizer()));
+
+        Assert.Equal("customers.customer.identification_number_required", empty.Code);
+        Assert.Equal("customers.customer.identification_number_too_long", tooLong.Code);
+    }
+
+    [Fact]
+    public void CreateFromRegisterRejectsAPhoneLongerThan32()
+    {
+        var failure = Assert.Throws<CustomersDomainException>(() => Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "Laura", Identification(IdentificationType.Cc, "1020304050"),
+            new string('3', CustomerContactInfo.PhoneMaxLength + 1), Now, new StubPhoneNormalizer()));
+
+        Assert.Equal("customers.customer.phone_too_long", failure.Code);
+    }
+
+    [Fact]
+    public void ARegisterCustomerCanBeCompletedLater()
+    {
+        var customer = Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "Laura Gómez", Identification(IdentificationType.Cc, "1020304050"),
+            null, Now, new StubPhoneNormalizer());
+
+        customer.Complete(
+            "CLI08000142", "Laura Gómez", null, null, Identification(), ValidContact(), Commercial(), Now.AddMinutes(1));
+
+        Assert.True(customer.IsComplete);
+        Assert.Equal(IdentificationType.Nit, customer.IdentificationType);
+        Assert.Equal("900.123.456-1", customer.IdentificationNumber);
+    }
+
     // Spec 2026-10-09 §6.5: se calcula al crear y al editar; sin normalizador queda null (P7 del plan).
     [Fact]
     public void PhoneE164IsComputedOnCreateAndUpdateWithTheNormalizer()

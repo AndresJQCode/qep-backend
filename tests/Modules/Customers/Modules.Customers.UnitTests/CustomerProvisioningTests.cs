@@ -33,12 +33,12 @@ public sealed class CustomerProvisioningTests
 
     private sealed class RecordingAudit : ICustomersAuditPublisher
     {
-        public List<string> Human { get; } = [];
+        public List<(Guid Tenant, Guid Actor, string Action, string ResourceId, string Outcome)> Human { get; } = [];
 
         public List<(Guid Tenant, string Action, string ResourceId, string Outcome)> ByIntegration { get; } = [];
 
         public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
-            Human.Add(action);
+            Human.Add((tenantId, actorId, action, resourceId, outcome));
 
         public void PublishByIntegration(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
             ByIntegration.Add((tenantId, action, resourceId, outcome));
@@ -297,5 +297,46 @@ public sealed class CustomerProvisioningTests
             Tenant, new string('a', Customer.NameMaxLength + 10), null, null, null, TestContext.Current.CancellationToken);
 
         Assert.Equal(Customer.NameMaxLength, Assert.Single(bed.Customers.Added).Name.Length);
+    }
+
+    [Fact]
+    public async Task CreateFromRegisterAddsAnIncompleteAndAuditsTheCashierAsActor()
+    {
+        var bed = NewBed();
+        var cashierId = Guid.NewGuid();
+
+        var result = await bed.Provisioning.CreateFromRegisterAsync(
+            Tenant, cashierId, new RegisterCustomerData("Laura Gómez", "CC", "1020304050", null), TestContext.Current.CancellationToken);
+
+        var customer = Assert.Single(bed.Customers.Added);
+        Assert.False(customer.IsComplete);
+        Assert.Equal(new ProvisionedCustomer(customer.Id.Value, false, true, true), result);
+        Assert.Empty(bed.Audit.ByIntegration);
+        Assert.Equal(
+            (Tenant, cashierId, "customers.customer.created", customer.Id.ToString(), "success"),
+            Assert.Single(bed.Audit.Human));
+    }
+
+    [Fact]
+    public async Task CreateFromRegisterLetsTheIdentificationRaceThrough()
+    {
+        var bed = NewBed(saveFailure: new CustomersDomainException("customers.customer.identification_taken", "taken"));
+
+        var failure = await Assert.ThrowsAsync<CustomersDomainException>(() => bed.Provisioning.CreateFromRegisterAsync(
+            Tenant, Guid.NewGuid(), new RegisterCustomerData("Laura Gómez", "CC", "1020304050", null), TestContext.Current.CancellationToken));
+
+        Assert.Equal("customers.customer.identification_taken", failure.Code);
+    }
+
+    [Fact]
+    public async Task CreateFromRegisterRejectsAnUnknownDocumentType()
+    {
+        var bed = NewBed();
+
+        var failure = await Assert.ThrowsAsync<CustomersDomainException>(() => bed.Provisioning.CreateFromRegisterAsync(
+            Tenant, Guid.NewGuid(), new RegisterCustomerData("Laura Gómez", "RUT", "1020304050", null), TestContext.Current.CancellationToken));
+
+        Assert.Equal("customers.customer.identification_type_invalid", failure.Code);
+        Assert.Empty(bed.Customers.Added);
     }
 }
