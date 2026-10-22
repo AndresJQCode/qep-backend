@@ -7,7 +7,7 @@ namespace Modules.Automations.Infrastructure.Persistence;
 // commitea o revierte con el cambio. changed_fields va vacío, como en el resto de los módulos con recorder propio.
 internal sealed class AutomationsAuditRecorder(AutomationsDbContext dbContext) : IAutomationsAuditRecorder
 {
-    private const string Source = "automations";
+    internal const string Source = "automations";
     private const string Outcome = "success";
     private const string NoChangedFields = "[]";
 

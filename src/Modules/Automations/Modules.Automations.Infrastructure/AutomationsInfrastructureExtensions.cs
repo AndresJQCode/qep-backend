@@ -31,6 +31,7 @@ public static class AutomationsInfrastructureExtensions
         services.AddScoped<IAutomationsUnitOfWork, AutomationsUnitOfWork>();
         // Auditoría atómica: la entrada viaja en el mismo SaveChanges del cambio (ADR 0019).
         services.AddScoped<IAutomationsAuditRecorder, AutomationsAuditRecorder>();
+        services.AddScoped<IAutomationsAuditQueries, AutomationsAuditQueries>();
         return services;
     }
 }

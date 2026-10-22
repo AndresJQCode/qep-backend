@@ -454,11 +454,15 @@ public sealed class SaveChatbotDraftHandler(
     IChatbotRepository chatbots,
     IAutomationsUnitOfWork unitOfWork,
     IAutomationsAuditRecorder audit,
+    IAutomationsAuditQueries auditQueries,
     IClock clock,
     IValidator<SaveChatbotDraftCommand> validator,
     ChatbotEditorBuilder builder)
     : ICommandHandler<SaveChatbotDraftCommand, DraftSavedDto>
 {
+    /// <summary>§4.6: «draft_saved» a lo sumo una vez por minuto por chatbot.</summary>
+    private static readonly TimeSpan DraftAuditInterval = TimeSpan.FromSeconds(60);
+
     public async Task<DraftSavedDto> HandleAsync(SaveChatbotDraftCommand command, CancellationToken cancellationToken)
     {
         await AutomationsAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AutomationsPermissions.ChatbotManage, cancellationToken);
@@ -471,7 +475,13 @@ public sealed class SaveChatbotDraftHandler(
 
         var now = clock.UtcNow;
         chatbot.SaveDraft(FlowJson.Serialize(flow), command.Layout.GetRawText(), by, now);
-        audit.Record(command.TenantId, executionContext.SubjectId, false, AutomationsAuditActions.ChatbotDraftSaved, AutomationsAuditActions.ResourceChatbot, chatbot.Id, now);
+        // §4.6: el editor guarda solo cada pocos segundos; una entrada por guardado inundaría la auditoría. Una por minuto y chatbot.
+        if (await auditQueries.LastDraftSavedAtAsync(command.TenantId, chatbot.Id, cancellationToken) is not { } last
+            || now - last > DraftAuditInterval)
+        {
+            audit.Record(command.TenantId, executionContext.SubjectId, false, AutomationsAuditActions.ChatbotDraftSaved, AutomationsAuditActions.ResourceChatbot, chatbot.Id, now);
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return new DraftSavedDto(chatbot.Version, chatbot.DraftUpdatedAt, await builder.ValidateAsync(chatbot, flow, cancellationToken));

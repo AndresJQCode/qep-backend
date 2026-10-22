@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -126,10 +127,28 @@ internal static class AutomationsApiHarness
             Task.FromResult<IReadOnlyList<ExternalApiRef>>([.. Items]);
     }
 
-    public sealed class QepApiFactory(string connectionString, FakeExternalApis? externalApis = null) : WebApplicationFactory<Program>
+    /// <summary>Un reloj que la prueba mueve. Copia de <c>TestClock</c> de <c>MessagingApiHarness</c>: arranca en el instante real para que
+    /// lo que depende de «ahora» (membresías, vencimientos) no se descuadre, y la prueba lo adelanta con <see cref="UtcNow"/>.</summary>
+    public sealed class TestClock : IClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.UtcNow;
+    }
+
+    public sealed class QepApiFactory(string connectionString, FakeExternalApis? externalApis = null, TestClock? clock = null)
+        : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            if (clock is not null)
+            {
+                // IClock es scoped en AddQepPlatform: se reemplaza por la instancia de la prueba.
+                builder.ConfigureTestServices(services =>
+                {
+                    services.RemoveAll<IClock>();
+                    services.AddSingleton<IClock>(clock);
+                });
+            }
+
             if (externalApis is not null)
             {
                 builder.ConfigureTestServices(services =>

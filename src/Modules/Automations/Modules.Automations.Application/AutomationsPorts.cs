@@ -117,6 +117,14 @@ public interface IAutomationsAuditRecorder
     void Record(Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset at);
 }
 
+/// <summary>Lecturas sobre <c>audit.entries</c> que el módulo necesita para no auditar de más (el registro es interno de
+/// Infrastructure).</summary>
+public interface IAutomationsAuditQueries
+{
+    /// <summary>Cuándo se auditó por última vez un guardado de borrador de este chatbot (<c>draft_saved</c>); <c>null</c> si nunca.</summary>
+    Task<DateTimeOffset?> LastDraftSavedAtAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken);
+}
+
 public static class AutomationsAuditActions
 {
     public const string ResourceChatbot = "chatbot";
