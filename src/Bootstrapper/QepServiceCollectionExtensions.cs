@@ -750,6 +750,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateChatbotValidator>();
         services.AddScoped<IQueryHandler<ListChatbotsQuery, ChatbotListResponse>, ListChatbotsHandler>();
         services.AddScoped<IQueryHandler<GetChatbotQuery, ChatbotEditorDto>, GetChatbotHandler>();
+        services.AddScoped<IQueryHandler<ListSelectableConnectionsQuery, IReadOnlyList<SelectableConnectionDto>>, ListSelectableConnectionsHandler>();
         services.AddScoped<ICommandHandler<CreateChatbotCommand, ChatbotEditorDto>, CreateChatbotHandler>();
         services.AddScoped<ICommandHandler<UpdateChatbotCommand, ChatbotEditorDto>, UpdateChatbotHandler>();
         services.AddScoped<ICommandHandler<SaveChatbotDraftCommand, DraftSavedDto>, SaveChatbotDraftHandler>();
@@ -878,14 +879,12 @@ public static class QepServiceCollectionExtensions
         // Messaging (spec 2026-10-09 §6.4): clientes por teléfono y nombres de miembros, por adaptadores.
         services.AddScoped<IMessagingCustomerDirectory, MessagingCustomerDirectory>();
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
-        // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes. Adaptador nulo («Chatbot» para todo id) hasta que
-        // la tarea 16 lo reemplace por el de Automations.
-        services.AddScoped<IAutomationsChatbotNames, NullAutomationsChatbotNames>();
-        // Spec 2026-10-21 §4.4: lo que Automations necesita de Mensajería e Integrations. Las conexiones ya son reales (sobre
-        // IMessagingConnectionDirectory); la «API externa» y los horarios quedan nulos hasta la tarea 16 del plan.
+        // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes, leído de Automations.
+        services.AddScoped<IAutomationsChatbotNames, AutomationsChatbotNames>();
+        // Spec 2026-10-21 §5.3: lo que Automations necesita de Mensajería e Integrations, por adaptadores.
         services.AddScoped<IAutomationConnections, AutomationConnections>();
-        services.AddScoped<IAutomationExternalApis, NullAutomationExternalApis>();
-        services.AddScoped<IAutomationBusinessHours, NullAutomationBusinessHours>();
+        services.AddScoped<IAutomationExternalApis, AutomationExternalApis>();
+        services.AddScoped<IAutomationBusinessHours, AutomationBusinessHours>();
         // Spec 2026-10-12 §3.3 (D-Q5): el nombre del tenant para las variables de las respuestas rápidas, por Tenancy.
         services.AddScoped<IMessagingTenantNames, MessagingTenantNames>();
         // Spec 2026-10-11 §4.2: el autor de una nota de cliente (usuario, no membresía) con su nombre visible.

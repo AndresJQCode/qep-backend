@@ -39,9 +39,7 @@ public sealed class ChatbotEditorBuilder(
         var scheduleNames = await businessHours.ScheduleNamesAsync(
             chatbot.TenantId, [.. tenantConnections.Select(connection => connection.Id)], cancellationToken);
         var apis = await externalApis.ListAsync(chatbot.TenantId, cancellationToken);
-        var servedBy = (await chatbots.ListServingConnectionsAsync(chatbot.TenantId, cancellationToken))
-            .GroupBy(serving => serving.ConnectionId)
-            .ToDictionary(group => group.Key, group => new ServedByDto(group.First().ChatbotId, group.First().Name));
+        var servedBy = await ServedByAsync(chatbot.TenantId, cancellationToken);
         var today = await TodayAsync(chatbot.TenantId, [chatbot.Id], cancellationToken);
 
         var (flow, problem) = ParseStored(chatbot);
@@ -59,17 +57,37 @@ public sealed class ChatbotEditorBuilder(
                 ToElement(chatbot.DraftFlowJson), ToElement(chatbot.DraftLayoutJson), chatbot.DraftUpdatedAt, chatbot.DraftUpdatedBy),
             published is null ? null : new ChatbotPublishedDto(published.Number, published.PublishedAt),
             issues,
-            [.. tenantConnections.Select(connection => new SelectableConnectionDto(
-                connection.Id,
-                connection.Name,
-                connection.Channel,
-                connection.Handle,
-                connection.Status,
-                servedBy.GetValueOrDefault(connection.Id),
-                scheduleNames.GetValueOrDefault(connection.Id)))],
+            ToSelectable(tenantConnections, servedBy, scheduleNames),
             [.. apis.Select(api => new ExternalApiRefDto(api.Id, api.Name, api.Status))],
             FlowValidator.KnownVariables(flow ?? EmptyFlow));
     }
+
+    /// <summary>`GET /connections` (§4.4): las mismas conexiones que trae el editor, armadas por el mismo código.</summary>
+    public async Task<IReadOnlyList<SelectableConnectionDto>> ListSelectableAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var tenantConnections = await connections.ListAsync(tenantId, cancellationToken);
+        var scheduleNames = await businessHours.ScheduleNamesAsync(
+            tenantId, [.. tenantConnections.Select(connection => connection.Id)], cancellationToken);
+        return ToSelectable(tenantConnections, await ServedByAsync(tenantId, cancellationToken), scheduleNames);
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, ServedByDto>> ServedByAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        (await chatbots.ListServingConnectionsAsync(tenantId, cancellationToken))
+            .GroupBy(serving => serving.ConnectionId)
+            .ToDictionary(group => group.Key, group => new ServedByDto(group.First().ChatbotId, group.First().Name));
+
+    private static IReadOnlyList<SelectableConnectionDto> ToSelectable(
+        IReadOnlyList<AutomationConnectionRef> tenantConnections,
+        IReadOnlyDictionary<Guid, ServedByDto> servedBy,
+        IReadOnlyDictionary<Guid, string?> scheduleNames) =>
+        [.. tenantConnections.Select(connection => new SelectableConnectionDto(
+            connection.Id,
+            connection.Name,
+            connection.Channel,
+            connection.Handle,
+            connection.Status,
+            servedBy.GetValueOrDefault(connection.Id),
+            scheduleNames.GetValueOrDefault(connection.Id)))];
 
     /// <summary>La validación de un flujo recién leído con el contexto del chatbot, sin armar el resto del editor (el guardado).</summary>
     public async Task<IReadOnlyList<FlowIssueDto>> ValidateAsync(Chatbot chatbot, FlowDefinition flow, CancellationToken cancellationToken)

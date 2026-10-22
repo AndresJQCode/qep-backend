@@ -313,6 +313,13 @@ internal static class AutomationsApiHarness
         return connection.Id;
     }
 
+    /// <summary>Una conexión «API externa» del tenant. // plan 2: el proveedor <c>external-api</c> no está en el catálogo de Integrations
+    /// (<see cref="IntegrationProviders.All"/>), así que <c>IntegrationConnection.Create</c> no tiene definición con la que validar campos
+    /// y sembrarla escribiría una fila que el catálogo no reconoce. El plan 2 la implementa; hasta entonces la prueba de
+    /// <c>externalApis</c> por la API real queda con <c>Skip</c> y el adaptador se prueba con un doble en <c>AutomationAdaptersTests</c>.</summary>
+    public static Task<Guid> SeedExternalApiConnectionAsync(WebApplicationFactory<Program> host, Guid tenantId, string name, string status) =>
+        throw new NotSupportedException("El proveedor external-api llega con el plan 2.");
+
     /// <summary>El <c>code</c> y las claves de <c>errors</c> de un ProblemDetails.</summary>
     public static async Task<(string? Code, string[] ErrorKeys)> ProblemAsync(HttpResponseMessage response)
     {

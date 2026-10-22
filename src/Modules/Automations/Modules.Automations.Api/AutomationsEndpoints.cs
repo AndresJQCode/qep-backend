@@ -14,6 +14,7 @@ public static class AutomationsEndpoints
     {
         var group = endpoints.MapGroup("/api/v1/tenants/{tenantId:guid}/automations").WithTags("Automations");
         group.MapChatbotEndpoints();
+        group.MapConnectionEndpoints();
         return endpoints;
     }
 

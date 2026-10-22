@@ -40,6 +40,49 @@ public sealed class MessageAuthorshipApiTests
         Assert.Equal(chatbotId, message.GetProperty("sentByChatbot").GetProperty("chatbotId").GetGuid());
     }
 
+    /// <summary>Task 16: con el adaptador real de Automations el hilo muestra el nombre guardado del chatbot, no el «Chatbot» del
+    /// respaldo; uno borrado (id desconocido) sigue saliendo como «Chatbot».</summary>
+    [Fact]
+    public async Task TheThreadShowsTheRealChatbotName()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        var connectionId = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", "111", "222");
+        var conversationId = await SeedConversationAsync(factory, tenant.TenantId, connectionId, "573001234567");
+        var chatbotId = Guid.CreateVersion7();
+        var deletedChatbotId = Guid.CreateVersion7();
+        await ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO automations.chatbots (id, tenant_id, name, draft_flow, draft_updated_at, draft_updated_by, created_at, created_by, updated_at)
+            VALUES (@chatbotId, @tenantId, 'Servicio técnico', '{"schema":1,"start":{"firstNodeId":null},"variables":[],"nodes":[]}'::jsonb, now(), @by, now(), @by, now())
+            """,
+            ("chatbotId", chatbotId), ("tenantId", tenant.TenantId), ("by", tenant.OwnerUserId));
+        foreach (var (id, text, minutes) in new[] { (chatbotId, "Hola desde el bot", 1), (deletedChatbotId, "Hola desde uno borrado", 2) })
+        {
+            await ExecuteAsync(
+                connectionString,
+                """
+                INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, created_at, sent_by_kind, sent_by_chatbot_id, sent_by_member_id)
+                VALUES (gen_random_uuid(), @conversationId, @tenantId, @connectionId, now() + make_interval(mins => @minutes), 2, 1, 1, @text, now(), 2, @chatbotId, NULL)
+                """,
+                ("conversationId", conversationId), ("tenantId", tenant.TenantId), ("connectionId", connectionId), ("chatbotId", id),
+                ("text", text), ("minutes", minutes));
+        }
+
+        var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ReadPermissions);
+
+        var page = await client.GetFromJsonAsync<JsonElement>(MessagesUrl(tenant.TenantId, conversationId), Ct);
+
+        var names = page.GetProperty("items").EnumerateArray()
+            .ToDictionary(item => item.GetProperty("text").GetString()!, item => item.GetProperty("sentByChatbot").GetProperty("name").GetString());
+        Assert.Equal("Servicio técnico", names["Hola desde el bot"]);
+        Assert.Equal("Chatbot", names["Hola desde uno borrado"]);
+    }
+
     [Fact]
     public async Task AClaimWithAChatbotWritesKindTwoAndNoMember()
     {
