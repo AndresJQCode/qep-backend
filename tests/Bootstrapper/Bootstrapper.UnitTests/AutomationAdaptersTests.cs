@@ -211,6 +211,18 @@ public sealed class AutomationAdaptersTests
             inbox.Calls);
     }
 
+    /// <summary>P2-R7: la purga del inbox pasa tal cual a Mensajería y devuelve lo que borró.</summary>
+    [Fact]
+    public async Task TheQueuePassesThePurgeThrough()
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-7);
+        var inbox = new StubAutomationInbox { Purged = 42 };
+
+        Assert.Equal(42, await new AutomationInboundQueue(inbox).PurgeProcessedBeforeAsync(cutoff, 1000, Ct));
+
+        Assert.Equal([$"purge {cutoff:O} 1000"], inbox.Calls);
+    }
+
     [Fact]
     public async Task TheMediaAdapterMapsTheStoredFileAndTheStore()
     {
@@ -279,6 +291,14 @@ public sealed class AutomationAdaptersTests
 
         public Task<Guid?> FindLastInboundIdAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public int Purged { get; init; }
+
+        public Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken)
+        {
+            Calls.Add($"purge {cutoff:O} {batch}");
+            return Task.FromResult(Purged);
+        }
     }
 
     private sealed class StubMediaReads(StoredMedia? stored) : IMediaReads

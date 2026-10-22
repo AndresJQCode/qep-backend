@@ -38,4 +38,9 @@ public interface IAutomationInbox
     /// <summary>Spec 2026-10-21 D-M5: el entrante más reciente de la conversación (en el orden del hilo), con el que el traspaso del bot
     /// suena a todo el tenant como un entrante sin asignar; <c>null</c> si no tiene ninguno o no es del tenant.</summary>
     Task<Guid?> FindLastInboundIdAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+
+    /// <summary>Ruling P2-R7: borra hasta <paramref name="batch"/> filas ya procesadas antes de <paramref name="cutoff"/> y devuelve cuántas
+    /// borró; una pendiente nunca, por vieja que sea. De todos los tenants: es mantenimiento del worker. Sin esto la tabla crece con cada
+    /// entrante desde que el flag está prendido.</summary>
+    Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken);
 }

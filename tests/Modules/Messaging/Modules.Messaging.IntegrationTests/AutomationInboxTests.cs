@@ -363,6 +363,39 @@ public sealed class AutomationInboxTests
         Assert.Equal("failed|true", await ScalarAsync<string>(f.ConnectionString, "SELECT outcome || '|' || (processed_at IS NOT NULL)::text FROM messaging.automation_inbox"));
     }
 
+    /// <summary>Ruling P2-R7: la purga borra por lotes sólo lo procesado antes del corte; lo reciente y lo pendiente (aunque sea viejo)
+    /// quedan.</summary>
+    [Fact]
+    public async Task PurgeProcessedBeforeDeletesOnlyOldProcessedRowsInBatches()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await PostTextAsync(f, "w1");
+        await PostTextAsync(f, "w2", 10);
+        await PostTextAsync(f, "w3", 20);
+        await PostTextAsync(f, "w4", 30);
+        await ExecuteAsync(f.ConnectionString,
+            """
+            UPDATE messaging.automation_inbox AS inbox
+               SET processed_at = CASE message.wamid WHEN 'w3' THEN now() - interval '6 days' ELSE now() - interval '8 days' END,
+                   outcome = 'handled'
+              FROM messaging.messages AS message WHERE message.id = inbox.message_id AND message.wamid IN ('w1', 'w2', 'w3')
+            """);
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.automation_inbox SET created_at = now() - interval '30 days'");
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-7);
+
+        Assert.Equal(1, await WithInboxAsync(f, inbox => inbox.PurgeProcessedBeforeAsync(cutoff, 1, Ct)));
+        Assert.Equal(1, await WithInboxAsync(f, inbox => inbox.PurgeProcessedBeforeAsync(cutoff, 1000, Ct)));
+        Assert.Equal(0, await WithInboxAsync(f, inbox => inbox.PurgeProcessedBeforeAsync(cutoff, 1000, Ct)));
+
+        Assert.Equal("w3:handled,w4:-", await ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT string_agg(message.wamid || ':' || coalesce(inbox.outcome, '-'), ',' ORDER BY message.wamid)
+              FROM messaging.automation_inbox AS inbox JOIN messaging.messages AS message ON message.id = inbox.message_id
+            """));
+    }
+
     [Fact]
     public async Task KindsTheEngineDoesNotReadAreNotEnqueued()
     {

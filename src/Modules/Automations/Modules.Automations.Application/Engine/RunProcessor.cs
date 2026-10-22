@@ -12,7 +12,8 @@ namespace Modules.Automations.Application.Engine;
 /// con el lock de la conversación primero (P2-R20) y se confirma una sola vez al final; los cambios a la conversación (arrancar,
 /// traspasar, resolver, terminar) los confirma Mensajería por su lado en el momento (Task 5), así que un reintento de la fila puede
 /// encontrarlos ya hechos y lo tiene en cuenta: la corrida nueva usa el id que deriva del entrante y los envíos el mismo clientId
-/// (P2-R5). Los efectos del motor los ejecuta <see cref="RunEffects"/>.
+/// (P2-R5). Los efectos del motor los ejecuta <see cref="RunEffects"/>. El barrido de abandonadas (D-M13) también pasa por acá, con el
+/// mismo orden de locks.
 /// </summary>
 public sealed partial class RunProcessor(
     IAutomationsUnitOfWork unitOfWork,
@@ -34,6 +35,12 @@ public sealed partial class RunProcessor(
 
     /// <summary>D-M8: <c>{saveTo.url}</c> vale 15 minutos.</summary>
     private static readonly TimeSpan AttachmentUrlLifetime = TimeSpan.FromMinutes(15);
+
+    /// <summary>D-M13: una corrida en espera más que esto sin entrante está abandonada.</summary>
+    public static readonly TimeSpan AbandonAfter = TimeSpan.FromHours(24);
+
+    /// <summary>Las candidatas que <see cref="FindAbandonedAsync"/> devuelve por pasada.</summary>
+    public const int AbandonBatchSize = 100;
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Automation inbox row {MessageId} of tenant {TenantId} was re-claimed after attempt {Attempts}; this result does not count.")]
     private static partial void LogReclaimed(ILogger logger, Guid tenantId, Guid messageId, int attempts);
@@ -75,7 +82,6 @@ public sealed partial class RunProcessor(
 
     private async Task<string> ProcessUnitAsync(InboundQueueItem item, CancellationToken cancellationToken)
     {
-        var now = clock.UtcNow;
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         await unitOfWork.LockConversationAsync(item.ConversationId, cancellationToken);
         var run = await runs.FindLiveForUpdateAsync(item.TenantId, item.ConversationId, cancellationToken);
@@ -89,6 +95,9 @@ public sealed partial class RunProcessor(
         }
 
         var conversation = await conversations.GetAsync(item.TenantId, item.ConversationId, cancellationToken);
+        // Después del lock y de leer la conversación: si una persona la devolvió al asistente mientras la unidad esperaba el lock, la
+        // corrida nueva no puede quedar con un StartedAt anterior a ese regreso (P2-R25), o el siguiente entrante la interrumpiría.
+        var now = clock.UtcNow;
 
         // D-M15: una acción humana termina la corrida viva; Mensajería no conoce Automations, así que se detecta acá.
         var interrupted = false;
@@ -104,6 +113,53 @@ public sealed partial class RunProcessor(
         // Guardar confirma la transacción y suelta los locks (IAutomationsUnitOfWork): una sola vez por unidad.
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return outcome ?? (interrupted ? RunOutcomes.Interrupted : RunOutcomes.Skipped);
+    }
+
+    /// <summary>
+    /// D-M13: las corridas que esperan desde antes de <c>now − 24 h</c>, para que el worker abandone cada una en su unidad. El
+    /// <c>FOR UPDATE SKIP LOCKED</c> de <see cref="IConversationRunRepository.ClaimAbandonedAsync"/> sólo elige: salta las que una unidad
+    /// tiene tomadas y se suelta enseguida (la transacción se deshace al disponerse). Abandonar con esa fila tomada y pedir después el lock
+    /// de la conversación invertiría el orden de P2-R20 contra una unidad que ya tiene el lock y espera la fila: un deadlock.
+    /// </summary>
+    public async Task<IReadOnlyList<AbandonedRun>> FindAbandonedAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        var claimed = await runs.ClaimAbandonedAsync(now - AbandonAfter, AbandonBatchSize, cancellationToken);
+        return [.. claimed.Select(run => new AbandonedRun(run.TenantId, run.ConversationId, run.Id))];
+    }
+
+    /// <summary>
+    /// D-M13 y D-M14: abandona una candidata de <see cref="FindAbandonedAsync"/> en su propia unidad, con el orden de locks de
+    /// <see cref="ProcessAsync"/> (P2-R20). Antes de tocarla se vuelve a mirar bajo el lock: si un entrante la movió entre la elección y
+    /// el lock, ya no está abandonada. La conversación vuelve a None primero (Mensajería confirma por su lado); si el guardado de
+    /// Automations fallara después, el barrido siguiente la vuelve a encontrar y <c>EndAsync</c> ya no hace nada. <c>false</c> = no había
+    /// nada que abandonar.
+    /// </summary>
+    public async Task<bool> AbandonAsync(AbandonedRun candidate, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        await unitOfWork.LockConversationAsync(candidate.ConversationId, cancellationToken);
+        var run = await runs.FindLiveForUpdateAsync(candidate.TenantId, candidate.ConversationId, cancellationToken);
+        if (run is null || run.Id != candidate.RunId || run.Status != RunStatus.Waiting || run.UpdatedAt >= now - AbandonAfter)
+        {
+            return false;
+        }
+
+        try
+        {
+            // EndAsync no hace nada si el asistente ya no está activo (una persona la pausó o la resolvió y nadie volvió a escribir).
+            await conversations.EndAsync(run.TenantId, run.ConversationId, cancellationToken);
+        }
+        catch (ResourceNotFoundException)
+        {
+            // La conversación ya no existe: no hay qué devolver a None, pero la corrida igual tiene que dejar de esperar.
+        }
+
+        run.Finish(RunStatus.Abandoned, null, now);
+        audit.Record(run.TenantId, Guid.Empty, bySystem: true, AutomationsAuditActions.RunAbandoned, AutomationsAuditActions.ResourceRun, run.Id, now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return true;
     }
 
     /// <summary>D-M15. Tomar y devolver al asistente no deja rastro en el estado (tomar pausa y no encola, devolver vuelve a
@@ -306,3 +362,7 @@ public sealed partial class RunProcessor(
         _ => RunOutcomes.Ended,
     };
 }
+
+/// <summary>D-M13: una corrida que el barrido eligió para abandonar; <see cref="RunProcessor.AbandonAsync"/> la vuelve a mirar bajo el
+/// lock.</summary>
+public sealed record AbandonedRun(Guid TenantId, Guid ConversationId, Guid RunId);

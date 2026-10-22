@@ -56,9 +56,72 @@ public sealed class RunProcessorTests
         Assert.Empty(bed.Messenger.Sent);
     }
 
+    /// <summary>
+    /// D-M15 y P2-R25 (minor de la tarea 6): una persona devuelve la conversación al asistente mientras la unidad espera el lock. La hora
+    /// de la corrida se lee después del lock y de la conversación; si se leyera antes, la corrida nueva arrancaría antes que el regreso y el
+    /// siguiente entrante la interrumpiría como si una persona la hubiera devuelto después.
+    /// </summary>
+    [Fact]
+    public async Task TheRunStartsAfterAResumeStampedWhileTheUnitWaitedForTheLock()
+    {
+        var clock = new SteppingClock(DateTimeOffset.UtcNow);
+        var resumedAt = clock.UtcNow.AddSeconds(30);
+        var bed = new Bed(
+            startFailure: null,
+            new AutomationConversationState("Open", null, "Active", ChatbotId, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567", resumedAt),
+            clock,
+            onLock: () => clock.UtcNow = clock.UtcNow.AddMinutes(1));
+
+        var outcome = await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Ended, outcome);
+        var run = Assert.Single(bed.Runs.Added);
+        Assert.True(run.StartedAt >= resumedAt, $"La corrida arrancó a las {run.StartedAt:O}, antes del regreso de las {resumedAt:O}.");
+    }
+
+    /// <summary>D-M13 y D-M14: la candidata sigue esperando desde hace más de 24 h bajo el lock: termina <c>Abandoned</c>, la conversación
+    /// vuelve a None y queda la auditoría de sistema.</summary>
+    [Fact]
+    public async Task AStaleWaitingRunIsAbandoned()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var bed = new Bed(startFailure: null);
+        var run = WaitingRun(now.AddHours(-25));
+        bed.Runs.Added.Add(run);
+
+        Assert.True(await bed.Processor().AbandonAsync(new AbandonedRun(TenantId, ConversationId, run.Id), now, TestContext.Current.CancellationToken));
+
+        Assert.Equal(RunStatus.Abandoned, run.Status);
+        Assert.Equal(now, run.EndedAt);
+        Assert.Equal(1, bed.Conversations.Ended);
+        Assert.Equal([AutomationsAuditActions.RunAbandoned], bed.Audit.Actions);
+    }
+
+    /// <summary>P2-R20: entre la elección y el lock un entrante movió la corrida (o es otra la viva); ya no está abandonada y no se toca.</summary>
+    [Fact]
+    public async Task ARunThatMovedAfterItWasPickedIsNotAbandoned()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var bed = new Bed(startFailure: null);
+        var run = WaitingRun(now.AddMinutes(-1));
+        bed.Runs.Added.Add(run);
+
+        Assert.False(await bed.Processor().AbandonAsync(new AbandonedRun(TenantId, ConversationId, run.Id), now, TestContext.Current.CancellationToken));
+        Assert.False(await bed.Processor().AbandonAsync(new AbandonedRun(TenantId, ConversationId, Guid.CreateVersion7()), now.AddDays(2), TestContext.Current.CancellationToken));
+
+        Assert.Equal(RunStatus.Waiting, run.Status);
+        Assert.Equal(0, bed.Conversations.Ended);
+        Assert.Empty(bed.Audit.Actions);
+    }
+
+    private static ConversationRun WaitingRun(DateTimeOffset updatedAt) =>
+        ConversationRun.Start(
+            Guid.CreateVersion7(), TenantId, ConversationId, ConnectionId, ChatbotId, VersionId,
+            RunState.Initial(RunVariables.Empty()) with { Status = RunStatus.Waiting, CurrentNodeId = "n1" }, updatedAt);
+
     private sealed class TestDomainException() : DomainException("messaging.automation.not_available", "Ya no es del bot.");
 
-    private sealed class Bed(Exception startFailure)
+    private sealed class Bed(Exception? startFailure, AutomationConversationState? state = null, IClock? clock = null, Action? onLock = null)
     {
         public RecordingInbox Inbox { get; } = new();
 
@@ -66,25 +129,33 @@ public sealed class RunProcessorTests
 
         public RecordingMessenger Messenger { get; } = new();
 
+        public Conversations Conversations { get; } = new(startFailure, state);
+
+        public RecordingAudit Audit { get; } = new();
+
         public RunProcessor Processor()
         {
-            var conversations = new Conversations(startFailure);
-            var audit = new NoAudit();
+            var conversations = Conversations;
+            var audit = Audit;
             var hours = new OpenHours();
             var effects = new RunEffects(Messenger, conversations, hours, audit, NullLogger<RunEffects>.Instance);
             return new RunProcessor(
-                new NoUnitOfWork(), Runs, new ServingChatbots(), Inbox, conversations, new TenantNames(), new Connections(), hours,
-                new NoMedia(), audit, effects, new FixedClock(), NullLogger<RunProcessor>.Instance);
+                new NoUnitOfWork(onLock), Runs, new ServingChatbots(), Inbox, conversations, new TenantNames(), new Connections(), hours,
+                new NoMedia(), audit, effects, clock ?? new FixedClock(), NullLogger<RunProcessor>.Instance);
         }
     }
 
-    private sealed class NoUnitOfWork : IAutomationsUnitOfWork, IAsyncDisposable
+    private sealed class NoUnitOfWork(Action? onLock) : IAutomationsUnitOfWork, IAsyncDisposable
     {
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken) => Task.FromResult<IAsyncDisposable>(this);
 
-        public Task LockConversationAsync(Guid conversationId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task LockConversationAsync(Guid conversationId, CancellationToken cancellationToken)
+        {
+            onLock?.Invoke();
+            return Task.CompletedTask;
+        }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
@@ -158,16 +229,20 @@ public sealed class RunProcessorTests
 
         public Task<InboundMessage?> ReadAsync(Guid tenantId, Guid messageId, CancellationToken cancellationToken) =>
             Task.FromResult<InboundMessage?>(new InboundMessage(messageId, CustomerMessageKinds.Text, "Hola", null, null, DateTimeOffset.UtcNow));
+
+        public Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
-    private sealed class Conversations(Exception startFailure) : IAutomationConversations
+    private sealed class Conversations(Exception? startFailure, AutomationConversationState? state) : IAutomationConversations
     {
+        public int Ended { get; private set; }
+
         public Task<AutomationConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
-            Task.FromResult<AutomationConversationState?>(new AutomationConversationState(
+            Task.FromResult<AutomationConversationState?>(state ?? new AutomationConversationState(
                 "Open", null, "None", null, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567"));
 
         public Task StartAsync(Guid tenantId, Guid conversationId, Guid chatbotId, string? firstStepTitle, CancellationToken cancellationToken) =>
-            Task.FromException(startFailure);
+            startFailure is null ? Task.CompletedTask : Task.FromException(startFailure);
 
         public Task SetStepAsync(Guid tenantId, Guid conversationId, string? stepTitle, CancellationToken cancellationToken) => Task.CompletedTask;
 
@@ -177,7 +252,11 @@ public sealed class RunProcessorTests
 
         public Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken) => Task.CompletedTask;
 
-        public Task EndAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task EndAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+        {
+            Ended++;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class RecordingMessenger : IAutomationMessenger
@@ -226,15 +305,22 @@ public sealed class RunProcessorTests
         public Task<(Stream Content, long Length)?> OpenReadAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
-    private sealed class NoAudit : IAutomationsAuditRecorder
+    private sealed class RecordingAudit : IAutomationsAuditRecorder
     {
-        public void Record(Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset at)
-        {
-        }
+        public List<string> Actions { get; } = [];
+
+        public void Record(Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset at) =>
+            Actions.Add(action);
     }
 
     private sealed class FixedClock : IClock
     {
         public DateTimeOffset UtcNow { get; } = DateTimeOffset.UtcNow;
+    }
+
+    /// <summary>Un reloj que la prueba adelanta (desde el lock, en la prueba del regreso al asistente).</summary>
+    private sealed class SteppingClock(DateTimeOffset start) : IClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = start;
     }
 }

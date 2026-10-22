@@ -152,6 +152,10 @@ public interface IAutomationInboundQueue
 
     /// <summary><c>null</c> si el mensaje no es un entrante de ese tenant.</summary>
     Task<InboundMessage?> ReadAsync(Guid tenantId, Guid messageId, CancellationToken cancellationToken);
+
+    /// <summary>Ruling P2-R7: borra hasta <paramref name="batch"/> filas ya procesadas antes de <paramref name="cutoff"/>, de todos los
+    /// tenants, y devuelve cuántas; las pendientes quedan.</summary>
+    Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken);
 }
 
 /// <summary>Lo que el motor necesita de la conversación (§5.2 paso 2). <see cref="Status"/> es <c>Open</c> o <c>Resolved</c>;

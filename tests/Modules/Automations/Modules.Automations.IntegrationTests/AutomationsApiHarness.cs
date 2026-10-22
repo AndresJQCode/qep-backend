@@ -233,6 +233,7 @@ internal static class AutomationsApiHarness
             builder.UseSetting("Messaging:Automation:Enqueue", enqueueAutomation ? "true" : "false");
             // El motor tampoco corre solo: la prueba llama DrainAutomationsAsync.
             builder.UseSetting("Automations:Workers:InboxPollSeconds", "3600");
+            builder.UseSetting("Automations:Workers:AbandonSweepMinutes", "1440");
         }
     }
 
@@ -416,6 +417,10 @@ internal static class AutomationsApiHarness
     /// <summary>Spec 2026-10-21 §5.2: una pasada del motor (reclama y procesa lo pendiente del inbox).</summary>
     public static Task DrainAutomationsAsync(WebApplicationFactory<Program> host) =>
         HostedService<AutomationInboxWorker>(host).DrainAsync(TestContext.Current.CancellationToken);
+
+    /// <summary>D-M13 y P2-R7: un barrido del motor con la hora que dice la prueba (abandona las corridas en espera y purga el inbox).</summary>
+    public static Task SweepAutomationsAsync(WebApplicationFactory<Program> host, DateTimeOffset now) =>
+        HostedService<AutomationInboxWorker>(host).SweepAsync(now, TestContext.Current.CancellationToken);
 
     private static T HostedService<T>(WebApplicationFactory<Program> host) =>
         host.Services.GetServices<IHostedService>().OfType<T>().Single();

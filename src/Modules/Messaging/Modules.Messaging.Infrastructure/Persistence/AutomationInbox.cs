@@ -101,6 +101,21 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
         return rows.Count == 0 ? null : rows[0];
     }
 
+    // Por la llave primaria, como la purga de webhook_deliveries (WebhookPurgeWorker.cs:60-64). Sin índice sobre processed_at a propósito:
+    // los dos que hay son parciales sobre las pendientes, y la tabla sólo guarda la ventana de retención.
+    public async Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batch);
+        // Npgsql sólo escribe un timestamptz desde un DateTimeOffset en UTC.
+        cutoff = cutoff.ToUniversalTime();
+        return await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            DELETE FROM messaging.automation_inbox
+             WHERE message_id IN (SELECT message_id FROM messaging.automation_inbox
+                                   WHERE processed_at IS NOT NULL AND processed_at < {cutoff} LIMIT {batch})
+            """, cancellationToken);
+    }
+
     private sealed record InboundRow(
         Guid MessageId, short Kind, string? Text, string? ReplyId, string? MimeType, string? FileName, bool Stored, DateTimeOffset OccurredAt)
     {

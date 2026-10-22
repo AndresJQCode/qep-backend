@@ -55,16 +55,24 @@ public sealed partial class EngineEndToEndTests
     }
 
     private static async Task<Fixture> ArrangeAsync(
-        TestDatabase database, string trigger = "NewConversation", string[]? keywords = null, bool enqueue = true, string flowJson = FlowJson)
+        TestDatabase database, string trigger = "NewConversation", string[]? keywords = null, bool enqueue = true, string flowJson = FlowJson,
+        int? inboxBatchSize = null)
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString, enqueueAutomation: enqueue);
         var notifier = new RecordingNotifier();
-        var host = factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        var host = factory.WithWebHostBuilder(builder =>
         {
-            services.RemoveAll<IMessagingNotifier>();
-            services.AddSingleton<IMessagingNotifier>(notifier);
-        }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IMessagingNotifier>();
+                services.AddSingleton<IMessagingNotifier>(notifier);
+            });
+            if (inboxBatchSize is { } size)
+            {
+                builder.UseSetting("Automations:Workers:InboxBatchSize", size.ToString(CultureInfo.InvariantCulture));
+            }
+        });
         var tenant = await RegisterTenantAsync(host);
         await EnableAutomationsAsync(connectionString, tenant.TenantId);
         var connectionId = await SeedWhatsAppConnectionAsync(host, tenant.TenantId, "Servicio", PhoneNumberId, "222");
@@ -392,7 +400,7 @@ public sealed partial class EngineEndToEndTests
                 BeforeAnswer?.Invoke(number);
                 if (number >= RejectFrom)
                 {
-                    return FakeMetaGraphHandler.Json(HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(131000));
+                    return FakeMetaGraphHandler.Json(HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(RejectCode));
                 }
 
                 return FakeMetaGraphHandler.Json(HttpStatusCode.OK, $$"""
@@ -405,6 +413,9 @@ public sealed partial class EngineEndToEndTests
 
         /// <summary>Desde este envío, Graph responde un error que no es de credencial ni de ventana.</summary>
         public int? RejectFrom { get; set; }
+
+        /// <summary>El código de Graph del rechazo: 131000 (error desconocido) si la prueba no dice otro.</summary>
+        public int RejectCode { get; set; } = 131000;
 
         /// <summary>El texto de cada envío que llegó a Graph, en orden (también el que lanzó): <c>text.body</c> o el cuerpo del
         /// interactivo con su tipo adelante (<c>[button] …</c>). El JSON de Graph escapa las tildes, así que se lee y no se busca en crudo.</summary>
