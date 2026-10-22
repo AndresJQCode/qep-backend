@@ -128,9 +128,14 @@ public static class FlowEngine
                     return Result();
                 }
 
+                // Ruling P2-R14: sólo una versión guardada corrupta apunta a un bloque que no existe (el validador no publica
+                // node.unknown_target). Igual que el tope de vueltas, se termina Failed en vez de lanzar, para que la conversación no
+                // quede Active con un bot mudo; el NodeId es el bloque (o el Inicio) cuya salida apunta al vacío.
                 if (!nodes.TryGetValue(targetId, out var node))
                 {
-                    throw new InvalidOperationException($"El flujo apunta al bloque «{targetId}», que no existe.");
+                    effects.Add(new Effect.EndRun(fromNodeId, EndReasons.TargetMissing));
+                    status = RunStatus.Failed;
+                    return Result();
                 }
 
                 // El validador no rechaza los ciclos sin espera al publicar: el tope corta aquí, con lo ya emitido (ver maxEntries).

@@ -37,6 +37,9 @@ public static class EndReasons
 
     /// <summary>Ruling P2-R13: el flujo dio vueltas sin esperar al cliente ni a un efecto externo; la corrida termina <c>Failed</c>.</summary>
     public const string LoopDetected = "loop_detected";
+
+    /// <summary>Ruling P2-R14: una salida (o el Inicio) apunta a un bloque que no existe en la versión; la corrida termina <c>Failed</c>.</summary>
+    public const string TargetMissing = "target_missing";
 }
 
 public sealed record StepResult(RunState State, IReadOnlyList<Effect> Effects);

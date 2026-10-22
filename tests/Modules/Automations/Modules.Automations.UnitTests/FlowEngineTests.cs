@@ -244,6 +244,23 @@ public sealed class FlowEngineTests
     }
 
     [Fact]
+    public void AMissingTargetEndsFailedInsteadOfThrowing()
+    {
+        // Sólo una versión guardada corrupta llega aquí (el validador no publica node.unknown_target): la corrida termina, no lanza.
+        var dangling = Start(Flow(Message("n1", "Hola", next: "borrado")));
+
+        Assert.Equal<Effect>([new Effect.SendText("n1", "Hola"), new Effect.EndRun("n1", "target_missing")], dangling.Effects);
+        Assert.Equal(RunStatus.Failed, dangling.State.Status);
+
+        var noStart = FlowEngine.Step(
+            new FlowDefinition(FlowDefinition.CurrentSchema, new FlowStart("borrado"), [], [Message("n1", "Hola")]),
+            Settings(), RunState.Initial(RunVariables.Empty()), new EngineInput.Start(), Now);
+
+        Assert.Equal<Effect>([new Effect.EndRun(FlowEngine.StartNodeId, "target_missing")], noStart.Effects);
+        Assert.Equal(RunStatus.Failed, noStart.State.Status);
+    }
+
+    [Fact]
     public void TheAnnexAFlowStartsWithTheWelcomeAndWaitsForTheDocument()
     {
         var variables = RunVariables.Empty();
