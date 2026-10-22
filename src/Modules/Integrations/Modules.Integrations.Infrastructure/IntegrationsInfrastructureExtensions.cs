@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Integrations.Application;
 using Modules.Integrations.Application.Shopify;
+using Modules.Integrations.Infrastructure.ExternalApi;
 using Modules.Integrations.Infrastructure.Meta;
 using Modules.Integrations.Infrastructure.Persistence;
 using Modules.Integrations.Infrastructure.SecretProtection;
@@ -81,6 +82,13 @@ public static class IntegrationsInfrastructureExtensions
         services.AddScoped<IInstagramLoginGateway, InstagramLoginGateway>();
         services.AddOptions<InstagramRefreshOptions>().Bind(configuration.GetSection(InstagramRefreshOptions.SectionName));
         services.AddHostedService<InstagramTokenRefreshWorker>();
+        // Spec 2026-10-21 D-H2/D-H3: el probador de external-api, con el handler de la política anti-SSRF (sin redirecciones
+        // ni proxy, y ConnectCallback que no conecta a un rango interno) y sin los loggers, que pueden registrar el header de
+        // la clave (D-H5).
+        services.AddHttpClient(ExternalApiConnectionTester.HttpClientName, ExternalApiConnectionTester.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => ExternalApiUrlPolicy.CreateHandler())
+            .RemoveAllLoggers();
+        services.AddSingleton<IProviderConnectionTester, ExternalApiConnectionTester>();
         services.AddSingleton<IConnectionTester, ConnectionTesterRegistry>();
 
         // Spec 2026-10-09 §9 (decisión 2): la app de Meta de toda la plataforma. En Production

@@ -279,6 +279,35 @@ public sealed class ConnectionSecretLeakTests
             ShopifyFlow.SentinelAccessToken, ShopifyFlow.SentinelCode, SentinelShopifyClientSecret);
     }
 
+    // Spec 2026-10-21 D-H5: la API externa responde 401 con un cuerpo que repite la clave; ni la clave ni el cuerpo salen por la
+    // respuesta, los logs, la auditoría ni platform.request_failures. La clave sí viajó en su header: es el probador real.
+    [Fact]
+    public async Task AnExternalApiKeyThatTheProviderEchoesNeverLeaks()
+    {
+        const string sentinelBody = "external-api-body-SENTINEL-6f2e";
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var logs = new CapturedLogs();
+        using var host = factory.WithCapturedLogs(logs);
+        factory.ExternalApiHandler.Status = HttpStatusCode.Unauthorized;
+        factory.ExternalApiHandler.Body = JsonSerializer.Serialize(new { message = sentinelBody, echo = SentinelExternalApiKey });
+        var tenant = await RegisterAutomationsTenantAsync(host, connectionString);
+        using var client = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ExternalApiBody());
+        var body = await response.Content.ReadAsStringAsync(Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("integrations.connection.credentials_rejected", JsonDocument.Parse(body).RootElement.GetProperty("code").GetString());
+        var request = Assert.Single(factory.ExternalApiHandler.Requests);
+        Assert.Equal("https://api-clasic.qcode.co/", request.Uri?.ToString());
+        Assert.Equal(SentinelExternalApiKey, request.Headers["x-api-key"]);
+        AssertLogged(logs, "External API credential test answered HTTP 401");
+        Assert.DoesNotContain(logs.Categories, category => category.StartsWith("System.Net.Http.HttpClient", StringComparison.Ordinal));
+        await AssertNothingLeaksAsync(connectionString, logs, [body], SentinelExternalApiKey, sentinelBody);
+    }
+
     // Spec, «Auditoría»: nunca un valor de campo, ni público. Y el token nunca en fields.
     [Fact]
     public async Task AWholeLifecycleNeverWritesASecretOrAFieldValueOutsideTheConnection()

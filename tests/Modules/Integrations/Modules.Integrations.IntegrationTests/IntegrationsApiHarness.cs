@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
+using Modules.Integrations.Infrastructure.ExternalApi;
 using Modules.Integrations.Infrastructure.Meta;
 using Modules.Integrations.Infrastructure.Shopify;
 using Modules.Integrations.Infrastructure.Zenvia;
@@ -208,6 +209,10 @@ internal static class IntegrationsApiHarness
         /// *.myshopify.com.</summary>
         public FakeShopifyHandler ShopifyHandler { get; } = new();
 
+        /// <summary>Lo que sale hacia la API de una conexión <c>external-api</c> (su probador, D-H3) lo ve este: ninguna prueba
+        /// sale a la red. Reemplaza al handler con la política anti-SSRF, que se prueba aparte (<c>ExternalApiUrlPolicyTests</c>).</summary>
+        public FakeExternalApiHandler ExternalApiHandler { get; } = new();
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
@@ -264,34 +269,10 @@ internal static class IntegrationsApiHarness
                     .ConfigurePrimaryHttpMessageHandler(() => InstagramHandler);
                 services.AddHttpClient(ShopifyAdminGateway.HttpClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => ShopifyHandler);
-                AcceptExternalApiConnections(services);
+                services.AddHttpClient(ExternalApiConnectionTester.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => ExternalApiHandler);
             });
         }
-    }
-
-    /// <summary>Spec 2026-10-21 D-H1: el probador de <c>external-api</c> llega con la tarea 10 (D-H3). Hasta entonces crear una conexión
-    /// sin probador sería un 500, así que el host de pruebas decora <see cref="IConnectionTester"/> y da por buena la de ese
-    /// proveedor; los demás siguen al probador real. // Tarea 10: borrar esto cuando exista <c>ExternalApiConnectionTester</c>.</summary>
-    private static void AcceptExternalApiConnections(IServiceCollection services)
-    {
-        var original = services.Last(descriptor => descriptor.ServiceType == typeof(IConnectionTester));
-        services.Remove(original);
-        services.AddSingleton<IConnectionTester>(provider => new ExternalApiAcceptingTester(
-            (IConnectionTester)(original.ImplementationInstance
-                ?? original.ImplementationFactory?.Invoke(provider)
-                ?? ActivatorUtilities.CreateInstance(provider, original.ImplementationType!))));
-    }
-
-    private sealed class ExternalApiAcceptingTester(IConnectionTester inner) : IConnectionTester
-    {
-        public Task<ConnectionTestResult> TestAsync(
-            IntegrationProvider provider,
-            IReadOnlyDictionary<string, string> fields,
-            IReadOnlyDictionary<string, string> secrets,
-            CancellationToken cancellationToken) =>
-            provider.Key == IntegrationProviders.ExternalApi.Key
-                ? Task.FromResult(ConnectionTestResult.Ok)
-                : inner.TestAsync(provider, fields, secrets, cancellationToken);
     }
 
     /// <summary>Spec 2026-10-21 D-H1: el cuerpo de una conexión «API externa».</summary>
@@ -307,7 +288,7 @@ internal static class IntegrationsApiHarness
         };
 
     /// <summary>Un tenant real con <c>automations</c> (que arrastra a <c>messaging</c>): <c>external-api</c> no pide habilitación.</summary>
-    public static async Task<RegisteredTenant> RegisterAutomationsTenantAsync(QepApiFactory factory, string connectionString)
+    public static async Task<RegisteredTenant> RegisterAutomationsTenantAsync(WebApplicationFactory<Program> factory, string connectionString)
     {
         var tenant = await RegisterTenantAsync(factory);
         await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
@@ -674,6 +655,28 @@ internal sealed class FakeZenviaHandler : HttpMessageHandler
             throw failure;
         }
 
+        return Task.FromResult(new HttpResponseMessage(Status) { Content = new StringContent(Body) });
+    }
+}
+
+internal sealed record ExternalApiRequest(HttpMethod Method, Uri? Uri, IReadOnlyDictionary<string, string> Headers);
+
+/// <summary>La API de una conexión <c>external-api</c>, de mentira: anota cada request (con sus headers, para ver la clave) y
+/// responde lo que la prueba pida.</summary>
+internal sealed class FakeExternalApiHandler : HttpMessageHandler
+{
+    public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
+
+    public string Body { get; set; } = "{}";
+
+    public ConcurrentQueue<ExternalApiRequest> Requests { get; } = new();
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        Requests.Enqueue(new ExternalApiRequest(
+            request.Method,
+            request.RequestUri,
+            request.Headers.ToDictionary(header => header.Key, header => string.Join(",", header.Value), StringComparer.OrdinalIgnoreCase)));
         return Task.FromResult(new HttpResponseMessage(Status) { Content = new StringContent(Body) });
     }
 }

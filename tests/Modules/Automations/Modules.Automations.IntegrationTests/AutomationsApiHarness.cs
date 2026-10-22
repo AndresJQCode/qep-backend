@@ -55,6 +55,16 @@ internal static class AutomationsApiHarness
         "messaging.instagram-graph", "messaging.instagram-download", "integrations.instagram-graph",
     ];
 
+    /// <summary><c>ExternalApiConnectionTester.HttpClientName</c>, que es interno de Integrations.Infrastructure.</summary>
+    private const string ExternalApiClientName = "integrations.external-api";
+
+    /// <summary>Una API externa de mentira que acepta cualquier credencial.</summary>
+    public sealed class AcceptingExternalApiHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") });
+    }
+
     public static readonly string[] ReadPermissions = [AutomationsPermissions.ChatbotRead];
 
     public static readonly string[] ManagePermissions = [AutomationsPermissions.ChatbotRead, AutomationsPermissions.ChatbotManage];
@@ -169,6 +179,10 @@ internal static class AutomationsApiHarness
         /// <summary>Lo que sale hacia Graph —desde Integrations y desde Mensajería— lo ve este handler.</summary>
         public FakeMetaGraphHandler MetaHandler { get; } = new();
 
+        /// <summary>La API de las conexiones external-api que siembra <see cref="SeedExternalApiConnectionAsync"/>: responde 200, así el
+        /// probador da la credencial por buena sin salir a la red.</summary>
+        public AcceptingExternalApiHandler ExternalApiHandler { get; } = new();
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.ConfigureTestServices(services =>
@@ -177,6 +191,9 @@ internal static class AutomationsApiHarness
                 {
                     services.AddHttpClient(name).ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
                 }
+
+                // Spec 2026-10-21 D-H3: el probador real de external-api corre al crear la conexión; su API la responde este doble.
+                services.AddHttpClient(ExternalApiClientName).ConfigurePrimaryHttpMessageHandler(() => ExternalApiHandler);
             });
 
             if (clock is not null)
@@ -197,18 +214,6 @@ internal static class AutomationsApiHarness
                     services.AddSingleton<IAutomationExternalApis>(externalApis);
                 });
             }
-
-            // Spec 2026-10-21 D-H1: el probador de external-api llega con la tarea 10 (D-H3); hasta entonces el host de pruebas da por buena
-            // la conexión de ese proveedor y los demás siguen al probador real. // Tarea 10: borrar esto.
-            builder.ConfigureTestServices(services =>
-            {
-                var original = services.Last(descriptor => descriptor.ServiceType == typeof(IConnectionTester));
-                services.Remove(original);
-                services.AddSingleton<IConnectionTester>(provider => new ExternalApiAcceptingTester(
-                    (IConnectionTester)(original.ImplementationInstance
-                        ?? original.ImplementationFactory?.Invoke(provider)
-                        ?? ActivatorUtilities.CreateInstance(provider, original.ImplementationType!))));
-            });
 
             builder.UseEnvironment("Development");
             // Sin vigilar archivos de configuración (MessagingApiHarness explica el límite de FSEvents de macOS).
@@ -247,18 +252,6 @@ internal static class AutomationsApiHarness
             builder.UseSetting("Automations:Workers:InboxPollSeconds", "3600");
             builder.UseSetting("Automations:Workers:AbandonSweepMinutes", "1440");
         }
-    }
-
-    private sealed class ExternalApiAcceptingTester(IConnectionTester inner) : IConnectionTester
-    {
-        public Task<ConnectionTestResult> TestAsync(
-            IntegrationProvider provider,
-            IReadOnlyDictionary<string, string> fields,
-            IReadOnlyDictionary<string, string> secrets,
-            CancellationToken cancellationToken) =>
-            provider.Key == IntegrationProviders.ExternalApi.Key
-                ? Task.FromResult(ConnectionTestResult.Ok)
-                : inner.TestAsync(provider, fields, secrets, cancellationToken);
     }
 
     internal sealed record RegisteredTenant(Guid TenantId, Guid OwnerUserId);
