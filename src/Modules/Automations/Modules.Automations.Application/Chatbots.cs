@@ -9,17 +9,20 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Automations.Application;
 
-// Spec 2026-10-21 §4.4: lista, creación (en blanco; plantilla y duplicado llegan con la tarea 17 del plan), lectura, edición, borrador,
-// validación, publicación, pausa, reanudación, duplicado y borrado del chatbot.
+// Spec 2026-10-21 §4.4: lista, creación (en blanco, desde una plantilla o como duplicado), lectura, edición, borrador, validación,
+// publicación, pausa, reanudación, duplicado y borrado del chatbot.
 
 public sealed record ListChatbotsQuery(Guid TenantId, string? Search) : IQuery<ChatbotListResponse>;
 
 public sealed record GetChatbotQuery(Guid TenantId, Guid ChatbotId) : IQuery<ChatbotEditorDto>;
 
-/// <summary><see cref="Kind"/> es <c>blank</c>, <c>template</c> o <c>duplicate</c> (§4.4).</summary>
+/// <summary><see cref="Kind"/> es <c>blank</c>, <c>template</c> (con <see cref="TemplateId"/>: el id de una del sistema o el Guid de
+/// una del tenant, y <see cref="Parameters"/> opcionales, D-C14) o <c>duplicate</c> (con <see cref="ChatbotId"/>) (§4.4).</summary>
 public sealed record ChatbotSource(string Kind, string? TemplateId, Guid? ChatbotId, IReadOnlyDictionary<string, string>? Parameters)
 {
     public const string Blank = "blank";
+    public const string Template = "template";
+    public const string Duplicate = "duplicate";
 }
 
 public sealed record CreateChatbotCommand(
@@ -67,6 +70,15 @@ public static class ChatbotLimits
 
     /// <summary>D-C12: hasta «(copia 50)». Más allá es un nombre que el tenant tiene que elegir a mano (409 <c>name_taken</c>).</summary>
     public const int MaxCopyNumber = 50;
+
+    /// <summary>D-C14: cuántos parámetros de plantilla y de qué largo. Un valor va a parar a un texto del flujo, así que no puede pasar
+    /// del cuerpo de un interactivo de Meta (1024, D-I1); lo que quede largo para su campo lo marca Validar.</summary>
+    public const int MaxTemplateParameters = 20;
+
+    public const int TemplateParameterMaxLength = 1024;
+
+    /// <summary>El largo de un id de plantilla (del sistema o Guid): más es un id que no existe.</summary>
+    public const int TemplateIdMaxLength = 64;
 }
 
 /// <summary>Las reglas que comparten crear y editar. Texto libre ⇒ validador aunque el agregado valide (CLAUDE.md): el validador da
@@ -113,12 +125,26 @@ public sealed class CreateChatbotValidator : AbstractValidator<CreateChatbotComm
         ChatbotRules.Trigger(RuleFor(command => command.Trigger));
         ChatbotRules.Keywords(RuleFor(command => command.Keywords));
         ChatbotRules.ConnectionIds(RuleFor(command => command.ConnectionIds));
-        // La tarea 17 del plan agrega template y duplicate.
         RuleFor(command => command.Source).NotNull();
-        RuleFor(command => command.Source.Kind)
-            .Equal(ChatbotSource.Blank)
-            .When(command => command.Source is not null)
-            .WithMessage("Source kind must be blank.");
+        When(command => command.Source is not null, () =>
+        {
+            RuleFor(command => command.Source.Kind)
+                .Must(kind => kind is ChatbotSource.Blank or ChatbotSource.Template or ChatbotSource.Duplicate)
+                .WithMessage("Source kind must be blank, template or duplicate.");
+            RuleFor(command => command.Source.TemplateId)
+                .NotEmpty()
+                .MaximumLength(ChatbotLimits.TemplateIdMaxLength)
+                .When(command => command.Source.Kind == ChatbotSource.Template);
+            RuleFor(command => command.Source.ChatbotId)
+                .NotNull()
+                .When(command => command.Source.Kind == ChatbotSource.Duplicate);
+            RuleFor(command => command.Source.Parameters)
+                .Must(parameters => parameters!.Count <= ChatbotLimits.MaxTemplateParameters)
+                .WithMessage($"At most {ChatbotLimits.MaxTemplateParameters} template parameters are allowed.")
+                .Must(parameters => parameters!.Values.All(value => value is null || value.Length <= ChatbotLimits.TemplateParameterMaxLength))
+                .WithMessage($"Each template parameter can have at most {ChatbotLimits.TemplateParameterMaxLength} characters.")
+                .When(command => command.Source.Parameters is not null);
+        });
     }
 }
 
@@ -245,12 +271,19 @@ public sealed class GetChatbotHandler(
     }
 }
 
-/// <summary>Nace en borrador (D-C1) con sus conexiones inactivas: un borrador no atiende a nadie (D-C13).</summary>
+/// <summary>
+/// Nace en borrador (D-C1) con sus conexiones inactivas: un borrador no atiende a nadie (D-C13). El flujo y las posiciones salen de
+/// <c>source</c>: en blanco; de una plantilla del sistema con sus parámetros sustituidos (D-C14) o de una del tenant tal cual; o del
+/// borrador de otro chatbot, como <c>POST /duplicate</c> pero con el nombre, la descripción, el disparador, las palabras y las
+/// conexiones del pedido (D-C8: nada queda enlazado al origen).
+/// </summary>
 public sealed class CreateChatbotHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     AutomationsCaller caller,
     IChatbotRepository chatbots,
+    IChatbotTemplateRepository templates,
+    ISystemTemplateCatalog systemTemplates,
     IAutomationConnections connections,
     IAutomationsUnitOfWork unitOfWork,
     IAutomationsAuditRecorder audit,
@@ -264,20 +297,54 @@ public sealed class CreateChatbotHandler(
         await AutomationsAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AutomationsPermissions.ChatbotManage, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var by = await caller.RequireAsync(command.TenantId, cancellationToken);
+        var (flowJson, layoutJson, source) = await ResolveSourceAsync(command.TenantId, command.Source, cancellationToken);
         var tenantConnections = await connections.ListAsync(command.TenantId, cancellationToken);
         ChatbotConnectionCheck.Ensure(tenantConnections, command.ConnectionIds);
         await ChatbotConnectionCheck.EnsureNameIsFreeAsync(chatbots, command.TenantId, command.Name, null, cancellationToken);
 
         var now = clock.UtcNow;
         // El validador ya garantizó el disparador: esta conversión no lanza.
-        var chatbot = Chatbot.Create(
-            command.TenantId, command.Name, command.Description, Enum.Parse<ChatbotTrigger>(command.Trigger), command.Keywords, ChatbotLimits.BlankFlow, ChatbotLimits.BlankLayout, by, now);
+        var trigger = Enum.Parse<ChatbotTrigger>(command.Trigger);
+        var chatbot = Chatbot.Create(command.TenantId, command.Name, command.Description, trigger, command.Keywords, flowJson, layoutJson, by, now);
+        if (source is not null)
+        {
+            // Como POST /duplicate (D-C12): la palabra de reinicio y el tope de intentos vienen con el borrador; lo demás, del pedido.
+            chatbot.UpdateSettings(trigger, command.Keywords, source.RestartKeyword, source.MaxAttempts, now);
+        }
+
         chatbot.SetConnections(command.ConnectionIds, now);
         await chatbots.AddAsync(chatbot, cancellationToken);
         audit.Record(command.TenantId, executionContext.SubjectId, false, AutomationsAuditActions.ChatbotCreated, AutomationsAuditActions.ResourceChatbot, chatbot.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return await builder.BuildAsync(chatbot, tenantConnections, cancellationToken);
+    }
+
+    /// <summary>El flujo y las posiciones del chatbot nuevo, y el chatbot de origen si es un duplicado. Una plantilla que no existe es 404
+    /// <c>automations.template.not_found</c>; un chatbot de origen que no existe, 404 <c>automations.chatbot.not_found</c>.</summary>
+    private async Task<(string FlowJson, string LayoutJson, Chatbot? Source)> ResolveSourceAsync(
+        Guid tenantId, ChatbotSource source, CancellationToken cancellationToken)
+    {
+        switch (source.Kind)
+        {
+            case ChatbotSource.Template:
+                var templateId = source.TemplateId!;
+                if (systemTemplates.Find(templateId) is { } system)
+                {
+                    var values = TemplateParameters.Resolve(system.Parameters, source.Parameters);
+                    return (TemplateParameters.Apply(system.FlowJson, values), system.LayoutJson, null);
+                }
+
+                // Una plantilla del tenant no declara parámetros (D-C14): se copia tal cual.
+                var own = Guid.TryParse(templateId, out var id) ? await templates.FindAsync(tenantId, id, cancellationToken) : null;
+                return own is not null ? (own.FlowJson, own.LayoutJson, null) : throw AutomationsNotFound.Template(templateId);
+            case ChatbotSource.Duplicate:
+                var chatbotId = source.ChatbotId!.Value;
+                var original = await chatbots.FindAsync(tenantId, chatbotId, cancellationToken) ?? throw AutomationsNotFound.Chatbot(chatbotId);
+                return (original.DraftFlowJson, original.DraftLayoutJson, original);
+            default:
+                return (ChatbotLimits.BlankFlow, ChatbotLimits.BlankLayout, null);
+        }
     }
 }
 

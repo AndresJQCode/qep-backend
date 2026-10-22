@@ -21,6 +21,10 @@
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Spec 2026-10-21 D-C8: las plantillas del sistema viajan dentro del ensamblado, como los seeds de Geografía y Catálogo. -->
+    <EmbeddedResource Include="Seed\Templates\*.json" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Las corridas, las llamadas HTTP y las simulaciones son registros internal; las pruebas los buscan en el host. -->
     <InternalsVisibleTo Include="Modules.Automations.UnitTests" />
     <InternalsVisibleTo Include="Modules.Automations.IntegrationTests" />

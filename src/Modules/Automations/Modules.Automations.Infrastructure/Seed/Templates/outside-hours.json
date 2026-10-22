@@ -1,0 +1,34 @@
+{
+  "id": "outside-hours",
+  "name": "Fuera de horario",
+  "category": "Support",
+  "description": "En horario de atención pasa la conversación a un asesor; fuera de horario avisa cuándo le responden al cliente y cierra la conversación.",
+  "channels": ["WhatsApp"],
+  "requirement": "usa el horario de la conexión",
+  "parameters": [
+    { "key": "closedMessage", "label": "Mensaje fuera de horario", "kind": "text", "options": null, "defaultValue": "Gracias por escribirnos. En este momento estamos fuera de horario; te respondemos apenas volvamos a atender." }
+  ],
+  "preview": ["¿Estamos atendiendo?", "Pasar a un asesor", "Aviso de fuera de horario", "Cerrar la conversación"],
+  "flow": {
+    "schema": 1,
+    "start": { "firstNodeId": "n1" },
+    "variables": [],
+    "nodes": [
+      { "id": "n1", "kind": "businessHours", "title": "¿Estamos atendiendo?", "outputs": { "open": "n2", "closed": "n3" } },
+      { "id": "n2", "kind": "handoff", "title": "Pasar a un asesor", "text": "Te paso con un asesor." },
+      {
+        "id": "n3", "kind": "message", "title": "Aviso de fuera de horario", "text": "{param.closedMessage}", "urlButton": null,
+        "outputs": { "next": "n4" }
+      },
+      { "id": "n4", "kind": "resolve", "title": "Cerrar la conversación", "text": null, "reasonId": null }
+    ]
+  },
+  "layout": {
+    "positions": {
+      "n1": { "x": 260, "y": 100 },
+      "n2": { "x": 560, "y": 20 },
+      "n3": { "x": 560, "y": 220 },
+      "n4": { "x": 860, "y": 220 }
+    }
+  }
+}
