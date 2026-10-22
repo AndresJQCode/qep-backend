@@ -126,7 +126,7 @@
               "acceptPolicy": true
             }
           ],
-          "total": 1
+          "totalCount": 1
         },
         "outputs": {
           "ok": "policy-check",
@@ -253,7 +253,7 @@
               "acceptPolicy": true
             }
           ],
-          "total": 1
+          "totalCount": 1
         },
         "outputs": {
           "ok": "customer-found",

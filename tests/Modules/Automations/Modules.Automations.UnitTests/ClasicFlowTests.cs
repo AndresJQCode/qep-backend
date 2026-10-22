@@ -13,8 +13,17 @@ public sealed class ClasicFlowTests
     {
         var issues = FlowValidator.Validate(ClasicFlow.Parse(), ClasicFlow.Context());
 
-        var errors = issues.Where(i => i.Severity == FlowIssueSeverity.Error).Select(i => $"{i.Code}@{i.NodeId}").ToList();
-        Assert.True(errors.Count == 0, string.Join(", ", errors));
+        // Los defectos reales de un fixture de este tamaño (node.unreachable, variable.never_set, http.no_sample_response) salen como
+        // warnings: el conjunto se fija exacto. Sólo quedan las salidas opcionales que el flujo deja sin conectar a propósito.
+        Assert.DoesNotContain(issues, i => i.Severity == FlowIssueSeverity.Error);
+        string[] unconnected =
+        [
+            "policy", "document", "not-found-options", "new-first-name", "new-last-name", "new-address", "new-neighborhood", "new-city",
+            "new-failure", "invoice-photo", "equipment", "other-address", "service-kind", "failure", "contact-name", "contact-phone",
+        ];
+        Assert.Equal(
+            unconnected.Select(nodeId => ("node.output_unconnected_optional", nodeId)).Order(),
+            issues.Select(i => (i.Code, i.NodeId!)).Order());
     }
 
     [Fact]
@@ -78,8 +87,9 @@ public sealed class ClasicFlowTests
 
         var after = FlowEngine.Step(flow, settings, waiting.State, new EngineInput.CustomerMessage("Text", reply, null, null), now);
 
-        // Aceptada, sigue por policy-save (HTTP) y se detiene ahí; rechazada, sigue esperando en la misma pregunta.
-        Assert.Equal(accepted, after.State.CurrentNodeId != "policy");
+        // Aceptada, guarda la respuesta y sigue por policy-save (HTTP); rechazada, sigue esperando en la misma pregunta.
+        Assert.Equal(accepted ? "policy-save" : "policy", after.State.CurrentNodeId);
+        Assert.Equal(accepted, after.State.Variables.Has("aceptacion"));
     }
 
     [Fact]

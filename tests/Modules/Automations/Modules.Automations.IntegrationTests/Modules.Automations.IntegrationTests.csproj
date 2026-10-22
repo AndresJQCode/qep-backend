@@ -14,7 +14,7 @@
   <ItemGroup>
     <!-- Un solo archivo del Anexo A: el de las pruebas unitarias, enlazado. -->
     <EmbeddedResource Include="..\Modules.Automations.UnitTests\Fixtures\annex-a.json" Link="Fixtures\annex-a.json" />
-    <!-- Spec 2026-10-21 Anexo B, pasos 4 a 7 y 9 a 11, con el subflujo de cliente nuevo: lo importa ClasicFlowEndToEndTests. -->
+    <!-- Spec 2026-10-21 Anexo B, el flujo completo de Clasic (política, cliente nuevo, servicio técnico y mantenimiento): lo importa ClasicFlowEndToEndTests. -->
     <EmbeddedResource Include="Fixtures\clasic.json" />
   </ItemGroup>
   <ItemGroup>
