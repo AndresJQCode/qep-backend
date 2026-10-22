@@ -745,8 +745,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<DecideTriageCommand, TriageResultDto>, DecideTriageHandler>();
         // Pipeline (spec 2026-10-13 D36): el resumen de negocios de la ficha del cliente.
         services.AddScoped<IQueryHandler<GetCustomerDealsSummaryQuery, CustomerDealsSummaryDto>, GetCustomerDealsSummaryHandler>();
-        // Automations (spec 2026-10-21 §4.4): lista, creación, lectura, edición, borrador y validación del chatbot. A mano, como el
-        // resto: sin registro, 500 (CompositionRootTests).
+        // Automations (spec 2026-10-21 §4.4): lista, creación, lectura, edición, borrador, validación, publicación, pausa, reanudación,
+        // duplicado y borrado del chatbot. A mano, como el resto: sin registro, 500 (CompositionRootTests).
         services.AddValidatorsFromAssemblyContaining<CreateChatbotValidator>();
         services.AddScoped<IQueryHandler<ListChatbotsQuery, ChatbotListResponse>, ListChatbotsHandler>();
         services.AddScoped<IQueryHandler<GetChatbotQuery, ChatbotEditorDto>, GetChatbotHandler>();
@@ -754,6 +754,11 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<UpdateChatbotCommand, ChatbotEditorDto>, UpdateChatbotHandler>();
         services.AddScoped<ICommandHandler<SaveChatbotDraftCommand, DraftSavedDto>, SaveChatbotDraftHandler>();
         services.AddScoped<IQueryHandler<ValidateChatbotQuery, IReadOnlyList<FlowIssueDto>>, ValidateChatbotHandler>();
+        services.AddScoped<ICommandHandler<PublishChatbotCommand, ChatbotEditorDto>, PublishChatbotHandler>();
+        services.AddScoped<ICommandHandler<PauseChatbotCommand, ChatbotEditorDto>, PauseChatbotHandler>();
+        services.AddScoped<ICommandHandler<ResumeChatbotCommand, ChatbotEditorDto>, ResumeChatbotHandler>();
+        services.AddScoped<ICommandHandler<DuplicateChatbotCommand, ChatbotEditorDto>, DuplicateChatbotHandler>();
+        services.AddScoped<ICommandHandler<DeleteChatbotCommand, bool>, DeleteChatbotHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();

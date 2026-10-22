@@ -8,8 +8,9 @@ using Modules.Automations.Application;
 
 namespace Modules.Automations.Api;
 
-/// <summary>Spec 2026-10-21 §4.4: lista, creación, lectura, edición, borrador y validación del chatbot. Leer y validar con
-/// <c>automations.chatbot.read</c>; escribir con <c>automations.chatbot.manage</c>, con <c>If-Match</c> sobre un chatbot existente.</summary>
+/// <summary>Spec 2026-10-21 §4.4: lista, creación, lectura, edición, borrador, validación, publicación, pausa, reanudación, duplicado y
+/// borrado del chatbot. Leer y validar con <c>automations.chatbot.read</c>; escribir con <c>automations.chatbot.manage</c>, con
+/// <c>If-Match</c> sobre un chatbot existente (menos duplicar, que no lo cambia).</summary>
 internal static class ChatbotEndpoints
 {
     public static void MapChatbotEndpoints(this RouteGroupBuilder automations)
@@ -50,7 +51,42 @@ internal static class ChatbotEndpoints
             .Produces<IReadOnlyList<FlowIssueDto>>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
+
+        chatbots.MapPost("/{chatbotId:guid}/publish", PublishAsync)
+            .WithActionContract()
+            .Produces<ChatbotEditorDto>()
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
+        chatbots.MapPost("/{chatbotId:guid}/pause", PauseAsync)
+            .WithActionContract()
+            .Produces<ChatbotEditorDto>();
+
+        chatbots.MapPost("/{chatbotId:guid}/resume", ResumeAsync)
+            .WithActionContract()
+            .Produces<ChatbotEditorDto>();
+
+        chatbots.MapPost("/{chatbotId:guid}/duplicate", DuplicateAsync)
+            .RequireAuthorization(AutomationsPermissions.ChatbotManage)
+            .Produces<ChatbotEditorDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
+        chatbots.MapDelete("/{chatbotId:guid}", DeleteAsync)
+            .WithActionContract()
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status409Conflict);
     }
+
+    /// <summary>Una acción sin cuerpo sobre un chatbot existente (publicar, pausar, reanudar, borrar): <c>If-Match</c> como en
+    /// <see cref="WithWriteContract{TRequest, TResponse}"/>.</summary>
+    private static RouteHandlerBuilder WithActionContract(this RouteHandlerBuilder route) =>
+        route.RequireAuthorization(AutomationsPermissions.ChatbotManage)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
     /// <summary>Lo común de toda escritura sobre un chatbot existente: <c>If-Match</c> (428 sin él, 412 si es viejo).</summary>
     private static RouteHandlerBuilder WithWriteContract<TRequest, TResponse>(this RouteHandlerBuilder route)
@@ -175,6 +211,32 @@ internal static class ChatbotEndpoints
 
     private static async Task<IResult> ValidateAsync(Guid tenantId, Guid chatbotId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ValidateChatbotQuery(tenantId, chatbotId), cancellationToken));
+
+    private static async Task<IResult> PublishAsync(
+        Guid tenantId, Guid chatbotId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new PublishChatbotCommand(tenantId, chatbotId, AutomationsEndpoints.RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> PauseAsync(
+        Guid tenantId, Guid chatbotId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new PauseChatbotCommand(tenantId, chatbotId, AutomationsEndpoints.RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> ResumeAsync(
+        Guid tenantId, Guid chatbotId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new ResumeChatbotCommand(tenantId, chatbotId, AutomationsEndpoints.RequireVersion(httpContext)), cancellationToken));
+
+    // Sin Location, como crear: el editor abre con la copia que vuelve.
+    private static async Task<IResult> DuplicateAsync(Guid tenantId, Guid chatbotId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Created((string?)null, await dispatcher.SendAsync(new DuplicateChatbotCommand(tenantId, chatbotId), cancellationToken));
+
+    private static async Task<IResult> DeleteAsync(
+        Guid tenantId, Guid chatbotId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(new DeleteChatbotCommand(tenantId, chatbotId, AutomationsEndpoints.RequireVersion(httpContext)), cancellationToken);
+        return Results.NoContent();
+    }
 }
 
 /// <summary>§4.4: <c>source.kind</c> es <c>blank</c>, <c>template</c> o <c>duplicate</c>; los otros campos van según el tipo.</summary>

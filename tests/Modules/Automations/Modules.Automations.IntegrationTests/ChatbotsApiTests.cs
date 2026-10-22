@@ -506,6 +506,288 @@ public sealed class ChatbotsApiTests
         Assert.Equal([setup.WhatsAppId], item.Connections.Select(connection => connection.Id));
     }
 
+    // D-C3: los errores bloquean y viajan en errors["flow"] como «código: mensaje».
+    [Fact]
+    public async Task PublishAnInvalidDraftIs422ChatbotInvalidWithTheIssues()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+
+        var response = await ActAsync(setup.Client, setup, editor.Chatbot.Id, "publish", editor.Chatbot.Version);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        Assert.Equal("automations.chatbot.invalid", problem.RootElement.GetProperty("code").GetString());
+        var flow = problem.RootElement.GetProperty("errors").GetProperty("flow").EnumerateArray().Select(item => item.GetString()!).ToList();
+        Assert.NotEmpty(flow);
+        Assert.Contains(flow, item => item.StartsWith($"{FlowIssueCodes.StartNoFirstNode}: ", StringComparison.Ordinal));
+        var reloaded = await GetAsync(setup, editor.Chatbot.Id);
+        Assert.Equal(("Draft", editor.Chatbot.Version), (reloaded.Chatbot.Status, reloaded.Chatbot.Version));
+        Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM automations.chatbot_versions"));
+    }
+
+    [Fact]
+    public async Task PublishTheAnnexAFlowActivatesAndNumbersVersionOne()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (id, version) = await PublishableAsync(setup);
+
+        var response = await ActAsync(setup.Client, setup, id, "publish", version);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var published = (await response.Content.ReadFromJsonAsync<ChatbotEditorDto>(Ct))!;
+        Assert.Equal(("Active", false), (published.Chatbot.Status, published.Chatbot.HasDraftChanges));
+        Assert.Equal(1, published.Published!.Number);
+        Assert.Equal((int?)1, published.Chatbot.PublishedVersion);
+        Assert.True(published.Chatbot.Version > version);
+        Assert.Equal(new ServedByDto(id, "Servicio técnico"), Assert.Single(published.Connections).ServedBy);
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+        Assert.Equal(1L, await CountAsync(connectionString,
+            "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.published'", ("id", id.ToString())));
+    }
+
+    // D-C4: la conexión la ocupa el primero; el 409 nombra al que la tiene.
+    [Fact]
+    public async Task PublishASecondChatbotOnTheSameConnectionIs409()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (first, firstVersion) = await PublishableAsync(setup);
+        var (second, secondVersion) = await PublishableAsync(setup, "Ventas");
+        Assert.Equal(HttpStatusCode.OK, (await ActAsync(setup.Client, setup, first, "publish", firstVersion)).StatusCode);
+
+        var response = await ActAsync(setup.Client, setup, second, "publish", secondVersion);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        Assert.Equal("automations.chatbot.connection_taken", problem.RootElement.GetProperty("code").GetString());
+        Assert.Contains("Servicio técnico", problem.RootElement.GetProperty("detail").GetString(), StringComparison.Ordinal);
+        var reloaded = await GetAsync(setup, second);
+        Assert.Equal(("Draft", secondVersion), (reloaded.Chatbot.Status, reloaded.Chatbot.Version));
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+    }
+
+    // El índice parcial, no un chequeo previo, decide entre dos publicaciones simultáneas.
+    [Fact]
+    public async Task ConcurrentPublishOnTheSameConnectionLeavesOneActive()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (first, firstVersion) = await PublishableAsync(setup);
+        var (second, secondVersion) = await PublishableAsync(setup, "Ventas");
+        using var clientA = CreateClient(factory, setup.Tenant.OwnerUserId, setup.Tenant.TenantId, ManagePermissions);
+        using var clientB = CreateClient(factory, setup.Tenant.OwnerUserId, setup.Tenant.TenantId, ManagePermissions);
+
+        var responses = await Task.WhenAll(
+            ActAsync(clientA, setup, first, "publish", firstVersion),
+            ActAsync(clientB, setup, second, "publish", secondVersion));
+
+        Assert.Equal([HttpStatusCode.OK, HttpStatusCode.Conflict], responses.Select(response => response.StatusCode).Order());
+        var conflict = responses.Single(response => response.StatusCode == HttpStatusCode.Conflict);
+        Assert.Equal("automations.chatbot.connection_taken", (await ProblemAsync(conflict)).Code);
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+    }
+
+    // D-C13: la pausa conserva la conexión; D-C5: reanudar vuelve a Active.
+    [Fact]
+    public async Task PauseKeepsTheConnectionAndResumeWorks()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (first, firstVersion) = await PublishableAsync(setup);
+        var (second, secondVersion) = await PublishableAsync(setup, "Ventas");
+        var published = await ReadEditorAsync(await ActAsync(setup.Client, setup, first, "publish", firstVersion));
+
+        var pause = await ActAsync(setup.Client, setup, first, "pause", published.Chatbot.Version);
+        Assert.Equal(HttpStatusCode.OK, pause.StatusCode);
+        var paused = (await pause.Content.ReadFromJsonAsync<ChatbotEditorDto>(Ct))!;
+        var other = await ActAsync(setup.Client, setup, second, "publish", secondVersion);
+        var resume = await ActAsync(setup.Client, setup, first, "resume", paused.Chatbot.Version);
+
+        Assert.Equal("Paused", paused.Chatbot.Status);
+        Assert.Equal(HttpStatusCode.Conflict, other.StatusCode);
+        Assert.Equal("automations.chatbot.connection_taken", (await ProblemAsync(other)).Code);
+        Assert.Equal(HttpStatusCode.OK, resume.StatusCode);
+        var resumed = (await resume.Content.ReadFromJsonAsync<ChatbotEditorDto>(Ct))!;
+        Assert.Equal(("Active", 1), (resumed.Chatbot.Status, resumed.Published!.Number));
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+        foreach (var action in new[] { "paused", "resumed" })
+        {
+            Assert.Equal(1L, await CountAsync(connectionString,
+                "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = @action",
+                ("id", first.ToString()), ("action", $"automations.chatbot.{action}")));
+        }
+    }
+
+    [Fact]
+    public async Task PauseADraftIs422NotPublished()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+
+        var response = await ActAsync(setup.Client, setup, editor.Chatbot.Id, "pause", editor.Chatbot.Version);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("automations.chatbot.not_published", (await ProblemAsync(response)).Code);
+    }
+
+    // D-C12: «(copia)», luego «(copia 2)»; la copia nace en borrador y sin conexiones.
+    [Fact]
+    public async Task DuplicateNumbersTheCopy()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (id, version) = await PublishableAsync(setup);
+        var settings = await PutAsync(
+            setup, $"{ChatbotsUrl(setup.Tenant.TenantId)}/{id}",
+            new UpdateChatbotRequest("Servicio técnico", "Atiende la línea.", "Keyword", ["hola"], "volver", 5, [setup.WhatsAppId]), version);
+        Assert.Equal(HttpStatusCode.OK, settings.StatusCode);
+        var original = await GetAsync(setup, id);
+        var url = $"{ChatbotsUrl(setup.Tenant.TenantId)}/{id}/duplicate";
+
+        var first = await setup.Client.PostAsync(url, null, Ct);
+        var second = await setup.Client.PostAsync(url, null, Ct);
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+        var copy = (await first.Content.ReadFromJsonAsync<ChatbotEditorDto>(Ct))!;
+        var copy2 = (await second.Content.ReadFromJsonAsync<ChatbotEditorDto>(Ct))!;
+        Assert.Equal("Servicio técnico (copia)", copy.Chatbot.Name);
+        Assert.Equal("Servicio técnico (copia 2)", copy2.Chatbot.Name);
+        Assert.NotEqual(id, copy.Chatbot.Id);
+        Assert.Equal(("Draft", "Atiende la línea.", "Keyword"), (copy.Chatbot.Status, copy.Chatbot.Description, copy.Chatbot.Trigger));
+        Assert.Empty(copy.Chatbot.Connections);
+        Assert.Null(copy.Published);
+        Assert.Equal(["hola"], copy.Keywords);
+        Assert.Equal(("volver", 5), (copy.RestartKeyword, copy.MaxAttempts));
+        Assert.True(SameJson(copy.Draft.Flow, original.Draft.Flow.GetRawText()));
+        Assert.True(SameJson(copy.Draft.Layout, original.Draft.Layout.GetRawText()));
+        Assert.Equal(0L, await CountAsync(connectionString,
+            "SELECT count(*) FROM automations.chatbot_connections WHERE chatbot_id = @id", ("id", copy.Chatbot.Id)));
+        Assert.Equal(1L, await CountAsync(connectionString,
+            "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.created'", ("id", copy.Chatbot.Id.ToString())));
+    }
+
+    [Fact]
+    public async Task DeleteWithLiveRunsIs409()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (id, version) = await PublishableAsync(setup);
+        var published = await ReadEditorAsync(await ActAsync(setup.Client, setup, id, "publish", version));
+        var versionId = await ScalarAsync<Guid>(connectionString, "SELECT published_version_id FROM automations.chatbots WHERE id = @id", ("id", id));
+        await ExecuteAsync(connectionString,
+            """
+            INSERT INTO automations.conversation_runs (id, tenant_id, conversation_id, connection_id, chatbot_id, chatbot_version_id, status, started_at, updated_at)
+            VALUES (@id, @tenantId, @conversationId, @connectionId, @chatbotId, @versionId, 'Waiting', now(), now())
+            """,
+            ("id", Guid.CreateVersion7()), ("tenantId", setup.Tenant.TenantId), ("conversationId", Guid.CreateVersion7()),
+            ("connectionId", setup.WhatsAppId), ("chatbotId", id), ("versionId", versionId));
+
+        var response = await DeleteAsync(setup, id, published.Chatbot.Version);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("automations.chatbot.has_live_runs", (await ProblemAsync(response)).Code);
+        Assert.Equal(1L, await CountAsync(connectionString, "SELECT count(*) FROM automations.chatbots WHERE id = @id", ("id", id)));
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+    }
+
+    // D-C13: borrar sí libera la conexión; versiones y conexiones se van en cascada.
+    [Fact]
+    public async Task DeleteFreesTheConnection()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (first, firstVersion) = await PublishableAsync(setup);
+        var (second, secondVersion) = await PublishableAsync(setup, "Ventas");
+        var published = await ReadEditorAsync(await ActAsync(setup.Client, setup, first, "publish", firstVersion));
+
+        var missing = await DeleteAsync(setup, first, null);
+        var deleted = await DeleteAsync(setup, first, published.Chatbot.Version);
+        var other = await ActAsync(setup.Client, setup, second, "publish", secondVersion);
+
+        Assert.Equal(HttpStatusCode.PreconditionRequired, missing.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, other.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await setup.Client.GetAsync($"{ChatbotsUrl(setup.Tenant.TenantId)}/{first}", Ct)).StatusCode);
+        foreach (var table in new[] { "chatbot_versions", "chatbot_connections" })
+        {
+            Assert.Equal(0L, await CountAsync(connectionString, $"SELECT count(*) FROM automations.{table} WHERE chatbot_id = @id", ("id", first)));
+        }
+
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+        Assert.Equal(1L, await CountAsync(connectionString,
+            "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.deleted'", ("id", first.ToString())));
+    }
+
+    /// <summary>Un chatbot con la conexión de WhatsApp y el flujo del Anexo A guardado (sólo avisos con <see cref="FakeExternalApis.WithAnnexA"/>):
+    /// listo para publicar. Devuelve su id y la versión vigente.</summary>
+    private static async Task<(Guid Id, long Version)> PublishableAsync(Setup setup, string name = "Servicio técnico")
+    {
+        var editor = await CreateAsync(setup, name);
+        var save = await SaveDraftAsync(setup, editor, AnnexA.Json);
+        Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+        return (editor.Chatbot.Id, (await save.Content.ReadFromJsonAsync<DraftSavedDto>(Ct))!.Version);
+    }
+
+    /// <summary><c>POST /chatbots/{id}/{action}</c> con <c>If-Match</c> (publish, pause, resume).</summary>
+    private static Task<HttpResponseMessage> ActAsync(HttpClient client, Setup setup, Guid chatbotId, string action, long version)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, $"{ChatbotsUrl(setup.Tenant.TenantId)}/{chatbotId}/{action}");
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
+        return client.SendAsync(request, Ct);
+    }
+
+    private static Task<HttpResponseMessage> DeleteAsync(Setup setup, Guid chatbotId, long? version)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Delete, $"{ChatbotsUrl(setup.Tenant.TenantId)}/{chatbotId}");
+        if (version is not null)
+        {
+            request.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
+        }
+
+        return setup.Client.SendAsync(request, Ct);
+    }
+
+    private static async Task<ChatbotEditorDto> ReadEditorAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<ChatbotEditorDto>(Ct))!;
+    }
+
+    private static Task<long> ActiveRowsAsync(string connectionString, Guid connectionId) =>
+        CountAsync(connectionString, "SELECT count(*) FROM automations.chatbot_connections WHERE connection_id = @id AND active", ("id", connectionId));
+
     private static Task<HttpResponseMessage> SendDraftBodyAsync(Setup setup, string url, HttpContent content, long version)
     {
         var request = new HttpRequestMessage(HttpMethod.Put, url) { Content = content };

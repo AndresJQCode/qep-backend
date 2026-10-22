@@ -75,7 +75,12 @@ public sealed class ChatbotEditorBuilder(
     public async Task<IReadOnlyList<FlowIssueDto>> ValidateAsync(Chatbot chatbot, FlowDefinition flow, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(chatbot);
-        var tenantConnections = await connections.ListAsync(chatbot.TenantId, cancellationToken);
+        return await ValidateAsync(chatbot, flow, await connections.ListAsync(chatbot.TenantId, cancellationToken), cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<FlowIssueDto>> ValidateAsync(
+        Chatbot chatbot, FlowDefinition flow, IReadOnlyList<AutomationConnectionRef> tenantConnections, CancellationToken cancellationToken)
+    {
         var scheduleNames = await businessHours.ScheduleNamesAsync(
             chatbot.TenantId, [.. chatbot.Connections.Select(connection => connection.ConnectionId)], cancellationToken);
         var apis = await externalApis.ListAsync(chatbot.TenantId, cancellationToken);
@@ -86,8 +91,17 @@ public sealed class ChatbotEditorBuilder(
     public async Task<IReadOnlyList<FlowIssueDto>> ValidateStoredAsync(Chatbot chatbot, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(chatbot);
+        return await ValidateStoredAsync(chatbot, await connections.ListAsync(chatbot.TenantId, cancellationToken), cancellationToken);
+    }
+
+    /// <summary>Con las conexiones del tenant ya leídas: publicar valida y después arma el editor con la misma lectura.</summary>
+    public async Task<IReadOnlyList<FlowIssueDto>> ValidateStoredAsync(
+        Chatbot chatbot, IReadOnlyList<AutomationConnectionRef> tenantConnections, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(chatbot);
+        ArgumentNullException.ThrowIfNull(tenantConnections);
         var (flow, problem) = ParseStored(chatbot);
-        return flow is null ? [problem!] : await ValidateAsync(chatbot, flow, cancellationToken);
+        return flow is null ? [problem!] : await ValidateAsync(chatbot, flow, tenantConnections, cancellationToken);
     }
 
     /// <summary>La lista (§4.4): filas proyectadas y una sola lectura de conexiones y de corridas para todos los chatbots.</summary>
