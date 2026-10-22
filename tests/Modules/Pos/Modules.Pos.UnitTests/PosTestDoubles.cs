@@ -360,7 +360,6 @@ internal sealed class FakeProductLookup : IPosProductLookup
             .ToDictionary(entry => entry.Product.VariantId, entry => entry.Product));
 }
 
-/// <summary>Todo lo que un handler del POS necesita, con el cajero del ejemplo ya miembro activo.</summary>
 /// <summary>
 /// El adaptador de Customers en memoria. Guarda por tenant las referencias del selector (con documento) y las
 /// fotos que lee la venta (con o sin documento, activas o no), y anota cada llamada en <see cref="Calls"/>
@@ -437,6 +436,7 @@ internal sealed class FakeCustomerLookup : IPosCustomerLookup
     }
 }
 
+/// <summary>Todo lo que un handler del POS necesita, con el cajero del ejemplo ya miembro activo.</summary>
 internal sealed class PosTestBed
 {
     public static readonly Guid UserId = Guid.Parse("01930000-0000-7000-8000-000000000001");

@@ -44,6 +44,8 @@ public sealed class CreatePosSaleValidator : AbstractValidator<CreatePosSaleComm
                 .Must(PosLimits.HasValidScale).WithMessage("The price accepts at most 2 decimals.");
             line.RuleFor(value => value.ExpectedTaxPercentage).InclusiveBetween(0, 100);
         });
+        // Un Guid.Empty es validation.failed (paso 1), nunca un código pos.*: el frontend toma esos como definitivos.
+        RuleFor(command => command.CustomerId).NotEqual(Guid.Empty).When(command => command.CustomerId is not null);
         RuleFor(command => command.Payments).NotEmpty()
             .Must(payments => payments is null || payments.Count <= PosLimits.MaxPayments).WithMessage("A sale cannot have more than 5 payments.");
         RuleForEach(command => command.Payments).NotNull().ChildRules(payment =>
@@ -83,6 +85,7 @@ public sealed class CreatePosSaleHandler(
     IPosProductLookup products,
     IPosCashierLookup cashiers,
     IMembershipDirectory membershipDirectory,
+    IPosCustomerLookup customers,
     IExecutionContext executionContext,
     IClock clock,
     ITenantClock tenantClock,
@@ -95,7 +98,9 @@ public sealed class CreatePosSaleHandler(
         // la repetición: el cliente no lo toma como definitivo al reintentar un cobro incierto.
         // Ningún 422 con código pos.* puede salir antes del paso 2, porque el frontend sí trata esos
         // como definitivos: el id vacío lo para el validador (validation.failed) antes de que
-        // new PosSaleId lance pos.sale.id_required, y la huella no lanza.
+        // new PosSaleId lance pos.sale.id_required, y la huella no lanza. Por lo mismo, los cuatro
+        // códigos del cliente (403 y tres 422, paso 5b) salen después de la repetición: un cliente
+        // desactivado entre el primer envío y el reintento no puede volver definitivo un cobro hecho.
         PosAuthorization.EnsureAuthorized(executionContext, command.TenantId, PosPermissions.SaleCreate);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var cashier = await PosCashierResolver.ResolveAsync(membershipDirectory, executionContext, command.TenantId, cancellationToken);
@@ -138,11 +143,37 @@ public sealed class CreatePosSaleHandler(
                 throw DiscountNotAllowed();
             }
 
+            // 5b. Cliente identificado (spec 2026-10-14): el permiso va antes de leer nada, y los tres
+            // 422 son definitivos, así que ninguno gasta número.
+            PosSaleCustomer? customer = null;
+            if (command.CustomerId is { } customerId)
+            {
+                if (!executionContext.HasPermission(PosPermissions.SaleCustomer))
+                {
+                    throw CustomerNotAllowed();
+                }
+
+                var found = await customers.FindAsync(command.TenantId, customerId, cancellationToken)
+                    ?? throw new PosDomainException("pos.sale.customer_not_found", "The customer was not found.");
+                if (!found.IsActive)
+                {
+                    throw new PosDomainException("pos.sale.customer_inactive", "The customer is inactive.");
+                }
+
+                if (found.IdentificationType is null || found.IdentificationNumber is null)
+                {
+                    throw new PosDomainException(
+                        "pos.sale.customer_identification_missing", "The customer has no identification document.");
+                }
+
+                customer = new PosSaleCustomer(found.Id, found.Name, found.IdentificationType, found.IdentificationNumber);
+            }
+
             // 6. Venta (valida líneas y pagos). Un total en cero sin descuento sólo sale de
             // productos con precio 0, y regalar también es un descuento.
             var now = clock.UtcNow;
             sale = PosSale.Create(
-                saleId, fingerprint, session, lines, command.Payments.Select(ToInput).ToArray(), now);
+                saleId, fingerprint, session, lines, command.Payments.Select(ToInput).ToArray(), now, customer);
             if (sale.Total == 0 && !canDiscount)
             {
                 throw DiscountNotAllowed();
@@ -247,6 +278,9 @@ public sealed class CreatePosSaleHandler(
 
     private static RequestForbiddenException DiscountNotAllowed() =>
         new("pos.sale.discount_not_allowed", "Discounts and zero-total sales need the pos.sale.discount permission.");
+
+    private static RequestForbiddenException CustomerNotAllowed() =>
+        new("pos.sale.customer_not_allowed", "Selling to an identified customer needs the pos.sale.customer permission.");
 
     // changedFields es el único campo libre del contrato de auditoría (spec, «Descuentos en la
     // auditoría»): discount:{position}:{productCode}:{discountPercentage} y total:0.

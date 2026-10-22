@@ -80,7 +80,21 @@ public sealed class PosSaleTests
     }
 
     [Fact]
-    public void TheSaleIsAlwaysToTheFinalConsumer()
+    public void ASaleWithACustomerKeepsItsSnapshot()
+    {
+        var id = Guid.CreateVersion7();
+        var sale = PosSale.Create(
+            PosSaleId.New(), Fingerprint, OpenSession(), WorkedExampleLines(), [Card(20_000m, "1234"), Cash(20_000m)], Now,
+            new PosSaleCustomer(id, "Laura Gómez", "CC", "1020304050"));
+
+        Assert.Equal(id, sale.CustomerId);
+        Assert.Equal("Laura Gómez", sale.CustomerName);
+        Assert.Equal("CC", sale.CustomerIdentificationType);
+        Assert.Equal("1020304050", sale.CustomerIdentificationNumber);
+    }
+
+    [Fact]
+    public void ASaleWithoutACustomerIsTheFinalConsumer()
     {
         var sale = Sale(OpenSession());
 

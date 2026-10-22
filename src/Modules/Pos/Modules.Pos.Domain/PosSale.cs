@@ -78,7 +78,8 @@ public sealed class PosSale
         CashSession session,
         IReadOnlyList<PosSaleLineInput> lines,
         IReadOnlyList<PosPaymentInput> payments,
-        DateTimeOffset at)
+        DateTimeOffset at,
+        PosSaleCustomer? customer = null)
     {
         if (lines.Count == 0)
         {
@@ -110,10 +111,10 @@ public sealed class PosSale
             CashSessionId = session.Id,
             CashierId = session.CashierId,
             Currency = session.Currency,
-            CustomerId = null,
-            CustomerName = PosFinalConsumer.Name,
-            CustomerIdentificationType = null,
-            CustomerIdentificationNumber = PosFinalConsumer.IdentificationNumber,
+            CustomerId = customer?.Id,
+            CustomerName = customer?.Name ?? PosFinalConsumer.Name,
+            CustomerIdentificationType = customer?.IdentificationType,
+            CustomerIdentificationNumber = customer?.IdentificationNumber ?? PosFinalConsumer.IdentificationNumber,
             Subtotal = subtotal,
             DiscountAmount = discount,
             TaxAmount = tax,

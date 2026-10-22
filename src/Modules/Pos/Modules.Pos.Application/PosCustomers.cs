@@ -85,7 +85,8 @@ public sealed class CreatePosCustomerHandler(
 
         var type = command.IdentificationType!;
         var number = command.IdentificationNumber!.Trim();
-        // Por legibilidad: la carrera entre dos cajas la resuelve la unidad de trabajo de Customers, que lanza el 422
+        // La consulta previa existe para devolver `existing` en el 422 (el selector lo ofrece en vez del alta); la
+        // carrera entre dos cajas la cubre la unidad de trabajo de Customers, que lanza
         // customers.customer.identification_taken.
         if (await customers.FindByIdentificationAsync(command.TenantId, type, number, cancellationToken) is { } taken)
         {

@@ -9,6 +9,7 @@ namespace Modules.Pos.UnitTests;
 public sealed class CreatePosSaleHandlerTests
 {
     private static readonly string[] Seller = [PosPermissions.SaleCreate];
+    private static readonly string[] CustomerSeller = [PosPermissions.SaleCreate, PosPermissions.SaleCustomer];
     private static readonly string[] Discounter = [PosPermissions.SaleCreate, PosPermissions.SaleDiscount];
 
     private static (PosTestBed Bed, CashSession Session) Arrange()
@@ -19,17 +20,23 @@ public sealed class CreatePosSaleHandlerTests
     }
 
     private static CreatePosSaleCommand Command(
-        CashSession session, Guid? id = null, PosSaleLineRequest[]? lines = null, PosPaymentRequest[]? payments = null) =>
+        CashSession session, Guid? id = null, PosSaleLineRequest[]? lines = null, PosPaymentRequest[]? payments = null,
+        Guid? customerId = null) =>
         new(
             TenantId,
             id ?? Guid.CreateVersion7(),
             session.Id.Value,
             lines ?? [new(Shampoo, 2m, 10m, 11_900m, 19), new(Avena, 1.5m, 0m, 5_000m, 0), new(Jabon, 3m, 0m, 2_990m, 5)],
-            payments ?? [new("Card", 20_000m, null, "1234"), new("Cash", null, 20_000m, null)]);
+            payments ?? [new("Card", 20_000m, null, "1234"), new("Cash", null, 20_000m, null)],
+            customerId);
+
+    // Sin descuento: el vendedor de estas pruebas no tiene pos.sale.discount, y el 403 que se prueba es el del cliente.
+    private static CreatePosSaleCommand PlainCommand(CashSession session, Guid? customerId = null) =>
+        Command(session, lines: [new(Shampoo, 1m, 0m, 11_900m, 19)], payments: [new("Cash", null, 20_000m, null)], customerId: customerId);
 
     private static CreatePosSaleHandler Handler(PosTestBed bed, params string[] permissions) =>
         new(bed.Sessions, bed.Sales, bed.Numbers, bed.UnitOfWork, bed.SaleIdLock, bed.Audit, bed.Products, bed.Cashiers,
-            bed.Memberships, bed.Context(permissions), bed.Clock, bed.TenantClock, new CreatePosSaleValidator());
+            bed.Memberships, bed.Customers, bed.Context(permissions), bed.Clock, bed.TenantClock, new CreatePosSaleValidator());
 
     // La venta "del otro request" que el choque deja en la base: mismo id, mismo cajero, misma huella.
     private static PosSale WinnerFor(CreatePosSaleCommand command, CashSession session)
@@ -146,6 +153,101 @@ public sealed class CreatePosSaleHandlerTests
             Command(session, Guid.Empty), TestContext.Current.CancellationToken));
 
         Assert.Contains(error.Errors, failure => failure.PropertyName == nameof(CreatePosSaleCommand.Id));
+        Assert.Equal(0, bed.Numbers.Calls);
+    }
+
+    [Fact]
+    public async Task ASaleWithAValidCustomerStoresTheSnapshotWithItsId()
+    {
+        var (bed, session) = Arrange();
+        var customer = bed.Customers.AddSnapshot("Laura Gómez", "CC", "1020304050");
+
+        var result = await Handler(bed, CustomerSeller).HandleAsync(
+            PlainCommand(session, customer.Id),
+            TestContext.Current.CancellationToken);
+
+        var stored = Assert.Single(bed.Sales.Stored);
+        Assert.Equal(customer.Id, stored.CustomerId);
+        Assert.Equal(("Laura Gómez", "CC", "1020304050"), (stored.CustomerName, stored.CustomerIdentificationType, stored.CustomerIdentificationNumber));
+        Assert.Equal(("Laura Gómez", "CC", "1020304050"), (result.Sale.Customer.Name, result.Sale.Customer.IdentificationType, result.Sale.Customer.IdentificationNumber));
+    }
+
+    [Fact]
+    public async Task ASaleWithoutCustomerIdNeverAsksTheLookup()
+    {
+        var (bed, session) = Arrange();
+
+        await Handler(bed, CustomerSeller).HandleAsync(PlainCommand(session), TestContext.Current.CancellationToken);
+
+        Assert.Empty(bed.Customers.Calls);
+        Assert.Null(Assert.Single(bed.Sales.Stored).CustomerId);
+    }
+
+    [Fact]
+    public async Task ACustomerWithoutThePermissionIs403BeforeAnyNumber()
+    {
+        var (bed, session) = Arrange();
+        var customer = bed.Customers.AddSnapshot("Laura Gómez", "CC", "1020304050");
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() => Handler(bed, Seller).HandleAsync(
+            PlainCommand(session, customer.Id), TestContext.Current.CancellationToken));
+
+        Assert.Equal("pos.sale.customer_not_allowed", error.Code);
+        Assert.Equal(0, bed.Numbers.Calls);
+        Assert.Empty(bed.Customers.Calls);
+    }
+
+    [Theory]
+    [InlineData("missing", "pos.sale.customer_not_found")]
+    [InlineData("inactive", "pos.sale.customer_inactive")]
+    [InlineData("noDocument", "pos.sale.customer_identification_missing")]
+    public async Task AnUnusableCustomerIsADefinitive422(string state, string code)
+    {
+        var (bed, session) = Arrange();
+        var customerId = state switch
+        {
+            "inactive" => bed.Customers.AddSnapshot("Pedro", "CC", "5566778899", active: false).Id,
+            "noDocument" => bed.Customers.AddSnapshot("Laura de WhatsApp").Id,
+            _ => Guid.CreateVersion7(),
+        };
+
+        var error = await Assert.ThrowsAsync<PosDomainException>(() => Handler(bed, CustomerSeller).HandleAsync(
+            PlainCommand(session, customerId), TestContext.Current.CancellationToken));
+
+        Assert.Equal(code, error.Code);
+        Assert.Equal(0, bed.Numbers.Calls);
+        Assert.Empty(bed.Sales.Stored);
+    }
+
+    // Spec: la repetición se reconoce antes de mirar al cliente; si no, un cliente desactivado entre
+    // el primer envío y el reintento convertiría un cobro ya hecho en un 422 definitivo.
+    [Fact]
+    public async Task ARepeatWithACustomerIsRecognizedBeforeTheCustomerChecks()
+    {
+        var (bed, session) = Arrange();
+        var customer = bed.Customers.AddSnapshot("Laura Gómez", "CC", "1020304050");
+        var command = PlainCommand(session, customer.Id);
+        var first = await Handler(bed, CustomerSeller).HandleAsync(command, TestContext.Current.CancellationToken);
+        bed.Customers.Snapshots.Clear();
+        bed.Customers.AddSnapshot("Laura Gómez", "CC", "1020304050", active: false, id: customer.Id);
+
+        var repeat = await Handler(bed, CustomerSeller).HandleAsync(command, TestContext.Current.CancellationToken);
+
+        Assert.False(repeat.Created);
+        Assert.Equal(first.Sale.Id, repeat.Sale.Id);
+        Assert.Equal(1, bed.Numbers.Calls);
+    }
+
+    [Fact]
+    public async Task AnEmptyCustomerIdIsAValidationFailure()
+    {
+        var (bed, session) = Arrange();
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() => Handler(bed, CustomerSeller).HandleAsync(
+            PlainCommand(session, Guid.Empty), TestContext.Current.CancellationToken));
+
+        Assert.Contains(error.Errors, failure => failure.PropertyName == nameof(CreatePosSaleCommand.CustomerId));
+        Assert.Empty(bed.Customers.Calls);
         Assert.Equal(0, bed.Numbers.Calls);
     }
 

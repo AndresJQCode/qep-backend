@@ -233,7 +233,68 @@ public sealed class PosCustomerApiTests
         // Sólo el status: la política enmascarada no garantiza código.
         Assert.Equal(HttpStatusCode.Forbidden, search.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, create.StatusCode);
+
+        var session = await arranged.World.OpenSessionAsync(arranged.Cashier);
+        var withCustomer = await arranged.Cashier.PostAsJsonAsync(
+            $"{arranged.World.Url}/sales",
+            SaleWithCustomer(arranged.World, session.Id, Guid.CreateVersion7(), Guid.CreateVersion7()),
+            TestContext.Current.CancellationToken);
+        var plain = await arranged.Cashier.PostAsJsonAsync(
+            $"{arranged.World.Url}/sales",
+            PosWorld.SaleBody(Guid.CreateVersion7(), session.Id, arranged.World.PlainLine(), PosWorld.CashPayment(20_000m)),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, withCustomer.StatusCode);
+        var problem = await withCustomer.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("pos.sale.customer_not_allowed", problem.GetProperty("code").GetString());
+        Assert.Equal(HttpStatusCode.Created, plain.StatusCode);
+        var sale = await plain.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("Consumidor final", sale.GetProperty("customer").GetProperty("name").GetString());
     }
+
+    [Fact]
+    public async Task ASaleToAQuickCreatedCustomerCarriesItInTheTicketAndTheList()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeAsync(factory, database);
+        var created = await arranged.Cashier.PostAsJsonAsync($"{arranged.World.Url}/customers", QuickBody(), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var customerId = (await created.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("id").GetGuid();
+        var session = await arranged.World.OpenSessionAsync(arranged.Cashier);
+        var saleId = Guid.CreateVersion7();
+
+        var response = await arranged.Cashier.PostAsJsonAsync(
+            $"{arranged.World.Url}/sales",
+            SaleWithCustomer(arranged.World, session.Id, saleId, customerId),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var customer = (await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("customer");
+        Assert.Equal("Laura Gómez", customer.GetProperty("name").GetString());
+        Assert.Equal("CC", customer.GetProperty("identificationType").GetString());
+        Assert.Equal("1020304050", customer.GetProperty("identificationNumber").GetString());
+        var list = await arranged.Cashier.GetFromJsonAsync<JsonElement>($"{arranged.World.Url}/sales", TestContext.Current.CancellationToken);
+        var item = Assert.Single(list.GetProperty("items").EnumerateArray());
+        Assert.Equal("Laura Gómez", item.GetProperty("customerName").GetString());
+        Assert.Equal(
+            1L,
+            await CountAsync(
+                database,
+                "SELECT count(*) FROM pos.sales WHERE id = @id AND customer_id = @customerId",
+                ("id", saleId),
+                ("customerId", customerId)));
+    }
+
+    private static object SaleWithCustomer(PosWorld world, Guid sessionId, Guid saleId, Guid customerId) =>
+        new
+        {
+            id = saleId,
+            cashSessionId = sessionId,
+            lines = world.PlainLine(),
+            payments = PosWorld.CashPayment(20_000m),
+            customerId,
+        };
 
     [Fact]
     public async Task BillingCannotUseThePosCustomerEndpoints()
