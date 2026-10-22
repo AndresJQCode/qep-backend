@@ -104,19 +104,26 @@ public sealed class AutomationsSchemaTests
         await InsertRunAsync(connectionString, tenantId, conversationId, "HandedOff");
     }
 
+    // La revisión de la tarea 9: una ruta desconocida da 404 aun con el grupo vacío, así que no prueba nada. Esto sí: el grupo
+    // existe y sus rutas pasan por TenantModuleGuard (sin automations, 403 con código), y lo que no está mapeado sigue en 404.
     [Fact]
-    public async Task AnUnknownRouteUnderAutomationsIs404NotMissingModule()
+    public async Task TheChatbotsRouteWithoutTheModuleIs403AndAnUnknownRouteIs404()
     {
         await using var database = await StartDatabaseAsync();
         var connectionString = database.GetConnectionString();
         using var factory = new QepApiFactory(connectionString);
         var tenant = await RegisterTenantAsync(factory);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ReadPermissions);
+
+        var withoutModule = await client.GetAsync($"{AutomationsUrl(tenant.TenantId)}/chatbots", Ct);
         await EnableAutomationsAsync(connectionString, tenant.TenantId);
-        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId);
+        var unknown = await client.GetAsync($"{AutomationsUrl(tenant.TenantId)}/nothing", Ct);
+        var withModule = await client.GetAsync($"{AutomationsUrl(tenant.TenantId)}/chatbots", Ct);
 
-        var response = await client.GetAsync($"{AutomationsUrl(tenant.TenantId)}/nothing", Ct);
-
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, withoutModule.StatusCode);
+        Assert.Equal("tenancy.module_not_enabled", (await ProblemAsync(withoutModule)).Code);
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, withModule.StatusCode);
     }
 
     private static async Task<Guid> InsertChatbotAsync(string connectionString, Guid tenantId, string name)

@@ -18,6 +18,8 @@ public static class AutomationsInfrastructureExtensions
 
         // La membresía de quien llama, una vez por request: autor del borrador, de la publicación y de la auditoría.
         services.AddScoped<AutomationsCaller>();
+        // El editor y la lista (BFF, spec 2026-10-21 §4.4): una sola pieza arma lo que la pantalla pinta.
+        services.AddScoped<ChatbotEditorBuilder>();
 
         services.AddScoped<IChatbotRepository, ChatbotRepository>();
         services.AddScoped<IChatbotTemplateRepository, ChatbotTemplateRepository>();

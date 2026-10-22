@@ -27,8 +27,9 @@ public static partial class FlowValidator
     private const string NameRule = "empieza con minúscula y usa sólo letras y números, máximo 40.";
 
     /// <summary>D-M8: las variables que el motor siempre llena, sin que un bloque las escriba.</summary>
-    private static readonly FrozenSet<string> FixedVariables =
-        new[] { "nombre", "telefono", "empresa", "conexion" }.ToFrozenSet(StringComparer.Ordinal);
+    private static readonly string[] FixedOrder = ["nombre", "telefono", "empresa", "conexion"];
+
+    private static readonly FrozenSet<string> FixedVariables = FixedOrder.ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>Sin conectar, D-M7 las cubre en tiempo de ejecución (reinicia o repite), así que son aviso y no error.</summary>
     private static readonly FrozenSet<string> OptionalOutputs =
@@ -83,6 +84,24 @@ public static partial class FlowValidator
         }
 
         return issues;
+    }
+
+    /// <summary>Las variables que el editor ofrece para interpolar: las fijas (D-M8), las declaradas y las que escribe algún bloque,
+    /// sin repetir y en ese orden. Las vacías (un <c>saveTo</c> a medio escribir) no cuentan.</summary>
+    public static IReadOnlyList<string> KnownVariables(FlowDefinition flow)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+        var known = new List<string>(FixedVariables.Count + flow.Variables.Count);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var name in FixedOrder.Concat(flow.Variables.Select(variable => variable.Name)).Concat(WrittenInOrder(flow)))
+        {
+            if (!string.IsNullOrWhiteSpace(name) && seen.Add(name))
+            {
+                known.Add(name);
+            }
+        }
+
+        return known;
     }
 
     private static bool CheckStart(FlowStart start, HashSet<string> ids, List<FlowIssue> issues)
@@ -407,29 +426,37 @@ public static partial class FlowValidator
     {
         // D-M8: cuenta lo que produce un bloque. Declarar una variable en variables[] no la llena.
         var written = new HashSet<string>(FixedVariables, StringComparer.Ordinal);
+        written.UnionWith(WrittenInOrder(flow));
+        return written;
+    }
+
+    private static IEnumerable<string> WrittenInOrder(FlowDefinition flow)
+    {
         foreach (var node in flow.Nodes)
         {
             switch (node)
             {
                 case OpenQuestionNode question:
-                    written.Add(question.SaveTo);
+                    yield return question.SaveTo;
                     break;
                 case ButtonsNode { SaveTo: { } saveTo } when !string.IsNullOrWhiteSpace(saveTo):
-                    written.Add(saveTo);
+                    yield return saveTo;
                     break;
                 case ListNode list:
-                    written.Add(list.SaveTo);
+                    yield return list.SaveTo;
                     break;
                 case AttachmentNode attachment:
-                    written.Add(attachment.SaveTo);
+                    yield return attachment.SaveTo;
                     break;
                 case HttpNode http:
-                    written.UnionWith(http.Mapping.Select(mapping => mapping.To));
+                    foreach (var mapping in http.Mapping)
+                    {
+                        yield return mapping.To;
+                    }
+
                     break;
             }
         }
-
-        return written;
     }
 
     // D-M8 pide avisar si «no la produce ningún bloque anterior». Aquí se simplifica a «ningún bloque»: saber qué bloque va antes

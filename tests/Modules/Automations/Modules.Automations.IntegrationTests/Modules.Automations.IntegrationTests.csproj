@@ -12,6 +12,10 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Un solo archivo del Anexo A: el de las pruebas unitarias, enlazado. -->
+    <EmbeddedResource Include="..\Modules.Automations.UnitTests\Fixtures\annex-a.json" Link="Fixtures\annex-a.json" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Api\Api.csproj" />
   </ItemGroup>
 </Project>

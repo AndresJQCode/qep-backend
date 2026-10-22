@@ -19,6 +19,23 @@ public sealed class FlowValidatorTests
         Assert.Null(issue.NodeId);
     }
 
+    // Lo que el editor ofrece para interpolar (§4.4 «variables conocidas»): fijas, declaradas y escritas, sin repetir ni vacías.
+    [Fact]
+    public void KnownVariablesAreTheFixedTheDeclaredAndTheWrittenOnes()
+    {
+        var question = new OpenQuestionNode(
+            "n1", "Documento", Out(("answered", "end"), ("invalid", null)), "¿Documento?", "cedula", new QuestionValidation("none", null, null), null);
+        var blank = new OpenQuestionNode(
+            "n2", "A medias", Out(("answered", "end"), ("invalid", null)), "¿Algo?", "", new QuestionValidation("none", null, null), null);
+        var flow = new FlowDefinition(
+            1, new FlowStart("n1"), [new FlowVariable("cedula", "text"), new FlowVariable("equipos", "list")], [question, blank, Http(), End()]);
+
+        Assert.Equal(["nombre", "telefono", "empresa", "conexion", "cedula", "equipos"], FlowValidator.KnownVariables(flow));
+        Assert.Equal(
+            ["nombre", "telefono", "empresa", "conexion", "cedula", "equipos", "cliente", "equipo", "motivo", "factura", "direccion", "orden"],
+            FlowValidator.KnownVariables(AnnexAFlow.Parse()));
+    }
+
     [Fact]
     public void AnUnconnectedNextIsAnError()
     {

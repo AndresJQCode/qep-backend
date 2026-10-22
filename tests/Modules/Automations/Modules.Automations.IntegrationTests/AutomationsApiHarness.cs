@@ -2,7 +2,9 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Automations.Application;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
@@ -107,10 +109,36 @@ internal static class AutomationsApiHarness
         }
     }
 
-    public sealed class QepApiFactory(string connectionString) : WebApplicationFactory<Program>
+    /// <summary>
+    /// Las conexiones «API externa» que ve el host. El proveedor <c>external-api</c> de Integrations llega con el plan 2 y, hasta
+    /// entonces, el adaptador del composition root no devuelve ninguna: las pruebas que necesitan las del Anexo A
+    /// (<see cref="AnnexA.CustomersApi"/>, <see cref="AnnexA.ServiceOrdersApi"/>) le pasan este doble a <see cref="QepApiFactory"/>.
+    /// </summary>
+    public sealed class FakeExternalApis : IAutomationExternalApis
+    {
+        public List<ExternalApiRef> Items { get; } = [];
+
+        /// <summary>Las dos del Anexo A, activas.</summary>
+        public static FakeExternalApis WithAnnexA() =>
+            new() { Items = { new ExternalApiRef(AnnexA.CustomersApi, "Clientes", "Active"), new ExternalApiRef(AnnexA.ServiceOrdersApi, "Órdenes", "Active") } };
+
+        public Task<IReadOnlyList<ExternalApiRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ExternalApiRef>>([.. Items]);
+    }
+
+    public sealed class QepApiFactory(string connectionString, FakeExternalApis? externalApis = null) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            if (externalApis is not null)
+            {
+                builder.ConfigureTestServices(services =>
+                {
+                    services.RemoveAll<IAutomationExternalApis>();
+                    services.AddSingleton<IAutomationExternalApis>(externalApis);
+                });
+            }
+
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 40 }.ConnectionString);
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);

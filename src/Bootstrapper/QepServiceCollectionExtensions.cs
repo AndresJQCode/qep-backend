@@ -745,6 +745,15 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<DecideTriageCommand, TriageResultDto>, DecideTriageHandler>();
         // Pipeline (spec 2026-10-13 D36): el resumen de negocios de la ficha del cliente.
         services.AddScoped<IQueryHandler<GetCustomerDealsSummaryQuery, CustomerDealsSummaryDto>, GetCustomerDealsSummaryHandler>();
+        // Automations (spec 2026-10-21 §4.4): lista, creación, lectura, edición, borrador y validación del chatbot. A mano, como el
+        // resto: sin registro, 500 (CompositionRootTests).
+        services.AddValidatorsFromAssemblyContaining<CreateChatbotValidator>();
+        services.AddScoped<IQueryHandler<ListChatbotsQuery, ChatbotListResponse>, ListChatbotsHandler>();
+        services.AddScoped<IQueryHandler<GetChatbotQuery, ChatbotEditorDto>, GetChatbotHandler>();
+        services.AddScoped<ICommandHandler<CreateChatbotCommand, ChatbotEditorDto>, CreateChatbotHandler>();
+        services.AddScoped<ICommandHandler<UpdateChatbotCommand, ChatbotEditorDto>, UpdateChatbotHandler>();
+        services.AddScoped<ICommandHandler<SaveChatbotDraftCommand, DraftSavedDto>, SaveChatbotDraftHandler>();
+        services.AddScoped<IQueryHandler<ValidateChatbotQuery, IReadOnlyList<FlowIssueDto>>, ValidateChatbotHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
@@ -786,7 +795,7 @@ public static class QepServiceCollectionExtensions
         services.AddPipelineInfrastructure(configuration);
 
         // Automations (spec 2026-10-21 §4.1): los chatbots. Sólo ve Tenancy (y Audit en Infrastructure); conversaciones, salida del
-        // bot, conexiones y la «API externa» entran por adaptadores que llegan con la tarea 16 del plan.
+        // bot, conexiones y la «API externa» entran por adaptadores que se registran más abajo.
         services.AddAutomationsInfrastructure(configuration);
 
         // Shopify (spec 2026-10-15): el espejo de pedidos de las tiendas. Sólo ve Tenancy (y Audit para su auditoría atómica);
@@ -867,6 +876,11 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes. Adaptador nulo («Chatbot» para todo id) hasta que
         // la tarea 16 lo reemplace por el de Automations.
         services.AddScoped<IAutomationsChatbotNames, NullAutomationsChatbotNames>();
+        // Spec 2026-10-21 §4.4: lo que Automations necesita de Mensajería e Integrations. Las conexiones ya son reales (sobre
+        // IMessagingConnectionDirectory); la «API externa» y los horarios quedan nulos hasta la tarea 16 del plan.
+        services.AddScoped<IAutomationConnections, AutomationConnections>();
+        services.AddScoped<IAutomationExternalApis, NullAutomationExternalApis>();
+        services.AddScoped<IAutomationBusinessHours, NullAutomationBusinessHours>();
         // Spec 2026-10-12 §3.3 (D-Q5): el nombre del tenant para las variables de las respuestas rápidas, por Tenancy.
         services.AddScoped<IMessagingTenantNames, MessagingTenantNames>();
         // Spec 2026-10-11 §4.2: el autor de una nota de cliente (usuario, no membresía) con su nombre visible.

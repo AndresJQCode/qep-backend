@@ -61,6 +61,9 @@ internal static class AutomationsNotFound
 
     public static ResourceNotFoundException ExternalApi(Guid id) =>
         new(AutomationsErrorCodes.ExternalApiNotFound, $"External API connection '{id}' was not found.");
+
+    public static ResourceNotFoundException Connection(Guid id) =>
+        new(AutomationsErrorCodes.ConnectionNotFound, $"Connection '{id}' was not found.");
 }
 
 internal static class AutomationsVersions

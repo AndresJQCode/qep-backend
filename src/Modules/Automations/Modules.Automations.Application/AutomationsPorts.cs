@@ -47,6 +47,34 @@ public interface IConversationRunQueries
     Task<bool> HasLiveRunsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken);
 }
 
+/// <summary>Spec 2026-10-21 §4.4 y D-M6: una conexión de Mensajería del tenant, en cualquier estado. <see cref="Channel"/> es el nombre
+/// de <c>ConversationChannel</c> (<c>WhatsApp</c> o <c>Instagram</c>); <see cref="Handle"/>, el número visible o el <c>@usuario</c>, vacío
+/// si la conexión no está activa; <see cref="Status"/>, el nombre del estado de Integrations (<c>Active</c>, <c>Paused</c>, …).</summary>
+public sealed record AutomationConnectionRef(Guid Id, string Name, string Channel, string Handle, string Status);
+
+/// <summary>Las conexiones de Mensajería del tenant (adaptador en Bootstrapper sobre <c>IMessagingConnectionDirectory</c>): Automations
+/// no referencia Messaging.</summary>
+public interface IAutomationConnections
+{
+    Task<IReadOnlyList<AutomationConnectionRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
+/// <summary>Una conexión «API externa» del tenant (D-H4); <see cref="Status"/> es el nombre del estado de Integrations.</summary>
+public sealed record ExternalApiRef(Guid Id, string Name, string Status);
+
+/// <summary>Las conexiones «API externa» del tenant, que el bloque HTTP usa (adaptador en Bootstrapper sobre Integrations).</summary>
+public interface IAutomationExternalApis
+{
+    Task<IReadOnlyList<ExternalApiRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
+/// <summary>El horario asignado a cada conexión (Mensajería, D-H10). Una conexión sin horario viene con <c>null</c> o no viene.</summary>
+public interface IAutomationBusinessHours
+{
+    Task<IReadOnlyDictionary<Guid, string?>> ScheduleNamesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> connectionIds, CancellationToken cancellationToken);
+}
+
 /// <summary>Traduce por nombre de índice (nunca sólo por SqlState): nombre repetido y conexión ocupada → 409; versión vieja o
 /// dos publicaciones simultáneas → <c>concurrency.conflict</c> (412).</summary>
 public interface IAutomationsUnitOfWork

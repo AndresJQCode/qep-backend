@@ -9,10 +9,11 @@ public static class AutomationsEndpoints
 {
     /// <summary>Spec 2026-10-21 §4.4: todo bajo <c>/api/v1/tenants/{tenantId:guid}/automations</c>. Cada ruta declara su
     /// <c>RequireAuthorization</c>; los handlers revalidan tenant, permiso y capacidad (403 con código, nunca 404 ante otro tenant).
-    /// Las rutas llegan con las tareas 14 en adelante del plan.</summary>
+    /// </summary>
     public static IEndpointRouteBuilder MapAutomationsEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGroup("/api/v1/tenants/{tenantId:guid}/automations").WithTags("Automations");
+        var group = endpoints.MapGroup("/api/v1/tenants/{tenantId:guid}/automations").WithTags("Automations");
+        group.MapChatbotEndpoints();
         return endpoints;
     }
 

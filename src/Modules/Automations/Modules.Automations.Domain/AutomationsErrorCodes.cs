@@ -47,4 +47,8 @@ public static class AutomationsErrorCodes
     public const string SimulationExpired = "automations.simulation.expired";
 
     public const string ExternalApiNotFound = "automations.external_api.not_found";
+
+    /// <summary>Crear o editar un chatbot con una conexión que no es del tenant (o que Integrations ya borró). No está en §4.3: lo
+    /// agrega la tarea 14 del plan.</summary>
+    public const string ConnectionNotFound = "automations.connection.not_found";
 }
