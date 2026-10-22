@@ -1,5 +1,7 @@
 using BuildingBlocks.Application;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Automations.Infrastructure.Persistence;
 using Modules.Automations.Application;
 using Modules.Automations.Domain;
 using static Modules.Automations.IntegrationTests.AutomationsApiHarness;
@@ -167,6 +169,150 @@ public sealed class AutomationsPersistenceTests
             "SELECT count(*) FROM audit.entries WHERE tenant_id = @t AND action = 'automations.chatbot.created' AND resource_type = 'chatbot' AND resource_id = @r",
             ("t", tenantId), ("r", chatbot.Id.ToString()));
         Assert.Equal(1L, count);
+    }
+
+    // D-C13: pausar no libera la conexión; el motor decide por Status.
+    [Fact]
+    public async Task FindPublishedByConnectionReturnsAPausedChatbot()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var chatbot = NewChatbot(tenantId, "Ventas");
+        chatbot.SetConnections([connectionId], Now);
+        chatbot.Publish([], Guid.CreateVersion7(), Now);
+        chatbot.Pause(Now);
+        using (var seed = factory.Services.CreateScope())
+        {
+            await seed.ServiceProvider.GetRequiredService<IChatbotRepository>().AddAsync(chatbot, Ct);
+            await seed.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var scope = factory.Services.CreateScope();
+        var found = await scope.ServiceProvider.GetRequiredService<IChatbotRepository>()
+            .FindPublishedByConnectionAsync(tenantId, connectionId, Ct);
+
+        Assert.NotNull(found);
+        Assert.Equal(ChatbotStatus.Paused, found.Status);
+    }
+
+    [Fact]
+    public async Task ListSearchesCaseInsensitivelyTreatsWildcardsAsLiteralsAndScopesByTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        using (var seed = factory.Services.CreateScope())
+        {
+            var repository = seed.ServiceProvider.GetRequiredService<IChatbotRepository>();
+            foreach (var name in new[] { "Ventas Bogotá", "Soporte_100", "Soporte X100", "Oferta 50%", "Oferta 500" })
+            {
+                await repository.AddAsync(NewChatbot(tenantId, name), Ct);
+            }
+
+            await repository.AddAsync(NewChatbot(Guid.CreateVersion7(), "Ventas Otro Tenant"), Ct);
+            await seed.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var scope = factory.Services.CreateScope();
+        var chatbots = scope.ServiceProvider.GetRequiredService<IChatbotRepository>();
+
+        Assert.Equal(["Ventas Bogotá"], (await chatbots.ListAsync(tenantId, "vENTAS", Ct)).Select(chatbot => chatbot.Name));
+        Assert.Equal(["Soporte_100"], (await chatbots.ListAsync(tenantId, "_100", Ct)).Select(chatbot => chatbot.Name));
+        Assert.Equal(["Oferta 50%"], (await chatbots.ListAsync(tenantId, "50%", Ct)).Select(chatbot => chatbot.Name));
+        // Un «%» suelto no es comodín: sólo casa el nombre que lo trae.
+        Assert.Equal(["Oferta 50%"], (await chatbots.ListAsync(tenantId, "%", Ct)).Select(chatbot => chatbot.Name));
+        Assert.Equal(
+            ["Oferta 50%", "Oferta 500", "Soporte X100", "Soporte_100", "Ventas Bogotá"],
+            (await chatbots.ListAsync(tenantId, null, Ct)).Select(chatbot => chatbot.Name).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task TodayIncludesTheStartBoundExcludesTheEndBoundAndOtherTenants()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var chatbotId = Guid.CreateVersion7();
+        var dayStart = new DateTimeOffset(2026, 10, 21, 5, 0, 0, TimeSpan.Zero);
+        var dayEnd = dayStart.AddDays(1);
+        await InsertRunAsync(connectionString, tenantId, chatbotId, "Completed", dayStart);
+        await InsertRunAsync(connectionString, tenantId, chatbotId, "HandedOff", dayEnd);
+        await InsertRunAsync(connectionString, Guid.CreateVersion7(), chatbotId, "Completed", dayStart.AddHours(1));
+
+        using var scope = factory.Services.CreateScope();
+        // El mismo instante con offset de Bogotá: se normaliza a UTC antes de llegar a Npgsql.
+        var today = await scope.ServiceProvider.GetRequiredService<IConversationRunQueries>()
+            .TodayAsync(tenantId, [chatbotId], dayStart.ToOffset(TimeSpan.FromHours(-5)), dayEnd.ToOffset(TimeSpan.FromHours(-5)), Ct);
+
+        Assert.Equal((1, 0), today[chatbotId]);
+    }
+
+    [Fact]
+    public async Task ADuplicatedTemplateNameBecomesTemplateNameTaken()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        await InsertTemplateAsync(connectionString, tenantId, "Menu");
+        var other = await InsertTemplateAsync(connectionString, tenantId, "Otro");
+
+        using var scope = factory.Services.CreateScope();
+        var template = await scope.ServiceProvider.GetRequiredService<IChatbotTemplateRepository>().FindAsync(tenantId, other, Ct);
+        Assert.NotNull(template);
+        scope.ServiceProvider.GetRequiredService<AutomationsDbContext>().Entry(template).Property(value => value.Name).CurrentValue = "MENU";
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(
+            () => scope.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct));
+
+        Assert.Equal(AutomationsErrorCodes.TemplateNameTaken, error.Code);
+    }
+
+    // Dos publicaciones que proponen el mismo número: la segunda choca con el índice de versiones, no con el token del chatbot.
+    [Fact]
+    public async Task ARacedVersionNumberBecomesConcurrencyConflict()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var chatbot = NewChatbot(tenantId, "Ventas");
+        using (var seed = factory.Services.CreateScope())
+        {
+            await seed.ServiceProvider.GetRequiredService<IChatbotRepository>().AddAsync(chatbot, Ct);
+            await seed.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var scope = factory.Services.CreateScope();
+        var loaded = await scope.ServiceProvider.GetRequiredService<IChatbotRepository>().FindAsync(tenantId, chatbot.Id, Ct);
+        Assert.NotNull(loaded);
+        await ExecuteAsync(connectionString,
+            """
+            INSERT INTO automations.chatbot_versions (id, chatbot_id, tenant_id, number, flow, layout, published_at, published_by)
+            VALUES (@id, @chatbotId, @tenantId, 1, '{}'::jsonb, '{}'::jsonb, now(), @by)
+            """,
+            ("id", Guid.CreateVersion7()), ("chatbotId", chatbot.Id), ("tenantId", tenantId), ("by", Guid.CreateVersion7()));
+        loaded.Publish([], Guid.CreateVersion7(), Now);
+
+        var error = await Assert.ThrowsAsync<RequestConcurrencyException>(
+            () => scope.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct));
+
+        Assert.Equal("concurrency.conflict", error.Code);
+    }
+
+    private static async Task<Guid> InsertTemplateAsync(string connectionString, Guid tenantId, string name)
+    {
+        var id = Guid.CreateVersion7();
+        await ExecuteAsync(connectionString,
+            """
+            INSERT INTO automations.chatbot_templates (id, tenant_id, name, category, flow, layout, created_at, created_by)
+            VALUES (@id, @tenantId, @name, 'general', '{}'::jsonb, '{}'::jsonb, now(), @by)
+            """,
+            ("id", id), ("tenantId", tenantId), ("name", name), ("by", Guid.CreateVersion7()));
+        return id;
     }
 
     private static Task<int> InsertRunAsync(string connectionString, Guid tenantId, Guid chatbotId, string status, DateTimeOffset startedAt) =>

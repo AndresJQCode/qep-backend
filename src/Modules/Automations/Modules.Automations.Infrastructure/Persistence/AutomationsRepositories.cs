@@ -34,7 +34,8 @@ internal sealed class ChatbotRepository(AutomationsDbContext dbContext) : IChatb
 
     // La columna usa ToLower() sin argumentos: es lo único que Npgsql traduce a lower(), la misma expresión de IX_chatbots_tenant_name
     // (ToLowerInvariant y Equals(OrdinalIgnoreCase) no se traducen; precedente: BusinessHoursRepository). El lado del parámetro se
-    // evalúa en .NET, así que va invariante. El pragma cubre sólo esa expresión.
+    // evalúa en .NET, así que va invariante: ToLowerInvariant de .NET y lower() de Postgres pueden diferir en caracteres exóticos y el
+    // índice único es el respaldo. El pragma cubre sólo esa expresión.
     public Task<bool> NameExistsAsync(Guid tenantId, string name, Guid? exceptId, CancellationToken cancellationToken)
     {
         var lowered = name.Trim().ToLowerInvariant();
