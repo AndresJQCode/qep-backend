@@ -13,12 +13,12 @@ namespace Modules.Automations.Application.Http;
 public sealed record HttpBlockRequest(string Method, string Path, IReadOnlyList<KeyValuePair<string, string>> Query, HttpBlockBody? Body)
 {
     /// <summary>
-    /// Por qué la ruta no puede salir, o <c>null</c>. <c>path_value_empty</c> (P2-R34): un valor vacío o ausente (<c>/customers/{id}</c> sin id
-    /// caería sobre la colección con un PUT o PATCH). <c>path_dot_segment</c> (P2-R31, P2-R32, P2-R34): un valor con un segmento <c>.</c> o
-    /// <c>..</c>, mirado ya desescapado y partido por <c>/</c> y <c>\</c>, o la ruta interpolada con uno. Escapado, <c>../admin</c> queda en
-    /// un solo segmento (<c>..%2Fadmin</c>), pero un proxy que decodifica <c>%2F</c> y normaliza (nginx con URI en <c>proxy_pass</c>) subiría
-    /// igual; y <c>System.Uri</c> resuelve <c>..</c> y <c>%2E%2E</c> hacia arriba de la URL base de la conexión. El validador (P2-R8) ya rechaza
-    /// <c>..</c> en el texto de la plantilla.
+    /// Por qué la ruta no puede salir, o <c>null</c>. <c>path_value_empty</c> (P2-R34, P2-R46): un valor vacío, ausente o de sólo <c>/</c> y
+    /// <c>\</c> (<c>/customers/{id}</c> sin id caería sobre la colección con un PUT o PATCH). <c>path_dot_segment</c> (P2-R31, P2-R32,
+    /// P2-R34): un valor con un segmento <c>.</c> o <c>..</c>, mirado ya desescapado y partido por <c>/</c> y <c>\</c>, o la ruta interpolada
+    /// con uno. Escapado, <c>../admin</c> queda en un solo segmento (<c>..%2Fadmin</c>), pero un proxy que decodifica <c>%2F</c> y normaliza
+    /// (nginx con URI en <c>proxy_pass</c>) subiría igual; y <c>System.Uri</c> resuelve <c>..</c> y <c>%2E%2E</c> hacia arriba de la URL base
+    /// de la conexión. El validador (P2-R8) ya rechaza <c>..</c> en el texto de la plantilla.
     /// </summary>
     public string? PathRejection { get; private init; }
 
@@ -40,7 +40,9 @@ public sealed record HttpBlockRequest(string Method, string Path, IReadOnlyList<
 
     private static string? PathRejectionOf(string path, IReadOnlyList<string> values)
     {
-        if (values.Any(value => value.Length == 0))
+        // P2-R46: un valor de sólo barras también es vacío. Escapado sale %2F, pero un proxy que decodifica antes de reenviar ve
+        // /customers// y cae en la colección, como el {id} vacío.
+        if (values.Any(value => value.Length == 0 || FullyUnescaped(value).All(character => character is '/' or '\\')))
         {
             return "path_value_empty";
         }

@@ -96,7 +96,9 @@ public sealed class RunProcessorTests
         var outcome = await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
 
         var run = Assert.Single(bed.Runs.Added);
-        Assert.Equal(RunOutcomes.Failed, outcome);
+        // P2-R46: «run_failed», distinto del «failed» con que Mensajería cierra una fila que agotó sus intentos.
+        Assert.Equal("run_failed", outcome);
+        Assert.Equal([$"complete {Item.MessageId} 1 run_failed"], bed.Inbox.Calls);
         Assert.Equal((RunStatus.Failed, "automations.run.loop_detected"), (run.Status, run.FailureCode));
         Assert.Equal(EngineReentries.Max, http.Calls.Count);
         Assert.Equal(25, EngineReentries.Max);
@@ -242,16 +244,228 @@ public sealed class RunProcessorTests
         Assert.Empty(bed.Audit.Actions);
     }
 
-    private static ConversationRun WaitingRun(DateTimeOffset updatedAt) =>
+    /// <summary>
+    /// Ruling P2-R42: con el módulo <c>automations</c> apagado el bot no contesta. La corrida viva termina <c>Interrupted</c> (con el
+    /// entrante marcado, P2-R24), la conversación activa vuelve a None y la fila se cierra <c>skipped</c>, sin envíos ni auditoría.
+    /// </summary>
+    [Fact]
+    public async Task WithTheModuleOffALiveRunIsInterruptedAndTheConversationEnds()
+    {
+        var bed = new Bed(
+            startFailure: null,
+            new AutomationConversationState("Open", null, "Active", ChatbotId, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567"),
+            moduleEnabled: false);
+        var run = WaitingRun(DateTimeOffset.UtcNow.AddMinutes(-1));
+        bed.Runs.Added.Add(run);
+
+        var outcome = await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Skipped, outcome);
+        Assert.Equal([$"complete {Item.MessageId} 1 skipped"], bed.Inbox.Calls);
+        Assert.Equal(RunStatus.Interrupted, run.Status);
+        Assert.Equal(Item.MessageId, run.LastInboundMessageId);
+        Assert.Equal(1, bed.Conversations.Ended);
+        Assert.Single(bed.Runs.Added);
+        Assert.Empty(bed.Messenger.Sent);
+        Assert.Empty(bed.Audit.Actions);
+    }
+
+    /// <summary>P2-R42: sin corrida y sin asistente, el disparador ni se evalúa: nada arranca y la conversación no se toca.</summary>
+    [Fact]
+    public async Task WithTheModuleOffNoRunStarts()
+    {
+        var bed = new Bed(startFailure: null, moduleEnabled: false);
+
+        var outcome = await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Skipped, outcome);
+        Assert.Equal([$"complete {Item.MessageId} 1 skipped"], bed.Inbox.Calls);
+        Assert.Empty(bed.Runs.Added);
+        Assert.Empty(bed.Messenger.Sent);
+        Assert.Equal((0, 0), (bed.Conversations.Started, bed.Conversations.Ended));
+    }
+
+    /// <summary>
+    /// Ruling P2-R45: otra unidad tiene el lock de la conversación (la misma fila, reclamada otra vez porque la unidad original pasó su
+    /// lease). Esta no espera detrás: reprograma la fila a 5 s con su testigo, no la cierra y no toca nada (ni la corrida ni la
+    /// conversación ni el motor).
+    /// </summary>
+    [Fact]
+    public async Task ABusyConversationLockRetriesTheRowInFiveSecondsWithoutAStep()
+    {
+        var bed = new Bed(startFailure: null, lockBusy: true);
+        bed.Runs.Added.Add(WaitingRun(DateTimeOffset.UtcNow.AddMinutes(-1)));
+
+        var outcome = await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal("locked", outcome);
+        Assert.Equal([$"retry {Item.MessageId} 1 00:00:05"], bed.Inbox.Calls);
+        Assert.Equal(0, bed.Runs.Reads);
+        Assert.Equal(0, bed.Conversations.Reads);
+        Assert.Single(bed.Runs.Added);
+        Assert.Equal(RunStatus.Waiting, bed.Runs.Added[0].Status);
+        Assert.Empty(bed.Messenger.Sent);
+    }
+
+    /// <summary>P2-R45: el barrido tampoco espera el lock; una unidad en curso es un entrante, y la corrida no está abandonada.</summary>
+    [Fact]
+    public async Task ABusyConversationLockSkipsTheAbandonCandidate()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var bed = new Bed(startFailure: null, lockBusy: true);
+        var run = WaitingRun(now.AddHours(-25));
+        bed.Runs.Added.Add(run);
+
+        Assert.False(await bed.Processor().AbandonAsync(new AbandonedRun(TenantId, ConversationId, run.Id), now, TestContext.Current.CancellationToken));
+
+        Assert.Equal(RunStatus.Waiting, run.Status);
+        Assert.Equal(0, bed.Conversations.Ended);
+    }
+
+    /// <summary>
+    /// Ruling P2-R43 y D-M8: el adjunto llegó antes de que <c>MediaCopyWorker</c> lo copiara (se guarda <c>stored: false</c>, sin url).
+    /// En la unidad siguiente ya está en R2: antes del paso se marca <c>stored: true</c> y se firma la url, y el mensaje que la usa la lleva.
+    /// </summary>
+    [Fact]
+    public async Task AnAttachmentStoredAfterItArrivedGetsItsUrlBeforeTheNextMessage()
+    {
+        var media = new StubMedia();
+        var attachmentMessage = new InboundQueueItem(Guid.CreateVersion7(), TenantId, ConnectionId, ConversationId, Opened: false, DateTimeOffset.UtcNow, Attempts: 1);
+        var reply = new InboundQueueItem(Guid.CreateVersion7(), TenantId, ConnectionId, ConversationId, Opened: false, DateTimeOffset.UtcNow, Attempts: 1);
+        var bed = new Bed(startFailure: null, ActiveState(), flow: AttachmentFlow, media: media);
+        bed.Inbox.Messages[attachmentMessage.MessageId] = new InboundMessage(
+            attachmentMessage.MessageId, CustomerMessageKinds.Document, null, null, new InboundAttachment("application/pdf", "f.pdf", Stored: false), DateTimeOffset.UtcNow);
+        var run = WaitingRun(DateTimeOffset.UtcNow.AddMinutes(-1), "n1");
+        bed.Runs.Added.Add(run);
+
+        await bed.Processor().ProcessAsync(attachmentMessage, TestContext.Current.CancellationToken);
+
+        Assert.Equal("false|", $"{run.ToState().Variables.TextOf("factura.stored")}|{run.ToState().Variables.TextOf("factura.url")}");
+        Assert.Equal(["¿Algo más?"], bed.Messenger.Texts);
+
+        media.Stored[attachmentMessage.MessageId] = new StoredAttachment("tenant/media/f.pdf", "f.pdf", "application/pdf", 3);
+        await bed.Processor().ProcessAsync(reply, TestContext.Current.CancellationToken);
+
+        Assert.Equal(["¿Algo más?", "Tu factura: https://r2.test/tenant/media/f.pdf?signed=1"], bed.Messenger.Texts);
+        var saved = run.ToState().Variables;
+        Assert.Equal(("true", "https://r2.test/tenant/media/f.pdf?signed=1"), (saved.TextOf("factura.stored"), saved.TextOf("factura.url")));
+        Assert.Equal(["tenant/media/f.pdf"], media.SignedKeys);
+    }
+
+    /// <summary>P2-R43: un envío no espera el adjunto. Si sigue sin copiarse, la url se interpola vacía y la variable queda como estaba.</summary>
+    [Fact]
+    public async Task AMessageDoesNotWaitForAnAttachmentStillNotStored()
+    {
+        var media = new StubMedia();
+        var pending = Guid.CreateVersion7();
+        var bed = new Bed(startFailure: null, ActiveState(), flow: AttachmentFlow, media: media);
+        var run = WaitingRun(DateTimeOffset.UtcNow.AddMinutes(-1), "n2", PendingAttachment(pending));
+        bed.Runs.Added.Add(run);
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(["Tu factura: "], bed.Messenger.Texts);
+        Assert.Equal("false", run.ToState().Variables.TextOf("factura.stored"));
+        Assert.Equal([pending], media.Lookups);
+        Assert.Empty(media.SignedKeys);
+    }
+
+    /// <summary>P2-R43: antes del bloque HTTP también se refresca, así el ejecutor recibe la url ya firmada y la corrida la guarda.</summary>
+    [Fact]
+    public async Task AnHttpBlockReceivesTheRefreshedAttachment()
+    {
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "n1" }, "variables": [ { "name": "factura", "type": "attachment" } ],
+              "nodes": [
+                { "id": "n1", "kind": "attachment", "title": "Factura", "text": "Envía la factura", "accept": "any", "saveTo": "factura", "outputs": { "received": "n2", "invalid": null } },
+                { "id": "n2", "kind": "openQuestion", "title": "Algo más", "text": "¿Algo más?", "saveTo": "nota", "validation": { "kind": "none" }, "outputs": { "answered": "n3", "invalid": null } },
+                { "id": "n3", "kind": "http", "title": "Subir", "connectionId": "11111111-1111-1111-1111-111111111111", "method": "POST", "path": "/files", "body": { "kind": "json", "template": "{ \"url\": \"{factura.url}\" }" }, "mapping": [], "outputs": { "ok": null, "error": null } }
+              ] }
+            """;
+        var media = new StubMedia();
+        var stored = Guid.CreateVersion7();
+        media.Stored[stored] = new StoredAttachment("tenant/media/f.pdf", "f.pdf", "application/pdf", 3);
+        var http = new RecordingHttpBlocks(new HttpCallResult(true, 200, RunVariables.Empty(), HttpCallOutcomes.Ok, null));
+        var bed = new Bed(startFailure: null, ActiveState(), flow: flow, http: http, media: media);
+        bed.Runs.Added.Add(WaitingRun(DateTimeOffset.UtcNow.AddMinutes(-1), "n2", PendingAttachment(stored)));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        var (_, variables) = Assert.Single(http.Calls);
+        Assert.Equal(("true", "https://r2.test/tenant/media/f.pdf?signed=1"), (variables.TextOf("factura.stored"), variables.TextOf("factura.url")));
+    }
+
+    /// <summary>P2-R46 (rama de AbandonAsync): bajo el lock la corrida viva ya no está <c>Waiting</c> (un entrante la dejó corriendo); no
+    /// se abandona.</summary>
+    [Fact]
+    public async Task ARunNoLongerWaitingUnderTheLockIsNotAbandoned()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var bed = new Bed(startFailure: null, ActiveState());
+        var run = ConversationRun.Start(
+            Guid.CreateVersion7(), TenantId, ConversationId, ConnectionId, ChatbotId, VersionId,
+            RunState.Initial(RunVariables.Empty()) with { Status = RunStatus.Running, CurrentNodeId = "n1" }, now.AddHours(-25));
+        bed.Runs.Added.Add(run);
+
+        Assert.False(await bed.Processor().AbandonAsync(new AbandonedRun(TenantId, ConversationId, run.Id), now, TestContext.Current.CancellationToken));
+
+        Assert.Equal(RunStatus.Running, run.Status);
+        Assert.Equal(0, bed.Conversations.Ended);
+        Assert.Empty(bed.Audit.Actions);
+    }
+
+    /// <summary>P2-R46 (rama de AbandonAsync): la conversación se borró entre la lectura y <c>EndAsync</c>; no hay qué devolver a None,
+    /// pero la corrida igual deja de esperar y queda la auditoría.</summary>
+    [Fact]
+    public async Task AConversationGoneAtEndStillAbandonsTheRun()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var bed = new Bed(
+            startFailure: null, ActiveState(now.AddHours(-26)),
+            endFailure: new ResourceNotFoundException("messaging.conversation.not_found", "La conversación no existe."));
+        var run = WaitingRun(now.AddHours(-25));
+        bed.Runs.Added.Add(run);
+
+        Assert.True(await bed.Processor().AbandonAsync(new AbandonedRun(TenantId, ConversationId, run.Id), now, TestContext.Current.CancellationToken));
+
+        Assert.Equal(RunStatus.Abandoned, run.Status);
+        Assert.Equal([AutomationsAuditActions.RunAbandoned], bed.Audit.Actions);
+    }
+
+    /// <summary>Pedir adjunto → pregunta → mensaje que usa la url del adjunto (D-M8).</summary>
+    private const string AttachmentFlow = """
+        { "schema": 1, "start": { "firstNodeId": "n1" }, "variables": [ { "name": "factura", "type": "attachment" } ],
+          "nodes": [
+            { "id": "n1", "kind": "attachment", "title": "Factura", "text": "Envía la factura", "accept": "any", "saveTo": "factura", "outputs": { "received": "n2", "invalid": null } },
+            { "id": "n2", "kind": "openQuestion", "title": "Algo más", "text": "¿Algo más?", "saveTo": "nota", "validation": { "kind": "none" }, "outputs": { "answered": "n3", "invalid": null } },
+            { "id": "n3", "kind": "message", "title": "Factura", "text": "Tu factura: {factura.url}", "outputs": { "next": null } }
+          ] }
+        """;
+
+    private static AutomationConversationState ActiveState(DateTimeOffset? lastInboundAt = null) =>
+        new("Open", null, "Active", ChatbotId, ConnectionId, lastInboundAt ?? DateTimeOffset.UtcNow, "Laura", "573001234567");
+
+    /// <summary>Lo que guarda el bloque Adjunto (CustomerReply.Receive) de un archivo que todavía no está en R2.</summary>
+    private static RunVariables PendingAttachment(Guid messageId)
+    {
+        var variables = RunVariables.Empty();
+        variables.Set("factura", new System.Text.Json.Nodes.JsonObject
+        {
+            ["messageId"] = messageId.ToString(), ["fileName"] = "f.pdf", ["mimeType"] = "application/pdf", ["stored"] = false,
+        });
+        return variables;
+    }
+
+    private static ConversationRun WaitingRun(DateTimeOffset updatedAt, string nodeId = "n1", RunVariables? variables = null) =>
         ConversationRun.Start(
             Guid.CreateVersion7(), TenantId, ConversationId, ConnectionId, ChatbotId, VersionId,
-            RunState.Initial(RunVariables.Empty()) with { Status = RunStatus.Waiting, CurrentNodeId = "n1" }, updatedAt);
+            RunState.Initial(variables ?? RunVariables.Empty()) with { Status = RunStatus.Waiting, CurrentNodeId = nodeId }, updatedAt);
 
     private sealed class TestDomainException() : DomainException("messaging.automation.not_available", "Ya no es del bot.");
 
     private sealed class Bed(
         Exception? startFailure, AutomationConversationState? state = null, IClock? clock = null, Action? onLock = null, string flow = Flow,
-        IHttpBlockExecutor? http = null)
+        IHttpBlockExecutor? http = null, bool moduleEnabled = true, bool lockBusy = false, Exception? endFailure = null, IAutomationMedia? media = null)
     {
         public RecordingInbox Inbox { get; } = new();
 
@@ -259,7 +473,7 @@ public sealed class RunProcessorTests
 
         public RecordingMessenger Messenger { get; } = new();
 
-        public Conversations Conversations { get; } = new(startFailure, state);
+        public Conversations Conversations { get; } = new(startFailure, state, endFailure);
 
         public RecordingAudit Audit { get; } = new();
 
@@ -268,23 +482,26 @@ public sealed class RunProcessorTests
             var conversations = Conversations;
             var audit = Audit;
             var hours = new OpenHours();
-            var effects = new RunEffects(Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), audit, NullLogger<RunEffects>.Instance);
+            var files = media ?? new NoMedia();
+            var effects = new RunEffects(
+                Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), files, audit, NullLogger<RunEffects>.Instance);
             return new RunProcessor(
-                new NoUnitOfWork(onLock), Runs, new ServingChatbots(flow), Inbox, conversations, new TenantNames(), new Connections(), hours,
-                new NoMedia(), audit, effects, clock ?? new FixedClock(), NullLogger<RunProcessor>.Instance);
+                new NoUnitOfWork(onLock, lockBusy), Runs, new ServingChatbots(flow), Inbox, conversations, new TenantNames(), new Connections(), hours,
+                files, new ModuleStatus(moduleEnabled), audit, effects, clock ?? new FixedClock(), NullLogger<RunProcessor>.Instance);
         }
     }
 
-    private sealed class NoUnitOfWork(Action? onLock) : IAutomationsUnitOfWork, IAsyncDisposable
+    /// <param name="busy">Ruling P2-R45: otra unidad tiene el lock de la conversación.</param>
+    private sealed class NoUnitOfWork(Action? onLock, bool busy) : IAutomationsUnitOfWork, IAsyncDisposable
     {
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken) => Task.FromResult<IAsyncDisposable>(this);
 
-        public Task LockConversationAsync(Guid conversationId, CancellationToken cancellationToken)
+        public Task<bool> TryLockConversationAsync(Guid conversationId, CancellationToken cancellationToken)
         {
             onLock?.Invoke();
-            return Task.CompletedTask;
+            return Task.FromResult(!busy);
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -294,8 +511,13 @@ public sealed class RunProcessorTests
     {
         public List<ConversationRun> Added { get; } = [];
 
-        public Task<ConversationRun?> FindLiveForUpdateAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
-            Task.FromResult(Added.FirstOrDefault(run => run.IsLive));
+        public int Reads { get; private set; }
+
+        public Task<ConversationRun?> FindLiveForUpdateAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+        {
+            Reads++;
+            return Task.FromResult(Added.FirstOrDefault(run => run.IsLive));
+        }
 
         public Task<ConversationRun?> FindLatestAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
             Task.FromResult(Added.LastOrDefault());
@@ -356,6 +578,9 @@ public sealed class RunProcessorTests
     {
         public List<string> Calls { get; } = [];
 
+        /// <summary>Los entrantes que la prueba fija por id; cualquier otro es un texto «Hola».</summary>
+        public Dictionary<Guid, InboundMessage> Messages { get; } = [];
+
         public Task<IReadOnlyList<InboundQueueItem>> ClaimAsync(DateTimeOffset now, int batch, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<bool> CompleteAsync(Guid tenantId, Guid messageId, int attempts, string outcome, CancellationToken cancellationToken)
@@ -371,23 +596,35 @@ public sealed class RunProcessorTests
         }
 
         public Task<InboundMessage?> ReadAsync(Guid tenantId, Guid messageId, CancellationToken cancellationToken) =>
-            Task.FromResult<InboundMessage?>(new InboundMessage(messageId, CustomerMessageKinds.Text, "Hola", null, null, DateTimeOffset.UtcNow));
+            Task.FromResult<InboundMessage?>(Messages.TryGetValue(messageId, out var message)
+                ? message
+                : new InboundMessage(messageId, CustomerMessageKinds.Text, "Hola", null, null, DateTimeOffset.UtcNow));
 
         public Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
-    private sealed class Conversations(Exception? startFailure, AutomationConversationState? state) : IAutomationConversations
+    private sealed class Conversations(Exception? startFailure, AutomationConversationState? state, Exception? endFailure) : IAutomationConversations
     {
         public int Ended { get; private set; }
 
         public int HandedOff { get; private set; }
 
-        public Task<AutomationConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
-            Task.FromResult<AutomationConversationState?>(state ?? new AutomationConversationState(
-                "Open", null, "None", null, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567"));
+        public int Started { get; private set; }
 
-        public Task StartAsync(Guid tenantId, Guid conversationId, Guid chatbotId, string? firstStepTitle, CancellationToken cancellationToken) =>
-            startFailure is null ? Task.CompletedTask : Task.FromException(startFailure);
+        public int Reads { get; private set; }
+
+        public Task<AutomationConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+        {
+            Reads++;
+            return Task.FromResult<AutomationConversationState?>(state ?? new AutomationConversationState(
+                "Open", null, "None", null, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567"));
+        }
+
+        public Task StartAsync(Guid tenantId, Guid conversationId, Guid chatbotId, string? firstStepTitle, CancellationToken cancellationToken)
+        {
+            Started++;
+            return startFailure is null ? Task.CompletedTask : Task.FromException(startFailure);
+        }
 
         public Task SetStepAsync(Guid tenantId, Guid conversationId, string? stepTitle, CancellationToken cancellationToken) => Task.CompletedTask;
 
@@ -403,6 +640,11 @@ public sealed class RunProcessorTests
 
         public Task EndAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
         {
+            if (endFailure is not null)
+            {
+                return Task.FromException(endFailure);
+            }
+
             Ended++;
             return Task.CompletedTask;
         }
@@ -412,9 +654,12 @@ public sealed class RunProcessorTests
     {
         public List<Guid> Sent { get; } = [];
 
+        public List<string> Texts { get; } = [];
+
         public Task<BotSendOutcome> SendTextAsync(Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, string text, CancellationToken cancellationToken)
         {
             Sent.Add(clientId);
+            Texts.Add(text);
             return Task.FromResult<BotSendOutcome>(new BotSendOutcome.Sent(Guid.CreateVersion7()));
         }
 
@@ -452,6 +697,36 @@ public sealed class RunProcessorTests
         public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<(Stream Content, long Length)?> OpenReadAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    /// <summary>R2 de mentira: los adjuntos que la prueba da por copiados, y cada llave que se firmó.</summary>
+    private sealed class StubMedia : IAutomationMedia
+    {
+        public Dictionary<Guid, StoredAttachment> Stored { get; } = [];
+
+        public List<Guid> Lookups { get; } = [];
+
+        public List<string> SignedKeys { get; } = [];
+
+        public Task<StoredAttachment?> TryGetStoredAsync(Guid tenantId, Guid messageId, CancellationToken cancellationToken)
+        {
+            Lookups.Add(messageId);
+            return Task.FromResult(Stored.TryGetValue(messageId, out var stored) ? stored : null);
+        }
+
+        public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken)
+        {
+            Assert.Equal(TimeSpan.FromMinutes(15), lifetime);
+            SignedKeys.Add(key);
+            return Task.FromResult(new Uri($"https://r2.test/{key}?signed=1"));
+        }
+
+        public Task<(Stream Content, long Length)?> OpenReadAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class ModuleStatus(bool enabled) : IAutomationsModuleStatus
+    {
+        public Task<bool> IsEnabledAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(enabled);
     }
 
     private sealed class RecordingAudit : IAutomationsAuditRecorder

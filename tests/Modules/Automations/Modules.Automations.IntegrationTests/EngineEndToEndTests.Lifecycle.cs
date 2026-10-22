@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Automations.Application;
+using Modules.Automations.Infrastructure.Engine;
 using static Modules.Automations.IntegrationTests.AutomationsApiHarness;
 
 namespace Modules.Automations.IntegrationTests;
@@ -267,9 +270,50 @@ public sealed partial class EngineEndToEndTests
 
         Assert.Equal("Failed|messaging.message.rejected|tech", await RunAsync(f, "status || '|' || failure_code || '|' || (variables->'motivo'->>'id')"));
         Assert.Equal("Open|Paused|Handoff", await ConversationAsync(f, "status || '|' || automation_status || '|' || automation_pause_reason"));
-        Assert.Equal("started,failed", await OutcomesAsync(f));
+        Assert.Equal("started,run_failed", await OutcomesAsync(f));
         Assert.Equal(1L, await AuditAsync(f, "automations.run.failed"));
         Assert.Equal(1L, await CountAsync(f.ConnectionString,
             "SELECT count(*) FROM messaging.messages WHERE kind = 13 AND details->>'type' = 'AutomationPaused'"));
+    }
+
+    /// <summary>Ruling P2-R42: la ingesta sólo mira <c>messaging</c>, así que con <c>automations</c> apagado la fila igual llega; el motor la
+    /// cierra <c>skipped</c> sin contestar ni arrancar nada.</summary>
+    [Fact]
+    public async Task WithTheModuleOffTheBotStaysSilent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        Assert.Equal(1, await DisableModuleAsync(f.ConnectionString, f.Tenant.TenantId, "automations"));
+
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Empty(f.Meta.Sends());
+        Assert.Equal("Open|None", await ConversationAsync(f, "status || '|' || automation_status"));
+        Assert.Equal("skipped", await OutcomesAsync(f));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.conversation_runs"));
+    }
+
+    /// <summary>P2-R42: apagarlo con una corrida esperando. El siguiente entrante la termina <c>Interrupted</c>, devuelve la conversación
+    /// a None (la bandeja deja de mostrarla atendida por el bot) y no manda nada. La caché del módulo (60 s) se vacía a mano: es lo que
+    /// pasa solo al minuto.</summary>
+    [Fact]
+    public async Task TurningTheModuleOffInterruptsALiveRun()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        Assert.Equal("Waiting|Active", await RunAsync(f, "status || '|' || (SELECT automation_status FROM messaging.conversations)"));
+
+        await DisableModuleAsync(f.ConnectionString, f.Tenant.TenantId, "automations");
+        f.Host.Services.GetRequiredService<IMemoryCache>().Remove(AutomationsModuleStatus.CacheKey(f.Tenant.TenantId));
+        await TapAsync(f, "w2", "tech", "Servicio técnico");
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal(2, f.Meta.Sends().Count);
+        Assert.Equal("Interrupted", await RunAsync(f, "status"));
+        Assert.Equal("Open|None|", await ConversationAsync(f, "status || '|' || automation_status || '|' || coalesce(automation_step, '')"));
+        Assert.Equal("started,skipped", await OutcomesAsync(f));
     }
 }

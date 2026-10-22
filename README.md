@@ -2919,8 +2919,8 @@ arreglo, o string entre comillas), y una variable ausente es `null`. El cuerpo r
 outcome es `body_not_json` **antes** de llamar. En la ruta, cada valor interpolado se escapa con `Uri.EscapeDataString`
 (P2-R31): un `/`, `?`, `#` o `%` que venga de lo que escribió el cliente no cambia la ruta ni agrega una query. Se rechaza sin
 llamar (outcome `url_rejected`) un valor que sea o contenga un segmento `.` o `..`, también codificado y en `/` o `\`
-(`path_dot_segment`, P2-R32/R34) y uno vacío —una variable sin valor— (`path_value_empty`): `/customers/{id}` sin id
-llegaría a la colección entera con un `PUT` o `PATCH`.
+(`path_dot_segment`, P2-R32/R34) y uno vacío —una variable sin valor— o de sólo `/` y `\` (`path_value_empty`, P2-R46):
+`/customers/{id}` sin id llegaría a la colección entera con un `PUT` o `PATCH`, y `%2F` también si un proxy lo decodifica.
 
 **Contrato para el frontend (plan 3).** El editor manda **siempre todos los campos** de cada bloque: `""` (nunca `null`)
 para un texto que todavía no se escribió, y `null` (nunca `""`) para ids y números sin fijar (`connectionId`, `reasonId`…);
@@ -2939,8 +2939,8 @@ aditivos: un cliente viejo los ignora.
 
 Plan 2 (spec 2026-10-21 §5, §7, §8). Un `BackgroundService` (`AutomationInboxWorker`) reclama **una fila por llamada** de
 `messaging.automation_inbox` (así cada unidad arranca con el lease de 30 s entero) hasta `InboxBatchSize` por pasada, y
-`RunProcessor` procesa cada una en su propio scope: toma el candado de la conversación (`LockConversationAsync`, siempre, antes
-de leer la corrida viva), decide qué le toca al bot y aplica los efectos del `FlowEngine`, un dominio puro (`Step(flow, settings,
+`RunProcessor` procesa cada una en su propio scope: toma el candado de la conversación (`TryLockConversationAsync`, siempre, antes
+de leer la corrida viva, y sin esperarlo: ver abajo), decide qué le toca al bot y aplica los efectos del `FlowEngine`, un dominio puro (`Step(flow, settings,
 state, input, now)` → estado nuevo + efectos). El motor **sólo responde** una conversación `Open`, sin asesor asignado y con
 `automation_status` `Active` (o sin asistente y con disparador que aplique); `IBotOutbound` vuelve a verificarlo al enviar, porque
 entre el claim y el envío un asesor puede haber tomado la conversación. Una corrida viva termina con **la versión con que
@@ -2960,8 +2960,25 @@ empezó** (D-C1): se lee su `chatbot_version_id`, no la publicada.
   códigos de Mensajería (`messaging.connection_unavailable`, P2-R21…). Abandono: una corrida `Waiting` sin actividad 24 h se
   cierra `Abandoned` (D-M13); una conversación pausada, resuelta o devuelta al asistente a mano se cierra `Interrupted` (D-M15).
 - **Tope de reentradas: `EngineReentries.Max = 25` por unidad** (P2-R40). Un bloque HTTP u Horario devuelve el control al motor
-  en la misma unidad; el validador permite un ciclo que pasa por ellos, y sin tope giraría por encima del lease. El simulador usa
-  el mismo.
+  en la misma unidad; el validador permite un ciclo que pasa por ellos, y sin tope no terminaría nunca. El simulador usa el mismo.
+- **Módulo `automations` apagado** (P2-R42). La ingesta sólo mira `messaging`, así que las filas siguen llegando al inbox; cada
+  unidad mira el módulo del tenant (`IAutomationsModuleStatus`, caché por pod de 60 s como `WebhookRouting`) y, si está apagado,
+  no contesta: la corrida viva termina `Interrupted`, una conversación con el asistente `Active` vuelve a `None` y la fila se cierra
+  `skipped`. Apagar tarda hasta un minuto en verse.
+- **El lease de 30 s no acota la unidad** (P2-R45). Peor caso: cada bloque HTTP puede esperar 20 s su adjunto (un presupuesto por
+  bloque, compartido entre la url y el archivo) más 10 s de timeout, o sea 30 s, y una unidad admite 25 reentradas: 25 × 30 s =
+  750 s, más hasta 15 s por envío. Con una sola espera de adjunto seguida de un timeout ya se gasta el lease entero. Por eso el
+  candado de la conversación se toma con `pg_try_advisory_xact_lock` (la misma forma de dos claves): quien vuelve a reclamar la fila
+  mientras la unidad original sigue no se queda bloqueado detrás, sino que la reprograma a 5 s sin cerrarla (resultado `locked`,
+  que no se escribe). Si la original confirma antes, el reintento ve el marcador de P2-R24 y cierra `duplicate`. Cada reprogramación
+  gasta un intento (lo suma el reclamo), así que una unidad que pasa de unos 45 s (lease de 30 s + tres reintentos de 5 s) ve su
+  fila cerrada `failed` por Mensajería mientras termina: su trabajo queda hecho una vez (su `CompleteAsync`, con el testigo viejo,
+  no cuenta) y sólo el outcome miente. **Límite conocido:** con la fila cerrada, el entrante siguiente de esa conversación ya se puede
+  reclamar y también choca con el candado; si la unidad original sigue unos 25 s más (≈70 s en total), ese entrante agota sus
+  intentos y el bot no lo atiende. El barrido de abandonadas tampoco espera el candado: una unidad en curso es un entrante.
+- **Outcomes de la fila** (`automation_inbox.outcome`): `started`, `advanced`, `ended`, `skipped`, `interrupted`, `duplicate` y
+  `run_failed` (la corrida terminó `Failed` y pasó a un asesor, P2-R46). `failed` es sólo el de Mensajería: una fila que agotó sus
+  5 intentos.
 - **Retención.** Las filas procesadas del inbox se purgan a los 7 días (`InboxRetentionDays`, P2-R7), `http_calls` a los 30
   (`HttpCallRetentionDays`) y las simulaciones vencen a las 2 h sin mensajes. Los barridos corren cada `AbandonSweepMinutes` (10)
   y las simulaciones en su propio bucle (`SimulationSweepMinutes`, 10).
@@ -2977,8 +2994,9 @@ Opciones, todas bajo `Automations:Workers` (`AutomationsWorkerOptions`, con defa
 | `HttpCallRetentionDays` | 30 | Días que se conserva una fila de `http_calls` |
 | `SimulationSweepMinutes` | 10 | Cada cuánto se borran simulaciones vencidas |
 
-`GET /runs?chatbotId=&from=&to=` (`automations.chatbot.read`) lista las corridas de un chatbot; sin rango, los últimos 7 días, y
-`from` > `to` es 422 `automations.run.range_invalid` (código nuevo, no está en §4.3). Lo que ve el asesor en el hilo no sale de
+`GET /runs?chatbotId=&from=&to=` (`automations.chatbot.read`) lista las corridas de un chatbot con `started_at` en `[from, to)`
+(**`to` es exclusivo**); sin rango, los últimos 7 días, y `from` > `to` es 422 `automations.run.range_invalid` (código nuevo, no
+está en §4.3). Lo que ve el asesor en el hilo no sale de
 acá sino de `GET …/messaging/conversations/{id}/automation` (§5.5).
 
 #### Bloque HTTP y proveedor `external-api`
@@ -3013,9 +3031,17 @@ devuelve su resultado: lanzar deshacería la unidad y el reintento volvería a l
 
 Desvíos de D-H8 y límites conocidos:
 
-- **Adjunto: se espera 20 s, no los 60 s del spec** (4 reintentos cada 5 s, `MediaWaitRetries`). La unidad corre dentro de un
-  lease de 30 s y esperar 60 haría que otra réplica reclamara la misma fila a mitad; `MediaCopyWorker` corre cada 5 s y copia una
-  imagen en menos de un segundo. Pasado el tiempo, el bloque sale por `error` con `media_not_ready`.
+- **Adjunto: se espera 20 s, no los 60 s del spec** (4 reintentos cada 5 s, `MediaWaitRetries`, un solo presupuesto por bloque).
+  Esperar 60 alargaría todavía más una unidad que ya puede pasar su lease de 30 s (ver «El lease de 30 s no acota la unidad»);
+  `MediaCopyWorker` corre cada 5 s y copia una imagen en menos de un segundo. Pasado el tiempo, el bloque sale por `error` con
+  `media_not_ready`. Se espera tanto el archivo del multipart como un `{x.url}` de un adjunto que todavía no está en R2 en la ruta,
+  la query o el cuerpo (P2-R43). `duration_ms` mide la llamada, sin la espera (P2-R46).
+- **`{saveTo.url}` se firma tarde** (D-M8, P2-R43). El entrante con el adjunto casi siempre se procesa antes de que el archivo esté
+  en R2, así que el bloque Adjunto lo guarda `stored: false` y sin url. Antes de cada paso del motor (donde se interpolan los textos
+  de los envíos) y antes de cada bloque HTTP, el procesador vuelve a mirar los adjuntos pendientes y, si ya llegaron, los marca
+  `stored: true` con una url de 15 min recién firmada. Un envío no espera: un mensaje en el mismo paso en que llega el adjunto, o
+  con el archivo todavía sin copiar, interpola la url vacía.
+- **El archivo del multipart lleva `Content-Length`** (P2-R46): el stream de R2 no se puede buscar y `StreamContent` no lo calcula.
 - **Un cuelgue entre la llamada HTTP y el commit de la unidad vuelve a llamar a la API** (P2-R37): la corrida `Running` repite el
   bloque. Es un límite aceptado: la API de Clasic no tiene llave de idempotencia, y un servicio duplicado es posible si el proceso
   muere justo ahí.

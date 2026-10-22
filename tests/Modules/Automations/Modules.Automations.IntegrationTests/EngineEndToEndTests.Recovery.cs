@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Net;
+using Modules.Automations.Infrastructure.Persistence;
 using Npgsql;
 using static Modules.Automations.IntegrationTests.AutomationsApiHarness;
 
@@ -195,7 +197,7 @@ public sealed partial class EngineEndToEndTests
         Assert.Empty(f.Meta.Sends());
         Assert.Equal("Failed|automations.run.target_missing", await RunAsync(f, "status || '|' || failure_code"));
         Assert.Equal("Paused|Handoff", await ConversationAsync(f, "automation_status || '|' || automation_pause_reason"));
-        Assert.Equal("failed", await OutcomesAsync(f));
+        Assert.Equal("run_failed", await OutcomesAsync(f));
     }
 
     /// <summary>Lista vinculante de la tarea 5: una persona pausó el asistente mientras salía el texto del traspaso; Mensajería rechaza el
@@ -275,5 +277,51 @@ public sealed partial class EngineEndToEndTests
         Assert.Equal(2, sends.Count(text => text.StartsWith("Hola Laura", StringComparison.Ordinal)));
         Assert.Equal(4L, await BotMessagesAsync(f));
         Assert.Equal("Waiting|n2", await RunAsync(f, "status || '|' || current_node_id"));
+    }
+
+    /// <summary>
+    /// Ruling P2-R45: otra conexión tiene el lock de la conversación (lo que hace una unidad que pasó su lease mientras su fila se
+    /// vuelve a reclamar). El worker no se queda esperando detrás: reprograma la fila a 5 s, sin cerrarla ni contestar. Cuando el lock se
+    /// suelta, el reintento la atiende.
+    /// </summary>
+    [Fact]
+    public async Task ARowWhoseConversationIsLockedIsRetriedWithoutBlocking()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await InboundAsync(f, "w1", "Hola");
+        var conversationId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations");
+
+        await using (var holder = new NpgsqlConnection(f.ConnectionString))
+        {
+            await holder.OpenAsync(Ct);
+            await using var transaction = await holder.BeginTransactionAsync(Ct);
+            await using (var command = new NpgsqlCommand("SELECT pg_advisory_xact_lock(@ns, hashtext(@c))", holder, transaction))
+            {
+                command.Parameters.AddWithValue("ns", AutomationsUnitOfWork.ConversationLockNamespace);
+                command.Parameters.AddWithValue("c", conversationId.ToString());
+                await command.ExecuteNonQueryAsync(Ct);
+            }
+
+            var watch = Stopwatch.StartNew();
+            await DrainAutomationsAsync(f.Host).WaitAsync(TimeSpan.FromSeconds(10), Ct);
+            watch.Stop();
+
+            Assert.InRange(watch.Elapsed, TimeSpan.Zero, TimeSpan.FromSeconds(3));
+            Assert.Empty(f.Meta.Sends());
+            Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.conversation_runs"));
+            Assert.Equal("-|1|true", await ScalarAsync<string>(f.ConnectionString,
+                """
+                SELECT coalesce(outcome, '-') || '|' || attempts || '|' || (processed_at IS NULL AND next_attempt_at > now() + interval '3 seconds')::text
+                  FROM messaging.automation_inbox
+                """));
+            await transaction.CommitAsync(Ct);
+        }
+
+        await ExpireLeasesAsync(f);
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal("started", await OutcomesAsync(f));
+        Assert.Equal(2, f.Meta.Sends().Count);
     }
 }

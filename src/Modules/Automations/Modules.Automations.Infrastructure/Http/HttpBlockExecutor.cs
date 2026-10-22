@@ -6,9 +6,11 @@ using System.Text.Json.Nodes;
 using BuildingBlocks.Application;
 using Microsoft.Extensions.Logging;
 using Modules.Automations.Application;
+using Modules.Automations.Application.Engine;
 using Modules.Automations.Application.Http;
 using Modules.Automations.Domain.Engine;
 using Modules.Automations.Domain.Flow;
+using Modules.Automations.Domain.Text;
 
 namespace Modules.Automations.Infrastructure.Http;
 
@@ -90,8 +92,16 @@ public sealed partial class HttpBlockExecutor(
             return new HttpCallResult(false, null, RunVariables.Empty(), HttpCallOutcomes.ConnectionUnavailable, HttpCallOutcomes.ConnectionUnavailable);
         }
 
-        var request = HttpBlockRequest.Build(node, variables);
-        var call = new Call(context, connectionId, request.Method, request.Path, clock.UtcNow, Stopwatch.GetTimestamp());
+        // D-H8 con el desvío de MediaWaitRetries: un solo presupuesto de espera por bloque, lo usen la url de un adjunto o el archivo del
+        // multipart, así el bloque no espera más de 20 s aunque use dos adjuntos.
+        var mediaWait = new MediaWait();
+        var (effective, notReady) = await WithAttachmentUrlsAsync(context.TenantId, node, variables, mediaWait, cancellationToken);
+        var request = HttpBlockRequest.Build(node, effective);
+        var call = new Call(context, connectionId, request.Method, request.Path, clock.UtcNow);
+        if (notReady is not null)
+        {
+            return await FinishAsync(call, notReady, cancellationToken);
+        }
 
         if (urlPolicy.Reject(credentials.BaseUrl) is { } rejected)
         {
@@ -121,7 +131,7 @@ public sealed partial class HttpBlockExecutor(
                 content = new StringContent(body.Content, Encoding.UTF8, "application/json");
                 break;
             case HttpBlockBody.Multipart form:
-                var built = await FormAsync(context.TenantId, form, variables, cancellationToken);
+                var built = await FormAsync(context.TenantId, form, effective, mediaWait, cancellationToken);
                 if (built.Failure is { } notBuilt)
                 {
                     return await FinishAsync(call, notBuilt, cancellationToken);
@@ -134,6 +144,8 @@ public sealed partial class HttpBlockExecutor(
                 break;
         }
 
+        // P2-R46: la duración de http_calls es la de la llamada; la espera del adjunto (hasta 20 s) no cuenta.
+        call = call with { SentAt = Stopwatch.GetTimestamp() };
         var result = await SendAsync(node, credentials, request.Method, url, content, cancellationToken);
         // P2-R33a: la llamada ya salió. Un apagado justo ahora no puede perder la fila: el reintento volvería a llamar sin rastro de la primera.
         return await FinishAsync(call, result, CancellationToken.None);
@@ -255,8 +267,53 @@ public sealed partial class HttpBlockExecutor(
         return Uri.TryCreate(url.ToString(), UriKind.Absolute, out var built) ? built : null;
     }
 
+    /// <summary>
+    /// Ruling P2-R43: la ruta, la query o el cuerpo usan <c>{x.url}</c> de un adjunto que todavía no está en R2 (<c>stored: false</c>). Se
+    /// espera como al archivo del multipart y, cuando llega, se firma la url con la llave que da Mensajería sobre una copia de las variables
+    /// (la corrida guarda la suya cuando la refresca <c>RunEffects</c>). Si no llega, el bloque sale por <c>media_not_ready</c> sin llamar.
+    /// </summary>
+    private async Task<(RunVariables Variables, HttpCallResult? NotReady)> WithAttachmentUrlsAsync(
+        Guid tenantId, HttpNode node, RunVariables variables, MediaWait mediaWait, CancellationToken cancellationToken)
+    {
+        RunVariables? effective = null;
+        foreach (var name in AttachmentUrlRoots(node).Distinct(StringComparer.Ordinal))
+        {
+            if (AttachmentUrls.PendingMessageId(variables, name) is not { } messageId)
+            {
+                continue;
+            }
+
+            if (await StoredAsync(tenantId, messageId, mediaWait, cancellationToken) is not { } stored)
+            {
+                return (variables, Failure(HttpCallOutcomes.MediaNotReady, null, HttpCallOutcomes.MediaNotReady));
+            }
+
+            effective ??= variables.Clone();
+            AttachmentUrls.MarkStored(effective, name, await media.CreateDownloadUrlAsync(stored.Key, AttachmentUrls.Lifetime, cancellationToken));
+        }
+
+        return (effective ?? variables, null);
+    }
+
+    // Las variables raíz de cada {x.url} de la ruta, la query y el cuerpo (plantilla JSON o campos del multipart): el bloque Adjunto guarda
+    // en una raíz, así que una url más adentro (a.b.url) no es de un adjunto.
+    private static IEnumerable<string> AttachmentUrlRoots(HttpNode node)
+    {
+        IEnumerable<string> templates = [node.Path, .. node.Query.Select(pair => pair.Value)];
+        if (node.Body is { } body)
+        {
+            templates = templates.Concat(body.Template is null ? [] : [body.Template]).Concat((body.Fields ?? []).Select(pair => pair.Value));
+        }
+
+        return templates
+            .SelectMany(TemplateText.ReferencesIn)
+            .Where(reference => reference.EndsWith(".url", StringComparison.Ordinal))
+            .Select(reference => reference[..^".url".Length])
+            .Where(root => !root.Contains('.', StringComparison.Ordinal) && !root.Contains('[', StringComparison.Ordinal));
+    }
+
     private async Task<(HttpContent? Content, HttpCallResult? Failure)> FormAsync(
-        Guid tenantId, HttpBlockBody.Multipart form, RunVariables variables, CancellationToken cancellationToken)
+        Guid tenantId, HttpBlockBody.Multipart form, RunVariables variables, MediaWait mediaWait, CancellationToken cancellationToken)
     {
         StreamContent? file = null;
         string? fileName = null;
@@ -268,13 +325,16 @@ public sealed partial class HttpBlockExecutor(
                 return (null, Failure(HttpCallOutcomes.MediaNotReady, null, "attachment_missing"));
             }
 
-            if (await StoredAsync(tenantId, messageId, cancellationToken) is not { } stored
+            if (await StoredAsync(tenantId, messageId, mediaWait, cancellationToken) is not { } stored
                 || await media.OpenReadAsync(stored.Key, cancellationToken) is not { } opened)
             {
                 return (null, Failure(HttpCallOutcomes.MediaNotReady, null, HttpCallOutcomes.MediaNotReady));
             }
 
             file = new StreamContent(opened.Content);
+            // P2-R46: el stream de R2 es una respuesta de red que no se puede buscar, así que StreamContent no calcula el largo y la parte
+            // viajaría sin Content-Length; el largo lo da el almacén.
+            file.Headers.ContentLength = opened.Length;
             file.Headers.ContentType = MediaTypeHeaderValue.TryParse(stored.MimeType, out var type) ? type : null;
             fileName = SafeFileName(stored.FileName);
         }
@@ -316,21 +376,23 @@ public sealed partial class HttpBlockExecutor(
         return safe.Length == 0 ? DefaultFileName : safe;
     }
 
-    // D-H8 con el desvío de MediaWaitRetries: el adjunto puede llegar antes de que MediaCopyWorker lo copie a R2.
-    private async Task<StoredAttachment?> StoredAsync(Guid tenantId, Guid messageId, CancellationToken cancellationToken)
+    // D-H8 con el desvío de MediaWaitRetries: el adjunto puede llegar antes de que MediaCopyWorker lo copie a R2. Los reintentos salen del
+    // presupuesto del bloque (MediaWait), compartido entre la url de un adjunto y el archivo del multipart.
+    private async Task<StoredAttachment?> StoredAsync(Guid tenantId, Guid messageId, MediaWait mediaWait, CancellationToken cancellationToken)
     {
-        for (var attempt = 0; ; attempt++)
+        while (true)
         {
             if (await media.TryGetStoredAsync(tenantId, messageId, cancellationToken) is { } stored)
             {
                 return stored;
             }
 
-            if (attempt == MediaWaitRetries)
+            if (mediaWait.Remaining == 0)
             {
                 return null;
             }
 
+            mediaWait.Remaining--;
             await wait(MediaWaitInterval, cancellationToken);
         }
     }
@@ -340,7 +402,8 @@ public sealed partial class HttpBlockExecutor(
 
     private async Task<HttpCallResult> FinishAsync(Call call, HttpCallResult result, CancellationToken cancellationToken)
     {
-        var durationMs = (int)Math.Min(int.MaxValue, Stopwatch.GetElapsedTime(call.StartedAt).TotalMilliseconds);
+        // Sin llamada (url rechazada, adjunto que no llegó, cuerpo que no se armó) no hay duración que medir.
+        var durationMs = call.SentAt is { } sentAt ? (int)Math.Min(int.MaxValue, Stopwatch.GetElapsedTime(sentAt).TotalMilliseconds) : 0;
         if (result.Ok)
         {
             LogCalled(logger, call.Context.TenantId, call.Context.NodeId, result.Outcome, result.Status, durationMs);
@@ -368,5 +431,12 @@ public sealed partial class HttpBlockExecutor(
         return result;
     }
 
-    private sealed record Call(HttpCallContext Context, Guid ConnectionId, string Method, string Path, DateTimeOffset CalledAt, long StartedAt);
+    /// <summary><see cref="SentAt"/>: el <c>Stopwatch</c> justo antes de mandar; <c>null</c> si el bloque no llegó a llamar.</summary>
+    private sealed record Call(HttpCallContext Context, Guid ConnectionId, string Method, string Path, DateTimeOffset CalledAt, long? SentAt = null);
+
+    /// <summary>Los reintentos de espera del adjunto que le quedan al bloque (D-H8 con el desvío: 4 × 5 s en total).</summary>
+    private sealed class MediaWait
+    {
+        public int Remaining { get; set; } = MediaWaitRetries;
+    }
 }

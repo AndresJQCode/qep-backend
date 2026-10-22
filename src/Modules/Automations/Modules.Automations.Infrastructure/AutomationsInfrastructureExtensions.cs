@@ -47,6 +47,9 @@ public static class AutomationsInfrastructureExtensions
         // Spec 2026-10-21 §5.2: el motor atiende el inbox que llena la ingesta de Mensajería. RunProcessor y sus puertos se registran en
         // el composition root, con los adaptadores.
         services.AddOptions<AutomationsWorkerOptions>().Bind(configuration.GetSection(AutomationsWorkerOptions.SectionName));
+        // Ruling P2-R42: cada unidad mira el módulo del tenant, cacheado (AddMemoryCache es idempotente; Mensajería también lo registra).
+        services.AddMemoryCache();
+        services.AddScoped<IAutomationsModuleStatus, AutomationsModuleStatus>();
         services.AddHostedService<AutomationInboxWorker>();
         return services;
     }

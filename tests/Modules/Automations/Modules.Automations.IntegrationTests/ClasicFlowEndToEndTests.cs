@@ -331,7 +331,7 @@ public sealed class ClasicFlowEndToEndTests
         Assert.Equal(25L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.http_calls"));
         Assert.Equal(25, f.Api.Requests.Count);
         Assert.Equal(["Hola, ya te ayudamos."], f.Graph.Sends());
-        Assert.Equal("1|true|failed", await TextAsync(f,
+        Assert.Equal("1|true|run_failed", await TextAsync(f,
             "SELECT attempts || '|' || (processed_at IS NOT NULL) || '|' || coalesce(outcome, '-') FROM messaging.automation_inbox"));
     }
 

@@ -230,7 +230,7 @@ public sealed partial class EngineEndToEndTests
 
         Assert.Equal("Failed|messaging.message.rejected", await RunAsync(f, "status || '|' || failure_code"));
         Assert.Equal("Paused|Handoff", await ConversationAsync(f, "automation_status || '|' || automation_pause_reason"));
-        Assert.Equal("failed", await OutcomesAsync(f));
+        Assert.Equal("run_failed", await OutcomesAsync(f));
         Assert.Equal(1L, await AuditAsync(f, "automations.run.failed"));
         Assert.Equal(0L, await AuditAsync(f, "automations.run.handed_off"));
     }

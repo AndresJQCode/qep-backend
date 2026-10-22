@@ -459,6 +459,121 @@ public sealed class HttpBlockExecutorTests
         Assert.Equal(("file", "IMG"), (Assert.Single(Assert.Single(bed.Handler.Requests).Parts).Name, bed.Handler.Requests[0].Parts[0].Text));
     }
 
+    /// <summary>
+    /// Ruling P2-R43: el cuerpo JSON usa <c>{factura.url}</c> de un adjunto que todavía no está en R2. El bloque espera lo mismo que el
+    /// multipart (hasta 4 × 5 s) y, cuando llega, firma la url con la llave que da Mensajería y la manda.
+    /// </summary>
+    [Fact]
+    public async Task AUrlOfAnAttachmentNotYetStoredWaitsAndIsSentSigned()
+    {
+        var bed = new Bed(_ => Json(HttpStatusCode.OK, "{}"));
+        var messageId = Guid.CreateVersion7();
+        bed.OnDelay = () =>
+        {
+            if (bed.Delays.Count == 2)
+            {
+                bed.Media.Stored[messageId] = new StoredAttachment("tenant/media/f.pdf", "f.pdf", "application/pdf", 3);
+            }
+        };
+        var variables = Variables();
+        variables.Set("factura", PendingAttachment(messageId));
+        var node = Node("/files", "POST", body: new HttpBody(HttpBodyKinds.Json, """{ "url": "{factura.url}" }""", null, null, null));
+
+        var result = await bed.Executor().ExecuteAsync(Context, node, variables, Ct);
+
+        Assert.True(result.Ok);
+        Assert.Equal(2, bed.Delays.Count);
+        Assert.Equal("""{ "url": "https://r2.test/tenant/media/f.pdf?signed=1" }""", Assert.Single(bed.Handler.Requests).Body);
+        Assert.Equal(["tenant/media/f.pdf"], bed.Media.SignedKeys);
+        // Las variables de quien llama no cambian: la corrida guarda la url cuando la refresca ella (RunEffects).
+        Assert.Equal("false", variables.TextOf("factura.stored"));
+    }
+
+    /// <summary>P2-R43: si el adjunto no llega en los 20 s, el bloque no llama y sale por <c>error</c> con <c>media_not_ready</c>, igual que
+    /// el multipart. Vale también para la url en la query.</summary>
+    [Fact]
+    public async Task AUrlOfAnAttachmentThatNeverArrivesIsMediaNotReady()
+    {
+        var bed = new Bed(_ => Json(HttpStatusCode.OK, "{}"));
+        var variables = Variables();
+        variables.Set("factura", PendingAttachment(Guid.CreateVersion7()));
+        var node = Node("/files", query: [new KeyValue("source", "{factura.url}")]);
+
+        var result = await bed.Executor().ExecuteAsync(Context, node, variables, Ct);
+
+        Assert.Equal(("media_not_ready", false), (result.Outcome, result.Ok));
+        Assert.Equal(Enumerable.Repeat(TimeSpan.FromSeconds(5), 4), bed.Delays);
+        Assert.Empty(bed.Handler.Requests);
+        Assert.Equal("media_not_ready", Assert.Single(bed.Log.Entries).Outcome);
+    }
+
+    /// <summary>P2-R43: un adjunto que ya tiene su url no se vuelve a buscar ni se espera.</summary>
+    [Fact]
+    public async Task AStoredAttachmentUrlIsSentAsItIs()
+    {
+        var bed = new Bed(_ => Json(HttpStatusCode.OK, "{}"));
+        var variables = Variables();
+        variables.Set("factura", new System.Text.Json.Nodes.JsonObject
+        {
+            ["messageId"] = Guid.CreateVersion7().ToString(), ["stored"] = true, ["url"] = "https://r2.test/k?signed=1",
+        });
+        var node = Node("/files", "POST", body: new HttpBody(HttpBodyKinds.Json, """{ "url": "{factura.url}" }""", null, null, null));
+
+        await bed.Executor().ExecuteAsync(Context, node, variables, Ct);
+
+        Assert.Equal("""{ "url": "https://r2.test/k?signed=1" }""", Assert.Single(bed.Handler.Requests).Body);
+        Assert.Equal(0, bed.Media.Lookups);
+        Assert.Empty(bed.Delays);
+    }
+
+    /// <summary>Ruling P2-R46: el objeto de R2 llega como un stream de red que no sabe su largo; sin el Content-Length del archivo, la parte
+    /// viajaría sin él y algunas APIs rechazan un archivo así.</summary>
+    [Fact]
+    public async Task TheFilePartCarriesTheLengthOfTheStoredObject()
+    {
+        var bed = new Bed(_ => Json(HttpStatusCode.OK, "{}"));
+        var messageId = Guid.CreateVersion7();
+        bed.Media.Stored[messageId] = new StoredAttachment("k", "f.pdf", "application/pdf", 3);
+        bed.Media.Objects["k"] = Encoding.ASCII.GetBytes("PDF");
+        bed.Media.Unsized = true;
+        var variables = Variables();
+        variables.Set("factura", new System.Text.Json.Nodes.JsonObject { ["messageId"] = messageId.ToString() });
+        var node = Node("/upload", "POST", body: new HttpBody(HttpBodyKinds.Multipart, null, [], "file", "factura"));
+
+        await bed.Executor().ExecuteAsync(Context, node, variables, Ct);
+
+        Assert.Equal(3L, Assert.Single(Assert.Single(bed.Handler.Requests).Parts).Length);
+    }
+
+    /// <summary>Ruling P2-R46: <c>http_calls.duration_ms</c> mide la llamada, no la espera del adjunto que la precede.</summary>
+    [Fact]
+    public async Task TheDurationStartsAtTheSendNotAtTheAttachmentWait()
+    {
+        var bed = new Bed(_ => Json(HttpStatusCode.OK, "{}"));
+        var messageId = Guid.CreateVersion7();
+        bed.Media.Objects["k"] = Encoding.ASCII.GetBytes("IMG");
+        bed.OnDelay = () =>
+        {
+            Thread.Sleep(TimeSpan.FromMilliseconds(250));
+            if (bed.Delays.Count == 2)
+            {
+                bed.Media.Stored[messageId] = new StoredAttachment("k", null, "image/jpeg", 3);
+            }
+        };
+        var variables = Variables();
+        variables.Set("factura", new System.Text.Json.Nodes.JsonObject { ["messageId"] = messageId.ToString() });
+        var node = Node("/upload", "POST", body: new HttpBody(HttpBodyKinds.Multipart, null, [], "file", "factura"));
+
+        await bed.Executor().ExecuteAsync(Context, node, variables, Ct);
+
+        Assert.InRange(Assert.Single(bed.Log.Entries).DurationMs, 0, 249);
+    }
+
+    private static System.Text.Json.Nodes.JsonObject PendingAttachment(Guid messageId) => new()
+    {
+        ["messageId"] = messageId.ToString(), ["fileName"] = "f.pdf", ["mimeType"] = "application/pdf", ["stored"] = false,
+    };
+
     [Fact]
     public async Task NothingOfTheBodyOrTheKeyIsLogged()
     {
@@ -527,7 +642,7 @@ public sealed class HttpBlockExecutorTests
                 });
     }
 
-    internal sealed record CapturedPart(string? Name, string? FileName, string? ContentType, string Text);
+    internal sealed record CapturedPart(string? Name, string? FileName, string? ContentType, string Text, long? Length = null);
 
     internal sealed record CapturedRequest(
         string Method, Uri Uri, IReadOnlyDictionary<string, string> Headers, string? ContentType, string? Body, IReadOnlyList<CapturedPart> Parts);
@@ -548,9 +663,11 @@ public sealed class HttpBlockExecutorTests
                 foreach (var part in multipart)
                 {
                     var disposition = part.Headers.ContentDisposition;
+                    // El largo antes de leer: es el header que viajaría (un stream sin largo no lo calcula).
+                    var length = part.Headers.ContentLength;
                     parts.Add(new CapturedPart(
                         disposition?.Name?.Trim('"'), disposition?.FileName?.Trim('"'), part.Headers.ContentType?.MediaType,
-                        await part.ReadAsStringAsync(cancellationToken)));
+                        await part.ReadAsStringAsync(cancellationToken), length));
                 }
             }
             else if (request.Content is not null)
@@ -615,7 +732,19 @@ public sealed class HttpBlockExecutorTests
             return Task.FromResult(tenantId == TenantId && Stored.TryGetValue(messageId, out var stored) ? stored : null);
         }
 
-        public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public ConcurrentQueue<string> Signed { get; } = new();
+
+        public IReadOnlyList<string> SignedKeys => [.. Signed];
+
+        /// <summary>Como el stream de R2 (una respuesta de red): no se puede buscar ni sabe su largo.</summary>
+        public bool Unsized { get; set; }
+
+        public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken)
+        {
+            Assert.Equal(TimeSpan.FromMinutes(15), lifetime);
+            Signed.Enqueue(key);
+            return Task.FromResult(new Uri($"https://r2.test/{key}?signed=1"));
+        }
 
         public ConcurrentQueue<Stream> Opened { get; } = new();
 
@@ -626,7 +755,7 @@ public sealed class HttpBlockExecutorTests
                 return Task.FromResult<(Stream Content, long Length)?>(null);
             }
 
-            var stream = new MemoryStream(bytes);
+            var stream = Unsized ? new UnsizedStream(bytes) : new MemoryStream(bytes);
             Opened.Enqueue(stream);
             return Task.FromResult<(Stream Content, long Length)?>((stream, bytes.LongLength));
         }

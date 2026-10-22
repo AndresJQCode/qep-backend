@@ -9,10 +9,10 @@ namespace Modules.Automations.Application.Engine;
 
 /// <summary>
 /// Spec 2026-10-21 §5.2: una fila del inbox, en una unidad de trabajo. La transacción de Automations la abre <see cref="ProcessAsync"/>
-/// con el lock de la conversación primero (P2-R20) y se confirma una sola vez al final; los cambios a la conversación (arrancar,
-/// traspasar, resolver, terminar) los confirma Mensajería por su lado en el momento (Task 5), así que un reintento de la fila puede
-/// encontrarlos ya hechos y lo tiene en cuenta: la corrida nueva usa el id que deriva del entrante y los envíos el mismo clientId
-/// (P2-R5). Los efectos del motor los ejecuta <see cref="RunEffects"/>. El barrido de abandonadas (D-M13) también pasa por acá, con el
+/// con el lock de la conversación primero (P2-R20, sin esperarlo: P2-R45) y se confirma una sola vez al final; los cambios a la
+/// conversación (arrancar, traspasar, resolver, terminar) los confirma Mensajería por su lado en el momento (Task 5), así que un
+/// reintento de la fila puede encontrarlos ya hechos y lo tiene en cuenta: la corrida nueva usa el id que deriva del entrante y los
+/// envíos el mismo clientId (P2-R5). Los efectos del motor los ejecuta <see cref="RunEffects"/>. El barrido de abandonadas (D-M13) también pasa por acá, con el
 /// mismo orden de locks.
 /// </summary>
 public sealed partial class RunProcessor(
@@ -25,6 +25,7 @@ public sealed partial class RunProcessor(
     IAutomationConnections connections,
     IAutomationBusinessHours businessHours,
     IAutomationMedia media,
+    IAutomationsModuleStatus modules,
     IAutomationsAuditRecorder audit,
     RunEffects effects,
     IClock clock,
@@ -33,8 +34,8 @@ public sealed partial class RunProcessor(
     /// <summary>D-M4: la ingesta sube la versión de la conversación por SQL; el choque se resuelve volviendo a intentar enseguida.</summary>
     private static readonly TimeSpan ConcurrencyRetryDelay = TimeSpan.FromSeconds(2);
 
-    /// <summary>D-M8: <c>{saveTo.url}</c> vale 15 minutos.</summary>
-    private static readonly TimeSpan AttachmentUrlLifetime = TimeSpan.FromMinutes(15);
+    /// <summary>Ruling P2-R45: otra unidad tiene el lock de la conversación; se vuelve a mirar en 5 s en vez de esperarla.</summary>
+    private static readonly TimeSpan LockedRetryDelay = TimeSpan.FromSeconds(5);
 
     /// <summary>D-M13: una corrida en espera más que esto sin entrante está abandonada.</summary>
     public static readonly TimeSpan AbandonAfter = TimeSpan.FromHours(24);
@@ -49,9 +50,9 @@ public sealed partial class RunProcessor(
     private static partial void LogUnreadableFlow(ILogger logger, Guid tenantId, Guid versionId);
 
     /// <summary>
-    /// Devuelve el resultado escrito en la fila, o <see cref="RunOutcomes.Retry"/> si un cambio concurrente de la conversación la
-    /// reprogramó. Una excepción no prevista sale de acá con la transacción ya deshecha: la fila queda para su reintento por lease (a los
-    /// 5 intentos Mensajería la cierra <c>failed</c>).
+    /// Devuelve el resultado escrito en la fila, o <see cref="RunOutcomes.Retry"/> / <see cref="RunOutcomes.Locked"/> si la fila se
+    /// reprogramó (un cambio concurrente de la conversación, o su lock tomado por otra unidad). Una excepción no prevista sale de acá con
+    /// la transacción ya deshecha: la fila queda para su reintento por lease (a los 5 intentos Mensajería la cierra <c>failed</c>).
     /// </summary>
     public async Task<string> ProcessAsync(InboundQueueItem item, CancellationToken cancellationToken)
     {
@@ -63,12 +64,16 @@ public sealed partial class RunProcessor(
         }
         catch (RequestConcurrencyException)
         {
-            if (!await inbox.RetryLaterAsync(item.TenantId, item.MessageId, item.Attempts, ConcurrencyRetryDelay, CancellationToken.None))
-            {
-                LogReclaimed(logger, item.TenantId, item.MessageId, item.Attempts);
-            }
+            return await RetryLaterAsync(item, ConcurrencyRetryDelay, RunOutcomes.Retry);
+        }
 
-            return RunOutcomes.Retry;
+        if (outcome == RunOutcomes.Locked)
+        {
+            // P2-R45: cada reprogramación gasta un intento (lo suma el reclamo). Si la unidad original sigue corriendo pasados ~45 s
+            // (lease de 30 s + tres reintentos de 5 s), al quinto Mensajería cierra la fila «failed» mientras ella termina: su trabajo
+            // queda hecho una sola vez (su CompleteAsync con el testigo viejo ya no cuenta) y sólo el outcome de la fila miente. Si el
+            // lock se suelta antes, el reintento que entra ve el marcador de P2-R24 y la cierra «duplicate» sin repetir nada.
+            return await RetryLaterAsync(item, LockedRetryDelay, RunOutcomes.Locked);
         }
 
         // Sin cancelación: la unidad ya se confirmó, y una fila que no se cierra se volvería a procesar como un entrante nuevo.
@@ -80,10 +85,26 @@ public sealed partial class RunProcessor(
         return outcome;
     }
 
+    private async Task<string> RetryLaterAsync(InboundQueueItem item, TimeSpan delay, string outcome)
+    {
+        if (!await inbox.RetryLaterAsync(item.TenantId, item.MessageId, item.Attempts, delay, CancellationToken.None))
+        {
+            LogReclaimed(logger, item.TenantId, item.MessageId, item.Attempts);
+        }
+
+        return outcome;
+    }
+
     private async Task<string> ProcessUnitAsync(InboundQueueItem item, CancellationToken cancellationToken)
     {
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
-        await unitOfWork.LockConversationAsync(item.ConversationId, cancellationToken);
+        // P2-R45: sin esperar. Quien lo tiene es la unidad de esta misma fila, reclamada otra vez porque pasó su lease (el reclamo de
+        // Mensajería sólo entrega la más vieja pendiente de cada conversación); esperarla dejaría a este worker colgado detrás.
+        if (!await unitOfWork.TryLockConversationAsync(item.ConversationId, cancellationToken))
+        {
+            return RunOutcomes.Locked;
+        }
+
         var run = await runs.FindLiveForUpdateAsync(item.TenantId, item.ConversationId, cancellationToken);
 
         // Ruling P2-R24: la unidad de este entrante ya se confirmó (el cierre de la fila falló o el lease venció antes de cerrarla). Sin
@@ -99,6 +120,11 @@ public sealed partial class RunProcessor(
         // corrida nueva no puede quedar con un StartedAt anterior a ese regreso (P2-R25), o el siguiente entrante la interrumpiría.
         var now = clock.UtcNow;
 
+        if (!await modules.IsEnabledAsync(item.TenantId, cancellationToken))
+        {
+            return await StandDownAsync(item, conversation, run, now, cancellationToken);
+        }
+
         // D-M15: una acción humana termina la corrida viva; Mensajería no conoce Automations, así que se detecta acá.
         var interrupted = false;
         if (run is not null && (conversation is null || HumanTookOver(conversation, run)))
@@ -113,6 +139,30 @@ public sealed partial class RunProcessor(
         // Guardar confirma la transacción y suelta los locks (IAutomationsUnitOfWork): una sola vez por unidad.
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return outcome ?? (interrupted ? RunOutcomes.Interrupted : RunOutcomes.Skipped);
+    }
+
+    /// <summary>
+    /// Ruling P2-R42: el tenant apagó <c>automations</c> (la ingesta sigue encolando porque sólo mira <c>messaging</c>). El bot no
+    /// contesta: la corrida viva termina <c>Interrupted</c>, como cuando una persona interviene (D-M15), con el entrante marcado (P2-R24);
+    /// una conversación con el asistente activo vuelve a None (D-M14) para que la bandeja no la muestre atendida por un bot mudo; una en
+    /// pausa queda como está (ya la tiene una persona). Sin auditoría: no es algo que el bot haya hecho.
+    /// </summary>
+    private async Task<string> StandDownAsync(
+        InboundQueueItem item, AutomationConversationState? conversation, ConversationRun? run, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (run is not null)
+        {
+            run.Finish(RunStatus.Interrupted, null, now);
+            run.MarkInbound(item.MessageId);
+        }
+
+        if (conversation?.AutomationStatus == AutomationStates.Active)
+        {
+            await conversations.EndAsync(item.TenantId, item.ConversationId, cancellationToken);
+        }
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return RunOutcomes.Skipped;
     }
 
     /// <summary>
@@ -139,7 +189,13 @@ public sealed partial class RunProcessor(
     {
         ArgumentNullException.ThrowIfNull(candidate);
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
-        await unitOfWork.LockConversationAsync(candidate.ConversationId, cancellationToken);
+        // P2-R45: el barrido tampoco espera. Una unidad en curso es un entrante de esta conversación: la corrida ya no está abandonada, y si
+        // lo siguiera estando, el barrido siguiente la vuelve a encontrar.
+        if (!await unitOfWork.TryLockConversationAsync(candidate.ConversationId, cancellationToken))
+        {
+            return false;
+        }
+
         var run = await runs.FindLiveForUpdateAsync(candidate.TenantId, candidate.ConversationId, cancellationToken);
         if (run is null || run.Id != candidate.RunId || run.Status != RunStatus.Waiting || run.UpdatedAt >= now - AbandonAfter)
         {
@@ -323,7 +379,8 @@ public sealed partial class RunProcessor(
 
     /// <summary>
     /// El entrante como lo lee el motor. D-M8: si la corrida espera en un Pedir adjunto y el archivo ya está en R2, el enlace de 15 min se
-    /// firma antes del paso, con la llave que Mensajería da para este mismo mensaje (nunca una leída de las variables).
+    /// firma antes del paso, con la llave que Mensajería da para este mismo mensaje (nunca una leída de las variables). Si todavía no
+    /// llegó, se guarda sin url y <see cref="RunEffects"/> la firma más tarde, antes del efecto que la use (P2-R43).
     /// </summary>
     private async Task<EngineInput.CustomerMessage> CustomerMessageAsync(
         InboundQueueItem item, InboundMessage inbound, FlowDefinition flow, string? waitingNodeId, CancellationToken cancellationToken)
@@ -338,7 +395,7 @@ public sealed partial class RunProcessor(
             && flow.Nodes.Any(node => node.Id == waitingNodeId && node is AttachmentNode)
             && await media.TryGetStoredAsync(item.TenantId, item.MessageId, cancellationToken) is { } stored)
         {
-            url = (await media.CreateDownloadUrlAsync(stored.Key, AttachmentUrlLifetime, cancellationToken)).AbsoluteUri;
+            url = (await media.CreateDownloadUrlAsync(stored.Key, AttachmentUrls.Lifetime, cancellationToken)).AbsoluteUri;
         }
 
         return new EngineInput.CustomerMessage(
@@ -369,7 +426,7 @@ public sealed partial class RunProcessor(
     {
         RunStatus.Running or RunStatus.Waiting => whenLive,
         RunStatus.Interrupted => RunOutcomes.Interrupted,
-        RunStatus.Failed => RunOutcomes.Failed,
+        RunStatus.Failed => RunOutcomes.RunFailed,
         _ => RunOutcomes.Ended,
     };
 }

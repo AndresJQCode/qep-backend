@@ -24,6 +24,7 @@ public sealed partial class RunEffects(
     IAutomationConversations conversations,
     IAutomationBusinessHours businessHours,
     IHttpBlockExecutor httpBlocks,
+    IAutomationMedia media,
     IAutomationsAuditRecorder audit,
     ILogger<RunEffects> logger)
 {
@@ -36,6 +37,8 @@ public sealed partial class RunEffects(
         ArgumentNullException.ThrowIfNull(unit);
         var run = unit.Run;
         var state = run.ToState();
+        // P2-R43: las variables que escribe un Pedir adjunto, las únicas que pueden quedar con stored: false.
+        string[] attachments = [.. unit.Flow.Nodes.OfType<AttachmentNode>().Select(node => node.SaveTo).Distinct(StringComparer.Ordinal)];
         // P2-R5: el orden de cada envío dentro de la unidad, también los que siguen a un HTTP o a un horario. Riesgo aceptado (raro): si
         // el reintento de una unidad deshecha toma otra rama (el horario cambió de abierto a cerrado entre los dos intentos), su envío
         // número N reusa el clientId del N del primer intento; si ése había salido, Mensajería lo da por enviado y el mensaje nuevo no sale.
@@ -44,6 +47,9 @@ public sealed partial class RunEffects(
         EngineInput? next = input;
         while (next is not null)
         {
+            // P2-R43: el motor interpola los textos de SendText y SendInteractive dentro del paso, así que el refresco de los adjuntos va
+            // antes de cada paso (el de la unidad y el de cada reentrada); un adjunto que se recibe en este mismo paso todavía no tiene url.
+            state = await RefreshAttachmentsAsync(run, state, attachments, cancellationToken);
             var step = FlowEngine.Step(unit.Flow, unit.Settings, state, next, now);
             state = step.State;
             next = null;
@@ -72,8 +78,14 @@ public sealed partial class RunEffects(
                             return;
                         }
 
-                        // El bloque lee las variables como quedaron en este paso (lo que se guardó antes de llegar a él). P2-R5: el
-                        // contador de envíos sigue después de la reentrada, no vuelve a cero.
+                        // El bloque lee las variables como quedaron en este paso (lo que se guardó antes de llegar a él), con los adjuntos
+                        // que llegaron mientras tanto ya firmados (P2-R43; si el bloque usa la url de uno que no llegó, el ejecutor lo
+                        // espera). P2-R5: el contador de envíos sigue después de la reentrada, no vuelve a cero.
+                        if (effect is Effect.CallHttp)
+                        {
+                            state = await RefreshAttachmentsAsync(run, state, attachments, cancellationToken);
+                        }
+
                         next = await ExternalAsync(run, effect, state.Variables, cancellationToken);
                         break;
                     case Effect.Handoff:
@@ -141,6 +153,17 @@ public sealed partial class RunEffects(
 
         run.Close(state, RunStatus.Failed, failureCode, now);
         Audit(run, AutomationsAuditActions.RunFailed, now);
+    }
+
+    private async Task<RunState> RefreshAttachmentsAsync(ConversationRun run, RunState state, string[] attachments, CancellationToken cancellationToken)
+    {
+        if (attachments.Length == 0)
+        {
+            return state;
+        }
+
+        var variables = await AttachmentUrls.RefreshAsync(media, run.TenantId, state.Variables, attachments, cancellationToken);
+        return ReferenceEquals(variables, state.Variables) ? state : state with { Variables = variables };
     }
 
     private Task<BotSendOutcome> SendAsync(ConversationRun run, Effect effect, Guid clientId, CancellationToken cancellationToken) => effect switch

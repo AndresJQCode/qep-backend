@@ -23,7 +23,7 @@ public sealed class HttpBlockCallLogTests
         {
             var unit = scope.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>();
             await using var transaction = await unit.BeginTransactionAsync(Ct);
-            await unit.LockConversationAsync(Guid.CreateVersion7(), Ct);
+            Assert.True(await unit.TryLockConversationAsync(Guid.CreateVersion7(), Ct));
             // response_too_large (18) no cabía en el varchar(16) de §4.2: la migración WidenHttpCallOutcome lo amplió.
             await scope.ServiceProvider.GetRequiredService<IHttpCallLog>().RecordAsync(
                 new HttpCallEntry(

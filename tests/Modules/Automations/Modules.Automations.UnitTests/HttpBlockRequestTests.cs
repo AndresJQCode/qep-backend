@@ -157,6 +157,23 @@ public sealed class HttpBlockRequestTests
         Assert.Equal("path_value_empty", HttpBlockRequest.Build(Node("/customers/{nadie}"), Variables()).PathRejection);
     }
 
+    /// <summary>Ruling P2-R46: un valor que sólo tiene barras se escapa a <c>%2F</c>, pero un proxy que decodifica antes de reenviar ve
+    /// <c>/customers//</c> y cae en la colección, como el valor vacío de P2-R34.</summary>
+    [Theory]
+    [InlineData("/")]
+    [InlineData("\\")]
+    [InlineData("//")]
+    [InlineData("/\\/")]
+    [InlineData("%2F")]
+    [InlineData("%5C%2F")]
+    public void AValueMadeOnlyOfSlashesIsEmpty(string value)
+    {
+        var variables = Variables();
+        variables.Set("id", value);
+
+        Assert.Equal("path_value_empty", HttpBlockRequest.Build(Node("/customers/{id}"), variables).PathRejection);
+    }
+
     [Fact]
     public void ADotInsideAValueIsFine()
     {

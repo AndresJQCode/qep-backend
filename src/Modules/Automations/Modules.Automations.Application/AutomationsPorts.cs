@@ -298,10 +298,24 @@ public interface IAutomationsUnitOfWork
     /// de ella.</summary>
     Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken);
 
-    /// <summary>D-M12: <c>pg_advisory_xact_lock</c> sobre la conversación, también cuando aún no tiene corrida que bloquear (dos
-    /// entrantes que la inician a la vez). Exige la transacción abierta. Se toma primero y después se lee con
-    /// <see cref="IConversationRunRepository.FindLiveForUpdateAsync"/> (P2-R20).</summary>
-    Task LockConversationAsync(Guid conversationId, CancellationToken cancellationToken);
+    /// <summary>
+    /// D-M12: <c>pg_try_advisory_xact_lock</c> sobre la conversación, también cuando aún no tiene corrida que bloquear (dos entrantes que
+    /// la inician a la vez). Exige la transacción abierta. Se toma primero y después se lee con
+    /// <see cref="IConversationRunRepository.FindLiveForUpdateAsync"/> (P2-R20). Ruling P2-R45: no espera; <c>false</c> = otra unidad lo
+    /// tiene (la misma fila, reclamada otra vez porque la unidad original pasó su lease), y quien llama reprograma en vez de quedarse
+    /// bloqueado detrás de ella.
+    /// </summary>
+    Task<bool> TryLockConversationAsync(Guid conversationId, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Ruling P2-R42: ¿el tenant tiene el módulo <c>automations</c> activo? La ingesta de Mensajería sólo mira <c>messaging</c>, así que con
+/// <c>automations</c> apagado las filas del inbox siguen llegando y el motor es quien deja de contestar. Cacheado por tenant como
+/// <c>WebhookRouting.IsModuleEnabledAsync</c> de Mensajería: apagar tarda hasta un minuto en verse (aceptado, como D-M18).
+/// </summary>
+public interface IAutomationsModuleStatus
+{
+    Task<bool> IsEnabledAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-21 §5.2 y D-M12/D-M13: las corridas del motor. Las lecturas <c>ForUpdate</c> y el barrido sólo valen dentro de
@@ -309,7 +323,7 @@ public interface IAutomationsUnitOfWork
 public interface IConversationRunRepository
 {
     /// <summary>La corrida viva de la conversación, bloqueada con <c>SELECT … FOR UPDATE</c>. Llamar antes a
-    /// <see cref="IAutomationsUnitOfWork.LockConversationAsync"/> (P2-R20). Exige la transacción abierta.</summary>
+    /// <see cref="IAutomationsUnitOfWork.TryLockConversationAsync"/> (P2-R20). Exige la transacción abierta.</summary>
     Task<ConversationRun?> FindLiveForUpdateAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
 
     Task<ConversationRun?> FindLatestAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);

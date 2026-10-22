@@ -425,6 +425,7 @@ pasada, y los que no son lo que el bloque espera cuentan como intento (D-M7).
   `SendInteractiveAsync(…, InteractiveSend, clientId)` → `BotSendResult(Sent(messageId) | WindowClosed |
   Rejected(code))`. Adapta `IBotOutbound` de Messaging (D-I4). `clientId` determinístico = hash de `(runId,
   nodeId, índice del mensaje, attempts)` para que un reintento de la fila no duplique.
+  **Errata (plan 2, ruling P2-R5):** la implementación usa `(runId, baseStepNumber, effectIndex)` y no `attempts`, que cambia en cada reintento y haría que el reintento duplicara.
 - `IAutomationBusinessHours`: `IsOpenAsync(tenantId, connectionId)` sobre `IBusinessHours`.
 - `IAutomationConnections`: `ListAsync(tenantId) → (id, name, channel, handle, status)` sobre
   `IMessagingConnectionDirectory.ListAllAsync` + `IBusinessHours.GetStatusesAsync`.

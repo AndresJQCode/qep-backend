@@ -13,24 +13,28 @@ namespace Modules.Automations.Infrastructure.Persistence;
 internal sealed class AutomationsUnitOfWork(AutomationsDbContext dbContext) : IAutomationsUnitOfWork
 {
     /// <summary>Primera clave del lock de dos claves: la fecha del plan. Cualquier constante sirve mientras ningún otro lock de dos
-    /// claves la use (hoy sólo está <c>TenantChangeLock.Namespace</c> = 20261008).</summary>
-    private const int ConversationLockNamespace = 20261022;
+    /// claves la use (hoy sólo está <c>TenantChangeLock.Namespace</c> = 20261008). Internal para las pruebas que toman el lock desde otra
+    /// conexión.</summary>
+    internal const int ConversationLockNamespace = 20261022;
 
     public async Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken) =>
         await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
-    // Precedente: OrphanUserCleanupWorker. El lock se libera con la transacción, así que sin una abierta no serializaría nada.
-    public async Task LockConversationAsync(Guid conversationId, CancellationToken cancellationToken)
+    // Precedente: OrphanUserCleanupWorker. El lock se libera con la transacción, así que sin una abierta no serializaría nada. Ruling
+    // P2-R45: la variante try, que no espera; la forma de dos claves es la misma de antes.
+    public async Task<bool> TryLockConversationAsync(Guid conversationId, CancellationToken cancellationToken)
     {
         if (dbContext.Database.CurrentTransaction is null)
         {
-            throw new InvalidOperationException("LockConversationAsync exige la transacción de BeginTransactionAsync.");
+            throw new InvalidOperationException("TryLockConversationAsync exige la transacción de BeginTransactionAsync.");
         }
 
         // Forma de dos claves: es un espacio aparte del de una sola clave, donde viven UserLifecycleLockKey y PosSaleIdLock, así que
         // ningún hash de ellos puede chocar con el de una conversación (mismo criterio de TenantChangeLock.cs:3-13).
-        await dbContext.Database.ExecuteSqlAsync(
-            $"SELECT pg_advisory_xact_lock({ConversationLockNamespace}, hashtext({conversationId.ToString()}))", cancellationToken);
+        var taken = await dbContext.Database.SqlQuery<bool>(
+            $"SELECT pg_try_advisory_xact_lock({ConversationLockNamespace}, hashtext({conversationId.ToString()})) AS \"Value\"")
+            .ToListAsync(cancellationToken);
+        return taken.Single();
     }
 
     public async Task SaveChangesAsync(CancellationToken cancellationToken)

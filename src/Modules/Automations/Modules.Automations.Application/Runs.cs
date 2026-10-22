@@ -17,7 +17,8 @@ public sealed record RunDto(
     int? DurationSeconds,
     string? FailureCode);
 
-/// <summary>Sin <paramref name="From"/> y <paramref name="To"/> rige «los últimos 7 días». El repositorio topa en 500.</summary>
+/// <summary>Las corridas con <c>started_at</c> en [<paramref name="From"/>, <paramref name="To"/>): <paramref name="To"/> es exclusivo
+/// (P2-R46). Sin <paramref name="From"/> y <paramref name="To"/> rige «los últimos 7 días». El repositorio topa en 500.</summary>
 public sealed record ListRunsQuery(Guid TenantId, Guid ChatbotId, DateTimeOffset? From, DateTimeOffset? To) : IQuery<IReadOnlyList<RunDto>>;
 
 /// <summary>§4.4: historial de corridas de un chatbot, de la más nueva a la más vieja, con <c>automations.chatbot.read</c>. El chatbot

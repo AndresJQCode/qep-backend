@@ -478,17 +478,21 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `Proxy-*`…, P2-R30); la lista vive en `ExternalApiUrlPolicy.IsReservedHeader` y copiada en el patrón del catálogo
   (`IntegrationProviders.ExternalApi`), amarradas por una prueba: se cambian juntas.
 - **Un valor del cliente en la ruta del bloque HTTP se escapa y se vigila** (P2-R31/R32/R34): `Uri.EscapeDataString`, y un segmento
-  `.`/`..` (también `%2E%2E`) o un valor vacío rechaza la llamada (`path_dot_segment`, `path_value_empty`) sin hacerla, porque
+  `.`/`..` (también `%2E%2E`) o un valor vacío o de sólo `/` y `\` (P2-R46) rechaza la llamada (`path_dot_segment`,
+  `path_value_empty`) sin hacerla, porque
   `System.Uri` resuelve `..` aun codificado y un `{id}` vacío llega a la colección con un `PUT`. El cuerpo se interpola
   JSON-aware (P2-R11): dentro de un string, el texto escapado; suelto, el literal JSON (`null` si falta la variable).
 - **El mapeo de la respuesta no usa la gramática de las variables.** `mapping.from` acepta `$`, `$[0]`, `[0].id` y rutas con puntos
   (`JsonPath.IsValidResponsePath`, P2-R36): Clasic responde arreglos en la raíz (`[].id`, Anexo C). Un `from` que no cumple es
   `http.mapping_path_invalid` al validar (antes guardaba `null` en silencio). Y el validador detecta `{referencia}` con un patrón
   más laxo (`VariableToken`: `{_x}`, `{a..b}`) que `TemplateText`, que es lo que el motor reemplaza.
-- **Esperas con tope por el lease de 30 s del inbox.** El adjunto del bloque HTTP se espera 20 s (4 × 5 s), no los 60 s de D-H8; el
-  motor corta en `EngineReentries.Max = 25` reentradas por unidad (HTTP u horario que vuelven a entrar al motor) con
-  `automations.run.loop_detected`, igual que el simulador (P2-R40); y un solo `ClaimAsync` reclama una fila, para que cada unidad
-  arranque con el lease entero (P2-R24). Subir cualquiera sin subir el lease hace que otra réplica reclame la misma fila a mitad.
+- **Esperas con tope, pero el lease de 30 s no acota la unidad.** El adjunto del bloque HTTP se espera 20 s (4 × 5 s, un presupuesto
+  por bloque para la url y el archivo), no los 60 s de D-H8; el motor corta en `EngineReentries.Max = 25` reentradas por unidad (HTTP
+  u horario que vuelven a entrar al motor) con `automations.run.loop_detected`, igual que el simulador (P2-R40); y un solo
+  `ClaimAsync` reclama una fila, para que cada unidad arranque con el lease entero (P2-R24). Aun así el peor caso (25 × (20 + 10) s
+  más 15 s por envío) pasa el lease: por eso el candado de la conversación es `pg_try_advisory_xact_lock` y, ocupado, la fila se
+  reprograma a 5 s (P2-R45) en vez de bloquear al worker; cada reprogramación gasta un intento (README, «El lease de 30 s no acota la
+  unidad»). No vuelvas al `pg_advisory_xact_lock` que espera.
 - **`http_calls.outcome` mide 24, no 16** (spec §4.2 dice 16; `response_too_large` ya tiene 18, migración `WidenHttpCallOutcome`).
   Un outcome nuevo más largo es otra migración.
 - **El simulador corre el borrador, no la versión publicada, y `Start` exige cuerpo** (`{ "liveHttp": false }`; sin cuerpo no es lo

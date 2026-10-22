@@ -1,5 +1,7 @@
 using BuildingBlocks.Application;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Automations.Application;
 using Modules.Automations.Domain;
 using Modules.Automations.Domain.Engine;
@@ -80,8 +82,10 @@ public sealed class RunsPersistenceTests
         Assert.NotNull(await blocked.WaitAsync(TimeSpan.FromSeconds(10), Ct));
     }
 
+    /// <summary>Ruling P2-R45: el lock por conversación no espera. Mientras una unidad lo tiene, otra recibe <c>false</c> en el momento;
+    /// cuando la primera confirma, se suelta.</summary>
     [Fact]
-    public async Task LockConversationSerializesWithoutARun()
+    public async Task TryLockConversationFailsWhileAnotherUnitHoldsIt()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -89,28 +93,34 @@ public sealed class RunsPersistenceTests
 
         using var firstScope = factory.Services.CreateScope();
         using var secondScope = factory.Services.CreateScope();
+        using var thirdScope = factory.Services.CreateScope();
         var firstUnit = firstScope.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>();
         var secondUnit = secondScope.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>();
+        var thirdUnit = thirdScope.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>();
         await using var first = await firstUnit.BeginTransactionAsync(Ct);
-        await firstUnit.LockConversationAsync(conversationId, Ct);
+        Assert.True(await firstUnit.TryLockConversationAsync(conversationId, Ct));
 
-        await using var second = await secondUnit.BeginTransactionAsync(Ct);
-        var blocked = secondUnit.LockConversationAsync(conversationId, Ct);
+        await using (await secondUnit.BeginTransactionAsync(Ct))
+        {
+            Assert.False(await secondUnit.TryLockConversationAsync(conversationId, Ct).WaitAsync(TimeSpan.FromSeconds(5), Ct));
+            // Otra conversación no choca.
+            Assert.True(await secondUnit.TryLockConversationAsync(Guid.CreateVersion7(), Ct));
+        }
 
-        Assert.NotSame(blocked, await Task.WhenAny(blocked, Task.Delay(500, Ct)));
         await firstUnit.SaveChangesAsync(Ct);
-        await blocked.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await using var third = await thirdUnit.BeginTransactionAsync(Ct);
+        Assert.True(await thirdUnit.TryLockConversationAsync(conversationId, Ct));
     }
 
     [Fact]
-    public async Task LockConversationWithoutATransactionThrows()
+    public async Task TryLockConversationWithoutATransactionThrows()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var scope = factory.Services.CreateScope();
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => scope.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().LockConversationAsync(Guid.CreateVersion7(), Ct));
+            () => scope.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().TryLockConversationAsync(Guid.CreateVersion7(), Ct));
     }
 
     [Fact]
@@ -280,5 +290,90 @@ public sealed class RunsPersistenceTests
         await firstUnit.SaveChangesAsync(Ct);
 
         Assert.Null(await waiting.WaitAsync(TimeSpan.FromSeconds(10), Ct));
+    }
+
+    /// <summary>
+    /// Ruling P2-R46 (D-M13): el barrido abandona cada candidata en su unidad; una que falla (acá, Mensajería no puede devolver su
+    /// conversación a None) se registra y sigue esperando para el barrido siguiente, y las demás se abandonan igual.
+    /// </summary>
+    [Fact]
+    public async Task OneFailingAbandonCandidateDoesNotStopTheOthers()
+    {
+        await using var database = await StartDatabaseAsync();
+        var conversations = new FailingEndConversations();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var host = factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IAutomationConversations>();
+            services.AddSingleton<IAutomationConversations>(conversations);
+        }));
+        var tenantId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        // La que falla es la más vieja: el barrido la toma primero.
+        var failing = NewRun(tenantId, Guid.CreateVersion7(), RunStatus.Waiting, now.AddHours(-27));
+        var other = NewRun(tenantId, Guid.CreateVersion7(), RunStatus.Waiting, now.AddHours(-26));
+        conversations.FailFor = failing.ConversationId;
+        using (var scope = host.Services.CreateScope())
+        {
+            var repository = scope.ServiceProvider.GetRequiredService<IConversationRunRepository>();
+            await repository.AddAsync(failing, Ct);
+            await repository.AddAsync(other, Ct);
+            await scope.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        await SweepAutomationsAsync(host, now);
+
+        Assert.Equal("Waiting,Abandoned", await ScalarAsync<string>(database.GetConnectionString(),
+            "SELECT string_agg(status, ',' ORDER BY started_at) FROM automations.conversation_runs"));
+        Assert.Equal([failing.ConversationId, other.ConversationId], conversations.Ended);
+    }
+
+    /// <summary>Las conversaciones de Mensajería en memoria, todas con el bot atendiendo; <see cref="EndAsync"/> falla para una.</summary>
+    private sealed class FailingEndConversations : IAutomationConversations
+    {
+        private readonly List<Guid> ended = [];
+
+        public Guid FailFor { get; set; }
+
+        public IReadOnlyList<Guid> Ended
+        {
+            get
+            {
+                lock (ended)
+                {
+                    return [.. ended];
+                }
+            }
+        }
+
+        public Task<AutomationConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
+            Task.FromResult<AutomationConversationState?>(new AutomationConversationState(
+                "Open", null, "Active", Guid.CreateVersion7(), Guid.CreateVersion7(), DateTimeOffset.UtcNow.AddDays(-2), "Laura", "573001234567"));
+
+        public Task EndAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+        {
+            lock (ended)
+            {
+                ended.Add(conversationId);
+            }
+
+            return conversationId == FailFor
+                ? Task.FromException(new InvalidOperationException("Mensajería no respondió."))
+                : Task.CompletedTask;
+        }
+
+        public Task StartAsync(Guid tenantId, Guid conversationId, Guid chatbotId, string? firstStepTitle, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task SetStepAsync(Guid tenantId, Guid conversationId, string? stepTitle, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task SetChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task HandoffAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 }
