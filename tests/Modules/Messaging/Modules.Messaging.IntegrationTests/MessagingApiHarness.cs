@@ -217,6 +217,12 @@ internal static class MessagingApiHarness
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
+            // Sin vigilar archivos de configuración: cada host dejaba vivo el FileSystemWatcher de los user-secrets (nadie dispone el
+            // PhysicalFileProvider que crea FileConfigurationSource.ResolveFileProvider), y en macOS un proceso admite 512 streams de
+            // FSEvents. Pasados ~512 hosts, el siguiente entraba en un bucle de recarga dentro de WebApplication.CreateBuilder y la
+            // prueba moría a los 5 minutos con «Timed out waiting for the entry point to build the IHost». WebApplicationFactory pasa
+            // los UseSetting como argumentos de línea de comandos, así que CreateBuilder lo lee antes de agregar los archivos.
+            builder.UseSetting("hostBuilder:reloadConfigOnChange", "false");
             // Pool acotado sólo en pruebas: un host no puede acaparar las conexiones del contenedor compartido.
             builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 80 }.ConnectionString);
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
