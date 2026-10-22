@@ -27,7 +27,11 @@ public sealed record SystemTemplate(
     IReadOnlyList<TemplateParameter> Parameters,
     IReadOnlyList<string> Preview,
     string FlowJson,
-    string LayoutJson);
+    string LayoutJson)
+{
+    /// <summary>Cuántos bloques trae el flujo, contado una vez al cargar el catálogo y no en cada <c>GET /templates</c>.</summary>
+    public int BlockCount { get; init; }
+}
 
 /// <summary>D-C8: las plantillas del sistema, cargadas una vez al arrancar desde los recursos embebidos de Infrastructure.</summary>
 public interface ISystemTemplateCatalog
@@ -158,7 +162,7 @@ internal static class TemplateCards
         template.Name,
         template.Category,
         template.Description,
-        FlowJson.Parse(template.FlowJson).Nodes.Count,
+        template.BlockCount,
         template.Channels,
         template.Requirement,
         OwnedByTenant: false,

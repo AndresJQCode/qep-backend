@@ -281,6 +281,33 @@ public sealed class TemplatesApiTests
             "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.template.deleted'", ("id", template.Id)));
     }
 
+    // Doble aislamiento: ni la plantilla ni el chatbot de otro tenant sirven de origen; 404 sin decir de quién son.
+    [Fact]
+    public async Task CreateFromAnotherTenantsTemplateOrChatbotIs404()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        var other = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        using var __ = other.Client;
+        var editor = await CreateBlankAsync(setup);
+        var template = (await (await SaveAsTemplateAsync(setup, editor.Chatbot.Id, "Línea de servicio")).Content.ReadFromJsonAsync<TemplateDto>(Ct))!;
+
+        var fromTemplate = await other.Client.PostAsJsonAsync(
+            ChatbotsUrl(other.Tenant.TenantId), Request("Ajena", new ChatbotSourceRequest("template", template.Id, null, null)), Ct);
+        var fromChatbot = await other.Client.PostAsJsonAsync(
+            ChatbotsUrl(other.Tenant.TenantId), Request("Ajena", new ChatbotSourceRequest("duplicate", null, editor.Chatbot.Id, null)), Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, fromTemplate.StatusCode);
+        Assert.Equal("automations.template.not_found", (await ProblemAsync(fromTemplate)).Code);
+        Assert.Equal(HttpStatusCode.NotFound, fromChatbot.StatusCode);
+        Assert.Equal("automations.chatbot.not_found", (await ProblemAsync(fromChatbot)).Code);
+        Assert.Equal(0L, await CountAsync(connectionString,
+            "SELECT count(*) FROM automations.chatbots WHERE tenant_id = @tenantId", ("tenantId", other.Tenant.TenantId)));
+    }
+
     /// <summary>El Anexo A como lo guarda el modelo, con los <c>connectionId</c> de sus bloques HTTP en <c>null</c>.</summary>
     private static string AnnexAWithoutConnections()
     {

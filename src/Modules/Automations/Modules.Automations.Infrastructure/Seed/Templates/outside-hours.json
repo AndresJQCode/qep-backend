@@ -2,7 +2,7 @@
   "id": "outside-hours",
   "name": "Fuera de horario",
   "category": "Support",
-  "description": "En horario de atención pasa la conversación a un asesor; fuera de horario avisa cuándo le responden al cliente y cierra la conversación.",
+  "description": "En horario de atención pasa la conversación a un asesor; fuera de horario avisa que estás fuera de horario y cierra la conversación.",
   "channels": ["WhatsApp"],
   "requirement": "usa el horario de la conexión",
   "parameters": [

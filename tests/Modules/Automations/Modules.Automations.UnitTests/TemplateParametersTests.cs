@@ -35,10 +35,17 @@ public sealed class TemplateParametersTests
                 "extraOption": { "id": "other-row", "title": "Otra {param.option1}", "description": null } },
               "saveTo": "eleccion", "fallback": "repeat", "outputs": { "chosen": "n5", "extra": "n6", "other": null } },
             { "id": "n5", "kind": "http", "title": "Buscar", "connectionId": null, "method": "GET", "path": "/{param.option1}",
-              "query": [ { "key": "q", "value": "{param.option1}" } ], "body": null, "timeoutSeconds": 8, "okWhen": null,
+              "query": [ { "key": "q", "value": "{param.option1}" } ],
+              "body": { "kind": "json", "template": "{ \"q\": \"{param.option1}\" }", "fields": null, "fileField": null, "fileVariable": null },
+              "timeoutSeconds": 8, "okWhen": null,
               "mapping": [ { "from": "{param.option1}", "to": "{param.option1}" } ], "sampleResponse": null,
               "outputs": { "ok": "n6", "error": "n7" } },
             { "id": "n6", "kind": "handoff", "title": "Asesor", "text": "Te paso con {param.option1}." },
+            { "id": "n8", "kind": "attachment", "title": "Foto {param.option1}", "text": "Envía la foto de {param.option1}", "accept": "image",
+              "saveTo": "{param.option1}", "outputs": { "received": "n9", "invalid": null } },
+            { "id": "n9", "kind": "condition", "title": "¿Es {param.option1}?", "match": "all",
+              "rules": [ { "variable": "{param.option1}", "operator": "equals", "value": "{param.option1}" } ],
+              "outputs": { "yes": "n6", "no": "n7" } },
             { "id": "n7", "kind": "resolve", "title": "Fin", "text": "Chao de {param.missing}.", "reasonId": null }
           ]
         }
@@ -73,10 +80,21 @@ public sealed class TemplateParametersTests
         Assert.Equal("/{param.option1}", http.Path);
         Assert.Equal("{param.option1}", Assert.Single(http.Query).Value);
         Assert.Equal(new HttpMapping("{param.option1}", "{param.option1}"), Assert.Single(http.Mapping));
+        // El cuerpo es JSON con variables, no texto que el cliente lea.
+        Assert.Equal("{ \"q\": \"{param.option1}\" }", http.Body!.Template);
 
         Assert.Equal("Te paso con Ventas.", Assert.IsType<HandoffNode>(flow.Nodes[5]).Text);
+
+        var attachment = Assert.IsType<AttachmentNode>(flow.Nodes[6]);
+        Assert.Equal(("Foto Ventas", "Envía la foto de Ventas", "{param.option1}"), (attachment.Title, attachment.Text, attachment.SaveTo));
+
+        // La regla compara contra un valor, no le habla al cliente: variable y valor quedan literales; sólo el título cambia.
+        var condition = Assert.IsType<ConditionNode>(flow.Nodes[7]);
+        Assert.Equal("¿Es Ventas?", condition.Title);
+        Assert.Equal(new ConditionRule("{param.option1}", "equals", "{param.option1}"), Assert.Single(condition.Rules));
+
         // Sin valor para «missing», queda literal: Validar lo muestra y el admin lo corrige.
-        Assert.Equal("Chao de {param.missing}.", Assert.IsType<ResolveNode>(flow.Nodes[6]).Text);
+        Assert.Equal("Chao de {param.missing}.", Assert.IsType<ResolveNode>(flow.Nodes[8]).Text);
     }
 
     [Fact]

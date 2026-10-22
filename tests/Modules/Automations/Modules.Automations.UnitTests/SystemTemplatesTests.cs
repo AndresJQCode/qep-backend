@@ -42,6 +42,25 @@ public sealed partial class SystemTemplatesTests
         Assert.Null(Catalog.Find("no-existe"));
     }
 
+    // D-C8: exactamente las dos de la primera entrega, con su número de bloques contado al cargar.
+    [Fact]
+    public void TheCatalogHasExactlyTheTwoTemplatesWithTheirBlockCounts()
+    {
+        Assert.Equal(
+            [("outside-hours", 4), ("welcome-menu-handoff", 4)],
+            Catalog.All.Select(template => (template.Id, template.BlockCount)));
+        Assert.All(Catalog.All, template => Assert.Equal(FlowJson.Parse(template.FlowJson).Nodes.Count, template.BlockCount));
+    }
+
+    // Un cambio en el glob del csproj o en el espacio de nombres no puede dejar la galería vacía en silencio: el host no arranca.
+    [Fact]
+    public void ACatalogWithoutTemplateResourcesDoesNotStart()
+    {
+        var exception = Assert.Throws<InvalidOperationException>(() => new SystemTemplateCatalog(typeof(SystemTemplatesTests).Assembly));
+
+        Assert.Contains("no trae plantillas del sistema", exception.Message, StringComparison.Ordinal);
+    }
+
     // La tarjeta de la galería (§4.4) pinta preview y parámetros: tienen que decir la verdad del flujo.
     [Fact]
     public void PreviewIsTheBlockTitlesAndEveryParameterIsDeclared()

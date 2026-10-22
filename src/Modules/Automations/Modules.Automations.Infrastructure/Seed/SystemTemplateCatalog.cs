@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using Modules.Automations.Application;
 using Modules.Automations.Domain;
@@ -8,8 +9,10 @@ namespace Modules.Automations.Infrastructure.Seed;
 /// <summary>
 /// Spec 2026-10-21 D-C8 y §4.5: las plantillas del sistema son los <c>Seed/Templates/*.json</c> embebidos en este ensamblado (como los
 /// seeds de Geografía y Catálogo, <c>GeographySeeder.OpenResource</c>), un archivo por plantilla. Se leen una vez, al construir el
-/// singleton. Un archivo roto es un error de quien lo escribió, no del tenant: tumba el arranque, y <c>SystemTemplatesTests</c> lo
-/// atrapa antes con <see cref="FlowValidator"/>.
+/// singleton, y <c>AutomationsDatabaseInitializer</c> lo construye al arrancar el host. Un archivo roto (o ningún archivo: el glob del
+/// csproj o el espacio de nombres cambió) es un error de quien lo escribió, no del tenant: lanza <see cref="InvalidOperationException"/>
+/// y el host no arranca, en vez de dejar la galería vacía o rota hasta el primer pedido. <c>SystemTemplatesTests</c> lo atrapa antes,
+/// con <see cref="FlowValidator"/>.
 /// </summary>
 internal sealed class SystemTemplateCatalog : ISystemTemplateCatalog
 {
@@ -18,13 +21,26 @@ internal sealed class SystemTemplateCatalog : ISystemTemplateCatalog
     private readonly Dictionary<string, SystemTemplate> _byId;
 
     public SystemTemplateCatalog()
+        : this(typeof(SystemTemplateCatalog).Assembly)
     {
-        var assembly = typeof(SystemTemplateCatalog).Assembly;
+    }
+
+    /// <summary>Con otro ensamblado sólo para la prueba de que un catálogo sin recursos no arranca.</summary>
+    internal SystemTemplateCatalog(Assembly assembly)
+    {
         // Por nombre de recurso: el orden no depende del sistema de archivos de quien compiló.
-        All = [.. assembly.GetManifestResourceNames()
+        var resources = assembly.GetManifestResourceNames()
             .Where(name => name.Contains(ResourceMarker, StringComparison.Ordinal) && name.EndsWith(".json", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal)
-            .Select(name => Read(assembly, name))];
+            .ToList();
+        if (resources.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"El ensamblado «{assembly.GetName().Name}» no trae plantillas del sistema (recursos *{ResourceMarker}*.json): revisa el " +
+                "EmbeddedResource del csproj.");
+        }
+
+        All = [.. resources.Select(name => Read(assembly, name))];
 
         _byId = new Dictionary<string, SystemTemplate>(StringComparer.Ordinal);
         foreach (var template in All)
@@ -40,7 +56,7 @@ internal sealed class SystemTemplateCatalog : ISystemTemplateCatalog
 
     public SystemTemplate? Find(string id) => _byId.GetValueOrDefault(id);
 
-    private static SystemTemplate Read(System.Reflection.Assembly assembly, string resourceName)
+    private static SystemTemplate Read(Assembly assembly, string resourceName)
     {
         using var stream = assembly.GetManifestResourceStream(resourceName)
             ?? throw new InvalidOperationException($"No se pudo abrir el recurso embebido «{resourceName}».");
@@ -52,6 +68,8 @@ internal sealed class SystemTemplateCatalog : ISystemTemplateCatalog
             throw new InvalidOperationException($"La plantilla «{resourceName}» tiene la categoría «{category}», que no existe.");
         }
 
+        // En la forma del modelo, como lo guarda un borrador: el chatbot instalado y el que se edita a mano se leen igual.
+        var flow = FlowJson.Parse(Required(root, "flow", resourceName).GetRawText());
         return new SystemTemplate(
             RequiredString(root, "id", resourceName),
             RequiredString(root, "name", resourceName),
@@ -61,9 +79,11 @@ internal sealed class SystemTemplateCatalog : ISystemTemplateCatalog
             root.TryGetProperty("requirement", out var requirement) && requirement.ValueKind == JsonValueKind.String ? requirement.GetString() : null,
             [.. Required(root, "parameters", resourceName).EnumerateArray().Select(parameter => ReadParameter(parameter, resourceName))],
             [.. Required(root, "preview", resourceName).EnumerateArray().Select(title => title.GetString()!)],
-            // En la forma del modelo, como lo guarda un borrador: el chatbot instalado y el que se edita a mano se leen igual.
-            FlowJson.Serialize(FlowJson.Parse(Required(root, "flow", resourceName).GetRawText())),
-            Required(root, "layout", resourceName).GetRawText());
+            FlowJson.Serialize(flow),
+            Required(root, "layout", resourceName).GetRawText())
+        {
+            BlockCount = flow.Nodes.Count,
+        };
     }
 
     private static TemplateParameter ReadParameter(JsonElement parameter, string resourceName) => new(
