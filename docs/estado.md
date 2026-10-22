@@ -10,8 +10,8 @@ no si se construyó: varios siguen diciendo «borrador» y están construidos.
 Estados: **Construido** (mergeado a `develop`) · **En curso** · **Aprobado, sin empezar** · **Por verificar**.
 «Push» dice si el trabajo ya llegó a `origin`. Para comprobarlo: `git log --oneline origin/develop..develop` en cada repo.
 
-**Push al 2026-10-22.** Backend: 12 commits sin push (POS cliente identificado y `docs(estado)`). Frontend: 27 commits
-sin push (POS cliente identificado y el frontend del spec 1 de Automatizaciones). `develop` va 627 commits delante de
+**Push al 2026-10-22 (noche).** Backend: nada pendiente. Frontend: 6 commits sin push (CB-13, CB-14 y las correcciones
+de la revisión final del constructor de chatbots, `1d453314..208e13f2`). `develop` va 627 commits delante de
 `origin/main` en el backend y 522 en el frontend.
 
 ## Variantes: backend y frontend salen juntos
@@ -28,7 +28,7 @@ existe (VAR-01..13, cierre `22cde669`, en `origin/develop` del frontend; verific
 | Cliente identificado en POS (spec 2026-10-14 + cambios del owner 2026-10-22) | Backend **construido y mergeado** (`d4d4eff3..bcc92424`, ff a `develop`, sin push): permiso `pos.sale.customer` (exige `pos` y `customers`; admin y cajero), `GET`/`POST /pos/customers` (elegibles filtrados en SQL con `SearchSelectableAsync`; alta rápida como ficha incompleta con documento, auditada con `source: "pos"`; 422 `pos.customer.identification_taken` con `existing` vía `IHasProblemExtensions`), `customerId` opcional en `POST /pos/sales` (huella sin cambio cuando no viene; 403/422 `pos.sale.customer_*` después de la repetición) e índice parcial `IX_sales_tenant_customer`. 8 tareas + POSC-09 con revisión por tarea, revisión final y una tanda de correcciones. Frontend (POSC-11..18) en curso en `qep-frontend` rama `feature/pos-cliente-identificado` | [spec](../../qep-frontend/docs/superpowers/specs/2026-10-14-pos-cliente-identificado-design.md), [plan backend](superpowers/plans/2026-10-22-pos-cliente-identificado-backend.md) |
 | Variantes de producto | Backend **construido** (T1–T15 y T14b, revisión final `92f74496`). Pruebas escritas y **sin ejecutar** desde la T4; revisión con Fable pendiente. Frontend construido (VAR-01..13, en `origin/develop` del frontend) | [estado propio](superpowers/plans/2026-10-20-variantes-estado.md) |
 | Automatizaciones (antes «Asistentes»): spec 1, asistente en la conversación y horarios de atención | **Construido en los dos repos.** Backend (`62cb0aaf`): 7 tareas, revisión final + una ronda de corrección. Frontend (`dd22f151..551c05d3`, ff a `develop` del frontend, **sin push**): 9 tareas AH-01..09 con revisión por tarea y revisión final; chip y filtro «Asistente» en la bandeja, pausar/devolver desde el hilo, página `/settings/business-hours`. Falta la prueba manual contra el backend real | [spec](superpowers/specs/2026-10-21-mensajeria-asistente-y-horarios-design.md), [plan backend](superpowers/plans/2026-10-21-mensajeria-asistente-y-horarios-backend.md), [investigación](superpowers/specs/2026-10-21-asistentes-investigacion.md) |
-| Automatizaciones: spec 4, constructor de chatbots (motor, editor, bloque HTTP) | **Backend 1 construido y mergeado** (`46455d73..ff7f6956`, ff a `develop`): fases 1-3 del spec (Mensajería lista para un bot, módulo `automations` y permisos, módulo `Automations` con agregado, validador, endpoints del editor, plantillas e import/export), 20 tareas con revisión por tarea, revisión final en dos paquetes y una tanda de correcciones. **Backend 2 construido y mergeado** (`6261ea26..a194e6ab`, ff a `develop`): el motor atiende (corridas, worker con abandono y purgas, `GET /runs`, «Datos capturados»), proveedor `external-api` con política anti-SSRF, bloque HTTP con `http_calls`, simulador del borrador. `Messaging:Automation:Enqueue` prendido; sólo responde un tenant con el módulo `automations` encendido y un chatbot publicado. Falta frontend (plan 3) y Clasic (plan 4), sin escribir | [spec](superpowers/specs/2026-10-21-constructor-de-chatbots-design.md), [plan backend 1](superpowers/plans/2026-10-21-constructor-de-chatbots-backend-1.md), [plan backend 2](superpowers/plans/2026-10-22-constructor-de-chatbots-backend-2.md) |
+| Automatizaciones: spec 4, constructor de chatbots (motor, editor, bloque HTTP) | **Backend 1 construido y mergeado** (`46455d73..ff7f6956`, ff a `develop`): fases 1-3 del spec (Mensajería lista para un bot, módulo `automations` y permisos, módulo `Automations` con agregado, validador, endpoints del editor, plantillas e import/export), 20 tareas con revisión por tarea, revisión final en dos paquetes y una tanda de correcciones. **Backend 2 construido y mergeado** (`6261ea26..a194e6ab`, ff a `develop`): el motor atiende (corridas, worker con abandono y purgas, `GET /runs`, «Datos capturados»), proveedor `external-api` con política anti-SSRF, bloque HTTP con `http_calls`, simulador del borrador. `Messaging:Automation:Enqueue` prendido; sólo responde un tenant con el módulo `automations` encendido y un chatbot publicado. **Frontend (plan 3) construido y mergeado** en `develop` del frontend (`551c05d3..208e13f2`): 14 tareas CB-01..14 con revisión por tarea, revisión final y una tanda de correcciones; lista, creación, editor (lienzo, propiedades, autoguardado con cola única, validación, publicar, ajustes, simulador) y en la bandeja chip con chatbot y paso, autor bot, interactivos y «Datos capturados». Importar/exportar quedó fuera (decisión del developer). Falta la prueba manual contra el backend real y Clasic (plan 4, sin escribir) | [spec](superpowers/specs/2026-10-21-constructor-de-chatbots-design.md), [plan backend 1](superpowers/plans/2026-10-21-constructor-de-chatbots-backend-1.md), [plan backend 2](superpowers/plans/2026-10-22-constructor-de-chatbots-backend-2.md) |
 | Envío de cotizaciones por el canal del tenant | Spec en borrador para el owner. **Plan 1 de 3 construido** en los dos repos (proveedores habilitados por tenant); planes 2 y 3 sin escribir | [spec](superpowers/specs/2026-10-21-envio-de-cotizaciones-por-canal-del-tenant-design.md), [plan 1](superpowers/plans/2026-10-21-proveedores-habilitados-por-tenant.md) |
 | Shopify: fuente del documento del comprador | Parte 1 **construida** (`d00a20a8`, merge `b7447106`); faltan el endpoint de opciones, el select del frontend y la documentación | [detalle](#shopify-fuente-del-documento-del-comprador) |
 | Shopify: días de historial en «Sincronizar ahora» | Spec commiteado (`42565f98`); sin código en ningún repo | [spec](superpowers/specs/2026-10-21-shopify-historial-dias-design.md) |
@@ -39,15 +39,10 @@ existe (VAR-01..13, cierre `22cde669`, en `origin/develop` del frontend; verific
 
 Orden acordado con el owner: variantes → productos desde Shopify → campanita → alertas.
 
-**Automatizaciones: siguiente paso (2026-10-22).** El spec 1 está construido en los dos repos. Del spec 4 (constructor)
-están los dos backends; lo que sigue es el **plan 3, el frontend del constructor**, sin escribir. La maqueta del módulo
-ya está en `develop` del frontend (`e2003638`: lista, nuevo, editor React Flow con simulador en pestaña, plantillas),
-pero corre sobre fixtures (`features/automations/fixtures`, `use-demo-read.ts`) y no llama a la API: el plan 3 la
-conecta a los endpoints de §4.4 (editor, publicar, plantillas, import/export, simulación, `GET /runs`), y suma en la
-bandeja lo que el backend ya manda y el frontend todavía no lee: `automation.chatbotName`/`stepTitle`,
-`MessageDto.sentByChatbot` e `interactive`, y «Datos capturados» (`GET /conversations/{id}/automation`). Después: el
-plan 4 (Clasic), la conexión «API externa» en Integraciones si el plan 3 no la cubre, los specs 2 y 3 en lo que el 4 no
-tomó (envío proactivo y claves de API), y al final la migración de lulo-chat
+**Automatizaciones: siguiente paso (2026-10-22, noche).** Los specs 1 y 4 (backend y frontend) están construidos en
+los dos repos. Antes de producción: prueba manual del editor (autoguardado, 412 con dos pestañas, publicar, simular) y
+de la bandeja con un chatbot corriendo contra el backend real. Después: el plan 4 (Clasic), los specs 2 y 3 en lo que el
+4 no tomó (envío proactivo y claves de API), importar/exportar si se necesita, y al final la migración de lulo-chat
 (`docs/superpowers/specs/2026-10-21-migracion-lulo-chat-design.md`, sin commitear, con 10 preguntas abiertas en §4).
 Todo con el «arranca» del developer.
 
@@ -88,7 +83,7 @@ copia del frontend para los códigos nuevos.
 | 2026-10-21 Shopify: días de historial | Aprobado en conversación, sin empezar | Tope 30 días, desde `LinkedAt`, en cada pulsación; el cron no cambia. Extiende D-S4 |
 | 2026-10-21 onboarding | Incompleto, en pausa; sin empezar | Metas por módulo; estado calculado en vivo, sin escribir en el GET; backfill cierra la guía de los tenants existentes |
 | 2026-10-21 mensajería: asistente y horarios de atención (Automatizaciones, spec 1) | Construido; backend (`62cb0aaf`) y frontend (`551c05d3`, sin push) | `automation/*` y `/messaging/business-hours`; permiso `messaging.business_hours.manage` sólo en `admin`; festivos de Colombia por interruptor (D-H9). El `GET /business-hours` trae `connections` (D-H10 corregido al planear) |
-| 2026-10-21 Automatizaciones: constructor de chatbots (spec 4) | Backends 1 (`ff7f6956`) y 2 (`a194e6ab`) construidos; frontend y Clasic sin plan | Toma de los specs 2 y 3 lo que el bot necesita (interactivos salientes, «API externa»). Reglas del controlador R1-R21 en el reporte de la sesión; pendientes para el backend 2 abajo, en Registro |
+| 2026-10-21 Automatizaciones: constructor de chatbots (spec 4) | Backends 1 (`ff7f6956`) y 2 (`a194e6ab`) y frontend (`208e13f2`, sin push) construidos; Clasic sin plan | Toma de los specs 2 y 3 lo que el bot necesita (interactivos salientes, «API externa»). Reglas del controlador R1-R21 en el reporte de la sesión; pendientes para el backend 2 abajo, en Registro |
 | 2026-10-21 Automatizaciones: investigación y roadmap | Concepto; specs 2–3 y migración de lulo-chat sin escribir (el 4 se escribió y se está construyendo) | Orden: interactivos → claves de API y envío proactivo → constructor (motor, editor React Flow, bloque HTTP) → migración. IA diferida |
 
 Construido sin spec propio: enviar el pedido por WhatsApp (`POST /orders/{id}/send`, `OrderEndpoints.cs:114`; frontend
@@ -190,6 +185,15 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-22 — Mergeado a `develop` del frontend el frontend del constructor de chatbots (plan 3, `551c05d3..208e13f2`),
+  construido con subagentes en 14 tareas (CB-01..14) con revisión por tarea, revisión final de la rama y una tanda de
+  correcciones. Lo más delicado: una sola cola de escritura por editor (autoguardado de 2 s, validar, publicar, ajustes,
+  borrar) con la `version` que devolvió la escritura anterior; un 412 recarga el editor. La revisión atrapó antes del
+  merge: Suprimir con el foco fuera del lienzo borraba el bloque seleccionado; un `cta.url` `javascript:` quedaba
+  clicable (ahora sólo `https`, `src/lib/https-url.ts`); un falso «No pudimos guardar»; una simulación muerta tras un
+  reinicio fallido. **Otra sesión mergeó la rama a mitad (CB-01..12) y la empujó a `origin/develop` (`1d453314`, 21:25)**;
+  el resto entró encima sin cambios de árbol. Importar/exportar quedó fuera por decisión del developer. Suite: sólo las
+  5 fallas de `catalog/product-form` que ya tenía `develop`. Falta la prueba manual contra el backend real.
 - 2026-10-22 — Mergeado a `develop` del frontend el frontend del spec 1 de Automatizaciones (`dd22f151..551c05d3`, con
   `develop` integrado en la rama y ff; sin push), construido con subagentes en 9 tareas (AH-01..09) con revisión por
   tarea, revisión final de la rama y una tanda de correcciones (franjas ordenadas al guardar, solape en excepciones,
