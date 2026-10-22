@@ -1609,7 +1609,7 @@ el spec del slice; esta tabla es el inventario.
 | `GET /customers`                   | `pos.sale.customer`    | Clientes elegibles de la caja: activos con documento, hasta 20, por nombre, documento o CUC |
 | `POST /customers`                  | `pos.sale.customer`    | Alta rápida: ficha incompleta con documento; 422 `pos.customer.identification_taken` trae `existing` |
 | `GET /sales/{saleId}`              | `pos.sale.read`        | Detalle de una venta                                                             |
-| `GET /sales`                       | `pos.sale.read`        | Lista paginada de ventas, con filtros                                            |
+| `GET /sales`                       | `pos.sale.read`        | Lista paginada de ventas; `number` y `customerDocument` buscan por un pedazo     |
 | `POST /sales/{saleId}/void`        | `pos.sale.void`        | Anula una venta, con motivo; sólo si su caja sigue abierta                       |
 
 ### Aceptación de la invitación

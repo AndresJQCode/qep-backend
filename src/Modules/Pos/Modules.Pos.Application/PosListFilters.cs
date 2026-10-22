@@ -14,6 +14,8 @@ public sealed record CashSessionFilter(
     int Page,
     int PageSize);
 
+/// <param name="Number">Pedazo del número de venta, ya recortado; coincide sin distinguir mayúsculas.</param>
+/// <param name="CustomerDocument">Pedazo del documento de la venta, ya recortado; coincide igual que Number.</param>
 public sealed record PosSaleFilter(
     Guid TenantId,
     MemberId? Cashier,
@@ -22,6 +24,7 @@ public sealed record PosSaleFilter(
     DateTimeOffset? ToUtc,
     PosSaleStatus? Status,
     string? Number,
+    string? CustomerDocument,
     int Page,
     int PageSize);
 

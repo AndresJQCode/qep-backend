@@ -7,8 +7,18 @@ namespace Modules.Pos.Application;
 
 /// <param name="From">Fecha local del tenant; se corta con StartOfDayUtc.</param>
 /// <param name="To">Fecha local del tenant, incluida; se corta con EndOfDayExclusiveUtc.</param>
+/// <param name="Number">Un pedazo del número de venta: «15» encuentra POS-000015.</param>
+/// <param name="CustomerDocument">Un pedazo del documento que quedó en la venta, no el del cliente de hoy.</param>
 public sealed record ListPosSalesQuery(
-    Guid TenantId, Guid? SessionId, DateOnly? From, DateOnly? To, string? Status, string? Number, int Page, int PageSize)
+    Guid TenantId,
+    Guid? SessionId,
+    DateOnly? From,
+    DateOnly? To,
+    string? Status,
+    string? Number,
+    string? CustomerDocument,
+    int Page,
+    int PageSize)
     : IQuery<PosPage<PosSaleListItemResponse>>;
 
 public sealed class ListPosSalesValidator : AbstractValidator<ListPosSalesQuery>
@@ -21,6 +31,8 @@ public sealed class ListPosSalesValidator : AbstractValidator<ListPosSalesQuery>
             .Must(status => status is null || Enum.GetNames<PosSaleStatus>().Contains(status, StringComparer.Ordinal))
             .WithMessage("The status must be Completed or Voided.");
         RuleFor(query => query.Number).MaximumLength(20);
+        // El largo de pos.sales.customer_identification_number: uno más largo no coincide con nada.
+        RuleFor(query => query.CustomerDocument).MaximumLength(32);
         RuleFor(query => query)
             .Must(query => query.From is null || query.To is null || query.From <= query.To)
             .WithName("from").WithMessage("from must not be after to.");
@@ -52,6 +64,7 @@ public sealed class ListPosSalesHandler(
                 query.To is { } to ? calendar.EndOfDayExclusiveUtc(to) : null,
                 query.Status is { } status ? Enum.Parse<PosSaleStatus>(status) : null,
                 string.IsNullOrWhiteSpace(query.Number) ? null : query.Number.Trim(),
+                string.IsNullOrWhiteSpace(query.CustomerDocument) ? null : query.CustomerDocument.Trim(),
                 query.Page,
                 query.PageSize),
             cancellationToken);

@@ -229,10 +229,12 @@ public static class PosEndpoints
         DateOnly? to = null,
         string? status = null,
         string? number = null,
+        string? customerDocument = null,
         int page = 1,
         int pageSize = 20) =>
         Results.Ok(await dispatcher.QueryAsync(
-            new ListPosSalesQuery(tenantId, sessionId, from, to, status, number, page, pageSize), cancellationToken));
+            new ListPosSalesQuery(tenantId, sessionId, from, to, status, number, customerDocument, page, pageSize),
+            cancellationToken));
 
     private static async Task<IResult> VoidSaleAsync(
         Guid tenantId, Guid saleId, VoidPosSaleRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
