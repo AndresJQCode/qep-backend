@@ -202,7 +202,7 @@
         "id": "welcome",
         "kind": "message",
         "title": "Bienvenida",
-        "text": "Hola, te damos la bienvenida a CLASIC, especialistas en calentamiento de agua. Recuerda que puedes reiniciar la conversación en cualquier momento escribiendo *REINICIAR*.",
+        "text": "Para solicitar un servicio o una asistencia técnica, te vamos a pedir unos datos. Recuerda que puedes reiniciar la conversación en cualquier momento escribiendo *REINICIAR*.",
         "outputs": {
           "next": "document"
         }
@@ -211,7 +211,7 @@
         "id": "document",
         "kind": "openQuestion",
         "title": "Número de documento",
-        "text": "Para solicitar un servicio o una asistencia técnica, escribe tu número de documento.",
+        "text": "Escribe tu número de documento.",
         "saveTo": "cedula",
         "validation": {
           "kind": "digits"
@@ -928,7 +928,7 @@
         "id": "order-error",
         "kind": "message",
         "title": "No se pudo crear la orden",
-        "text": "No pudimos crear la orden: puede que ya exista una abierta para esa dirección o que haya un bloqueo. Te paso con un asesor.",
+        "text": "No pudimos crear la orden: puede que ya exista una abierta para esa dirección o que haya un bloqueo.",
         "outputs": {
           "next": "handoff"
         }

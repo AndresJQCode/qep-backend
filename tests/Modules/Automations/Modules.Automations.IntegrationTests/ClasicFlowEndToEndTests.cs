@@ -56,11 +56,12 @@ public sealed class ClasicFlowEndToEndTests
 
     private const string NoCustomers = """{"items":[],"totalCount":0}""";
 
-    // Lo que manda el bot en los pasos que más se miran, tal como está en el fixture.
+    // Lo que manda el bot en los pasos que más se miran, tal como está en el fixture. La bienvenida no saluda: el saludo ya lo dio la
+    // política a quien pasa por ella, y abría igual.
     private const string Welcome =
-        "Hola, te damos la bienvenida a CLASIC, especialistas en calentamiento de agua. Recuerda que puedes reiniciar la conversación en cualquier momento escribiendo *REINICIAR*.";
+        "Para solicitar un servicio o una asistencia técnica, te vamos a pedir unos datos. Recuerda que puedes reiniciar la conversación en cualquier momento escribiendo *REINICIAR*.";
 
-    private const string AskDocument = "Para solicitar un servicio o una asistencia técnica, escribe tu número de documento.";
+    private const string AskDocument = "Escribe tu número de documento.";
 
     private const string AskEquipment = "[list] Elige el equipo o la dirección donde necesitas el servicio.";
 
@@ -368,7 +369,8 @@ public sealed class ClasicFlowEndToEndTests
 
         Assert.Equal(
             [
-                "No pudimos crear la orden: puede que ya exista una abierta para esa dirección o que haya un bloqueo. Te paso con un asesor.",
+                // La frase del asesor la dice sólo el handoff: el aviso del error no la repite.
+                "No pudimos crear la orden: puede que ya exista una abierta para esa dirección o que haya un bloqueo.",
                 "Te paso con un asesor.",
             ],
             f.Graph.Sends()[^2..]);
