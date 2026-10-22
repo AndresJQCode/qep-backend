@@ -47,18 +47,17 @@ public sealed class RunVariables
 
     /// <summary>El valor como texto para un mensaje: escalar tal cual (números y booleanos en cultura invariante), objeto o lista como
     /// JSON compacto, y <c>null</c> o ausente como vacío.</summary>
-    public string TextOf(string path)
+    public string TextOf(string path) => FormatText(Get(path));
+
+    /// <summary>El mismo formato de <see cref="TextOf"/> para un valor ya leído (un campo de un elemento de una colección).</summary>
+    internal static string FormatText(JsonNode? node) => node switch
     {
-        var node = Get(path);
-        return node switch
-        {
-            null => string.Empty,
-            JsonValue value when value.TryGetValue<string>(out var text) => text,
-            JsonValue value when value.TryGetValue<bool>(out var flag) => flag ? "true" : "false",
-            JsonValue value when value.TryGetValue<decimal>(out var number) => number.ToString(CultureInfo.InvariantCulture),
-            _ => node.ToJsonString(Compact),
-        };
-    }
+        null => string.Empty,
+        JsonValue value when value.TryGetValue<string>(out var text) => text,
+        JsonValue value when value.TryGetValue<bool>(out var flag) => flag ? "true" : "false",
+        JsonValue value when value.TryGetValue<decimal>(out var number) => number.ToString(CultureInfo.InvariantCulture),
+        _ => node.ToJsonString(Compact),
+    };
 
     public IReadOnlyDictionary<string, JsonNode?> Snapshot() =>
         root.ToDictionary(pair => pair.Key, pair => pair.Value?.DeepClone(), StringComparer.Ordinal);
