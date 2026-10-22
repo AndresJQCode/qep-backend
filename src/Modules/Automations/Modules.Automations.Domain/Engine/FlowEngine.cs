@@ -41,12 +41,21 @@ public static class FlowEngine
     private static StepResult OnCustomerMessage(
         FlowDefinition flow, EngineSettings settings, RunState state, EngineInput.CustomerMessage message, DateTimeOffset now)
     {
-        if (WaitingAt(flow, state) is not { } node)
+        if (state.Status != RunStatus.Waiting)
         {
             return Unchanged(state);
         }
 
         var walk = new Walk(flow, state, now);
+
+        // Ruling P2-R17, por lo mismo que P2-R14: esperar en un bloque que no existe en la versión (o que no espera) sólo pasa con una
+        // versión guardada corrupta. Ignorar el mensaje dejaría la conversación Active con un bot mudo para siempre; terminar Failed deja
+        // que el procesador la pase a un asesor.
+        if (WaitingNode(flow, state.CurrentNodeId) is not { } node)
+        {
+            return walk.Fail(state.CurrentNodeId ?? StartNodeId, EndReasons.TargetMissing);
+        }
+
         if (IsRestart(settings, message))
         {
             return walk.Restart(node);
@@ -62,15 +71,15 @@ public static class FlowEngine
     }
 
     /// <summary>D-I5: la palabra se compara como las palabras clave (sin tildes, mayúsculas ni espacios de más). Sin palabra configurada
-    /// no reinicia nada: un texto vacío no puede reiniciar la corrida.</summary>
+    /// no reinicia nada: un texto vacío no puede reiniciar la corrida. Ruling P2-R16: sólo lo escrito reinicia; un toque (con
+    /// <c>ReplyId</c>) se compara por id, así que un botón «Reiniciar» sale por su propia salida.</summary>
     private static bool IsRestart(EngineSettings settings, EngineInput.CustomerMessage message) =>
-        !string.IsNullOrWhiteSpace(settings.RestartKeyword) && !string.IsNullOrWhiteSpace(message.Text)
+        message.ReplyId is null && !string.IsNullOrWhiteSpace(settings.RestartKeyword) && !string.IsNullOrWhiteSpace(message.Text)
         && TextMatch.Same(message.Text, settings.RestartKeyword);
 
-    private static FlowNode? WaitingAt(FlowDefinition flow, RunState state) =>
-        state.Status == RunStatus.Waiting && state.CurrentNodeId is { } nodeId
-            ? flow.Nodes.FirstOrDefault(node => node.Id == nodeId && Waits(node))
-            : null;
+    /// <summary>El bloque en que espera la corrida; el primero con ese id, como el diccionario de <see cref="Walk"/>.</summary>
+    private static FlowNode? WaitingNode(FlowDefinition flow, string? nodeId) =>
+        nodeId is null ? null : flow.Nodes.FirstOrDefault(node => node.Id == nodeId) is { } found && Waits(found) ? found : null;
 
     private static bool Waits(FlowNode node) => node is OpenQuestionNode or ButtonsNode or ListNode or AttachmentNode;
 
@@ -153,6 +162,14 @@ public static class FlowEngine
             {
                 variables.Set(name, value);
             }
+        }
+
+        /// <summary>Termina la corrida <c>Failed</c> sin entrar en ningún bloque.</summary>
+        public StepResult Fail(string nodeId, string reason)
+        {
+            effects.Add(new Effect.EndRun(nodeId, reason));
+            status = RunStatus.Failed;
+            return Result();
         }
 
         /// <summary>Guarda la respuesta del cliente en el <c>saveTo</c> del bloque; un Botones sin <c>saveTo</c> no guarda nada.</summary>

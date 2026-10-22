@@ -39,16 +39,16 @@ public sealed class FlowEngineWaitingTests
 
     private static OpenQuestionNode Question(
         string id, string validation = QuestionValidationKinds.None, string? answered = "ok", string? invalid = null, string saveTo = "cedula",
-        IReadOnlyList<string>? keywords = null, int? maxAttempts = null) =>
+        IReadOnlyList<string>? keywords = null, int? maxAttempts = null, string? pattern = null) =>
         new(id, "Número de documento", Out((FlowOutputs.Answered, answered), (FlowOutputs.Invalid, invalid)), "¿Cuál es tu número de documento?",
-            saveTo, new QuestionValidation(validation, null, keywords), maxAttempts);
+            saveTo, new QuestionValidation(validation, pattern, keywords), maxAttempts);
 
     private static ButtonsNode Buttons(string id, string fallback = InteractiveFallbacks.Repeat, string? other = null) =>
         new(id, "Motivo", Out(("tech", "t"), ("sales", "s"), (FlowOutputs.Other, other)), "¿En qué te ayudamos?",
             [new FlowButton("tech", "Servicio técnico"), new FlowButton("sales", "Ventas")], "motivo", fallback);
 
-    private static ListNode EquipmentList(string id, bool extra = true, string fallback = InteractiveFallbacks.Repeat) =>
-        new(id, "Equipo", Out((FlowOutputs.Chosen, "elegido"), (FlowOutputs.Extra, "otra"), (FlowOutputs.TooMany, "muchos"), (FlowOutputs.Other, null)),
+    private static ListNode EquipmentList(string id, bool extra = true, string fallback = InteractiveFallbacks.Repeat, string? tooMany = "muchos") =>
+        new(id, "Equipo", Out((FlowOutputs.Chosen, "elegido"), (FlowOutputs.Extra, "otra"), (FlowOutputs.TooMany, tooMany), (FlowOutputs.Other, null)),
             "¿Cuál equipo?", "Ver equipos",
             new ListOptions(ListOptionKinds.Dynamic, null, "equipos", "id", "referenceCode", "address",
                 extra ? new ListFixedRow("otra", "Otra dirección", null) : null),
@@ -58,6 +58,16 @@ public sealed class FlowEngineWaitingTests
         new(id, "Factura", Out((FlowOutputs.Received, "ok"), (FlowOutputs.Invalid, null)), "Envíanos la factura.", accept, "factura");
 
     private static RunVariables Variables(string json) => RunVariables.Parse(json);
+
+    /// <summary>La lista de equipos con los elementos dados tal cual (para filas raras: sin id, repetidas, largas).</summary>
+    private static RunVariables Equipment(params JsonObject[] items) =>
+        Variables(new JsonObject { ["equipos"] = new JsonArray([.. items]) }.ToJsonString());
+
+    private static IReadOnlyList<(string Id, string Title, string? Description)> SentRows(StepResult result) =>
+        Assert.IsType<InteractiveMessage.List>(Assert.IsType<Effect.SendInteractive>(result.Effects[0]).Message).Rows;
+
+    private static FlowDefinition EquipmentFlow(ListNode list) =>
+        Flow(list, Message("elegido", "Listo"), Message("otra", "¿Cuál dirección?"), Message("muchos", "Son muchos"));
 
     private static RunVariables Equipment(int count) => Variables(new JsonObject
     {
@@ -409,5 +419,228 @@ public sealed class FlowEngineWaitingTests
         Assert.Equal<Effect>([new Effect.Handoff("l")], result.Effects);
         Assert.Equal(RunStatus.HandedOff, result.State.Status);
         Assert.Equal("l", result.State.CurrentNodeId);
+    }
+
+    [Fact]
+    public void ADynamicListFitsLongRowsToMetaLimits()
+    {
+        // 20 letras y un emoji de 4 unidades UTF-16 (👍🏽): el corte no puede partirlo, así que el título queda en 20 letras y «…».
+        var longTitle = new string('a', 20) + "👍🏽" + "bbbb";
+        var flow = EquipmentFlow(EquipmentList("l", extra: false));
+
+        var result = Start(flow, Equipment(
+            new JsonObject { ["id"] = 1, ["referenceCode"] = longTitle, ["address"] = new string('x', 80) },
+            new JsonObject { ["id"] = new string('9', 201), ["referenceCode"] = "CAL-2" },
+            new JsonObject { ["id"] = 3, ["referenceCode"] = "CAL-3" }));
+
+        var rows = SentRows(result);
+        Assert.Equal([("1", new string('a', 20) + "…", (string?)(new string('x', 71) + "…")), ("3", "CAL-3", null)], rows);
+        Assert.All(rows, row => Assert.True(row.Title.Length <= 24 && (row.Description?.Length ?? 0) <= 72));
+    }
+
+    [Fact]
+    public void DuplicateRowIdsKeepTheFirstAndTheExtraWins()
+    {
+        var flow = EquipmentFlow(EquipmentList("l"));
+
+        var result = Start(flow, Equipment(
+            new JsonObject { ["id"] = 1, ["referenceCode"] = "CAL-1" },
+            new JsonObject { ["id"] = 1, ["referenceCode"] = "CAL-repetido" },
+            new JsonObject { ["id"] = "otra", ["referenceCode"] = "Choca con la extra" },
+            new JsonObject { ["id"] = 2, ["referenceCode"] = "CAL-2" }));
+
+        Assert.Equal([("1", "CAL-1", (string?)null), ("2", "CAL-2", null), ("otra", "Otra dirección", null)], SentRows(result));
+
+        // Se depura antes de contar: once elementos con un id repetido son diez filas y la lista sí se manda.
+        var eleven = Equipment([.. Enumerable.Range(1, 10).Select(index => new JsonObject { ["id"] = index, ["referenceCode"] = $"CAL-{index}" }),
+            new JsonObject { ["id"] = 1, ["referenceCode"] = "CAL-repetido" }]);
+
+        var deduped = Start(EquipmentFlow(EquipmentList("l", extra: false)), eleven);
+
+        Assert.Equal(10, SentRows(deduped).Count);
+        Assert.Equal(RunStatus.Waiting, deduped.State.Status);
+    }
+
+    [Fact]
+    public void TypingTheFullTitleOfAFittedRowChoosesIt()
+    {
+        const string fullTitle = "Calentador de paso a gas natural";
+        var flow = EquipmentFlow(EquipmentList("l"));
+        var started = Start(flow, Equipment(new JsonObject { ["id"] = 7, ["referenceCode"] = fullTitle }));
+
+        Assert.Equal("Calentador de paso a ga…", SentRows(started)[0].Title);
+
+        var typed = Reply(flow, started, Typed("calentador de paso a GAS natural"));
+
+        // Se guarda el título completo: es el dato del equipo, el recorte es sólo cómo cupo en WhatsApp.
+        Assert.Equal("elegido", typed.State.CurrentNodeId);
+        AssertJson(
+            """{ "id": "7", "title": "Calentador de paso a gas natural", "item": { "id": 7, "referenceCode": "Calentador de paso a gas natural" } }""",
+            typed.State.Variables.Get("equipo"));
+        Assert.Equal("elegido", Reply(flow, started, Typed("Calentador de paso a ga…")).State.CurrentNodeId);
+    }
+
+    [Fact]
+    public void ATappedReplyIsNeverTheRestartKeyword()
+    {
+        var buttons = new ButtonsNode("b", "Opciones", Out(("again", "a"), ("menu", "m"), (FlowOutputs.Other, null)), "¿Qué hacemos?",
+            [new FlowButton("again", "Reiniciar"), new FlowButton("menu", "Menú")], null, InteractiveFallbacks.Repeat);
+        var flow = Flow(Question("q0", saveTo: "motivo", answered: "b"), buttons, Message("a", "Otra vez"), Message("m", "Menú"));
+        var atButtons = Reply(flow, Start(flow), Typed("Tengo una falla"));
+
+        var tapped = Reply(flow, atButtons, Tapped("again", "Reiniciar"));
+        var typed = Reply(flow, atButtons, Typed("Reiniciar"));
+
+        Assert.Equal("a", tapped.State.CurrentNodeId);
+        Assert.True(tapped.State.Variables.Has("motivo"));
+        Assert.Equal("q0", typed.State.CurrentNodeId);
+        Assert.False(typed.State.Variables.Has("motivo"));
+    }
+
+    [Fact]
+    public void AWaitingRunAtAMissingOrNonWaitingNodeEndsFailed()
+    {
+        // Ruling P2-R17: como P2-R14, una corrida que espera en un bloque que no existe (o que no espera) termina en vez de quedar muda.
+        var flow = Flow(Question("n1"), Message("ok", "Gracias"));
+        var started = Start(flow);
+
+        foreach (var nodeId in new[] { "borrado", "ok" })
+        {
+            var result = FlowEngine.Step(flow, Settings(), started.State with { CurrentNodeId = nodeId }, Typed("10203"), Now);
+
+            Assert.Equal<Effect>([new Effect.EndRun(nodeId, "target_missing")], result.Effects);
+            Assert.Equal(RunStatus.Failed, result.State.Status);
+        }
+    }
+
+    [Theory]
+    [InlineData("1.500", "1500")]
+    [InlineData("1.500.000", "1500000")]
+    [InlineData("1.500,5", "1500.5")]
+    [InlineData("1.5", "1.5")]
+    [InlineData("3.14", "3.14")]
+    [InlineData("1.5000", "1.5000")]
+    [InlineData("1234,5", "1234.5")]
+    [InlineData("-2,5", "-2.5")]
+    [InlineData("0.500", "0.500")]
+    public void NumberAnswersReadDotsAsThousandsOnlyInGroupsOfThree(string typed, string expected)
+    {
+        var flow = Flow(Question("n1", "number", saveTo: "monto"), Message("ok", "Listo"));
+
+        var result = Reply(flow, Start(flow), Typed(typed));
+
+        Assert.Equal(decimal.Parse(expected, System.Globalization.CultureInfo.InvariantCulture), result.State.Variables.Get("monto")!.GetValue<decimal>());
+    }
+
+    [Theory]
+    [InlineData("1,500.5")]
+    [InlineData("1.5.3")]
+    [InlineData("1e5")]
+    [InlineData("doce")]
+    public void ANonNumberAnswerToANumberQuestionIsInvalid(string typed)
+    {
+        var flow = Flow(Question("n1", "number", saveTo: "monto"), Message("ok", "Listo"));
+
+        AssertResent(Reply(flow, Start(flow), Typed(typed)), "n1", attempts: 1);
+    }
+
+    [Fact]
+    public void ACaptionNeverSelectsAButton()
+    {
+        var flow = Flow(Buttons("b"), Message("t", "Técnico"), Message("s", "Ventas"));
+        var captioned = new EngineInput.CustomerMessage("Image", "Ventas", null, new AttachmentInput(InvoiceMessageId, null, "image/jpeg", false));
+
+        AssertResent(Reply(flow, Start(flow), captioned), "b", attempts: 1);
+    }
+
+    [Fact]
+    public void ATypedTitleSharedByTwoOptionsIsAmbiguous()
+    {
+        var list = new ListNode("l", "Sede", Out((FlowOutputs.Chosen, "elegido"), (FlowOutputs.Other, null)), "¿Cuál sede?", "Ver sedes",
+            new ListOptions(ListOptionKinds.Fixed, [new ListFixedRow("a", "Sede Norte", null), new ListFixedRow("b", "SEDE NÓRTE", null)],
+                null, null, null, null, null),
+            "sede", InteractiveFallbacks.Repeat);
+        var listFlow = Flow(list, Message("elegido", "Listo"));
+        var started = Start(listFlow);
+
+        AssertResent(Reply(listFlow, started, Typed("sede norte")), "l", attempts: 1);
+        AssertJson("""{ "id": "b", "title": "SEDE NÓRTE" }""", Reply(listFlow, started, Tapped("b", "SEDE NÓRTE")).State.Variables.Get("sede"));
+
+        var buttons = new ButtonsNode("b", "Confirmar", Out(("yes", "s"), ("yes2", "s"), (FlowOutputs.Other, null)), "¿Confirmas?",
+            [new FlowButton("yes", "Sí"), new FlowButton("yes2", "si")], null, InteractiveFallbacks.Repeat);
+        var buttonsFlow = Flow(buttons, Message("s", "Listo"));
+
+        AssertResent(Reply(buttonsFlow, Start(buttonsFlow), Typed("SI")), "b", attempts: 1);
+    }
+
+    [Fact]
+    public void ARegexAnswerIsValidatedWithoutThrowing()
+    {
+        StepResult Answer(string? pattern, string typed)
+        {
+            var flow = Flow(Question("n1", QuestionValidationKinds.Regex, saveTo: "codigo", pattern: pattern), Message("ok", "Listo"));
+            return Reply(flow, Start(flow), Typed(typed));
+        }
+
+        Assert.Equal("ok", Answer("^[A-Z]{3}-[0-9]+$", " CAL-12 ").State.CurrentNodeId);
+        AssertResent(Answer("^[A-Z]{3}-[0-9]+$", "cal 12"), "n1", attempts: 1);
+        // Un patrón que no compila (sólo en un borrador del simulador) cuenta como intento: el paso no lanza.
+        AssertResent(Answer("(", "CAL-12"), "n1", attempts: 1);
+    }
+
+    [Fact]
+    public void ARowWithoutIdOrTitleIsSkipped()
+    {
+        var result = Start(EquipmentFlow(EquipmentList("l")), Equipment(
+            new JsonObject { ["referenceCode"] = "Sin id" },
+            new JsonObject { ["id"] = 2 },
+            new JsonObject { ["id"] = 3, ["referenceCode"] = "  " },
+            new JsonObject { ["id"] = 4, ["referenceCode"] = "CAL-4" }));
+
+        Assert.Equal([("4", "CAL-4", (string?)null), ("otra", "Otra dirección", null)], SentRows(result));
+    }
+
+    [Fact]
+    public void AnUnconnectedTooManyEndsCompleted()
+    {
+        var result = Start(EquipmentFlow(EquipmentList("l", extra: false, tooMany: null)), Equipment(11));
+
+        Assert.Equal<Effect>([new Effect.EndRun("l", "output_unconnected")], result.Effects);
+        Assert.Equal(RunStatus.Completed, result.State.Status);
+    }
+
+    [Fact]
+    public void ExhaustedRepeatButtonsTakeOtherWhenConnected()
+    {
+        var flow = Flow(Buttons("b", other: "o"), Message("t", "Técnico"), Message("s", "Ventas"), Message("o", "Te paso"));
+        var started = Start(flow);
+
+        var first = Reply(flow, started, Typed("x"));
+        var second = Reply(flow, first, Typed("y"));
+        var third = Reply(flow, second, Typed("z"));
+
+        AssertResent(first, "b", attempts: 1);
+        AssertResent(second, "b", attempts: 2);
+        Assert.Equal("o", third.State.CurrentNodeId);
+        Assert.Contains(third.State.Trace, entry => entry is { NodeId: "b", Outcome: FlowOutputs.Other });
+    }
+
+    [Theory]
+    [InlineData("image", "Image", true)]
+    [InlineData("image", "Document", false)]
+    [InlineData("document", "Document", true)]
+    [InlineData("any", "Image", true)]
+    [InlineData("any", "Document", true)]
+    [InlineData("any", "Video", true)]
+    [InlineData("any", "Audio", true)]
+    [InlineData("any", "Unsupported", false)]
+    public void AnAttachmentIsReceivedOnlyWhenItsKindIsAccepted(string accept, string kind, bool received)
+    {
+        var flow = Flow(Invoice("n1", accept), Message("ok", "Recibida"));
+
+        var result = Reply(flow, Start(flow), Attachment(kind, "archivo", "application/octet-stream"));
+
+        Assert.Equal(received ? "ok" : "n1", result.State.CurrentNodeId);
+        Assert.Equal(received, result.State.Variables.Has("factura"));
     }
 }

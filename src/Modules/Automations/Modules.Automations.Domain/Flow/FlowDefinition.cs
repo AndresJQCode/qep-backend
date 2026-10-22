@@ -115,6 +115,13 @@ public static class FlowVariableTypes
     public static readonly IReadOnlySet<string> All = new[] { "text", "number", "list", "object", "attachment" }.ToFrozenSet(StringComparer.Ordinal);
 }
 
+/// <summary>D-M8: las variables que el motor siempre llena, sin que un bloque las escriba, en el orden en que el editor las lista. Las lee
+/// el validador (son conocidas en todo flujo) y el motor (son lo único que sobrevive a un reinicio): una sola lista para los dos.</summary>
+public static class FlowFixedVariables
+{
+    public static readonly IReadOnlyList<string> Names = ["nombre", "telefono", "empresa", "conexion"];
+}
+
 public static class QuestionValidationKinds
 {
     public const string None = "none";

@@ -35,10 +35,7 @@ public static partial class FlowValidator
 
     private const string NameRule = "empieza con minúscula y usa sólo letras y números, máximo 40.";
 
-    /// <summary>D-M8: las variables que el motor siempre llena, sin que un bloque las escriba.</summary>
-    private static readonly string[] FixedOrder = ["nombre", "telefono", "empresa", "conexion"];
-
-    private static readonly FrozenSet<string> FixedVariables = FixedOrder.ToFrozenSet(StringComparer.Ordinal);
+    private static readonly FrozenSet<string> FixedVariables = FlowFixedVariables.Names.ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>Sin conectar, D-M7 las cubre en tiempo de ejecución (reinicia o repite), así que son aviso y no error.</summary>
     private static readonly FrozenSet<string> OptionalOutputs =
@@ -102,7 +99,7 @@ public static partial class FlowValidator
         ArgumentNullException.ThrowIfNull(flow);
         var known = new List<string>(FixedVariables.Count + flow.Variables.Count);
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var name in FixedOrder.Concat(flow.Variables.Select(variable => variable.Name)).Concat(WrittenInOrder(flow)))
+        foreach (var name in FlowFixedVariables.Names.Concat(flow.Variables.Select(variable => variable.Name)).Concat(WrittenInOrder(flow)))
         {
             if (!string.IsNullOrWhiteSpace(name) && seen.Add(name))
             {
