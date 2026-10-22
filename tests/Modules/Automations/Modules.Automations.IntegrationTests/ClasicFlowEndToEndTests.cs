@@ -301,6 +301,40 @@ public sealed class ClasicFlowEndToEndTests
             await TextAsync(f, "SELECT method || ' ' || path || ' ' || status_code || ' ' || outcome || ' ' || error_code FROM automations.http_calls ORDER BY id DESC LIMIT 1"));
     }
 
+    /// <summary>Un bloque HTTP cuya salida <c>ok</c> vuelve a él, contra una API que siempre responde 200 (el validador permite el ciclo).</summary>
+    private const string HttpLoopFlow = """
+        { "schema": 1, "start": { "firstNodeId": "n1" }, "variables": [],
+          "nodes": [
+            { "id": "n1", "kind": "message", "title": "Hola", "text": "Hola, ya te ayudamos.", "outputs": { "next": "n2" } },
+            { "id": "n2", "kind": "http", "title": "Consultar", "connectionId": "11111111-1111-1111-1111-111111111111", "method": "GET", "path": "/status",
+              "mapping": [], "outputs": { "ok": "n2", "error": "n3" } },
+            { "id": "n3", "kind": "handoff", "title": "Asesor", "text": "Te paso con un asesor." }
+          ] }
+        """;
+
+    /// <summary>Ruling P2-R40: cada resultado del HTTP vuelve a entrar al motor en la misma unidad; sin tope daría vueltas pasado el lease. A
+    /// las 25 llamadas la corrida termina Failed <c>loop_detected</c>, la conversación pasa a un asesor y la fila del entrante se cierra en su
+    /// primer intento (otra pasada no vuelve a llamar).</summary>
+    [Fact]
+    public async Task AnHttpLoopIsCutAtTheReentryCapAndHandsOff()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database, HttpLoopFlow);
+        f.Api.Respond(@"^/status$", HttpStatusCode.OK, "{}");
+
+        await SayAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal("Failed|automations.run.loop_detected", await TextAsync(f,
+            "SELECT status || '|' || coalesce(failure_code, '') FROM automations.conversation_runs"));
+        Assert.Equal("Open|Paused", await TextAsync(f, "SELECT status || '|' || automation_status FROM messaging.conversations"));
+        Assert.Equal(25L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.http_calls"));
+        Assert.Equal(25, f.Api.Requests.Count);
+        Assert.Equal(["Hola, ya te ayudamos."], f.Graph.Sends());
+        Assert.Equal("1|true|failed", await TextAsync(f,
+            "SELECT attempts || '|' || (processed_at IS NOT NULL) || '|' || coalesce(outcome, '-') FROM messaging.automation_inbox"));
+    }
+
     /// <summary>D-H4 dentro del lease de 30 s del inbox (§5.2). Con un timeout de 1 s y una API que tardaría 5 s, la unidad termina en
     /// menos de 5: lo mismo que 8 s contra 9 s, sin que la prueba espere nueve.</summary>
     [Fact]

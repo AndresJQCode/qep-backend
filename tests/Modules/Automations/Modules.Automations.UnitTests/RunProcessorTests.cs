@@ -75,6 +75,36 @@ public sealed class RunProcessorTests
         Assert.Equal("Laura", run.ToState().Variables.TextOf("cliente.firstName"));
     }
 
+    /// <summary>
+    /// Ruling P2-R40: el motor corta un ciclo dentro de un recorrido (P2-R13), pero cada resultado de un HTTP empieza un recorrido nuevo, así
+    /// que un bloque cuya salida vuelve a él daría vueltas dentro de la unidad para siempre (pasado el lease de 30 s). A las 25 reentradas la
+    /// corrida termina Failed <c>loop_detected</c> como en P2-R13: traspaso a un asesor y auditoría, sin más envíos.
+    /// </summary>
+    [Fact]
+    public async Task AnHttpBlockThatLoopsToItselfEndsFailedAfterTheReentryCap()
+    {
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "n1" }, "variables": [],
+              "nodes": [
+                { "id": "n1", "kind": "message", "title": "Hola", "text": "Hola", "outputs": { "next": "n2" } },
+                { "id": "n2", "kind": "http", "title": "Consultar", "connectionId": "11111111-1111-1111-1111-111111111111", "method": "GET", "path": "/status", "mapping": [], "outputs": { "ok": "n2", "error": null } }
+              ] }
+            """;
+        var http = new RecordingHttpBlocks(new HttpCallResult(true, 200, RunVariables.Empty(), HttpCallOutcomes.Ok, null));
+        var bed = new Bed(null, flow: flow, http: http);
+
+        var outcome = await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        var run = Assert.Single(bed.Runs.Added);
+        Assert.Equal(RunOutcomes.Failed, outcome);
+        Assert.Equal((RunStatus.Failed, "automations.run.loop_detected"), (run.Status, run.FailureCode));
+        Assert.Equal(EngineReentries.Max, http.Calls.Count);
+        Assert.Equal(25, EngineReentries.Max);
+        Assert.Equal(1, bed.Conversations.HandedOff);
+        Assert.Equal([DeterministicClientId.For(run.Id, 0, 0)], bed.Messenger.Sent);
+        Assert.Equal([AutomationsAuditActions.RunStarted, AutomationsAuditActions.RunFailed], bed.Audit.Actions);
+    }
+
     /// <summary>D-H4: un fallo de la API sale por <c>error</c> sin mezclar nada de lo que el ejecutor haya devuelto.</summary>
     [Fact]
     public async Task AFailedHttpBlockTakesTheErrorOutputWithoutMerging()
@@ -350,6 +380,8 @@ public sealed class RunProcessorTests
     {
         public int Ended { get; private set; }
 
+        public int HandedOff { get; private set; }
+
         public Task<AutomationConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
             Task.FromResult<AutomationConversationState?>(state ?? new AutomationConversationState(
                 "Open", null, "None", null, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567"));
@@ -361,7 +393,11 @@ public sealed class RunProcessorTests
 
         public Task SetChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken) => Task.CompletedTask;
 
-        public Task HandoffAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task HandoffAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+        {
+            HandedOff++;
+            return Task.CompletedTask;
+        }
 
         public Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken) => Task.CompletedTask;
 

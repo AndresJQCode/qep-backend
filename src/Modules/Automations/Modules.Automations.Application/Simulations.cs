@@ -15,7 +15,8 @@ namespace Modules.Automations.Application;
 // en vez de mandar mensajes, escribe la transcripción. Nunca toca conversaciones, el inbox ni las corridas.
 
 /// <summary>Contra qué corre una simulación. <see cref="ConnectionId"/> es la primera conexión del chatbot, la que pregunta el bloque Horario
-/// (D-S3); <see cref="Guid.Empty"/> si no tiene ninguna, y entonces el horario cuenta como abierto (una conexión sin horario lo está).</summary>
+/// (D-S3); <see cref="Guid.Empty"/> si no tiene ninguna, y entonces rige el horario predeterminado del tenant (Mensajería resuelve así una
+/// conexión sin horario asignado, <c>BusinessHoursRepository.GetStatusesAsync</c>), o abierto si el tenant no tiene ninguno.</summary>
 public sealed record SimulationContext(Guid TenantId, Guid SimulationId, Guid ConnectionId, bool LiveHttp);
 
 /// <summary>
@@ -26,13 +27,6 @@ public sealed record SimulationContext(Guid TenantId, Guid SimulationId, Guid Co
 /// </summary>
 public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusinessHours businessHours, IClock clock)
 {
-    /// <summary>
-    /// El motor corta un ciclo dentro de un recorrido (P2-R13), pero cada resultado de un horario o de un HTTP empieza un recorrido nuevo: un
-    /// HTTP cuya salida vuelve a él no se ve como ciclo. Con la respuesta de ejemplo no hay ni espera de red, así que sin tope la llamada daría
-    /// vueltas sin fin. El flujo de Clasic (Anexo B) encadena a lo sumo cinco efectos externos seguidos.
-    /// </summary>
-    public const int MaxExternalEffects = 25;
-
     /// <summary>D-S2: el <c>ErrorCode</c> con que sale por <c>error</c> un bloque sin respuesta de ejemplo.</summary>
     public const string NoSampleResponse = "http.no_sample_response";
 
@@ -67,7 +61,8 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
                         // El estado ya dice en qué bloque espera: currentNodeId es lo que el lienzo marca.
                         break;
                     case Effect.CheckBusinessHours or Effect.CallHttp:
-                        if (++external > MaxExternalEffects)
+                        // P2-R40: el mismo tope de reentradas que el procesador.
+                        if (++external > EngineReentries.Max)
                         {
                             lines.System(effect.NodeId, EndText(EndReasons.LoopDetected));
                             return (state with { Status = RunStatus.Failed }, lines.All);

@@ -40,6 +40,7 @@ public sealed partial class RunEffects(
         // el reintento de una unidad deshecha toma otra rama (el horario cambió de abierto a cerrado entre los dos intentos), su envío
         // número N reusa el clientId del N del primer intento; si ése había salido, Mensajería lo da por enviado y el mensaje nuevo no sale.
         var sends = 0;
+        var reentries = 0;
         EngineInput? next = input;
         while (next is not null)
         {
@@ -63,6 +64,14 @@ public sealed partial class RunEffects(
                         await conversations.SetStepAsync(run.TenantId, run.ConversationId, wait.StepTitle, cancellationToken);
                         break;
                     case Effect.CheckBusinessHours or Effect.CallHttp:
+                        // P2-R40: una salida que vuelve al bloque (o a uno anterior) daría vueltas dentro de la unidad; se trata como el ciclo
+                        // de P2-R13. FailAsync traspasa al final, como cualquier traspaso (P2-R23).
+                        if (++reentries > EngineReentries.Max)
+                        {
+                            await FailAsync(run, state, AutomationsRunFailures.Of(EndReasons.LoopDetected), now, cancellationToken);
+                            return;
+                        }
+
                         // El bloque lee las variables como quedaron en este paso (lo que se guardó antes de llegar a él). P2-R5: el
                         // contador de envíos sigue después de la reentrada, no vuelve a cero.
                         next = await ExternalAsync(run, effect, state.Variables, cancellationToken);
