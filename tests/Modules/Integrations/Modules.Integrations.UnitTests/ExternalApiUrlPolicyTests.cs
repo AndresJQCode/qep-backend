@@ -1,5 +1,10 @@
 using System.Collections.Concurrent;
 using System.Net;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Modules.Integrations.Domain;
+using Modules.Integrations.Infrastructure;
 using Modules.Integrations.Infrastructure.ExternalApi;
 
 namespace Modules.Integrations.UnitTests;
@@ -59,6 +64,9 @@ public sealed class ExternalApiUrlPolicyTests
     [InlineData("64:ff9b::a00:1")]
     [InlineData("64:ff9b::7f00:1")]
     [InlineData("64:ff9b::a9fe:a9fe")]
+    [InlineData("64:ff9b:1::a00:1")]
+    [InlineData("64:ff9b:1::7f00:1")]
+    [InlineData("64:ff9b:1:ffff::a9fe:a9fe")]
     public void ForbiddenRanges(string ip) => Assert.True(ExternalApiUrlPolicy.IsForbidden(IPAddress.Parse(ip)));
 
     [Theory]
@@ -75,7 +83,65 @@ public sealed class ExternalApiUrlPolicyTests
     [InlineData("2606:4700::1")]
     [InlineData("::ffff:181.49.1.1")]
     [InlineData("64:ff9b::b531:101")]
+    [InlineData("64:ff9b:1::b531:101")]
     public void PublicAddressesAreAllowed(string ip) => Assert.False(ExternalApiUrlPolicy.IsForbidden(IPAddress.Parse(ip)));
+
+    // Fallo P2-R30: la misma lista que el patrón del catálogo; el bloque HTTP (tarea 11) la vuelve a mirar antes de mandar.
+    [Theory]
+    [InlineData("Host", true)]
+    [InlineData("HOST", true)]
+    [InlineData("Connection", true)]
+    [InlineData("Keep-Alive", true)]
+    [InlineData("transfer-encoding", true)]
+    [InlineData("te", true)]
+    [InlineData("Trailer", true)]
+    [InlineData("Upgrade", true)]
+    [InlineData("Proxy-Authorization", true)]
+    [InlineData("Content-Type", true)]
+    [InlineData("Cookie", true)]
+    [InlineData("User-Agent", true)]
+    [InlineData("X-Token", false)]
+    [InlineData("x-api-key", false)]
+    [InlineData("Authorization", false)]
+    [InlineData("Hosted-Key", false)]
+    [InlineData("X-Content-Key", false)]
+    public void ReservedHeadersAreTheSameForThePolicyAndTheCatalog(string name, bool reserved)
+    {
+        Assert.Equal(reserved, ExternalApiUrlPolicy.IsReservedHeader(name));
+        Assert.Equal(!reserved, IntegrationProviders.ExternalApi.FindField(ExternalApiFieldKeys.AuthHeader)!.HasValidShape(name));
+    }
+
+    // Revisión de la tarea 10: todos los hosts de prueba reemplazan el handler primario; esto amarra que el registro real del
+    // cliente es el de la política. Sin él, el handler por defecto sigue redirecciones con la clave, usa el proxy del sistema
+    // y conecta a 10/8 o a 169.254.169.254 sin que nada se ponga rojo.
+    [Fact]
+    public void TheNamedClientIsBoundToThePolicyHandler()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:QepDatabase"] = "Host=localhost;Database=unit;Username=x;Password=x",
+                ["Integrations:Zenvia:BaseUrl"] = "https://zenvia.test",
+            })
+            .Build();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new UnitTestHostEnvironment());
+        services.AddIntegrationsInfrastructure(configuration);
+        using var provider = services.BuildServiceProvider();
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>()
+            .CreateHandler(ExternalApiConnectionTester.HttpClientName);
+        while (handler is DelegatingHandler delegating)
+        {
+            handler = delegating.InnerHandler!;
+        }
+
+        var primary = Assert.IsType<SocketsHttpHandler>(handler);
+        Assert.NotNull(primary.ConnectCallback);
+        Assert.False(primary.AllowAutoRedirect);
+        Assert.False(primary.UseProxy);
+    }
 
     // El nombre público que resuelve a una dirección interna (DNS rebinding incluido): basta una prohibida entre las
     // resueltas para no conectar a ninguna.

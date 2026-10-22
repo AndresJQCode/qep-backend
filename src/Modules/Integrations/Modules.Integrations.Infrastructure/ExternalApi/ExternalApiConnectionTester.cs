@@ -31,7 +31,7 @@ internal sealed partial class ExternalApiConnectionTester(
     [LoggerMessage(Level = LogLevel.Warning, Message = "External API credential test could not reach the provider: {Reason}")]
     private static partial void LogUnreachable(ILogger logger, string reason);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "External API base URL was rejected: {Reason}")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "External API connection settings were rejected: {Reason}")]
     private static partial void LogRejected(ILogger logger, string reason);
 
     /// <summary>Como Zenvia: 10 s por prueba y <c>User-Agent: qep-integrations</c>.</summary>
@@ -61,6 +61,13 @@ internal sealed partial class ExternalApiConnectionTester(
         // /v1/health, no /health como resolvería new Uri(base, relativa).
         var testPath = NonBlank(fields, ExternalApiFieldKeys.TestPath) ?? DefaultTestPath;
         var authHeader = NonBlank(fields, ExternalApiFieldKeys.AuthHeader) ?? DefaultAuthHeader;
+        // P2-R30: el catálogo ya lo rechaza al guardar; una conexión guardada antes no puede mandar la clave en Host.
+        if (ExternalApiUrlPolicy.IsReservedHeader(authHeader))
+        {
+            LogRejected(logger, "reserved_header");
+            return ConnectionTestResult.Invalid(ExternalApiFieldKeys.AuthHeader, "reserved_header");
+        }
+
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(baseUrl.TrimEnd('/') + testPath, UriKind.Absolute));
         request.Headers.TryAddWithoutValidation(authHeader, secrets[ExternalApiFieldKeys.ApiKey]);
 

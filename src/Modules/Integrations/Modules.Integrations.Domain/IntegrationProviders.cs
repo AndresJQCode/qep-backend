@@ -261,8 +261,11 @@ public static class IntegrationProviders
                 invalidMessage: "Escribe la dirección completa con https://, sin query."),
             new FieldDefinition(
                 ExternalApiFieldKeys.AuthHeader, "Header de la clave", FieldKind.Text,
-                required: false, maxLength: 64, pattern: @"^[A-Za-z0-9-]{1,64}\z",
-                invalidMessage: "El nombre del header sólo puede tener letras, números y guiones."),
+                // Fallo P2-R30: ni un header que usa el transporte (Host sería el SNI y mandaría la clave en claro), sin distinguir
+                // mayúsculas. La misma lista que ExternalApiUrlPolicy.IsReservedHeader (Infrastructure), amarrada por prueba.
+                required: false, maxLength: 64,
+                pattern: @"^(?!(?i:host|connection|keep-alive|transfer-encoding|te|trailer|upgrade|cookie|user-agent)\z)(?!(?i:proxy-|content-))[A-Za-z0-9-]{1,64}\z",
+                invalidMessage: "El nombre del header sólo puede tener letras, números y guiones, y no puede ser uno reservado como Host o Content-Type."),
             new FieldDefinition(
                 ExternalApiFieldKeys.ApiKey, "Clave de la API", FieldKind.Secret,
                 required: true, maxLength: 512, pattern: @"^[\x21-\x7E]{1,512}\z",

@@ -11,6 +11,10 @@ namespace Modules.Integrations.Infrastructure.ExternalApi;
 /// </summary>
 public static class ExternalApiUrlPolicy
 {
+    private static readonly HashSet<string> ReservedHeaders = new(
+        ["Host", "Connection", "Keep-Alive", "Transfer-Encoding", "TE", "Trailer", "Upgrade", "Cookie", "User-Agent"],
+        StringComparer.OrdinalIgnoreCase);
+
     /// <summary><c>null</c> si la URL se acepta; si no, el motivo técnico (nunca sale por HTTP).</summary>
     public static string? Reject(Uri url)
     {
@@ -34,7 +38,7 @@ public static class ExternalApiUrlPolicy
 
     /// <summary>
     /// Fallo P2-R28: todo lo que no es internet público. Una IPv4 mapeada en IPv6 (<c>::ffff:0:0/96</c>) o traducida por
-    /// NAT64 (<c>64:ff9b::/96</c>) se desenvuelve y se juzga como IPv4: si no, <c>::ffff:127.0.0.1</c> llegaría al loopback.
+    /// NAT64 (<c>64:ff9b::/96</c> y <c>64:ff9b:1::/48</c>) se desenvuelve y se juzga como IPv4: si no, <c>::ffff:127.0.0.1</c> llegaría al loopback.
     /// </summary>
     public static bool IsForbidden(IPAddress address)
     {
@@ -61,6 +65,17 @@ public static class ExternalApiUrlPolicy
 
         return IsForbiddenV4(address.GetAddressBytes());
     }
+
+    /// <summary>
+    /// Fallo P2-R30: el header de la clave no puede ser uno que el transporte usa (<c>Host</c> sería el SNI del TLS y mandaría
+    /// la clave en claro; los de conexión, contenido, proxy, cookie o User-Agent rompen el request o lo desvían). Sin distinguir
+    /// mayúsculas. El catálogo lo rechaza al guardar con la misma lista (<c>IntegrationProviders.ExternalApi</c>, campo
+    /// <c>authHeader</c>); el probador y el bloque HTTP lo vuelven a mirar antes de mandar.
+    /// </summary>
+    public static bool IsReservedHeader(string name) =>
+        ReservedHeaders.Contains(name)
+        || name.StartsWith("Proxy-", StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith("Content-", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// El handler primario de toda llamada a una API externa. Sin redirecciones (un 3xx llevaría el header de la clave, que
@@ -124,9 +139,11 @@ public static class ExternalApiUrlPolicy
         throw last!;
     }
 
+    // 64:ff9b::/96 (RFC 6052) y el prefijo de uso local 64:ff9b:1::/48 (RFC 8215, P2-R30), con la IPv4 en los últimos 32 bits:
+    // así lo despliega un traductor que usa un /96 dentro del /48.
     private static bool IsNat64(byte[] bytes) =>
         bytes[0] == 0x00 && bytes[1] == 0x64 && bytes[2] == 0xff && bytes[3] == 0x9b
-        && bytes[4..12].All(value => value == 0);
+        && (bytes[4..12].All(value => value == 0) || (bytes[4] == 0x00 && bytes[5] == 0x01));
 
     private static bool IsForbiddenV4(byte[] bytes) =>
         bytes[0] switch

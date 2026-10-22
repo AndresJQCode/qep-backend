@@ -141,6 +141,23 @@ public sealed class ExternalApiConnectionTesterTests : IDisposable
         Assert.Empty(_api.Requests);
     }
 
+    // Fallo P2-R30: el catálogo ya lo rechaza al guardar; el probador lo vuelve a mirar (una conexión guardada antes del
+    // cambio) y no manda nada.
+    [Theory]
+    [InlineData("Host")]
+    [InlineData("content-type")]
+    [InlineData("Proxy-Authorization")]
+    [InlineData("TE")]
+    public async Task AReservedAuthHeaderIsInvalidOnTheField(string authHeader)
+    {
+        var result = await TestAsync(authHeader: authHeader);
+
+        Assert.Equal(ConnectionTestOutcome.Invalid, result.Outcome);
+        Assert.Equal(ExternalApiFieldKeys.AuthHeader, result.FieldKey);
+        Assert.Equal("reserved_header", result.Reason);
+        Assert.Empty(_api.Requests);
+    }
+
     // El handler real lanza esto desde ConnectCallback cuando el nombre resuelve a un rango interno (D-H2).
     [Fact]
     public async Task AHostResolvingToAForbiddenRangeIsInvalidOnTheField()

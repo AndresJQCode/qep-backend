@@ -171,6 +171,36 @@ public sealed class IntegrationCatalogTests
     public void TheOptionalAndSecretFieldsKeepTheirShape(string key, string value, bool valid) =>
         Assert.Equal(valid, IntegrationProviders.ExternalApi.FindField(key)!.HasValidShape(value));
 
+    // Fallo P2-R30: un header reservado no puede llevar la clave (Host sería el SNI del TLS y la mandaría en claro; los de
+    // conexión, contenido o proxy rompen el request o lo desvían). Sin distinguir mayúsculas.
+    [Theory]
+    [InlineData("Host")]
+    [InlineData("host")]
+    [InlineData("Connection")]
+    [InlineData("keep-alive")]
+    [InlineData("Transfer-Encoding")]
+    [InlineData("TE")]
+    [InlineData("Trailer")]
+    [InlineData("Upgrade")]
+    [InlineData("Proxy-Authorization")]
+    [InlineData("proxy-connection")]
+    [InlineData("Content-Type")]
+    [InlineData("content-length")]
+    [InlineData("Cookie")]
+    [InlineData("USER-AGENT")]
+    public void TheAuthHeaderCannotBeAReservedHeader(string name) =>
+        Assert.False(IntegrationProviders.ExternalApi.FindField("authHeader")!.HasValidShape(name));
+
+    [Theory]
+    [InlineData("X-Token")]
+    [InlineData("x-api-key")]
+    [InlineData("Authorization")]
+    [InlineData("Hosted-Key")]
+    [InlineData("X-Content-Key")]
+    [InlineData("Tenant")]
+    public void TheAuthHeaderAcceptsCustomNames(string name) =>
+        Assert.True(IntegrationProviders.ExternalApi.FindField("authHeader")!.HasValidShape(name));
+
     [Fact]
     public void ExternalApiIsVisibleOnlyWithAutomations()
     {

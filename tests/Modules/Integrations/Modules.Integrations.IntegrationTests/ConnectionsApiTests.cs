@@ -101,6 +101,28 @@ public sealed class ConnectionsApiTests
         Assert.DoesNotContain(SentinelExternalApiKey, await list.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
     }
 
+    // Fallo P2-R30: un header reservado no puede llevar la clave; el 422 marca el campo y no se guarda nada ni se llama a la API.
+    [Theory]
+    [InlineData("Host")]
+    [InlineData("content-type")]
+    [InlineData("Proxy-Authorization")]
+    [InlineData("COOKIE")]
+    public async Task AReservedAuthHeaderIs422OnTheField(string authHeader)
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterAutomationsTenantAsync(factory, connectionString);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ExternalApiBody(authHeader: authHeader));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(["fields.authHeader"], (await ProblemAsync(response)).ErrorKeys);
+        Assert.Equal(0L, await CountConnectionsAsync(connectionString, tenant.TenantId));
+        Assert.Empty(factory.ExternalApiHandler.Requests);
+    }
+
     [Fact]
     public async Task AnHttpBaseUrlIs422OnTheField()
     {
