@@ -208,7 +208,8 @@ public sealed partial class HttpBlockExecutor(
 
         foreach (var pair in mapping)
         {
-            mapped.Set(pair.To, JsonPath.Select(root, pair.From));
+            // P2-R36: «$» y una ruta que empieza por índice leen una respuesta que es un arreglo en la raíz (Anexo C).
+            mapped.Set(pair.To, JsonPath.SelectResponse(root, pair.From));
         }
 
         return new HttpCallResult(true, status, mapped, HttpCallOutcomes.Ok, null);

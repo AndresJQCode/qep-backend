@@ -65,6 +65,10 @@ public static class FlowIssueCodes
     public const string QuestionPatternInvalid = "question.pattern_invalid";
     public const string QuestionKeywordsEmpty = "question.keywords_empty";
 
+    /// <summary>Ruling P2-R36: un <c>mapping.from</c> que el ejecutor no sabe leer (<c>JsonPath.IsValidResponsePath</c>) guardaría siempre
+    /// <c>null</c> sin que nada lo avise.</summary>
+    public const string HttpMappingPathInvalid = "http.mapping_path_invalid";
+
     /// <summary>Es del chatbot y no de un bloque: lo agrega el handler de publicar (<c>NodeId</c> nulo).</summary>
     public const string TriggerKeywordsEmpty = "trigger.keywords_empty";
 }

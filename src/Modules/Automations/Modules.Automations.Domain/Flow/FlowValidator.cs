@@ -1,6 +1,7 @@
 using System.Collections.Frozen;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Modules.Automations.Domain.Text;
 
 namespace Modules.Automations.Domain.Flow;
 
@@ -351,6 +352,14 @@ public static partial class FlowValidator
 
         foreach (var mapping in http.Mapping)
         {
+            // P2-R36: la misma forma que lee el ejecutor (HttpBlockExecutor.Map → JsonPath.SelectResponse).
+            if (!JsonPath.IsValidResponsePath(mapping.From))
+            {
+                issues.Add(Error(
+                    FlowIssueCodes.HttpMappingPathInvalid, http.Id,
+                    $"«{mapping.From}» en el mapeo de «{http.Title}» no es una ruta de la respuesta. Usa puntos e índices (data[0].id), $ para la respuesta entera o $[0].id si es una lista."));
+            }
+
             CheckName(http, mapping.To, issues);
         }
 

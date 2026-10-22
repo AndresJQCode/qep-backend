@@ -341,6 +341,30 @@ public sealed class FlowValidatorTests
         Assert.Empty(FlowValidator.Validate(Flow(Http(), End()), Ctx()));
     }
 
+    /// <summary>Ruling P2-R36: el validador acepta en <c>mapping.from</c> exactamente lo que lee el ejecutor (<c>JsonPath.SelectResponse</c>).</summary>
+    [Theory]
+    [InlineData("$")]
+    [InlineData("[0].id")]
+    [InlineData("$[0].id")]
+    [InlineData("$.data")]
+    [InlineData("data[0].id")]
+    public void AResponseMappingPathIsAccepted(string from) =>
+        Assert.Empty(FlowValidator.Validate(Flow(Http() with { Mapping = [new HttpMapping(from, "cliente")] }, End()), Ctx()));
+
+    [Theory]
+    [InlineData("$$")]
+    [InlineData("[x]")]
+    [InlineData("$data")]
+    [InlineData("data..id")]
+    [InlineData("")]
+    public void AnUnreadableResponseMappingPathIsAnError(string from)
+    {
+        var issues = FlowValidator.Validate(Flow(Http() with { Mapping = [new HttpMapping(from, "cliente")] }, End()), Ctx());
+
+        var issue = Single(issues, "http.mapping_path_invalid");
+        Assert.Equal((FlowIssueSeverity.Error, "n1"), (issue.Severity, issue.NodeId));
+    }
+
     [Fact]
     public void TheClasicSubsetHasOnlyWarnings()
     {

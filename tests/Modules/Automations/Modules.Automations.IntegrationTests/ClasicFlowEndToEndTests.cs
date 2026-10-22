@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,13 +31,12 @@ public sealed class ClasicFlowEndToEndTests
     /// <summary>Anexo C: <c>GET /customers</c> es paginado (<c>data</c>, <c>total</c>).</summary>
     private const string CustomerFound = """{"data":[{"id":7,"firstName":"Laura","lastName":"Gómez","acceptPolicy":true}],"total":1}""";
 
-    // Anexo C dice que all-invoice-items y failures responden un arreglo en la raíz; JsonPath (D-H4) sólo lee rutas que empiezan por un
-    // nombre, así que el fixture mapea «data». Ver el reporte de la tarea 12: el flujo real necesita una regla para la raíz.
+    /// <summary>Anexo C: all-invoice-items y failures responden un arreglo en la raíz (<c>[].id</c>); el fixture lo mapea con <c>$</c> (P2-R36).</summary>
     private const string TwoEquipments = """
-        {"data":[{"id":1,"referenceCode":"CAL-001","address":"Calle 1 # 2-3","haveOrderOpen":false},{"id":2,"referenceCode":"CAL-002","address":"Carrera 4 # 5-6","haveOrderOpen":false}]}
+        [{"id":1,"referenceCode":"CAL-001","address":"Calle 1 # 2-3","haveOrderOpen":false},{"id":2,"referenceCode":"CAL-002","address":"Carrera 4 # 5-6","haveOrderOpen":false}]
         """;
 
-    private const string Failures = """{"data":[{"id":3,"description":"No enciende"},{"id":4,"description":"Fuga de agua"}]}""";
+    private const string Failures = """[{"id":3,"description":"No enciende"},{"id":4,"description":"Fuga de agua"}]""";
 
     private static readonly byte[] InvoiceBytes = Encoding.UTF8.GetBytes("factura de compra de Clasic");
 
@@ -55,17 +55,28 @@ public sealed class ClasicFlowEndToEndTests
         }
     }
 
-    private static async Task<Fixture> ArrangeAsync(TestDatabase database, string? flowJson = null)
+    /// <param name="traceLogs">Ruling P2-R38: el host registra todo desde Trace, el nivel en que el logging de HttpClient escribe los
+    /// headers. A Information una regresión de <c>RemoveAllLoggers()</c> pasaría sin que nada lo viera.</param>
+    private static async Task<Fixture> ArrangeAsync(TestDatabase database, string? flowJson = null, bool traceLogs = false)
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString);
         var store = new FakeMediaStore();
         var logs = new CapturedLogs();
-        var host = factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        var host = factory.WithWebHostBuilder(builder =>
         {
-            services.AddSingleton<IMessagingMediaStore>(store);
-            services.AddSingleton<ILoggerProvider>(logs);
-        }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddSingleton<IMessagingMediaStore>(store);
+                services.AddSingleton<ILoggerProvider>(logs);
+            });
+            if (traceLogs)
+            {
+                // Las reglas de appsettings (Default Information, Microsoft.AspNetCore Warning) ganan sobre SetMinimumLevel; una regla del
+                // proveedor de la prueba sin categoría gana sobre todas ellas para ese proveedor, así que lo captura todo desde Trace.
+                builder.ConfigureLogging(logging => logging.SetMinimumLevel(LogLevel.Trace).AddFilter<CapturedLogs>(null, LogLevel.Trace));
+            }
+        });
         var tenant = await RegisterTenantAsync(host);
         await EnableAutomationsAsync(connectionString, tenant.TenantId);
         var whatsApp = await SeedWhatsAppConnectionAsync(host, tenant.TenantId, "Servicio Clasic", PhoneNumberId, "322");
@@ -323,7 +334,7 @@ public sealed class ClasicFlowEndToEndTests
     public async Task TheKeyNeverAppearsInLogsAuditOrHttpCalls()
     {
         await using var database = await StartDatabaseAsync();
-        using var f = await ArrangeAsync(database);
+        using var f = await ArrangeAsync(database, traceLogs: true);
         f.Api.Respond(@"^/service-orders$", HttpStatusCode.BadRequest, """{"message":"Cliente bloqueado"}""");
 
         await ToTheOrderAsync(f);
@@ -331,10 +342,16 @@ public sealed class ClasicFlowEndToEndTests
         // Controles positivos: la clave sí viajó en el header, y los logs del host y la auditoría sí se capturan.
         Assert.All(f.Api.Requests, request => Assert.Equal(ApiKey, request.ApiKey));
         Assert.Contains(f.Logs.Entries, entry => entry.StartsWith("Chatbot HTTP block", StringComparison.Ordinal));
+        Assert.Contains(LogLevel.Trace, f.Logs.Levels);
         Assert.True(await CountAsync(f.ConnectionString, "SELECT count(*) FROM audit.entries") > 0);
         Assert.True(await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.http_calls") >= 5);
 
         Assert.DoesNotContain(ApiKey, f.Logs.AllText, StringComparison.Ordinal);
+        // P2-R38: el logging de HttpClient redacta por defecto los valores de los headers (y la query), así que la clave sola no delata un
+        // RemoveAllLoggers() que falte en el cliente del bloque; la URL sí: «Start processing HTTP request GET https://api-clasic.test/…»
+        // (verificado quitando RemoveAllLoggers: esta aserción falla).
+        Assert.DoesNotContain("identificationNumber=10203", f.Logs.AllText, StringComparison.Ordinal);
+        Assert.DoesNotContain(BaseUrl, f.Logs.AllText, StringComparison.Ordinal);
         foreach (var table in new[] { "automations.http_calls", "audit.entries", "automations.conversation_runs", "platform.request_failures" })
         {
             var rows = await TextAsync(f, $"SELECT coalesce(string_agg(row_to_json(t)::text, E'\\n'), '') FROM {table} AS t");
@@ -450,25 +467,33 @@ public sealed class ClasicFlowEndToEndTests
     {
         private readonly ConcurrentQueue<string> entries = new();
 
+        private readonly ConcurrentQueue<LogLevel> levels = new();
+
         public IReadOnlyCollection<string> Entries => entries;
+
+        /// <summary>El nivel de cada entrada: el control positivo de que el host de verdad registra desde Trace (P2-R38).</summary>
+        public IReadOnlyCollection<LogLevel> Levels => levels;
 
         public string AllText => string.Join('\n', entries);
 
-        public ILogger CreateLogger(string categoryName) => new CapturingLogger(entries);
+        public ILogger CreateLogger(string categoryName) => new CapturingLogger(entries, levels);
 
         public void Dispose()
         {
         }
 
-        private sealed class CapturingLogger(ConcurrentQueue<string> entries) : ILogger
+        private sealed class CapturingLogger(ConcurrentQueue<string> entries, ConcurrentQueue<LogLevel> levels) : ILogger
         {
             public IDisposable? BeginScope<TState>(TState state)
                 where TState : notnull => null;
 
             public bool IsEnabled(LogLevel logLevel) => true;
 
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            {
+                levels.Enqueue(logLevel);
                 entries.Enqueue(formatter(state, exception) + (exception is null ? string.Empty : "\n" + exception));
+            }
         }
     }
 }
