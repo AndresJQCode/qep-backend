@@ -884,6 +884,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IPosProductLookup, PosProductLookup>();
         services.AddScoped<IPosCompanyLookup, PosCompanyLookup>();
         services.AddScoped<IPosCashierLookup, PosCashierLookup>();
+        services.AddScoped<IPosCustomerLookup, PosCustomerLookup>();
 
         // Integrations (P23): el nombre de quien creó la conexión sale de Tenancy e Identity.
         services.AddScoped<IConnectionAuthorNames, IntegrationsConnectionAuthorNames>();
