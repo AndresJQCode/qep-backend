@@ -38,6 +38,9 @@ public static class AutomationsErrorCodes
     public const string ChatbotHasLiveRuns = "automations.chatbot.has_live_runs";
 
     /// <summary><c>IX_chatbot_templates_tenant_name</c>: el nombre de la plantilla se compara sin mayúsculas.</summary>
+    /// <summary><c>IX_conversation_runs_live</c> (D-M12): la conversación ya tiene una corrida viva.</summary>
+    public const string RunAlreadyLive = "automations.run.already_live";
+
     public const string TemplateNameTaken = "automations.template.name_taken";
 
     public const string TemplateNotFound = "automations.template.not_found";

@@ -3,45 +3,6 @@ namespace Modules.Automations.Infrastructure.Persistence;
 // Spec 2026-10-21 §4.2 y §5.2: filas de trabajo del motor, del bloque HTTP y del simulador. No son agregados: las escribe y las
 // lee la infraestructura (el worker del plan 2), así que viven acá y no en Domain.
 
-/// <summary>Una corrida de un chatbot sobre una conversación (D-M12: a lo sumo una viva por conversación). <c>ConversationId</c>
-/// y <c>ConnectionId</c> son referencias blandas a Messaging e Integrations.</summary>
-internal sealed class ConversationRunRecord
-{
-    public Guid Id { get; set; }
-
-    public Guid TenantId { get; set; }
-
-    public Guid ConversationId { get; set; }
-
-    public Guid ConnectionId { get; set; }
-
-    public Guid ChatbotId { get; set; }
-
-    public Guid ChatbotVersionId { get; set; }
-
-    /// <summary>Running | Waiting | Completed | HandedOff | Resolved | WindowClosed | Failed | Abandoned | Interrupted.</summary>
-    public string Status { get; set; } = string.Empty;
-
-    public string? CurrentNodeId { get; set; }
-
-    public int StepNumber { get; set; }
-
-    public short Attempts { get; set; }
-
-    public string VariablesJson { get; set; } = "{}";
-
-    /// <summary><c>[{at, nodeId, kind, outcome}]</c>, tope 200 entradas.</summary>
-    public string TraceJson { get; set; } = "[]";
-
-    public DateTimeOffset StartedAt { get; set; }
-
-    public DateTimeOffset UpdatedAt { get; set; }
-
-    public DateTimeOffset? EndedAt { get; set; }
-
-    public string? FailureCode { get; set; }
-}
-
 /// <summary>Una llamada del bloque HTTP, de una corrida o de una simulación. El path va interpolado y sin query: la query puede
 /// llevar datos del cliente.</summary>
 internal sealed class HttpCallRecord

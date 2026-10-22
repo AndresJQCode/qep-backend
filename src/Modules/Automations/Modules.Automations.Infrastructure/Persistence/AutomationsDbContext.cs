@@ -58,7 +58,7 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
 
     public DbSet<ChatbotTemplate> Templates => Set<ChatbotTemplate>();
 
-    internal DbSet<ConversationRunRecord> Runs => Set<ConversationRunRecord>();
+    public DbSet<ConversationRun> Runs => Set<ConversationRun>();
 
     internal DbSet<HttpCallRecord> HttpCalls => Set<HttpCallRecord>();
 
@@ -178,7 +178,7 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
 
     private static void ConfigureRun(ModelBuilder modelBuilder)
     {
-        var run = modelBuilder.Entity<ConversationRunRecord>();
+        var run = modelBuilder.Entity<ConversationRun>();
         run.ToTable("conversation_runs", Schema);
         run.HasKey(value => value.Id);
         run.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
@@ -187,10 +187,10 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
         run.Property(value => value.ConnectionId).HasColumnName("connection_id");
         run.Property(value => value.ChatbotId).HasColumnName("chatbot_id");
         run.Property(value => value.ChatbotVersionId).HasColumnName("chatbot_version_id");
-        run.Property(value => value.Status).HasColumnName("status").HasMaxLength(16);
+        run.Property(value => value.Status).HasColumnName("status").HasMaxLength(16).HasConversion<string>();
         run.Property(value => value.CurrentNodeId).HasColumnName("current_node_id").HasMaxLength(64);
         run.Property(value => value.StepNumber).HasColumnName("step_number").HasDefaultValue(0);
-        run.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue((short)0);
+        run.Property(value => value.Attempts).HasColumnName("attempts").HasColumnType("smallint").HasDefaultValue(0);
         run.Property(value => value.VariablesJson).HasColumnName("variables").HasColumnType("jsonb").HasDefaultValueSql("'{}'");
         run.Property(value => value.TraceJson).HasColumnName("trace").HasColumnType("jsonb").HasDefaultValueSql("'[]'");
         run.Property(value => value.StartedAt).HasColumnName("started_at");

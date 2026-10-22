@@ -105,6 +105,35 @@ public interface IAutomationBusinessHours
 public interface IAutomationsUnitOfWork
 {
     Task SaveChangesAsync(CancellationToken cancellationToken);
+
+    /// <summary>Abre la transacción de una unidad del motor. <see cref="SaveChangesAsync"/> la confirma; disponer el handle sin haber
+    /// guardado la deshace. Los <c>FOR UPDATE</c> y el lock por conversación sólo valen dentro de ella.</summary>
+    Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken);
+
+    /// <summary>D-M12: <c>pg_advisory_xact_lock</c> sobre la conversación, también cuando aún no tiene corrida que bloquear (dos
+    /// entrantes que la inician a la vez). Exige la transacción abierta.</summary>
+    Task LockConversationAsync(Guid conversationId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-10-21 §5.2 y D-M12/D-M13: las corridas del motor. Las lecturas <c>ForUpdate</c> y el barrido sólo valen dentro de
+/// la transacción de <see cref="IAutomationsUnitOfWork.BeginTransactionAsync"/>.</summary>
+public interface IConversationRunRepository
+{
+    /// <summary>La corrida viva de la conversación, bloqueada con <c>SELECT … FOR UPDATE</c>.</summary>
+    Task<ConversationRun?> FindLiveForUpdateAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+
+    Task<ConversationRun?> FindLatestAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+
+    Task AddAsync(ConversationRun run, CancellationToken cancellationToken);
+
+    /// <summary>Las corridas del chatbot iniciadas en [<paramref name="from"/>, <paramref name="until"/>), de la más nueva a la más
+    /// vieja, hasta 500.</summary>
+    Task<IReadOnlyList<ConversationRun>> ListAsync(
+        Guid tenantId, Guid chatbotId, DateTimeOffset from, DateTimeOffset until, CancellationToken cancellationToken);
+
+    /// <summary>D-M13: las <c>Waiting</c> con <c>updated_at</c> anterior a <paramref name="waitingBefore"/>, tomadas con
+    /// <c>FOR UPDATE SKIP LOCKED</c> para que dos barridos no se pisen. De todos los tenants: es un barrido del sistema.</summary>
+    Task<IReadOnlyList<ConversationRun>> ClaimAbandonedAsync(DateTimeOffset waitingBefore, int limit, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-21 §4.6: auditoría atómica propia, en la misma transacción que el cambio. Lo del motor va con
@@ -127,6 +156,7 @@ public static class AutomationsAuditActions
 {
     public const string ResourceChatbot = "chatbot";
     public const string ResourceTemplate = "chatbot_template";
+    public const string ResourceRun = "conversation_run";
 
     public const string ChatbotCreated = "automations.chatbot.created";
     public const string ChatbotUpdated = "automations.chatbot.updated";
@@ -138,4 +168,12 @@ public static class AutomationsAuditActions
     public const string ChatbotImported = "automations.chatbot.imported";
     public const string TemplateCreated = "automations.template.created";
     public const string TemplateDeleted = "automations.template.deleted";
+    public const string RunStarted = "automations.run.started";
+    public const string RunHandedOff = "automations.run.handed_off";
+    public const string RunResolved = "automations.run.resolved";
+    public const string RunCompleted = "automations.run.completed";
+    public const string RunFailed = "automations.run.failed";
+
+    /// <summary>No está en la lista de §4.6: el barrido de D-M13 termina corridas sin una persona y la auditoría es la única huella.</summary>
+    public const string RunAbandoned = "automations.run.abandoned";
 }

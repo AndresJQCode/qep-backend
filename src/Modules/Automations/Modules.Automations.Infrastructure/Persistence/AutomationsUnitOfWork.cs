@@ -12,11 +12,31 @@ namespace Modules.Automations.Infrastructure.Persistence;
 /// referencia Npgsql.</summary>
 internal sealed class AutomationsUnitOfWork(AutomationsDbContext dbContext) : IAutomationsUnitOfWork
 {
+    public async Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        await dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+    // Precedente: OrphanUserCleanupWorker. El lock se libera con la transacción, así que sin una abierta no serializaría nada.
+    public async Task LockConversationAsync(Guid conversationId, CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("LockConversationAsync exige la transacción de BeginTransactionAsync.");
+        }
+
+        await dbContext.Database.ExecuteSqlAsync(
+            $"SELECT pg_advisory_xact_lock(hashtext({conversationId.ToString()}))", cancellationToken);
+    }
+
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {
         try
         {
             await dbContext.SaveChangesAsync(cancellationToken);
+            // Con la transacción de la unidad abierta, guardar es confirmar (el handle sin confirmar deshace al disponerse).
+            if (dbContext.Database.CurrentTransaction is { } transaction)
+            {
+                await transaction.CommitAsync(cancellationToken);
+            }
         }
         // Antes que la rama de DbUpdateException: DbUpdateConcurrencyException hereda de ella.
         catch (DbUpdateConcurrencyException exception)
@@ -31,6 +51,11 @@ internal sealed class AutomationsUnitOfWork(AutomationsDbContext dbContext) : IA
         {
             throw new ResourceConflictException(
                 AutomationsErrorCodes.ChatbotConnectionTaken, "Otro chatbot activo ya atiende esa conexión.", exception);
+        }
+        catch (DbUpdateException exception) when (IsUnique(exception, AutomationsDbContext.LiveRunIndex))
+        {
+            throw new ResourceConflictException(
+                AutomationsErrorCodes.RunAlreadyLive, "La conversación ya tiene una corrida viva.", exception);
         }
         catch (DbUpdateException exception) when (IsUnique(exception, AutomationsDbContext.TemplateNameIndex))
         {

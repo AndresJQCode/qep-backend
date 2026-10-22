@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Modules.Automations.Application;
 using Modules.Automations.Domain;
+using Modules.Automations.Domain.Engine;
 
 namespace Modules.Automations.Infrastructure.Persistence;
 
@@ -96,4 +97,67 @@ internal sealed class ChatbotTemplateRepository(AutomationsDbContext dbContext) 
         await dbContext.Templates.AddAsync(chatbotTemplate, cancellationToken);
 
     public void Remove(ChatbotTemplate chatbotTemplate) => dbContext.Templates.Remove(chatbotTemplate);
+}
+
+/// <summary>Spec 2026-10-21 §5.2, D-M12 y D-M13. <c>FOR UPDATE</c> y <c>SKIP LOCKED</c> van por SQL crudo sobre la entidad mapeada
+/// (EF no los modela) para que el resultado quede rastreado y el procesador guarde con un solo <c>SaveChanges</c>.</summary>
+internal sealed class ConversationRunRepository(AutomationsDbContext dbContext) : IConversationRunRepository
+{
+    private const int ListMax = 500;
+
+    public async Task<ConversationRun?> FindLiveForUpdateAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+    {
+        var running = nameof(RunStatus.Running);
+        var waiting = nameof(RunStatus.Waiting);
+        var rows = await dbContext.Runs.FromSql($"""
+            SELECT * FROM automations.conversation_runs
+            WHERE tenant_id = {tenantId} AND conversation_id = {conversationId} AND status IN ({running}, {waiting})
+            FOR UPDATE
+            """).ToListAsync(cancellationToken);
+        return rows.SingleOrDefault();
+    }
+
+    public Task<ConversationRun?> FindLatestAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
+        dbContext.Runs.AsNoTracking()
+            .Where(run => run.TenantId == tenantId && run.ConversationId == conversationId)
+            .OrderByDescending(run => run.StartedAt)
+            .ThenByDescending(run => run.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+    public async Task AddAsync(ConversationRun run, CancellationToken cancellationToken) =>
+        await dbContext.Runs.AddAsync(run, cancellationToken);
+
+    public async Task<IReadOnlyList<ConversationRun>> ListAsync(
+        Guid tenantId, Guid chatbotId, DateTimeOffset from, DateTimeOffset until, CancellationToken cancellationToken)
+    {
+        // Npgsql rechaza un offset distinto de cero en timestamptz.
+        var start = from.ToUniversalTime();
+        var end = until.ToUniversalTime();
+        return await dbContext.Runs.AsNoTracking()
+            .Where(run => run.TenantId == tenantId && run.ChatbotId == chatbotId && run.StartedAt >= start && run.StartedAt < end)
+            .OrderByDescending(run => run.StartedAt)
+            .ThenByDescending(run => run.Id)
+            .Take(ListMax)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ConversationRun>> ClaimAbandonedAsync(
+        DateTimeOffset waitingBefore, int limit, CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            // Sin transacción el lock de fila se suelta al terminar la consulta y otro barrido tomaría las mismas filas.
+            throw new InvalidOperationException("ClaimAbandonedAsync exige la transacción de BeginTransactionAsync.");
+        }
+
+        var waiting = nameof(RunStatus.Waiting);
+        var cutoff = waitingBefore.ToUniversalTime();
+        return await dbContext.Runs.FromSql($"""
+            SELECT * FROM automations.conversation_runs
+            WHERE status = {waiting} AND updated_at < {cutoff}
+            ORDER BY updated_at
+            LIMIT {limit}
+            FOR UPDATE SKIP LOCKED
+            """).ToListAsync(cancellationToken);
+    }
 }

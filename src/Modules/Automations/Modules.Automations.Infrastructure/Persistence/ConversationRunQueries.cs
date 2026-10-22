@@ -1,15 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Modules.Automations.Application;
+using Modules.Automations.Domain.Engine;
 
 namespace Modules.Automations.Infrastructure.Persistence;
-
-/// <summary>Estados de <c>conversation_runs.status</c> que estas consultas leen (los mismos de <c>LiveRunFilter</c>).</summary>
-internal static class RunStatuses
-{
-    public const string Running = "Running";
-    public const string Waiting = "Waiting";
-    public const string HandedOff = "HandedOff";
-}
 
 /// <summary>SQL sobre <c>automations.conversation_runs</c>: el registro es interno de Infrastructure, así que Application lo lee por
 /// este puerto. La ventana del día ya viene en UTC desde el reloj del tenant.</summary>
@@ -28,7 +21,7 @@ internal sealed class ConversationRunQueries(AutomationsDbContext dbContext) : I
         // Npgsql rechaza un offset distinto de cero en timestamptz.
         var windowStart = dayStartUtc.ToUniversalTime();
         var windowEnd = dayEndUtc.ToUniversalTime();
-        var handedOff = RunStatuses.HandedOff;
+        var handedOff = nameof(RunStatus.HandedOff);
         var rows = await dbContext.Database.SqlQuery<TodayRow>($"""
             SELECT chatbot_id AS "ChatbotId",
                    count(*)::int AS "Handled",
@@ -45,7 +38,7 @@ internal sealed class ConversationRunQueries(AutomationsDbContext dbContext) : I
 
     public Task<bool> HasLiveRunsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken) =>
         dbContext.Runs.AsNoTracking().AnyAsync(
-            run => run.TenantId == tenantId && run.ChatbotId == chatbotId && (run.Status == RunStatuses.Running || run.Status == RunStatuses.Waiting),
+            run => run.TenantId == tenantId && run.ChatbotId == chatbotId && (run.Status == RunStatus.Running || run.Status == RunStatus.Waiting),
             cancellationToken);
 
     // Clase con setters y no un record: EF no ve a través del constructor de un record en SqlQuery.
