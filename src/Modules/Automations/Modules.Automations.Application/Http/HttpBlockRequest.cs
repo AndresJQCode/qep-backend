@@ -13,21 +13,61 @@ namespace Modules.Automations.Application.Http;
 public sealed record HttpBlockRequest(string Method, string Path, IReadOnlyList<KeyValuePair<string, string>> Query, HttpBlockBody? Body)
 {
     /// <summary>
-    /// Fallo P2-R31: un segmento que quedó en <c>.</c> o <c>..</c> (también codificado). <c>Uri.EscapeDataString</c> no escapa el punto, y
-    /// <c>System.Uri</c> resuelve <c>..</c> y <c>%2E%2E</c> hacia arriba: un valor <c>..</c> sacaría la llamada de la URL base de la conexión.
-    /// El validador (P2-R8) ya lo rechaza en el texto de la plantilla; esto mira la ruta ya interpolada.
+    /// Por qué la ruta no puede salir, o <c>null</c>. <c>path_value_empty</c> (P2-R34): un valor vacío o ausente (<c>/customers/{id}</c> sin id
+    /// caería sobre la colección con un PUT o PATCH). <c>path_dot_segment</c> (P2-R31, P2-R32, P2-R34): un valor con un segmento <c>.</c> o
+    /// <c>..</c>, mirado ya desescapado y partido por <c>/</c> y <c>\</c>, o la ruta interpolada con uno. Escapado, <c>../admin</c> queda en
+    /// un solo segmento (<c>..%2Fadmin</c>), pero un proxy que decodifica <c>%2F</c> y normaliza (nginx con URI en <c>proxy_pass</c>) subiría
+    /// igual; y <c>System.Uri</c> resuelve <c>..</c> y <c>%2E%2E</c> hacia arriba de la URL base de la conexión. El validador (P2-R8) ya rechaza
+    /// <c>..</c> en el texto de la plantilla.
     /// </summary>
-    public bool PathHasDotSegment => Path.Split('/').Any(segment => Uri.UnescapeDataString(segment) is "." or "..");
+    public string? PathRejection { get; private init; }
 
     public static HttpBlockRequest Build(HttpNode node, RunVariables variables)
     {
         ArgumentNullException.ThrowIfNull(node);
         ArgumentNullException.ThrowIfNull(variables);
-        return new HttpBlockRequest(
-            node.Method,
-            TemplateText.Interpolate(node.Path, variables, Uri.EscapeDataString),
-            Pairs(node.Query, variables),
-            BodyOf(node.Body, variables));
+        var values = new List<string>();
+        var path = TemplateText.Interpolate(node.Path, variables, value =>
+        {
+            values.Add(value);
+            return Uri.EscapeDataString(value);
+        });
+        return new HttpBlockRequest(node.Method, path, Pairs(node.Query, variables), BodyOf(node.Body, variables))
+        {
+            PathRejection = PathRejectionOf(path, values),
+        };
+    }
+
+    private static string? PathRejectionOf(string path, IReadOnlyList<string> values)
+    {
+        if (values.Any(value => value.Length == 0))
+        {
+            return "path_value_empty";
+        }
+
+        return values.Any(value => HasDotSegment(FullyUnescaped(value), '/', '\\')) || HasDotSegment(FullyUnescaped(path), '/')
+            ? "path_dot_segment"
+            : null;
+    }
+
+    private static bool HasDotSegment(string text, params char[] separators) =>
+        text.Split(separators).Any(segment => segment is "." or "..");
+
+    // Un servidor que decodifica dos veces vería «..» en «%252E%252E»: se desescapa hasta que no cambie (con tope, por si acaso).
+    private static string FullyUnescaped(string text)
+    {
+        for (var round = 0; round < 4; round++)
+        {
+            var unescaped = Uri.UnescapeDataString(text);
+            if (unescaped == text)
+            {
+                return text;
+            }
+
+            text = unescaped;
+        }
+
+        return text;
     }
 
     private static HttpBlockBody? BodyOf(HttpBody? body, RunVariables variables) => body switch

@@ -109,24 +109,60 @@ public sealed class HttpBlockRequestTests
     public void PathValuesAreEscapedButTheTemplateTextIsNot()
     {
         var variables = Variables();
-        variables.Set("id", "../x?y#z");
+        variables.Set("id", "a/b?c#d");
 
         var request = HttpBlockRequest.Build(Node("/customers/{id}/all-items"), variables);
 
-        Assert.Equal("/customers/..%2Fx%3Fy%23z/all-items", request.Path);
-        Assert.False(request.PathHasDotSegment);
+        Assert.Equal("/customers/a%2Fb%3Fc%23d/all-items", request.Path);
+        Assert.Null(request.PathRejection);
     }
 
-    /// <summary>P2-R31: <c>Uri.EscapeDataString</c> no escapa el punto, y <c>System.Uri</c> resuelve <c>..</c> (también <c>%2E%2E</c>): un
-    /// segmento que queda en <c>.</c> o <c>..</c> sacaría la llamada de la URL base.</summary>
+    /// <summary>
+    /// P2-R31/P2-R34: un valor con un segmento <c>.</c> o <c>..</c> (partido por <c>/</c> y <c>\</c>, ya desescapado) no sale, aunque escapado
+    /// quede en un solo segmento: un proxy que decodifica <c>%2F</c> y normaliza (nginx con URI en <c>proxy_pass</c>) subiría igual. Y
+    /// <c>System.Uri</c> resuelve <c>..</c> y <c>%2E%2E</c> hacia arriba.
+    /// </summary>
     [Theory]
     [InlineData("..")]
     [InlineData(".")]
-    public void AValueThatBecomesADotSegmentIsFlagged(string value)
+    [InlineData("../x?y#z")]
+    [InlineData("../admin")]
+    [InlineData("..\\admin")]
+    [InlineData("a/./b")]
+    [InlineData("%2E%2E%2Fadmin")]
+    [InlineData("%252E%252E%252Fadmin")]
+    public void AValueWithADotSegmentIsRejected(string value)
     {
         var variables = Variables();
         variables.Set("id", value);
 
-        Assert.True(HttpBlockRequest.Build(Node("/customers/{id}"), variables).PathHasDotSegment);
+        Assert.Equal("path_dot_segment", HttpBlockRequest.Build(Node("/customers/{id}"), variables).PathRejection);
+    }
+
+    /// <summary>P2-R32: dos valores que juntos forman <c>..</c> también se ven en la ruta ya interpolada.</summary>
+    [Fact]
+    public void TwoValuesThatTogetherMakeADotSegmentAreRejected()
+    {
+        var variables = Variables();
+        variables.Set("a", ".");
+        variables.Set("b", ".");
+
+        Assert.Equal("path_dot_segment", HttpBlockRequest.Build(Node("/customers/{a}{b}"), variables).PathRejection);
+    }
+
+    /// <summary>P2-R34: <c>/customers/{id}</c> sin id llamaría a la colección (un PUT o PATCH sobre todas).</summary>
+    [Fact]
+    public void AMissingPathValueIsRejected()
+    {
+        Assert.Equal("path_value_empty", HttpBlockRequest.Build(Node("/customers/{nadie}"), Variables()).PathRejection);
+    }
+
+    [Fact]
+    public void ADotInsideAValueIsFine()
+    {
+        var variables = Variables();
+        variables.Set("id", "v1.2..3");
+
+        Assert.Null(HttpBlockRequest.Build(Node("/customers/{id}"), variables).PathRejection);
     }
 }

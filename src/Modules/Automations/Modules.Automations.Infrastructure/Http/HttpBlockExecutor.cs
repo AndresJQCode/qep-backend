@@ -99,9 +99,9 @@ public sealed partial class HttpBlockExecutor(
             return await FinishAsync(call, Failure(HttpCallOutcomes.UrlRejected, null, rejected), cancellationToken);
         }
 
-        if (request.PathHasDotSegment)
+        if (request.PathRejection is { } pathRejection)
         {
-            return await FinishAsync(call, Failure(HttpCallOutcomes.UrlRejected, null, "path_dot_segment"), cancellationToken);
+            return await FinishAsync(call, Failure(HttpCallOutcomes.UrlRejected, null, pathRejection), cancellationToken);
         }
 
         if (request.Body is HttpBlockBody.Json json && !json.IsWellFormed())
@@ -123,9 +123,9 @@ public sealed partial class HttpBlockExecutor(
                 break;
             case HttpBlockBody.Multipart form:
                 var built = await FormAsync(context.TenantId, form, variables, cancellationToken);
-                if (built.Failure is { } notReady)
+                if (built.Failure is { } notBuilt)
                 {
-                    return await FinishAsync(call, Failure(HttpCallOutcomes.MediaNotReady, null, notReady), cancellationToken);
+                    return await FinishAsync(call, notBuilt, cancellationToken);
                 }
 
                 content = built.Content;
@@ -136,7 +136,8 @@ public sealed partial class HttpBlockExecutor(
         }
 
         var result = await SendAsync(node, credentials, request.Method, url, content, cancellationToken);
-        return await FinishAsync(call, result, cancellationToken);
+        // P2-R33a: la llamada ya salió. Un apagado justo ahora no puede perder la fila: el reintento volvería a llamar sin rastro de la primera.
+        return await FinishAsync(call, result, CancellationToken.None);
     }
 
     private async Task<HttpCallResult> SendAsync(
@@ -146,11 +147,13 @@ public sealed partial class HttpBlockExecutor(
         message.Headers.TryAddWithoutValidation(credentials.AuthHeader, credentials.ApiKey);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(node.TimeoutSeconds, MinTimeoutSeconds, MaxTimeoutSeconds)));
+        int? answered = null;
         try
         {
             using var response = await httpClientFactory.CreateClient(HttpClientName)
                 .SendAsync(message, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
             var status = (int)response.StatusCode;
+            answered = status;
             // Un status que no cumple no necesita el cuerpo: de él no se guarda nada.
             if (!IsOk(node.OkWhen, status))
             {
@@ -167,14 +170,20 @@ public sealed partial class HttpBlockExecutor(
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             // El timeout del bloque (o el del cliente), no una cancelación de quien llama: ésa se propaga.
-            return Failure(HttpCallOutcomes.Timeout, null, HttpCallOutcomes.Timeout);
+            return Failure(HttpCallOutcomes.Timeout, answered, HttpCallOutcomes.Timeout);
         }
         catch (HttpRequestException exception)
         {
             // D-H2: ConnectCallback rechazó lo que resolvió el host. Es la URL, no la red.
             return urlPolicy.RejectionIn(exception) is { } reason
                 ? Failure(HttpCallOutcomes.UrlRejected, null, reason)
-                : Failure(HttpCallOutcomes.Network, null, HttpCallOutcomes.Network);
+                : Failure(HttpCallOutcomes.Network, answered, HttpCallOutcomes.Network);
+        }
+        catch (IOException)
+        {
+            // Revisión de la tarea 11: con ResponseHeadersRead, un corte a mitad del cuerpo llega como HttpIOException (IOException, no
+            // HttpRequestException). La API ya recibió el request: lanzar desharía la unidad y el reintento la volvería a llamar.
+            return Failure(HttpCallOutcomes.Network, answered, HttpCallOutcomes.Network);
         }
     }
 
@@ -253,7 +262,7 @@ public sealed partial class HttpBlockExecutor(
         return Uri.TryCreate(url.ToString(), UriKind.Absolute, out var built) ? built : null;
     }
 
-    private async Task<(HttpContent? Content, string? Failure)> FormAsync(
+    private async Task<(HttpContent? Content, HttpCallResult? Failure)> FormAsync(
         Guid tenantId, HttpBlockBody.Multipart form, RunVariables variables, CancellationToken cancellationToken)
     {
         StreamContent? file = null;
@@ -263,35 +272,55 @@ public sealed partial class HttpBlockExecutor(
             // La variable la escribió el bloque Adjunto (CustomerReply.Receive): sólo su messageId cuenta; la llave de R2 sale de Mensajería.
             if (!Guid.TryParse(variables.TextOf($"{fileVariable}.messageId"), out var messageId))
             {
-                return (null, "attachment_missing");
+                return (null, Failure(HttpCallOutcomes.MediaNotReady, null, "attachment_missing"));
             }
 
             if (await StoredAsync(tenantId, messageId, cancellationToken) is not { } stored
                 || await media.OpenReadAsync(stored.Key, cancellationToken) is not { } opened)
             {
-                return (null, HttpCallOutcomes.MediaNotReady);
+                return (null, Failure(HttpCallOutcomes.MediaNotReady, null, HttpCallOutcomes.MediaNotReady));
             }
 
             file = new StreamContent(opened.Content);
             file.Headers.ContentType = MediaTypeHeaderValue.TryParse(stored.MimeType, out var type) ? type : null;
-            fileName = stored.FileName ?? DefaultFileName;
+            fileName = SafeFileName(stored.FileName);
         }
 
         var content = new MultipartFormDataContent();
-        foreach (var (key, value) in form.Fields)
+        try
         {
-            // Sin Content-Type, como manda un navegador un campo de texto: algunas APIs leen un campo con tipo como si fuera un archivo.
-            var field = new StringContent(value);
-            field.Headers.ContentType = null;
-            content.Add(field, key);
-        }
+            foreach (var (key, value) in form.Fields)
+            {
+                // Sin Content-Type, como manda un navegador un campo de texto: algunas APIs leen un campo con tipo como si fuera un archivo.
+                var field = new StringContent(value);
+                field.Headers.ContentType = null;
+                content.Add(field, key);
+            }
 
-        if (file is not null)
+            if (file is not null)
+            {
+                content.Add(file, form.FileField!, fileName!);
+                file = null;
+            }
+
+            return (content, null);
+        }
+        catch (Exception exception) when (exception is ArgumentException or FormatException)
         {
-            content.Add(file, form.FileField!, fileName!);
+            // Un nombre de campo que el header Content-Disposition no admite (comillas o saltos de línea en lo que escribió el admin): el
+            // cuerpo no se puede armar. Se cierra el archivo de R2 y el bloque sale por «error» con su fila, sin lanzar.
+            content.Dispose();
+            file?.Dispose();
+            return (null, Failure(HttpCallOutcomes.BodyNotJson, null, "form_invalid"));
         }
+    }
 
-        return (content, null);
+    // Revisión de la tarea 11: el nombre lo puso el cliente en WhatsApp (message_media.file_name sólo se recorta). Una comilla, una barra
+    // invertida o un control (CR/LF) rompen el header Content-Disposition o le inyectan otro: se quitan, y si no queda nada va «file».
+    private static string SafeFileName(string? name)
+    {
+        var safe = new string([.. (name ?? string.Empty).Where(character => character is not ('"' or '\\') && !char.IsControl(character))]).Trim();
+        return safe.Length == 0 ? DefaultFileName : safe;
     }
 
     // D-H8 con el desvío de MediaWaitRetries: el adjunto puede llegar antes de que MediaCopyWorker lo copie a R2.

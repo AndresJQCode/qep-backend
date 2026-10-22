@@ -82,29 +82,128 @@ public sealed class HttpBlockExecutorTests
     {
         var bed = new Bed(_ => Json(HttpStatusCode.OK, "{}"));
         var variables = Variables();
-        variables.Set("id", "../x?y#z");
+        variables.Set("id", "a/b?c#d");
 
         await bed.Executor().ExecuteAsync(Context, Node("/customers/{id}"), variables, Ct);
 
         var request = Assert.Single(bed.Handler.Requests);
-        Assert.Equal("/v1/customers/..%2Fx%3Fy%23z", request.Uri.AbsolutePath);
+        Assert.Equal("/v1/customers/a%2Fb%3Fc%23d", request.Uri.AbsolutePath);
         Assert.Equal(string.Empty, request.Uri.Query);
-        Assert.Equal("/customers/..%2Fx%3Fy%23z", Assert.Single(bed.Log.Entries).Path);
+        Assert.Equal("/customers/a%2Fb%3Fc%23d", Assert.Single(bed.Log.Entries).Path);
     }
 
-    /// <summary>P2-R31: un valor que deja un segmento <c>..</c> no sale (System.Uri lo resolvería hacia arriba de la URL base).</summary>
-    [Fact]
-    public async Task ADotSegmentFromAValueIsRejectedWithoutACall()
+    /// <summary>P2-R31/P2-R34: un valor con un segmento <c>..</c> no sale, aunque escapado quede en un solo segmento (un proxy que decodifica
+    /// <c>%2F</c> y normaliza subiría igual), ni con la barra invertida.</summary>
+    [Theory]
+    [InlineData("..")]
+    [InlineData("../admin")]
+    [InlineData("..\\admin")]
+    public async Task ADotSegmentFromAValueIsRejectedWithoutACall(string value)
     {
         var bed = new Bed(_ => Json(HttpStatusCode.OK, "{}"));
         var variables = Variables();
-        variables.Set("id", "..");
+        variables.Set("id", value);
 
         var result = await bed.Executor().ExecuteAsync(Context, Node("/customers/{id}"), variables, Ct);
 
         Assert.Equal(("url_rejected", "path_dot_segment", false), (result.Outcome, result.ErrorCode, result.Ok));
         Assert.Empty(bed.Handler.Requests);
-        Assert.Equal("url_rejected", Assert.Single(bed.Log.Entries).Outcome);
+        Assert.Equal(("url_rejected", "path_dot_segment"), (Assert.Single(bed.Log.Entries).Outcome, bed.Log.Entries[0].ErrorCode));
+    }
+
+    /// <summary>P2-R34: sin la variable de la ruta, <c>PUT /customers/{id}</c> caería sobre la colección.</summary>
+    [Fact]
+    public async Task AMissingPathValueIsRejectedWithoutACall()
+    {
+        var bed = new Bed(_ => Json(HttpStatusCode.OK, "{}"));
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node("/customers/{nadie}", "PUT"), Variables(), Ct);
+
+        Assert.Equal(("url_rejected", "path_value_empty", false), (result.Outcome, result.ErrorCode, result.Ok));
+        Assert.Empty(bed.Handler.Requests);
+        Assert.Equal("path_value_empty", Assert.Single(bed.Log.Entries).ErrorCode);
+    }
+
+    /// <summary>Revisión de la tarea 11: un corte de la conexión mientras se lee el cuerpo (HttpIOException, que es IOException y no
+    /// HttpRequestException) es <c>network</c> con su fila; si lanzara, la unidad se desharía y el reintento volvería a llamar a la API.</summary>
+    [Fact]
+    public async Task AConnectionDropWhileReadingTheBodyIsNetwork()
+    {
+        var bed = new Bed(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new DroppingStream()) });
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node(mapping: [new HttpMapping("data", "x")]), Variables(), Ct);
+
+        Assert.Equal(("network", false), (result.Outcome, result.Ok));
+        var entry = Assert.Single(bed.Log.Entries);
+        Assert.Equal(("network", (int?)200), (entry.Outcome, entry.StatusCode));
+    }
+
+    /// <summary>P2-R33: si la fila no se puede escribir, el bloque sigue con su resultado (lanzar haría que el reintento volviera a llamar).</summary>
+    [Fact]
+    public async Task AFailingCallLogDoesNotFailTheBlock()
+    {
+        var bed = new Bed(_ => Json(HttpStatusCode.OK, """{"id":7}"""));
+        bed.Log.Failure = new InvalidOperationException("db down");
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node(mapping: [new HttpMapping("id", "cliente")]), Variables(), Ct);
+
+        Assert.Equal(("ok", "7"), (result.Outcome, result.Mapped.TextOf("cliente")));
+    }
+
+    /// <summary>P2-R33a: con la llamada ya hecha, la fila se escribe aunque el proceso se esté apagando.</summary>
+    [Fact]
+    public async Task AfterTheCallTheRowIsRecordedWithoutTheCallerToken()
+    {
+        var bed = new Bed(_ => Json(HttpStatusCode.OK, "{}"));
+
+        await bed.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+
+        Assert.False(Assert.Single(bed.Log.Tokens).CanBeCanceled);
+    }
+
+    /// <summary>Revisión de la tarea 11: el nombre del archivo lo puso el cliente en WhatsApp; una comilla, un salto de línea o una barra no
+    /// pueden romper el header del formulario.</summary>
+    [Theory]
+    [InlineData("a\"b.pdf", "ab.pdf")]
+    [InlineData("a\r\nX-Evil: 1.pdf", "aX-Evil: 1.pdf")]
+    [InlineData("C:\\docs\\f.pdf", "C:docsf.pdf")]
+    [InlineData("\"\r\n", "file")]
+    public async Task ACustomerFileNameIsSanitized(string stored, string sent)
+    {
+        var bed = new Bed(_ => Json(HttpStatusCode.OK, "{}"));
+        var messageId = Guid.CreateVersion7();
+        bed.Media.Stored[messageId] = new StoredAttachment("k", stored, "application/pdf", 3);
+        bed.Media.Objects["k"] = Encoding.ASCII.GetBytes("PDF");
+        var variables = Variables();
+        variables.Set("factura", new System.Text.Json.Nodes.JsonObject { ["messageId"] = messageId.ToString() });
+        var node = Node("/upload", "POST", body: new HttpBody(HttpBodyKinds.Multipart, null, [], "file", "factura"));
+
+        var result = await bed.Executor().ExecuteAsync(Context, node, variables, Ct);
+
+        Assert.True(result.Ok);
+        Assert.Equal(sent, Assert.Single(Assert.Single(bed.Handler.Requests).Parts).FileName);
+    }
+
+    /// <summary>Lo que todavía no arma el formulario (un nombre de campo con comillas, que escribió el admin) sale como resultado, sin lanzar
+    /// y sin dejar abierto el archivo de R2.</summary>
+    [Fact]
+    public async Task AFormThatCannotBeBuiltIsAnOutcomeAndClosesTheFile()
+    {
+        var bed = new Bed(_ => Json(HttpStatusCode.OK, "{}"));
+        var messageId = Guid.CreateVersion7();
+        bed.Media.Stored[messageId] = new StoredAttachment("k", "f.pdf", "application/pdf", 3);
+        bed.Media.Objects["k"] = Encoding.ASCII.GetBytes("PDF");
+        var variables = Variables();
+        variables.Set("factura", new System.Text.Json.Nodes.JsonObject { ["messageId"] = messageId.ToString() });
+        var node = Node("/upload", "POST", body: new HttpBody(HttpBodyKinds.Multipart, null, [new KeyValue("a\"b\r\nX: y", "1")], "fi\"le", "factura"));
+
+        var result = await bed.Executor().ExecuteAsync(Context, node, variables, Ct);
+
+        Assert.Equal(("body_not_json", "form_invalid", false), (result.Outcome, result.ErrorCode, result.Ok));
+        Assert.Empty(bed.Handler.Requests);
+        Assert.Equal("form_invalid", Assert.Single(bed.Log.Entries).ErrorCode);
+        Assert.All(bed.Media.Opened, stream => Assert.False(stream.CanRead));
+        Assert.NotEmpty(bed.Media.Opened);
     }
 
     /// <summary>P2-R31 (y P2-R30): una conexión guardada antes de la regla no puede mandar la clave en <c>Host</c>.</summary>
@@ -518,19 +617,41 @@ public sealed class HttpBlockExecutorTests
 
         public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken) => throw new NotSupportedException();
 
-        public Task<(Stream Content, long Length)?> OpenReadAsync(string key, CancellationToken cancellationToken) =>
-            Task.FromResult<(Stream Content, long Length)?>(
-                Objects.TryGetValue(key, out var bytes) ? (new MemoryStream(bytes), bytes.LongLength) : null);
+        public ConcurrentQueue<Stream> Opened { get; } = new();
+
+        public Task<(Stream Content, long Length)?> OpenReadAsync(string key, CancellationToken cancellationToken)
+        {
+            if (!Objects.TryGetValue(key, out var bytes))
+            {
+                return Task.FromResult<(Stream Content, long Length)?>(null);
+            }
+
+            var stream = new MemoryStream(bytes);
+            Opened.Enqueue(stream);
+            return Task.FromResult<(Stream Content, long Length)?>((stream, bytes.LongLength));
+        }
     }
 
     internal sealed class MemoryCallLog : IHttpCallLog
     {
         private readonly ConcurrentQueue<HttpCallEntry> entries = new();
 
+        private readonly ConcurrentQueue<CancellationToken> tokens = new();
+
         public IReadOnlyList<HttpCallEntry> Entries => [.. entries];
+
+        public IReadOnlyList<CancellationToken> Tokens => [.. tokens];
+
+        public Exception? Failure { get; set; }
 
         public Task RecordAsync(HttpCallEntry entry, CancellationToken cancellationToken)
         {
+            tokens.Enqueue(cancellationToken);
+            if (Failure is not null)
+            {
+                throw Failure;
+            }
+
             entries.Enqueue(entry);
             return Task.CompletedTask;
         }
@@ -539,6 +660,56 @@ public sealed class HttpBlockExecutorTests
     private sealed class FixedClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset UtcNow => now;
+    }
+
+    // La conexión se corta a mitad del cuerpo: lo que SocketsHttpHandler entrega como HttpIOException.
+    private sealed class DroppingStream : Stream
+    {
+        private bool served;
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (served)
+            {
+                throw new HttpIOException(HttpRequestError.ResponseEnded, "The response ended prematurely.");
+            }
+
+            served = true;
+            buffer[offset] = (byte)'{';
+            return 1;
+        }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (served)
+            {
+                throw new HttpIOException(HttpRequestError.ResponseEnded, "The response ended prematurely.");
+            }
+
+            served = true;
+            buffer.Span[0] = (byte)'{';
+            return ValueTask.FromResult(1);
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     // Un cuerpo sin Content-Length: el tope se tiene que aplicar leyendo, no sólo mirando el header.
