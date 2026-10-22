@@ -23,6 +23,8 @@
     <ProjectReference Include="..\Modules\Messaging\Modules.Messaging.Infrastructure\Modules.Messaging.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Pipeline\Modules.Pipeline.Application\Modules.Pipeline.Application.csproj" />
     <ProjectReference Include="..\Modules\Pipeline\Modules.Pipeline.Infrastructure\Modules.Pipeline.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Automations\Modules.Automations.Application\Modules.Automations.Application.csproj" />
+    <ProjectReference Include="..\Modules\Automations\Modules.Automations.Infrastructure\Modules.Automations.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Customers\Modules.Customers.Application\Modules.Customers.Application.csproj" />
     <ProjectReference Include="..\Modules\Customers\Modules.Customers.Infrastructure\Modules.Customers.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Geography\Modules.Geography.Application\Modules.Geography.Application.csproj" />

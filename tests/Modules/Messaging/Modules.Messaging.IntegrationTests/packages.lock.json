@@ -759,6 +759,8 @@
           "Microsoft.AspNetCore.OpenApi": "[10.0.13, )",
           "Microsoft.OpenApi": "[2.12.2, )",
           "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Automations.Api": "[1.0.0, )",
+          "Modules.Automations.Infrastructure": "[1.0.0, )",
           "Modules.Catalog.Api": "[1.0.0, )",
           "Modules.Catalog.Infrastructure": "[1.0.0, )",
           "Modules.Companies.Api": "[1.0.0, )",
@@ -799,6 +801,8 @@
           "Modules.Audit.Infrastructure": "[1.0.0, )",
           "Modules.Authorization.Application": "[1.0.0, )",
           "Modules.Authorization.Infrastructure": "[1.0.0, )",
+          "Modules.Automations.Application": "[1.0.0, )",
+          "Modules.Automations.Infrastructure": "[1.0.0, )",
           "Modules.Catalog.Application": "[1.0.0, )",
           "Modules.Catalog.Infrastructure": "[1.0.0, )",
           "Modules.Companies.Application": "[1.0.0, )",
@@ -905,6 +909,42 @@
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Modules.Authorization.Application": "[1.0.0, )",
           "Modules.Authorization.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "modules.automations.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Automations.Application": "[1.0.0, )",
+          "Modules.Automations.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.automations.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Automations.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.automations.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.automations.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Automations.Application": "[1.0.0, )",
+          "Modules.Automations.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },

@@ -11,6 +11,8 @@ using BuildingBlocks.Observability;
 using Microsoft.Extensions.Options;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Infrastructure;
+using Modules.Automations.Api;
+using Modules.Automations.Infrastructure;
 using Modules.Catalog.Api;
 using Modules.Catalog.Infrastructure;
 using Modules.Companies.Api;
@@ -196,6 +198,8 @@ app.MapShopifyEndpoints();
 app.MapMessagingEndpoints();
 app.MapMessagingHub();
 app.MapPipelineEndpoints();
+// Spec 2026-10-21 §4.4: el constructor de chatbots.
+app.MapAutomationsEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al
@@ -258,6 +262,11 @@ await app.Services.InitializePipelineDatabaseAsync(
 // Shopify (spec 2026-10-15 §9): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas: conexión, cliente,
 // pedido, asesor y empresa son referencias blandas.
 await app.Services.InitializeShopifyDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Automations (spec 2026-10-21 §4.1): después de Messaging e Integrations, cuyas conexiones y conversaciones referencia sin FK, y de
+// Audit (escribe en audit.entries).
+await app.Services.InitializeAutomationsDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y

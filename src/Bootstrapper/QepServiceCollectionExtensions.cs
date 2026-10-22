@@ -18,6 +18,7 @@ using Microsoft.IdentityModel.Tokens;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Application;
 using Modules.Authorization.Infrastructure;
+using Modules.Automations.Infrastructure;
 using Modules.Catalog.Application;
 using Modules.Catalog.Infrastructure;
 using Modules.Companies.Application;
@@ -782,6 +783,10 @@ public static class QepServiceCollectionExtensions
         // Pipeline (spec 2026-10-13): el embudo de ventas. Sólo ve Tenancy (y Audit en Infrastructure); conversaciones,
         // clientes y nombres de miembros entran por adaptadores que se registran más abajo.
         services.AddPipelineInfrastructure(configuration);
+
+        // Automations (spec 2026-10-21 §4.1): los chatbots. Sólo ve Tenancy (y Audit en Infrastructure); conversaciones, salida del
+        // bot, conexiones y la «API externa» entran por adaptadores que llegan con la tarea 16 del plan.
+        services.AddAutomationsInfrastructure(configuration);
 
         // Shopify (spec 2026-10-15): el espejo de pedidos de las tiendas. Sólo ve Tenancy (y Audit para su auditoría atómica);
         // conexiones, clientes, productos, ciudades y pedidos entran por adaptadores que se registran más abajo.
