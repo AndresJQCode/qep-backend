@@ -21,6 +21,7 @@ using Modules.Authorization.Infrastructure;
 using Modules.Automations.Application;
 using Modules.Automations.Application.Engine;
 using Modules.Automations.Infrastructure;
+using Modules.Automations.Infrastructure.Http;
 using Modules.Catalog.Application;
 using Modules.Catalog.Infrastructure;
 using Modules.Companies.Application;
@@ -33,6 +34,7 @@ using Modules.Identity.Infrastructure;
 using Modules.Integrations.Application;
 using Modules.Integrations.Application.Shopify;
 using Modules.Integrations.Infrastructure;
+using Modules.Integrations.Infrastructure.ExternalApi;
 using Modules.Messaging.Application;
 using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
@@ -896,6 +898,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAutomationConnections, AutomationConnections>();
         services.AddScoped<IAutomationExternalApis, AutomationExternalApis>();
         services.AddScoped<IAutomationBusinessHours, AutomationBusinessHours>();
+        // Spec 2026-10-21 D-H2, D-H5 y fallo P2-R31: el cliente del bloque HTTP va acá y no en AddAutomationsInfrastructure porque su handler
+        // primario (anti-SSRF: sin redirecciones, sin proxy, ConnectCallback que rechaza rangos internos) es de Integrations.Infrastructure.
+        // Sin loggers: el de HttpClient registraría la URL con la query del cliente. CompositionRootTests lo amarra.
+        services.AddSingleton<IExternalApiUrlPolicy, AutomationExternalApiUrlPolicy>();
+        services.AddHttpClient(HttpBlockExecutor.HttpClientName, HttpBlockExecutor.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => ExternalApiUrlPolicy.CreateHandler())
+            .RemoveAllLoggers();
         // Spec 2026-10-21 §5.3, D-M5 y D-M14: los puertos del motor sobre la cola, la conversación, la salida del bot y los medios de
         // Mensajería, y el nombre de la empresa por Tenancy.
         services.AddScoped<IAutomationInboundQueue, AutomationInboundQueue>();

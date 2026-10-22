@@ -478,8 +478,8 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("Outcome")
                         .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)")
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
                         .HasColumnName("outcome");
 
                     b.Property<string>("Path")

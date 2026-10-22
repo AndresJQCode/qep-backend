@@ -459,6 +459,36 @@ public sealed class CompositionRootTests
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ICommandHandler<SyncShopifyStoreCommand, ShopifySyncResult>>());
     }
 
+    /// <summary>
+    /// Fallo P2-R31 (el mismo amarre que <c>ExternalApiUrlPolicyTests.TheNamedClientIsBoundToThePolicyHandler</c> de la tarea 10): el
+    /// cliente del bloque HTTP del chatbot se registra en el composition root con el handler de la política anti-SSRF. Sin él, el handler
+    /// por defecto sigue redirecciones con la clave, usa el proxy del sistema y conecta a 10/8 o a 169.254.169.254 sin que nada se ponga
+    /// rojo: las pruebas de extremo a extremo reemplazan el handler primario.
+    /// </summary>
+    [Fact]
+    public void TheChatbotHttpClientIsBoundToThePolicyHandler()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>()
+            .CreateHandler(Modules.Automations.Infrastructure.Http.HttpBlockExecutor.HttpClientName);
+        while (handler is DelegatingHandler delegating)
+        {
+            handler = delegating.InnerHandler!;
+        }
+
+        var primary = Assert.IsType<SocketsHttpHandler>(handler);
+        Assert.NotNull(primary.ConnectCallback);
+        Assert.False(primary.AllowAutoRedirect);
+        Assert.False(primary.UseProxy);
+        using var scope = provider.CreateScope();
+        Assert.IsType<Modules.Automations.Infrastructure.Http.HttpBlockExecutor>(
+            scope.ServiceProvider.GetRequiredService<Modules.Automations.Application.Http.IHttpBlockExecutor>());
+    }
+
     [Fact]
     public void TheContainerCanBuildTheEntitlementMask()
     {

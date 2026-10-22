@@ -109,6 +109,35 @@ public sealed record ExternalApiRef(Guid Id, string Name, string Status);
 public interface IAutomationExternalApis
 {
     Task<IReadOnlyList<ExternalApiRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>D-H5: la URL base, el header y la clave de la conexión, al momento de llamar. <c>null</c> si no es del tenant, no es
+    /// <c>external-api</c>, no está <c>Active</c> o su clave no se puede leer.</summary>
+    Task<ExternalApiCredentials?> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
+/// <summary>D-H5: lo que el bloque HTTP necesita para llamar. La clave vive en memoria lo que dura la llamada: nunca se interpola, ni se
+/// guarda en la corrida, ni se registra, y <see cref="ToString"/> no la imprime (como <c>ResolvedConnection</c> de Integrations).</summary>
+public sealed record ExternalApiCredentials(Uri BaseUrl, string AuthHeader, string ApiKey)
+{
+    public override string ToString() => $"ExternalApiCredentials {{ BaseUrl = {BaseUrl} }}";
+}
+
+/// <summary>
+/// Spec 2026-10-21 D-H2 y fallos P2-R30/P2-R31: la política anti-SSRF de Integrations (adaptador en Bootstrapper sobre
+/// <c>ExternalApiUrlPolicy</c>): Automations no referencia Integrations. El handler que juzga cada conexión lo pone el registro del cliente
+/// nombrado, también en Bootstrapper.
+/// </summary>
+public interface IExternalApiUrlPolicy
+{
+    /// <summary><c>null</c> si la URL base se acepta; si no, el motivo técnico (<c>scheme_not_https</c>, <c>host_is_ip_literal</c>, …).</summary>
+    string? Reject(Uri url);
+
+    /// <summary>P2-R30: el header de la clave no puede ser uno del transporte (<c>Host</c>, <c>Content-*</c>, …).</summary>
+    bool IsReservedHeader(string name);
+
+    /// <summary>El motivo si la excepción de <c>HttpClient</c> es el rechazo al conectar (el host resolvió a un rango interno); <c>null</c>
+    /// si es otra falla de red.</summary>
+    string? RejectionIn(Exception exception);
 }
 
 /// <summary>El horario asignado a cada conexión (Mensajería, D-H10). Una conexión sin horario viene con <c>null</c> o no viene.</summary>

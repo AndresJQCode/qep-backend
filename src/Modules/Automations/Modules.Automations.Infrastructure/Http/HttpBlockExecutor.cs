@@ -1,0 +1,350 @@
+using System.Diagnostics;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging;
+using Modules.Automations.Application;
+using Modules.Automations.Application.Http;
+using Modules.Automations.Domain.Engine;
+using Modules.Automations.Domain.Flow;
+using Modules.Automations.Domain.Text;
+
+namespace Modules.Automations.Infrastructure.Http;
+
+/// <summary>
+/// Spec 2026-10-21 D-H4..D-H8: el bloque HTTP del chatbot. Resuelve la conexión <c>external-api</c> al momento de llamar (D-H5), manda
+/// <c>{BaseUrl}{Path}?{Query}</c> con <c>{AuthHeader}: {ApiKey}</c>, espera a lo sumo <c>timeoutSeconds</c>, lee hasta 1 MB y guarda de la
+/// respuesta sólo lo que dice el mapeo (D-H7). Cada llamada deja su fila en <c>http_calls</c> (D-H6), salvo cuando no hay conexión. Ni el
+/// cuerpo, ni los headers, ni la clave, ni la URL llegan a un log: los mensajes llevan tenant, bloque, resultado, status y duración, y el
+/// cliente nombrado no tiene loggers (<c>RemoveAllLoggers</c>, registrado en Bootstrapper con el handler anti-SSRF de Integrations).
+/// </summary>
+public sealed partial class HttpBlockExecutor(
+    IHttpClientFactory httpClientFactory,
+    IAutomationExternalApis externalApis,
+    IExternalApiUrlPolicy urlPolicy,
+    IAutomationMedia media,
+    IHttpCallLog callLog,
+    IClock clock,
+    ILogger<HttpBlockExecutor> logger,
+    Func<TimeSpan, CancellationToken, Task>? delay = null) : IHttpBlockExecutor
+{
+    /// <summary>D-H5.</summary>
+    public const string HttpClientName = "automations.external-api";
+
+    /// <summary>D-H7: el tope de la respuesta.</summary>
+    public const int MaxResponseBytes = 1024 * 1024;
+
+    /// <summary>
+    /// Desvío de D-H8 (plan 2, tarea 11): el spec dice 60 s de espera por el adjunto, pero la unidad entera corre dentro de un lease de 30 s y
+    /// esperar 60 haría que otra réplica reclamara la misma fila a mitad. Se espera 20 s (4 reintentos cada 5 s): <c>MediaCopyWorker</c> corre
+    /// cada 5 s y copia una imagen en menos de un segundo.
+    /// </summary>
+    internal const int MediaWaitRetries = 4;
+
+    internal static readonly TimeSpan MediaWaitInterval = TimeSpan.FromSeconds(5);
+
+    private const int MinTimeoutSeconds = 1;
+
+    private const int MaxTimeoutSeconds = 10;
+
+    private const string DefaultFileName = "file";
+
+    private readonly Func<TimeSpan, CancellationToken, Task> wait = delay ?? Task.Delay;
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Chatbot HTTP block {NodeId} of tenant {TenantId} answered {Status}: {Outcome} in {DurationMs} ms")]
+    private static partial void LogCalled(ILogger logger, Guid tenantId, string nodeId, string outcome, int? status, int durationMs);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Chatbot HTTP block {NodeId} of tenant {TenantId} failed: {Outcome} (status {Status}) in {DurationMs} ms")]
+    private static partial void LogFailed(ILogger logger, Guid tenantId, string nodeId, string outcome, int? status, int durationMs);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Chatbot HTTP block {NodeId} of tenant {TenantId} has no usable connection: {Outcome}")]
+    private static partial void LogUnavailable(ILogger logger, Guid tenantId, string nodeId, string outcome);
+
+    // Sin la excepción: su mensaje podría traer lo que la base devolvió sobre la fila.
+    [LoggerMessage(Level = LogLevel.Error, Message = "Chatbot HTTP block {NodeId} of tenant {TenantId} could not record its call ({Outcome}): {ErrorType}")]
+    private static partial void LogNotRecorded(ILogger logger, Guid tenantId, string nodeId, string outcome, string errorType);
+
+    /// <summary>D-H5: <c>User-Agent: qep-automations</c>. El tope real es el <c>timeoutSeconds</c> del bloque (1..10); éste sólo ataja una
+    /// llamada a la que nadie le puso uno.</summary>
+    public static void ConfigureClient(HttpClient client)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+        client.Timeout = TimeSpan.FromSeconds(MaxTimeoutSeconds + 5);
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("qep-automations");
+    }
+
+    public async Task<HttpCallResult> ExecuteAsync(HttpCallContext context, HttpNode node, RunVariables variables, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(node);
+        ArgumentNullException.ThrowIfNull(variables);
+
+        // Sin conexión no hay fila que registrar (http_calls.connection_id no admite null). Un header reservado (P2-R30/P2-R31) es una conexión
+        // guardada antes de la regla: no se usa, igual que una pausada.
+        if (node.ConnectionId is not { } connectionId
+            || await externalApis.ResolveAsync(context.TenantId, connectionId, cancellationToken) is not { } credentials
+            || urlPolicy.IsReservedHeader(credentials.AuthHeader))
+        {
+            LogUnavailable(logger, context.TenantId, context.NodeId, HttpCallOutcomes.ConnectionUnavailable);
+            return new HttpCallResult(false, null, RunVariables.Empty(), HttpCallOutcomes.ConnectionUnavailable, HttpCallOutcomes.ConnectionUnavailable);
+        }
+
+        var request = HttpBlockRequest.Build(node, variables);
+        var call = new Call(context, connectionId, request.Method, request.Path, clock.UtcNow, Stopwatch.GetTimestamp());
+
+        if (urlPolicy.Reject(credentials.BaseUrl) is { } rejected)
+        {
+            return await FinishAsync(call, Failure(HttpCallOutcomes.UrlRejected, null, rejected), cancellationToken);
+        }
+
+        if (request.PathHasDotSegment)
+        {
+            return await FinishAsync(call, Failure(HttpCallOutcomes.UrlRejected, null, "path_dot_segment"), cancellationToken);
+        }
+
+        if (request.Body is HttpBlockBody.Json json && !json.IsWellFormed())
+        {
+            return await FinishAsync(call, Failure(HttpCallOutcomes.BodyNotJson, null, HttpCallOutcomes.BodyNotJson), cancellationToken);
+        }
+
+        // Una URL que no se arma (un valor enorme pasa el largo máximo de System.Uri) no puede lanzar: deshacer la unidad la reintentaría igual.
+        if (UrlOf(credentials.BaseUrl, request) is not { } url)
+        {
+            return await FinishAsync(call, Failure(HttpCallOutcomes.UrlRejected, null, "url_invalid"), cancellationToken);
+        }
+
+        HttpContent? content;
+        switch (request.Body)
+        {
+            case HttpBlockBody.Json body:
+                content = new StringContent(body.Content, Encoding.UTF8, "application/json");
+                break;
+            case HttpBlockBody.Multipart form:
+                var built = await FormAsync(context.TenantId, form, variables, cancellationToken);
+                if (built.Failure is { } notReady)
+                {
+                    return await FinishAsync(call, Failure(HttpCallOutcomes.MediaNotReady, null, notReady), cancellationToken);
+                }
+
+                content = built.Content;
+                break;
+            default:
+                content = null;
+                break;
+        }
+
+        var result = await SendAsync(node, credentials, request.Method, url, content, cancellationToken);
+        return await FinishAsync(call, result, cancellationToken);
+    }
+
+    private async Task<HttpCallResult> SendAsync(
+        HttpNode node, ExternalApiCredentials credentials, string method, Uri url, HttpContent? content, CancellationToken cancellationToken)
+    {
+        using var message = new HttpRequestMessage(new HttpMethod(method), url) { Content = content };
+        message.Headers.TryAddWithoutValidation(credentials.AuthHeader, credentials.ApiKey);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(node.TimeoutSeconds, MinTimeoutSeconds, MaxTimeoutSeconds)));
+        try
+        {
+            using var response = await httpClientFactory.CreateClient(HttpClientName)
+                .SendAsync(message, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            var status = (int)response.StatusCode;
+            // Un status que no cumple no necesita el cuerpo: de él no se guarda nada.
+            if (!IsOk(node.OkWhen, status))
+            {
+                return Failure(HttpCallOutcomes.ErrorStatus, status, $"http_{status}");
+            }
+
+            if (await ReadCappedAsync(response.Content, timeout.Token) is not { } body)
+            {
+                return Failure(HttpCallOutcomes.ResponseTooLarge, status, HttpCallOutcomes.ResponseTooLarge);
+            }
+
+            return Map(node.Mapping, status, body);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // El timeout del bloque (o el del cliente), no una cancelación de quien llama: ésa se propaga.
+            return Failure(HttpCallOutcomes.Timeout, null, HttpCallOutcomes.Timeout);
+        }
+        catch (HttpRequestException exception)
+        {
+            // D-H2: ConnectCallback rechazó lo que resolvió el host. Es la URL, no la red.
+            return urlPolicy.RejectionIn(exception) is { } reason
+                ? Failure(HttpCallOutcomes.UrlRejected, null, reason)
+                : Failure(HttpCallOutcomes.Network, null, HttpCallOutcomes.Network);
+        }
+    }
+
+    // D-H7: sólo el mapeo guarda algo. Una ruta ausente deja la variable en null, que no es un fallo (la Condición siguiente lo mira).
+    private static HttpCallResult Map(IReadOnlyList<HttpMapping> mapping, int status, byte[] body)
+    {
+        var mapped = RunVariables.Empty();
+        if (mapping.Count == 0)
+        {
+            return new HttpCallResult(true, status, mapped, HttpCallOutcomes.Ok, null);
+        }
+
+        JsonNode? root;
+        try
+        {
+            root = JsonNode.Parse(body);
+        }
+        catch (JsonException)
+        {
+            return Failure(HttpCallOutcomes.MappingFailed, status, HttpCallOutcomes.BodyNotJson);
+        }
+
+        foreach (var pair in mapping)
+        {
+            mapped.Set(pair.To, JsonPath.Select(root, pair.From));
+        }
+
+        return new HttpCallResult(true, status, mapped, HttpCallOutcomes.Ok, null);
+    }
+
+    private static bool IsOk(IReadOnlyList<int>? okWhen, int status) => okWhen is null ? status is >= 200 and < 300 : okWhen.Contains(status);
+
+    // D-H7: ni un Content-Length de más ni un cuerpo sin él que pase el tope; nunca se lee más de MaxResponseBytes + un bloque.
+    private static async Task<byte[]?> ReadCappedAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength > MaxResponseBytes)
+        {
+            return null;
+        }
+
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        int read;
+        while ((read = await stream.ReadAsync(chunk, cancellationToken)) > 0)
+        {
+            if (buffer.Length + read > MaxResponseBytes)
+            {
+                return null;
+            }
+
+            buffer.Write(chunk, 0, read);
+        }
+
+        return buffer.ToArray();
+    }
+
+    // La URL base sin su «/» final más la ruta (que empieza con «/»): /v1 + /customers es /v1/customers, no /customers como resolvería
+    // new Uri(base, relativa). Igual que el probador de la conexión (ExternalApiConnectionTester).
+    private static Uri? UrlOf(Uri baseUrl, HttpBlockRequest request)
+    {
+        var url = new StringBuilder(baseUrl.GetLeftPart(UriPartial.Path).TrimEnd('/'));
+        if (!request.Path.StartsWith('/'))
+        {
+            url.Append('/');
+        }
+
+        url.Append(request.Path);
+        var separator = '?';
+        foreach (var (key, value) in request.Query)
+        {
+            url.Append(separator).Append(Uri.EscapeDataString(key)).Append('=').Append(Uri.EscapeDataString(value));
+            separator = '&';
+        }
+
+        return Uri.TryCreate(url.ToString(), UriKind.Absolute, out var built) ? built : null;
+    }
+
+    private async Task<(HttpContent? Content, string? Failure)> FormAsync(
+        Guid tenantId, HttpBlockBody.Multipart form, RunVariables variables, CancellationToken cancellationToken)
+    {
+        StreamContent? file = null;
+        string? fileName = null;
+        if (form is { FileField: not null, FileVariable: { } fileVariable })
+        {
+            // La variable la escribió el bloque Adjunto (CustomerReply.Receive): sólo su messageId cuenta; la llave de R2 sale de Mensajería.
+            if (!Guid.TryParse(variables.TextOf($"{fileVariable}.messageId"), out var messageId))
+            {
+                return (null, "attachment_missing");
+            }
+
+            if (await StoredAsync(tenantId, messageId, cancellationToken) is not { } stored
+                || await media.OpenReadAsync(stored.Key, cancellationToken) is not { } opened)
+            {
+                return (null, HttpCallOutcomes.MediaNotReady);
+            }
+
+            file = new StreamContent(opened.Content);
+            file.Headers.ContentType = MediaTypeHeaderValue.TryParse(stored.MimeType, out var type) ? type : null;
+            fileName = stored.FileName ?? DefaultFileName;
+        }
+
+        var content = new MultipartFormDataContent();
+        foreach (var (key, value) in form.Fields)
+        {
+            // Sin Content-Type, como manda un navegador un campo de texto: algunas APIs leen un campo con tipo como si fuera un archivo.
+            var field = new StringContent(value);
+            field.Headers.ContentType = null;
+            content.Add(field, key);
+        }
+
+        if (file is not null)
+        {
+            content.Add(file, form.FileField!, fileName!);
+        }
+
+        return (content, null);
+    }
+
+    // D-H8 con el desvío de MediaWaitRetries: el adjunto puede llegar antes de que MediaCopyWorker lo copie a R2.
+    private async Task<StoredAttachment?> StoredAsync(Guid tenantId, Guid messageId, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            if (await media.TryGetStoredAsync(tenantId, messageId, cancellationToken) is { } stored)
+            {
+                return stored;
+            }
+
+            if (attempt == MediaWaitRetries)
+            {
+                return null;
+            }
+
+            await wait(MediaWaitInterval, cancellationToken);
+        }
+    }
+
+    private static HttpCallResult Failure(string outcome, int? status, string errorCode) =>
+        new(false, status, RunVariables.Empty(), outcome, errorCode);
+
+    private async Task<HttpCallResult> FinishAsync(Call call, HttpCallResult result, CancellationToken cancellationToken)
+    {
+        var durationMs = (int)Math.Min(int.MaxValue, Stopwatch.GetElapsedTime(call.StartedAt).TotalMilliseconds);
+        if (result.Ok)
+        {
+            LogCalled(logger, call.Context.TenantId, call.Context.NodeId, result.Outcome, result.Status, durationMs);
+        }
+        else
+        {
+            LogFailed(logger, call.Context.TenantId, call.Context.NodeId, result.Outcome, result.Status, durationMs);
+        }
+
+        try
+        {
+            await callLog.RecordAsync(
+                new HttpCallEntry(
+                    call.Context.TenantId, call.Context.RunId, call.Context.SimulationId, call.Context.NodeId, call.ConnectionId, call.Method,
+                    call.Path, result.Status, durationMs, result.Outcome, result.ErrorCode, call.CalledAt),
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // La llamada ya salió y no se repite: si la fila falla, el bloque sigue con su resultado. Deshacer la unidad por el registro haría
+            // que el reintento volviera a llamar a la API (un POST que crea una orden, dos veces).
+            LogNotRecorded(logger, call.Context.TenantId, call.Context.NodeId, result.Outcome, exception.GetType().Name);
+        }
+
+        return result;
+    }
+
+    private sealed record Call(HttpCallContext Context, Guid ConnectionId, string Method, string Path, DateTimeOffset CalledAt, long StartedAt);
+}

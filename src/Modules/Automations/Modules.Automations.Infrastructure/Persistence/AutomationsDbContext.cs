@@ -219,7 +219,9 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
         call.Property(value => value.Path).HasColumnName("path").HasMaxLength(512);
         call.Property(value => value.StatusCode).HasColumnName("status_code");
         call.Property(value => value.DurationMs).HasColumnName("duration_ms");
-        call.Property(value => value.Outcome).HasColumnName("outcome").HasMaxLength(16);
+        // §4.2 decía varchar(16); el ejecutor (plan 2, tarea 11) registra también response_too_large (18). 24 deja margen a los de
+        // HttpCallOutcomes sin cambiar ningún nombre.
+        call.Property(value => value.Outcome).HasColumnName("outcome").HasMaxLength(24);
         call.Property(value => value.ErrorCode).HasColumnName("error_code").HasMaxLength(64);
         call.Property(value => value.CalledAt).HasColumnName("called_at");
         call.HasIndex(value => new { value.TenantId, value.CalledAt }, "IX_http_calls_tenant_called").IsDescending(false, true);

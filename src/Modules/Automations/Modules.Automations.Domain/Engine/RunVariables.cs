@@ -76,6 +76,17 @@ public sealed class RunVariables
         _ => node.ToJsonString(Compact),
     };
 
+    /// <summary>Fallo P2-R11: el valor como literal JSON para un cuerpo de API (texto entre comillas y escapado, ausente como
+    /// <c>null</c>), con el mismo escape que <see cref="ToJson"/>.</summary>
+    internal static string JsonLiteral(JsonNode? node) => node is null ? "null" : node.ToJsonString(Compact);
+
+    /// <summary>Fallo P2-R11: el texto escapado para ir dentro de una cadena JSON que ya tiene sus comillas.</summary>
+    internal static string JsonStringContent(string text)
+    {
+        var quoted = JsonSerializer.Serialize(text, Compact);
+        return quoted[1..^1];
+    }
+
     public IReadOnlyDictionary<string, JsonNode?> Snapshot() =>
         root.ToDictionary(pair => pair.Key, pair => pair.Value?.DeepClone(), StringComparer.Ordinal);
 

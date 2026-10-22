@@ -61,6 +61,67 @@ public sealed class AutomationAdaptersTests
         Assert.Equal([(active, "Clientes", "Active"), (paused, "Órdenes", "Paused")], result.Select(api => (api.Id, api.Name, api.Status)));
     }
 
+    /// <summary>D-H5: la clave sale de Integrations al momento de llamar; sin header guardado se usa <c>x-api-key</c>, como el probador.</summary>
+    [Fact]
+    public async Task ResolveReturnsTheCredentialsOfAnExternalApiConnection()
+    {
+        var id = Guid.CreateVersion7();
+        var connections = new StubIntegrationConnections([], new ResolvedConnection(
+            id, "external-api", "Clasic",
+            new Dictionary<string, string> { ["baseUrl"] = "https://api.clasic.test/v1", ["authHeader"] = " " },
+            new Dictionary<string, string> { ["apiKey"] = "KEY-SENTINEL" }));
+
+        var credentials = await new AutomationExternalApis(connections).ResolveAsync(TenantId, id, Ct);
+
+        Assert.Equal(
+            (new Uri("https://api.clasic.test/v1"), "x-api-key", "KEY-SENTINEL"), (credentials?.BaseUrl, credentials?.AuthHeader, credentials?.ApiKey));
+        Assert.DoesNotContain("KEY-SENTINEL", credentials!.ToString(), StringComparison.Ordinal);
+        Assert.Equal((TenantId, id), connections.Resolved);
+    }
+
+    [Fact]
+    public async Task ResolveKeepsTheStoredAuthHeader()
+    {
+        var id = Guid.CreateVersion7();
+        var connections = new StubIntegrationConnections([], new ResolvedConnection(
+            id, "external-api", "Clasic",
+            new Dictionary<string, string> { ["baseUrl"] = "https://api.clasic.test", ["authHeader"] = "X-Token" },
+            new Dictionary<string, string> { ["apiKey"] = "K" }));
+
+        Assert.Equal("X-Token", (await new AutomationExternalApis(connections).ResolveAsync(TenantId, id, Ct))?.AuthHeader);
+    }
+
+    /// <summary>Una conexión de otro proveedor (un WhatsApp con el id de un bloque mal importado) no es una API externa.</summary>
+    [Fact]
+    public async Task ResolveIgnoresAnotherProviderAndAnUnresolvedConnection()
+    {
+        var other = new StubIntegrationConnections([], new ResolvedConnection(
+            Guid.CreateVersion7(), "meta-whatsapp", "Ventas",
+            new Dictionary<string, string> { ["baseUrl"] = "https://api.clasic.test" }, new Dictionary<string, string> { ["apiKey"] = "K" }));
+        var none = new StubIntegrationConnections([]);
+
+        Assert.Null(await new AutomationExternalApis(other).ResolveAsync(TenantId, Guid.CreateVersion7(), Ct));
+        Assert.Null(await new AutomationExternalApis(none).ResolveAsync(TenantId, Guid.CreateVersion7(), Ct));
+    }
+
+    /// <summary>D-H2 y P2-R30/P2-R31: la política del bloque HTTP es la misma de Integrations, también al reconocer el rechazo al conectar.</summary>
+    [Fact]
+    public void TheUrlPolicyIsTheIntegrationsPolicy()
+    {
+        var policy = new AutomationExternalApiUrlPolicy();
+
+        Assert.Equal("scheme_not_https", policy.Reject(new Uri("http://api.clasic.test")));
+        Assert.Equal("host_is_ip_literal", policy.Reject(new Uri("https://10.0.0.1")));
+        Assert.Null(policy.Reject(new Uri("https://api.clasic.test/v1")));
+        Assert.True(policy.IsReservedHeader("host"));
+        Assert.True(policy.IsReservedHeader("Content-Type"));
+        Assert.False(policy.IsReservedHeader("x-api-key"));
+        Assert.Equal(
+            "resolved_to_forbidden_range",
+            policy.RejectionIn(new HttpRequestException("x", new Modules.Integrations.Infrastructure.ExternalApi.ExternalApiUrlRejectedException("resolved_to_forbidden_range"))));
+        Assert.Null(policy.RejectionIn(new HttpRequestException("x", new IOException("reset"))));
+    }
+
     [Fact]
     public async Task ScheduleNamesCarryTheEffectiveScheduleOrNull()
     {
@@ -351,9 +412,11 @@ public sealed class AutomationAdaptersTests
         public Task<ConversationChannel?> FindChannelAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
-    private sealed class StubIntegrationConnections(IReadOnlyList<ConnectionListing> listings) : IIntegrationConnections
+    private sealed class StubIntegrationConnections(IReadOnlyList<ConnectionListing> listings, ResolvedConnection? resolved = null) : IIntegrationConnections
     {
         public string? RequestedProvider { get; private set; }
+
+        public (Guid TenantId, Guid ConnectionId)? Resolved { get; private set; }
 
         public Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken)
         {
@@ -361,7 +424,11 @@ public sealed class AutomationAdaptersTests
             return Task.FromResult(listings);
         }
 
-        public Task<ResolvedConnection?> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<ResolvedConnection?> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+        {
+            Resolved = (tenantId, connectionId);
+            return Task.FromResult(resolved);
+        }
 
         public Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
