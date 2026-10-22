@@ -454,10 +454,46 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   sustituto). No copies la regla en un módulo —la copia de Pos ya se retiró una vez—: Quotations y Pos no se ven entre
   sí, y dos copias divergen sin que nada se ponga rojo. Ensanchar la columna es una migración en cada módulo más su
   constante (`QuotationProductSnapshot.NameMaxLength`, `PosSaleLine.ProductNameMaxLength`).
-- **`Messaging:Automation:Enqueue` queda apagado hasta que el motor exista (plan 2).** Con el flag prendido y sin worker la
-  cola `messaging.automation_inbox` crece sin que nadie la lea y nadie la purga. Y antes de desplegar la migración
-  `AddAutomationEngine` en un ambiente donde alguien puso a mano `automation_status` ≠ 'None', la migración normaliza esas
-  filas a 'None'.
+- **`Messaging:Automation:Enqueue` está prendido (plan 2) y es lo único que hace que el bot conteste.** Sin el flag el webhook no
+  encola y el bot queda mudo sin error. La cola se purga (filas procesadas a los 7 días, `Automations:Workers:InboxRetentionDays`) y
+  antes de desplegar la migración `AddAutomationEngine` en un ambiente donde alguien puso a mano `automation_status` ≠ 'None', la
+  migración normaliza esas filas a 'None'.
+- **El motor sólo responde una conversación `Open`, sin asesor y con el asistente `Active`; `IBotOutbound` lo vuelve a verificar al
+  enviar** (`RunProcessor.DecideAsync`): entre el claim del inbox y el envío un asesor puede haber tomado la conversación.
+- **El `clientId` de un mensaje del bot no depende del `attempts` de la fila.** Es `DeterministicClientId.For(runId,
+  baseStepNumber, effectIndex)` y el id de una corrida nueva sale del id del mensaje del inbox (`RunIdFor`), así un reintento de la
+  fila —o un `Start` que se deshizo— reusa corrida y `clientId`s y Mensajería, idempotente por `clientId`, no duplica (P2-R5). El
+  plan escribía `(runId, nodeId, índice, attempts)`: con `attempts` el reintento SÍ reenvía. El motor sube `StepNumber` en cada bloque
+  que entra, también al reenviar uno que espera, para que dos unidades confirmadas nunca compartan base.
+- **El cliente HTTP del bloque se registra en Bootstrapper, no en `AddAutomationsInfrastructure`**, porque su handler anti-SSRF
+  (`ExternalApiUrlPolicy.CreateHandler`) es de `Integrations.Infrastructure`. Sin redirecciones, sin proxy, `RemoveAllLoggers()`: el
+  log de `HttpClient` escribiría la URL con la query del cliente. Cambiar el handler sin pasar por ahí deja a cualquier admin con un
+  proxy hacia la red interna; `CompositionRootTests` amarra que el handler sea el de la política.
+- **Una llamada HTTP del bloque no se puede deshacer, y la unidad sí.** Si el proceso muere entre la llamada y el commit, el
+  reintento vuelve a llamar (P2-R37; la API de Clasic no tiene llave de idempotencia). Si `http_calls` no se puede escribir, se loguea
+  y se sigue: lanzar deshace la unidad y repite la llamada.
+- **Nada de lo que responde una API externa, sus headers ni la clave sale a logs, auditoría ni `http_calls`** (D-H5, D-H6). La
+  prueba `TheKeyNeverAppearsInLogsAuditOrHttpCalls` corre el host en `Trace`, porque el log de headers de `HttpClient` es `Trace`:
+  a `Information` quitar `RemoveAllLoggers()` pasaría sin verse. `authHeader` no puede ser un header reservado (`Host`, `Content-*`,
+  `Proxy-*`…, P2-R30); la lista vive en `ExternalApiUrlPolicy.IsReservedHeader` y copiada en el patrón del catálogo
+  (`IntegrationProviders.ExternalApi`), amarradas por una prueba: se cambian juntas.
+- **Un valor del cliente en la ruta del bloque HTTP se escapa y se vigila** (P2-R31/R32/R34): `Uri.EscapeDataString`, y un segmento
+  `.`/`..` (también `%2E%2E`) o un valor vacío rechaza la llamada (`path_dot_segment`, `path_value_empty`) sin hacerla, porque
+  `System.Uri` resuelve `..` aun codificado y un `{id}` vacío llega a la colección con un `PUT`. El cuerpo se interpola
+  JSON-aware (P2-R11): dentro de un string, el texto escapado; suelto, el literal JSON (`null` si falta la variable).
+- **El mapeo de la respuesta no usa la gramática de las variables.** `mapping.from` acepta `$`, `$[0]`, `[0].id` y rutas con puntos
+  (`JsonPath.IsValidResponsePath`, P2-R36): Clasic responde arreglos en la raíz (`[].id`, Anexo C). Un `from` que no cumple es
+  `http.mapping_path_invalid` al validar (antes guardaba `null` en silencio). Y el validador detecta `{referencia}` con un patrón
+  más laxo (`VariableToken`: `{_x}`, `{a..b}`) que `TemplateText`, que es lo que el motor reemplaza.
+- **Esperas con tope por el lease de 30 s del inbox.** El adjunto del bloque HTTP se espera 20 s (4 × 5 s), no los 60 s de D-H8; el
+  motor corta en `EngineReentries.Max = 25` reentradas por unidad (HTTP u horario que vuelven a entrar al motor) con
+  `automations.run.loop_detected`, igual que el simulador (P2-R40); y un solo `ClaimAsync` reclama una fila, para que cada unidad
+  arranque con el lease entero (P2-R24). Subir cualquiera sin subir el lease hace que otra réplica reclame la misma fila a mitad.
+- **`http_calls.outcome` mide 24, no 16** (spec §4.2 dice 16; `response_too_large` ya tiene 18, migración `WidenHttpCallOutcome`).
+  Un outcome nuevo más largo es otra migración.
+- **El simulador corre el borrador, no la versión publicada, y `Start` exige cuerpo** (`{ "liveHttp": false }`; sin cuerpo no es lo
+  mismo). Con `liveHttp` un bucle de HTTP puede tardar `25 × timeoutSeconds` en un solo request. El bloque HTTP del simulador usa
+  `JsonPath.SelectResponse`, el mismo mapeo del ejecutor.
 - **Las plantillas del sistema de Automatizaciones se cargan al arrancar**: un JSON embebido roto tumba el host (a propósito).
 
 ## Verificación

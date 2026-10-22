@@ -2236,6 +2236,9 @@ que con el módulo apagado la respuesta sigue siendo `tenancy.module_not_enabled
 siguen funcionando, para que el tenant vea y limpie lo que ya tenía. `IIntegrationConnections.ResolveAsync`
 y `ListActiveAsync` saltan un proveedor deshabilitado, así que ningún consumidor envía por él.
 
+Desde el spec 2026-10-21 hay además **API externa** (`external-api`, visible con `automations` activo; ver
+[Bloque HTTP y proveedor `external-api`](#bloque-http-y-proveedor-external-api)): la usan los bloques HTTP de los chatbots.
+
 Desde el spec 2026-10-09 el catálogo tiene dos proveedores: **Zenvia (WhatsApp)** y **WhatsApp Business
 (Meta)** (`whatsapp-cloud`, visible con `messaging` activo, tope de 5). El segundo no se conecta por
 formulario sino por **Embedded Signup**: el frontend abre el popup de Meta con `Meta:App:AppId` y
@@ -2830,9 +2833,9 @@ Prender `pipeline` al tenant desde la consola de operador; para el triage tambi�
 
 ### Automatizaciones: constructor de chatbots
 
-El constructor de chatbots de WhatsApp (spec 2026-10-21, plan backend 1): un admin arma un flujo de bloques en un
-lienzo, lo valida y lo publica sobre una o varias conexiones. En este plan **nada ejecuta todavía un flujo**: el motor
-que lee las versiones publicadas y contesta es el plan 2. Módulo `automations` (exige `messaging`, se prende por tenant),
+El constructor de chatbots de WhatsApp (spec 2026-10-21, planes backend 1 y 2): un admin arma un flujo de bloques en un
+lienzo, lo valida y lo publica sobre una o varias conexiones, y el motor (ver [El motor](#el-motor-de-chatbots)) lo ejecuta contra
+los clientes que escriben. Módulo `automations` (exige `messaging`, se prende por tenant),
 permisos `automations.chatbot.read|manage` de núcleo y de fábrica sólo en `admin`: cada handler revisa el módulo y
 responde 403 `tenancy.module_not_enabled`. Esquema `automations` con siete tablas: `chatbots`, `chatbot_versions`,
 `chatbot_connections`, `chatbot_templates`, `conversation_runs`, `http_calls` y `simulations`. Los únicos son
@@ -2890,8 +2893,34 @@ las «API externa» que usa. El cuerpo de
 `http.connection_missing`, `http.connection_paused`, `http.body_not_json`, `http.path_invalid`, `http.no_sample_response`,
 `condition.no_rules`, `variable.name_invalid`, `variable.never_set` y `business_hours.not_assigned`, más los de parseo
 `flow.malformed` y `flow.unknown_kind`. La lista cerrada `fallback` de una pregunta es `repeat | otherOutput | handoff`
-(R15). Hay huecos conocidos que el motor (plan 2) tiene que cerrar antes de leer versiones: cero botones, lista fija sin
-filas, URL de botón vacía o no https, `timeoutSeconds` fuera de 1..10, `maxAttempts` fuera de 1..5, entre otros.
+(R15). Como las versiones son inmutables, desde el plan 2 (P2-R8) también son **errores** lo que Meta o el motor no pueden
+ejecutar: `buttons.empty` (cero botones), `list.no_rows` (lista fija sin filas), `list.dynamic_incomplete` (lista dinámica sin
+colección, `idField` o `titleField`), `message.url_invalid` (URL de botón vacía o no https), `http.timeout_invalid`
+(`timeoutSeconds` fuera de 1..10), `question.max_attempts_invalid` (`maxAttempts` fuera de 1..5), `question.pattern_invalid`
+(validación `regex` con patrón vacío o que no compila) y `question.keywords_empty` (validación `keywords` sin lista);
+`http.path_invalid` rechaza además un segmento `.` o `..`. `http.mapping_path_invalid` (P2-R39) es el `from` de un mapeo que
+el ejecutor no sabe leer: antes se guardaba `null` sin avisar, así que un borrador viejo con un `from` malo ya no publica hasta
+corregirlo. Y `trigger.keywords_empty` es del chatbot, no de un bloque: lo agrega el handler de publicar (`nodeId` nulo) cuando
+el disparador es `Keyword` sin palabras.
+
+**Gramáticas.** Hay dos, y no son la misma:
+
+- *Referencia a variable* (`{cliente.firstName}`, `{data[0].id}`): nombre, y luego `.nombre` o `[n]`. Es lo que lee el
+  motor (`TemplateText`, `JsonPath.Select`). El validador la detecta con un patrón algo más laxo (`VariableToken`, que acepta
+  `{_x}` y `{a..b}`), así que hay referencias que pasan sin aviso y el motor deja **vacías** en tiempo de ejecución: un texto
+  con `{` que no es variable se queda tal cual.
+- *Ruta del mapeo de la respuesta* (`mapping.from`, P2-R36): además de la anterior, `$` (el cuerpo entero), `$[0]`, `$.data`,
+  `[0].id` y `data.items[0].id`. Existe porque Clasic responde arreglos en la raíz (`[].id` en el Anexo C). `$` no nombra una
+  variable: no vale como referencia.
+
+**Interpolación en el bloque HTTP.** El cuerpo es JSON-aware (P2-R11): un `{variable}` dentro de un string se reemplaza por el
+texto de la variable **escapado** para JSON; uno suelto (fuera de comillas) por su literal JSON (número, booleano, objeto,
+arreglo, o string entre comillas), y una variable ausente es `null`. El cuerpo resultante se vuelve a parsear: si no es JSON, el
+outcome es `body_not_json` **antes** de llamar. En la ruta, cada valor interpolado se escapa con `Uri.EscapeDataString`
+(P2-R31): un `/`, `?`, `#` o `%` que venga de lo que escribió el cliente no cambia la ruta ni agrega una query. Se rechaza sin
+llamar (outcome `url_rejected`) un valor que sea o contenga un segmento `.` o `..`, también codificado y en `/` o `\`
+(`path_dot_segment`, P2-R32/R34) y uno vacío —una variable sin valor— (`path_value_empty`): `/customers/{id}` sin id
+llegaría a la colección entera con un `PUT` o `PATCH`.
 
 **Contrato para el frontend (plan 3).** El editor manda **siempre todos los campos** de cada bloque: `""` (nunca `null`)
 para un texto que todavía no se escribió, y `null` (nunca `""`) para ids y números sin fijar (`connectionId`, `reasonId`…);
@@ -2900,9 +2929,113 @@ clave se guardan normalizadas (minúsculas, sin tildes) y así vuelven. Un solo 
 
 **Lo que Mensajería expone para el motor.** `IBotOutbound` (enviar como el bot, con las mismas guardas de estado que un
 asesor y la misma regla de texto) e `IAutomationInbox` (la cola `messaging.automation_inbox` que llena el webhook y que el
-motor reclamará con lease y testigo de intentos) son puertos de Mensajería que el plan 2 consume. La ingesta sólo encola con
-`Messaging:Automation:Enqueue`, **apagado** hasta que exista el worker. En el hilo, `MessageDto.sentByChatbot` (el chatbot
-autor) e `interactive` (los botones, la lista o el enlace de un interactivo saliente) son aditivos: un cliente viejo los ignora.
+motor reclama con lease de 30 s y testigo de intentos) son puertos de Mensajería que Automations consume por adaptadores en
+Bootstrapper (`src/Bootstrapper/Automation*.cs`). La ingesta encola con `Messaging:Automation:Enqueue`, **prendido** por defecto
+desde el plan 2 (`appsettings.json`): apagarlo deja al bot mudo sin error, porque el webhook ya no encola. En el hilo,
+`MessageDto.sentByChatbot` (el chatbot autor) e `interactive` (los botones, la lista o el enlace de un interactivo saliente) son
+aditivos: un cliente viejo los ignora.
+
+#### El motor de chatbots
+
+Plan 2 (spec 2026-10-21 §5, §7, §8). Un `BackgroundService` (`AutomationInboxWorker`) reclama **una fila por llamada** de
+`messaging.automation_inbox` (así cada unidad arranca con el lease de 30 s entero) hasta `InboxBatchSize` por pasada, y
+`RunProcessor` procesa cada una en su propio scope: toma el candado de la conversación (`LockConversationAsync`, siempre, antes
+de leer la corrida viva), decide qué le toca al bot y aplica los efectos del `FlowEngine`, un dominio puro (`Step(flow, settings,
+state, input, now)` → estado nuevo + efectos). El motor **sólo responde** una conversación `Open`, sin asesor asignado y con
+`automation_status` `Active` (o sin asistente y con disparador que aplique); `IBotOutbound` vuelve a verificarlo al enviar, porque
+entre el claim y el envío un asesor puede haber tomado la conversación. Una corrida viva termina con **la versión con que
+empezó** (D-C1): se lee su `chatbot_version_id`, no la publicada.
+
+- **Reintento sin duplicar.** El `clientId` de cada envío es `DeterministicClientId.For(runId, baseStepNumber, effectIndex)`
+  (P2-R5): `baseStepNumber` es el `StepNumber` persistido al empezar la unidad y `effectIndex` el ordinal del envío dentro de ella
+  (contando las reentradas de HTTP y horario). El id de una corrida **nueva** sale del id del mensaje del inbox
+  (`DeterministicClientId.RunIdFor`), así que un `Start` que se deshizo y se reintenta reusa corrida y `clientId`s, y el backend
+  de Mensajería, que es idempotente por `clientId`, no manda dos veces. El `attempts` de la fila **no** entra: cambia en cada
+  reintento. Además `conversation_runs.last_inbound_message_id` marca el último entrante atendido (P2-R24): si la fila se vuelve a
+  entregar tras un commit, se completa con outcome `duplicate`.
+- **Corridas que terminan mal** (`failure_code`, más un `Handoff` y la auditoría `automations.run.failed`):
+  `automations.run.loop_detected` (el flujo volvió a un bloque sin esperar al cliente, P2-R13, o pasó el tope de reentradas),
+  `automations.run.target_missing` (una salida apunta a un bloque que no existe en la versión guardada, P2-R14/R17) y
+  `automations.run.version_missing` (la versión de una corrida viva ya no existe, P2-R6). Los de un envío rechazado son los
+  códigos de Mensajería (`messaging.connection_unavailable`, P2-R21…). Abandono: una corrida `Waiting` sin actividad 24 h se
+  cierra `Abandoned` (D-M13); una conversación pausada, resuelta o devuelta al asistente a mano se cierra `Interrupted` (D-M15).
+- **Tope de reentradas: `EngineReentries.Max = 25` por unidad** (P2-R40). Un bloque HTTP u Horario devuelve el control al motor
+  en la misma unidad; el validador permite un ciclo que pasa por ellos, y sin tope giraría por encima del lease. El simulador usa
+  el mismo.
+- **Retención.** Las filas procesadas del inbox se purgan a los 7 días (`InboxRetentionDays`, P2-R7), `http_calls` a los 30
+  (`HttpCallRetentionDays`) y las simulaciones vencen a las 2 h sin mensajes. Los barridos corren cada `AbandonSweepMinutes` (10)
+  y las simulaciones en su propio bucle (`SimulationSweepMinutes`, 10).
+
+Opciones, todas bajo `Automations:Workers` (`AutomationsWorkerOptions`, con defaults en código; `appsettings.json` los repite):
+
+| Clave | Default | Qué hace |
+| --- | --- | --- |
+| `InboxPollSeconds` | 1 | El tick del worker del inbox |
+| `InboxBatchSize` | 20 | Filas por pasada (una por `ClaimAsync`) |
+| `AbandonSweepMinutes` | 10 | Cada cuánto se abandonan corridas viejas y se purga el inbox y `http_calls` |
+| `InboxRetentionDays` | 7 | Días que se conserva una fila procesada del inbox |
+| `HttpCallRetentionDays` | 30 | Días que se conserva una fila de `http_calls` |
+| `SimulationSweepMinutes` | 10 | Cada cuánto se borran simulaciones vencidas |
+
+`GET /runs?chatbotId=&from=&to=` (`automations.chatbot.read`) lista las corridas de un chatbot; sin rango, los últimos 7 días, y
+`from` > `to` es 422 `automations.run.range_invalid` (código nuevo, no está en §4.3). Lo que ve el asesor en el hilo no sale de
+acá sino de `GET …/messaging/conversations/{id}/automation` (§5.5).
+
+#### Bloque HTTP y proveedor `external-api`
+
+El proveedor `external-api` («API externa», categoría `Automation`, visible con `automations` activo, tope de 10 conexiones por
+tenant, sin habilitación por tenant) guarda `baseUrl` (https, sin query), `authHeader` (opcional; default `x-api-key`), `apiKey`
+(el único secreto) y `testPath` (opcional; default `/`). El probador hace un `GET` a `baseUrl + testPath` y no revela la clave.
+`authHeader` **no puede ser un header reservado** (P2-R30): `Host` (sería el SNI del TLS y mandaría la clave en claro),
+`Connection`, `Keep-Alive`, `Transfer-Encoding`, `TE`, `Trailer`, `Upgrade`, `Cookie`, `User-Agent`, `Proxy-*` y `Content-*`, sin
+distinguir mayúsculas: el catálogo responde 422 en `fields.authHeader`, y el probador (`reserved_header`) y el bloque lo vuelven
+a mirar antes de mandar.
+
+Política anti-SSRF (D-H2, `ExternalApiUrlPolicy`): al guardar, `https` y un nombre, nunca una IP literal; en **cada conexión**
+(`ConnectCallback`, porque el DNS de un nombre público puede cambiar después: rebinding) se resuelve el host y, si **alguna**
+dirección es prohibida, no se conecta a ninguna (P2-R29). Prohibido es todo lo que no es internet público (P2-R28): loopback,
+privadas, link-local, `0.0.0.0/8`, CGNAT `100.64.0.0/10`, `192.0.0.0/24`, `198.18.0.0/15`, `240.0.0.0/4`, y en IPv6 `::`, `::1`,
+`fe80::/10`, `fec0::/10`, `fc00::/7` y `ff00::/8`; una IPv4 mapeada (`::ffff:0:0/96`) o traducida por NAT64 (`64:ff9b::/96` y
+`64:ff9b:1::/48`) se desenvuelve y se juzga como IPv4. Sin redirecciones (un 3xx llevaría la clave al host de `Location`) y sin
+proxy. **El cliente del bloque se registra en Bootstrapper** (`QepServiceCollectionExtensions`) y no en
+`AddAutomationsInfrastructure`, porque ese handler es de `Integrations.Infrastructure` y Automations no la referencia;
+`RemoveAllLoggers()` evita que el log de `HttpClient` escriba la URL con la query del cliente. `CompositionRootTests` lo amarra.
+
+Qué se guarda y qué no (D-H5, D-H6): nada del cuerpo de la respuesta, sus headers ni la clave sale a logs, auditoría,
+`http_calls` ni `platform.request_failures`. `automations.http_calls` guarda la ruta ya interpolada y **sin query**, método,
+status, duración, `outcome` y `error_code`. Outcomes: `ok`, `error_status` (`error_code` = `http_<status>`), `timeout`,
+`network`, `mapping_failed`, `url_rejected` (con el motivo en `error_code`: `path_dot_segment`, `path_value_empty`, `url_invalid`
+o el de la política), `connection_unavailable` (sin conexión usable o `authHeader` reservado: **no deja fila**),
+`media_not_ready`, `response_too_large` (la respuesta pasa de 1 MB) y `body_not_json` (que también cubre `form_invalid`, un
+multipart que no se pudo armar). La columna `outcome` mide **24**, no 16 como dice el SQL del spec §4.2
+(`response_too_large` ya tiene 18; migración `WidenHttpCallOutcome`, P2-R33). Si escribir la fila falla, se loguea y el bloque
+devuelve su resultado: lanzar deshacería la unidad y el reintento volvería a llamar a la API (P2-R33).
+
+Desvíos de D-H8 y límites conocidos:
+
+- **Adjunto: se espera 20 s, no los 60 s del spec** (4 reintentos cada 5 s, `MediaWaitRetries`). La unidad corre dentro de un
+  lease de 30 s y esperar 60 haría que otra réplica reclamara la misma fila a mitad; `MediaCopyWorker` corre cada 5 s y copia una
+  imagen en menos de un segundo. Pasado el tiempo, el bloque sale por `error` con `media_not_ready`.
+- **Un cuelgue entre la llamada HTTP y el commit de la unidad vuelve a llamar a la API** (P2-R37): la corrida `Running` repite el
+  bloque. Es un límite aceptado: la API de Clasic no tiene llave de idempotencia, y un servicio duplicado es posible si el proceso
+  muere justo ahí.
+- **El mapeo lee arreglos en la raíz** (`$`, `[0].id`), ver Gramáticas. Sin mapeo (D-H7) el bloque sólo decide `ok` o `error`.
+
+#### Simulador
+
+`POST …/automations/chatbots/{id}/simulations`, `POST …/simulations/{id}/messages` y `DELETE …/simulations/{id}`
+(`automations.chatbot.manage`, sin `If-Match`: la simulación es del panel que la abrió). Corre el **borrador** con el mismo
+`FlowEngine` y escribe una transcripción en vez de enviar; traspasar, resolver y terminar sólo dejan una línea de sistema
+(D-S3), nunca tocan conversaciones, el inbox ni las corridas.
+
+- **`Start` necesita cuerpo**: `{ "liveHttp": false }`. Sin cuerpo no es lo mismo que `liveHttp: false`.
+- Un bloque HTTP responde con su **respuesta de ejemplo** (D-S2); sin ella sale por `error` con `http.no_sample_response`.
+  Con `liveHttp: true` llama a la API de verdad, con las mismas reglas del bloque, **y un bucle puede tardar hasta
+  `25 × timeoutSeconds` en un solo request** (el tope de reentradas aplica igual). Un bloque con archivo en vivo responde
+  `media_not_ready` sin llamar y sin fila en `http_calls`.
+- **Cada mensaje corre contra el borrador actual**, no contra el que había al empezar; si dos llegan a la vez gana el último en
+  escribir. Un mensaje a una simulación terminada la devuelve sin cambios, y una vencida (2 h) es 404
+  `automations.simulation.expired` o `not_found` si ya se borró.
 
 ### Integración con Shopify
 
