@@ -34,6 +34,9 @@ public static class EndReasons
 {
     /// <summary>§5.4: una salida sin conectar (sólo posible si se publicó con avisos) termina la corrida <c>Completed</c>.</summary>
     public const string OutputUnconnected = "output_unconnected";
+
+    /// <summary>Ruling P2-R13: el flujo dio vueltas sin esperar al cliente ni a un efecto externo; la corrida termina <c>Failed</c>.</summary>
+    public const string LoopDetected = "loop_detected";
 }
 
 public sealed record StepResult(RunState State, IReadOnlyList<Effect> Effects);

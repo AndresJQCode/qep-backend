@@ -226,6 +226,24 @@ public sealed class FlowEngineTests
     }
 
     [Fact]
+    public void ACycleWithoutAWaitEndsFailedInsteadOfLooping()
+    {
+        // n1 → c (siempre «yes») → n1 …: nada espera, así que sin tope el paso no terminaría nunca.
+        var flow = Flow(
+            Message("n1", "Hola", next: "c"),
+            new ConditionNode("c", "Siempre", Out((FlowOutputs.Yes, "n1"), (FlowOutputs.No, null)), "all",
+                [new ConditionRule("nada", "isEmpty", null)]));
+
+        var result = Start(flow);
+
+        Assert.Equal(RunStatus.Failed, result.State.Status);
+        Assert.Equal(new Effect.EndRun("n1", "loop_detected"), result.Effects[^1]);
+        // Lo emitido antes del tope se conserva: el tope es 2 × 2 bloques + 10 = 14 entradas, siete vueltas de n1 → c.
+        Assert.Equal(7, result.Effects.OfType<Effect.SendText>().Count());
+        Assert.Equal(14, result.State.StepNumber);
+    }
+
+    [Fact]
     public void TheAnnexAFlowStartsWithTheWelcomeAndWaitsForTheDocument()
     {
         var variables = RunVariables.Empty();

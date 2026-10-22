@@ -70,7 +70,7 @@ public static class FlowEngine
     private sealed class Walk
     {
         private readonly Dictionary<string, FlowNode> nodes = new(StringComparer.Ordinal);
-        private readonly HashSet<string> entered = new(StringComparer.Ordinal);
+        private readonly int maxEntries;
         private readonly List<Effect> effects = [];
         private readonly List<TraceEntry> trace;
         private readonly RunVariables variables;
@@ -79,6 +79,7 @@ public static class FlowEngine
         private string? currentNodeId;
         private int stepNumber;
         private int attempts;
+        private int entries;
 
         public Walk(FlowDefinition flow, RunState state, DateTimeOffset now)
         {
@@ -87,6 +88,11 @@ public static class FlowEngine
                 nodes.TryAdd(node.Id, node);
             }
 
+            // Ruling P2-R13. Sin una espera ni un efecto externo, las variables no cambian dentro de un paso: un recorrido legítimo
+            // entra a lo sumo una vez en cada bloque, así que pasar del doble de bloques (más un margen para flujos diminutos) sólo
+            // pasa con un ciclo que daría vueltas para siempre. Lanzar no sirve: el procesador revertiría la unidad, la fila se
+            // reintentaría cinco veces y la conversación quedaría Active con un bot mudo; terminar Failed deja que alguien la vea.
+            maxEntries = (flow.Nodes.Count * 2) + 10;
             trace = [.. state.Trace];
             variables = state.Variables.Clone();
             currentNodeId = state.CurrentNodeId;
@@ -127,11 +133,12 @@ public static class FlowEngine
                     throw new InvalidOperationException($"El flujo apunta al bloque «{targetId}», que no existe.");
                 }
 
-                // Dentro de un paso nada cambia las variables, así que volver a un bloque sin pasar por una espera repetiría el mismo
-                // recorrido para siempre (y acumularía envíos sin fin). El validador no rechaza esos ciclos al publicar.
-                if (!entered.Add(node.Id))
+                // El validador no rechaza los ciclos sin espera al publicar: el tope corta aquí, con lo ya emitido (ver maxEntries).
+                if (++entries > maxEntries)
                 {
-                    throw new InvalidOperationException($"El flujo vuelve al bloque «{node.Id}» sin esperar al cliente: daría vueltas para siempre.");
+                    effects.Add(new Effect.EndRun(node.Id, EndReasons.LoopDetected));
+                    status = RunStatus.Failed;
+                    return Result();
                 }
 
                 // Los intentos son del bloque que espera: un bloque nuevo empieza de cero (D-M7).
