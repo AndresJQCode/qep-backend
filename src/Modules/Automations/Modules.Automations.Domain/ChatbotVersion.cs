@@ -10,6 +10,19 @@ public sealed class ChatbotVersion
         LayoutJson = "{}";
     }
 
+    internal static ChatbotVersion Publish(Guid chatbotId, Guid tenantId, int number, string flowJson, string layoutJson, Guid by, DateTimeOffset now) =>
+        new()
+        {
+            Id = Guid.CreateVersion7(),
+            ChatbotId = chatbotId,
+            TenantId = tenantId,
+            Number = number,
+            FlowJson = flowJson,
+            LayoutJson = layoutJson,
+            PublishedAt = now,
+            PublishedBy = by,
+        };
+
     public Guid Id { get; private set; }
 
     public Guid ChatbotId { get; private set; }

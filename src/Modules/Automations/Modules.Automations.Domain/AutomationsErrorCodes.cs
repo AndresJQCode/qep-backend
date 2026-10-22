@@ -11,6 +11,15 @@ public static class AutomationsErrorCodes
     /// <summary><c>IX_chatbots_tenant_name</c>: el nombre se compara sin mayúsculas.</summary>
     public const string ChatbotNameTaken = "automations.chatbot.name_taken";
 
+    /// <summary>D-C12: el nombre llega vacío o con más de 80 caracteres (no está en §4.3; lo agrega el agregado).</summary>
+    public const string ChatbotNameInvalid = "automations.chatbot.name_invalid";
+
+    /// <summary>D-C6: más de 10 palabras clave distintas (ya normalizadas).</summary>
+    public const string ChatbotKeywordsTooMany = "automations.chatbot.keywords_too_many";
+
+    /// <summary>D-C6: una palabra clave (o la de reinicio) pasa de 40 caracteres.</summary>
+    public const string ChatbotKeywordTooLong = "automations.chatbot.keyword_too_long";
+
     /// <summary>Publicar con al menos un error del validador.</summary>
     public const string ChatbotInvalid = "automations.chatbot.invalid";
 

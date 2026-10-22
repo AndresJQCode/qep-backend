@@ -26,6 +26,10 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
     /// traduce por este nombre a 409 <c>automations.chatbot.connection_taken</c>.</summary>
     public const string ActiveConnectionIndex = "IX_chatbot_connections_active";
 
+    /// <summary>§4.2: <c>UNIQUE (chatbot_id, number)</c>. Dos publicaciones concurrentes proponen el mismo número; la segunda choca
+    /// con este índice.</summary>
+    public const string VersionNumberIndex = "IX_chatbot_versions_chatbot_number";
+
     /// <summary>§4.2: único por <c>(tenant_id, lower(name))</c>, por SQL en <c>AddAutomations</c>.</summary>
     public const string TemplateNameIndex = "IX_chatbot_templates_tenant_name";
 
@@ -108,7 +112,7 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
         chatbot.Property(value => value.RestartKeyword).HasColumnName("restart_keyword").HasMaxLength(Chatbot.RestartKeywordMaxLength)
             .HasDefaultValue(Chatbot.DefaultRestartKeyword);
         chatbot.Property(value => value.MaxAttempts).HasColumnName("max_attempts").HasConversion<short>()
-            .HasDefaultValue(Chatbot.DefaultMaxAttempts);
+            .HasDefaultValue(Chatbot.DefaultMaxAttempts).HasSentinel(-1);
         chatbot.Property(value => value.DraftFlowJson).HasColumnName("draft_flow").HasColumnType("jsonb");
         chatbot.Property(value => value.DraftLayoutJson).HasColumnName("draft_layout").HasColumnType("jsonb").HasDefaultValueSql("'{}'");
         chatbot.Property(value => value.DraftUpdatedAt).HasColumnName("draft_updated_at");
@@ -139,7 +143,7 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
         version.Property(value => value.PublishedAt).HasColumnName("published_at");
         version.Property(value => value.PublishedBy).HasColumnName("published_by");
         // §4.2: UNIQUE (chatbot_id, number). Dos publicaciones concurrentes proponen el mismo número; la segunda choca acá.
-        version.HasIndex(value => new { value.ChatbotId, value.Number }, "IX_chatbot_versions_chatbot_number").IsUnique();
+        version.HasIndex(value => new { value.ChatbotId, value.Number }, VersionNumberIndex).IsUnique();
     }
 
     private static void ConfigureConnection(ModelBuilder modelBuilder)

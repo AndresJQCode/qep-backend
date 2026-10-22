@@ -9,6 +9,12 @@ public sealed class ChatbotConnection
     {
     }
 
+    internal static ChatbotConnection Create(Guid chatbotId, Guid tenantId, Guid connectionId, bool active) =>
+        new() { ChatbotId = chatbotId, TenantId = tenantId, ConnectionId = connectionId, Active = active };
+
+    /// <summary>Publicar ocupa la conexión (D-C13).</summary>
+    internal void Activate() => Active = true;
+
     public Guid ChatbotId { get; private set; }
 
     public Guid TenantId { get; private set; }
