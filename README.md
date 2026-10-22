@@ -2861,7 +2861,7 @@ EF no modela índices por expresión), `IX_chatbot_versions_chatbot_number` (1, 
 | `POST` | `/chatbots/import` (`{ name, export, connectionMap }`) | `automations.chatbot.manage` |
 | `GET` | `/connections` (las conexiones que el editor ofrece y qué chatbot ocupa cada una) | `automations.chatbot.read` |
 
-Toda escritura sobre un chatbot existente lleva `If-Match` (428 sin él, 412 si es viejo), menos duplicar. Es **un solo**
+Toda escritura sobre un chatbot existente lleva `If-Match` (428 sin él, 412 si es viejo), menos duplicar y guardar como plantilla. Es **un solo**
 `version` compartido entre `PUT /chatbots/{id}` y `PUT …/draft`: guardar el borrador lo mueve y el formulario de ajustes
 tiene que mandar el que le devolvió el último guardado, y al revés.
 
