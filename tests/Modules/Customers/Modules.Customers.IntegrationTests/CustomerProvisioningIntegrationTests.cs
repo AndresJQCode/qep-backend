@@ -137,4 +137,30 @@ public sealed class CustomerProvisioningIntegrationTests
             "SELECT count(*) FROM platform.outbox_messages WHERE payload->>'action' = 'customers.customer.created' "
             + "AND payload->>'actorType' = 'Integration'"));
     }
+
+    // El payload ya tenía source, fijo en «customers»; la caja lo cambia a «pos» y todo lo demás sigue igual.
+    [Fact]
+    public async Task TheAuditPayloadCarriesTheGivenSourceAndDefaultsToCustomers()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        var actor = Guid.CreateVersion7();
+
+        await InScopeAsync<ProvisionedCustomer, ICustomerProvisioning>(factory, provisioning =>
+            provisioning.CreateFromRegisterAsync(
+                Tenant, actor, new RegisterCustomerData("Laura Gómez", "CC", "1020304050", null), "pos", TestContext.Current.CancellationToken));
+        await InScopeAsync<ProvisionedCustomer, ICustomerProvisioning>(factory, provisioning =>
+            provisioning.CreateFromRegisterAsync(
+                Tenant, actor, new RegisterCustomerData("Pedro Ruiz", "CC", "1020304051", null), null, TestContext.Current.CancellationToken));
+
+        Assert.Equal("pos", await ScalarAsync(database.GetConnectionString(),
+            "SELECT payload->>'source' FROM platform.outbox_messages WHERE payload->>'action' = 'customers.customer.created' "
+            + $"AND payload->>'actorId' = '{actor}' AND payload->>'actorType' = 'Human' "
+            + "AND payload->>'resourceId' = (SELECT id::text FROM customers.customers WHERE identification_number = '1020304050')"));
+        Assert.Equal("customers", await ScalarAsync(database.GetConnectionString(),
+            "SELECT payload->>'source' FROM platform.outbox_messages WHERE payload->>'action' = 'customers.customer.created' "
+            + $"AND payload->>'actorId' = '{actor}' AND payload->>'actorType' = 'Human' "
+            + "AND payload->>'resourceId' = (SELECT id::text FROM customers.customers WHERE identification_number = '1020304051')"));
+    }
 }

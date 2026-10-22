@@ -6,13 +6,16 @@ namespace Modules.Customers.Application;
 // Companies.
 public interface ICustomersAuditPublisher
 {
+    /// <param name="source">Quién audita cuando no es el propio módulo (la caja manda <c>"pos"</c>, como
+    /// <c>PosAuditPublisher</c>); <c>null</c> deja <c>"customers"</c>.</param>
     void Publish(
         Guid tenantId,
         Guid actorId,
         string action,
         string resourceId,
         string outcome,
-        DateTimeOffset occurredAt);
+        DateTimeOffset occurredAt,
+        string? source = null);
 
     /// <summary>
     /// Spec de Shopify 2026-10-15 §6.2.1 (H7): lo que hace el sistema por una integración, sin persona detrás. Va con

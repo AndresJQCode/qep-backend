@@ -60,11 +60,12 @@ public interface ICustomerProvisioning
     /// <see cref="CreateCompleteAsync"/>, la carrera del documento no se traga: si otra alta ganó, el llamador tiene que
     /// enterarse para volver a buscar al cliente que quedó.
     /// </summary>
+    /// <param name="source">El origen que va a la bitácora (<c>"pos"</c> desde la caja); <c>null</c> deja el del módulo.</param>
     /// <exception cref="CustomersDomainException">Con <c>customers.customer.identification_type_invalid</c> si el tipo de
     /// documento no existe; con el código de la regla rota si el nombre, el documento o el teléfono no valen; o con
     /// <c>customers.customer.identification_taken</c> si el documento ya lo tiene otro cliente del tenant.</exception>
     Task<ProvisionedCustomer> CreateFromRegisterAsync(
-        Guid tenantId, Guid actorId, RegisterCustomerData data, CancellationToken cancellationToken);
+        Guid tenantId, Guid actorId, RegisterCustomerData data, string? source, CancellationToken cancellationToken);
 }
 
 public sealed class CustomerProvisioning(
@@ -193,7 +194,7 @@ public sealed class CustomerProvisioning(
     }
 
     public async Task<ProvisionedCustomer> CreateFromRegisterAsync(
-        Guid tenantId, Guid actorId, RegisterCustomerData data, CancellationToken cancellationToken)
+        Guid tenantId, Guid actorId, RegisterCustomerData data, string? source, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(data);
         var now = clock.UtcNow;
@@ -207,7 +208,7 @@ public sealed class CustomerProvisioning(
             phoneNormalizer);
         repository.Add(customer);
         // Hay una persona detrás (el cajero), así que va como Human y no por PublishByIntegration.
-        auditPublisher.Publish(tenantId, actorId, CustomerAuditActions.Created, customer.Id.ToString(), Success, now);
+        auditPublisher.Publish(tenantId, actorId, CustomerAuditActions.Created, customer.Id.ToString(), Success, now, source);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return new ProvisionedCustomer(customer.Id.Value, IsComplete: false, IsActive: true, Created: true);
     }

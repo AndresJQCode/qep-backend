@@ -252,7 +252,7 @@ internal sealed class FakeCustomerProvisioning : ICustomerProvisioning
     }
 
     public Task<ProvisionedCustomer> CreateFromRegisterAsync(
-        Guid tenantId, Guid actorId, RegisterCustomerData data, CancellationToken cancellationToken) =>
+        Guid tenantId, Guid actorId, RegisterCustomerData data, string? source, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 }
 

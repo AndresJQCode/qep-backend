@@ -33,12 +33,12 @@ public sealed class CustomerProvisioningTests
 
     private sealed class RecordingAudit : ICustomersAuditPublisher
     {
-        public List<(Guid Tenant, Guid Actor, string Action, string ResourceId, string Outcome)> Human { get; } = [];
+        public List<(Guid Tenant, Guid Actor, string Action, string ResourceId, string Outcome, string? Source)> Human { get; } = [];
 
         public List<(Guid Tenant, string Action, string ResourceId, string Outcome)> ByIntegration { get; } = [];
 
-        public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
-            Human.Add((tenantId, actorId, action, resourceId, outcome));
+        public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, string? source = null) =>
+            Human.Add((tenantId, actorId, action, resourceId, outcome, source));
 
         public void PublishByIntegration(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
             ByIntegration.Add((tenantId, action, resourceId, outcome));
@@ -306,14 +306,14 @@ public sealed class CustomerProvisioningTests
         var cashierId = Guid.NewGuid();
 
         var result = await bed.Provisioning.CreateFromRegisterAsync(
-            Tenant, cashierId, new RegisterCustomerData("Laura Gómez", "CC", "1020304050", null), TestContext.Current.CancellationToken);
+            Tenant, cashierId, new RegisterCustomerData("Laura Gómez", "CC", "1020304050", null), source: null, TestContext.Current.CancellationToken);
 
         var customer = Assert.Single(bed.Customers.Added);
         Assert.False(customer.IsComplete);
         Assert.Equal(new ProvisionedCustomer(customer.Id.Value, false, true, true), result);
         Assert.Empty(bed.Audit.ByIntegration);
         Assert.Equal(
-            (Tenant, cashierId, "customers.customer.created", customer.Id.ToString(), "success"),
+            (Tenant, cashierId, "customers.customer.created", customer.Id.ToString(), "success", (string?)null),
             Assert.Single(bed.Audit.Human));
     }
 
@@ -323,7 +323,7 @@ public sealed class CustomerProvisioningTests
         var bed = NewBed(saveFailure: new CustomersDomainException("customers.customer.identification_taken", "taken"));
 
         var failure = await Assert.ThrowsAsync<CustomersDomainException>(() => bed.Provisioning.CreateFromRegisterAsync(
-            Tenant, Guid.NewGuid(), new RegisterCustomerData("Laura Gómez", "CC", "1020304050", null), TestContext.Current.CancellationToken));
+            Tenant, Guid.NewGuid(), new RegisterCustomerData("Laura Gómez", "CC", "1020304050", null), source: null, TestContext.Current.CancellationToken));
 
         Assert.Equal("customers.customer.identification_taken", failure.Code);
     }
@@ -334,9 +334,45 @@ public sealed class CustomerProvisioningTests
         var bed = NewBed();
 
         var failure = await Assert.ThrowsAsync<CustomersDomainException>(() => bed.Provisioning.CreateFromRegisterAsync(
-            Tenant, Guid.NewGuid(), new RegisterCustomerData("Laura Gómez", "RUT", "1020304050", null), TestContext.Current.CancellationToken));
+            Tenant, Guid.NewGuid(), new RegisterCustomerData("Laura Gómez", "RUT", "1020304050", null), source: null, TestContext.Current.CancellationToken));
 
         Assert.Equal("customers.customer.identification_type_invalid", failure.Code);
         Assert.Empty(bed.Customers.Added);
+    }
+
+    [Fact]
+    public async Task CreateFromRegisterAuditsWithTheGivenSource()
+    {
+        var bed = NewBed();
+
+        await bed.Provisioning.CreateFromRegisterAsync(
+            Tenant, Guid.NewGuid(), new RegisterCustomerData("Laura Gómez", "CC", "1020304050", null), "pos", TestContext.Current.CancellationToken);
+
+        Assert.Equal("pos", Assert.Single(bed.Audit.Human).Source);
+    }
+
+    [Fact]
+    public async Task CreateFromRegisterWithoutSourceAuditsWithTheDefault()
+    {
+        var bed = NewBed();
+
+        await bed.Provisioning.CreateFromRegisterAsync(
+            Tenant, Guid.NewGuid(), new RegisterCustomerData("Laura Gómez", "CC", "1020304050", null), source: null, TestContext.Current.CancellationToken);
+
+        // El publisher real resuelve null a «customers».
+        Assert.Null(Assert.Single(bed.Audit.Human).Source);
+    }
+
+    [Fact]
+    public async Task OtherProvisioningPathsKeepAuditingWithoutSource()
+    {
+        var bed = NewBed();
+
+        await bed.Provisioning.CreateCompleteAsync(Tenant, Buyer(), TestContext.Current.CancellationToken);
+        await bed.Provisioning.CreateIncompleteAsync(Tenant, "Laura", null, null, null, TestContext.Current.CancellationToken);
+
+        // Las dos van por PublishByIntegration, que no lleva source: sale «customers» como siempre.
+        Assert.Empty(bed.Audit.Human);
+        Assert.Equal(2, bed.Audit.ByIntegration.Count);
     }
 }

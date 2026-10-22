@@ -27,7 +27,7 @@ public sealed class CustomerWhatsAppDirectoryRaceTests
 
     private sealed class NoAudit : ICustomersAuditPublisher
     {
-        public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt)
+        public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, string? source = null)
         {
         }
 

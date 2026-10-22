@@ -42,7 +42,7 @@ internal static class EngagementTestBed
     {
         public List<(Guid Tenant, Guid Actor, string Action, string ResourceId)> Events { get; } = [];
 
-        public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+        public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, string? source = null) =>
             Events.Add((tenantId, actorId, action, resourceId));
 
         public void PublishByIntegration(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
