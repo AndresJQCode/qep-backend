@@ -9,7 +9,6 @@ using Modules.Automations.Application;
 using Modules.Automations.Application.Http;
 using Modules.Automations.Domain.Engine;
 using Modules.Automations.Domain.Flow;
-using Modules.Automations.Domain.Text;
 
 namespace Modules.Automations.Infrastructure.Http;
 
@@ -187,13 +186,12 @@ public sealed partial class HttpBlockExecutor(
         }
     }
 
-    // D-H7: sólo el mapeo guarda algo. Una ruta ausente deja la variable en null, que no es un fallo (la Condición siguiente lo mira).
+    // D-H7: sólo el mapeo guarda algo; sin mapeo el cuerpo ni se lee como JSON. El paso del mapeo es el mismo del simulador (HttpResponseMapping).
     private static HttpCallResult Map(IReadOnlyList<HttpMapping> mapping, int status, byte[] body)
     {
-        var mapped = RunVariables.Empty();
         if (mapping.Count == 0)
         {
-            return new HttpCallResult(true, status, mapped, HttpCallOutcomes.Ok, null);
+            return new HttpCallResult(true, status, RunVariables.Empty(), HttpCallOutcomes.Ok, null);
         }
 
         JsonNode? root;
@@ -206,13 +204,7 @@ public sealed partial class HttpBlockExecutor(
             return Failure(HttpCallOutcomes.MappingFailed, status, HttpCallOutcomes.BodyNotJson);
         }
 
-        foreach (var pair in mapping)
-        {
-            // P2-R36: «$» y una ruta que empieza por índice leen una respuesta que es un arreglo en la raíz (Anexo C).
-            mapped.Set(pair.To, JsonPath.SelectResponse(root, pair.From));
-        }
-
-        return new HttpCallResult(true, status, mapped, HttpCallOutcomes.Ok, null);
+        return new HttpCallResult(true, status, HttpResponseMapping.Apply(mapping, root), HttpCallOutcomes.Ok, null);
     }
 
     private static bool IsOk(IReadOnlyList<int>? okWhen, int status) => okWhen is null ? status is >= 200 and < 300 : okWhen.Contains(status);

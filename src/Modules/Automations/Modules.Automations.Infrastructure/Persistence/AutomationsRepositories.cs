@@ -191,3 +191,23 @@ internal sealed class ConversationRunRepository(AutomationsDbContext dbContext) 
             """).ToListAsync(cancellationToken);
     }
 }
+
+/// <summary>Spec 2026-10-21 §8 y D-S1: las sesiones del simulador.</summary>
+internal sealed class SimulationRepository(AutomationsDbContext dbContext) : ISimulationRepository
+{
+    public Task<Simulation?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
+        dbContext.Simulations.FirstOrDefaultAsync(simulation => simulation.TenantId == tenantId && simulation.Id == id, cancellationToken);
+
+    public async Task AddAsync(Simulation simulation, CancellationToken cancellationToken) =>
+        await dbContext.Simulations.AddAsync(simulation, cancellationToken);
+
+    public void Remove(Simulation simulation) => dbContext.Simulations.Remove(simulation);
+
+    // Un DELETE directo, sin cargar filas: una simulación vencida no tiene nada que nadie vaya a leer. La tabla es chica (una fila por
+    // panel abierto en las últimas 2 h), así que no hace falta lotear ni índice por expires_at.
+    public Task<int> DeleteExpiredAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var cutoff = now.ToUniversalTime();
+        return dbContext.Simulations.Where(simulation => simulation.ExpiresAt <= cutoff).ExecuteDeleteAsync(cancellationToken);
+    }
+}

@@ -17,6 +17,7 @@ public static class AutomationsEndpoints
         group.MapConnectionEndpoints();
         group.MapTemplateEndpoints();
         group.MapRunEndpoints();
+        group.MapSimulationEndpoints();
         return endpoints;
     }
 

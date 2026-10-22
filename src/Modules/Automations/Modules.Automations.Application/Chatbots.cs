@@ -546,8 +546,6 @@ public sealed class PublishChatbotHandler(
     ChatbotEditorBuilder builder)
     : ICommandHandler<PublishChatbotCommand, ChatbotEditorDto>
 {
-    private const string FlowField = "flow";
-
     public async Task<ChatbotEditorDto> HandleAsync(PublishChatbotCommand command, CancellationToken cancellationToken)
     {
         await AutomationsAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AutomationsPermissions.ChatbotManage, cancellationToken);
@@ -566,17 +564,7 @@ public sealed class PublishChatbotHandler(
                 "El chatbot arranca por palabra clave y no tiene ninguna: agrega al menos una en los ajustes."));
         }
 
-        var errors = issues.Where(issue => issue.Severity == nameof(FlowIssueSeverity.Error)).ToList();
-        if (errors.Count > 0)
-        {
-            throw new AutomationsDomainException(
-                AutomationsErrorCodes.ChatbotInvalid,
-                "El flujo tiene errores: corrígelos para publicar.",
-                new Dictionary<string, string[]>(StringComparer.Ordinal)
-                {
-                    [FlowField] = [.. errors.Select(error => $"{error.Code}: {error.Message}")],
-                });
-        }
+        ChatbotFlowErrors.ThrowIfAny(issues, "El flujo tiene errores: corrígelos para publicar.");
 
         var now = clock.UtcNow;
         // El agregado vuelve a exigir cero errores: es la regla, y esto sólo adelanta el 422 con la lista.

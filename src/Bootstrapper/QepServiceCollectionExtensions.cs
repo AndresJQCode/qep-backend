@@ -771,6 +771,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<ListChatbotTemplatesQuery, TemplateCatalogDto>, ListChatbotTemplatesHandler>();
         services.AddScoped<ICommandHandler<SaveChatbotAsTemplateCommand, TemplateDto>, SaveChatbotAsTemplateHandler>();
         services.AddScoped<ICommandHandler<DeleteChatbotTemplateCommand, bool>, DeleteChatbotTemplateHandler>();
+        // Automations (spec 2026-10-21 §8, D-S1..D-S3): el simulador del editor sobre el borrador.
+        services.AddScoped<ICommandHandler<StartSimulationCommand, SimulationDto>, StartSimulationHandler>();
+        services.AddScoped<ICommandHandler<SendSimulationMessageCommand, SimulationDto>, SendSimulationMessageHandler>();
+        services.AddScoped<ICommandHandler<DeleteSimulationCommand, bool>, DeleteSimulationHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
@@ -915,6 +919,8 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-10-21 §5.2: una unidad del motor por fila del inbox, en el scope que abre AutomationInboxWorker.
         services.AddScoped<RunEffects>();
         services.AddScoped<RunProcessor>();
+        // Spec 2026-10-21 §8: el simulador usa el mismo ejecutor HTTP y el mismo puerto de horario que el motor.
+        services.AddScoped<SimulationRunner>();
         // Spec 2026-10-12 §3.3 (D-Q5): el nombre del tenant para las variables de las respuestas rápidas, por Tenancy.
         services.AddScoped<IMessagingTenantNames, MessagingTenantNames>();
         // Spec 2026-10-11 §4.2: el autor de una nota de cliente (usuario, no membresía) con su nombre visible.

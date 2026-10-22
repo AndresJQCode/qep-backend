@@ -438,6 +438,59 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
                     b.ToTable("conversation_runs", "automations");
                 });
 
+            modelBuilder.Entity("Modules.Automations.Domain.Simulation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ChatbotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("chatbot_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<bool>("LiveHttp")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("live_http");
+
+                    b.Property<Guid>("MemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("member_id");
+
+                    b.Property<string>("StateJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("state");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("TranscriptJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("transcript")
+                        .HasDefaultValueSql("'[]'");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("simulations", "automations");
+                });
+
             modelBuilder.Entity("Modules.Automations.Infrastructure.Persistence.HttpCallRecord", b =>
                 {
                     b.Property<long>("Id")
@@ -510,59 +563,6 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
                         .IsDescending(false, true);
 
                     b.ToTable("http_calls", "automations");
-                });
-
-            modelBuilder.Entity("Modules.Automations.Infrastructure.Persistence.SimulationRecord", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<Guid>("ChatbotId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("chatbot_id");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<DateTimeOffset>("ExpiresAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("expires_at");
-
-                    b.Property<bool>("LiveHttp")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false)
-                        .HasColumnName("live_http");
-
-                    b.Property<Guid>("MemberId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("member_id");
-
-                    b.Property<string>("StateJson")
-                        .IsRequired()
-                        .HasColumnType("jsonb")
-                        .HasColumnName("state");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("tenant_id");
-
-                    b.Property<string>("TranscriptJson")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("jsonb")
-                        .HasColumnName("transcript")
-                        .HasDefaultValueSql("'[]'");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("simulations", "automations");
                 });
 
             modelBuilder.Entity("Modules.Automations.Domain.ChatbotConnection", b =>

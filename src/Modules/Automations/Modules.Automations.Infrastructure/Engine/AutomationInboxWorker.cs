@@ -15,7 +15,8 @@ namespace Modules.Automations.Infrastructure.Engine;
 /// <see cref="RunProcessor"/>, como <c>MediaCopyWorker</c> (Mensajería). Varias réplicas pueden correrlo a la vez: el reclamo da un solo
 /// ganador por fila y sólo la más vieja pendiente de cada conversación, y el lock por conversación de la unidad serializa el resto.
 /// Aparte, cada <c>AbandonSweepMinutes</c>, barre las corridas abandonadas (D-M13), purga el inbox procesado (P2-R7) y las llamadas
-/// del bloque HTTP pasada su retención (D-H6), en su propio bucle para que un barrido largo no frene las respuestas del bot.
+/// del bloque HTTP pasada su retención (D-H6); y cada <c>SimulationSweepMinutes</c>, borra las simulaciones vencidas (D-S1). Cada barrido va
+/// en su propio bucle para que uno largo no frene las respuestas del bot.
 /// </summary>
 internal sealed partial class AutomationInboxWorker(
     IServiceScopeFactory scopeFactory,
@@ -38,11 +39,20 @@ internal sealed partial class AutomationInboxWorker(
     [LoggerMessage(Level = LogLevel.Error, Message = "Abandoning run {RunId} of tenant {TenantId} failed; the next sweep tries again.")]
     private static partial void LogAbandonFailed(ILogger logger, Exception exception, Guid tenantId, Guid runId);
 
+    [LoggerMessage(Level = LogLevel.Error, Message = "Automations sweep step {Step} failed; the other steps still run and this one runs again on the next interval.")]
+    private static partial void LogSweepStepFailed(ILogger logger, Exception exception, string step);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Automations sweep abandoned {Abandoned} runs, purged {Purged} processed inbox rows older than {Days} days and {PurgedCalls} HTTP block calls older than {CallDays} days.")]
     private static partial void LogSwept(ILogger logger, int abandoned, int purged, int days, int purgedCalls, int callDays);
 
+    [LoggerMessage(Level = LogLevel.Information, Message = "Automations sweep deleted {Deleted} expired simulations.")]
+    private static partial void LogSimulationsSwept(ILogger logger, int deleted);
+
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
-        Task.WhenAll(PollAsync(stoppingToken), SweepEveryIntervalAsync(stoppingToken));
+        Task.WhenAll(
+            PollAsync(stoppingToken),
+            EveryIntervalAsync(options.Value.AbandonSweepMinutes, SweepAsync, stoppingToken),
+            EveryIntervalAsync(options.Value.SimulationSweepMinutes, SweepSimulationsAsync, stoppingToken));
 
     private async Task PollAsync(CancellationToken stoppingToken)
     {
@@ -65,17 +75,22 @@ internal sealed partial class AutomationInboxWorker(
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
-    /// <summary>El primer barrido espera un intervalo: una corrida abandonada ya esperó 24 h y no hay apuro al arrancar, y las réplicas que
-    /// arrancan juntas en un despliegue no barren todas a la vez.</summary>
-    private async Task SweepEveryIntervalAsync(CancellationToken stoppingToken)
+    /// <summary>El primer barrido espera un intervalo: una corrida abandonada ya esperó 24 h (una simulación vencida, 2 h) y no hay apuro al
+    /// arrancar, y las réplicas que arrancan juntas en un despliegue no barren todas a la vez.</summary>
+    private async Task EveryIntervalAsync(int minutes, Func<DateTimeOffset, CancellationToken, Task> sweep, CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(Math.Max(1, options.Value.AbandonSweepMinutes)));
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(Math.Max(1, minutes)));
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             try
             {
-                await using var scope = scopeFactory.CreateAsyncScope();
-                await SweepAsync(scope.ServiceProvider.GetRequiredService<IClock>().UtcNow, stoppingToken);
+                DateTimeOffset now;
+                await using (var scope = scopeFactory.CreateAsyncScope())
+                {
+                    now = scope.ServiceProvider.GetRequiredService<IClock>().UtcNow;
+                }
+
+                await sweep(now, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -89,17 +104,46 @@ internal sealed partial class AutomationInboxWorker(
     }
 
     /// <summary>Un barrido con la hora <paramref name="now"/>: abandona lo que espera hace más de 24 h, purga el inbox procesado y las
-    /// filas de <c>http_calls</c> pasada su retención. Internal para las pruebas.</summary>
+    /// filas de <c>http_calls</c> pasada su retención. Cada paso en su propio intento: uno que falla (se registra) no deja sin correr a los
+    /// otros. Internal para las pruebas.</summary>
     internal async Task SweepAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var abandoned = await AbandonAsync(now, cancellationToken);
+        var abandoned = await StepAsync("abandon", () => AbandonAsync(now, cancellationToken), cancellationToken);
         var days = Math.Max(1, options.Value.InboxRetentionDays);
-        var purged = await PurgeAsync(
-            (provider, batch) => provider.GetRequiredService<IAutomationInboundQueue>().PurgeProcessedBeforeAsync(now.AddDays(-days), batch, cancellationToken));
+        var purged = await StepAsync("inbox_purge", () => PurgeAsync(
+            (provider, batch) => provider.GetRequiredService<IAutomationInboundQueue>().PurgeProcessedBeforeAsync(now.AddDays(-days), batch, cancellationToken)),
+            cancellationToken);
         var callDays = Math.Max(1, options.Value.HttpCallRetentionDays);
-        var purgedCalls = await PurgeAsync(
-            (provider, batch) => provider.GetRequiredService<IHttpCallLog>().PurgeBeforeAsync(now.AddDays(-callDays), batch, cancellationToken));
+        var purgedCalls = await StepAsync("http_calls_purge", () => PurgeAsync(
+            (provider, batch) => provider.GetRequiredService<IHttpCallLog>().PurgeBeforeAsync(now.AddDays(-callDays), batch, cancellationToken)),
+            cancellationToken);
         LogSwept(logger, abandoned, purged, days, purgedCalls, callDays);
+    }
+
+    /// <summary>D-S1: borra las simulaciones vencidas (<c>expires_at</c> ya pasó: 2 h sin mensajes). Internal para las pruebas.</summary>
+    internal async Task SweepSimulationsAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var deleted = await scope.ServiceProvider.GetRequiredService<ISimulationRepository>().DeleteExpiredAsync(now, cancellationToken);
+        LogSimulationsSwept(logger, deleted);
+    }
+
+    /// <summary>Un paso del barrido; si falla, cuenta cero y el barrido sigue con el siguiente.</summary>
+    private async Task<int> StepAsync(string step, Func<Task<int>> run, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await run();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            LogSweepStepFailed(logger, exception, step);
+            return 0;
+        }
     }
 
     /// <summary>

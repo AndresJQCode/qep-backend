@@ -63,11 +63,34 @@ internal static class AutomationsNotFound
     public static ResourceNotFoundException Simulation(Guid id) =>
         new(AutomationsErrorCodes.SimulationNotFound, $"Simulation '{id}' was not found.");
 
+    /// <summary>D-S1: vencida pero todavía sin barrer; después del barrido es <see cref="Simulation"/>.</summary>
+    public static ResourceNotFoundException SimulationExpired(Guid id) =>
+        new(AutomationsErrorCodes.SimulationExpired, $"Simulation '{id}' expired.");
+
     public static ResourceNotFoundException ExternalApi(Guid id) =>
         new(AutomationsErrorCodes.ExternalApiNotFound, $"External API connection '{id}' was not found.");
 
     public static ResourceNotFoundException Connection(Guid id) =>
         new(AutomationsErrorCodes.ConnectionNotFound, $"Connection '{id}' was not found.");
+}
+
+/// <summary>D-C3: un flujo con errores no se publica ni se simula. El 422 <c>automations.chatbot.invalid</c> lleva los errores bajo
+/// <c>errors.flow</c> como «código: mensaje»; los avisos no bloquean ni viajan ahí (el editor ya los tiene en <c>issues</c>).</summary>
+internal static class ChatbotFlowErrors
+{
+    public const string Field = "flow";
+
+    public static void ThrowIfAny(IEnumerable<FlowIssueDto> issues, string message)
+    {
+        var errors = issues.Where(issue => issue.Severity == nameof(FlowIssueSeverity.Error)).ToList();
+        if (errors.Count > 0)
+        {
+            throw new AutomationsDomainException(
+                AutomationsErrorCodes.ChatbotInvalid,
+                message,
+                new Dictionary<string, string[]>(StringComparer.Ordinal) { [Field] = [.. errors.Select(error => $"{error.Code}: {error.Message}")] });
+        }
+    }
 }
 
 internal static class AutomationsVersions

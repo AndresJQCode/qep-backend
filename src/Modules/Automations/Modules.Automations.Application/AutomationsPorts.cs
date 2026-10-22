@@ -78,6 +78,19 @@ public interface IChatbotTemplateRepository
     void Remove(ChatbotTemplate chatbotTemplate);
 }
 
+/// <summary>Spec 2026-10-21 §8 y D-S1: las sesiones del simulador. Todo método recibe el tenant, salvo el barrido, que es del sistema.</summary>
+public interface ISimulationRepository
+{
+    Task<Simulation?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken);
+
+    Task AddAsync(Simulation simulation, CancellationToken cancellationToken);
+
+    void Remove(Simulation simulation);
+
+    /// <summary>D-S1: borra las vencidas (<c>expires_at &lt;= now</c>) de todos los tenants y devuelve cuántas.</summary>
+    Task<int> DeleteExpiredAsync(DateTimeOffset now, CancellationToken cancellationToken);
+}
+
 /// <summary>Lecturas sobre las corridas del motor (el esquema es de Infrastructure).</summary>
 public interface IConversationRunQueries
 {

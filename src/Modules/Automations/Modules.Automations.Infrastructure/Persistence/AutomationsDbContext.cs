@@ -62,7 +62,7 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
 
     internal DbSet<HttpCallRecord> HttpCalls => Set<HttpCallRecord>();
 
-    internal DbSet<SimulationRecord> Simulations => Set<SimulationRecord>();
+    public DbSet<Simulation> Simulations => Set<Simulation>();
 
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
@@ -229,7 +229,7 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
 
     private static void ConfigureSimulation(ModelBuilder modelBuilder)
     {
-        var simulation = modelBuilder.Entity<SimulationRecord>();
+        var simulation = modelBuilder.Entity<Simulation>();
         simulation.ToTable("simulations", Schema);
         simulation.HasKey(value => value.Id);
         simulation.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
