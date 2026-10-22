@@ -118,21 +118,30 @@ public static class FlowVariableTypes
 public static class QuestionValidationKinds
 {
     public const string None = "none";
+    public const string Digits = "digits";
+    public const string Number = "number";
     public const string Regex = "regex";
     public const string Keywords = "keywords";
 
-    public static readonly IReadOnlySet<string> All = new[] { None, "digits", "number", Regex, Keywords }.ToFrozenSet(StringComparer.Ordinal);
+    public static readonly IReadOnlySet<string> All = new[] { None, Digits, Number, Regex, Keywords }.ToFrozenSet(StringComparer.Ordinal);
 }
 
 /// <summary>
 /// Qué hacen Botones y Lista ante una respuesta que no es una opción. §5.4 sólo describe <c>repeat</c>; los otros dos son los
-/// que manda el editor (qep-frontend, <c>features/automations/types/automations.ts</c>) y su semántica queda para el motor.
+/// que manda el editor (qep-frontend, <c>features/automations/types/automations.ts</c>) y el ruling P2-R9 fija su semántica en el motor.
 /// </summary>
 public static class InteractiveFallbacks
 {
+    /// <summary>Reenvía el mensaje hasta agotar los intentos y luego aplica D-M7.</summary>
     public const string Repeat = "repeat";
 
-    public static readonly IReadOnlySet<string> All = new[] { Repeat, "otherOutput", "handoff" }.ToFrozenSet(StringComparer.Ordinal);
+    /// <summary>Sale por <c>other</c> en la primera respuesta inválida si está conectada; si no, como <see cref="Repeat"/>.</summary>
+    public const string OtherOutput = "otherOutput";
+
+    /// <summary>Pasa a un asesor en la primera respuesta inválida.</summary>
+    public const string Handoff = "handoff";
+
+    public static readonly IReadOnlySet<string> All = new[] { Repeat, OtherOutput, Handoff }.ToFrozenSet(StringComparer.Ordinal);
 }
 
 public static class ListOptionKinds
@@ -145,7 +154,11 @@ public static class ListOptionKinds
 
 public static class AttachmentAccepts
 {
-    public static readonly IReadOnlySet<string> All = new[] { "image", "document", "any" }.ToFrozenSet(StringComparer.Ordinal);
+    public const string Image = "image";
+    public const string Document = "document";
+    public const string Any = "any";
+
+    public static readonly IReadOnlySet<string> All = new[] { Image, Document, Any }.ToFrozenSet(StringComparer.Ordinal);
 }
 
 public static class ConditionMatches

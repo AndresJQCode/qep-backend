@@ -28,10 +28,60 @@ public static class FlowEngine
             EngineInput.Start => new Walk(flow, state, now).Go(flow.Start.FirstNodeId, StartNodeId),
             EngineInput.HttpResult result => OnHttpResult(flow, state, result, now),
             EngineInput.BusinessHours hours => OnBusinessHours(flow, state, hours, now),
-            EngineInput.CustomerMessage => throw new NotImplementedException("La respuesta del cliente a un bloque que espera llega en la tarea 3 del plan 2."),
+            EngineInput.CustomerMessage message => OnCustomerMessage(flow, settings, state, message, now),
             _ => throw new ArgumentOutOfRangeException(nameof(input), input.GetType().Name, "Entrada del motor desconocida."),
         };
     }
+
+    /// <summary>
+    /// La respuesta del cliente al bloque en que la corrida espera (§5.4, D-I5, D-M7). La palabra de reinicio gana sobre cualquier
+    /// clasificación: escrita en una pregunta abierta sin validación no se guarda como respuesta. Un mensaje con la corrida no
+    /// <c>Waiting</c> (el procesador no debería mandarlo) no cambia nada.
+    /// </summary>
+    private static StepResult OnCustomerMessage(
+        FlowDefinition flow, EngineSettings settings, RunState state, EngineInput.CustomerMessage message, DateTimeOffset now)
+    {
+        if (WaitingAt(flow, state) is not { } node)
+        {
+            return Unchanged(state);
+        }
+
+        var walk = new Walk(flow, state, now);
+        if (IsRestart(settings, message))
+        {
+            return walk.Restart(node);
+        }
+
+        if (CustomerReply.Classify(node, message, state.Variables) is ReplyOutcome.Output output)
+        {
+            walk.Save(SaveToOf(node), output.Saved);
+            return walk.Leave(node, output.Name);
+        }
+
+        return walk.Reject(node, settings);
+    }
+
+    /// <summary>D-I5: la palabra se compara como las palabras clave (sin tildes, mayúsculas ni espacios de más). Sin palabra configurada
+    /// no reinicia nada: un texto vacío no puede reiniciar la corrida.</summary>
+    private static bool IsRestart(EngineSettings settings, EngineInput.CustomerMessage message) =>
+        !string.IsNullOrWhiteSpace(settings.RestartKeyword) && !string.IsNullOrWhiteSpace(message.Text)
+        && TextMatch.Same(message.Text, settings.RestartKeyword);
+
+    private static FlowNode? WaitingAt(FlowDefinition flow, RunState state) =>
+        state.Status == RunStatus.Waiting && state.CurrentNodeId is { } nodeId
+            ? flow.Nodes.FirstOrDefault(node => node.Id == nodeId && Waits(node))
+            : null;
+
+    private static bool Waits(FlowNode node) => node is OpenQuestionNode or ButtonsNode or ListNode or AttachmentNode;
+
+    private static string? SaveToOf(FlowNode node) => node switch
+    {
+        OpenQuestionNode question => question.SaveTo,
+        ButtonsNode buttons => buttons.SaveTo,
+        ListNode list => list.SaveTo,
+        AttachmentNode attachment => attachment.SaveTo,
+        _ => null,
+    };
 
     private static StepResult OnHttpResult(FlowDefinition flow, RunState state, EngineInput.HttpResult result, DateTimeOffset now)
     {
@@ -73,8 +123,9 @@ public static class FlowEngine
         private readonly HashSet<string> entered = new(StringComparer.Ordinal);
         private readonly List<Effect> effects = [];
         private readonly List<TraceEntry> trace;
-        private readonly RunVariables variables;
+        private readonly string? firstNodeId;
         private readonly DateTimeOffset now;
+        private RunVariables variables;
         private RunStatus status = RunStatus.Running;
         private string? currentNodeId;
         private int stepNumber;
@@ -87,6 +138,7 @@ public static class FlowEngine
                 nodes.TryAdd(node.Id, node);
             }
 
+            firstNodeId = flow.Start.FirstNodeId;
             trace = [.. state.Trace];
             variables = state.Variables.Clone();
             currentNodeId = state.CurrentNodeId;
@@ -102,6 +154,73 @@ public static class FlowEngine
                 variables.Set(name, value);
             }
         }
+
+        /// <summary>Guarda la respuesta del cliente en el <c>saveTo</c> del bloque; un Botones sin <c>saveTo</c> no guarda nada.</summary>
+        public void Save(string? name, JsonNode? value)
+        {
+            if (!string.IsNullOrWhiteSpace(name) && value is not null)
+            {
+                variables.Set(name, value);
+            }
+        }
+
+        /// <summary>
+        /// Una respuesta que no es lo que <paramref name="node"/> espera (D-M7) es un intento. El <c>fallback</c> de Botones y Lista decide
+        /// primero (ruling P2-R9); Pregunta abierta y Pedir adjunto siempre se comportan como <c>repeat</c>. Mientras queden intentos se
+        /// reenvía el mensaje; al agotarlos se sale por <c>invalid</c>/<c>other</c> si está conectada, y si no, la corrida reinicia.
+        /// </summary>
+        public StepResult Reject(FlowNode node, EngineSettings settings)
+        {
+            attempts++;
+            var fallback = node switch
+            {
+                ButtonsNode buttons => buttons.Fallback,
+                ListNode list => list.Fallback,
+                _ => InteractiveFallbacks.Repeat,
+            };
+
+            if (fallback == InteractiveFallbacks.Handoff)
+            {
+                effects.Add(new Effect.Handoff(node.Id));
+                _ = Stop(node, RunStatus.HandedOff, TraceOutcomes.HandedOff);
+                return Result();
+            }
+
+            var exhausted = node is OpenQuestionNode or AttachmentNode ? FlowOutputs.Invalid : FlowOutputs.Other;
+            var connected = node.Outputs.GetValueOrDefault(exhausted) is not null;
+            if (fallback == InteractiveFallbacks.OtherOutput && connected)
+            {
+                return Leave(node, FlowOutputs.Other);
+            }
+
+            // D-C7: un bloque de pregunta puede pisar los intentos del chatbot; los demás usan los del chatbot.
+            var maxAttempts = node is OpenQuestionNode { MaxAttempts: { } own } ? own : settings.MaxAttempts;
+            if (attempts < maxAttempts)
+            {
+                return Resend(node);
+            }
+
+            return connected ? Leave(node, exhausted) : Restart(node);
+        }
+
+        /// <summary>
+        /// D-I5 y D-M7: la corrida vuelve a empezar con sólo las variables fijas y cero intentos, y se recorre desde el Inicio como un
+        /// <see cref="EngineInput.Start"/>. Es un recorrido nuevo: volver a entrar en el primer bloque (que puede ser el que esperaba) no es
+        /// un ciclo. <see cref="RunState.StepNumber"/> no vuelve a cero: sigue subiendo para que los clientIds no se repitan (ruling P2-R5).
+        /// </summary>
+        public StepResult Restart(FlowNode node)
+        {
+            variables = variables.FixedOnly();
+            attempts = 0;
+            Record(node, TraceOutcomes.Restart);
+            entered.Clear();
+            return Go(firstNodeId, StartNodeId);
+        }
+
+        /// <summary>Reenvía el mensaje del bloque que espera entrando otra vez por <see cref="Enter"/> (suma StepNumber, ruling P2-R5) y sin
+        /// pasar por <see cref="Go"/>, que pondría los intentos en cero. Una Lista que al reentrar sale sola (<c>tooMany</c>) sigue desde ahí.</summary>
+        private StepResult Resend(FlowNode node) =>
+            Enter(node) is { } output ? Go(node.Outputs.GetValueOrDefault(output), node.Id) : Result();
 
         /// <summary>Sale de <paramref name="node"/> (donde la corrida estaba parada) por <paramref name="output"/> y sigue el recorrido.</summary>
         public StepResult Leave(FlowNode node, string output)
@@ -186,13 +305,29 @@ public static class FlowEngine
                     SendOptional(node.Id, resolve.Text);
                     effects.Add(new Effect.Resolve(node.Id, resolve.ReasonId));
                     return Stop(node, RunStatus.Resolved, TraceOutcomes.Resolved);
-                case OpenQuestionNode or ButtonsNode or ListNode or AttachmentNode:
+                case ListNode list:
+                    // §5.4: más filas de las que Meta acepta, o ninguna que mostrar, sale por tooMany sin enviar nada.
+                    var rows = CustomerReply.RowsOf(list, variables);
+                    if (rows.Count is 0 or > CustomerReply.MaxListRows)
+                    {
+                        return Took(node, FlowOutputs.TooMany);
+                    }
+
+                    effects.Add(new Effect.SendInteractive(node.Id, new InteractiveMessage.List(
+                        Text(list.Text), list.ButtonLabel, [.. rows.Select(row => (row.Id, row.Title, row.Description))])));
+                    return Wait(node);
+                case OpenQuestionNode or ButtonsNode or AttachmentNode:
                     effects.Add(Prompt(node));
-                    effects.Add(new Effect.WaitForCustomer(node.Id, node.Title));
-                    return Stop(node, RunStatus.Waiting, TraceOutcomes.Waiting);
+                    return Wait(node);
                 default:
                     throw new ArgumentOutOfRangeException(nameof(node), node.Kind, "Bloque sin semántica en el motor.");
             }
+        }
+
+        private string? Wait(FlowNode node)
+        {
+            effects.Add(new Effect.WaitForCustomer(node.Id, node.Title));
+            return Stop(node, RunStatus.Waiting, TraceOutcomes.Waiting);
         }
 
         private string Took(FlowNode node, string output)
@@ -255,8 +390,8 @@ public static class FlowEngine
         }
 
         /// <summary>
-        /// El mensaje de un bloque que espera. Los títulos de botones y filas no se interpolan: la tarea 3 compara contra ellos lo que el
-        /// cliente escribe.
+        /// El mensaje de un bloque que espera (la Lista lo arma <see cref="Enter"/>, que primero cuenta sus filas). Las etiquetas de los
+        /// botones no se interpolan: <see cref="CustomerReply"/> compara contra ellas lo que el cliente escribe.
         /// </summary>
         private Effect Prompt(FlowNode node) => node switch
         {
@@ -264,49 +399,8 @@ public static class FlowEngine
             AttachmentNode attachment => new Effect.SendText(node.Id, Text(attachment.Text)),
             ButtonsNode buttons => new Effect.SendInteractive(node.Id, new InteractiveMessage.Buttons(
                 Text(buttons.Text), [.. buttons.Buttons.Select(button => (button.Id, button.Label))])),
-            ListNode list => new Effect.SendInteractive(node.Id, new InteractiveMessage.List(Text(list.Text), list.ButtonLabel, Rows(list))),
             _ => throw new ArgumentOutOfRangeException(nameof(node), node.Kind, "El bloque no espera al cliente."),
         };
-
-        /// <summary>
-        /// §5.4: las filas fijas, o con <c>dynamic</c> una por elemento de la colección (sin id o sin título se salta), y al final la
-        /// <c>extraOption</c>. El tope de 10 y la lista vacía (salida <c>tooMany</c>, sin enviar) son de la tarea 3.
-        /// </summary>
-        private List<(string Id, string Title, string? Description)> Rows(ListNode list)
-        {
-            var options = list.Options;
-            var rows = new List<(string Id, string Title, string? Description)>();
-            if (options.Kind == ListOptionKinds.Dynamic)
-            {
-                if (variables.Get(options.Collection ?? string.Empty) is JsonArray items)
-                {
-                    foreach (var item in items)
-                    {
-                        var id = Field(item, options.IdField);
-                        var title = Field(item, options.TitleField);
-                        if (id.Length > 0 && title.Length > 0)
-                        {
-                            var description = Field(item, options.DescriptionField);
-                            rows.Add((id, title, description.Length > 0 ? description : null));
-                        }
-                    }
-                }
-            }
-            else
-            {
-                rows.AddRange((options.Fixed ?? []).Select(row => (row.Id, row.Title, row.Description)));
-            }
-
-            if (options.ExtraOption is { } extra)
-            {
-                rows.Add((extra.Id, extra.Title, extra.Description));
-            }
-
-            return rows;
-        }
-
-        private static string Field(JsonNode? item, string? field) =>
-            field is null ? string.Empty : RunVariables.FormatText(JsonPath.Select(item, field)).Trim();
 
         private bool Holds(ConditionNode condition) => condition.Match == "any"
             ? condition.Rules.Any(Holds)

@@ -25,3 +25,16 @@ public abstract record EngineInput
 
 /// <summary>El adjunto de un <see cref="EngineInput.CustomerMessage"/>; <see cref="Stored"/> dice si Messaging ya lo tiene guardado.</summary>
 public sealed record AttachmentInput(Guid MessageId, string? FileName, string MimeType, bool Stored);
+
+/// <summary>Los <see cref="EngineInput.CustomerMessage.Kind"/> que encola <c>automation_inbox</c> (§5.1): los nombres del
+/// <c>MessageKind</c> de Messaging, que Automations no referencia.</summary>
+public static class CustomerMessageKinds
+{
+    public const string Text = "Text";
+    public const string Interactive = "Interactive";
+    public const string Image = "Image";
+    public const string Document = "Document";
+    public const string Video = "Video";
+    public const string Audio = "Audio";
+    public const string Unsupported = "Unsupported";
+}

@@ -30,6 +30,10 @@ public static class TraceOutcomes
 
     public const string HandedOff = "handedOff";
     public const string Resolved = "resolved";
+
+    /// <summary>La palabra de reinicio (D-I5) o los intentos agotados sin salida conectada (D-M7): la corrida vuelve al Inicio desde el
+    /// bloque que esperaba.</summary>
+    public const string Restart = "restart";
 }
 
 /// <summary>

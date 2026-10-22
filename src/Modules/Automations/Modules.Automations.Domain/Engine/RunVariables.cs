@@ -19,7 +19,28 @@ public sealed class RunVariables
 
     private RunVariables(JsonObject root) => this.root = root;
 
+    /// <summary>
+    /// Las variables fijas de toda corrida (las mismas de <c>FlowValidator.FixedOrder</c>): las escribe el procesador al empezar y son
+    /// lo único que sobrevive a un reinicio (D-I5, D-M7), porque describen al cliente y la conexión, no lo que respondió.
+    /// </summary>
+    public static readonly IReadOnlyList<string> FixedNames = ["nombre", "telefono", "empresa", "conexion"];
+
     public static RunVariables Empty() => new([]);
+
+    /// <summary>Una copia con sólo las <see cref="FixedNames"/> que existan: lo que queda al reiniciar la corrida.</summary>
+    public RunVariables FixedOnly()
+    {
+        var kept = new JsonObject();
+        foreach (var name in FixedNames)
+        {
+            if (root.TryGetPropertyValue(name, out var value))
+            {
+                kept[name] = value?.DeepClone();
+            }
+        }
+
+        return new RunVariables(kept);
+    }
 
     /// <summary>Lee lo que escribió <see cref="ToJson"/>; vacío es «sin variables». Algo que no es un objeto lanza <see cref="JsonException"/>.</summary>
     public static RunVariables Parse(string json)
