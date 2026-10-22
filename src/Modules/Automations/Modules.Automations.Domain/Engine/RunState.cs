@@ -37,6 +37,13 @@ public static class TraceOutcomes
 /// que el procesador persiste en <c>conversation_runs</c>. <see cref="Attempts"/> son las respuestas inválidas al bloque que espera
 /// (D-M7). El motor nunca modifica las <see cref="Variables"/> que recibe: trabaja sobre una copia.
 /// </summary>
+/// <param name="Status">Viva (<c>Running</c>, <c>Waiting</c>) o cómo terminó.</param>
+/// <param name="CurrentNodeId">El último bloque en que entró la corrida; <c>null</c> antes de empezar.</param>
+/// <param name="StepNumber">Ruling P2-R5: sube con cada bloque en que se entra (también al reenviar el de espera), así el procesador
+/// deriva clientIds únicos de (runId, StepNumber al empezar la unidad, índice del envío) y un reintento de la fila no duplica mensajes.</param>
+/// <param name="Attempts">Respuestas inválidas al bloque que espera; vuelve a cero al entrar en otro bloque.</param>
+/// <param name="Variables">Las variables de la corrida (D-M8).</param>
+/// <param name="Trace">Las últimas <see cref="TraceMax"/> entradas, de la más vieja a la más nueva.</param>
 public sealed record RunState(RunStatus Status, string? CurrentNodeId, int StepNumber, int Attempts, RunVariables Variables, IReadOnlyList<TraceEntry> Trace)
 {
     /// <summary>§4.2: el trace guarda sólo las últimas 200 entradas.</summary>
@@ -48,8 +55,4 @@ public sealed record RunState(RunStatus Status, string? CurrentNodeId, int StepN
         ArgumentNullException.ThrowIfNull(fixedVariables);
         return new RunState(RunStatus.Running, null, 0, 0, fixedVariables, []);
     }
-
-    // Ruling P2-R5: sube con cada bloque en que se entra (también al reenviar el de espera), así el procesador deriva clientIds
-    // únicos de (runId, StepNumber al empezar la unidad, índice del envío) y un reintento de la fila no duplica mensajes.
-    public int StepNumber { get; init; } = StepNumber;
 }

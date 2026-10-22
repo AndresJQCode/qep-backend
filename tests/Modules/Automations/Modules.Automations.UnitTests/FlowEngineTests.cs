@@ -83,7 +83,7 @@ public sealed class FlowEngineTests
     [Fact]
     public void ConditionAllAndAnyRouteYesOrNo()
     {
-        var variables = """{ "cliente": { "id": 1 }, "ciudad": "Medellín" }""";
+        var variables = """{ "cliente": { "id": 1 }, "ciudad": "Medellín", "vacio": {}, "ninguno": [], "blanco": "  " }""";
         var found = new ConditionRule("cliente", "isNotEmpty", null);
         var bogota = new ConditionRule("ciudad", "equals", "Bogota");
         var medellin = new ConditionRule("ciudad", "equals", "MEDELLIN");
@@ -96,6 +96,10 @@ public sealed class FlowEngineTests
         Assert.Equal("no", Landed(Run(Condition("c", "all", bogota, medellin))));
         Assert.Equal("no", Landed(Run(Condition("c", "all", new ConditionRule("cliente", "isEmpty", null)))));
         Assert.Equal("yes", Landed(Run(Condition("c", "all", new ConditionRule("nada", "isEmpty", null)))));
+        Assert.Equal("yes", Landed(Run(Condition("c", "all",
+            new ConditionRule("vacio", "isEmpty", null), new ConditionRule("ninguno", "isEmpty", null), new ConditionRule("blanco", "isEmpty", null)))));
+        Assert.Equal("no", Landed(Run(Condition("c", "any",
+            new ConditionRule("vacio", "isNotEmpty", null), new ConditionRule("ninguno", "isNotEmpty", null)))));
         Assert.Equal("yes", Landed(Run(Condition("c", "all", new ConditionRule("ciudad", "contains", "dell")))));
         Assert.Equal("yes", Landed(Run(Condition("c", "all", new ConditionRule("ciudad", "notEquals", "Cali")))));
         Assert.Equal("yes", Landed(Run(Condition("c", "all", new ConditionRule("cliente.id", "greaterThan", "0.5")))));
@@ -155,6 +159,9 @@ public sealed class FlowEngineTests
 
         Assert.Equal(new Effect.SendText("n2", "Cliente 7"), result.Effects[0]);
         Assert.Equal(7, result.State.Variables.Get("cliente.id")!.GetValue<int>());
+        // El resultado no entra en ningún bloque: sólo suma n2.
+        Assert.Equal(1, started.State.StepNumber);
+        Assert.Equal(2, result.State.StepNumber);
         // El paso anterior no cambió: el motor trabaja sobre una copia de las variables.
         Assert.False(started.State.Variables.Has("cliente"));
     }
@@ -182,6 +189,52 @@ public sealed class FlowEngineTests
         Assert.Same(started.State, result.State);
         Assert.Empty(result.Effects);
         Assert.Empty(Continue(flow, started, new EngineInput.BusinessHours("n1", IsOpen: true)).Effects);
+    }
+
+    [Theory]
+    [InlineData(RunStatus.Waiting)]
+    [InlineData(RunStatus.Completed)]
+    [InlineData(RunStatus.HandedOff)]
+    [InlineData(RunStatus.Failed)]
+    public void AResultIsIgnoredUnlessTheRunIsRunningAtThatNode(RunStatus status)
+    {
+        var httpFlow = Flow(Http("n1", ok: "n2", error: null), Message("n2", "Encontrado"));
+        var httpState = Start(httpFlow).State with { Status = status };
+
+        var http = FlowEngine.Step(httpFlow, Settings(), httpState,
+            new EngineInput.HttpResult("n1", Ok: true, 200, RunVariables.Empty(), null), Now);
+
+        Assert.Same(httpState, http.State);
+        Assert.Empty(http.Effects);
+
+        var hoursFlow = Flow(new BusinessHoursNode("n1", "Horario", Out((FlowOutputs.Open, null), (FlowOutputs.Closed, null))));
+        var hoursState = Start(hoursFlow).State with { Status = status };
+
+        var hours = FlowEngine.Step(hoursFlow, Settings(), hoursState, new EngineInput.BusinessHours("n1", IsOpen: true), Now);
+
+        Assert.Same(hoursState, hours.State);
+        Assert.Empty(hours.Effects);
+    }
+
+    [Fact]
+    public void EnteringANewNodeResetsTheAttempts()
+    {
+        var flow = Flow(Http("n1", ok: "n2", error: null), Message("n2", "Encontrado"));
+        var parked = Start(flow).State with { Attempts = 2 };
+
+        var result = FlowEngine.Step(flow, Settings(), parked, new EngineInput.HttpResult("n1", Ok: true, 200, RunVariables.Empty(), null), Now);
+
+        Assert.Equal(0, result.State.Attempts);
+    }
+
+    [Fact]
+    public void AMessageThatInterpolatesToBlankIsNotSentButContinues()
+    {
+        var result = Start(Flow(Message("n1", "{nada}", next: "n2"), Message("n2", "Sigo")));
+
+        Assert.Equal<Effect>([new Effect.SendText("n2", "Sigo"), new Effect.EndRun("n2", "output_unconnected")], result.Effects);
+        Assert.Equal(["n1", "n2"], result.State.Trace.Select(entry => entry.NodeId));
+        Assert.Equal(2, result.State.StepNumber);
     }
 
     [Fact]
@@ -223,6 +276,17 @@ public sealed class FlowEngineTests
         Assert.Equal("n250", result.State.Trace[^1].NodeId);
         Assert.Equal(250, result.State.StepNumber);
         Assert.All(result.State.Trace, entry => Assert.Equal(Now, entry.At));
+
+        // Un trace guardado por encima del tope también baja a 200 en el siguiente paso.
+        var stored = RunState.Initial(RunVariables.Empty()) with
+        {
+            Trace = [.. Enumerable.Range(1, 250).Select(index => new TraceEntry(Now, $"viejo{index}", "message", "next"))],
+        };
+
+        var trimmed = FlowEngine.Step(Flow(Message("n1", "Hola")), Settings(), stored, new EngineInput.Start(), Now);
+
+        Assert.Equal(RunState.TraceMax, trimmed.State.Trace.Count);
+        Assert.Equal("n1", trimmed.State.Trace[^1].NodeId);
     }
 
     [Fact]
@@ -236,11 +300,10 @@ public sealed class FlowEngineTests
 
         var result = Start(flow);
 
+        // Corta en la primera vuelta, antes de reenviar «Hola»: lo emitido antes se conserva, una sola vez.
+        Assert.Equal<Effect>([new Effect.SendText("n1", "Hola"), new Effect.EndRun("n1", "loop_detected")], result.Effects);
         Assert.Equal(RunStatus.Failed, result.State.Status);
-        Assert.Equal(new Effect.EndRun("n1", "loop_detected"), result.Effects[^1]);
-        // Lo emitido antes del tope se conserva: el tope es 2 × 2 bloques + 10 = 14 entradas, siete vueltas de n1 → c.
-        Assert.Equal(7, result.Effects.OfType<Effect.SendText>().Count());
-        Assert.Equal(14, result.State.StepNumber);
+        Assert.Equal(2, result.State.StepNumber);
     }
 
     [Fact]

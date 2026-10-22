@@ -70,7 +70,7 @@ public static class FlowEngine
     private sealed class Walk
     {
         private readonly Dictionary<string, FlowNode> nodes = new(StringComparer.Ordinal);
-        private readonly int maxEntries;
+        private readonly HashSet<string> entered = new(StringComparer.Ordinal);
         private readonly List<Effect> effects = [];
         private readonly List<TraceEntry> trace;
         private readonly RunVariables variables;
@@ -79,7 +79,6 @@ public static class FlowEngine
         private string? currentNodeId;
         private int stepNumber;
         private int attempts;
-        private int entries;
 
         public Walk(FlowDefinition flow, RunState state, DateTimeOffset now)
         {
@@ -88,11 +87,6 @@ public static class FlowEngine
                 nodes.TryAdd(node.Id, node);
             }
 
-            // Ruling P2-R13. Sin una espera ni un efecto externo, las variables no cambian dentro de un paso: un recorrido legítimo
-            // entra a lo sumo una vez en cada bloque, así que pasar del doble de bloques (más un margen para flujos diminutos) sólo
-            // pasa con un ciclo que daría vueltas para siempre. Lanzar no sirve: el procesador revertiría la unidad, la fila se
-            // reintentaría cinco veces y la conversación quedaría Active con un bot mudo; terminar Failed deja que alguien la vea.
-            maxEntries = (flow.Nodes.Count * 2) + 10;
             trace = [.. state.Trace];
             variables = state.Variables.Clone();
             currentNodeId = state.CurrentNodeId;
@@ -138,8 +132,12 @@ public static class FlowEngine
                     return Result();
                 }
 
-                // El validador no rechaza los ciclos sin espera al publicar: el tope corta aquí, con lo ya emitido (ver maxEntries).
-                if (++entries > maxEntries)
+                // Ruling P2-R13. Dentro de un recorrido nada cambia las variables (sólo una espera o un efecto externo lo hacen, y esos
+                // cortan el recorrido), así que volver a entrar en un bloque ya es el ciclo: repetiría lo mismo para siempre. Se corta en
+                // la primera vuelta, antes de reenviar nada; el bloque en que la corrida estaba parada (el de Leave) no cuenta como
+                // entrado. El validador no rechaza esos ciclos al publicar. Lanzar no sirve: el procesador revertiría la unidad, la fila
+                // se reintentaría cinco veces y la conversación quedaría Active con un bot mudo; terminar Failed deja que alguien la vea.
+                if (!entered.Add(node.Id))
                 {
                     effects.Add(new Effect.EndRun(node.Id, EndReasons.LoopDetected));
                     status = RunStatus.Failed;
@@ -170,7 +168,7 @@ public static class FlowEngine
             switch (node)
             {
                 case MessageNode message:
-                    effects.Add(Send(message));
+                    Send(message);
                     return Took(node, FlowOutputs.Next);
                 case ConditionNode condition:
                     return Took(node, Holds(condition) ? FlowOutputs.Yes : FlowOutputs.No);
@@ -213,7 +211,9 @@ public static class FlowEngine
         private void Record(FlowNode node, string outcome)
         {
             trace.Add(new TraceEntry(now, node.Id, node.Kind, outcome));
-            if (trace.Count > RunState.TraceMax)
+
+            // while y no if: un trace guardado con más de 200 entradas (de antes del tope) también se recorta.
+            while (trace.Count > RunState.TraceMax)
             {
                 trace.RemoveAt(0);
             }
@@ -224,10 +224,20 @@ public static class FlowEngine
 
         private string Text(string template) => TemplateText.Interpolate(template, variables);
 
-        /// <summary>D-I1: con botón de URL sale como <c>CtaUrl</c>, que es la única forma de mandar un enlace como botón.</summary>
-        private Effect Send(MessageNode message) => message.UrlButton is { } button
-            ? new Effect.SendInteractive(message.Id, new InteractiveMessage.CtaUrl(Text(message.Text), Text(button.Label), Text(button.Url)))
-            : new Effect.SendText(message.Id, Text(message.Text));
+        /// <summary>D-I1: con botón de URL sale como <c>CtaUrl</c>, que es la única forma de mandar un enlace como botón. Sin botón, un
+        /// texto que queda en blanco al interpolar no se manda (como en Pasar a un asesor y Resolver), pero el bloque sigue por <c>next</c>.</summary>
+        private void Send(MessageNode message)
+        {
+            if (message.UrlButton is { } button)
+            {
+                effects.Add(new Effect.SendInteractive(
+                    message.Id, new InteractiveMessage.CtaUrl(Text(message.Text), Text(button.Label), Text(button.Url))));
+            }
+            else
+            {
+                SendOptional(message.Id, message.Text);
+            }
+        }
 
         private void SendOptional(string nodeId, string? template)
         {
