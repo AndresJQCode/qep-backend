@@ -648,6 +648,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<ListConversationsValidator>();
         services.AddScoped<IQueryHandler<ListConversationsQuery, ConversationPageDto>, ListConversationsHandler>();
         services.AddScoped<IQueryHandler<GetConversationQuery, ConversationSummary>, GetConversationHandler>();
+        services.AddScoped<IQueryHandler<GetConversationAutomationQuery, ConversationAutomationDetailsDto>, GetConversationAutomationHandler>();
         services.AddScoped<IQueryHandler<ListMessagesQuery, MessagePageDto>, ListMessagesHandler>();
         // Messaging (spec 2026-10-09 §8.8): búsqueda en el historial.
         services.AddScoped<IQueryHandler<SearchMessagesQuery, SearchPageDto>, SearchMessagesHandler>();
@@ -752,6 +753,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<ListChatbotsQuery, ChatbotListResponse>, ListChatbotsHandler>();
         services.AddScoped<IQueryHandler<GetChatbotQuery, ChatbotEditorDto>, GetChatbotHandler>();
         services.AddScoped<IQueryHandler<ListSelectableConnectionsQuery, IReadOnlyList<SelectableConnectionDto>>, ListSelectableConnectionsHandler>();
+        services.AddScoped<IQueryHandler<ListRunsQuery, IReadOnlyList<RunDto>>, ListRunsHandler>();
         services.AddScoped<ICommandHandler<CreateChatbotCommand, ChatbotEditorDto>, CreateChatbotHandler>();
         services.AddScoped<ICommandHandler<UpdateChatbotCommand, ChatbotEditorDto>, UpdateChatbotHandler>();
         services.AddScoped<ICommandHandler<SaveChatbotDraftCommand, DraftSavedDto>, SaveChatbotDraftHandler>();
@@ -888,6 +890,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
         // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes, leído de Automations.
         services.AddScoped<IAutomationsChatbotNames, AutomationsChatbotNames>();
+        // Spec 2026-10-21 §5.5: «Datos capturados» del asesor, leído de la corrida más reciente de Automations.
+        services.AddScoped<IConversationAutomationDetails, AutomationConversationDetails>();
         // Spec 2026-10-21 §5.3: lo que Automations necesita de Mensajería e Integrations, por adaptadores.
         services.AddScoped<IAutomationConnections, AutomationConnections>();
         services.AddScoped<IAutomationExternalApis, AutomationExternalApis>();

@@ -40,6 +40,9 @@ public static class AutomationsErrorCodes
     /// <summary><c>IX_conversation_runs_live</c> (D-M12): la conversación ya tiene una corrida viva.</summary>
     public const string RunAlreadyLive = "automations.run.already_live";
 
+    /// <summary><c>GET /runs</c> con <c>from</c> posterior a <c>to</c>: no es del §4.3, lo agrega la tarea 8 del plan 2.</summary>
+    public const string RunRangeInvalid = "automations.run.range_invalid";
+
     /// <summary><c>IX_chatbot_templates_tenant_name</c>: el nombre de la plantilla se compara sin mayúsculas.</summary>
     public const string TemplateNameTaken = "automations.template.name_taken";
 

@@ -42,6 +42,13 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-10-21 §5.5: «Datos capturados» de la corrida más reciente, con el permiso de la bandeja.
+        group.MapGet("/conversations/{conversationId:guid}/automation", GetConversationAutomationAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationRead)
+            .Produces<ConversationAutomationDetailsDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         // Spec 2026-10-09 §8.3: envío de texto, idempotente por clientId.
         group.MapPost("/conversations/{conversationId:guid}/messages", SendMessageAsync)
             .RequireAuthorization(MessagingPermissions.ConversationManage)
@@ -462,6 +469,9 @@ public static class MessagingEndpoints
 
     private static async Task<IResult> ReleaseAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new ReleaseConversationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> GetConversationAutomationAsync(Guid tenantId, Guid conversationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetConversationAutomationQuery(tenantId, conversationId), cancellationToken));
 
     private static async Task<IResult> PauseAutomationAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new PauseAutomationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));

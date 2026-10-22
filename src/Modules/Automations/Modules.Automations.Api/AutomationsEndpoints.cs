@@ -16,6 +16,7 @@ public static class AutomationsEndpoints
         group.MapChatbotEndpoints();
         group.MapConnectionEndpoints();
         group.MapTemplateEndpoints();
+        group.MapRunEndpoints();
         return endpoints;
     }
 
