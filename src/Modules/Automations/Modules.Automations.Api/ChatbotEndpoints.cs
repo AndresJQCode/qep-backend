@@ -72,6 +72,21 @@ internal static class ChatbotEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict);
 
+        chatbots.MapGet("/{chatbotId:guid}/export", ExportAsync)
+            .RequireAuthorization(AutomationsPermissions.ChatbotManage)
+            .Produces<ChatbotExportDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        chatbots.MapPost("/import", ImportAsync)
+            .RequireAuthorization(AutomationsPermissions.ChatbotManage)
+            .Accepts<ImportChatbotRequest>("application/json")
+            .Produces<ChatbotEditorDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         chatbots.MapDelete("/{chatbotId:guid}", DeleteAsync)
             .WithActionContract()
             .Produces(StatusCodes.Status204NoContent)
@@ -139,6 +154,22 @@ internal static class ChatbotEndpoints
     {
         // Antes que el cuerpo: sin If-Match no vale la pena leerlo.
         var version = AutomationsEndpoints.RequireVersion(httpContext);
+        var (draft, failure) = await ReadBoundedJsonAsync<SaveDraftRequest>(httpContext, cancellationToken);
+        if (draft is null)
+        {
+            return failure!;
+        }
+
+        return Results.Ok(await dispatcher.SendAsync(
+            new SaveChatbotDraftCommand(tenantId, chatbotId, version, draft.Flow, draft.Layout),
+            cancellationToken));
+    }
+
+    /// <summary>Lee el cuerpo JSON con el tope de <see cref="ChatbotLimits.DraftBodyMaxBytes"/> (el del borrador; un archivo importado
+    /// cabe en lo mismo: flujo, posiciones y margen) y lo deserializa. Devuelve el resultado HTTP a responder si no se puede.</summary>
+    private static async Task<(T? Body, IResult? Failure)> ReadBoundedJsonAsync<T>(HttpContext httpContext, CancellationToken cancellationToken)
+        where T : class
+    {
         if (httpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sizeFeature)
         {
             sizeFeature.MaxRequestBodySize = ChatbotLimits.DraftBodyMaxBytes;
@@ -147,39 +178,31 @@ internal static class ChatbotEndpoints
         var request = httpContext.Request;
         if (request.ContentLength > ChatbotLimits.DraftBodyMaxBytes)
         {
-            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            return (null, Results.StatusCode(StatusCodes.Status413PayloadTooLarge));
         }
 
         if (!request.HasJsonContentType())
         {
-            return Results.StatusCode(StatusCodes.Status415UnsupportedMediaType);
+            return (null, Results.StatusCode(StatusCodes.Status415UnsupportedMediaType));
         }
 
         var (body, status) = await ReadBoundedAsync(request.Body, ChatbotLimits.DraftBodyMaxBytes, cancellationToken);
         if (body is null)
         {
-            return Results.StatusCode(status);
+            return (null, Results.StatusCode(status));
         }
 
-        SaveDraftRequest? draft;
         try
         {
-            draft = JsonSerializer.Deserialize<SaveDraftRequest>(body, JsonSerializerOptions.Web);
+            return JsonSerializer.Deserialize<T>(body, JsonSerializerOptions.Web) is { } value
+                ? (value, null)
+                : (null, Results.StatusCode(StatusCodes.Status400BadRequest));
         }
         catch (JsonException)
         {
             // Lo mismo que respondería el binder con un JSON roto.
-            return Results.StatusCode(StatusCodes.Status400BadRequest);
+            return (null, Results.StatusCode(StatusCodes.Status400BadRequest));
         }
-
-        if (draft is null)
-        {
-            return Results.StatusCode(StatusCodes.Status400BadRequest);
-        }
-
-        return Results.Ok(await dispatcher.SendAsync(
-            new SaveChatbotDraftCommand(tenantId, chatbotId, version, draft.Flow, draft.Layout),
-            cancellationToken));
     }
 
     private static async Task<(byte[]? Body, int Status)> ReadBoundedAsync(Stream stream, int maxBytes, CancellationToken cancellationToken)
@@ -230,6 +253,20 @@ internal static class ChatbotEndpoints
     // Sin Location, como crear: el editor abre con la copia que vuelve.
     private static async Task<IResult> DuplicateAsync(Guid tenantId, Guid chatbotId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Created((string?)null, await dispatcher.SendAsync(new DuplicateChatbotCommand(tenantId, chatbotId), cancellationToken));
+
+    private static async Task<IResult> ExportAsync(Guid tenantId, Guid chatbotId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ExportChatbotQuery(tenantId, chatbotId), cancellationToken));
+
+    /// <summary>D-C9: el archivo importado se lee con el mismo tope del borrador, a mano, por la misma razón que <see cref="SaveDraftAsync"/>.
+    /// Sin Location, como crear.</summary>
+    private static async Task<IResult> ImportAsync(
+        Guid tenantId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var (request, failure) = await ReadBoundedJsonAsync<ImportChatbotRequest>(httpContext, cancellationToken);
+        return request is null
+            ? failure!
+            : Results.Created((string?)null, await dispatcher.SendAsync(new ImportChatbotCommand(tenantId, request), cancellationToken));
+    }
 
     private static async Task<IResult> DeleteAsync(
         Guid tenantId, Guid chatbotId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)

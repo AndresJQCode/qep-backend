@@ -49,3 +49,26 @@ public sealed record ChatbotEditorDto(
     IReadOnlyList<string> Variables);
 
 public sealed record DraftSavedDto(long Version, DateTimeOffset UpdatedAt, IReadOnlyList<FlowIssueDto> Issues);
+
+/// <summary>D-C9: el archivo de un chatbot. <see cref="Schema"/> es la versión del archivo (hoy 1), no la del flujo. Lleva el borrador,
+/// sin conexiones ni estado; <see cref="ExternalApis"/> son las «API externa» que nombran sus bloques HTTP, para que quien importa
+/// sepa qué conexiones debe tener (un id que el tenant ya no tiene viaja con nombre vacío y estado <c>Unknown</c>).</summary>
+public sealed record ChatbotExportDto(
+    int Schema,
+    string Name,
+    string Description,
+    string Trigger,
+    IReadOnlyList<string> Keywords,
+    string RestartKeyword,
+    int MaxAttempts,
+    JsonElement Flow,
+    JsonElement Layout,
+    IReadOnlyList<ExternalApiRefDto> ExternalApis,
+    DateTimeOffset ExportedAt)
+{
+    public const int CurrentSchema = 1;
+}
+
+/// <summary>D-C15: <see cref="Name"/> (si viene) pisa al del archivo; <see cref="ConnectionMap"/> va de la conexión «API externa» del
+/// archivo a la del tenant que importa.</summary>
+public sealed record ImportChatbotRequest(string? Name, ChatbotExportDto Export, IReadOnlyDictionary<Guid, Guid>? ConnectionMap);

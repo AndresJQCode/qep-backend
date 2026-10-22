@@ -48,6 +48,10 @@ public sealed record DuplicateChatbotCommand(Guid TenantId, Guid ChatbotId) : IC
 
 public sealed record DeleteChatbotCommand(Guid TenantId, Guid ChatbotId, long Version) : ICommand<bool>;
 
+public sealed record ExportChatbotQuery(Guid TenantId, Guid ChatbotId) : IQuery<ChatbotExportDto>;
+
+public sealed record ImportChatbotCommand(Guid TenantId, ImportChatbotRequest Request) : ICommand<ChatbotEditorDto>;
+
 /// <summary>Los límites del cuerpo (§4.4) y de los campos que comparten crear y editar.</summary>
 public static class ChatbotLimits
 {
@@ -86,20 +90,24 @@ public static class ChatbotLimits
 /// descripción larga a su recorte silencioso.</summary>
 internal static class ChatbotRules
 {
-    public static void Name<T>(IRuleBuilderInitial<T, string> rule) => rule.NotEmpty().MaximumLength(Chatbot.NameMaxLength);
+    // `key` renombra la clave del error (importar los pone bajo «export.»): el handler de crear y editar la deja como está.
+    public static void Name<T>(IRuleBuilderInitial<T, string> rule, string? key = null) =>
+        Keyed(rule.NotEmpty().MaximumLength(Chatbot.NameMaxLength), key);
 
-    public static void Description<T>(IRuleBuilderInitial<T, string> rule) => rule.NotNull().MaximumLength(Chatbot.DescriptionMaxLength);
+    public static void Description<T>(IRuleBuilderInitial<T, string> rule, string? key = null) =>
+        Keyed(rule.NotNull().MaximumLength(Chatbot.DescriptionMaxLength), key);
 
-    public static void Trigger<T>(IRuleBuilderInitial<T, string> rule) =>
-        rule.Must(trigger => TryParseTrigger(trigger, out _))
-            .WithMessage("Trigger must be NewConversation, Keyword or OutsideHours.");
+    public static void Trigger<T>(IRuleBuilderInitial<T, string> rule, string? key = null) =>
+        Keyed(rule.Must(trigger => TryParseTrigger(trigger, out _)).WithMessage("Trigger must be NewConversation, Keyword or OutsideHours."), key);
 
-    public static void Keywords<T>(IRuleBuilderInitial<T, IReadOnlyList<string>> rule) =>
-        rule.NotNull()
-            .Must(keywords => keywords.Count <= Chatbot.MaxKeywords)
-            .WithMessage($"At most {Chatbot.MaxKeywords} keywords are allowed.")
-            .Must(keywords => keywords.All(keyword => keyword is not null && keyword.Trim().Length <= Chatbot.KeywordMaxLength))
-            .WithMessage($"Each keyword can have at most {Chatbot.KeywordMaxLength} characters.");
+    public static void Keywords<T>(IRuleBuilderInitial<T, IReadOnlyList<string>> rule, string? key = null) =>
+        Keyed(
+            rule.NotNull()
+                .Must(keywords => keywords.Count <= Chatbot.MaxKeywords)
+                .WithMessage($"At most {Chatbot.MaxKeywords} keywords are allowed.")
+                .Must(keywords => keywords.All(keyword => keyword is not null && keyword.Trim().Length <= Chatbot.KeywordMaxLength))
+                .WithMessage($"Each keyword can have at most {Chatbot.KeywordMaxLength} characters."),
+            key);
 
     public static void ConnectionIds<T>(IRuleBuilderInitial<T, IReadOnlyList<Guid>> rule) =>
         rule.NotNull()
@@ -107,6 +115,14 @@ internal static class ChatbotRules
             .WithMessage($"At most {ChatbotLimits.MaxConnections} connections are allowed.")
             .Must(ids => ids.Distinct().Count() == ids.Count)
             .WithMessage("A connection cannot be repeated.");
+
+    private static void Keyed<T, TProperty>(IRuleBuilderOptions<T, TProperty> rule, string? key)
+    {
+        if (key is not null)
+        {
+            rule.OverridePropertyName(key);
+        }
+    }
 
     public static bool TryParseTrigger(string? value, out ChatbotTrigger trigger)
     {
@@ -182,6 +198,51 @@ public sealed class SaveChatbotDraftValidator : AbstractValidator<SaveChatbotDra
             .Must(layout => Encoding.UTF8.GetByteCount(layout.GetRawText()) <= ChatbotLimits.LayoutMaxLength)
             .WithMessage($"The layout cannot exceed {ChatbotLimits.LayoutMaxLength / 1024} KB.")
             .OverridePropertyName("layout");
+    }
+}
+
+/// <summary>D-C9: el archivo importado se valida con los mismos límites del borrador (512 KB el flujo, 256 KB las posiciones) y las
+/// mismas reglas de campos que crear y editar. Que el flujo se pueda leer lo dice el handler bajo <c>export.flow</c>, como
+/// <see cref="SaveChatbotDraftValidator"/> bajo <c>flow</c>.</summary>
+public sealed class ImportChatbotValidator : AbstractValidator<ImportChatbotCommand>
+{
+    private static string EffectiveName(ImportChatbotRequest request) => request.Name ?? request.Export?.Name ?? string.Empty;
+
+    public ImportChatbotValidator()
+    {
+        RuleFor(command => command.Request).NotNull();
+        When(command => command.Request is not null, () =>
+        {
+            RuleFor(command => command.Request.Export).NotNull().OverridePropertyName("export");
+            // El nombre que se usa es el del pedido si viene; si no, el del archivo.
+            ChatbotRules.Name(RuleFor(command => EffectiveName(command.Request)), "name");
+            When(command => command.Request.Export is not null, () =>
+            {
+                RuleFor(command => command.Request.Export.Schema)
+                    .Equal(ChatbotExportDto.CurrentSchema).OverridePropertyName("export.schema");
+                ChatbotRules.Description(RuleFor(command => command.Request.Export.Description), "export.description");
+                ChatbotRules.Trigger(RuleFor(command => command.Request.Export.Trigger), "export.trigger");
+                ChatbotRules.Keywords(RuleFor(command => command.Request.Export.Keywords), "export.keywords");
+                RuleFor(command => command.Request.Export.RestartKeyword)
+                    .NotEmpty().MaximumLength(Chatbot.RestartKeywordMaxLength).OverridePropertyName("export.restartKeyword");
+                RuleFor(command => command.Request.Export.MaxAttempts)
+                    .InclusiveBetween(Chatbot.MinAttempts, Chatbot.MaxAttemptsLimit).OverridePropertyName("export.maxAttempts");
+                RuleFor(command => command.Request.Export.Flow)
+                    .Cascade(CascadeMode.Stop)
+                    .Must(flow => flow.ValueKind == JsonValueKind.Object)
+                    .WithMessage(FlowFormatException.Malformed)
+                    .Must(flow => Encoding.UTF8.GetByteCount(flow.GetRawText()) <= ChatbotLimits.FlowMaxLength)
+                    .WithMessage($"The flow cannot exceed {ChatbotLimits.FlowMaxLength / 1024} KB.")
+                    .OverridePropertyName("export.flow");
+                RuleFor(command => command.Request.Export.Layout)
+                    .Cascade(CascadeMode.Stop)
+                    .Must(layout => layout.ValueKind == JsonValueKind.Object)
+                    .WithMessage("The layout must be a JSON object.")
+                    .Must(layout => Encoding.UTF8.GetByteCount(layout.GetRawText()) <= ChatbotLimits.LayoutMaxLength)
+                    .WithMessage($"The layout cannot exceed {ChatbotLimits.LayoutMaxLength / 1024} KB.")
+                    .OverridePropertyName("export.layout");
+            });
+        });
     }
 }
 
@@ -639,5 +700,121 @@ public sealed class DeleteChatbotHandler(
         chatbots.Remove(chatbot);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return true;
+    }
+}
+
+/// <summary>D-C9: el borrador del chatbot con sus ajustes, sin conexiones ni estado, más las «API externa» que nombran sus bloques HTTP
+/// (resueltas por el puerto: el archivo dice cuáles hay que tener, no sólo sus ids). Leer el borrador es lo mismo que
+/// <c>GET /chatbots/{id}</c>, pero es un archivo que sale del sistema: exige <c>manage</c> (§4.4).</summary>
+public sealed class ExportChatbotHandler(
+    IExecutionContext executionContext,
+    ITenantModules tenantModules,
+    IChatbotRepository chatbots,
+    IAutomationExternalApis externalApis,
+    IClock clock)
+    : IQueryHandler<ExportChatbotQuery, ChatbotExportDto>
+{
+    public async Task<ChatbotExportDto> HandleAsync(ExportChatbotQuery query, CancellationToken cancellationToken)
+    {
+        await AutomationsAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, AutomationsPermissions.ChatbotManage, cancellationToken);
+        var chatbot = await chatbots.FindAsync(query.TenantId, query.ChatbotId, cancellationToken)
+            ?? throw AutomationsNotFound.Chatbot(query.ChatbotId);
+
+        var referenced = ReferencedApiIds(chatbot.DraftFlowJson);
+        var known = (await externalApis.ListAsync(query.TenantId, cancellationToken)).ToDictionary(api => api.Id);
+        return new ChatbotExportDto(
+            ChatbotExportDto.CurrentSchema,
+            chatbot.Name,
+            chatbot.Description,
+            chatbot.Trigger.ToString(),
+            chatbot.Keywords,
+            chatbot.RestartKeyword,
+            chatbot.MaxAttempts,
+            JsonSerializer.Deserialize<JsonElement>(chatbot.DraftFlowJson),
+            JsonSerializer.Deserialize<JsonElement>(chatbot.DraftLayoutJson),
+            [.. referenced.Select(id => known.TryGetValue(id, out var api)
+                ? new ExternalApiRefDto(api.Id, api.Name, api.Status)
+                : new ExternalApiRefDto(id, string.Empty, "Unknown"))],
+            clock.UtcNow);
+    }
+
+    /// <summary>Un borrador ilegible (dato viejo) se exporta igual, sin APIs: el archivo es el respaldo, no la validación.</summary>
+    private static IReadOnlyList<Guid> ReferencedApiIds(string flowJson)
+    {
+        try
+        {
+            return [.. FlowJson.Parse(flowJson).Nodes.OfType<HttpNode>().Select(node => node.ConnectionId).OfType<Guid>().Distinct().Order()];
+        }
+        catch (FlowFormatException)
+        {
+            return [];
+        }
+    }
+}
+
+/// <summary>D-C9 y D-C15: crea un chatbot en <c>Draft</c> sin conexiones con el flujo y los ajustes del archivo. El mapa reescribe el
+/// <c>connectionId</c> de los bloques HTTP; el que no tiene par se queda, y Validar lo marca <c>http.connection_missing</c> en vez de
+/// que importar falle. Un flujo ilegible es 422 bajo <c>export.flow</c>; el nombre repetido, 409 <c>name_taken</c> (el índice
+/// respalda al chequeo).</summary>
+public sealed class ImportChatbotHandler(
+    IExecutionContext executionContext,
+    ITenantModules tenantModules,
+    AutomationsCaller caller,
+    IChatbotRepository chatbots,
+    IAutomationsUnitOfWork unitOfWork,
+    IAutomationsAuditRecorder audit,
+    IClock clock,
+    IValidator<ImportChatbotCommand> validator,
+    ChatbotEditorBuilder builder)
+    : ICommandHandler<ImportChatbotCommand, ChatbotEditorDto>
+{
+    public async Task<ChatbotEditorDto> HandleAsync(ImportChatbotCommand command, CancellationToken cancellationToken)
+    {
+        await AutomationsAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AutomationsPermissions.ChatbotManage, cancellationToken);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var export = command.Request.Export;
+        var flow = Remap(Parse(export.Flow), command.Request.ConnectionMap);
+        var by = await caller.RequireAsync(command.TenantId, cancellationToken);
+        var name = command.Request.Name ?? export.Name;
+        await ChatbotConnectionCheck.EnsureNameIsFreeAsync(chatbots, command.TenantId, name, null, cancellationToken);
+
+        var now = clock.UtcNow;
+        // El validador ya garantizó el disparador: esta conversión no lanza.
+        var trigger = Enum.Parse<ChatbotTrigger>(export.Trigger);
+        var chatbot = Chatbot.Create(
+            command.TenantId, name, export.Description, trigger, export.Keywords, FlowJson.Serialize(flow), export.Layout.GetRawText(), by, now);
+        chatbot.UpdateSettings(trigger, export.Keywords, export.RestartKeyword, export.MaxAttempts, now);
+        await chatbots.AddAsync(chatbot, cancellationToken);
+        audit.Record(command.TenantId, executionContext.SubjectId, false, AutomationsAuditActions.ChatbotImported, AutomationsAuditActions.ResourceChatbot, chatbot.Id, now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return await builder.BuildAsync(chatbot, cancellationToken);
+    }
+
+    private static FlowDefinition Parse(JsonElement flow)
+    {
+        try
+        {
+            return FlowJson.Parse(flow.GetRawText());
+        }
+        catch (FlowFormatException exception)
+        {
+            throw new ValidationException([new ValidationFailure("export.flow", exception.Code)]);
+        }
+    }
+
+    private static FlowDefinition Remap(FlowDefinition flow, IReadOnlyDictionary<Guid, Guid>? map)
+    {
+        if (map is null or { Count: 0 })
+        {
+            return flow;
+        }
+
+        return flow with
+        {
+            Nodes = [.. flow.Nodes.Select(node => node is HttpNode { ConnectionId: { } from } http && map.TryGetValue(from, out var to)
+                ? http with { ConnectionId = to }
+                : node)],
+        };
     }
 }

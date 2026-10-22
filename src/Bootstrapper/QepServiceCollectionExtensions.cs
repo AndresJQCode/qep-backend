@@ -746,7 +746,7 @@ public static class QepServiceCollectionExtensions
         // Pipeline (spec 2026-10-13 D36): el resumen de negocios de la ficha del cliente.
         services.AddScoped<IQueryHandler<GetCustomerDealsSummaryQuery, CustomerDealsSummaryDto>, GetCustomerDealsSummaryHandler>();
         // Automations (spec 2026-10-21 §4.4): lista, creación, lectura, edición, borrador, validación, publicación, pausa, reanudación,
-        // duplicado y borrado del chatbot. A mano, como el resto: sin registro, 500 (CompositionRootTests).
+        // duplicado, borrado, exportar e importar el chatbot. A mano, como el resto: sin registro, 500 (CompositionRootTests).
         services.AddValidatorsFromAssemblyContaining<CreateChatbotValidator>();
         services.AddScoped<IQueryHandler<ListChatbotsQuery, ChatbotListResponse>, ListChatbotsHandler>();
         services.AddScoped<IQueryHandler<GetChatbotQuery, ChatbotEditorDto>, GetChatbotHandler>();
@@ -760,6 +760,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<ResumeChatbotCommand, ChatbotEditorDto>, ResumeChatbotHandler>();
         services.AddScoped<ICommandHandler<DuplicateChatbotCommand, ChatbotEditorDto>, DuplicateChatbotHandler>();
         services.AddScoped<ICommandHandler<DeleteChatbotCommand, bool>, DeleteChatbotHandler>();
+        services.AddScoped<IQueryHandler<ExportChatbotQuery, ChatbotExportDto>, ExportChatbotHandler>();
+        services.AddScoped<ICommandHandler<ImportChatbotCommand, ChatbotEditorDto>, ImportChatbotHandler>();
         // Automations (spec 2026-10-21 D-C8): el catálogo de plantillas, guardar un chatbot como plantilla y borrarla.
         services.AddScoped<IQueryHandler<ListChatbotTemplatesQuery, TemplateCatalogDto>, ListChatbotTemplatesHandler>();
         services.AddScoped<ICommandHandler<SaveChatbotAsTemplateCommand, TemplateDto>, SaveChatbotAsTemplateHandler>();

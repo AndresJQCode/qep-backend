@@ -750,6 +750,118 @@ public sealed class ChatbotsApiTests
             "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.deleted'", ("id", first.ToString())));
     }
 
+    // D-C9: el archivo lleva el borrador y las «API externa» que nombran sus bloques HTTP.
+    [Fact]
+    public async Task ExportCarriesTheDraftAndTheExternalApis()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (id, _) = await PublishableAsync(setup);
+
+        var response = await setup.Client.GetAsync($"{ChatbotsUrl(setup.Tenant.TenantId)}/{id}/export", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var export = (await response.Content.ReadFromJsonAsync<ChatbotExportDto>(Ct))!;
+        Assert.Equal((1, "Servicio técnico", "NewConversation", "reiniciar", 3), (export.Schema, export.Name, export.Trigger, export.RestartKeyword, export.MaxAttempts));
+        Assert.True(SameJson(export.Flow, FlowJson.Serialize(FlowJson.Parse(AnnexA.Json))));
+        Assert.Equal([AnnexA.CustomersApi, AnnexA.ServiceOrdersApi], export.ExternalApis.Select(api => api.Id).Order());
+        Assert.All(export.ExternalApis, api => Assert.Equal("Active", api.Status));
+    }
+
+    [Fact]
+    public async Task ImportRecreatesADraftWithTheSameFlow()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (id, _) = await PublishableAsync(setup);
+        var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{id}/export", Ct))!;
+
+        var response = await setup.Client.PostAsJsonAsync(
+            $"{ChatbotsUrl(setup.Tenant.TenantId)}/import", new ImportChatbotRequest("Copia", export, null), Ct);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var imported = (await response.Content.ReadFromJsonAsync<ChatbotEditorDto>(Ct))!;
+        Assert.Equal(("Copia", "Draft"), (imported.Chatbot.Name, imported.Chatbot.Status));
+        Assert.Empty(imported.Chatbot.Connections);
+        var reloaded = await GetAsync(setup, imported.Chatbot.Id);
+        Assert.True(SameJson(reloaded.Draft.Flow, FlowJson.Serialize(FlowJson.Parse(AnnexA.Json))));
+        Assert.Equal(1L, await CountAsync(connectionString,
+            "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.imported'", ("id", imported.Chatbot.Id.ToString())));
+
+        var again = await setup.Client.PostAsJsonAsync(
+            $"{ChatbotsUrl(setup.Tenant.TenantId)}/import", new ImportChatbotRequest("copia", export, null), Ct);
+        Assert.Equal(HttpStatusCode.Conflict, again.StatusCode);
+        Assert.Equal("automations.chatbot.name_taken", (await ProblemAsync(again)).Code);
+    }
+
+    // D-C15: el mapa reescribe la conexión de los bloques HTTP; la que no tiene par queda y Validar la marca.
+    [Fact]
+    public async Task ImportRemapsHttpConnections()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var apis = FakeExternalApis.WithAnnexA();
+        var replacement = Guid.CreateVersion7();
+        apis.Items.Add(new ExternalApiRef(replacement, "Clientes del cliente", "Active"));
+        using var factory = new QepApiFactory(connectionString, apis);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (id, _) = await PublishableAsync(setup);
+        var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{id}/export", Ct))!;
+        var url = $"{ChatbotsUrl(setup.Tenant.TenantId)}/import";
+
+        var mapped = await setup.Client.PostAsJsonAsync(
+            url, new ImportChatbotRequest("Mapeado", export, new Dictionary<Guid, Guid> { [AnnexA.CustomersApi] = replacement }), Ct);
+
+        Assert.Equal(HttpStatusCode.Created, mapped.StatusCode);
+        var mappedEditor = (await mapped.Content.ReadFromJsonAsync<ChatbotEditorDto>(Ct))!;
+        Assert.Equal([replacement, AnnexA.ServiceOrdersApi], HttpConnectionIds(mappedEditor));
+        Assert.DoesNotContain(mappedEditor.Issues, issue => issue.Code == FlowIssueCodes.HttpConnectionMissing);
+
+        apis.Items.Clear();
+        var unmapped = await setup.Client.PostAsJsonAsync(url, new ImportChatbotRequest("Sin mapa", export, null), Ct);
+
+        Assert.Equal(HttpStatusCode.Created, unmapped.StatusCode);
+        var unmappedEditor = (await unmapped.Content.ReadFromJsonAsync<ChatbotEditorDto>(Ct))!;
+        Assert.Equal([AnnexA.CustomersApi, AnnexA.ServiceOrdersApi], HttpConnectionIds(unmappedEditor));
+        Assert.Contains(unmappedEditor.Issues, issue => issue.Code == FlowIssueCodes.HttpConnectionMissing);
+    }
+
+    [Fact]
+    public async Task ImportWithABrokenFlowIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (id, _) = await PublishableAsync(setup);
+        var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{id}/export", Ct))!;
+        var flow = JsonNode.Parse(AnnexA.Json)!;
+        flow["nodes"]![0]!["kind"] = "teleport";
+        var broken = export with { Flow = JsonDocument.Parse(flow.ToJsonString()).RootElement };
+
+        var response = await setup.Client.PostAsJsonAsync(
+            $"{ChatbotsUrl(setup.Tenant.TenantId)}/import", new ImportChatbotRequest("Roto", broken, null), Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var (code, keys) = await ProblemAsync(response);
+        Assert.Equal("validation.failed", code);
+        Assert.Equal(["export.flow"], keys);
+        Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM automations.chatbots WHERE name = 'Roto'"));
+    }
+
+    private static Guid[] HttpConnectionIds(ChatbotEditorDto editor) =>
+        [.. editor.Draft.Flow.GetProperty("nodes").EnumerateArray()
+            .Where(node => node.GetProperty("kind").GetString() == "http")
+            .Select(node => node.GetProperty("connectionId").GetGuid())];
+
     /// <summary>Un chatbot con la conexión de WhatsApp y el flujo del Anexo A guardado (sólo avisos con <see cref="FakeExternalApis.WithAnnexA"/>):
     /// listo para publicar. Devuelve su id y la versión vigente.</summary>
     private static async Task<(Guid Id, long Version)> PublishableAsync(Setup setup, string name = "Servicio técnico")
