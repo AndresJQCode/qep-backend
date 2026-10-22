@@ -454,6 +454,11 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   sustituto). No copies la regla en un módulo —la copia de Pos ya se retiró una vez—: Quotations y Pos no se ven entre
   sí, y dos copias divergen sin que nada se ponga rojo. Ensanchar la columna es una migración en cada módulo más su
   constante (`QuotationProductSnapshot.NameMaxLength`, `PosSaleLine.ProductNameMaxLength`).
+- **`Messaging:Automation:Enqueue` queda apagado hasta que el motor exista (plan 2).** Con el flag prendido y sin worker la
+  cola `messaging.automation_inbox` crece sin que nadie la lea y nadie la purga. Y antes de desplegar la migración
+  `AddAutomationEngine` en un ambiente donde alguien puso a mano `automation_status` ≠ 'None', la migración normaliza esas
+  filas a 'None'.
+- **Las plantillas del sistema de Automatizaciones se cargan al arrancar**: un JSON embebido roto tumba el host (a propósito).
 
 ## Verificación
 

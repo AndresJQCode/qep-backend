@@ -648,14 +648,14 @@ fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un m
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
 `catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify` y `automations`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
-`companies`, `shopify` exige `orders` y `automations` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas; último de la lista) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots; último de la lista) no viene con el signup y se prende por tenant desde la consola de operador. Sin `messaging`, el triage de `pipeline` queda vacío; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`companies`, `shopify` exige `orders` y `automations` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots; último de la lista) no viene con el signup y se prende por tenant desde la consola de operador. Sin `messaging`, el triage de `pipeline` queda vacío; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
 Apagar un módulo descarta sus permisos en el request siguiente, por cookie y por el stub de
 desarrollo (este último sólo cuando el tenant existe en `tenancy.tenants`). No borra datos ni corta
 trabajos en vuelo. La SPA lo lee de `GET /api/v1/tenants/{tenantId}/modules` (autenticado, sin
-permiso), que siempre devuelve los diez con `enabled`, `contracted` y `missingDependencies`, y se
+permiso), que siempre devuelve todos los del catálogo con `enabled`, `contracted` y `missingDependencies`, y se
 entera en hasta 5 minutos.
 
 Un tenant del signup nace con los siete sin `pos`, `messaging` ni `pipeline` (los seis base más `shopify`) mientras `Entitlements:GrantDefaultModulesOnSignup`
@@ -2827,6 +2827,82 @@ de un tenant sin `pipeline` se marca procesado sin efecto: prender el módulo de
 después el frontend del embudo —kanban, panel del chat con triage, ajustes y la sección de negocios en la
 ficha del cliente de la conversación—. Los permisos nuevos exigen reiniciar la API y recargar la sesión.
 Prender `pipeline` al tenant desde la consola de operador; para el triage también hace falta `messaging`.
+
+### Automatizaciones: constructor de chatbots
+
+El constructor de chatbots de WhatsApp (spec 2026-10-21, plan backend 1): un admin arma un flujo de bloques en un
+lienzo, lo valida y lo publica sobre una o varias conexiones. En este plan **nada ejecuta todavía un flujo**: el motor
+que lee las versiones publicadas y contesta es el plan 2. Módulo `automations` (exige `messaging`, se prende por tenant),
+permisos `automations.chatbot.read|manage` de núcleo y de fábrica sólo en `admin`: cada handler revisa el módulo y
+responde 403 `tenancy.module_not_enabled`. Esquema `automations` con siete tablas: `chatbots`, `chatbot_versions`,
+`chatbot_connections`, `chatbot_templates`, `conversation_runs`, `http_calls` y `simulations`. Los únicos son
+`IX_chatbots_tenant_name` y `IX_chatbot_templates_tenant_name` sobre `(tenant_id, lower(name))` (por SQL en la migración:
+EF no modela índices por expresión), `IX_chatbot_versions_chatbot_number` (1, 2, 3… por chatbot) y dos parciales:
+`IX_chatbot_connections_active` (una conexión la atiende a lo sumo un chatbot publicado, `WHERE active`) e
+`IX_conversation_runs_live` (una corrida viva por conversación, `WHERE status IN ('Running','Waiting')`).
+
+**Rutas** bajo `/api/v1/tenants/{tenantId}/automations` (§4.4):
+
+| Método | Ruta | Permiso |
+| --- | --- | --- |
+| `GET` | `/chatbots?search=` | `automations.chatbot.read` |
+| `POST` | `/chatbots` (`source.kind`: `blank` \| `template` con `templateId` y `parameters` \| `duplicate` con `chatbotId`) | `automations.chatbot.manage` |
+| `GET` | `/chatbots/{chatbotId}` (el editor: borrador, versión publicada, validación, conexiones elegibles, variables) | `automations.chatbot.read` |
+| `PUT` | `/chatbots/{chatbotId}` (nombre, disparador, palabras clave, conexiones) | `automations.chatbot.manage` |
+| `PUT` | `/chatbots/{chatbotId}/draft` (`{ flow, layout }`) | `automations.chatbot.manage` |
+| `POST` | `/chatbots/{chatbotId}/validate` | `automations.chatbot.read` |
+| `POST` | `/chatbots/{chatbotId}/publish\|pause\|resume` | `automations.chatbot.manage` |
+| `POST` | `/chatbots/{chatbotId}/duplicate` | `automations.chatbot.manage` |
+| `DELETE` | `/chatbots/{chatbotId}` | `automations.chatbot.manage` |
+| `POST` | `/chatbots/{chatbotId}/save-as-template` | `automations.chatbot.manage` |
+| `GET` | `/templates` (del sistema y del tenant) | `automations.chatbot.read` |
+| `DELETE` | `/templates/{templateId}` (sólo las del tenant; una del sistema es 404) | `automations.chatbot.manage` |
+| `GET` | `/chatbots/{chatbotId}/export` | `automations.chatbot.manage` |
+| `POST` | `/chatbots/import` (`{ name, export, connectionMap }`) | `automations.chatbot.manage` |
+| `GET` | `/connections` (las conexiones que el editor ofrece y qué chatbot ocupa cada una) | `automations.chatbot.read` |
+
+Toda escritura sobre un chatbot existente lleva `If-Match` (428 sin él, 412 si es viejo), menos duplicar. Es **un solo**
+`version` compartido entre `PUT /chatbots/{id}` y `PUT …/draft`: guardar el borrador lo mueve y el formulario de ajustes
+tiene que mandar el que le devolvió el último guardado, y al revés.
+
+- **Borrador.** El cuerpo de `PUT …/draft` tiene un tope de 800 KB medido en bytes antes de leerlo (413 por
+  `Content-Length` o sin él, chunked); adentro, el flujo ≤ 512 KB y el layout ≤ 256 KB, también en bytes UTF-8. El
+  `layout` no se valida (D-C2). Un flujo que no se puede leer es 422 `validation.failed` con `errors.flow` =
+  `[código, detalle]`: el código es `flow.malformed` (JSON inválido, `schema` distinto de 1, un campo con otro tipo o fuera
+  de su lista cerrada, un id de bloque que falta o se repite) o `flow.unknown_kind`, y el detalle es el texto del parser,
+  para diagnosticar. La auditoría `automations.chatbot.draft_saved` se escribe a lo sumo una vez por minuto por chatbot.
+- **Publicar.** Copia el borrador a una versión inmutable; `Draft` pasa a `Active` y ocupa todas sus conexiones. Con
+  errores responde 422 `automations.chatbot.invalid` y `errors.flow` trae **sólo los errores** (no los avisos), cada uno
+  como `"<código>: <mensaje>"` (R16).
+- **Borrar** un chatbot con corridas vivas es 409 `automations.chatbot.has_live_runs`.
+- **Exportar e importar.** El export lleva el borrador (flujo y layout), nombre, descripción, disparador, palabras clave y
+las «API externa» que usa. El cuerpo de
+  `POST /import` tiene un tope propio de 1 MB, para que un export con flujo y layout en sus topes se pueda volver a
+  importar. `connectionMap` (≤ 50 pares) cambia las conexiones de «API externa» del tenant de origen por las del destino.
+- **Plantillas del sistema.** `welcome-menu-handoff` y `outside-hours` son JSON embebidos en
+  `Modules.Automations.Infrastructure/Seed/Templates/` y se cargan al arrancar: un archivo roto tumba el host, a propósito.
+  `save-as-template` guarda el borrador sin conexiones de «API externa».
+
+**Validación del flujo (`FlowValidator`).** Los códigos de `issues` son `start.no_first_node`,
+`node.output_unconnected`, `node.output_unconnected_optional`, `node.unknown_target`, `node.unreachable`,
+`buttons.too_many`, `buttons.label_too_long`, `buttons.id_invalid`, `list.row_id_invalid`, `list.too_many_rows`,
+`list.row_title_too_long`, `list.row_description_too_long`, `list.channel_not_supported`, `text.too_long`, `text.empty`,
+`http.connection_missing`, `http.connection_paused`, `http.body_not_json`, `http.path_invalid`, `http.no_sample_response`,
+`condition.no_rules`, `variable.name_invalid`, `variable.never_set` y `business_hours.not_assigned`, más los de parseo
+`flow.malformed` y `flow.unknown_kind`. La lista cerrada `fallback` de una pregunta es `repeat | otherOutput | handoff`
+(R15). Hay huecos conocidos que el motor (plan 2) tiene que cerrar antes de leer versiones: cero botones, lista fija sin
+filas, URL de botón vacía o no https, `timeoutSeconds` fuera de 1..10, `maxAttempts` fuera de 1..5, entre otros.
+
+**Contrato para el frontend (plan 3).** El editor manda **siempre todos los campos** de cada bloque: `""` (nunca `null`)
+para un texto que todavía no se escribió, y `null` (nunca `""`) para ids y números sin fijar (`connectionId`, `reasonId`…);
+las listas cerradas llevan su default. Los ids de botón y de fila los genera el editor. Las palabras
+clave se guardan normalizadas (minúsculas, sin tildes) y así vuelven. Un solo `If-Match` para ajustes y borrador (arriba).
+
+**Lo que Mensajería expone para el motor.** `IBotOutbound` (enviar como el bot, con las mismas guardas de estado que un
+asesor y la misma regla de texto) e `IAutomationInbox` (la cola `messaging.automation_inbox` que llena el webhook y que el
+motor reclamará con lease y testigo de intentos) son puertos de Mensajería que el plan 2 consume. La ingesta sólo encola con
+`Messaging:Automation:Enqueue`, **apagado** hasta que exista el worker. En el hilo, `MessageDto.sentByChatbot` (el chatbot
+autor) e `interactive` (los botones, la lista o el enlace de un interactivo saliente) son aditivos: un cliente viejo los ignora.
 
 ### Integración con Shopify
 
