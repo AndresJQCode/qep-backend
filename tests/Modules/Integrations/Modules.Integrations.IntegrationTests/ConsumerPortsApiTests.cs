@@ -51,6 +51,32 @@ public sealed class ConsumerPortsApiTests
             ("id", connection.Id.ToString())));
     }
 
+    // Spec 2026-10-21 D-H1: el bloque HTTP resuelve la conexión con la dirección y la clave descifrada.
+    [Fact]
+    public async Task ResolveAsyncCarriesBaseUrlAndTheKey()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterAutomationsTenantAsync(factory, connectionString);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ExternalApiBody(authHeader: "X-Token"));
+        var created = (await response.Content.ReadFromJsonAsync<ConnectionResponse>(Ct))!;
+
+        using var scope = factory.Services.CreateScope();
+        var resolved = await scope.ServiceProvider.GetRequiredService<IIntegrationConnections>()
+            .ResolveAsync(tenant.TenantId, created.Id, Ct);
+
+        Assert.NotNull(resolved);
+        Assert.Equal("external-api", resolved.ProviderKey);
+        Assert.Equal("https://api-clasic.qcode.co", resolved.Fields["baseUrl"]);
+        Assert.Equal("X-Token", resolved.Fields["authHeader"]);
+        Assert.Equal(SentinelExternalApiKey, resolved.Secrets["apiKey"]);
+        var listed = await scope.ServiceProvider.GetRequiredService<IIntegrationConnections>()
+            .ListByProviderAsync(tenant.TenantId, "external-api", Ct);
+        Assert.Equal([created.Id], listed.Select(item => item.Id));
+    }
+
     [Fact]
     public async Task ThePortsSeeOnlyActiveVisibleConnectionsOfTheirTenant()
     {

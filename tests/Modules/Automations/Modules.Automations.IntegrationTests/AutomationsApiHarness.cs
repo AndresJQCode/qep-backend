@@ -137,9 +137,9 @@ internal static class AutomationsApiHarness
     }
 
     /// <summary>
-    /// Las conexiones «API externa» que ve el host. El proveedor <c>external-api</c> de Integrations llega con el plan 2 y, hasta
-    /// entonces, el adaptador del composition root no devuelve ninguna: las pruebas que necesitan las del Anexo A
-    /// (<see cref="AnnexA.CustomersApi"/>, <see cref="AnnexA.ServiceOrdersApi"/>) le pasan este doble a <see cref="QepApiFactory"/>.
+    /// Las conexiones «API externa» que ve el host. Las pruebas del Anexo A necesitan los ids fijos de
+    /// <see cref="AnnexA.CustomersApi"/> y <see cref="AnnexA.ServiceOrdersApi"/>, que una conexión creada por la API no puede tener: le
+    /// pasan este doble a <see cref="QepApiFactory"/>. Las que prueban la lectura real usan <see cref="SeedExternalApiConnectionAsync"/>.
     /// </summary>
     public sealed class FakeExternalApis : IAutomationExternalApis
     {
@@ -198,6 +198,18 @@ internal static class AutomationsApiHarness
                 });
             }
 
+            // Spec 2026-10-21 D-H1: el probador de external-api llega con la tarea 10 (D-H3); hasta entonces el host de pruebas da por buena
+            // la conexión de ese proveedor y los demás siguen al probador real. // Tarea 10: borrar esto.
+            builder.ConfigureTestServices(services =>
+            {
+                var original = services.Last(descriptor => descriptor.ServiceType == typeof(IConnectionTester));
+                services.Remove(original);
+                services.AddSingleton<IConnectionTester>(provider => new ExternalApiAcceptingTester(
+                    (IConnectionTester)(original.ImplementationInstance
+                        ?? original.ImplementationFactory?.Invoke(provider)
+                        ?? ActivatorUtilities.CreateInstance(provider, original.ImplementationType!))));
+            });
+
             builder.UseEnvironment("Development");
             // Sin vigilar archivos de configuración (MessagingApiHarness explica el límite de FSEvents de macOS).
             builder.UseSetting("hostBuilder:reloadConfigOnChange", "false");
@@ -235,6 +247,18 @@ internal static class AutomationsApiHarness
             builder.UseSetting("Automations:Workers:InboxPollSeconds", "3600");
             builder.UseSetting("Automations:Workers:AbandonSweepMinutes", "1440");
         }
+    }
+
+    private sealed class ExternalApiAcceptingTester(IConnectionTester inner) : IConnectionTester
+    {
+        public Task<ConnectionTestResult> TestAsync(
+            IntegrationProvider provider,
+            IReadOnlyDictionary<string, string> fields,
+            IReadOnlyDictionary<string, string> secrets,
+            CancellationToken cancellationToken) =>
+            provider.Key == IntegrationProviders.ExternalApi.Key
+                ? Task.FromResult(ConnectionTestResult.Ok)
+                : inner.TestAsync(provider, fields, secrets, cancellationToken);
     }
 
     internal sealed record RegisteredTenant(Guid TenantId, Guid OwnerUserId);
@@ -384,12 +408,53 @@ internal static class AutomationsApiHarness
         return connection.Id;
     }
 
-    /// <summary>Una conexión «API externa» del tenant. // plan 2: el proveedor <c>external-api</c> no está en el catálogo de Integrations
-    /// (<see cref="IntegrationProviders.All"/>), así que <c>IntegrationConnection.Create</c> no tiene definición con la que validar campos
-    /// y sembrarla escribiría una fila que el catálogo no reconoce. El plan 2 la implementa; hasta entonces la prueba de
-    /// <c>externalApis</c> por la API real queda con <c>Skip</c> y el adaptador se prueba con un doble en <c>AutomationAdaptersTests</c>.</summary>
-    public static Task<Guid> SeedExternalApiConnectionAsync(WebApplicationFactory<Program> host, Guid tenantId, string name, string status) =>
-        throw new NotSupportedException("El proveedor external-api llega con el plan 2.");
+    /// <summary>Spec 2026-10-21 D-H1: una conexión «API externa» del tenant, creada por <c>POST /integrations/connections</c> como la crea la pantalla
+    /// de Integrations (no hay otro camino: es un proveedor por formulario). <paramref name="status"/> es <c>Active</c> o <c>Paused</c>; la segunda
+    /// la pausa por <c>POST …/pause</c>. El tenant tiene que tener <c>automations</c> prendido (<see cref="EnableAutomationsAsync"/>).</summary>
+    public static async Task<Guid> SeedExternalApiConnectionAsync(
+        WebApplicationFactory<Program> host, Guid tenantId, Guid ownerUserId, string name, string status)
+    {
+        using var client = CreateClient(
+            host, ownerUserId, tenantId, IntegrationsPermissions.ConnectionRead, IntegrationsPermissions.ConnectionManage);
+        var url = $"/api/v1/tenants/{tenantId}/integrations/connections";
+        var created = await SendMutationAsync(client, url, new
+        {
+            providerKey = IntegrationProviders.ExternalApi.Key,
+            name,
+            fields = new Dictionary<string, string?> { ["baseUrl"] = "https://api-clasic.qcode.co", ["authHeader"] = "x-api-key" },
+            secrets = new Dictionary<string, string?> { ["apiKey"] = "external-api-key-SENTINEL-a9" },
+        }, ifMatch: null);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var id = (await created.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("id").GetGuid();
+        if (status == "Paused")
+        {
+            var paused = await SendMutationAsync(client, $"{url}/{id}/pause", body: null, ifMatch: "\"1\"");
+            Assert.Equal(HttpStatusCode.OK, paused.StatusCode);
+        }
+        else
+        {
+            Assert.Equal("Active", status);
+        }
+
+        return id;
+    }
+
+    private static async Task<HttpResponseMessage> SendMutationAsync(HttpClient client, string url, object? body, string? ifMatch)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+        if (body is not null)
+        {
+            request.Content = JsonContent.Create(body);
+        }
+
+        request.Headers.TryAddWithoutValidation("X-Qep-Client", "web");
+        if (ifMatch is not null)
+        {
+            request.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+        }
+
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
 
     /// <summary>La firma que Meta pone en <c>X-Hub-Signature-256</c>: HMAC-SHA256 del cuerpo con el AppSecret.</summary>
     public static string Sign(byte[] body) =>

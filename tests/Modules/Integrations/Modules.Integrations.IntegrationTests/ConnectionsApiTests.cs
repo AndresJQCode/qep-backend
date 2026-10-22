@@ -65,6 +65,77 @@ public sealed class ConnectionsApiTests
             ("tenantId", tenant.TenantId)));
     }
 
+    // Spec 2026-10-21 D-H1: external-api sale en el catálogo del tenant con automations, se crea por el formulario genérico y el
+    // GET nunca devuelve la clave.
+    [Fact]
+    public async Task CreatesAnExternalApiConnectionAndTheCatalogShowsItForAutomations()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterAutomationsTenantAsync(factory, connectionString);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var catalog = await client.GetFromJsonAsync<IntegrationsCatalogResponse>(CatalogUrl(tenant.TenantId), Ct);
+        var provider = Assert.Single(catalog!.Providers, item => item.Key == "external-api");
+        Assert.Equal("API externa", provider.DisplayName);
+        Assert.Equal(["baseUrl", "authHeader", "apiKey", "testPath"], provider.Fields.Select(field => field.Key));
+
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ExternalApiBody());
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = (await response.Content.ReadFromJsonAsync<ConnectionResponse>(Ct))!;
+        Assert.Equal("external-api", created.ProviderKey);
+        Assert.Equal("https://api-clasic.qcode.co", created.Fields["baseUrl"]);
+
+        var read = await SendAsync(client, HttpMethod.Get, ConnectionUrl(tenant.TenantId, created.Id));
+        var json = await read.Content.ReadAsStringAsync(Ct);
+        Assert.DoesNotContain(SentinelExternalApiKey, json, StringComparison.Ordinal);
+        using (var document = JsonDocument.Parse(json))
+        {
+            Assert.True(document.RootElement.GetProperty("secrets").GetProperty("apiKey").GetProperty("configured").GetBoolean());
+            Assert.False(document.RootElement.GetProperty("fields").TryGetProperty("apiKey", out _));
+        }
+
+        var list = await SendAsync(client, HttpMethod.Get, ConnectionsUrl(tenant.TenantId));
+        Assert.DoesNotContain(SentinelExternalApiKey, await list.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnHttpBaseUrlIs422OnTheField()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterAutomationsTenantAsync(factory, connectionString);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ExternalApiBody(baseUrl: "http://api.x.co"));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(["fields.baseUrl"], (await ProblemAsync(response)).ErrorKeys);
+        Assert.Equal(0L, await CountConnectionsAsync(connectionString, tenant.TenantId));
+    }
+
+    [Fact]
+    public async Task WithoutTheAutomationsModuleTheProviderIsHidden()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        // El signup no trae automations: es el caso de un tenant real sin el módulo.
+        var tenant = await RegisterTenantAsync(factory);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var catalog = await client.GetFromJsonAsync<IntegrationsCatalogResponse>(CatalogUrl(tenant.TenantId), Ct);
+        Assert.DoesNotContain(catalog!.Providers, provider => provider.Key == "external-api");
+
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ExternalApiBody());
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("tenancy.module_not_enabled", (await ProblemAsync(response)).Code);
+    }
+
     // F2 del plan de frontend: credentials_rejected trae errors con la clave del secreto.
     [Fact]
     public async Task RejectedCredentialsAnswer422OnTheSecretFieldAndSaveNothing()

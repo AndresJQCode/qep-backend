@@ -51,6 +51,9 @@ internal static class IntegrationsApiHarness
 
     public const string InstagramRedirectUri = "https://qep.qcode.co/settings/integrations/instagram/callback";
 
+    /// <summary>Un secreto inventado de «API externa»: no puede aparecer en ninguna respuesta.</summary>
+    public const string SentinelExternalApiKey = "external-api-key-SENTINEL-9c4f1a";
+
     public const string ZenviaBaseUrl = "https://zenvia.test";
 
     /// <summary>Spec 2026-10-15 §4.2: la app de Shopify, fijada y nunca heredada. Con el par, shopify es visible (D-M3);
@@ -261,8 +264,55 @@ internal static class IntegrationsApiHarness
                     .ConfigurePrimaryHttpMessageHandler(() => InstagramHandler);
                 services.AddHttpClient(ShopifyAdminGateway.HttpClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => ShopifyHandler);
+                AcceptExternalApiConnections(services);
             });
         }
+    }
+
+    /// <summary>Spec 2026-10-21 D-H1: el probador de <c>external-api</c> llega con la tarea 10 (D-H3). Hasta entonces crear una conexión
+    /// sin probador sería un 500, así que el host de pruebas decora <see cref="IConnectionTester"/> y da por buena la de ese
+    /// proveedor; los demás siguen al probador real. // Tarea 10: borrar esto cuando exista <c>ExternalApiConnectionTester</c>.</summary>
+    private static void AcceptExternalApiConnections(IServiceCollection services)
+    {
+        var original = services.Last(descriptor => descriptor.ServiceType == typeof(IConnectionTester));
+        services.Remove(original);
+        services.AddSingleton<IConnectionTester>(provider => new ExternalApiAcceptingTester(
+            (IConnectionTester)(original.ImplementationInstance
+                ?? original.ImplementationFactory?.Invoke(provider)
+                ?? ActivatorUtilities.CreateInstance(provider, original.ImplementationType!))));
+    }
+
+    private sealed class ExternalApiAcceptingTester(IConnectionTester inner) : IConnectionTester
+    {
+        public Task<ConnectionTestResult> TestAsync(
+            IntegrationProvider provider,
+            IReadOnlyDictionary<string, string> fields,
+            IReadOnlyDictionary<string, string> secrets,
+            CancellationToken cancellationToken) =>
+            provider.Key == IntegrationProviders.ExternalApi.Key
+                ? Task.FromResult(ConnectionTestResult.Ok)
+                : inner.TestAsync(provider, fields, secrets, cancellationToken);
+    }
+
+    /// <summary>Spec 2026-10-21 D-H1: el cuerpo de una conexión «API externa».</summary>
+    public static object ExternalApiBody(
+        string name = "Clientes", string? baseUrl = "https://api-clasic.qcode.co", string? authHeader = "x-api-key",
+        string? apiKey = SentinelExternalApiKey) =>
+        new
+        {
+            providerKey = "external-api",
+            name,
+            fields = new Dictionary<string, string?> { ["baseUrl"] = baseUrl, ["authHeader"] = authHeader },
+            secrets = new Dictionary<string, string?> { ["apiKey"] = apiKey },
+        };
+
+    /// <summary>Un tenant real con <c>automations</c> (que arrastra a <c>messaging</c>): <c>external-api</c> no pide habilitación.</summary>
+    public static async Task<RegisteredTenant> RegisterAutomationsTenantAsync(QepApiFactory factory, string connectionString)
+    {
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
+        await EnableModuleAsync(connectionString, tenant.TenantId, "automations");
+        return tenant;
     }
 
     internal sealed record RegisteredTenant(Guid TenantId, Guid OwnerUserId, string Email);

@@ -53,6 +53,16 @@ public static class ShopifyFieldKeys
     public const string AccessToken = "accessToken";
 }
 
+/// <summary>Spec 2026-10-21 D-H1. Todos son campos que escribe una persona; <see cref="ApiKey"/> es el único secreto.
+/// <see cref="AuthHeader"/> y <see cref="TestPath"/> son opcionales: sin ellos el consumidor usa <c>x-api-key</c> y <c>/</c>.</summary>
+public static class ExternalApiFieldKeys
+{
+    public const string BaseUrl = "baseUrl";
+    public const string AuthHeader = "authHeader";
+    public const string ApiKey = "apiKey";
+    public const string TestPath = "testPath";
+}
+
 /// <summary>
 /// La lista cerrada de proveedores, como <see cref="TenantModuleKeys.All"/> (spec 2026-10-08,
 /// «Catálogo»). Cada proveedor entra con el spec de su consumidor, porque sin módulo consumidor nunca
@@ -235,7 +245,38 @@ public static class IntegrationProviders
         DefaultMaxConnections,
         onboarding: ProviderOnboarding.ShopifyOAuth);
 
-    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram, Shopify];
+    /// <summary>Spec 2026-10-21 D-H1: una API externa del tenant, que consume el bloque HTTP de <c>automations</c>. Sin
+    /// habilitación por tenant: tener el módulo alcanza. El patrón de <c>baseUrl</c> sólo exige https sin query ni
+    /// fragmento; que el host no sea una IP ni un rango privado (D-H2) lo revisa el probador y cada llamada, no el
+    /// catálogo.</summary>
+    public static readonly IntegrationProvider ExternalApi = new(
+        "external-api",
+        "API externa",
+        IntegrationCategory.Automation,
+        [TenantModuleKeys.Automations],
+        [
+            new FieldDefinition(
+                ExternalApiFieldKeys.BaseUrl, "Dirección base", FieldKind.Url,
+                required: true, maxLength: 300, pattern: @"^https://[^\s/?#]+(/[^\s?#]*)?\z",
+                invalidMessage: "Escribe la dirección completa con https://, sin query."),
+            new FieldDefinition(
+                ExternalApiFieldKeys.AuthHeader, "Header de la clave", FieldKind.Text,
+                required: false, maxLength: 64, pattern: @"^[A-Za-z0-9-]{1,64}\z",
+                invalidMessage: "El nombre del header sólo puede tener letras, números y guiones."),
+            new FieldDefinition(
+                ExternalApiFieldKeys.ApiKey, "Clave de la API", FieldKind.Secret,
+                required: true, maxLength: 512, pattern: @"^[\x21-\x7E]{1,512}\z",
+                invalidMessage: "La clave sólo puede tener letras, números y símbolos, sin espacios: vuelve a copiarla."),
+            new FieldDefinition(
+                ExternalApiFieldKeys.TestPath, "Ruta de prueba", FieldKind.Text,
+                required: false, maxLength: 200, pattern: @"^/[^\s?#]*\z",
+                invalidMessage: "Escribe una ruta que empiece por «/», sin espacios ni query."),
+        ],
+        maxConnections: 10,
+        onboarding: ProviderOnboarding.Form,
+        requiresTenantEnablement: false);
+
+    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram, Shopify, ExternalApi];
 
     /// <summary>Ordinal, como el <c>CHECK</c>: <c>"Zenvia"</c> no es <c>"zenvia"</c>.</summary>
     public static IntegrationProvider? Find(string? key) =>

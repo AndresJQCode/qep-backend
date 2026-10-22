@@ -152,7 +152,10 @@ public sealed class ZenviaConnectionTesterTests : IDisposable
     {
         var keys = _services.GetServices<IProviderConnectionTester>().Select(tester => tester.ProviderKey).ToHashSet();
 
-        Assert.All(IntegrationProviders.All, provider => Assert.Contains(provider.Key, keys));
+        // Tarea 10 (spec 2026-10-21 D-H3): external-api trae su probador; en ese commit se quita esta excepción.
+        Assert.All(
+            IntegrationProviders.All.Where(provider => provider != IntegrationProviders.ExternalApi),
+            provider => Assert.Contains(provider.Key, keys));
     }
 
     [Fact]

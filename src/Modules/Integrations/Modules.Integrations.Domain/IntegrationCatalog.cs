@@ -11,6 +11,9 @@ public enum IntegrationCategory
 
     /// <summary>Spec 2026-10-15 §4.1: tiendas en línea (Shopify) de donde llegan pedidos.</summary>
     Commerce,
+
+    /// <summary>Spec 2026-10-21 D-H1: APIs externas del tenant que el bloque HTTP de los chatbots consume.</summary>
+    Automation,
 }
 
 public enum FieldKind

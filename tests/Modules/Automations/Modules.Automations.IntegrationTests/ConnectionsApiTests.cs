@@ -83,14 +83,31 @@ public sealed class ConnectionsApiTests
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(ConnectionsUrl(tenant.TenantId), Ct)).StatusCode);
     }
 
-    // plan 2: el proveedor external-api no existe en el catálogo de Integrations hasta entonces (SeedExternalApiConnectionAsync).
-    [Fact(Skip = "proveedor external-api en el plan 2")]
+    // Spec 2026-10-21 D-H4: el editor lista las conexiones «API externa» reales del tenant, activas y pausadas, sin la clave.
+    [Fact]
     public async Task TheEditorListsTheExternalApiConnections()
     {
         await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
         var tenant = await RegisterTenantAsync(factory);
-        await SeedExternalApiConnectionAsync(factory, tenant.TenantId, "Clientes", "Active");
+        await EnableAutomationsAsync(connectionString, tenant.TenantId);
+        var whatsApp = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Servicio", Digits(), Digits());
+        var active = await SeedExternalApiConnectionAsync(factory, tenant.TenantId, tenant.OwnerUserId, "Clientes", "Active");
+        var paused = await SeedExternalApiConnectionAsync(factory, tenant.TenantId, tenant.OwnerUserId, "Órdenes", "Paused");
+        var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var created = await client.PostAsJsonAsync(
+            $"{AutomationsUrl(tenant.TenantId)}/chatbots",
+            new CreateChatbotRequest("Servicio técnico", "x", "NewConversation", [], [whatsApp], new ChatbotSourceRequest("blank", null, null, null)),
+            Ct);
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var editor = (await created.Content.ReadFromJsonAsync<ChatbotEditorDto>(Ct))!;
+        Assert.Equal(
+            [(active, "Active"), (paused, "Paused")],
+            editor.ExternalApis.Select(api => (api.Id, api.Status)).OrderBy(api => api.Status, StringComparer.Ordinal));
+        Assert.DoesNotContain("SENTINEL", await created.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
     }
 
     private static async Task PublishAsync(HttpClient client, Guid tenantId, Guid connectionId)

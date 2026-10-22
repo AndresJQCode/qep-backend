@@ -39,7 +39,7 @@ public sealed class IntegrationCatalogTests
         Assert.Equal(@"^[0-9]{6}\z", provider.FindField("registrationPin")!.Pattern!.ToString());
         Assert.Null(provider.FindField("displayPhoneNumber")!.Pattern);
         Assert.Equal(
-            [IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud, IntegrationProviders.Instagram, IntegrationProviders.Shopify],
+            [IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud, IntegrationProviders.Instagram, IntegrationProviders.Shopify, IntegrationProviders.ExternalApi],
             IntegrationProviders.All);
         Assert.Equal(ProviderOnboarding.Form, IntegrationProviders.Zenvia.Onboarding);
     }
@@ -117,6 +117,66 @@ public sealed class IntegrationCatalogTests
         Assert.All(
             IntegrationProviders.Shopify.Fields.Where(field => field.Key is not ("shopDomain" or "shopName")),
             field => Assert.True(field.Internal));
+    }
+
+    // Spec 2026-10-21 D-H1: la fila literal de la API externa. La consume automations, se conecta por formulario y no pide
+    // habilitación por tenant.
+    [Fact]
+    public void ExternalApiIsAFormProviderConsumedByAutomations()
+    {
+        var provider = IntegrationProviders.ExternalApi;
+
+        Assert.Equal("external-api", provider.Key);
+        Assert.Equal("API externa", provider.DisplayName);
+        Assert.Equal(IntegrationCategory.Automation, provider.Category);
+        Assert.Equal([TenantModuleKeys.Automations], provider.ConsumingModules);
+        Assert.Equal(10, provider.MaxConnections);
+        Assert.Equal(ProviderOnboarding.Form, provider.Onboarding);
+        Assert.False(provider.IsBackendOwned);
+        Assert.False(provider.RequiresTenantEnablement);
+        Assert.Equal(["baseUrl", "authHeader", "testPath"], provider.PublicFields.Select(field => field.Key));
+        Assert.Equal(["apiKey"], provider.SecretFields.Select(field => field.Key));
+        Assert.Equal(FieldKind.Url, provider.FindField("baseUrl")!.Kind);
+        Assert.True(provider.FindField("baseUrl")!.Required);
+        Assert.Equal(300, provider.FindField("baseUrl")!.MaxLength);
+        Assert.True(provider.FindField("apiKey")!.Required);
+        Assert.Equal(512, provider.FindField("apiKey")!.MaxLength);
+        Assert.False(provider.FindField("authHeader")!.Required);
+        Assert.Equal(64, provider.FindField("authHeader")!.MaxLength);
+        Assert.False(provider.FindField("testPath")!.Required);
+        Assert.Equal(200, provider.FindField("testPath")!.MaxLength);
+        Assert.All(provider.Fields, field => Assert.False(field.Internal));
+        Assert.Same(provider, IntegrationProviders.Parse("external-api"));
+    }
+
+    [Theory]
+    [InlineData("https://api-clasic.qcode.co", true)]
+    [InlineData("https://api.x.co/v1", true)]
+    [InlineData("http://api.x.co", false)]
+    [InlineData("https://api.x.co/v1?x=1", false)]
+    [InlineData("https://api.x.co/v1#frag", false)]
+    [InlineData("https://api.x.co\n", false)]
+    [InlineData("https://", false)]
+    public void BaseUrlPatternRequiresHttpsWithoutQuery(string value, bool valid) =>
+        Assert.Equal(valid, IntegrationProviders.ExternalApi.FindField("baseUrl")!.HasValidShape(value));
+
+    [Theory]
+    [InlineData("authHeader", "x-api-key", true)]
+    [InlineData("authHeader", "X Token", false)]
+    [InlineData("testPath", "/health", true)]
+    [InlineData("testPath", "health", false)]
+    [InlineData("testPath", "/health?x=1", false)]
+    [InlineData("apiKey", "sk_live-1234", true)]
+    [InlineData("apiKey", "with space", false)]
+    public void TheOptionalAndSecretFieldsKeepTheirShape(string key, string value, bool valid) =>
+        Assert.Equal(valid, IntegrationProviders.ExternalApi.FindField(key)!.HasValidShape(value));
+
+    [Fact]
+    public void ExternalApiIsVisibleOnlyWithAutomations()
+    {
+        Assert.True(IntegrationProviders.ExternalApi.IsVisibleFor(TenantModuleSet.FromStored(TenantModuleKeys.All)));
+        Assert.False(IntegrationProviders.ExternalApi.IsVisibleFor(
+            TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Automations]))));
     }
 
     // Meta devuelve el número formateado: "+57 300 123 4567" tiene que pasar tal cual.

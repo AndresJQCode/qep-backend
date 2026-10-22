@@ -161,7 +161,7 @@ namespace Modules.Integrations.Infrastructure.Persistence.Migrations
 
                     b.ToTable("connections", "integrations", t =>
                         {
-                            t.HasCheckConstraint("CK_connections_provider_key", "provider_key IN ('zenvia','whatsapp-cloud','instagram','shopify')");
+                            t.HasCheckConstraint("CK_connections_provider_key", "provider_key IN ('zenvia','whatsapp-cloud','instagram','shopify','external-api')");
 
                             t.HasCheckConstraint("CK_connections_status", "status IN ('Active','Paused','NeedsAttention')");
                         });
