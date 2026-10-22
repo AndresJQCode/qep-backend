@@ -534,15 +534,16 @@ internal static class AutomationsApiHarness
         return editor.Chatbot.Id;
     }
 
-    /// <summary>D-C9 y D-C15: un chatbot importado por <c>POST /chatbots/import</c> desde el flujo <paramref name="flowJson"/>, con el mapa de
-    /// conexiones «API externa» del archivo a las del tenant. Queda en <c>Draft</c> y sin conexiones, como lo deja importar.</summary>
+    /// <summary>D-C9 y D-C15: un chatbot importado por <c>POST /chatbots/import</c> desde el flujo <paramref name="flowJson"/> y su
+    /// <paramref name="layoutJson"/> (el <c>Layout</c> del archivo exportado), con el mapa de conexiones «API externa» del archivo a las del
+    /// tenant. Queda en <c>Draft</c> y sin conexiones, como lo deja importar.</summary>
     public static async Task<ChatbotEditorDto> ImportChatbotAsync(
-        HttpClient client, Guid tenantId, string flowJson, IReadOnlyDictionary<Guid, Guid> connectionMap, string name = "Clasic")
+        HttpClient client, Guid tenantId, string flowJson, string layoutJson, IReadOnlyDictionary<Guid, Guid> connectionMap, string name = "Clasic")
     {
         var ct = TestContext.Current.CancellationToken;
         var export = new ChatbotExportDto(
             ChatbotExportDto.CurrentSchema, name, "Servicio técnico de calentadores.", "NewConversation", [], "reiniciar", 3,
-            JsonDocument.Parse(flowJson).RootElement, JsonDocument.Parse("{}").RootElement,
+            JsonDocument.Parse(flowJson).RootElement, JsonDocument.Parse(layoutJson).RootElement,
             [.. connectionMap.Keys.Select(id => new ExternalApiRefDto(id, "API de Clasic", "Active"))], DateTimeOffset.UtcNow);
         var imported = await client.PostAsJsonAsync($"{AutomationsUrl(tenantId)}/chatbots/import", new ImportChatbotRequest(null, export, connectionMap), ct);
         Assert.Equal(HttpStatusCode.Created, imported.StatusCode);

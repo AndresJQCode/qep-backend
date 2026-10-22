@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -17,9 +18,10 @@ using static Modules.Automations.IntegrationTests.AutomationsApiHarness;
 namespace Modules.Automations.IntegrationTests;
 
 /// <summary>
-/// Spec 2026-10-21 §7 y Anexo B de punta a punta: el subconjunto del flujo de Clasic importado por la API, con su conexión «API externa»
-/// real (creada por Integrations y resuelta por el adaptador de Bootstrapper), contra una API de Clasic de mentira
-/// (<see cref="FakeExternalApiHandler"/>). Los entrantes entran por el webhook de Meta, como en <see cref="EngineEndToEndTests"/>.
+/// Spec 2026-10-21 §7 y Anexo B de punta a punta: el flujo completo de Clasic (<see cref="ClasicFlow"/>) importado por la API con su
+/// layout y su conexión «API externa» real (creada por Integrations y resuelta por el adaptador de Bootstrapper), contra una API de Clasic
+/// de mentira (<see cref="FakeExternalApiHandler"/>) que responde con la forma real de su contrato (Anexo C). Los entrantes entran por el
+/// webhook de Meta, como en <see cref="EngineEndToEndTests"/>.
 /// </summary>
 public sealed class ClasicFlowEndToEndTests
 {
@@ -28,17 +30,43 @@ public sealed class ClasicFlowEndToEndTests
     private const string ApiKey = "clasic-key-SENTINEL";
     private const string BaseUrl = "https://api-clasic.test";
 
-    /// <summary>Anexo C: <c>GET /customers</c> es paginado (<c>data</c>, <c>total</c>).</summary>
-    private const string CustomerFound = """{"data":[{"id":7,"firstName":"Laura","lastName":"Gómez","acceptPolicy":true}],"total":1}""";
+    /// <summary>Anexo C con la forma que de verdad responde Clasic: <c>GET /customers</c> (por teléfono y por cédula) es paginado con
+    /// <c>items</c> y <c>totalCount</c>; el fixture lee <c>items</c> y <c>items[0]</c>.</summary>
+    private const string CustomerFound = """{"items":[{"id":7,"firstName":"Laura","lastName":"Gómez","acceptPolicy":true}],"totalCount":1}""";
 
-    /// <summary>Anexo C: all-invoice-items y failures responden un arreglo en la raíz (<c>[].id</c>); el fixture lo mapea con <c>$</c> (P2-R36).</summary>
+    /// <summary>Anexo C: all-invoice-items, failures y services responden un arreglo en la raíz (<c>[].id</c>); el fixture lo mapea con
+    /// <c>$</c> o <c>$[0]</c> (P2-R36).</summary>
     private const string TwoEquipments = """
         [{"id":1,"referenceCode":"CAL-001","address":"Calle 1 # 2-3","haveOrderOpen":false},{"id":2,"referenceCode":"CAL-002","address":"Carrera 4 # 5-6","haveOrderOpen":false}]
         """;
 
     private const string Failures = """[{"id":3,"description":"No enciende"},{"id":4,"description":"Fuga de agua"}]""";
 
+    private const string MaintenanceFailure = """[{"id":5,"description":"MANTENIMIENTO","cause":"MANTENIMIENTO"}]""";
+
+    private const string MaintenanceService = """[{"id":12,"name":"STM","description":"Servicio técnico de mantenimiento"}]""";
+
+    /// <summary>Anexo C: auto-select-service-type responde un objeto, no un arreglo; el fixture lo mapea entero con <c>$</c>.</summary>
+    private const string WarrantyService = """{"id":9,"name":"STG","description":"Servicio técnico en garantía"}""";
+
     private static readonly byte[] InvoiceBytes = Encoding.UTF8.GetBytes("factura de compra de Clasic");
+
+    /// <summary>D-K3: el mismo cliente que encuentra la cédula, pero sin la política aceptada.</summary>
+    private const string CustomerWithoutPolicy = """{"items":[{"id":7,"firstName":"Laura","lastName":"Gómez","acceptPolicy":false}],"totalCount":1}""";
+
+    private const string NoCustomers = """{"items":[],"totalCount":0}""";
+
+    // Lo que manda el bot en los pasos que más se miran, tal como está en el fixture.
+    private const string Welcome =
+        "Hola, te damos la bienvenida a CLASIC, especialistas en calentamiento de agua. Recuerda que puedes reiniciar la conversación en cualquier momento escribiendo *REINICIAR*.";
+
+    private const string AskDocument = "Para solicitar un servicio o una asistencia técnica, escribe tu número de documento.";
+
+    private const string AskEquipment = "[list] Elige el equipo o la dirección donde necesitas el servicio.";
+
+    private const string AskServiceKind = "[button] ¿Qué tipo de servicio necesitas?";
+
+    private const string AskContact = "¿Cómo se llama la persona de contacto para la visita?";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -57,7 +85,8 @@ public sealed class ClasicFlowEndToEndTests
 
     /// <param name="traceLogs">Ruling P2-R38: el host registra todo desde Trace, el nivel en que el logging de HttpClient escribe los
     /// headers. A Information una regresión de <c>RemoveAllLoggers()</c> pasaría sin que nada lo viera.</param>
-    private static async Task<Fixture> ArrangeAsync(TestDatabase database, string? flowJson = null, bool traceLogs = false)
+    /// <param name="layoutJson">El <c>Layout</c> del archivo que se importa; por defecto, el del fixture de Clasic.</param>
+    private static async Task<Fixture> ArrangeAsync(TestDatabase database, string? flowJson = null, string? layoutJson = null, bool traceLogs = false)
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString);
@@ -87,18 +116,30 @@ public sealed class ClasicFlowEndToEndTests
         using (var admin = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions))
         {
             var imported = await ImportChatbotAsync(
-                admin, tenant.TenantId, flowJson ?? ClasicFlow.FlowJson, new Dictionary<Guid, Guid> { [ClasicFlow.ClasicApi] = apiConnectionId });
+                admin, tenant.TenantId, flowJson ?? ClasicFlow.FlowJson, layoutJson ?? ClasicFlow.LayoutJson,
+                new Dictionary<Guid, Guid> { [ClasicFlow.ClasicApi] = apiConnectionId });
             // D-C15: el mapa reescribió la conexión de todos los bloques HTTP (si quedara una, publicar fallaría por http.connection_missing).
             Assert.DoesNotContain(ClasicFlow.ClasicApi.ToString(), imported.Draft.Flow.GetRawText(), StringComparison.Ordinal);
+            if (layoutJson is null)
+            {
+                // El layout del archivo llega al borrador: el editor abre el flujo importado con sus posiciones.
+                Assert.True(imported.Draft.Layout.GetProperty("positions").TryGetProperty("policy-lookup", out _));
+            }
+
             await PublishImportedAsync(admin, tenant.TenantId, imported, whatsApp);
         }
 
-        // El camino feliz por defecto; cada prueba pisa lo que necesita (gana la regla registrada última).
-        factory.ExternalApi.Respond(@"^/customers\?", HttpStatusCode.OK, CustomerFound);
+        // El camino feliz por defecto, con la forma real de cada respuesta (Anexo C); cada prueba pisa lo que necesita (gana la regla
+        // registrada última). Por teléfono y por cédula van en reglas aparte para que una prueba pise sólo una de las dos búsquedas.
+        factory.ExternalApi.Respond(@"^/customers\?phone=", HttpStatusCode.OK, CustomerFound);
+        factory.ExternalApi.Respond(@"^/customers\?identificationNumber=", HttpStatusCode.OK, CustomerFound);
+        factory.ExternalApi.Respond(@"^/customers/7$", HttpStatusCode.OK, "{}");
         factory.ExternalApi.Respond(@"^/invoices/customer/7/all-invoice-items$", HttpStatusCode.OK, TwoEquipments);
         factory.ExternalApi.Respond(@"^/failures$", HttpStatusCode.OK, Failures);
-        factory.ExternalApi.Respond(@"^/service-orders/auto-select-service-type\?", HttpStatusCode.OK, """{"id":9,"name":"Servicio técnico"}""");
-        factory.ExternalApi.Respond(@"^/service-orders$", HttpStatusCode.Created, """{"id":55,"state":"Draft"}""");
+        factory.ExternalApi.Respond(@"^/failures\?cause=MANTENIMIENTO$", HttpStatusCode.OK, MaintenanceFailure);
+        factory.ExternalApi.Respond(@"^/services\?name=STM$", HttpStatusCode.OK, MaintenanceService);
+        factory.ExternalApi.Respond(@"^/service-orders/auto-select-service-type\?", HttpStatusCode.OK, WarrantyService);
+        factory.ExternalApi.Respond(@"^/service-orders$", HttpStatusCode.Created, """{"id":55}""");
         factory.ExternalApi.Respond(@"^/customers/new-customer$", HttpStatusCode.Created, """{"serviceOrderNumber":"OS-123"}""");
 
         // §8.6: la copia del adjunto baja de Graph la URL firmada y luego los bytes, que se verifican contra el sha256.
@@ -145,7 +186,8 @@ public sealed class ClasicFlowEndToEndTests
         await DrainAutomationsAsync(f.Host);
     }
 
-    /// <summary>Hasta el teléfono de contacto: «Hola», cédula, equipo 1, servicio técnico, falla 3, «Ana» y el teléfono.</summary>
+    /// <summary>Hasta el teléfono de contacto: «Hola» (cliente por teléfono con la política aceptada), cédula, equipo 1, servicio técnico,
+    /// falla 3, «Ana» y el teléfono.</summary>
     private static async Task ToTheOrderAsync(Fixture f)
     {
         await SayAsync(f, "w1", "Hola");
@@ -155,6 +197,33 @@ public sealed class ClasicFlowEndToEndTests
         await ChooseAsync(f, "w5", "3", "No enciende");
         await SayAsync(f, "w6", "Ana");
         await SayAsync(f, "w7", "3001234567");
+    }
+
+    /// <summary>El registro de un documento que Clasic no conoce, hasta la factura: «Dejar mis datos», nombres, apellidos, dirección, barrio,
+    /// ciudad, la falla de la lista y la foto, ya copiada a R2 cuando el motor procesa el entrante (D-H8).</summary>
+    private static async Task RegisterAsync(Fixture f, string failureRowId, string failureTitle)
+    {
+        await SayAsync(f, "w1", "Hola");
+        await SayAsync(f, "w2", "10203");
+        await RegisterFromOptionsAsync(f, failureRowId, failureTitle);
+    }
+
+    /// <summary>Desde los botones de «¿Qué prefieres hacer?» hasta la factura.</summary>
+    private static async Task RegisterFromOptionsAsync(Fixture f, string failureRowId, string failureTitle)
+    {
+        await TapAsync(f, "w3", "leave", "Dejar mis datos");
+        await SayAsync(f, "w4", "Laura");
+        await SayAsync(f, "w5", "Gómez");
+        await SayAsync(f, "w6", "Calle 1 # 2-3");
+        await SayAsync(f, "w7", "Laureles");
+        await SayAsync(f, "w8", "Medellín");
+        await ChooseAsync(f, "w9", failureRowId, failureTitle);
+        await InboundAsync(f, Payloads.Message(WaId, "w10", Timestamp("w10"), "image", new JsonObject
+        {
+            ["id"] = "media-1", ["mime_type"] = "image/jpeg", ["sha256"] = "c2hhMjU2",
+        }));
+        await DrainMediaAsync(f.Host);
+        await DrainAutomationsAsync(f.Host);
     }
 
     private static Task<string> TextAsync(Fixture f, string sql) => ScalarAsync<string>(f.ConnectionString, sql);
@@ -172,25 +241,31 @@ public sealed class ClasicFlowEndToEndTests
         await using var database = await StartDatabaseAsync();
         using var f = await ArrangeAsync(database);
 
+        // D-K3: el teléfono encuentra a un cliente con la política aceptada, así que no se pregunta.
         await SayAsync(f, "w1", "Hola");
-        Assert.Equal(
-            ["Hola Laura, bienvenido a Clasic. Te ayudamos a programar el servicio de tu calentador.", "Escribe tu número de documento, sin puntos ni espacios."],
-            f.Graph.Sends());
+        Assert.Equal([Welcome, AskDocument], f.Graph.Sends());
 
         await SayAsync(f, "w2", "10203");
         // P2-R15: las filas de la lista dinámica salen de la respuesta de la API, más la extra.
         Assert.Equal(["1", "2", "other"], f.Graph.LastListRowIds());
-        Assert.Equal("[list] Elige el equipo que necesita servicio.", f.Graph.Sends()[^1]);
+        Assert.Equal(AskEquipment, f.Graph.Sends()[^1]);
 
         await ChooseAsync(f, "w3", "1", "CAL-001");
-        Assert.Equal("[button] ¿Qué tipo de servicio necesitas?", f.Graph.Sends()[^1]);
+        Assert.Equal(AskServiceKind, f.Graph.Sends()[^1]);
         await TapAsync(f, "w4", "tech", "Servicio técnico");
         Assert.Equal(["3", "4"], f.Graph.LastListRowIds());
         await ChooseAsync(f, "w5", "3", "No enciende");
+        Assert.Equal(AskContact, f.Graph.Sends()[^1]);
         await SayAsync(f, "w6", "Ana");
         await SayAsync(f, "w7", "3001234567");
 
-        Assert.Equal("Listo, Ana. Tu orden es la 55; te llamamos al 3001234567 para agendar la visita.", f.Graph.Sends()[^1]);
+        // El resumen lee el servicio del objeto de auto-select, el título de la fila elegida y la dirección del equipo (item de la lista).
+        Assert.Equal(
+            "Resumen de la solicitud:\n\nServicio: Servicio técnico en garantía\nTipo de daño: No enciende\nNombre de contacto: Ana\n"
+            + "Número de contacto: 3001234567\nNúmero de identificación: 10203\nDirección de visita: Calle 1 # 2-3\n\n"
+            + "Gracias por contactarnos. Tu servicio será atendido con la orden N° 55; un agente se comunicará contigo para confirmar la fecha y "
+            + "hora de la visita.",
+            f.Graph.Sends()[^1]);
         Assert.Equal("Resolved|None", await TextAsync(f, "SELECT status || '|' || automation_status FROM messaging.conversations"));
         var runId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM automations.conversation_runs");
         Assert.Equal("Resolved", await TextAsync(f, "SELECT status FROM automations.conversation_runs"));
@@ -198,8 +273,8 @@ public sealed class ClasicFlowEndToEndTests
         var requests = f.Api.Requests.ToArray();
         Assert.Equal(
             [
-                "GET /customers?identificationNumber=10203", "GET /invoices/customer/7/all-invoice-items", "GET /failures",
-                "GET /service-orders/auto-select-service-type?invoiceItemId=1", "POST /service-orders",
+                $"GET /customers?phone={WaId}", "GET /customers?identificationNumber=10203", "GET /invoices/customer/7/all-invoice-items",
+                "GET /failures", "GET /service-orders/auto-select-service-type?invoiceItemId=1", "POST /service-orders",
             ],
             requests.Select(request => $"{request.Method} {request.Uri.PathAndQuery}"));
         Assert.All(requests, request => Assert.Equal(("api-clasic.test", ApiKey), (request.Uri.Host, request.ApiKey)));
@@ -217,10 +292,10 @@ public sealed class ClasicFlowEndToEndTests
 
         // D-H6: una fila por llamada, de esta corrida, con la ruta interpolada y sin query; la tabla no tiene dónde guardar un cuerpo.
         Assert.Equal(
-            "GET /customers 200 ok -,GET /invoices/customer/7/all-invoice-items 200 ok -,GET /failures 200 ok -,"
+            "GET /customers 200 ok -,GET /customers 200 ok -,GET /invoices/customer/7/all-invoice-items 200 ok -,GET /failures 200 ok -,"
             + "GET /service-orders/auto-select-service-type 200 ok -,POST /service-orders 201 ok -",
             await HttpCallsAsync(f));
-        Assert.Equal(5L, await CountAsync(f.ConnectionString,
+        Assert.Equal(6L, await CountAsync(f.ConnectionString,
             "SELECT count(*) FROM automations.http_calls WHERE run_id = @run AND connection_id = @connection AND tenant_id = @tenant",
             ("run", runId), ("connection", f.ApiConnectionId), ("tenant", f.Tenant.TenantId)));
         Assert.Equal(0L, await CountAsync(f.ConnectionString,
@@ -236,47 +311,48 @@ public sealed class ClasicFlowEndToEndTests
     {
         await using var database = await StartDatabaseAsync();
         using var f = await ArrangeAsync(database);
-        f.Api.Respond(@"^/customers\?", HttpStatusCode.OK, """{"data":[],"total":0}""");
+        f.Api.Respond(@"^/customers\?identificationNumber=", HttpStatusCode.OK, NoCustomers);
 
         await SayAsync(f, "w1", "Hola");
         await SayAsync(f, "w2", "10203");
         // Anexo B paso 6: el botón URL de registro y las dos opciones.
         Assert.Equal(
-            ["[cta_url] No encontramos ese documento. Puedes registrarte en la página o dejarnos tus datos por aquí.", "[button] ¿Qué prefieres hacer?"],
+            [
+                "[cta_url] No te encuentras registrado en nuestra base de datos. Puedes dejar tus datos para agendar tu visita de asistencia "
+                + "técnica o ingresar otro número de documento.",
+                "[button] ¿Qué prefieres hacer?",
+            ],
             f.Graph.Sends()[^2..]);
+        f.Api.Requests.Clear();
 
-        await TapAsync(f, "w3", "leave", "Dejar mis datos");
-        await SayAsync(f, "w4", "Laura Gómez");
-        await SayAsync(f, "w5", "Calle 1 # 2-3, Laureles");
-        await SayAsync(f, "w6", "Calentador a gas, no enciende");
-        Assert.Equal("Envíanos una foto o el PDF de la factura de compra.", f.Graph.Sends()[^1]);
+        await RegisterFromOptionsAsync(f, "3", "No enciende");
 
-        await InboundAsync(f, Payloads.Message(WaId, "w7", Timestamp("w7"), "image", new JsonObject
-        {
-            ["id"] = "media-1", ["mime_type"] = "image/jpeg", ["sha256"] = "c2hhMjU2",
-        }));
-        // D-H8: el archivo ya está en R2 cuando el motor procesa el entrante.
-        await DrainMediaAsync(f.Host);
-        await DrainAutomationsAsync(f.Host);
-
-        var registration = Assert.Single(f.Api.Requests, request => request.Uri.AbsolutePath == "/customers/new-customer");
-        Assert.Equal(HttpMethod.Post, registration.Method);
+        // El orden de las preguntas del registro, desde «Dejar mis datos» hasta la factura.
+        Assert.Equal(
+            [
+                "¿Cuáles son tus nombres?", "¿Y tus apellidos?", "Escribe la dirección donde está el calentador.", "¿En qué barrio?", "¿En qué ciudad?",
+                "[list] ¿Qué falla presenta el calentador?", "Envía la foto o el PDF de la factura de compra del calentador.",
+            ],
+            f.Graph.Sends()[^8..^1]);
+        Assert.Equal(["GET /failures", "POST /customers/new-customer"], f.Api.Requests.Select(request => $"{request.Method} {request.Uri.PathAndQuery}"));
+        var registration = f.Api.Requests.Last();
         Assert.Equal(ApiKey, registration.ApiKey);
         var file = Assert.Single(registration.Parts, part => part.Name == "file");
         Assert.Equal(InvoiceBytes, file.Bytes);
         Assert.Equal("image/jpeg", file.ContentType);
         Assert.NotNull(file.FileName);
-        var fields = registration.Parts.Where(part => part.Name != "file").ToDictionary(part => part.Name, part => part.Text);
-        Assert.Equal("10203", fields["identificationNumber"]);
-        Assert.Equal("Laura Gómez", fields["fullName"]);
-        Assert.Equal("Calle 1 # 2-3, Laureles", fields["address"]);
-        Assert.Equal("Calentador a gas, no enciende", fields["failureDescription"]);
-        Assert.False(string.IsNullOrEmpty(fields["phone"]));
+        var fields = registration.Parts.Where(part => part.Name != "file").ToDictionary(part => part.Name, part => part.Text, StringComparer.Ordinal);
+        Assert.Equal(
+            ("10203", "Laura", "Gómez", "Calle 1 # 2-3", "Laureles", "Ciudad: Medellín", WaId, "3"),
+            (fields["identificationNumber"], fields["firstName"], fields["lastName"], fields["address"], fields["neighborhood"],
+                fields["addressDescription"], fields["phone"], fields["failureId"]));
 
-        Assert.Equal("Recibimos tus datos. Tu solicitud es la OS-123.", f.Graph.Sends()[^1]);
+        Assert.Equal(
+            "Recibimos tus datos. Tu solicitud quedó registrada con el número OS-123; un agente se comunicará contigo para confirmar la visita.",
+            f.Graph.Sends()[^1]);
         Assert.Equal("Resolved|None", await TextAsync(f, "SELECT status || '|' || automation_status FROM messaging.conversations"));
         Assert.Equal(
-            "GET /customers 200 ok -,POST /customers/new-customer 201 ok -",
+            "GET /customers 200 ok -,GET /customers 200 ok -,GET /failures 200 ok -,POST /customers/new-customer 201 ok -",
             await HttpCallsAsync(f));
     }
 
@@ -291,7 +367,10 @@ public sealed class ClasicFlowEndToEndTests
         await ToTheOrderAsync(f);
 
         Assert.Equal(
-            ["No pudimos crear la orden: puede que ya exista una abierta para esa dirección.", "Te paso con un asesor."],
+            [
+                "No pudimos crear la orden: puede que ya exista una abierta para esa dirección o que haya un bloqueo. Te paso con un asesor.",
+                "Te paso con un asesor.",
+            ],
             f.Graph.Sends()[^2..]);
         Assert.Equal("Open|Paused|", await TextAsync(f,
             "SELECT status || '|' || automation_status || '|' || coalesce(assigned_member_id::text, '') FROM messaging.conversations"));
@@ -319,7 +398,7 @@ public sealed class ClasicFlowEndToEndTests
     public async Task AnHttpLoopIsCutAtTheReentryCapAndHandsOff()
     {
         await using var database = await StartDatabaseAsync();
-        using var f = await ArrangeAsync(database, HttpLoopFlow);
+        using var f = await ArrangeAsync(database, HttpLoopFlow, layoutJson: "{}");
         f.Api.Respond(@"^/status$", HttpStatusCode.OK, "{}");
 
         await SayAsync(f, "w1", "Hola");
@@ -342,8 +421,10 @@ public sealed class ClasicFlowEndToEndTests
     {
         await using var database = await StartDatabaseAsync();
         using var f = await ArrangeAsync(database, ClasicFlow.WithTimeout("find-customer", 1));
-        f.Api.RespondAfter(@"^/customers\?", TimeSpan.FromSeconds(5), HttpStatusCode.OK, CustomerFound);
+        // Sólo la búsqueda por cédula tarda: la del teléfono (policy-lookup, con su timeout de 10 s) responde enseguida.
+        f.Api.RespondAfter(@"^/customers\?identificationNumber=", TimeSpan.FromSeconds(5), HttpStatusCode.OK, CustomerFound);
         await SayAsync(f, "w1", "Hola");
+        Assert.Equal([Welcome, AskDocument], f.Graph.Sends());
 
         var watch = Stopwatch.StartNew();
         await SayAsync(f, "w2", "10203");
@@ -353,13 +434,15 @@ public sealed class ClasicFlowEndToEndTests
         Assert.Equal("Te paso con un asesor.", f.Graph.Sends()[^1]);
         Assert.Equal("Paused", await TextAsync(f, "SELECT automation_status FROM messaging.conversations"));
         Assert.Equal("HandedOff", await TextAsync(f, "SELECT status FROM automations.conversation_runs"));
-        Assert.Equal("GET /customers - timeout timeout", await HttpCallsAsync(f));
+        Assert.Equal("GET /customers 200 ok -,GET /customers - timeout timeout", await HttpCallsAsync(f));
         // La fila del entrante quedó cerrada en su primer intento; otra pasada no la vuelve a reclamar ni a llamar a la API.
         Assert.Equal("1|true", await TextAsync(f,
             "SELECT attempts || '|' || (processed_at IS NOT NULL) FROM messaging.automation_inbox ORDER BY created_at DESC, message_id DESC LIMIT 1"));
         await DrainAutomationsAsync(f.Host);
-        Assert.Single(f.Api.Requests);
-        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.http_calls"));
+        Assert.Equal(
+            [$"GET /customers?phone={WaId}", "GET /customers?identificationNumber=10203"],
+            f.Api.Requests.Select(request => $"{request.Method} {request.Uri.PathAndQuery}"));
+        Assert.Equal(2L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.http_calls"));
     }
 
     /// <summary>D-H5 y D-H6: la clave sale sólo en el header hacia la API. Ni los logs del host, ni la auditoría, ni <c>http_calls</c>, ni la
@@ -378,19 +461,177 @@ public sealed class ClasicFlowEndToEndTests
         Assert.Contains(f.Logs.Entries, entry => entry.StartsWith("Chatbot HTTP block", StringComparison.Ordinal));
         Assert.Contains(LogLevel.Trace, f.Logs.Levels);
         Assert.True(await CountAsync(f.ConnectionString, "SELECT count(*) FROM audit.entries") > 0);
-        Assert.True(await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.http_calls") >= 5);
+        Assert.Equal(6L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.http_calls"));
 
         Assert.DoesNotContain(ApiKey, f.Logs.AllText, StringComparison.Ordinal);
         // P2-R38: el logging de HttpClient redacta por defecto los valores de los headers (y la query), así que la clave sola no delata un
         // RemoveAllLoggers() que falte en el cliente del bloque; la URL sí: «Start processing HTTP request GET https://api-clasic.test/…»
         // (verificado quitando RemoveAllLoggers: esta aserción falla).
         Assert.DoesNotContain("identificationNumber=10203", f.Logs.AllText, StringComparison.Ordinal);
+        Assert.DoesNotContain($"phone={WaId}", f.Logs.AllText, StringComparison.Ordinal);
         Assert.DoesNotContain(BaseUrl, f.Logs.AllText, StringComparison.Ordinal);
         foreach (var table in new[] { "automations.http_calls", "audit.entries", "automations.conversation_runs", "platform.request_failures" })
         {
             var rows = await TextAsync(f, $"SELECT coalesce(string_agg(row_to_json(t)::text, E'\\n'), '') FROM {table} AS t");
             Assert.DoesNotContain(ApiKey, rows, StringComparison.Ordinal);
         }
+    }
+
+    /// <summary>D-K3: el teléfono del cliente encuentra a alguien que no ha aceptado la política. El bot la pide antes que nada y, con
+    /// «Acepto.», la guarda en Clasic (<c>PUT /customers/{id}</c>) y sigue con la bienvenida.</summary>
+    [Fact]
+    public async Task ACustomerWhoHasNotAcceptedThePolicyIsAskedAndTheAcceptanceIsSaved()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        f.Api.Respond(@"^/customers\?phone=", HttpStatusCode.OK, CustomerWithoutPolicy);
+
+        await SayAsync(f, "w1", "Hola");
+        var policy = Assert.Single(f.Graph.Sends());
+        Assert.Contains("política de tratamiento de datos", policy, StringComparison.Ordinal);
+        Assert.Equal([$"GET /customers?phone={WaId}"], f.Api.Requests.Select(request => $"{request.Method} {request.Uri.PathAndQuery}"));
+
+        await SayAsync(f, "w2", "Acepto.");
+
+        var save = Assert.Single(f.Api.Requests, request => request.Method == HttpMethod.Put);
+        Assert.Equal("/customers/7", save.Uri.PathAndQuery);
+        Assert.Equal(ApiKey, save.ApiKey);
+        // El cuerpo es la plantilla interpolada tal cual (con sus espacios): se compara el JSON, no el texto. Clasic recibe el texto "true".
+        var body = JsonNode.Parse(save.Body!)!;
+        Assert.Equal(JsonValueKind.String, body["acceptPolicy"]!.GetValueKind());
+        Assert.Equal(("true", "Whatsapp"), (body["acceptPolicy"]!.GetValue<string>(), body["sourceAcceptPolicy"]!.GetValue<string>()));
+        Assert.Equal([Welcome, AskDocument], f.Graph.Sends()[1..]);
+        Assert.Equal("Waiting|document", await TextAsync(f, "SELECT status || '|' || current_node_id FROM automations.conversation_runs"));
+    }
+
+    /// <summary>Un teléfono que Clasic no conoce no tiene a quién guardarle la aceptación: el bot da la bienvenida sin preguntar.</summary>
+    [Fact]
+    public async Task AnUnknownPhoneSkipsThePolicy()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        f.Api.Respond(@"^/customers\?phone=", HttpStatusCode.OK, NoCustomers);
+
+        await SayAsync(f, "w1", "Hola");
+
+        Assert.Equal([Welcome, AskDocument], f.Graph.Sends());
+        Assert.Equal([$"GET /customers?phone={WaId}"], f.Api.Requests.Select(request => $"{request.Method} {request.Uri.PathAndQuery}"));
+        Assert.DoesNotContain(f.Api.Requests, request => request.Method == HttpMethod.Put);
+    }
+
+    /// <summary>Anexo B: un equipo con orden abierta no deja seguir. El bot avisa y vuelve a mandar la misma lista; con otro equipo sigue a
+    /// los botones del tipo de servicio, sin haber intentado crear la orden.</summary>
+    [Fact]
+    public async Task AnEquipmentWithAnOpenOrderIsRefusedAndTheListIsSentAgain()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        f.Api.Respond(@"^/invoices/customer/7/all-invoice-items$", HttpStatusCode.OK, """
+            [{"id":1,"referenceCode":"CAL-001","address":"Calle 1 # 2-3","haveOrderOpen":true},{"id":2,"referenceCode":"CAL-002","address":"Carrera 4 # 5-6","haveOrderOpen":false}]
+            """);
+
+        await SayAsync(f, "w1", "Hola");
+        await SayAsync(f, "w2", "10203");
+        await ChooseAsync(f, "w3", "1", "CAL-001");
+
+        Assert.Equal(
+            ["Ya hay una orden de servicio abierta para esa dirección. Elige otro equipo o escribe REINICIAR.", AskEquipment],
+            f.Graph.Sends()[^2..]);
+        Assert.Equal(2, f.Graph.Sends().Count(sent => sent == AskEquipment));
+        Assert.Equal(["1", "2", "other"], f.Graph.LastListRowIds());
+
+        await ChooseAsync(f, "w4", "2", "CAL-002");
+
+        Assert.Equal(AskServiceKind, f.Graph.Sends()[^1]);
+        Assert.DoesNotContain(f.Api.Requests, request => request.Uri.AbsolutePath.StartsWith("/service-orders", StringComparison.Ordinal));
+    }
+
+    /// <summary>Anexo B, mantenimiento: el servicio sale de <c>/services?name=STM</c> y la falla de <c>/failures?cause=MANTENIMIENTO</c>, sin
+    /// lista de fallas ni <c>auto-select-service-type</c>; el resumen trae los valores del mantenimiento.</summary>
+    [Fact]
+    public async Task MaintenanceUsesTheStmServiceAndTheMaintenanceFailure()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+
+        await SayAsync(f, "w1", "Hola");
+        await SayAsync(f, "w2", "10203");
+        await ChooseAsync(f, "w3", "1", "CAL-001");
+        await TapAsync(f, "w4", "maint", "Mantenimiento");
+        Assert.Equal(AskContact, f.Graph.Sends()[^1]);
+        await SayAsync(f, "w5", "Ana");
+        await SayAsync(f, "w6", "3001234567");
+
+        Assert.Equal(
+            [
+                $"GET /customers?phone={WaId}", "GET /customers?identificationNumber=10203", "GET /invoices/customer/7/all-invoice-items",
+                "GET /services?name=STM", "GET /failures?cause=MANTENIMIENTO", "POST /service-orders",
+            ],
+            f.Api.Requests.Select(request => $"{request.Method} {request.Uri.PathAndQuery}"));
+        var order = JsonNode.Parse(f.Api.Requests.Last().Body!)!;
+        Assert.Equal((7, 5, 12), (order["customerId"]!.GetValue<int>(), order["failureId"]!.GetValue<int>(), order["serviceId"]!.GetValue<int>()));
+        var item = order["invoiceItems"]![0]!;
+        Assert.Equal(("1", "Ana", "3001234567"),
+            (item["id"]!.GetValue<string>(), item["contact"]!.GetValue<string>(), item["optionalPhone"]!.GetValue<string>()));
+
+        var summary = f.Graph.Sends()[^1];
+        Assert.Contains("Servicio: Servicio técnico de mantenimiento", summary, StringComparison.Ordinal);
+        Assert.Contains("Dirección de visita: Calle 1 # 2-3", summary, StringComparison.Ordinal);
+        Assert.Contains("orden N° 55", summary, StringComparison.Ordinal);
+        Assert.Contains("$120.000", summary, StringComparison.Ordinal);
+        Assert.Equal("Resolved|None", await TextAsync(f, "SELECT status || '|' || automation_status FROM messaging.conversations"));
+    }
+
+    /// <summary>D-K8: «Otra dirección» de un cliente que ya existe no se puede registrar por la API (new-customer rechaza el documento), así
+    /// que el bot pide la dirección y pasa a un asesor; el texto queda en «Datos capturados» de la conversación.</summary>
+    [Fact]
+    public async Task AnotherAddressOfAKnownCustomerHandsOff()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        const string NewAddress = "Carrera 9 # 8-7, Belén, Medellín";
+
+        await SayAsync(f, "w1", "Hola");
+        await SayAsync(f, "w2", "10203");
+        await ChooseAsync(f, "w3", "other", "Otra dirección");
+        Assert.Equal("Escribe la dirección, el barrio y la ciudad de la nueva dirección.", f.Graph.Sends()[^1]);
+        await SayAsync(f, "w4", NewAddress);
+
+        Assert.Equal("Gracias. Te paso con un asesor para registrar la dirección nueva.", f.Graph.Sends()[^1]);
+        Assert.Equal("Open|Paused", await TextAsync(f, "SELECT status || '|' || automation_status FROM messaging.conversations"));
+        Assert.Equal("HandedOff", await TextAsync(f, "SELECT status FROM automations.conversation_runs"));
+        Assert.DoesNotContain(f.Api.Requests, request => request.Method != HttpMethod.Get);
+
+        // §5.5: lo que el asesor ve en la bandeja, con el permiso de la bandeja y no el de Automations (D-C10).
+        var conversationId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations");
+        using var agent = CreateClient(f.Host, f.Tenant.OwnerUserId, f.Tenant.TenantId, MessagingPermissions.ConversationRead);
+        var details = await agent.GetFromJsonAsync<ConversationAutomationDetailsDto>(
+            $"/api/v1/tenants/{f.Tenant.TenantId}/messaging/conversations/{conversationId}/automation", Ct);
+        Assert.Equal("HandedOff", details!.Status);
+        Assert.Equal(NewAddress, details.Variables.GetProperty("direccionNueva").GetString());
+    }
+
+    /// <summary>Anexo C: <c>POST /customers/new-customer</c> recibe exactamente los campos de <c>CreateCustomerWhatsappDto</c> más el archivo;
+    /// departamento y ciudad van fijos (Antioquia, Medellín) y la falla es el id de la fila que eligió el cliente.</summary>
+    [Fact]
+    public async Task RegistrationSendsTheRealMultipartFields()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        f.Api.Respond(@"^/customers\?identificationNumber=", HttpStatusCode.OK, NoCustomers);
+
+        await RegisterAsync(f, failureRowId: "4", failureTitle: "Fuga de agua");
+
+        var registration = Assert.Single(f.Api.Requests, request => request.Uri.AbsolutePath == "/customers/new-customer");
+        string[] expected =
+        [
+            "identificationNumber", "firstName", "lastName", "address", "neighborhood", "addressDescription", "phone", "departmentId", "cityId",
+            "failureId", "file",
+        ];
+        Assert.Equal(expected.Order(StringComparer.Ordinal), registration.Parts.Select(part => part.Name).Order(StringComparer.Ordinal));
+        var fields = registration.Parts.Where(part => part.Name != "file").ToDictionary(part => part.Name, part => part.Text, StringComparer.Ordinal);
+        Assert.Equal(("5", "5001000", "4"), (fields["departmentId"], fields["cityId"], fields["failureId"]));
+        Assert.Equal(InvoiceBytes, Assert.Single(registration.Parts, part => part.Name == "file").Bytes);
     }
 
     /// <summary>Lo que el bot mandó a Graph: responde <c>wamid.N</c> a cada envío (el acuse de leído aparte), como el <c>BotMeta</c> de
