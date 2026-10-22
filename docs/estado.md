@@ -28,6 +28,7 @@ falla. Ninguno de los dos `develop` se despliega solo hasta que exista el fronte
 | --- | --- | --- |
 | Variantes de producto | Backend **construido** (T1–T15 y T14b, revisión final `92f74496`). Pruebas escritas y **sin ejecutar** desde la T4; revisión con Fable pendiente; frontend sin empezar | [estado propio](superpowers/plans/2026-10-20-variantes-estado.md) |
 | Automatizaciones (antes «Asistentes»): spec 1, asistente en la conversación y horarios de atención | Backend **construido y mergeado** (`62cb0aaf`): 7 tareas, revisión final + una ronda de corrección. Nada pone `Active` en producción hasta el spec 4 (motor). Frontend: plan de 9 tareas en `qep-frontend/docs/superpowers/plans/2026-10-21-mensajeria-asistente-y-horarios-frontend.md`, sin empezar. Maquetación visual del módulo en sesión aparte (rama `feature/automatizaciones-maquetacion` del frontend) | [spec](superpowers/specs/2026-10-21-mensajeria-asistente-y-horarios-design.md), [plan backend](superpowers/plans/2026-10-21-mensajeria-asistente-y-horarios-backend.md), [investigación](superpowers/specs/2026-10-21-asistentes-investigacion.md) |
+| Automatizaciones: spec 4, constructor de chatbots (motor, editor, bloque HTTP) | **Backend 1 construido y mergeado** (`46455d73..ff7f6956`, ff a `develop`): fases 1-3 del spec (Mensajería lista para un bot, módulo `automations` y permisos, módulo `Automations` con agregado, validador, endpoints del editor, plantillas e import/export), 20 tareas con revisión por tarea, revisión final en dos paquetes y una tanda de correcciones. Nada atiende todavía: `Messaging:Automation:Enqueue` apagado y el módulo apagado en todo tenant. **Backend 2** (motor, «API externa» + bloque HTTP, simulador): plan escrito, 14 tareas. Planes 3 (frontend) y 4 (Clasic) sin escribir | [spec](superpowers/specs/2026-10-21-constructor-de-chatbots-design.md), [plan backend 1](superpowers/plans/2026-10-21-constructor-de-chatbots-backend-1.md) |
 | Envío de cotizaciones por el canal del tenant | Spec en borrador para el owner. **Plan 1 de 3 construido** en los dos repos (proveedores habilitados por tenant); planes 2 y 3 sin escribir | [spec](superpowers/specs/2026-10-21-envio-de-cotizaciones-por-canal-del-tenant-design.md), [plan 1](superpowers/plans/2026-10-21-proveedores-habilitados-por-tenant.md) |
 | Shopify: fuente del documento del comprador | Parte 1 **construida** (`d00a20a8`, merge `b7447106`); faltan el endpoint de opciones, el select del frontend y la documentación | [detalle](#shopify-fuente-del-documento-del-comprador) |
 | Shopify: días de historial en «Sincronizar ahora» | Spec commiteado (`42565f98`); sin código en ningún repo | [spec](superpowers/specs/2026-10-21-shopify-historial-dias-design.md) |
@@ -89,7 +90,8 @@ copia del frontend para los códigos nuevos.
 | 2026-10-21 Shopify: días de historial | Aprobado en conversación, sin empezar | Tope 30 días, desde `LinkedAt`, en cada pulsación; el cron no cambia. Extiende D-S4 |
 | 2026-10-21 onboarding | Incompleto, en pausa; sin empezar | Metas por módulo; estado calculado en vivo, sin escribir en el GET; backfill cierra la guía de los tenants existentes |
 | 2026-10-21 mensajería: asistente y horarios de atención (Automatizaciones, spec 1) | Backend construido (`62cb0aaf`); frontend sin empezar | `automation/*` y `/messaging/business-hours`; permiso `messaging.business_hours.manage` sólo en `admin`; festivos de Colombia por interruptor (D-H9). El `GET /business-hours` trae `connections` (D-H10 corregido al planear) |
-| 2026-10-21 Automatizaciones: investigación y roadmap | Concepto; specs 2–4 y migración de lulo-chat sin escribir | Orden: interactivos → claves de API y envío proactivo → constructor (motor, editor React Flow, bloque HTTP) → migración. IA diferida |
+| 2026-10-21 Automatizaciones: constructor de chatbots (spec 4) | Backend 1 construido (`ff7f6956`); backend 2 planeado; frontend y Clasic sin plan | Toma de los specs 2 y 3 lo que el bot necesita (interactivos salientes, «API externa»). Reglas del controlador R1-R21 en el reporte de la sesión; pendientes para el backend 2 abajo, en Registro |
+| 2026-10-21 Automatizaciones: investigación y roadmap | Concepto; specs 2–3 y migración de lulo-chat sin escribir (el 4 se escribió y se está construyendo) | Orden: interactivos → claves de API y envío proactivo → constructor (motor, editor React Flow, bloque HTTP) → migración. IA diferida |
 
 Construido sin spec propio: enviar el pedido por WhatsApp (`POST /orders/{id}/send`, `OrderEndpoints.cs:114`; frontend
 `3e7e4c00`), clasificación opcional del cliente, país del tenant, mensajería en tiempo real y filtros de la bandeja.
@@ -190,6 +192,20 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-22 — Mergeado a `develop` el backend 1 del constructor de chatbots (spec 4 de Automatizaciones,
+  `46455d73..ff7f6956`, ff), construido con subagentes en 20 tareas. Mensajería: interactivos salientes con los límites de
+  Meta, autoría `sent_by_kind`/`sent_by_chatbot_id`, `MessageDto.sentByChatbot` e `interactive`, `IBotOutbound`, cola
+  `messaging.automation_inbox` tras `Messaging:Automation:Enqueue` (apagado) con `IAutomationInbox` (lease, cerca por
+  `attempts`, cierre de filas envenenadas). Tenancy: módulo `automations` (depende de `messaging`). Permisos
+  `automations.chatbot.read`/`manage` sólo en `admin`. Módulo `Automations`: esquema de siete tablas, agregado `Chatbot`,
+  modelo del flujo y validador, endpoints de §4.4 salvo simulación y `GET /runs`, plantillas del sistema embebidas,
+  import/export. La revisión final (dos paquetes) no encontró Critical; la tanda de corrección cerró los Important que el
+  backend 2 consume. Al verificar apareció que la suite de Mensajería moría a las ~512 pruebas en macOS (cada host de
+  prueba dejaba vivo el watcher de los user-secrets): se corrigió en el harness (`ff7f6956`). **Pendiente para el backend
+  2, antes de prender el flag:** purgar filas procesadas de `automation_inbox`; validar al publicar lo que el motor no puede
+  ejecutar (0 botones, lista fija vacía, `timeoutSeconds` fuera de 1..10, `maxAttempts` fuera de 1..5, regex vacía, URL
+  del botón); las versiones publicadas se cargan con sus blobs en cada `FindAsync` (table splitting + migración vacía);
+  decisión del owner sobre si la respuesta del bot marca como leído para los asesores (`MarkRepliedAsync`).
 - 2026-10-21 — Mergeado a `develop` el backend del spec 1 de Automatizaciones (`62cb0aaf`: asistente en la conversación y
   horarios de atención), construido con subagentes en 7 tareas. La revisión final encontró un Critical real —mover el
   predeterminado a un horario más antiguo daba 409 porque EF ordena los `UPDATE` por clave primaria— que se corrigió con
