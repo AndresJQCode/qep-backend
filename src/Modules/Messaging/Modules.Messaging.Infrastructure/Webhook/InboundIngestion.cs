@@ -131,7 +131,7 @@ internal static class InboundIngestion
         var before = (await dbContext.Database.SqlQuery<PreviousState>(
             $"""
             WITH old AS (
-                SELECT status AS old_status, customer_id AS old_customer_id
+                SELECT status AS old_status, customer_id AS old_customer_id, last_inbound_at AS old_last_inbound_at
                 FROM messaging.conversations WHERE id = {conversationId} FOR NO KEY UPDATE)
             UPDATE messaging.conversations SET
                 unread_count       = unread_count + 1,
@@ -156,7 +156,7 @@ internal static class InboundIngestion
             FROM old
             WHERE id = {conversationId}
             RETURNING old.old_status AS "OldStatus", old.old_customer_id AS "OldCustomerId", assigned_member_id AS "AssignedMemberId",
-                      automation_status AS "AutomationStatus"
+                      automation_status AS "AutomationStatus", old.old_last_inbound_at AS "OldLastInboundAt"
             """).ToListAsync(cancellationToken)).Single();
 
         if (message.Media is { } media)
@@ -168,7 +168,7 @@ internal static class InboundIngestion
         // el UPDATE de la conversación; la PK por message_id es la red por si aun así se repitiera. «Abrió» incluye la conversación recién
         // creada: nace Open, así que su estado «de antes» no la delata.
         var opened = conversation.Created || before.OldStatus == nameof(ConversationStatus.Resolved);
-        if (enqueueAutomation && ShouldEnqueue(message.Kind, before))
+        if (enqueueAutomation && ShouldEnqueue(message, before))
         {
             // El corrimiento vive sólo en la cola, que es la única que ordena por created_at: correr también el mensaje o los eventos
             // movería timestamps que se ven en el hilo y en la auditoría.
@@ -214,11 +214,18 @@ internal static class InboundIngestion
         return new IngestedInbound(messageId, conversationId, before.AssignedMemberId, before.AutomationStatus, opened);
     }
 
-    /// <summary>Spec 2026-10-21 §5.1: los tipos que el motor puede leer. Stickers, ubicaciones, contactos y reacciones no encolan.</summary>
-    private static bool ShouldEnqueue(MessageKind kind, PreviousState state) =>
+    /// <summary>
+    /// Spec 2026-10-21 §5.1: los tipos que el motor puede leer. Stickers, ubicaciones, contactos y reacciones no encolan. Tampoco un
+    /// entrante anterior al último que la conversación ya tenía: Meta reintenta una entrega fallida hasta horas después, y la cola
+    /// ordena por llegada, no por <c>occurred_at</c>. Precedente 2026-10-22: un «hola» de las 21:42 llegó a las 22:01, detrás de uno de
+    /// las 21:56 que el bot ya había contestado, y el bot lo contestó de nuevo sin que el cliente escribiera. El mismo segundo sí encola:
+    /// el timestamp de Meta no tiene más resolución.
+    /// </summary>
+    private static bool ShouldEnqueue(InboundMessage message, PreviousState state) =>
         state.AssignedMemberId is null
         && state.AutomationStatus is "None" or "Active"
-        && kind is MessageKind.Text or MessageKind.Interactive or MessageKind.Image or MessageKind.Document
+        && (state.OldLastInboundAt is null || message.OccurredAt >= state.OldLastInboundAt)
+        && message.Kind is MessageKind.Text or MessageKind.Interactive or MessageKind.Image or MessageKind.Document
             or MessageKind.Video or MessageKind.Audio or MessageKind.Unsupported;
 
     /// <summary>§8.6: un id que no cabe en la columna haría fallar el INSERT y con él el mensaje entero. El mensaje entra; el medio
@@ -296,7 +303,7 @@ internal static class InboundIngestion
         return source is null ? null : source.Length <= PreviewMaxLength ? source : source[..PreviewMaxLength];
     }
 
-    private sealed record PreviousState(string OldStatus, Guid? OldCustomerId, Guid? AssignedMemberId, string AutomationStatus);
+    private sealed record PreviousState(string OldStatus, Guid? OldCustomerId, Guid? AssignedMemberId, string AutomationStatus, DateTimeOffset? OldLastInboundAt);
 
     private sealed record EchoState(Guid? AssignedMemberId, string AutomationStatus);
 }
