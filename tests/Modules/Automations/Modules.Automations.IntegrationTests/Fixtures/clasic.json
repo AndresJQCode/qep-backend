@@ -231,7 +231,7 @@
         "path": "/customers",
         "query": [
           {
-            "key": "identificationNumber",
+            "key": "document",
             "value": "{cedula}"
           }
         ],

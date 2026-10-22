@@ -59,6 +59,16 @@ public sealed class ClasicFlowTests
         Assert.All(reads, node => Assert.All(node.Mapping, m => Assert.StartsWith("items", m.From, StringComparison.Ordinal)));
     }
 
+    /// <summary>El cliente se busca con el filtro exacto <c>document</c>: <c>identificationNumber</c> es la búsqueda del admin y casa por
+    /// subcadena, así que «1» traería el cliente, las direcciones y la orden de otra persona.</summary>
+    [Fact]
+    public void TheCustomerIsFoundByTheExactDocumentFilter()
+    {
+        var node = HttpNodes(ClasicFlow.Parse()).Single(n => n.Id == "find-customer");
+
+        Assert.Equal([new KeyValue("document", "{cedula}")], node.Query);
+    }
+
     [Fact]
     public void NewCustomerSendsEveryFieldTheDtoRequires()
     {

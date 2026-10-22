@@ -133,7 +133,7 @@ public sealed class ClasicFlowEndToEndTests
         // El camino feliz por defecto, con la forma real de cada respuesta (Anexo C); cada prueba pisa lo que necesita (gana la regla
         // registrada última). Por teléfono y por cédula van en reglas aparte para que una prueba pise sólo una de las dos búsquedas.
         factory.ExternalApi.Respond(@"^/customers\?phone=", HttpStatusCode.OK, CustomerFound);
-        factory.ExternalApi.Respond(@"^/customers\?identificationNumber=", HttpStatusCode.OK, CustomerFound);
+        factory.ExternalApi.Respond(@"^/customers\?document=", HttpStatusCode.OK, CustomerFound);
         factory.ExternalApi.Respond(@"^/customers/7$", HttpStatusCode.OK, "{}");
         factory.ExternalApi.Respond(@"^/invoices/customer/7/all-invoice-items$", HttpStatusCode.OK, TwoEquipments);
         factory.ExternalApi.Respond(@"^/failures$", HttpStatusCode.OK, Failures);
@@ -274,7 +274,7 @@ public sealed class ClasicFlowEndToEndTests
         var requests = f.Api.Requests.ToArray();
         Assert.Equal(
             [
-                $"GET /customers?phone={WaId}", "GET /customers?identificationNumber=10203", "GET /invoices/customer/7/all-invoice-items",
+                $"GET /customers?phone={WaId}", "GET /customers?document=10203", "GET /invoices/customer/7/all-invoice-items",
                 "GET /failures", "GET /service-orders/auto-select-service-type?invoiceItemId=1", "POST /service-orders",
             ],
             requests.Select(request => $"{request.Method} {request.Uri.PathAndQuery}"));
@@ -312,7 +312,7 @@ public sealed class ClasicFlowEndToEndTests
     {
         await using var database = await StartDatabaseAsync();
         using var f = await ArrangeAsync(database);
-        f.Api.Respond(@"^/customers\?identificationNumber=", HttpStatusCode.OK, NoCustomers);
+        f.Api.Respond(@"^/customers\?document=", HttpStatusCode.OK, NoCustomers);
 
         await SayAsync(f, "w1", "Hola");
         await SayAsync(f, "w2", "10203");
@@ -424,7 +424,7 @@ public sealed class ClasicFlowEndToEndTests
         await using var database = await StartDatabaseAsync();
         using var f = await ArrangeAsync(database, ClasicFlow.WithTimeout("find-customer", 1));
         // Sólo la búsqueda por cédula tarda: la del teléfono (policy-lookup, con su timeout de 10 s) responde enseguida.
-        f.Api.RespondAfter(@"^/customers\?identificationNumber=", TimeSpan.FromSeconds(5), HttpStatusCode.OK, CustomerFound);
+        f.Api.RespondAfter(@"^/customers\?document=", TimeSpan.FromSeconds(5), HttpStatusCode.OK, CustomerFound);
         await SayAsync(f, "w1", "Hola");
         Assert.Equal([Welcome, AskDocument], f.Graph.Sends());
 
@@ -442,7 +442,7 @@ public sealed class ClasicFlowEndToEndTests
             "SELECT attempts || '|' || (processed_at IS NOT NULL) FROM messaging.automation_inbox ORDER BY created_at DESC, message_id DESC LIMIT 1"));
         await DrainAutomationsAsync(f.Host);
         Assert.Equal(
-            [$"GET /customers?phone={WaId}", "GET /customers?identificationNumber=10203"],
+            [$"GET /customers?phone={WaId}", "GET /customers?document=10203"],
             f.Api.Requests.Select(request => $"{request.Method} {request.Uri.PathAndQuery}"));
         Assert.Equal(2L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.http_calls"));
     }
@@ -469,7 +469,7 @@ public sealed class ClasicFlowEndToEndTests
         // P2-R38: el logging de HttpClient redacta por defecto los valores de los headers (y la query), así que la clave sola no delata un
         // RemoveAllLoggers() que falte en el cliente del bloque; la URL sí: «Start processing HTTP request GET https://api-clasic.test/…»
         // (verificado quitando RemoveAllLoggers: esta aserción falla).
-        Assert.DoesNotContain("identificationNumber=10203", f.Logs.AllText, StringComparison.Ordinal);
+        Assert.DoesNotContain("document=10203", f.Logs.AllText, StringComparison.Ordinal);
         Assert.DoesNotContain($"phone={WaId}", f.Logs.AllText, StringComparison.Ordinal);
         Assert.DoesNotContain(BaseUrl, f.Logs.AllText, StringComparison.Ordinal);
         foreach (var table in new[] { "automations.http_calls", "audit.entries", "automations.conversation_runs", "platform.request_failures" })
@@ -566,7 +566,7 @@ public sealed class ClasicFlowEndToEndTests
 
         Assert.Equal(
             [
-                $"GET /customers?phone={WaId}", "GET /customers?identificationNumber=10203", "GET /invoices/customer/7/all-invoice-items",
+                $"GET /customers?phone={WaId}", "GET /customers?document=10203", "GET /invoices/customer/7/all-invoice-items",
                 "GET /services?name=STM", "GET /failures?cause=MANTENIMIENTO", "POST /service-orders",
             ],
             f.Api.Requests.Select(request => $"{request.Method} {request.Uri.PathAndQuery}"));
@@ -620,7 +620,7 @@ public sealed class ClasicFlowEndToEndTests
     {
         await using var database = await StartDatabaseAsync();
         using var f = await ArrangeAsync(database);
-        f.Api.Respond(@"^/customers\?identificationNumber=", HttpStatusCode.OK, NoCustomers);
+        f.Api.Respond(@"^/customers\?document=", HttpStatusCode.OK, NoCustomers);
 
         await RegisterAsync(f, failureRowId: "4", failureTitle: "Fuga de agua");
 
