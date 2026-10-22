@@ -1145,10 +1145,11 @@ public static class QepServiceCollectionExtensions
                 // Solo admin: el log expone trazas y mensajes crudos de todos los modulos.
                 PlatformPermissions.RequestLogRead,
                 PlatformPermissions.RequestLogPurge,
-                // Punto de venta (spec 2026-10-07): admin tiene los seis, incluidos descontar y
+                // Punto de venta (spec 2026-10-07): admin tiene los siete, incluidos descontar y
                 // anular, que el cajero no tiene.
                 PosPermissions.SaleRead,
                 PosPermissions.SaleCreate,
+                PosPermissions.SaleCustomer,
                 PosPermissions.SaleVoid,
                 PosPermissions.SaleDiscount,
                 PosPermissions.RegisterOperate,
@@ -1271,7 +1272,8 @@ public static class QepServiceCollectionExtensions
             ]));
         // Spec 2026-10-07, decisión 4: vende, abre y cierra su caja y lee sus ventas. Sin
         // descuentos ni anulación, y sin catálogo ni clientes: /pos/products le da lo que la caja
-        // dibuja y el MVP no elige cliente. Un tenant que quiera cajeros con descuento hace un
+        // dibuja y elige o crea el cliente de la venta por /pos/customers, sin el padrón de Clientes
+        // (spec 2026-10-14, decisión 4). Un tenant que quiera cajeros con descuento hace un
         // rol custom.
         services.AddSingleton(new RoleDefinition(
             "cashier",
@@ -1282,6 +1284,7 @@ public static class QepServiceCollectionExtensions
             [
                 PosPermissions.SaleRead,
                 PosPermissions.SaleCreate,
+                PosPermissions.SaleCustomer,
                 PosPermissions.RegisterOperate
             ]));
         services.AddSingleton(new PermissionDefinition(
@@ -1573,6 +1576,13 @@ public static class QepServiceCollectionExtensions
             "Pos",
             "medium",
             RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.SaleCustomer,
+            "Elegir o crear el cliente de una venta",
+            "Permite buscar el cliente de una venta del punto de venta o darlo de alta rápida.",
+            "Pos",
+            "medium",
+            RequiredModules: [ModuleKeys.Pos, ModuleKeys.Customers]));
         services.AddSingleton(new PermissionDefinition(
             PosPermissions.SaleDiscount,
             "Dar descuentos en caja",
@@ -1996,6 +2006,9 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 PosPermissions.SaleCreate,
                 policy => AddPermissionRequirement(policy, PosPermissions.SaleCreate))
+            .AddPolicy(
+                PosPermissions.SaleCustomer,
+                policy => AddPermissionRequirement(policy, PosPermissions.SaleCustomer))
             .AddPolicy(
                 PosPermissions.SaleVoid,
                 policy => AddPermissionRequirement(policy, PosPermissions.SaleVoid))

@@ -112,7 +112,7 @@ public sealed class AuthorizationCatalogApiTests
     }
 
     /// <summary>
-    /// Spec 2026-10-07 (módulo POS): seis permisos propios, todos de admin; el rol de sistema
+    /// Spec 2026-10-07 (módulo POS): siete permisos propios, todos de admin; el rol de sistema
     /// `cashier` vende, abre y cierra su caja y lee sus ventas, sin descontar ni anular
     /// (decisión 4). Asesor y facturación no ven el punto de venta.
     /// </summary>
@@ -136,6 +136,8 @@ public sealed class AuthorizationCatalogApiTests
                 "Permite consultar las cajas y las ventas de todos los cajeros del tenant.", "Pos", "medium"),
             new("pos.sale.create", "Vender en caja",
                 "Permite registrar ventas en el punto de venta con la caja propia abierta.", "Pos", "medium"),
+            new("pos.sale.customer", "Elegir o crear el cliente de una venta",
+                "Permite buscar el cliente de una venta del punto de venta o darlo de alta rápida.", "Pos", "medium"),
             new("pos.sale.discount", "Dar descuentos en caja",
                 "Permite dar descuentos por línea y cobrar ventas en $0 en el punto de venta.", "Pos", "high"),
             new("pos.sale.read", "Ver ventas y cierres de caja",
@@ -152,7 +154,7 @@ public sealed class AuthorizationCatalogApiTests
             expected.Select(permission => permission.Permission).ToArray(),
             PermissionsOf(catalog, "admin", "pos."));
         Assert.Equal(
-            ["pos.register.operate", "pos.sale.create", "pos.sale.read"],
+            ["pos.register.operate", "pos.sale.create", "pos.sale.customer", "pos.sale.read"],
             catalog.Roles.Single(role => role.Role == "cashier").Permissions
                 .Order(StringComparer.Ordinal).ToArray());
         Assert.Empty(PermissionsOf(catalog, "advisor", "pos."));

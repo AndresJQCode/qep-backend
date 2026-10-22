@@ -169,18 +169,19 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>Ancla: sin esto, las dos de arriba pasarían por vacías. Son las 35 del spec de
-    /// entitlements, las 6 de POS, las tres <c>operator.*</c> y las dos <c>integrations.*</c> de los
+    /// entitlements, las 7 de POS, las tres <c>operator.*</c> y las dos <c>integrations.*</c> de los
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheSixtyConstants()
+    public void PermissionDiscoveryFindsTheSixtyOneConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
         // + el de plantillas (spec 2026-10-14 D-T5) + el de motivos de resolución (spec 2026-10-15 D-R8)
-        // + el de horarios de atención (spec 2026-10-21 D-H8) + los dos de chatbots (spec 2026-10-21 D-C10).
-        Assert.Equal(60, PermissionConstants().Length);
+        // + el de horarios de atención (spec 2026-10-21 D-H8) + los dos de chatbots (spec 2026-10-21 D-C10)
+        // + el del cliente de la venta de POS (spec 2026-10-14, decisión 4).
+        Assert.Equal(61, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-11 §6.4 y decisión 16: de núcleo (el módulo lo revisa cada handler) y de fábrica sólo en <c>admin</c>:
@@ -399,7 +400,7 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
-    /// Spec POS, «Arquitectura»: los seis <c>pos.*</c> mapean exactamente a <c>[pos]</c>. La prueba
+    /// Spec POS, «Arquitectura»: los seis <c>pos.*</c> de la caja mapean exactamente a <c>[pos]</c>; <c>pos.sale.customer</c> tiene su propia prueba (exige además <c>customers</c>). La prueba
     /// genérica sólo exige que <c>RequiredModules</c> no sea nulo, así que un <c>[]</c> o un módulo
     /// equivocado pasarían sin esta.
     /// </summary>
@@ -424,6 +425,26 @@ public sealed class CompositionRootTests
             Assert.NotNull(modules);
             Assert.Equal([ModuleKeys.Pos], modules.ToArray());
         }
+    }
+
+    /// <summary>
+    /// Spec 2026-10-14, decisión 4: elegir o crear el cliente de la venta exige <c>pos</c> y también <c>customers</c>
+    /// (en ese orden): sin Clientes, el enmascarado quita el permiso y la caja vende a Consumidor final. Va a admin y
+    /// cajero, no a asesor ni facturación.
+    /// </summary>
+    [Fact]
+    public void ThePosCustomerPermissionRequiresPosAndCustomersAndGoesToAdminAndCashier()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definition = RegisteredPermissionDefinitions()
+            .Single(item => item.Permission == PosPermissions.SaleCustomer);
+
+        Assert.Equal([ModuleKeys.Pos, ModuleKeys.Customers], definition.RequiredModules!.ToArray());
+        Assert.Contains(PosPermissions.SaleCustomer, catalog.PermissionsFor("admin"));
+        Assert.Contains(PosPermissions.SaleCustomer, catalog.PermissionsFor("cashier"));
+        Assert.DoesNotContain(PosPermissions.SaleCustomer, catalog.PermissionsFor("advisor"));
+        Assert.DoesNotContain(PosPermissions.SaleCustomer, catalog.PermissionsFor("billing"));
     }
 
     /// <summary>
