@@ -10,6 +10,10 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <!-- El flujo del Anexo A completo: lo reusan las pruebas del validador, del guardado y del motor. -->
+    <EmbeddedResource Include="Fixtures\annex-a.json" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Modules\Automations\Modules.Automations.Application\Modules.Automations.Application.csproj" />
     <ProjectReference Include="..\..\..\..\src\Modules\Automations\Modules.Automations.Domain\Modules.Automations.Domain.csproj" />
     <ProjectReference Include="..\..\..\..\src\Modules\Automations\Modules.Automations.Infrastructure\Modules.Automations.Infrastructure.csproj" />
