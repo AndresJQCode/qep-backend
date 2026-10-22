@@ -342,6 +342,23 @@ public sealed class FlowValidatorTests
     }
 
     [Fact]
+    public void TheClasicSubsetHasOnlyWarnings()
+    {
+        var issues = FlowValidator.Validate(ClasicSubsetFlow.Parse(), ClasicSubsetFlow.Context());
+
+        Assert.DoesNotContain(issues, i => i.Severity == FlowIssueSeverity.Error);
+        // Las salidas opcionales que el flujo deja sin conectar a propósito: un intento inválido repite (D-M7) y «otra respuesta» también.
+        string[] unconnected =
+        [
+            "document", "new-name", "new-address", "new-failure", "contact-name", "contact-phone", "invoice-photo", "not-found-options",
+            "service-kind", "equipment", "failure",
+        ];
+        Assert.Equal(
+            unconnected.Select(nodeId => ("node.output_unconnected_optional", nodeId)).Order(),
+            issues.Select(i => (i.Code, i.NodeId!)).Order());
+    }
+
+    [Fact]
     public void TheAnnexAFlowHasOnlyWarnings()
     {
         var issues = FlowValidator.Validate(AnnexAFlow.Parse(), AnnexAFlow.Context());

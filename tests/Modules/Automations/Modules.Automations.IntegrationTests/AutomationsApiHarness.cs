@@ -14,6 +14,7 @@ using Microsoft.Extensions.Hosting;
 using Modules.Automations.Api;
 using Modules.Automations.Application;
 using Modules.Automations.Infrastructure.Engine;
+using Modules.Automations.Infrastructure.Http;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
 using Npgsql;
@@ -187,6 +188,10 @@ internal static class AutomationsApiHarness
         /// probador da la credencial por buena sin salir a la red.</summary>
         public AcceptingExternalApiHandler ExternalApiHandler { get; } = new();
 
+        /// <summary>Spec 2026-10-21 D-H4: la API que llama el bloque HTTP del motor (<see cref="HttpBlockExecutor.HttpClientName"/>). Reemplaza
+        /// el handler anti-SSRF sólo en este host: la URL base de las conexiones sembradas no resuelve en ningún DNS.</summary>
+        public FakeExternalApiHandler ExternalApi { get; } = new();
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.ConfigureTestServices(services =>
@@ -198,6 +203,7 @@ internal static class AutomationsApiHarness
 
                 // Spec 2026-10-21 D-H3: el probador real de external-api corre al crear la conexión; su API la responde este doble.
                 services.AddHttpClient(ExternalApiClientName).ConfigurePrimaryHttpMessageHandler(() => ExternalApiHandler);
+                services.AddHttpClient(HttpBlockExecutor.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => ExternalApi);
             });
 
             if (clock is not null)
@@ -409,7 +415,8 @@ internal static class AutomationsApiHarness
     /// de Integrations (no hay otro camino: es un proveedor por formulario). <paramref name="status"/> es <c>Active</c> o <c>Paused</c>; la segunda
     /// la pausa por <c>POST …/pause</c>. El tenant tiene que tener <c>automations</c> prendido (<see cref="EnableAutomationsAsync"/>).</summary>
     public static async Task<Guid> SeedExternalApiConnectionAsync(
-        WebApplicationFactory<Program> host, Guid tenantId, Guid ownerUserId, string name, string status)
+        WebApplicationFactory<Program> host, Guid tenantId, Guid ownerUserId, string name, string status,
+        string baseUrl = "https://api-clasic.qcode.co", string apiKey = "external-api-key-SENTINEL-a9")
     {
         using var client = CreateClient(
             host, ownerUserId, tenantId, IntegrationsPermissions.ConnectionRead, IntegrationsPermissions.ConnectionManage);
@@ -418,8 +425,8 @@ internal static class AutomationsApiHarness
         {
             providerKey = IntegrationProviders.ExternalApi.Key,
             name,
-            fields = new Dictionary<string, string?> { ["baseUrl"] = "https://api-clasic.qcode.co", ["authHeader"] = "x-api-key" },
-            secrets = new Dictionary<string, string?> { ["apiKey"] = "external-api-key-SENTINEL-a9" },
+            fields = new Dictionary<string, string?> { ["baseUrl"] = baseUrl, ["authHeader"] = "x-api-key" },
+            secrets = new Dictionary<string, string?> { ["apiKey"] = apiKey },
         }, ifMatch: null);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var id = (await created.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("id").GetGuid();
@@ -520,6 +527,44 @@ internal static class AutomationsApiHarness
         var published = await client.SendAsync(publish, ct);
         Assert.Equal(HttpStatusCode.OK, published.StatusCode);
         return editor.Chatbot.Id;
+    }
+
+    /// <summary>D-C9 y D-C15: un chatbot importado por <c>POST /chatbots/import</c> desde el flujo <paramref name="flowJson"/>, con el mapa de
+    /// conexiones «API externa» del archivo a las del tenant. Queda en <c>Draft</c> y sin conexiones, como lo deja importar.</summary>
+    public static async Task<ChatbotEditorDto> ImportChatbotAsync(
+        HttpClient client, Guid tenantId, string flowJson, IReadOnlyDictionary<Guid, Guid> connectionMap, string name = "Clasic")
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var export = new ChatbotExportDto(
+            ChatbotExportDto.CurrentSchema, name, "Servicio técnico de calentadores.", "NewConversation", [], "reiniciar", 3,
+            JsonDocument.Parse(flowJson).RootElement, JsonDocument.Parse("{}").RootElement,
+            [.. connectionMap.Keys.Select(id => new ExternalApiRefDto(id, "API de Clasic", "Active"))], DateTimeOffset.UtcNow);
+        var imported = await client.PostAsJsonAsync($"{AutomationsUrl(tenantId)}/chatbots/import", new ImportChatbotRequest(null, export, connectionMap), ct);
+        Assert.Equal(HttpStatusCode.Created, imported.StatusCode);
+        return (await imported.Content.ReadFromJsonAsync<ChatbotEditorDto>(ct))!;
+    }
+
+    /// <summary>Lo que hace el admin después de importar: le asigna la conexión de WhatsApp (<c>PUT /chatbots/{id}</c>, con los ajustes que
+    /// trajo el archivo) y lo publica, cada paso con su <c>If-Match</c>.</summary>
+    public static async Task PublishImportedAsync(HttpClient client, Guid tenantId, ChatbotEditorDto imported, Guid connectionId)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var url = $"{AutomationsUrl(tenantId)}/chatbots/{imported.Chatbot.Id}";
+        using var update = new HttpRequestMessage(HttpMethod.Put, url)
+        {
+            Content = JsonContent.Create(new UpdateChatbotRequest(
+                imported.Chatbot.Name, imported.Chatbot.Description, imported.Chatbot.Trigger, imported.Keywords, imported.RestartKeyword,
+                imported.MaxAttempts, [connectionId])),
+        };
+        update.Headers.TryAddWithoutValidation("If-Match", $"\"{imported.Chatbot.Version}\"");
+        var updated = await client.SendAsync(update, ct);
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        var version = (await updated.Content.ReadFromJsonAsync<ChatbotEditorDto>(ct))!.Chatbot.Version;
+
+        using var publish = new HttpRequestMessage(HttpMethod.Post, $"{url}/publish");
+        publish.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
+        var published = await client.SendAsync(publish, ct);
+        Assert.Equal(HttpStatusCode.OK, published.StatusCode);
     }
 
     /// <summary>Una versión nueva de un chatbot ya publicado (D-C1): guardar otro borrador y publicar, con el <c>If-Match</c> de cada paso.</summary>

@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Automations.Application.Http;
 using Modules.Automations.Infrastructure.Persistence;
@@ -36,6 +37,23 @@ internal sealed class HttpCallLog(IServiceScopeFactory scopeFactory) : IHttpCall
             CalledAt = entry.CalledAt,
         });
         await context.SaveChangesAsync(cancellationToken);
+    }
+
+    // Por la llave primaria, como la purga del inbox (AutomationInbox.PurgeProcessedBeforeAsync) y la de webhook_deliveries. Todos los
+    // tenants a la vez: es la retención de la tabla, no una consulta de nadie. El índice (tenant_id, called_at) no ayuda sin tenant, y la
+    // tabla sólo guarda la ventana de 30 días, así que no se agrega otro.
+    public async Task<int> PurgeBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batch);
+        // Npgsql sólo escribe un timestamptz desde un DateTimeOffset en UTC.
+        cutoff = cutoff.ToUniversalTime();
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<AutomationsDbContext>();
+        return await context.Database.ExecuteSqlAsync(
+            $"""
+            DELETE FROM automations.http_calls
+             WHERE id IN (SELECT id FROM automations.http_calls WHERE called_at < {cutoff} LIMIT {batch})
+            """, cancellationToken);
     }
 
     private static string Fit(string value, int maxLength) => value.Length <= maxLength ? value : value[..maxLength];

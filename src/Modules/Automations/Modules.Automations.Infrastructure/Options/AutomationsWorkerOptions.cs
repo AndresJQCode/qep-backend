@@ -1,7 +1,7 @@
 namespace Modules.Automations.Infrastructure.Options;
 
-/// <summary>Spec 2026-10-21 §5.2: los workers del motor, con defaults en código. Los barridos (abandono D-M13 y purga del inbox P2-R7,
-/// <c>http_calls</c>, simulaciones) los usan las tareas 7, 12 y 13.</summary>
+/// <summary>Spec 2026-10-21 §5.2: los workers del motor, con defaults en código. Los barridos (abandono D-M13, purga del inbox P2-R7 y
+/// de <c>http_calls</c> D-H6, simulaciones) los usan las tareas 7, 12 y 13.</summary>
 public sealed class AutomationsWorkerOptions
 {
     public const string SectionName = "Automations:Workers";
@@ -19,6 +19,7 @@ public sealed class AutomationsWorkerOptions
     /// entrante que el bot no atendió) antes de que el barrido la borre.</summary>
     public int InboxRetentionDays { get; set; } = 7;
 
+    /// <summary>D-H6: los días que una fila de <c>automations.http_calls</c> se conserva antes de que el barrido la borre.</summary>
     public int HttpCallRetentionDays { get; set; } = 30;
 
     public int SimulationSweepMinutes { get; set; } = 10;

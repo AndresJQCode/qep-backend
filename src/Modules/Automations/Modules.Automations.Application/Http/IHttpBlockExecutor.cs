@@ -31,6 +31,10 @@ public sealed record HttpCallEntry(
 public interface IHttpCallLog
 {
     Task RecordAsync(HttpCallEntry entry, CancellationToken cancellationToken);
+
+    /// <summary>D-H6, retención: borra hasta <paramref name="batch"/> filas llamadas antes de <paramref name="cutoff"/> y devuelve cuántas.
+    /// El barrido del worker la llama lote por lote hasta que uno sale incompleto.</summary>
+    Task<int> PurgeBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken);
 }
 
 /// <summary>Los <c>outcome</c> de <c>http_calls</c>. D-H6 nombra los cinco primeros; el resto precisa el <c>error</c> del bloque.

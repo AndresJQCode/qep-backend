@@ -12,6 +12,8 @@
   <ItemGroup>
     <!-- El flujo del Anexo A completo: lo reusan las pruebas del validador, del guardado y del motor. -->
     <EmbeddedResource Include="Fixtures\annex-a.json" />
+    <!-- El subconjunto del flujo de Clasic (Anexo B) de las pruebas de punta a punta: el validador lo revisa también acá. -->
+    <EmbeddedResource Include="..\Modules.Automations.IntegrationTests\Fixtures\clasic-subset.json" Link="Fixtures\clasic-subset.json" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Modules\Automations\Modules.Automations.Application\Modules.Automations.Application.csproj" />

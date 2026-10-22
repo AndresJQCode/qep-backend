@@ -655,6 +655,8 @@ public sealed class HttpBlockExecutorTests
             entries.Enqueue(entry);
             return Task.CompletedTask;
         }
+
+        public Task<int> PurgeBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class FixedClock(DateTimeOffset now) : IClock

@@ -1,5 +1,6 @@
 using BuildingBlocks.Domain;
 using Microsoft.Extensions.Logging;
+using Modules.Automations.Application.Http;
 using Modules.Automations.Domain;
 using Modules.Automations.Domain.Engine;
 using Modules.Automations.Domain.Flow;
@@ -12,7 +13,8 @@ public sealed record RunUnit(ConversationRun Run, FlowDefinition Flow, EngineSet
 
 /// <summary>
 /// Spec 2026-10-21 §5.2 paso 5, D-M5 y D-M14: el bucle de efectos que <see cref="RunProcessor"/> delega. Ejecuta en orden lo que pide
-/// <see cref="FlowEngine.Step"/>, vuelve a entrar al motor con el resultado de un horario o de un HTTP, y deja el desenlace en la corrida
+/// <see cref="FlowEngine.Step"/>, vuelve a entrar al motor con el resultado de un horario o de un HTTP (D-M2; el bloque HTTP lo ejecuta
+/// <see cref="IHttpBlockExecutor"/>, que nunca lanza por la API), y deja el desenlace en la corrida
 /// (que el procesador guarda). Traspasar y resolver son siempre el último efecto de un paso, así que van justo antes del guardado de
 /// Automations (P2-R23): si ese guardado fallara después, el reintento encuentra la conversación pausada o resuelta con la corrida viva y
 /// la cierra <c>Interrupted</c> (D-M15). Es raro y el lado de Mensajería ya quedó bien; se acepta.
@@ -21,12 +23,10 @@ public sealed partial class RunEffects(
     IAutomationMessenger messenger,
     IAutomationConversations conversations,
     IAutomationBusinessHours businessHours,
+    IHttpBlockExecutor httpBlocks,
     IAutomationsAuditRecorder audit,
     ILogger<RunEffects> logger)
 {
-    /// <summary>Lo que devuelve un bloque HTTP hasta que el ejecutor exista (tarea 12): sale por <c>error</c>.</summary>
-    public const string HttpNotAvailable = "http.not_available";
-
     [LoggerMessage(Level = LogLevel.Information, Message = "Conversation {ConversationId} of tenant {TenantId} left the bot during run {RunId}; the run ends Interrupted.")]
     private static partial void LogTakenOver(ILogger logger, Guid tenantId, Guid conversationId, Guid runId);
 
@@ -63,7 +63,9 @@ public sealed partial class RunEffects(
                         await conversations.SetStepAsync(run.TenantId, run.ConversationId, wait.StepTitle, cancellationToken);
                         break;
                     case Effect.CheckBusinessHours or Effect.CallHttp:
-                        next = await ExternalAsync(run, effect, cancellationToken);
+                        // El bloque lee las variables como quedaron en este paso (lo que se guardó antes de llegar a él). P2-R5: el
+                        // contador de envíos sigue después de la reentrada, no vuelve a cero.
+                        next = await ExternalAsync(run, effect, state.Variables, cancellationToken);
                         break;
                     case Effect.Handoff:
                         if (!await HandsOverAsync(run, state, () => conversations.HandoffAsync(run.TenantId, run.ConversationId, cancellationToken), now))
@@ -113,8 +115,8 @@ public sealed partial class RunEffects(
 
         return unit.Flow.Nodes.FirstOrDefault(node => node.Id == unit.Run.CurrentNodeId) switch
         {
-            HttpNode http => await ExternalAsync(unit.Run, new Effect.CallHttp(http.Id, http), cancellationToken),
-            BusinessHoursNode hours => await ExternalAsync(unit.Run, new Effect.CheckBusinessHours(hours.Id), cancellationToken),
+            HttpNode http => await ExternalAsync(unit.Run, new Effect.CallHttp(http.Id, http), unit.Run.ToState().Variables, cancellationToken),
+            BusinessHoursNode hours => await ExternalAsync(unit.Run, new Effect.CheckBusinessHours(hours.Id), unit.Run.ToState().Variables, cancellationToken),
             _ => null,
         };
     }
@@ -182,14 +184,25 @@ public sealed partial class RunEffects(
         }
     }
 
-    private async Task<EngineInput> ExternalAsync(ConversationRun run, Effect effect, CancellationToken cancellationToken) => effect switch
+    private async Task<EngineInput> ExternalAsync(ConversationRun run, Effect effect, RunVariables variables, CancellationToken cancellationToken) =>
+        effect switch
+        {
+            Effect.CheckBusinessHours hours => new EngineInput.BusinessHours(
+                hours.NodeId, await businessHours.IsOpenAsync(run.TenantId, run.ConnectionId, cancellationToken)),
+            Effect.CallHttp http => await CallHttpAsync(run, http, variables, cancellationToken),
+            _ => throw new ArgumentOutOfRangeException(nameof(effect), effect.GetType().Name, "No es un efecto externo."),
+        };
+
+    /// <summary>
+    /// D-H4..D-H8. El ejecutor resuelve la conexión, llama, registra su fila de <c>http_calls</c> por su cuenta (P2-R33: confirmada aunque
+    /// esta unidad se deshaga) y devuelve cualquier fallo de la API como resultado, nunca como excepción (P2-R33a): un throw desharía la
+    /// unidad y el reintento de la fila volvería a llamar a la API. El motor sólo mezcla <see cref="HttpCallResult.Mapped"/> si salió bien.
+    /// </summary>
+    private async Task<EngineInput> CallHttpAsync(ConversationRun run, Effect.CallHttp http, RunVariables variables, CancellationToken cancellationToken)
     {
-        Effect.CheckBusinessHours hours => new EngineInput.BusinessHours(
-            hours.NodeId, await businessHours.IsOpenAsync(run.TenantId, run.ConnectionId, cancellationToken)),
-        // Tarea 12 trae el ejecutor del bloque; hasta entonces sale por «error» sin llamar a nadie.
-        Effect.CallHttp http => new EngineInput.HttpResult(http.NodeId, Ok: false, Status: null, RunVariables.Empty(), HttpNotAvailable),
-        _ => throw new ArgumentOutOfRangeException(nameof(effect), effect.GetType().Name, "No es un efecto externo."),
-    };
+        var result = await httpBlocks.ExecuteAsync(new HttpCallContext(run.TenantId, run.Id, null, http.NodeId), http.Node, variables, cancellationToken);
+        return new EngineInput.HttpResult(http.NodeId, result.Ok, result.Status, result.Mapped, result.ErrorCode);
+    }
 
     private void Audit(ConversationRun run, string action, DateTimeOffset now) =>
         audit.Record(run.TenantId, Guid.Empty, bySystem: true, action, AutomationsAuditActions.ResourceRun, run.Id, now);

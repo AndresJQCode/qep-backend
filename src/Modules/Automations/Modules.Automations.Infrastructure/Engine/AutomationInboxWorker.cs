@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Automations.Application;
 using Modules.Automations.Application.Engine;
+using Modules.Automations.Application.Http;
 using Modules.Automations.Infrastructure.Options;
 
 namespace Modules.Automations.Infrastructure.Engine;
@@ -13,15 +14,15 @@ namespace Modules.Automations.Infrastructure.Engine;
 /// Spec 2026-10-21 §5.2: vacía <c>messaging.automation_inbox</c>. Reclama un lote en un scope y procesa cada fila en el suyo con
 /// <see cref="RunProcessor"/>, como <c>MediaCopyWorker</c> (Mensajería). Varias réplicas pueden correrlo a la vez: el reclamo da un solo
 /// ganador por fila y sólo la más vieja pendiente de cada conversación, y el lock por conversación de la unidad serializa el resto.
-/// Aparte, cada <c>AbandonSweepMinutes</c>, barre las corridas abandonadas (D-M13) y purga el inbox procesado (P2-R7), en su propio
-/// bucle para que un barrido largo no frene las respuestas del bot.
+/// Aparte, cada <c>AbandonSweepMinutes</c>, barre las corridas abandonadas (D-M13), purga el inbox procesado (P2-R7) y las llamadas
+/// del bloque HTTP pasada su retención (D-H6), en su propio bucle para que un barrido largo no frene las respuestas del bot.
 /// </summary>
 internal sealed partial class AutomationInboxWorker(
     IServiceScopeFactory scopeFactory,
     IOptions<AutomationsWorkerOptions> options,
     ILogger<AutomationInboxWorker> logger) : BackgroundService
 {
-    /// <summary>Filas por <c>DELETE</c> de la purga del inbox, como <c>WebhookPurgeWorker.BatchSize</c>.</summary>
+    /// <summary>Filas por <c>DELETE</c> de las purgas (inbox y <c>http_calls</c>), como <c>WebhookPurgeWorker.BatchSize</c>.</summary>
     internal const int PurgeBatchSize = 1000;
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Automation inbox tick failed.")]
@@ -37,8 +38,8 @@ internal sealed partial class AutomationInboxWorker(
     [LoggerMessage(Level = LogLevel.Error, Message = "Abandoning run {RunId} of tenant {TenantId} failed; the next sweep tries again.")]
     private static partial void LogAbandonFailed(ILogger logger, Exception exception, Guid tenantId, Guid runId);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Automations sweep abandoned {Abandoned} runs and purged {Purged} processed inbox rows older than {Days} days.")]
-    private static partial void LogSwept(ILogger logger, int abandoned, int purged, int days);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Automations sweep abandoned {Abandoned} runs, purged {Purged} processed inbox rows older than {Days} days and {PurgedCalls} HTTP block calls older than {CallDays} days.")]
+    private static partial void LogSwept(ILogger logger, int abandoned, int purged, int days, int purgedCalls, int callDays);
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
         Task.WhenAll(PollAsync(stoppingToken), SweepEveryIntervalAsync(stoppingToken));
@@ -87,14 +88,18 @@ internal sealed partial class AutomationInboxWorker(
         }
     }
 
-    /// <summary>Un barrido con la hora <paramref name="now"/>: abandona lo que espera hace más de 24 h y purga el inbox procesado.
-    /// Internal para las pruebas.</summary>
+    /// <summary>Un barrido con la hora <paramref name="now"/>: abandona lo que espera hace más de 24 h, purga el inbox procesado y las
+    /// filas de <c>http_calls</c> pasada su retención. Internal para las pruebas.</summary>
     internal async Task SweepAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
         var abandoned = await AbandonAsync(now, cancellationToken);
         var days = Math.Max(1, options.Value.InboxRetentionDays);
-        var purged = await PurgeInboxAsync(now.AddDays(-days), cancellationToken);
-        LogSwept(logger, abandoned, purged, days);
+        var purged = await PurgeAsync(
+            (provider, batch) => provider.GetRequiredService<IAutomationInboundQueue>().PurgeProcessedBeforeAsync(now.AddDays(-days), batch, cancellationToken));
+        var callDays = Math.Max(1, options.Value.HttpCallRetentionDays);
+        var purgedCalls = await PurgeAsync(
+            (provider, batch) => provider.GetRequiredService<IHttpCallLog>().PurgeBeforeAsync(now.AddDays(-callDays), batch, cancellationToken));
+        LogSwept(logger, abandoned, purged, days, purgedCalls, callDays);
     }
 
     /// <summary>
@@ -142,15 +147,15 @@ internal sealed partial class AutomationInboxWorker(
         return total;
     }
 
-    /// <summary>P2-R7: lote por lote hasta que uno sale incompleto, como <c>WebhookPurgeWorker.DrainAsync</c>.</summary>
-    private async Task<int> PurgeInboxAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)
+    /// <summary>P2-R7 y D-H6: lote por lote, cada uno en su scope, hasta que uno sale incompleto, como <c>WebhookPurgeWorker.DrainAsync</c>.</summary>
+    private async Task<int> PurgeAsync(Func<IServiceProvider, int, Task<int>> purgeBatch)
     {
         var total = 0;
         int deleted;
         do
         {
             await using var scope = scopeFactory.CreateAsyncScope();
-            deleted = await scope.ServiceProvider.GetRequiredService<IAutomationInboundQueue>().PurgeProcessedBeforeAsync(cutoff, PurgeBatchSize, cancellationToken);
+            deleted = await purgeBatch(scope.ServiceProvider, PurgeBatchSize);
             total += deleted;
         }
         while (deleted == PurgeBatchSize);

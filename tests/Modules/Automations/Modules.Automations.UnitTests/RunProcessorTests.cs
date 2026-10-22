@@ -3,6 +3,7 @@ using BuildingBlocks.Domain;
 using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Automations.Application;
 using Modules.Automations.Application.Engine;
+using Modules.Automations.Application.Http;
 using Modules.Automations.Domain;
 using Modules.Automations.Domain.Engine;
 
@@ -40,6 +41,60 @@ public sealed class RunProcessorTests
         Assert.Equal([$"retry {Item.MessageId} 1 00:00:02"], bed.Inbox.Calls);
         Assert.Empty(bed.Runs.Added);
         Assert.Empty(bed.Messenger.Sent);
+    }
+
+    /// <summary>
+    /// D-M2 y P2-R5: el bloque HTTP vuelve a entrar al motor con su resultado dentro de la misma unidad, y los envíos que siguen continúan la
+    /// cuenta (un reintento de la fila repite los mismos clientIds en vez de reusar el 0 con otro mensaje). El ejecutor recibe la corrida y
+    /// las variables guardadas hasta ahí; lo mapeado sólo entra si salió bien.
+    /// </summary>
+    [Fact]
+    public async Task AnHttpBlockReentersTheEngineAndTheSendsAfterItKeepCounting()
+    {
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "n1" }, "variables": [],
+              "nodes": [
+                { "id": "n1", "kind": "message", "title": "Hola", "text": "Hola", "outputs": { "next": "n2" } },
+                { "id": "n2", "kind": "http", "title": "Buscar", "connectionId": "11111111-1111-1111-1111-111111111111", "method": "GET", "path": "/customers", "mapping": [ { "from": "data", "to": "cliente" } ], "outputs": { "ok": "n3", "error": null } },
+                { "id": "n3", "kind": "message", "title": "Encontrado", "text": "Te encontramos, {cliente.firstName}.", "outputs": { "next": null } }
+              ] }
+            """;
+        var mapped = RunVariables.Empty();
+        mapped.Set("cliente", System.Text.Json.Nodes.JsonNode.Parse("""{"firstName":"Laura"}"""));
+        var http = new RecordingHttpBlocks(new HttpCallResult(true, 200, mapped, HttpCallOutcomes.Ok, null));
+        var bed = new Bed(null, flow: flow, http: http);
+
+        var outcome = await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        var run = Assert.Single(bed.Runs.Added);
+        Assert.Equal(RunOutcomes.Ended, outcome);
+        Assert.Equal([DeterministicClientId.For(run.Id, 0, 0), DeterministicClientId.For(run.Id, 0, 1)], bed.Messenger.Sent);
+        var (context, variables) = Assert.Single(http.Calls);
+        Assert.Equal(new HttpCallContext(TenantId, run.Id, null, "n2"), context);
+        Assert.Equal("Laura", variables.TextOf("nombre"));
+        Assert.Equal("Laura", run.ToState().Variables.TextOf("cliente.firstName"));
+    }
+
+    /// <summary>D-H4: un fallo de la API sale por <c>error</c> sin mezclar nada de lo que el ejecutor haya devuelto.</summary>
+    [Fact]
+    public async Task AFailedHttpBlockTakesTheErrorOutputWithoutMerging()
+    {
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "n1" }, "variables": [],
+              "nodes": [
+                { "id": "n1", "kind": "http", "title": "Buscar", "connectionId": "11111111-1111-1111-1111-111111111111", "method": "GET", "path": "/customers", "mapping": [ { "from": "data", "to": "cliente" } ], "outputs": { "ok": null, "error": "n2" } },
+                { "id": "n2", "kind": "message", "title": "Error", "text": "No pudimos buscarte.", "outputs": { "next": null } }
+              ] }
+            """;
+        var leaked = RunVariables.Empty();
+        leaked.Set("cliente", System.Text.Json.Nodes.JsonNode.Parse("""{"firstName":"Laura"}"""));
+        var bed = new Bed(null, flow: flow, http: new RecordingHttpBlocks(new HttpCallResult(false, 409, leaked, HttpCallOutcomes.ErrorStatus, "http_409")));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        var run = Assert.Single(bed.Runs.Added);
+        Assert.Single(bed.Messenger.Sent);
+        Assert.Null(run.ToState().Variables.Get("cliente"));
     }
 
     /// <summary>Lista vinculante de la tarea 5: una persona tomó o resolvió la conversación entre la lectura y el arranque.</summary>
@@ -164,7 +219,9 @@ public sealed class RunProcessorTests
 
     private sealed class TestDomainException() : DomainException("messaging.automation.not_available", "Ya no es del bot.");
 
-    private sealed class Bed(Exception? startFailure, AutomationConversationState? state = null, IClock? clock = null, Action? onLock = null)
+    private sealed class Bed(
+        Exception? startFailure, AutomationConversationState? state = null, IClock? clock = null, Action? onLock = null, string flow = Flow,
+        IHttpBlockExecutor? http = null)
     {
         public RecordingInbox Inbox { get; } = new();
 
@@ -181,9 +238,9 @@ public sealed class RunProcessorTests
             var conversations = Conversations;
             var audit = Audit;
             var hours = new OpenHours();
-            var effects = new RunEffects(Messenger, conversations, hours, audit, NullLogger<RunEffects>.Instance);
+            var effects = new RunEffects(Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), audit, NullLogger<RunEffects>.Instance);
             return new RunProcessor(
-                new NoUnitOfWork(onLock), Runs, new ServingChatbots(), Inbox, conversations, new TenantNames(), new Connections(), hours,
+                new NoUnitOfWork(onLock), Runs, new ServingChatbots(flow), Inbox, conversations, new TenantNames(), new Connections(), hours,
                 new NoMedia(), audit, effects, clock ?? new FixedClock(), NullLogger<RunProcessor>.Instance);
         }
     }
@@ -226,13 +283,26 @@ public sealed class RunProcessorTests
             throw new NotSupportedException();
     }
 
-    private sealed class ServingChatbots : IChatbotRepository
+    /// <summary>El ejecutor del bloque HTTP: anota cada llamada y responde <paramref name="result"/> (sin resultado, ningún flujo de la prueba
+    /// tiene un bloque HTTP).</summary>
+    private sealed class RecordingHttpBlocks(HttpCallResult? result) : IHttpBlockExecutor
+    {
+        public List<(HttpCallContext Context, RunVariables Variables)> Calls { get; } = [];
+
+        public Task<HttpCallResult> ExecuteAsync(HttpCallContext context, Domain.Flow.HttpNode node, RunVariables variables, CancellationToken cancellationToken)
+        {
+            Calls.Add((context, variables));
+            return Task.FromResult(result ?? throw new NotSupportedException("La prueba no esperaba un bloque HTTP."));
+        }
+    }
+
+    private sealed class ServingChatbots(string flow) : IChatbotRepository
     {
         public Task<ServingChatbot?> FindServingByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
             Task.FromResult<ServingChatbot?>(new ServingChatbot(
                 ChatbotId, "Servicio", ChatbotStatus.Active, ChatbotTrigger.NewConversation, [], Chatbot.DefaultRestartKeyword, 3, VersionId));
 
-        public Task<string?> GetVersionFlowAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken) => Task.FromResult<string?>(Flow);
+        public Task<string?> GetVersionFlowAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken) => Task.FromResult<string?>(flow);
 
         public Task<EngineSettings?> FindEngineSettingsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken) =>
             Task.FromResult<EngineSettings?>(new EngineSettings(Chatbot.DefaultRestartKeyword, 3));
