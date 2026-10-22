@@ -263,7 +263,7 @@ public sealed class SaveChatbotAsTemplateHandler(
         }
         catch (FlowFormatException exception)
         {
-            throw new ValidationException([new ValidationFailure("flow", exception.Code)]);
+            throw FlowFormatFailures.For("flow", exception);
         }
 
         return FlowJson.Serialize(flow with

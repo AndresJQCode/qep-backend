@@ -8,16 +8,13 @@ public interface IChatbotRepository
 {
     Task<Chatbot?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken);
 
-    /// <summary>Ordenados por nombre; <paramref name="search"/> filtra por nombre sin mayúsculas.</summary>
-    Task<IReadOnlyList<Chatbot>> ListAsync(Guid tenantId, string? search, CancellationToken cancellationToken);
-
     /// <summary>El chatbot publicado que reserva la conexión (fila activa de <c>chatbot_connections</c>); un borrador no cuenta. Puede
     /// venir <c>Active</c> o <c>Paused</c> (D-C13: uno en pausa conserva la conexión reservada pero no contesta): quien llama revisa
     /// <c>Status</c> antes de responder.</summary>
     Task<Chatbot?> FindPublishedByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
-    /// <summary>Lo que la lista pinta, proyectado y sin seguimiento: sin los jsonb del borrador ni de las versiones. Mismo orden y
-    /// mismo filtro que <see cref="ListAsync"/>.</summary>
+    /// <summary>Lo que la lista pinta, proyectado y sin seguimiento: sin los jsonb del borrador ni de las versiones. Ordenados por
+    /// nombre (y por id para desempatar); <paramref name="search"/> filtra por nombre sin mayúsculas, con los comodines como literales.</summary>
     Task<IReadOnlyList<ChatbotSummaryRow>> ListSummariesAsync(Guid tenantId, string? search, CancellationToken cancellationToken);
 
     /// <summary>Qué chatbot publicado (activo o en pausa, D-C13) ocupa cada conexión: las filas activas de <c>chatbot_connections</c>.

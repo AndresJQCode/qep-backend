@@ -373,7 +373,11 @@ public sealed class ChatbotsApiTests
         Assert.Equal(("validation.failed", "flow"), await CodeAndKeyAsync(unknown));
         using (var problem = JsonDocument.Parse(await unknown.Content.ReadAsStringAsync(Ct)))
         {
-            Assert.Equal(FlowFormatException.UnknownKind, problem.RootElement.GetProperty("errors").GetProperty("flow")[0].GetString());
+            // El código primero (lo que el editor traduce) y el detalle del parser después, para diagnosticar.
+            var flowErrors = problem.RootElement.GetProperty("errors").GetProperty("flow");
+            Assert.Equal(2, flowErrors.GetArrayLength());
+            Assert.Equal(FlowFormatException.UnknownKind, flowErrors[0].GetString());
+            Assert.Contains("teleport", flowErrors[1].GetString(), StringComparison.Ordinal);
         }
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, tooBig.StatusCode);
@@ -854,7 +858,38 @@ public sealed class ChatbotsApiTests
         var (code, keys) = await ProblemAsync(response);
         Assert.Equal("validation.failed", code);
         Assert.Equal(["export.flow"], keys);
+        using (var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct)))
+        {
+            var flowErrors = problem.RootElement.GetProperty("errors").GetProperty("export.flow");
+            Assert.Equal((FlowFormatException.UnknownKind, 2), (flowErrors[0].GetString(), flowErrors.GetArrayLength()));
+        }
+
         Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM automations.chatbots WHERE name = 'Roto'"));
+    }
+
+    // El tope de importar es 1 MB, no el del borrador: un cuerpo de ~900 KB llega a validarse (422 por el layout) en vez de cortarse
+    // con 413, y uno de más de 1 MB sí se corta.
+    [Fact]
+    public async Task ImportHasItsOwnOneMegabyteBodyCap()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+        var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/export", Ct))!;
+        ImportChatbotRequest WithNote(int length) => new("Pesado", export with
+        {
+            Layout = JsonDocument.Parse($$"""{ "positions": {}, "note": "{{new string('a', length)}}" }""").RootElement,
+        }, null);
+
+        var underCap = await setup.Client.PostAsJsonAsync($"{ChatbotsUrl(setup.Tenant.TenantId)}/import", WithNote(900_000), Ct);
+        var overCap = await setup.Client.PostAsJsonAsync($"{ChatbotsUrl(setup.Tenant.TenantId)}/import", WithNote(1_100_000), Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, underCap.StatusCode);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, overCap.StatusCode);
+        Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM automations.chatbots WHERE name = 'Pesado'"));
     }
 
     private static Guid[] HttpConnectionIds(ChatbotEditorDto editor) =>

@@ -1,5 +1,8 @@
 using BuildingBlocks.Application;
+using FluentValidation;
+using FluentValidation.Results;
 using Modules.Automations.Domain;
+using Modules.Automations.Domain.Flow;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 
@@ -77,4 +80,12 @@ internal static class AutomationsVersions
             throw new RequestConcurrencyException("concurrency.conflict", "The resource changed after it was loaded.");
         }
     }
+}
+
+/// <summary>El 422 de un flujo que no se puede leer: el código primero (lo que el editor traduce) y después el detalle del parser
+/// («Falta «id» en …»), para que un bug del editor se pueda diagnosticar sin ir a los logs.</summary>
+internal static class FlowFormatFailures
+{
+    public static ValidationException For(string property, FlowFormatException exception) =>
+        new([new ValidationFailure(property, exception.Code), new ValidationFailure(property, exception.Message)]);
 }

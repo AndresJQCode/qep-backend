@@ -154,7 +154,7 @@ internal static class ChatbotEndpoints
     {
         // Antes que el cuerpo: sin If-Match no vale la pena leerlo.
         var version = AutomationsEndpoints.RequireVersion(httpContext);
-        var (draft, failure) = await ReadBoundedJsonAsync<SaveDraftRequest>(httpContext, cancellationToken);
+        var (draft, failure) = await ReadBoundedJsonAsync<SaveDraftRequest>(httpContext, ChatbotLimits.DraftBodyMaxBytes, cancellationToken);
         if (draft is null)
         {
             return failure!;
@@ -165,18 +165,18 @@ internal static class ChatbotEndpoints
             cancellationToken));
     }
 
-    /// <summary>Lee el cuerpo JSON con el tope de <see cref="ChatbotLimits.DraftBodyMaxBytes"/> (el del borrador; un archivo importado
-    /// cabe en lo mismo: flujo, posiciones y margen) y lo deserializa. Devuelve el resultado HTTP a responder si no se puede.</summary>
-    private static async Task<(T? Body, IResult? Failure)> ReadBoundedJsonAsync<T>(HttpContext httpContext, CancellationToken cancellationToken)
+    /// <summary>Lee el cuerpo JSON con el tope <paramref name="maxBytes"/> (<see cref="ChatbotLimits.DraftBodyMaxBytes"/> para el borrador,
+    /// <see cref="ChatbotLimits.ImportBodyMaxBytes"/> para importar) y lo deserializa. Devuelve el resultado HTTP a responder si no se puede.</summary>
+    private static async Task<(T? Body, IResult? Failure)> ReadBoundedJsonAsync<T>(HttpContext httpContext, int maxBytes, CancellationToken cancellationToken)
         where T : class
     {
         if (httpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sizeFeature)
         {
-            sizeFeature.MaxRequestBodySize = ChatbotLimits.DraftBodyMaxBytes;
+            sizeFeature.MaxRequestBodySize = maxBytes;
         }
 
         var request = httpContext.Request;
-        if (request.ContentLength > ChatbotLimits.DraftBodyMaxBytes)
+        if (request.ContentLength > maxBytes)
         {
             return (null, Results.StatusCode(StatusCodes.Status413PayloadTooLarge));
         }
@@ -186,7 +186,7 @@ internal static class ChatbotEndpoints
             return (null, Results.StatusCode(StatusCodes.Status415UnsupportedMediaType));
         }
 
-        var (body, status) = await ReadBoundedAsync(request.Body, ChatbotLimits.DraftBodyMaxBytes, cancellationToken);
+        var (body, status) = await ReadBoundedAsync(request.Body, maxBytes, cancellationToken);
         if (body is null)
         {
             return (null, Results.StatusCode(status));
@@ -262,7 +262,7 @@ internal static class ChatbotEndpoints
     private static async Task<IResult> ImportAsync(
         Guid tenantId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {
-        var (request, failure) = await ReadBoundedJsonAsync<ImportChatbotRequest>(httpContext, cancellationToken);
+        var (request, failure) = await ReadBoundedJsonAsync<ImportChatbotRequest>(httpContext, ChatbotLimits.ImportBodyMaxBytes, cancellationToken);
         return request is null
             ? failure!
             : Results.Created((string?)null, await dispatcher.SendAsync(new ImportChatbotCommand(tenantId, request), cancellationToken));

@@ -9,17 +9,6 @@ internal sealed class ChatbotRepository(AutomationsDbContext dbContext) : IChatb
     public Task<Chatbot?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
         WithChildren().SingleOrDefaultAsync(chatbot => chatbot.TenantId == tenantId && chatbot.Id == id, cancellationToken);
 
-    public async Task<IReadOnlyList<Chatbot>> ListAsync(Guid tenantId, string? search, CancellationToken cancellationToken)
-    {
-        var query = WithChildren().Where(chatbot => chatbot.TenantId == tenantId);
-        if (!string.IsNullOrWhiteSpace(search))
-        {
-            query = query.Where(chatbot => EF.Functions.ILike(chatbot.Name, $"%{EscapeLike(search.Trim())}%", "\\"));
-        }
-
-        return await query.OrderBy(chatbot => chatbot.Name).ThenBy(chatbot => chatbot.Id).ToListAsync(cancellationToken);
-    }
-
     public Task<Chatbot?> FindPublishedByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         WithChildren().SingleOrDefaultAsync(
             chatbot => chatbot.TenantId == tenantId
@@ -80,8 +69,11 @@ internal sealed class ChatbotRepository(AutomationsDbContext dbContext) : IChatb
 #pragma warning restore CA1304, CA1311, CA1862
     }
 
+    // AsSplitQuery: en una sola consulta el JOIN sale versiones × conexiones filas, y cada una repite el flow y el layout (jsonb) de su
+    // versión y el borrador del chatbot. Separadas, cada versión viaja una vez. Que el agregado siga trayendo los jsonb de todas las
+    // versiones publicadas es deuda conocida (final-report del plan 1): sacarlos pide partir la tabla en el modelo.
     private IQueryable<Chatbot> WithChildren() =>
-        dbContext.Chatbots.Include(chatbot => chatbot.Versions).Include(chatbot => chatbot.Connections);
+        dbContext.Chatbots.Include(chatbot => chatbot.Versions).Include(chatbot => chatbot.Connections).AsSplitQuery();
 
     // El nombre del usuario no puede inyectar comodines: se escapan \, % y _ (ESCAPE '\').
     private static string EscapeLike(string value) =>

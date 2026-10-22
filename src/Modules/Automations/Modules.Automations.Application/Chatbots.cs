@@ -64,6 +64,11 @@ public static class ChatbotLimits
     /// <summary>El tope del cuerpo de <c>PUT /draft</c>, antes de leerlo: flujo, posiciones y margen para el sobre JSON.</summary>
     public const int DraftBodyMaxBytes = 800 * 1024;
 
+    /// <summary>El tope del cuerpo de <c>POST /import</c>. Más que el del borrador a propósito: un export con flujo y posiciones en sus
+    /// topes (512 + 256 KB) más nombre, palabras clave y el mapa de conexiones se pasa de 800 KB, y lo que se exporta tiene que poder
+    /// volver a importarse.</summary>
+    public const int ImportBodyMaxBytes = 1024 * 1024;
+
     /// <summary>Brief de la tarea 14: cuántas conexiones puede atender un chatbot.</summary>
     public const int MaxConnections = 10;
 
@@ -504,7 +509,7 @@ public sealed class SaveChatbotDraftHandler(
         }
         catch (FlowFormatException exception)
         {
-            throw new ValidationException([new ValidationFailure("flow", exception.Code)]);
+            throw FlowFormatFailures.For("flow", exception);
         }
     }
 }
@@ -816,7 +821,7 @@ public sealed class ImportChatbotHandler(
         }
         catch (FlowFormatException exception)
         {
-            throw new ValidationException([new ValidationFailure("export.flow", exception.Code)]);
+            throw FlowFormatFailures.For("export.flow", exception);
         }
     }
 

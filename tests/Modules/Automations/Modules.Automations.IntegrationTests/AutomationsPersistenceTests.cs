@@ -292,14 +292,14 @@ public sealed class AutomationsPersistenceTests
         using var scope = factory.Services.CreateScope();
         var chatbots = scope.ServiceProvider.GetRequiredService<IChatbotRepository>();
 
-        Assert.Equal(["Ventas Bogotá"], (await chatbots.ListAsync(tenantId, "vENTAS", Ct)).Select(chatbot => chatbot.Name));
-        Assert.Equal(["Soporte_100"], (await chatbots.ListAsync(tenantId, "_100", Ct)).Select(chatbot => chatbot.Name));
-        Assert.Equal(["Oferta 50%"], (await chatbots.ListAsync(tenantId, "50%", Ct)).Select(chatbot => chatbot.Name));
+        Assert.Equal(["Ventas Bogotá"], (await chatbots.ListSummariesAsync(tenantId, "vENTAS", Ct)).Select(row => row.Name));
+        Assert.Equal(["Soporte_100"], (await chatbots.ListSummariesAsync(tenantId, "_100", Ct)).Select(row => row.Name));
+        Assert.Equal(["Oferta 50%"], (await chatbots.ListSummariesAsync(tenantId, "50%", Ct)).Select(row => row.Name));
         // Un «%» suelto no es comodín: sólo casa el nombre que lo trae.
-        Assert.Equal(["Oferta 50%"], (await chatbots.ListAsync(tenantId, "%", Ct)).Select(chatbot => chatbot.Name));
+        Assert.Equal(["Oferta 50%"], (await chatbots.ListSummariesAsync(tenantId, "%", Ct)).Select(row => row.Name));
         Assert.Equal(
             ["Oferta 50%", "Oferta 500", "Soporte X100", "Soporte_100", "Ventas Bogotá"],
-            (await chatbots.ListAsync(tenantId, null, Ct)).Select(chatbot => chatbot.Name).Order(StringComparer.Ordinal));
+            (await chatbots.ListSummariesAsync(tenantId, null, Ct)).Select(row => row.Name).Order(StringComparer.Ordinal));
     }
 
     [Fact]
