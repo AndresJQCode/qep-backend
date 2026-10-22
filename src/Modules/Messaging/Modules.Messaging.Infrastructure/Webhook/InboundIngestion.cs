@@ -20,17 +20,20 @@ internal static class InboundIngestion
     /// <param name="enqueueAutomation">Spec 2026-10-21 D-M1: deja el entrante en <c>automation_inbox</c>, en esta misma transacción, si
     /// quedó sin asesor, con la automatización en None o Active y de un tipo que el motor entiende. Instagram pasa <c>false</c> (D-M6).</param>
     /// <param name="channel">Spec 2026-10-14 decisión 4: lo escribe la conversación al nacer; después no cambia.</param>
+    /// <param name="position">Spec 2026-10-21 D-M1: la posición del mensaje dentro de su change. Sólo corre el <c>created_at</c> y el
+    /// <c>next_attempt_at</c> de la fila de <c>automation_inbox</c> (un microsegundo por posición); el mensaje, la conversación, los eventos y
+    /// el medio se quedan con el <c>now</c> de verdad.</param>
     public static async Task<IngestedInbound?> IngestAsync(
         MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now,
-        bool enqueueAutomation, CancellationToken cancellationToken, ConversationChannel channel = ConversationChannel.WhatsApp)
+        bool enqueueAutomation, CancellationToken cancellationToken, ConversationChannel channel = ConversationChannel.WhatsApp, int position = 0)
     {
         try
         {
-            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, channel, enqueueAutomation, cancellationToken);
+            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, channel, enqueueAutomation, position, cancellationToken);
         }
         catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UniqueViolation && exception.ConstraintName == ConnectionUserIndex)
         {
-            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, channel, enqueueAutomation, cancellationToken);
+            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, channel, enqueueAutomation, position, cancellationToken);
         }
     }
 
@@ -93,7 +96,7 @@ internal static class InboundIngestion
 
     private static async Task<IngestedInbound?> IngestOnceAsync(
         MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now,
-        ConversationChannel channel, bool enqueueAutomation, CancellationToken cancellationToken)
+        ConversationChannel channel, bool enqueueAutomation, int position, CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
@@ -167,10 +170,13 @@ internal static class InboundIngestion
         var opened = conversation.Created || before.OldStatus == nameof(ConversationStatus.Resolved);
         if (enqueueAutomation && ShouldEnqueue(message.Kind, before))
         {
+            // El corrimiento vive sólo en la cola, que es la única que ordena por created_at: correr también el mensaje o los eventos
+            // movería timestamps que se ven en el hilo y en la auditoría.
+            var enqueuedAt = now.AddTicks(position * TimeSpan.TicksPerMicrosecond);
             await dbContext.Database.ExecuteSqlAsync(
                 $"""
                 INSERT INTO messaging.automation_inbox (message_id, tenant_id, connection_id, conversation_id, opened, created_at, attempts, next_attempt_at)
-                VALUES ({messageId}, {tenantId}, {connectionId}, {conversationId}, {opened}, {now}, 0, {now})
+                VALUES ({messageId}, {tenantId}, {connectionId}, {conversationId}, {opened}, {enqueuedAt}, 0, {enqueuedAt})
                 ON CONFLICT (message_id) DO NOTHING
                 """, cancellationToken);
         }

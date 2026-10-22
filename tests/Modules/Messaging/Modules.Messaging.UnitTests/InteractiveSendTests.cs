@@ -14,6 +14,20 @@ public sealed class InteractiveSendTests
     [Fact] public void ElevenRowsFail() => Assert.Contains("interactive.list.too_many_rows", InteractiveSendValidation.Validate(new ListSend("x", "Ver", [new(null, Rows(11))])));
     [Fact] public void RowsAreCountedAcrossSections() => Assert.Contains("interactive.list.too_many_rows", InteractiveSendValidation.Validate(new ListSend("x", "Ver", [new("A", Rows(6)), new("B", Rows(5, 6))])));
     [Fact] public void DuplicatedRowIdsFail() => Assert.Contains("interactive.list.id_duplicated", InteractiveSendValidation.Validate(new ListSend("x", "Ver", [new(null, [new("r","a"), new("r","b")])])));
+    // Los topes que faltaban (revisión final): encabezado, pie, largo de los ids y las piezas vacías que Graph rechaza al enviar.
+    [Fact] public void AHeaderOfSixtyOneFails() => Assert.Contains("interactive.header.too_long", InteractiveSendValidation.Validate(new ButtonsSend("x", [new("a", "1")], Header: new string('h', 61))));
+    [Fact] public void AFooterOfSixtyOneFails() => Assert.Contains("interactive.footer.too_long", InteractiveSendValidation.Validate(new ButtonsSend("x", [new("a", "1")], Footer: new string('f', 61))));
+    [Fact] public void AHeaderAndFooterOfSixtyAreValid() => Assert.Empty(InteractiveSendValidation.Validate(new ButtonsSend("x", [new("a", "1")], new string('h', 60), new string('f', 60))));
+    [Fact] public void AButtonIdOf257Fails() => Assert.Contains("interactive.buttons.id_too_long", InteractiveSendValidation.Validate(new ButtonsSend("x", [new(new string('i', 257), "1")])));
+    [Fact] public void AButtonIdOf256IsValid() => Assert.Empty(InteractiveSendValidation.Validate(new ButtonsSend("x", [new(new string('i', 256), "1")])));
+    [Fact] public void AnEmptyButtonIdFails() => Assert.Contains("interactive.buttons.id_empty", InteractiveSendValidation.Validate(new ButtonsSend("x", [new(" ", "1")])));
+    [Fact] public void AnEmptyButtonTitleFails() => Assert.Contains("interactive.buttons.title_empty", InteractiveSendValidation.Validate(new ButtonsSend("x", [new("a", "")])));
+    [Fact] public void ARowIdOf201Fails() => Assert.Contains("interactive.list.row_id_too_long", InteractiveSendValidation.Validate(new ListSend("x", "Ver", [new(null, [new(new string('r', InteractiveLimits.RowIdMax + 1), "a")])])));
+    [Fact] public void ARowIdOf200IsValid() => Assert.Empty(InteractiveSendValidation.Validate(new ListSend("x", "Ver", [new(null, [new(new string('r', 200), "a")])])));
+    [Fact] public void AnEmptyRowIdFails() => Assert.Contains("interactive.list.id_empty", InteractiveSendValidation.Validate(new ListSend("x", "Ver", [new(null, [new("", "a")])])));
+    [Fact] public void AnEmptyRowTitleFails() => Assert.Contains("interactive.list.row_title_empty", InteractiveSendValidation.Validate(new ListSend("x", "Ver", [new(null, [new("r", "  ")])])));
+    [Fact] public void AnEmptyListButtonLabelFails() => Assert.Contains("interactive.list.button_empty", InteractiveSendValidation.Validate(new ListSend("x", "", [new(null, Rows(1))])));
+    [Fact] public void AnEmptyCtaDisplayTextFails() => Assert.Contains("interactive.cta.display_text_empty", InteractiveSendValidation.Validate(new CtaUrlSend("x", " ", new Uri("https://app.clasic.com.co"))));
     [Fact] public void CtaUrlMustBeHttps() => Assert.Contains("interactive.cta.url_not_https", InteractiveSendValidation.Validate(new CtaUrlSend("x", "Ir", new Uri("http://app.clasic.com.co"))));
 
     [Fact]

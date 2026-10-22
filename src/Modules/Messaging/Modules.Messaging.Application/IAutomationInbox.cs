@@ -21,11 +21,15 @@ public interface IAutomationInbox
     /// conversación (el orden del cliente importa), y las deja en lease: 30 s el primer intento, 2 min el segundo y 10 min desde el tercero.</summary>
     Task<IReadOnlyList<AutomationInboxItem>> ClaimAsync(DateTimeOffset now, int batch, CancellationToken cancellationToken);
 
+    // Complete y RetryLater reciben el Attempts del reclamo como testigo: si el motor se pasó de su lease, otra réplica ya volvió a
+    // reclamar la fila (y Attempts avanzó), y el worker atrasado no puede cerrarla ni reprogramarla encima del que la tiene ahora.
+    // Devuelven false cuando el testigo ya no coincide (o la fila ya está cerrada): lo que hizo ese worker ya no cuenta.
+
     /// <summary>Cierra la fila con el resultado; deja de reclamarse y deja de frenar a las más nuevas de su conversación.</summary>
-    Task CompleteAsync(Guid messageId, string outcome, CancellationToken cancellationToken);
+    Task<bool> CompleteAsync(Guid tenantId, Guid messageId, int attempts, string outcome, CancellationToken cancellationToken);
 
     /// <summary>Vuelve a intentar tras <paramref name="delay"/>; con 5 intentos ya hechos la cierra con <c>failed</c> en vez de reprogramarla.</summary>
-    Task RetryLaterAsync(Guid messageId, TimeSpan delay, CancellationToken cancellationToken);
+    Task<bool> RetryLaterAsync(Guid tenantId, Guid messageId, int attempts, TimeSpan delay, CancellationToken cancellationToken);
 
     /// <summary>Lo que el motor necesita del mensaje; <c>null</c> si no existe en ese tenant.</summary>
     Task<InboundForAutomation?> ReadInboundAsync(Guid tenantId, Guid messageId, CancellationToken cancellationToken);

@@ -23,11 +23,18 @@ public sealed class SendMessageValidator : AbstractValidator<SendMessageCommand>
     public SendMessageValidator()
     {
         RuleFor(command => command.Text)
-            .Must(text => text is not null && text.Trim().Length is > 0 and <= TextMaxLength && !text.Any(IsForbiddenControl))
+            .Must(IsAcceptableText)
             .OverridePropertyName("text").WithMessage("Escribe un mensaje de hasta 4096 caracteres.");
         RuleFor(command => command.ClientId).NotNull().NotEqual(Guid.Empty).OverridePropertyName("clientId");
         RuleFor(command => command.ReplyTo).NotEqual(Guid.Empty).When(command => command.ReplyTo is not null).OverridePropertyName("replyTo");
     }
+
+    /// <summary>La regla del texto de un asesor; el bot (<c>BotOutbound</c>) la reusa para no mandarle a Meta lo que a una persona se
+    /// le rechazaría.</summary>
+    internal static bool IsAcceptableText(string? text) =>
+        text is not null && text.Trim().Length is > 0 and <= TextMaxLength && !HasForbiddenControl(text);
+
+    internal static bool HasForbiddenControl(string text) => text.Any(IsForbiddenControl);
 
     private static bool IsForbiddenControl(char character) => char.IsControl(character) && character is not ('\n' or '\r' or '\t');
 }

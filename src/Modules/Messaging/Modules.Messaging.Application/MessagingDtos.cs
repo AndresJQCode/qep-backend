@@ -118,10 +118,27 @@ public sealed record MessageDto(
     /// lo tacha.</summary>
     bool Deleted = false,
     /// <summary>Spec 2026-10-21 D-I3: el chatbot que escribió el saliente; excluyente con <c>SentBy</c>.</summary>
-    ChatbotRefDto? SentByChatbot = null);
+    ChatbotRefDto? SentByChatbot = null,
+    /// <summary>Spec 2026-10-21 D-I2: los botones, la lista o el enlace de un interactivo saliente, para que el hilo los pinte.
+    /// <c>null</c> en todo lo demás, incluido el interactivo entrante (su respuesta ya va resumida en <c>text</c>).</summary>
+    InteractiveDto? Interactive = null);
 
 /// <summary>Spec 2026-10-21 D-I3: el chatbot autor de un mensaje, con el nombre que hoy tiene.</summary>
 public sealed record ChatbotRefDto(Guid ChatbotId, string Name);
+
+/// <summary>Spec 2026-10-21 D-I2 y §6: lo que el hilo necesita para dibujar un interactivo que mandó el bot. <c>Type</c> es el de
+/// Meta (<c>button</c> | <c>list</c> | <c>cta_url</c>) y sólo viaja la pieza de ese tipo; el cuerpo ya es el <c>text</c> del mensaje.</summary>
+public sealed record InteractiveDto(string Type, IReadOnlyList<InteractiveButtonDto>? Buttons, InteractiveListDto? List, InteractiveCtaDto? Cta);
+
+public sealed record InteractiveButtonDto(string Id, string Title);
+
+public sealed record InteractiveListDto(string ButtonLabel, IReadOnlyList<InteractiveListSectionDto> Sections);
+
+public sealed record InteractiveListSectionDto(string? Title, IReadOnlyList<InteractiveListRowDto> Rows);
+
+public sealed record InteractiveListRowDto(string Id, string Title, string? Description);
+
+public sealed record InteractiveCtaDto(string DisplayText, string Url);
 
 /// <summary>Spec 2026-10-11 §5.2: con qué plantilla salió un mensaje <c>Template</c>. El texto ya trae las variables
 /// sustituidas; esto sólo deja a la burbuja rotularlo («Plantilla · nombre»).</summary>

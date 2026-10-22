@@ -79,6 +79,13 @@ public sealed class BotOutbound(
             return new BotSendResult.Rejected("messaging.interactive.invalid");
         }
 
+        // La misma regla que el texto de un asesor (SendMessageValidator): el flujo lo escribe un admin y puede traer un \0 o pasarse
+        // de largo, y eso no debe llegar a Meta ni dejar fila.
+        if (send.Interactive is null ? !SendMessageValidator.IsAcceptableText(send.Text) : !AreAcceptable(send.Interactive))
+        {
+            return new BotSendResult.Rejected(MessagingErrorCodes.MessageRejected);
+        }
+
         // Con interactivo, su cuerpo es la única fuente del texto guardado.
         var text = send.Interactive?.Body ?? send.Text?.Trim();
         if (string.IsNullOrWhiteSpace(text))
@@ -131,5 +138,21 @@ public sealed class BotOutbound(
         }
 
         return new BotSendResult.Sent(claim.MessageId, AlreadySent: false);
+    }
+
+    /// <summary>Cada texto del interactivo, también ids y la URL, pasa la regla del asesor: sin caracteres de control y ≤ 4096. Los
+    /// vacíos y los topes de Meta, más cortos, ya los miró <see cref="InteractiveSendValidation"/>.</summary>
+    private static bool AreAcceptable(InteractiveSend send)
+    {
+        IEnumerable<string?> texts = [send.Body, send.Header, send.Footer];
+        texts = send switch
+        {
+            ButtonsSend buttons => texts.Concat(buttons.Buttons.SelectMany(b => new[] { b.Id, b.Title })),
+            ListSend list => texts.Append(list.ButtonLabel).Concat(list.Sections.SelectMany(section =>
+                section.Rows.SelectMany(r => new[] { r.Id, r.Title, r.Description }).Prepend(section.Title))),
+            CtaUrlSend cta => texts.Concat([cta.DisplayText, cta.Url.OriginalString]),
+            _ => texts,
+        };
+        return texts.All(text => text is null || (text.Length <= SendMessageValidator.TextMaxLength && !SendMessageValidator.HasForbiddenControl(text)));
     }
 }

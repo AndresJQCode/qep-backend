@@ -455,8 +455,6 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         reason.Ignore(value => value.IsArchived);
     }
 
-    /// <summary>Spec 2026-10-21 §5.1. Los dos únicos (nombre sin distinguir mayúsculas y un predeterminado por tenant) van en la migración
-    /// con SQL, así que acá no se declaran. La conexión es de Integrations (otro schema): <c>connection_id</c> es referencia blanda.</summary>
     /// <summary>Spec 2026-10-21 §4.2: la cola de entrantes que el motor de chatbots procesa. <c>connection_id</c> y
     /// <c>conversation_id</c> son referencias blandas (sin FK), como el resto de la tabla.</summary>
     private static void ConfigureAutomationInbox(ModelBuilder modelBuilder)
@@ -478,6 +476,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         inbox.HasIndex(value => new { value.ConversationId, value.CreatedAt }, "IX_automation_inbox_conversation").HasFilter("processed_at IS NULL");
     }
 
+    /// <summary>Spec 2026-10-21 §5.1. Los dos únicos (nombre sin distinguir mayúsculas y un predeterminado por tenant) van en la migración
+    /// con SQL, así que acá no se declaran. La conexión es de Integrations (otro schema): <c>connection_id</c> es referencia blanda.</summary>
     private static void ConfigureBusinessHours(ModelBuilder modelBuilder)
     {
         var schedule = modelBuilder.Entity<BusinessHoursSchedule>();

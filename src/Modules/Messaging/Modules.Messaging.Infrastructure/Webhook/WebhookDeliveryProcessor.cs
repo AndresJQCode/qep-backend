@@ -145,12 +145,13 @@ internal sealed partial class WebhookDeliveryProcessor(
             var now = clock.UtcNow;
             // Spec 2026-10-21 D-M1: los mensajes de un change comparten `now`, y el orden en que el motor los procesa sale de created_at
             // de la cola. El bucle recorre el orden en que Meta los mandó, así que un microsegundo por posición (la resolución de
-            // timestamptz) da una clave estrictamente creciente sin depender de los UUID v7 del mismo milisegundo.
+            // timestamptz) da una clave estrictamente creciente sin depender de los UUID v7 del mismo milisegundo. La ingesta aplica
+            // el corrimiento sólo a la fila de la cola.
             var position = 0;
             foreach (var message in change.Messages)
             {
                 var context = await PrepareAsync(route.TenantId, route.ConnectionId, message, cancellationToken);
-                var ingested = await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now.AddTicks(position++ * TimeSpan.TicksPerMicrosecond), automationOptions.Value.Enqueue, cancellationToken);
+                var ingested = await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, automationOptions.Value.Enqueue, cancellationToken, position: position++);
                 if (ingested is not null)
                 {
                     // Spec 2026-10-14: ya commiteado; un reenvío de Meta (null) no avisa nada.

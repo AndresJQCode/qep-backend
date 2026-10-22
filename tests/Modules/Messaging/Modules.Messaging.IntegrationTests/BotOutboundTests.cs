@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Messaging.Application;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
@@ -78,6 +80,48 @@ public sealed class BotOutboundTests
             "SELECT kind || '|' || (details->>'type') || '|' || text FROM messaging.messages WHERE id = @id", ("id", sent.MessageId)));
         var post = Assert.Single(f.Factory.MetaHandler.Requests, r => r.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal) && !IsReadReceipt(r));
         Assert.Contains("\"type\":\"interactive\"", post.Body, StringComparison.Ordinal);
+        // D-I2: el hilo trae los botones armados para pintarlos (regla BFF), no el objeto de Meta.
+        using var client = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ReadPermissions);
+        var page = await client.GetFromJsonAsync<JsonElement>(MessagesUrl(f.Tenant.TenantId, f.ConversationId), Ct);
+        var message = page.GetProperty("items").EnumerateArray().Single(m => m.GetProperty("id").GetGuid() == sent.MessageId);
+        var interactive = message.GetProperty("interactive");
+        Assert.Equal("button", interactive.GetProperty("type").GetString());
+        Assert.Equal("b1", interactive.GetProperty("buttons")[0].GetProperty("id").GetString());
+        Assert.Equal("Opción 2", interactive.GetProperty("buttons")[1].GetProperty("title").GetString());
+    }
+
+    [Fact]
+    public Task ANullCharacterIsRejectedWithoutARow() => AssertRejectedWithoutARowAsync("Hola\u0000");
+
+    [Fact]
+    public Task ATextOverTheAdvisorLimitIsRejectedWithoutARow() => AssertRejectedWithoutARowAsync(new string('a', SendMessageValidator.TextMaxLength + 1));
+
+    /// <summary>M2: lo que a un asesor se le rechaza (SendMessageValidator) tampoco sale como el bot, y no deja fila.</summary>
+    private static async Task AssertRejectedWithoutARowAsync(string text)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        var result = await SendAsync(f, text);
+
+        Assert.Equal("messaging.message.rejected", Assert.IsType<BotSendResult.Rejected>(result).Code);
+        Assert.Equal(0, SendCalls(f));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+    }
+
+    [Fact]
+    public async Task AControlCharacterInsideTheInteractiveIsRejectedWithoutARow()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        var result = await SendAsync(f, null, new ButtonsSend("¿Qué necesitas?", [new InteractiveButton("b1", "Uno\u0007")]));
+
+        Assert.Equal("messaging.message.rejected", Assert.IsType<BotSendResult.Rejected>(result).Code);
+        Assert.Equal(0, SendCalls(f));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
     }
 
     [Fact]

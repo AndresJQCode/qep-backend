@@ -194,7 +194,7 @@ public sealed class AutomationInboxTests
         // Mientras la primera sigue pendiente (aunque esté en lease) la segunda espera.
         Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later.AddSeconds(5), 10, Ct)));
 
-        await WithInboxAsync(f, async inbox => { await inbox.CompleteAsync(first, "handled", Ct); return 0; });
+        Assert.True(await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, first, item.Attempts, "handled", Ct)));
         var next = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
 
         Assert.NotEqual(first, next.MessageId);
@@ -215,22 +215,46 @@ public sealed class AutomationInboxTests
         // El primer reclamo toma un lease de 30 s: antes de que venza, nadie más lo ve.
         Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now, 10, Ct)));
         Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(20), 10, Ct)));
-        Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(31), 10, Ct)));
+        var claimed = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(31), 10, Ct)));
         // El segundo es de 2 min.
         Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(31).AddSeconds(100), 10, Ct)));
 
         for (var attempt = 3; attempt <= 5; attempt++)
         {
-            await WithInboxAsync(f, async inbox => { await inbox.RetryLaterAsync(id, TimeSpan.FromSeconds(1), Ct); return 0; });
+            var token = claimed.Attempts;
+            Assert.True(await WithInboxAsync(f, inbox => inbox.RetryLaterAsync(f.Tenant.TenantId, id, token, TimeSpan.FromSeconds(1), Ct)));
             Assert.Equal("false", await ScalarAsync<string>(f.ConnectionString, "SELECT (processed_at IS NOT NULL)::text FROM messaging.automation_inbox"));
-            Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddHours(attempt), 10, Ct)));
+            var at = now.AddHours(attempt);
+            claimed = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(at, 10, Ct)));
         }
 
-        Assert.Equal(5L, await ScalarAsync<long>(f.ConnectionString, "SELECT attempts::bigint FROM messaging.automation_inbox"));
-        await WithInboxAsync(f, async inbox => { await inbox.RetryLaterAsync(id, TimeSpan.FromSeconds(1), Ct); return 0; });
+        Assert.Equal(5, claimed.Attempts);
+        Assert.True(await WithInboxAsync(f, inbox => inbox.RetryLaterAsync(f.Tenant.TenantId, id, claimed.Attempts, TimeSpan.FromSeconds(1), Ct)));
 
         Assert.Equal("failed|true", await ScalarAsync<string>(f.ConnectionString, "SELECT outcome || '|' || (processed_at IS NOT NULL)::text FROM messaging.automation_inbox"));
         Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddDays(1), 10, Ct)));
+    }
+
+    /// <summary>M4: un worker que se pasó de su lease no cierra ni reprograma la fila que otra réplica ya volvió a reclamar.</summary>
+    [Fact]
+    public async Task AWorkerWhoseLeaseWasReclaimedCannotCloseOrRescheduleTheRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await PostTextAsync(f, "w1");
+        var item = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(DateTimeOffset.UtcNow.AddMinutes(5), 10, Ct)));
+        Assert.Equal(1, item.Attempts);
+        // Otra réplica la reclamó tras vencer el lease: attempts avanzó y el testigo del primer worker quedó viejo.
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.automation_inbox SET attempts = 2");
+
+        Assert.False(await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, item.MessageId, item.Attempts, "handled", Ct)));
+        Assert.False(await WithInboxAsync(f, inbox => inbox.RetryLaterAsync(f.Tenant.TenantId, item.MessageId, item.Attempts, TimeSpan.FromDays(1), Ct)));
+        // Tampoco cierra desde otro tenant, aun con el testigo vigente.
+        Assert.False(await WithInboxAsync(f, inbox => inbox.CompleteAsync(Guid.CreateVersion7(), item.MessageId, 2, "handled", Ct)));
+
+        Assert.Equal("true", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT (processed_at IS NULL AND outcome IS NULL AND next_attempt_at < now() + interval '1 hour')::text FROM messaging.automation_inbox"));
     }
 
     [Fact]
@@ -286,10 +310,13 @@ public sealed class AutomationInboxTests
 
         var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
         Assert.Equal("primero", (await WithInboxAsync(f, inbox => inbox.ReadInboundAsync(f.Tenant.TenantId, first.MessageId, Ct)))!.Text);
-        await WithInboxAsync(f, async inbox => { await inbox.CompleteAsync(first.MessageId, "handled", Ct); return 0; });
+        await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, first.MessageId, first.Attempts, "handled", Ct));
 
         var second = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
         Assert.Equal("segundo", (await WithInboxAsync(f, inbox => inbox.ReadInboundAsync(f.Tenant.TenantId, second.MessageId, Ct)))!.Text);
+        // M5: el microsegundo por posición sólo corre la cola; los dos mensajes guardan el mismo instante de ingesta.
+        Assert.Equal(1L, await ScalarAsync<long>(f.ConnectionString, "SELECT count(DISTINCT created_at) FROM messaging.messages WHERE direction = 1"));
+        Assert.Equal(2L, await ScalarAsync<long>(f.ConnectionString, "SELECT count(DISTINCT created_at) FROM messaging.automation_inbox"));
     }
 
     [Fact]

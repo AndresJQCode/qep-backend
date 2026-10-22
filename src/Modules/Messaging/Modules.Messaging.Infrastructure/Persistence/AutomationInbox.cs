@@ -46,26 +46,30 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
             """).ToListAsync(cancellationToken);
     }
 
-    public async Task CompleteAsync(Guid messageId, string outcome, CancellationToken cancellationToken)
+    // El filtro por attempts es la cerca contra un lease vencido (ver IAutomationInbox); el de tenant, la doble verificación de siempre.
+    public async Task<bool> CompleteAsync(Guid tenantId, Guid messageId, int attempts, string outcome, CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
-        await dbContext.Database.ExecuteSqlAsync(
-            $"""UPDATE messaging.automation_inbox SET processed_at = {now}, outcome = {outcome} WHERE message_id = {messageId} AND processed_at IS NULL""",
-            cancellationToken);
+        return await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE messaging.automation_inbox SET processed_at = {now}, outcome = {outcome}
+             WHERE message_id = {messageId} AND tenant_id = {tenantId} AND attempts = {attempts} AND processed_at IS NULL
+            """,
+            cancellationToken) > 0;
     }
 
-    public async Task RetryLaterAsync(Guid messageId, TimeSpan delay, CancellationToken cancellationToken)
+    public async Task<bool> RetryLaterAsync(Guid tenantId, Guid messageId, int attempts, TimeSpan delay, CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
         var retryAt = now + delay;
-        await dbContext.Database.ExecuteSqlAsync(
+        return await dbContext.Database.ExecuteSqlAsync(
             $"""
             UPDATE messaging.automation_inbox
                SET next_attempt_at = {retryAt},
                    processed_at = CASE WHEN attempts >= {MaxAttempts} THEN {now} ELSE NULL END,
                    outcome = CASE WHEN attempts >= {MaxAttempts} THEN 'failed' ELSE NULL END
-             WHERE message_id = {messageId} AND processed_at IS NULL
-            """, cancellationToken);
+             WHERE message_id = {messageId} AND tenant_id = {tenantId} AND attempts = {attempts} AND processed_at IS NULL
+            """, cancellationToken) > 0;
     }
 
     public async Task<InboundForAutomation?> ReadInboundAsync(Guid tenantId, Guid messageId, CancellationToken cancellationToken)

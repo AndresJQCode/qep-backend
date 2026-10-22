@@ -201,7 +201,9 @@ internal static class MessageMapping
             row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
             row.Kind == MessageKind.Unsupported ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson)) : null,
             row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson),
-            row.SentByChatbotId is { } chatbotId ? new ChatbotRefDto(chatbotId, chatbotNames?.GetValueOrDefault(chatbotId) ?? DeletedChatbotName) : null);
+            row.SentByChatbotId is { } chatbotId ? new ChatbotRefDto(chatbotId, chatbotNames?.GetValueOrDefault(chatbotId) ?? DeletedChatbotName) : null,
+            // Sólo el saliente: el details de un interactivo entrante es la respuesta del cliente (button_reply / list_reply), no una tarjeta.
+            row is { Direction: MessageDirection.Outbound, Kind: MessageKind.Interactive } ? InteractiveDetailsJson.Parse(row.DetailsJson) : null);
     }
 
     /// <summary>Spec 2026-10-21 D-I3: el chatbot que ya no existe (o que el puerto no conoce) firma con este texto.</summary>

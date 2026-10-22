@@ -80,6 +80,17 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                 table: "messages",
                 sql: "sent_by_kind <> 2 OR sent_by_member_id IS NULL");
 
+            // Defensivo: con la maqueta del spec 1 alguien pudo poner a mano automation_status <> 'None' en una conversación de demo, y
+            // esas filas no traen chatbot (la columna nace acá, NULL). Sin esto el CHECK de abajo tumba el despliegue; se devuelven a
+            // 'None' con todo lo que la acompaña, para que también cumplan CK_conversations_automation_started y _pause.
+            migrationBuilder.Sql(
+                """
+                UPDATE messaging.conversations
+                   SET automation_status = 'None', automation_started_at = NULL, automation_paused_at = NULL,
+                       automation_paused_by_member_id = NULL, automation_pause_reason = NULL
+                 WHERE automation_status <> 'None' AND automation_chatbot_id IS NULL;
+                """);
+
             migrationBuilder.AddCheckConstraint(
                 name: "CK_conversations_automation_chatbot",
                 schema: "messaging",

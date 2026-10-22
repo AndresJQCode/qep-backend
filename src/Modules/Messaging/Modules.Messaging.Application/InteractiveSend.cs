@@ -27,7 +27,7 @@ public sealed record CtaUrlSend(string Body, string DisplayText, Uri Url, string
 public static class InteractiveLimits
 {
     public const int BodyMax = 1024, HeaderMax = 60, FooterMax = 60, ButtonsMax = 3, ButtonTitleMax = 20, ButtonIdMax = 256,
-        RowsMax = 10, RowTitleMax = 24, RowDescriptionMax = 72, ListButtonMax = 20, DisplayTextMax = 20;
+        RowsMax = 10, RowIdMax = 200, RowTitleMax = 24, RowDescriptionMax = 72, ListButtonMax = 20, DisplayTextMax = 20;
 }
 
 public static class InteractiveSendValidation
@@ -46,6 +46,16 @@ public static class InteractiveSendValidation
             errors.Add("interactive.body.too_long");
         }
 
+        if (send.Header is { Length: > InteractiveLimits.HeaderMax })
+        {
+            errors.Add("interactive.header.too_long");
+        }
+
+        if (send.Footer is { Length: > InteractiveLimits.FooterMax })
+        {
+            errors.Add("interactive.footer.too_long");
+        }
+
         switch (send)
         {
             case ButtonsSend buttons:
@@ -55,7 +65,11 @@ public static class InteractiveSendValidation
                 ValidateList(list, errors);
                 break;
             case CtaUrlSend cta:
-                if (cta.DisplayText.Length > InteractiveLimits.DisplayTextMax)
+                if (string.IsNullOrWhiteSpace(cta.DisplayText))
+                {
+                    errors.Add("interactive.cta.display_text_empty");
+                }
+                else if (cta.DisplayText.Length > InteractiveLimits.DisplayTextMax)
                 {
                     errors.Add("interactive.cta.display_text_too_long");
                 }
@@ -84,9 +98,25 @@ public static class InteractiveSendValidation
             errors.Add("interactive.buttons.too_many");
         }
 
+        if (send.Buttons.Any(b => string.IsNullOrWhiteSpace(b.Title)))
+        {
+            errors.Add("interactive.buttons.title_empty");
+        }
+
         if (send.Buttons.Any(b => b.Title.Length > InteractiveLimits.ButtonTitleMax))
         {
             errors.Add("interactive.buttons.title_too_long");
+        }
+
+        // El id es lo que vuelve en button_reply: vacío, el motor no sabría qué salida tomar.
+        if (send.Buttons.Any(b => string.IsNullOrWhiteSpace(b.Id)))
+        {
+            errors.Add("interactive.buttons.id_empty");
+        }
+
+        if (send.Buttons.Any(b => b.Id.Length > InteractiveLimits.ButtonIdMax))
+        {
+            errors.Add("interactive.buttons.id_too_long");
         }
 
         if (send.Buttons.Select(b => b.Id).Distinct(StringComparer.Ordinal).Count() != send.Buttons.Count)
@@ -109,9 +139,24 @@ public static class InteractiveSendValidation
             errors.Add("interactive.list.too_many_rows");
         }
 
+        if (rows.Any(r => string.IsNullOrWhiteSpace(r.Title)))
+        {
+            errors.Add("interactive.list.row_title_empty");
+        }
+
         if (rows.Any(r => r.Title.Length > InteractiveLimits.RowTitleMax))
         {
             errors.Add("interactive.list.row_title_too_long");
+        }
+
+        if (rows.Any(r => string.IsNullOrWhiteSpace(r.Id)))
+        {
+            errors.Add("interactive.list.id_empty");
+        }
+
+        if (rows.Any(r => r.Id.Length > InteractiveLimits.RowIdMax))
+        {
+            errors.Add("interactive.list.row_id_too_long");
         }
 
         if (rows.Any(r => r.Description is { Length: > InteractiveLimits.RowDescriptionMax }))
@@ -119,7 +164,11 @@ public static class InteractiveSendValidation
             errors.Add("interactive.list.row_description_too_long");
         }
 
-        if (send.ButtonLabel.Length > InteractiveLimits.ListButtonMax)
+        if (string.IsNullOrWhiteSpace(send.ButtonLabel))
+        {
+            errors.Add("interactive.list.button_empty");
+        }
+        else if (send.ButtonLabel.Length > InteractiveLimits.ListButtonMax)
         {
             errors.Add("interactive.list.button_too_long");
         }
@@ -208,4 +257,109 @@ public static class InteractiveSendJson
         }).ToArray());
         return result;
     }
+}
+
+/// <summary>Spec 2026-10-21 D-I2: el camino de vuelta de <see cref="InteractiveSendJson.ToMetaObject"/>, para el hilo. El backend
+/// arma lo que la pantalla pinta (regla BFF): el frontend no tiene por qué conocer la forma del objeto de Meta guardado en
+/// <c>details</c>. Cualquier forma que no se reconozca da <c>null</c>: un detalle raro deja el mensaje sin botones, nunca rompe la página.</summary>
+internal static class InteractiveDetailsJson
+{
+    public static InteractiveDto? Parse(string? detailsJson)
+    {
+        if (string.IsNullOrEmpty(detailsJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(detailsJson);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !TryObject(root, "action", out var action))
+            {
+                return null;
+            }
+
+            return StringOf(root, "type") switch
+            {
+                "button" => Buttons(action) is { } buttons ? new InteractiveDto("button", buttons, null, null) : null,
+                "list" => List(action) is { } list ? new InteractiveDto("list", null, list, null) : null,
+                "cta_url" => Cta(action) is { } cta ? new InteractiveDto("cta_url", null, null, cta) : null,
+                _ => null,
+            };
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static List<InteractiveButtonDto>? Buttons(JsonElement action)
+    {
+        if (!TryArray(action, "buttons", out var items))
+        {
+            return null;
+        }
+
+        var result = new List<InteractiveButtonDto>();
+        foreach (var item in items.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object || !TryObject(item, "reply", out var reply)
+                || StringOf(reply, "id") is not { } id || StringOf(reply, "title") is not { } title)
+            {
+                return null;
+            }
+
+            result.Add(new InteractiveButtonDto(id, title));
+        }
+
+        return result;
+    }
+
+    private static InteractiveListDto? List(JsonElement action)
+    {
+        if (StringOf(action, "button") is not { } label || !TryArray(action, "sections", out var sections))
+        {
+            return null;
+        }
+
+        var result = new List<InteractiveListSectionDto>();
+        foreach (var section in sections.EnumerateArray())
+        {
+            if (section.ValueKind != JsonValueKind.Object || !TryArray(section, "rows", out var rows))
+            {
+                return null;
+            }
+
+            var parsed = new List<InteractiveListRowDto>();
+            foreach (var row in rows.EnumerateArray())
+            {
+                if (row.ValueKind != JsonValueKind.Object || StringOf(row, "id") is not { } id || StringOf(row, "title") is not { } title)
+                {
+                    return null;
+                }
+
+                parsed.Add(new InteractiveListRowDto(id, title, StringOf(row, "description")));
+            }
+
+            result.Add(new InteractiveListSectionDto(StringOf(section, "title"), parsed));
+        }
+
+        return new InteractiveListDto(label, result);
+    }
+
+    private static InteractiveCtaDto? Cta(JsonElement action) =>
+        TryObject(action, "parameters", out var parameters)
+        && StringOf(parameters, "display_text") is { } displayText && StringOf(parameters, "url") is { } url
+            ? new InteractiveCtaDto(displayText, url)
+            : null;
+
+    private static string? StringOf(JsonElement value, string name) =>
+        value.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.String ? property.GetString() : null;
+
+    private static bool TryObject(JsonElement value, string name, out JsonElement result) =>
+        value.TryGetProperty(name, out result) && result.ValueKind == JsonValueKind.Object;
+
+    private static bool TryArray(JsonElement value, string name, out JsonElement result) =>
+        value.TryGetProperty(name, out result) && result.ValueKind == JsonValueKind.Array;
 }
