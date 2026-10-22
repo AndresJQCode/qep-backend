@@ -360,6 +360,155 @@ public sealed class FlowValidatorTests
         Assert.Equal(expected.Order(), issues.Select(i => (i.Code, i.NodeId!)).Order());
     }
 
+    // Ruling P2-R8: lo que el motor o Meta no pueden ejecutar no se publica.
+    [Fact]
+    public void AButtonsNodeWithoutButtonsFails()
+    {
+        var issue = Single(FlowValidator.Validate(Flow(Buttons(), End()), Ctx()), "buttons.empty");
+
+        Assert.Equal((FlowIssueSeverity.Error, "n1"), (issue.Severity, issue.NodeId));
+        Assert.Equal("«Motivo» no tiene botones: agrega al menos uno.", issue.Message);
+    }
+
+    [Fact]
+    public void AFixedListWithoutRowsFailsButAnExtraOptionCountsAsARow()
+    {
+        var empty = Single(FlowValidator.Validate(Flow(FixedList([]), End()), Ctx()), "list.no_rows");
+        Assert.Equal((FlowIssueSeverity.Error, "n1"), (empty.Severity, empty.NodeId));
+
+        var onlyExtra = FixedList([]) with
+        {
+            Options = new ListOptions("fixed", [], null, null, null, null, new ListFixedRow("otro", "Otro", null)),
+            Outputs = Out(("chosen", "end"), ("other", "end"), ("extra", "end")),
+        };
+        Assert.DoesNotContain(FlowValidator.Validate(Flow(onlyExtra, End()), Ctx()), i => i.Code == "list.no_rows");
+    }
+
+    [Theory]
+    [InlineData(null, "id", "name")]
+    [InlineData("equipos", "", "name")]
+    [InlineData("equipos", "id", null)]
+    public void ADynamicListNeedsCollectionIdFieldAndTitleField(string? collection, string? idField, string? titleField)
+    {
+        var list = FixedList([]) with { Options = new ListOptions("dynamic", null, collection, idField, titleField, null, null) };
+
+        var issue = Single(FlowValidator.Validate(Flow(list, End()), Ctx()), "list.dynamic_incomplete");
+
+        Assert.Equal(FlowIssueSeverity.Error, issue.Severity);
+    }
+
+    [Fact]
+    public void ACompleteDynamicListHasNoDynamicIssue()
+    {
+        var list = FixedList([]) with { Options = new ListOptions("dynamic", null, "nombre", "id", "name", null, null) };
+
+        Assert.DoesNotContain(FlowValidator.Validate(Flow(list, End()), Ctx()), i => i.Code is "list.dynamic_incomplete" or "list.no_rows");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("http://x.com/a")]
+    [InlineData("/catalogo")]
+    [InlineData("x.com")]
+    public void AnUrlButtonNeedsAnAbsoluteHttpsUrl(string url)
+    {
+        var message = new MessageNode("n1", "Saludo", Out(("next", "end")), "Hola", new UrlButton("Ver", url));
+
+        var issue = Single(FlowValidator.Validate(Flow(message, End()), Ctx()), "message.url_invalid");
+
+        Assert.Equal((FlowIssueSeverity.Error, "n1"), (issue.Severity, issue.NodeId));
+    }
+
+    [Theory]
+    [InlineData("https://qcode.co/catalogo")]
+    [InlineData("https://qcode.co/pedido/{nombre}")]
+    public void AnHttpsUrlButtonIsValid(string url)
+    {
+        var message = new MessageNode("n1", "Saludo", Out(("next", "end")), "Hola", new UrlButton("Ver", url));
+
+        Assert.DoesNotContain(FlowValidator.Validate(Flow(message, End()), Ctx()), i => i.Code == "message.url_invalid");
+    }
+
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(1, false)]
+    [InlineData(10, false)]
+    [InlineData(11, true)]
+    public void TheHttpTimeoutMustBeBetween1And10Seconds(int seconds, bool fails)
+    {
+        var issues = FlowValidator.Validate(Flow(Http() with { TimeoutSeconds = seconds }, End()), Ctx());
+
+        Assert.Equal(fails, issues.Any(i => i.Code == "http.timeout_invalid"));
+    }
+
+    [Theory]
+    [InlineData("/a/../x")]
+    [InlineData("/a/..")]
+    [InlineData("/../x")]
+    [InlineData("/a/%2E%2e/x")]
+    public void AnHttpPathWithADotDotSegmentFails(string path)
+    {
+        var issue = Single(FlowValidator.Validate(Flow(Http(path: path), End()), Ctx()), "http.path_invalid");
+
+        Assert.Equal(FlowIssueSeverity.Error, issue.Severity);
+    }
+
+    [Fact]
+    public void AnHttpPathWithDotsInANameIsValid() =>
+        Assert.DoesNotContain(FlowValidator.Validate(Flow(Http(path: "/v1.2/..a/b.."), End()), Ctx()), i => i.Code == "http.path_invalid");
+
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(1, false)]
+    [InlineData(5, false)]
+    [InlineData(6, true)]
+    [InlineData(null, false)]
+    public void TheQuestionMaxAttemptsMustBeBetween1And5WhenSet(int? attempts, bool fails)
+    {
+        var issues = FlowValidator.Validate(Flow(Question(new QuestionValidation("none", null, null), attempts), End()), Ctx());
+
+        Assert.Equal(fails, issues.Any(i => i.Code == "question.max_attempts_invalid"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("([a-z")]
+    public void ARegexValidationNeedsACompilablePattern(string? pattern)
+    {
+        var issue = Single(FlowValidator.Validate(Flow(Question(new QuestionValidation("regex", pattern, null), 3), End()), Ctx()), "question.pattern_invalid");
+
+        Assert.Equal((FlowIssueSeverity.Error, "n1"), (issue.Severity, issue.NodeId));
+    }
+
+    [Fact]
+    public void AValidRegexPatternPasses() =>
+        Assert.DoesNotContain(
+            FlowValidator.Validate(Flow(Question(new QuestionValidation("regex", @"^\d{6,10}$", null), 3), End()), Ctx()),
+            i => i.Code == "question.pattern_invalid");
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("  ")]
+    public void AKeywordsValidationNeedsKeywords(string? onlyWord)
+    {
+        // null = lista ausente; "" = lista vacía; el resto = una sola palabra en blanco.
+        string[]? keywords = onlyWord is null ? null : onlyWord.Length == 0 ? [] : [onlyWord];
+        var issue = Single(FlowValidator.Validate(Flow(Question(new QuestionValidation("keywords", null, keywords), 3), End()), Ctx()), "question.keywords_empty");
+
+        Assert.Equal(FlowIssueSeverity.Error, issue.Severity);
+    }
+
+    [Fact]
+    public void AKeywordsValidationWithWordsPasses() =>
+        Assert.DoesNotContain(
+            FlowValidator.Validate(Flow(Question(new QuestionValidation("keywords", null, ["sí", "no"]), 3), End()), Ctx()),
+            i => i.Code == "question.keywords_empty");
+
+    private static OpenQuestionNode Question(QuestionValidation validation, int? attempts) =>
+        new("n1", "Documento", Out(("answered", "end"), ("invalid", "end")), "¿Documento?", "cedula", validation, attempts);
+
     private static FlowIssue Single(IReadOnlyList<FlowIssue> issues, string code) => Assert.Single(issues, i => i.Code == code);
 
     // Con indexador y no ToDictionary: una prueba de ids repetidos arma salidas con la misma clave.

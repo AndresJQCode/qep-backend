@@ -534,6 +534,32 @@ public sealed class ChatbotsApiTests
         Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM automations.chatbot_versions"));
     }
 
+    // Ruling P2-R8: el disparador por palabra clave sin palabras es un problema de los ajustes; los ajustes se guardan, publicar no.
+    [Fact]
+    public async Task PublishAKeywordChatbotWithoutKeywordsIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (id, version) = await PublishableAsync(setup);
+        var settings = await PutAsync(
+            setup, $"{ChatbotsUrl(setup.Tenant.TenantId)}/{id}",
+            new UpdateChatbotRequest("Servicio técnico", "", "Keyword", [], "volver", 3, [setup.WhatsAppId]), version);
+        Assert.Equal(HttpStatusCode.OK, settings.StatusCode);
+        var saved = await GetAsync(setup, id);
+
+        var response = await ActAsync(setup.Client, setup, id, "publish", saved.Chatbot.Version);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        Assert.Equal("automations.chatbot.invalid", problem.RootElement.GetProperty("code").GetString());
+        var flow = problem.RootElement.GetProperty("errors").GetProperty("flow").EnumerateArray().Select(item => item.GetString()!).ToList();
+        Assert.Contains(flow, item => item.StartsWith($"{FlowIssueCodes.TriggerKeywordsEmpty}: ", StringComparison.Ordinal));
+        Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM automations.chatbot_versions"));
+    }
+
     [Fact]
     public async Task PublishTheAnnexAFlowActivatesAndNumbersVersionOne()
     {

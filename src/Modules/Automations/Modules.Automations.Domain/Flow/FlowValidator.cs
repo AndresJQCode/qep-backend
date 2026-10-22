@@ -21,6 +21,15 @@ public static partial class FlowValidator
     private const int RowTitleMaxLength = 24;
     private const int RowDescriptionMaxLength = 72;
 
+    // D-H4: el timeout del bloque HTTP. D-C7: los intentos que un bloque puede pisar al del chatbot.
+    private const int MinTimeoutSeconds = 1;
+    private const int MaxTimeoutSeconds = 10;
+    private const int MinAttempts = 1;
+    private const int MaxAttempts = 5;
+
+    // Un patrón del admin corre sobre texto del cliente: el tope evita que uno catastrófico cuelgue el motor.
+    private static readonly TimeSpan PatternTimeout = TimeSpan.FromMilliseconds(100);
+
     // El nombre de ConversationChannel.Instagram (Modules.Messaging.Domain/MessageEnums.cs): Instagram no tiene listas (D-M6).
     private const string Instagram = "Instagram";
 
@@ -158,12 +167,14 @@ public static partial class FlowValidator
                 if (message.UrlButton is { } urlButton)
                 {
                     CheckLabel(node, urlButton.Label, issues);
+                    CheckUrlButton(node, urlButton, issues);
                 }
 
                 break;
             case OpenQuestionNode question:
                 CheckText(node, question.Text, TextMaxLength, issues);
                 CheckName(node, question.SaveTo, issues);
+                CheckQuestion(question, issues);
                 break;
             case ButtonsNode buttons:
                 CheckText(node, buttons.Text, InteractiveBodyMaxLength, issues);
@@ -172,6 +183,11 @@ public static partial class FlowValidator
                     issues.Add(Error(
                         FlowIssueCodes.ButtonsTooMany, node.Id,
                         $"«{node.Title}» tiene {buttons.Buttons.Count} botones; WhatsApp permite máximo {MaxButtons}. Usa una lista si necesitas más."));
+                }
+
+                if (buttons.Buttons.Count == 0)
+                {
+                    issues.Add(Error(FlowIssueCodes.ButtonsEmpty, node.Id, $"«{node.Title}» no tiene botones: agrega al menos uno."));
                 }
 
                 foreach (var button in buttons.Buttons)
@@ -249,6 +265,20 @@ public static partial class FlowValidator
                 $"La lista de «{list.Title}» tiene {rows.Count} filas; WhatsApp permite máximo {MaxRows}."));
         }
 
+        if (list.Options.Kind == ListOptionKinds.Fixed && rows.Count == 0)
+        {
+            issues.Add(Error(FlowIssueCodes.ListNoRows, list.Id, $"La lista de «{list.Title}» no tiene filas: agrega al menos una."));
+        }
+
+        if (list.Options.Kind == ListOptionKinds.Dynamic
+            && (string.IsNullOrWhiteSpace(list.Options.Collection) || string.IsNullOrWhiteSpace(list.Options.IdField)
+                || string.IsNullOrWhiteSpace(list.Options.TitleField)))
+        {
+            issues.Add(Error(
+                FlowIssueCodes.ListDynamicIncomplete, list.Id,
+                $"La lista de «{list.Title}» arma sus filas desde una variable: indica la variable, el campo del id y el campo del título."));
+        }
+
         CheckRowIds(list, rows, issues);
         foreach (var row in rows)
         {
@@ -300,6 +330,21 @@ public static partial class FlowValidator
                 $"La ruta de «{http.Title}» tiene que empezar con / y no llevar dominio, espacios, ? ni #: la query va aparte."));
         }
 
+        // Un segmento «..» (también codificado) sacaría la llamada de la URL base de la conexión.
+        if (http.Path.Split('/').Any(IsDotDotSegment))
+        {
+            issues.Add(Error(
+                FlowIssueCodes.HttpPathInvalid, http.Id,
+                $"La ruta de «{http.Title}» no puede llevar «..»: tiene que quedarse dentro de la URL de la conexión."));
+        }
+
+        if (http.TimeoutSeconds is < MinTimeoutSeconds or > MaxTimeoutSeconds)
+        {
+            issues.Add(Error(
+                FlowIssueCodes.HttpTimeoutInvalid, http.Id,
+                $"El tiempo de espera de «{http.Title}» es {http.TimeoutSeconds} s; tiene que estar entre {MinTimeoutSeconds} y {MaxTimeoutSeconds} segundos."));
+        }
+
         if (http.Body is { Kind: HttpBodyKinds.Json } body && !IsJsonTemplate(body.Template))
         {
             issues.Add(Error(
@@ -317,6 +362,73 @@ public static partial class FlowValidator
             issues.Add(Warning(
                 FlowIssueCodes.HttpNoSampleResponse, http.Id,
                 $"«{http.Title}» no tiene respuesta de ejemplo: el simulador sólo lo puede probar llamando a la API real."));
+        }
+    }
+
+    private static bool IsDotDotSegment(string segment)
+    {
+        try
+        {
+            return Uri.UnescapeDataString(segment) == "..";
+        }
+        catch (UriFormatException)
+        {
+            return false;
+        }
+    }
+
+    // D-I1: el botón URL de Meta exige una URL absoluta https. Las variables se reemplazan por un valor neutro: la URL se arma al enviar.
+    private static void CheckUrlButton(FlowNode node, UrlButton urlButton, List<FlowIssue> issues)
+    {
+        var url = VariableToken().Replace(urlButton.Url ?? string.Empty, "x");
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+        {
+            issues.Add(Error(
+                FlowIssueCodes.MessageUrlInvalid, node.Id,
+                $"La URL del botón de «{node.Title}» está vacía o no es una dirección completa que empiece con https://."));
+        }
+    }
+
+    private static void CheckQuestion(OpenQuestionNode question, List<FlowIssue> issues)
+    {
+        if (question.MaxAttempts is < MinAttempts or > MaxAttempts)
+        {
+            issues.Add(Error(
+                FlowIssueCodes.QuestionMaxAttemptsInvalid, question.Id,
+                $"Los intentos de «{question.Title}» son {question.MaxAttempts}; tienen que estar entre {MinAttempts} y {MaxAttempts}."));
+        }
+
+        var validation = question.Validation;
+        if (validation.Kind == QuestionValidationKinds.Regex && !IsCompilable(validation.Pattern))
+        {
+            issues.Add(Error(
+                FlowIssueCodes.QuestionPatternInvalid, question.Id,
+                $"El patrón de «{question.Title}» está vacío o no es una expresión regular válida."));
+        }
+
+        if (validation.Kind == QuestionValidationKinds.Keywords && (validation.Keywords is null || !validation.Keywords.Any(word => !string.IsNullOrWhiteSpace(word))))
+        {
+            issues.Add(Error(
+                FlowIssueCodes.QuestionKeywordsEmpty, question.Id,
+                $"«{question.Title}» valida por palabras y no tiene ninguna: agrega al menos una."));
+        }
+    }
+
+    private static bool IsCompilable(string? pattern)
+    {
+        if (string.IsNullOrWhiteSpace(pattern))
+        {
+            return false;
+        }
+
+        try
+        {
+            _ = new Regex(pattern, RegexOptions.CultureInvariant, PatternTimeout);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
         }
     }
 

@@ -557,7 +557,15 @@ public sealed class PublishChatbotHandler(
         var by = await caller.RequireAsync(command.TenantId, cancellationToken);
         var tenantConnections = await connections.ListAsync(command.TenantId, cancellationToken);
 
-        var issues = await builder.ValidateStoredAsync(chatbot, tenantConnections, cancellationToken);
+        var issues = (await builder.ValidateStoredAsync(chatbot, tenantConnections, cancellationToken)).ToList();
+        // Es un problema de los ajustes y no de un bloque, así que no lo ve el validador del flujo; guardar los ajustes sí se permite.
+        if (chatbot.Trigger == ChatbotTrigger.Keyword && chatbot.Keywords.Count == 0)
+        {
+            issues.Add(new FlowIssueDto(
+                nameof(FlowIssueSeverity.Error), FlowIssueCodes.TriggerKeywordsEmpty, null,
+                "El chatbot arranca por palabra clave y no tiene ninguna: agrega al menos una en los ajustes."));
+        }
+
         var errors = issues.Where(issue => issue.Severity == nameof(FlowIssueSeverity.Error)).ToList();
         if (errors.Count > 0)
         {

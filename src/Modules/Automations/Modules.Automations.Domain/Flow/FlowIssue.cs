@@ -54,4 +54,17 @@ public static class FlowIssueCodes
     public const string VariableNameInvalid = "variable.name_invalid";
     public const string VariableNeverSet = "variable.never_set";
     public const string BusinessHoursNotAssigned = "business_hours.not_assigned";
+
+    // Ruling P2-R8: lo que Meta o el motor no pueden ejecutar y, como las versiones son inmutables, no debe publicarse.
+    public const string ButtonsEmpty = "buttons.empty";
+    public const string ListNoRows = "list.no_rows";
+    public const string ListDynamicIncomplete = "list.dynamic_incomplete";
+    public const string MessageUrlInvalid = "message.url_invalid";
+    public const string HttpTimeoutInvalid = "http.timeout_invalid";
+    public const string QuestionMaxAttemptsInvalid = "question.max_attempts_invalid";
+    public const string QuestionPatternInvalid = "question.pattern_invalid";
+    public const string QuestionKeywordsEmpty = "question.keywords_empty";
+
+    /// <summary>Es del chatbot y no de un bloque: lo agrega el handler de publicar (<c>NodeId</c> nulo).</summary>
+    public const string TriggerKeywordsEmpty = "trigger.keywords_empty";
 }
