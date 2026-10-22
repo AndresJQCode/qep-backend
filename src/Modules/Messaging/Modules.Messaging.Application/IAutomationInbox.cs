@@ -31,6 +31,11 @@ public interface IAutomationInbox
     /// <summary>Vuelve a intentar tras <paramref name="delay"/>; con 5 intentos ya hechos la cierra con <c>failed</c> en vez de reprogramarla.</summary>
     Task<bool> RetryLaterAsync(Guid tenantId, Guid messageId, int attempts, TimeSpan delay, CancellationToken cancellationToken);
 
-    /// <summary>Lo que el motor necesita del mensaje; <c>null</c> si no existe en ese tenant.</summary>
+    /// <summary>Lo que el motor necesita del mensaje; <c>null</c> si no existe en ese tenant. <c>Text</c> es el texto o, si no tiene, la
+    /// leyenda del adjunto (P2-R4): una palabra clave también se dispara con la leyenda de una foto (D-C6, «cualquier entrante»).</summary>
     Task<InboundForAutomation?> ReadInboundAsync(Guid tenantId, Guid messageId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-21 D-M5: el entrante más reciente de la conversación (en el orden del hilo), con el que el traspaso del bot
+    /// suena a todo el tenant como un entrante sin asignar; <c>null</c> si no tiene ninguno o no es del tenant.</summary>
+    Task<Guid?> FindLastInboundIdAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
 }

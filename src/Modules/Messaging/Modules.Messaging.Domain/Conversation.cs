@@ -334,11 +334,14 @@ public sealed partial class Conversation
             throw new MessagingDomainException(MessagingErrorCodes.AutomationNotAvailable, "There is no assistant to hold a step.");
         }
 
-        // La columna es de 120: el título de un nodo más largo no debe tumbar el SaveChanges a mitad de un flujo.
-        AutomationStep = Truncate(stepTitle, AutomationStepMaxLength);
+        AutomationStep = FitAutomationStep(stepTitle);
     }
 
     private const int AutomationStepMaxLength = 120;
+
+    /// <summary>La columna es de 120: el título de un nodo más largo no debe tumbar el guardado a mitad de un flujo. Pública porque el
+    /// motor también escribe el paso con un UPDATE directo (<c>IConversationRepository.SetAutomationStepAsync</c>) y la regla es una sola.</summary>
+    public static string? FitAutomationStep(string? stepTitle) => Truncate(stepTitle, AutomationStepMaxLength);
 
     /// <summary>Spec 2026-10-21 D-M11: el flujo terminó. Sólo desde <c>Active</c>: una pausada la decide una persona y se devuelve con
     /// <see cref="ResumeAutomation"/>. Sin evento: el cierre de un flujo no es un hecho de asignación que mostrar en el hilo.</summary>

@@ -297,6 +297,31 @@ public sealed class AutomationInboxTests
         Assert.Equal(MessageKind.Image, before!.Kind);
         Assert.Equal(new InboundMediaForAutomation("image/jpeg", null, false), before.Media);
         Assert.Equal(new InboundMediaForAutomation("image/jpeg", null, true), after!.Media);
+        // P2-R4: sin texto, el motor lee la leyenda (una palabra clave también se dispara con la de una foto, D-C6).
+        Assert.Equal("leyenda", before.Text);
+    }
+
+    [Fact]
+    public async Task FindLastInboundIdIgnoresOutboundsAndEvents()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await PostTextAsync(f, "w1");
+        await PostTextAsync(f, "w2", 10);
+        var conversationId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations");
+        var last = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.messages WHERE wamid = 'w2'");
+        // Un saliente y un evento más nuevos no cuentan: el aviso del traspaso suena como el último entrante (D-M5).
+        await ExecuteAsync(f.ConnectionString,
+            """
+            INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, details, created_at)
+            SELECT gen_random_uuid(), c.id, c.tenant_id, c.connection_id, now() + make_interval(mins => n), d, k, 2, t, j::jsonb, now()
+              FROM messaging.conversations AS c,
+                   (VALUES (1, 2, 1, 'x', NULL), (2, 3, 13, NULL, '{"type":"Released"}')) AS v(n, d, k, t, j)
+            """);
+
+        Assert.Equal(last, await WithInboxAsync(f, inbox => inbox.FindLastInboundIdAsync(f.Tenant.TenantId, conversationId, Ct)));
+        Assert.Null(await WithInboxAsync(f, inbox => inbox.FindLastInboundIdAsync(Guid.CreateVersion7(), conversationId, Ct)));
     }
 
     [Fact]

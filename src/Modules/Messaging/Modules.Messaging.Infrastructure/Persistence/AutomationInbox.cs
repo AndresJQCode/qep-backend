@@ -77,7 +77,7 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
         // details guarda el objeto `interactive` de Meta tal cual (WebhookPayloadParser): button_reply / list_reply cuelgan de la raíz.
         var rows = await dbContext.Database.SqlQuery<InboundRow>(
             $"""
-            SELECT message.id AS "MessageId", message.kind AS "Kind", message.text AS "Text",
+            SELECT message.id AS "MessageId", message.kind AS "Kind", COALESCE(message.text, message.caption) AS "Text",
                    COALESCE(message.details->'button_reply'->>'id', message.details->'list_reply'->>'id') AS "ReplyId",
                    media.mime_type AS "MimeType", media.file_name AS "FileName", (media.stored_at IS NOT NULL) AS "Stored",
                    message.occurred_at AS "OccurredAt"
@@ -86,6 +86,19 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
              WHERE message.id = {messageId} AND message.tenant_id = {tenantId} AND message.direction = 1
             """).ToListAsync(cancellationToken);
         return rows.Count == 0 ? null : rows[0].ToInbound();
+    }
+
+    public async Task<Guid?> FindLastInboundIdAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+    {
+        // Por IX_messages_thread (conversation_id, occurred_at, id), el mismo orden del hilo.
+        var rows = await dbContext.Database.SqlQuery<Guid>(
+            $"""
+            SELECT message.id AS "Value" FROM messaging.messages AS message
+             WHERE message.conversation_id = {conversationId} AND message.tenant_id = {tenantId} AND message.direction = 1
+             ORDER BY message.occurred_at DESC, message.id DESC
+             LIMIT 1
+            """).ToListAsync(cancellationToken);
+        return rows.Count == 0 ? null : rows[0];
     }
 
     private sealed record InboundRow(

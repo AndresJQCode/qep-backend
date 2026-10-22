@@ -1,4 +1,5 @@
 using Modules.Automations.Domain;
+using Modules.Automations.Domain.Engine;
 
 namespace Modules.Automations.Application;
 
@@ -98,6 +99,122 @@ public interface IAutomationBusinessHours
 {
     Task<IReadOnlyDictionary<Guid, string?>> ScheduleNamesAsync(
         Guid tenantId, IReadOnlyCollection<Guid> connectionIds, CancellationToken cancellationToken);
+
+    /// <summary>El bloque Horario (§5.4): ¿la conexión está en horario ahora? Una conexión sin horario cuenta como abierta, como en
+    /// <c>IBusinessHours.GetStatusAsync</c> de Mensajería.</summary>
+    Task<bool> IsOpenAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-10-21 §5.1: una fila reclamada de <c>messaging.automation_inbox</c>. <see cref="Opened"/> (D-M16) dice que el
+/// entrante abrió o reabrió la conversación; <see cref="Attempts"/> ya cuenta el reclamo que la devolvió y es el testigo con que se cierra.</summary>
+public sealed record InboundQueueItem(Guid MessageId, Guid TenantId, Guid ConnectionId, Guid ConversationId, bool Opened, DateTimeOffset CreatedAt, int Attempts);
+
+/// <summary><see cref="Stored"/>: la copia a R2 ya terminó; mientras sea <c>false</c> el adjunto no se puede servir ni reenviar.</summary>
+public sealed record InboundAttachment(string MimeType, string? FileName, bool Stored);
+
+/// <summary>Lo que el motor lee de un entrante. <see cref="Kind"/> es el nombre del <c>MessageKind</c> de Mensajería
+/// (<c>CustomerMessageKinds</c>); <see cref="Text"/> es el texto o, si no tiene, la leyenda del adjunto (P2-R4: una palabra clave
+/// también se dispara con la leyenda de una foto).</summary>
+public sealed record InboundMessage(Guid MessageId, string Kind, string? Text, string? ReplyId, InboundAttachment? Attachment, DateTimeOffset OccurredAt);
+
+/// <summary>Spec 2026-10-21 §5.1 y §5.3: la cola del motor (adaptador en Bootstrapper sobre <c>IAutomationInbox</c> de Mensajería).
+/// <c>Complete</c> y <c>RetryLater</c> llevan el <c>Attempts</c> del reclamo como testigo (P2-R3): <c>false</c> = otra réplica volvió a
+/// reclamar la fila después de vencido el lease, y lo que hizo este worker ya no cuenta.</summary>
+// CA1711: el analizador asume que «Queue» implica heredar de System.Collections.Queue; acá es el sustantivo del spec (§5.3), como
+// IExportJobQueue de Quotations: falso positivo.
+#pragma warning disable CA1711
+public interface IAutomationInboundQueue
+#pragma warning restore CA1711
+{
+    Task<IReadOnlyList<InboundQueueItem>> ClaimAsync(DateTimeOffset now, int batch, CancellationToken cancellationToken);
+
+    Task<bool> CompleteAsync(Guid tenantId, Guid messageId, int attempts, string outcome, CancellationToken cancellationToken);
+
+    /// <summary>Con 5 intentos ya hechos, Mensajería la cierra con <c>failed</c> en vez de reprogramarla.</summary>
+    Task<bool> RetryLaterAsync(Guid tenantId, Guid messageId, int attempts, TimeSpan delay, CancellationToken cancellationToken);
+
+    /// <summary><c>null</c> si el mensaje no es un entrante de ese tenant.</summary>
+    Task<InboundMessage?> ReadAsync(Guid tenantId, Guid messageId, CancellationToken cancellationToken);
+}
+
+/// <summary>Lo que el motor necesita de la conversación (§5.2 paso 2). <see cref="Status"/> es <c>Open</c> o <c>Resolved</c>;
+/// <see cref="AutomationStatus"/>, <c>None</c>, <c>Active</c> o <c>Paused</c> (los nombres de los enums de Mensajería).
+/// <see cref="CustomerName"/> es el nombre de perfil de WhatsApp y <see cref="Phone"/>, el <c>wa_id</c>.</summary>
+public sealed record AutomationConversationState(
+    string Status, Guid? AssignedMemberId, string AutomationStatus, Guid? AutomationChatbotId, Guid ConnectionId,
+    DateTimeOffset? LastInboundAt, string? CustomerName, string? Phone);
+
+/// <summary>Spec 2026-10-21 §5.3, D-M5 y D-M14: lo que el motor le hace a la conversación (adaptador en Bootstrapper sobre el agregado
+/// <c>Conversation</c> de Mensajería). Cada cambio se guarda y se notifica antes de volver. Una regla del agregado que no se cumple
+/// (con asesor, ya resuelta, ya pausada) sale como el <c>DomainException</c> de Mensajería, y una versión vieja como
+/// <c>RequestConcurrencyException</c> (<c>concurrency.conflict</c>).</summary>
+public interface IAutomationConversations
+{
+    /// <summary><c>null</c> si la conversación no es del tenant.</summary>
+    Task<AutomationConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+
+    /// <summary><c>None → Active</c> con el chatbot y el primer paso.</summary>
+    Task StartAsync(Guid tenantId, Guid conversationId, Guid chatbotId, string? firstStepTitle, CancellationToken cancellationToken);
+
+    /// <summary>El paso visible en la bandeja (D-M14). No es un cambio de la conversación: no mueve su versión ni falla porque
+    /// entró un mensaje; sin asistente no escribe nada.</summary>
+    Task SetStepAsync(Guid tenantId, Guid conversationId, string? stepTitle, CancellationToken cancellationToken);
+
+    /// <summary>D-M5: <c>Paused</c> con motivo <c>Handoff</c>, sin asesor, con evento en el hilo, auditoría de sistema y aviso a todo el
+    /// tenant como un entrante sin asignar.</summary>
+    Task HandoffAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+
+    /// <summary>D-M5: resuelta con el motivo (si sigue activo en el tenant), con evento <c>Resolved</c> sin actor y auditoría de sistema.</summary>
+    Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken);
+
+    /// <summary>D-M14: <c>Active → None</c>, sin evento. Si el asistente ya no está activo (terminó, lo pausó una persona o la
+    /// conversación se resolvió) no hace nada.</summary>
+    Task EndAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+}
+
+/// <summary>Cómo terminó un envío del bot (D-I4). <see cref="NotAutomated"/>: la conversación ya no es del bot (resuelta, con asesor o
+/// sin asistente activo). <see cref="Rejected"/> lleva el código de Mensajería.</summary>
+public abstract record BotSendOutcome
+{
+    public sealed record Sent(Guid MessageId) : BotSendOutcome;
+
+    public sealed record NotAutomated : BotSendOutcome;
+
+    public sealed record WindowClosed : BotSendOutcome;
+
+    public sealed record Rejected(string Code) : BotSendOutcome;
+}
+
+/// <summary>Spec 2026-10-21 §5.3 y D-I4: los envíos del bot (adaptador en Bootstrapper sobre <c>IBotOutbound</c>). El
+/// <paramref name="clientId"/> lo deriva el procesador (P2-R5): un reintento con el mismo id no vuelve a mandar.</summary>
+public interface IAutomationMessenger
+{
+    Task<BotSendOutcome> SendTextAsync(Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, string text, CancellationToken cancellationToken);
+
+    Task<BotSendOutcome> SendInteractiveAsync(
+        Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, InteractiveMessage message, CancellationToken cancellationToken);
+}
+
+/// <summary>El adjunto de un entrante ya copiado al almacén: <see cref="Key"/> es la llave en R2.</summary>
+public sealed record StoredAttachment(string Key, string? FileName, string MimeType, long? SizeBytes);
+
+/// <summary>Spec 2026-10-21 §5.3 y D-M8: los adjuntos que el bloque Adjunto guarda y el bloque HTTP reenvía (adaptador en Bootstrapper
+/// sobre <c>IMediaReads</c> e <c>IMessagingMediaStore</c>).</summary>
+public interface IAutomationMedia
+{
+    /// <summary><c>null</c> si el mensaje no es del tenant, no tiene adjunto o todavía no se copió.</summary>
+    Task<StoredAttachment?> TryGetStoredAsync(Guid tenantId, Guid messageId, CancellationToken cancellationToken);
+
+    Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken);
+
+    /// <summary><c>null</c> si el objeto no está. El stream es de quien llama.</summary>
+    Task<(Stream Content, long Length)?> OpenReadAsync(string key, CancellationToken cancellationToken);
+}
+
+/// <summary>El nombre de la empresa para <c>{empresa}</c> (adaptador en Bootstrapper sobre Tenancy).</summary>
+public interface IAutomationTenantNames
+{
+    Task<string?> FindAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
 /// <summary>Traduce por nombre de índice (nunca sólo por SqlState): nombre repetido y conexión ocupada → 409; versión vieja o

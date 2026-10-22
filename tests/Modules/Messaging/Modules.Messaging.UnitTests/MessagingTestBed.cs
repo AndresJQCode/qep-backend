@@ -746,6 +746,8 @@ internal sealed class FakeConversationRepository : IConversationRepository
     public Task<UnreadFromOutcome> MarkUnreadFromAsync(Guid tenantId, Guid conversationId, Guid messageId, DateTimeOffset now, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<bool> ExistsAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<bool> SetAutomationStepAsync(Guid tenantId, Guid conversationId, string? stepTitle, CancellationToken cancellationToken) => throw new NotSupportedException();
 }
 
 internal sealed class FakeMessageQueries : IMessageQueries

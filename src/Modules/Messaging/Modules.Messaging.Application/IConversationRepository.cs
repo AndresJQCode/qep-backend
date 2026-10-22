@@ -37,6 +37,12 @@ public interface IConversationRepository
     /// propia transacción corta, antes del reclamo largo del envío: así la ingesta de esta conversación nunca espera a
     /// Meta, y sin token de concurrencia un entrante que subió la versión no lo convierte en 412 (RF7).</summary>
     Task<AutoAssignOutcome> TryAutoAssignAsync(Guid tenantId, Guid conversationId, Guid memberId, Guid actorUserId, DateTimeOffset now, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-21 D-M14: el paso del flujo que escribe el motor, en una sentencia que se commitea sola, sin token y sin
+    /// subir <c>version</c> ni <c>updated_at</c> (como <see cref="Conversation.SetAutomationStep"/>, que no hace <c>Touch</c>): cargar y
+    /// guardar el agregado convertiría en 412 cada entrante que llega mientras el bot avanza. Sólo con el asistente puesto (D-M11);
+    /// <c>true</c> si escribió.</summary>
+    Task<bool> SetAutomationStepAsync(Guid tenantId, Guid conversationId, string? stepTitle, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-10 §8.5 paso 5.</summary>

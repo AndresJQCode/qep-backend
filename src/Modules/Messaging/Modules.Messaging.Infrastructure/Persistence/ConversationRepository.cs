@@ -10,6 +10,16 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
         dbContext.Conversations.SingleOrDefaultAsync(
             conversation => conversation.TenantId == tenantId && conversation.Id == conversationId, cancellationToken);
 
+    public async Task<bool> SetAutomationStepAsync(Guid tenantId, Guid conversationId, string? stepTitle, CancellationToken cancellationToken)
+    {
+        var step = Conversation.FitAutomationStep(stepTitle);
+        return await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE messaging.conversations SET automation_step = {step}
+             WHERE id = {conversationId} AND tenant_id = {tenantId} AND automation_status <> 'None'
+            """, cancellationToken) > 0;
+    }
+
     public async Task<ReadReceiptTarget?> MarkReadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         // Spec 2026-10-09 §8.4: una sentencia, sin comparar version. La fila queda con su candado sólo mientras
