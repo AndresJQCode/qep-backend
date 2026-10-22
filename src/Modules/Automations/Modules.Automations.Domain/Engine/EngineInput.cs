@@ -23,8 +23,11 @@ public abstract record EngineInput
     public sealed record BusinessHours(string NodeId, bool IsOpen) : EngineInput;
 }
 
-/// <summary>El adjunto de un <see cref="EngineInput.CustomerMessage"/>; <see cref="Stored"/> dice si Messaging ya lo tiene guardado.</summary>
-public sealed record AttachmentInput(Guid MessageId, string? FileName, string MimeType, bool Stored);
+/// <summary>El adjunto de un <see cref="EngineInput.CustomerMessage"/>; <see cref="Stored"/> dice si Messaging ya lo tiene guardado.
+/// <see cref="Url"/> es el enlace firmado por 15 min (D-M8) que el procesador arma antes del paso cuando la corrida espera en un Pedir
+/// adjunto y el archivo ya está en R2: va dentro de la entrada y no se completa después porque el mismo recorrido puede seguir hasta un
+/// bloque que lee <c>{saveTo.url}</c>.</summary>
+public sealed record AttachmentInput(Guid MessageId, string? FileName, string MimeType, bool Stored, string? Url = null);
 
 /// <summary>Los <see cref="EngineInput.CustomerMessage.Kind"/> que encola <c>automation_inbox</c> (§5.1): los nombres del
 /// <c>MessageKind</c> de Messaging, que Automations no referencia.</summary>

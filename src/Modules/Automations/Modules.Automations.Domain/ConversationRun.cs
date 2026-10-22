@@ -108,6 +108,29 @@ public sealed class ConversationRun
         EndedAt = now;
     }
 
+    /// <summary>
+    /// Copia el estado que devolvió el motor (variables, trace, bloque) pero termina con el desenlace que decidió el procesador: el
+    /// envío que Mensajería no aceptó (<c>Failed</c> con su código, <c>WindowClosed</c>), la conversación que dejó de ser del bot a mitad
+    /// de la unidad (<c>Interrupted</c>) o el <c>EndRun</c> de un ciclo o de un bloque que no existe (<c>Failed</c>, P2-R13/R14). Así lo
+    /// capturado antes del corte queda en «Datos capturados» (§5.5). Como <see cref="Finish"/>, sólo sobre una corrida viva.
+    /// </summary>
+    public void Close(RunState state, RunStatus status, string? failureCode, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (!IsLive)
+        {
+            throw new InvalidOperationException($"La corrida {Id} ya terminó como {Status}.");
+        }
+
+        if (status is RunStatus.Running or RunStatus.Waiting)
+        {
+            throw new ArgumentOutOfRangeException(nameof(status), status, "Close cierra la corrida; no puede dejarla viva.");
+        }
+
+        Apply(state with { Status = status }, now);
+        FailureCode = failureCode;
+    }
+
     public RunState ToState()
     {
         var rows = JsonSerializer.Deserialize<List<TraceRow>>(TraceJson, TraceOptions) ?? [];

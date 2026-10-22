@@ -48,6 +48,21 @@ public sealed class ConversationRunTests
     }
 
     [Fact]
+    public void CloseKeepsWhatTheEngineCapturedWithTheProcessorsOutcome()
+    {
+        var run = NewRun(RunState.Initial(RunVariables.Empty()));
+        var later = Now.AddMinutes(2);
+
+        run.Close(new RunState(RunStatus.Waiting, "n2", 3, 0, RunVariables.Parse("""{"cedula":"10203"}"""), []), RunStatus.Failed, "messaging.message.rejected", later);
+
+        Assert.Equal((RunStatus.Failed, "messaging.message.rejected", "n2", 3), (run.Status, run.FailureCode, run.CurrentNodeId, run.StepNumber));
+        Assert.Equal("10203", RunVariables.Parse(run.VariablesJson).TextOf("cedula"));
+        Assert.Equal(later, run.EndedAt);
+        Assert.Throws<InvalidOperationException>(() => run.Close(run.ToState(), RunStatus.Interrupted, null, later));
+        Assert.Throws<ArgumentOutOfRangeException>(() => NewRun(RunState.Initial(RunVariables.Empty())).Close(run.ToState(), RunStatus.Waiting, null, later));
+    }
+
+    [Fact]
     public void ApplyALiveStateKeepsItOpen()
     {
         var run = NewRun(RunState.Initial(RunVariables.Empty()));

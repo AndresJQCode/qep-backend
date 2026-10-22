@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Modules.Automations.Application;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
@@ -18,13 +19,22 @@ namespace Bootstrapper;
 /// por SQL (<c>MarkRepliedAsync</c>) y la ingesta también. Releerla de un tracker viejo devolvería la versión de antes y el segundo
 /// cambio de la misma unidad (arrancar y después traspasar) sería un 412 contra sí mismo.
 /// </para>
+/// <para>
+/// Ruling P2-R22: el aviso en vivo va después del commit de Mensajería y es best effort, como en <c>OutboundSettlement</c>: si falla, el
+/// cambio ya quedó y la unidad del motor no puede deshacerse por eso (reintentaría un traspaso que ya ocurrió). El polling de la bandeja
+/// lo cubre.
+/// </para>
 /// </summary>
-internal sealed class AutomationConversations(
+internal sealed partial class AutomationConversations(
     IServiceScopeFactory scopes,
     IConversationQueries queries,
     IConversationRepository repository,
-    IMessagingNotifier notifier) : IAutomationConversations
+    IMessagingNotifier notifier,
+    ILogger<AutomationConversations> logger) : IAutomationConversations
 {
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Live notification for conversation {ConversationId} of tenant {TenantId} failed after the automation change was committed.")]
+    private static partial void LogNotifyFailed(ILogger logger, Exception exception, Guid tenantId, Guid conversationId);
+
     public async Task<AutomationConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
         // Sin seguimiento (ConversationQueries): lo que lee el motor no queda en ningún tracker.
         await queries.FindAsync(tenantId, conversationId, cancellationToken) is { } row
@@ -43,7 +53,7 @@ internal sealed class AutomationConversations(
         // Sin evento en el hilo ni auditoría de Mensajería (§5.2 paso 3 sólo pide guardar y notificar): el arranque lo audita la corrida
         // en Automations (automations.run.started).
         await services.UnitOfWork.SaveChangesAsync(cancellationToken);
-        await services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken);
+        await NotifyAsync(tenantId, conversationId, () => services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken));
     }
 
     public async Task SetStepAsync(Guid tenantId, Guid conversationId, string? stepTitle, CancellationToken cancellationToken)
@@ -52,7 +62,7 @@ internal sealed class AutomationConversations(
         // entrante que llega mientras el bot avanza la sube (InboundIngestion.cs).
         if (await repository.SetAutomationStepAsync(tenantId, conversationId, stepTitle, cancellationToken))
         {
-            await notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken);
+            await NotifyAsync(tenantId, conversationId, () => notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken));
         }
     }
 
@@ -66,12 +76,15 @@ internal sealed class AutomationConversations(
         services.Events.Record(tenantId, conversation.ConnectionId, conversation.Id, change, now);
         services.Audit.RecordBySystem(tenantId, MessagingAuditActions.AutomationPaused, conversation.Id, now);
         await services.UnitOfWork.SaveChangesAsync(cancellationToken);
-        await services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken);
-        // D-M5: la conversación vuelve a la bandeja sin asesor y tiene que sonar a todo el tenant, como un entrante sin asignar.
-        if (await services.Inbox.FindLastInboundIdAsync(tenantId, conversationId, cancellationToken) is { } lastInbound)
+        await NotifyAsync(tenantId, conversationId, async () =>
         {
-            await services.Notifier.InboundMessageAsync(tenantId, conversationId, lastInbound, assignedMemberId: null, cancellationToken);
-        }
+            await services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken);
+            // D-M5: la conversación vuelve a la bandeja sin asesor y tiene que sonar a todo el tenant, como un entrante sin asignar.
+            if (await services.Inbox.FindLastInboundIdAsync(tenantId, conversationId, cancellationToken) is { } lastInbound)
+            {
+                await services.Notifier.InboundMessageAsync(tenantId, conversationId, lastInbound, assignedMemberId: null, cancellationToken);
+            }
+        });
     }
 
     public async Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken)
@@ -91,7 +104,7 @@ internal sealed class AutomationConversations(
             tenantId, conversation.ConnectionId, conversation.Id, new ConversationEvent(ConversationEventType.Resolved, Actor: null, ReasonId: reason?.Id), now);
         services.Audit.RecordBySystem(tenantId, MessagingAuditActions.Resolved, conversation.Id, now);
         await services.UnitOfWork.SaveChangesAsync(cancellationToken);
-        await services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken);
+        await NotifyAsync(tenantId, conversationId, () => services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken));
     }
 
     public async Task EndAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
@@ -108,7 +121,20 @@ internal sealed class AutomationConversations(
 
         conversation.EndAutomation(services.Clock.UtcNow);
         await services.UnitOfWork.SaveChangesAsync(cancellationToken);
-        await services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken);
+        await NotifyAsync(tenantId, conversationId, () => services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken));
+    }
+
+    /// <summary>P2-R22: lo que falle después del commit se registra y no sube. La cancelación sí sube: es el worker que se apaga.</summary>
+    private async Task NotifyAsync(Guid tenantId, Guid conversationId, Func<Task> notify)
+    {
+        try
+        {
+            await notify();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogNotifyFailed(logger, exception, tenantId, conversationId);
+        }
     }
 
     /// <summary>Lo de Mensajería que un cambio usa, resuelto en su scope propio.</summary>

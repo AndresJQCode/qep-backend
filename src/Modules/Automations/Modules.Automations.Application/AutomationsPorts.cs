@@ -14,6 +14,17 @@ public interface IChatbotRepository
     /// <c>Status</c> antes de responder.</summary>
     Task<Chatbot?> FindPublishedByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Ruling P2-R6: lo que el motor lee por cada entrante sin corrida, proyectado y sin seguimiento (el agregado trae el flujo
+    /// de todas las versiones). El publicado que reserva la conexión, activo o en pausa: quien llama revisa <c>Status</c>.</summary>
+    Task<ServingChatbot?> FindServingByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    /// <summary>El <c>flow</c> de una sola versión publicada; <c>null</c> si no existe en el tenant (el chatbot se borró).</summary>
+    Task<string?> GetVersionFlowAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken);
+
+    /// <summary>Palabra de reinicio e intentos del chatbot (D-C7) para una corrida viva, que sigue aunque el chatbot ya no atienda la
+    /// conexión o esté en pausa (D-C1, D-C5); <c>null</c> si el chatbot ya no existe.</summary>
+    Task<EngineSettings?> FindEngineSettingsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken);
+
     /// <summary>Lo que la lista pinta, proyectado y sin seguimiento: sin los jsonb del borrador ni de las versiones. Ordenados por
     /// nombre (y por id para desempatar); <paramref name="search"/> filtra por nombre sin mayúsculas, con los comodines como literales.</summary>
     Task<IReadOnlyList<ChatbotSummaryRow>> ListSummariesAsync(Guid tenantId, string? search, CancellationToken cancellationToken);
@@ -46,6 +57,12 @@ public sealed record ChatbotSummaryRow(
 {
     public bool HasDraftChanges => Chatbot.DraftChangedSince(DraftUpdatedAt, PublishedAt);
 }
+
+/// <summary>Ruling P2-R6: el chatbot publicado que atiende una conexión, sin borrador ni versiones. <see cref="Keywords"/> vienen
+/// normalizadas por el agregado.</summary>
+public sealed record ServingChatbot(
+    Guid ChatbotId, string Name, ChatbotStatus Status, ChatbotTrigger Trigger, IReadOnlyList<string> Keywords, string RestartKeyword,
+    int MaxAttempts, Guid PublishedVersionId);
 
 /// <summary>La conexión <see cref="ConnectionId"/> la atiende el chatbot publicado <see cref="ChatbotId"/>.</summary>
 public sealed record ChatbotServingConnection(Guid ConnectionId, Guid ChatbotId, string Name);

@@ -258,11 +258,11 @@ internal static class MessagingApiHarness
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:CampaignPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:PurgeIntervalHours", "24");
-            // Spec 2026-10-21 D-M1: apagado por defecto; sólo las pruebas de la cola lo prenden.
-            if (enqueueAutomation)
-            {
-                builder.UseSetting("Messaging:Automation:Enqueue", "true");
-            }
+            // Spec 2026-10-21 D-M1: prendido por defecto en el host desde que el motor existe; acá se fija siempre y sólo las pruebas de la
+            // cola lo prenden, para que el resto no deje filas en automation_inbox.
+            builder.UseSetting("Messaging:Automation:Enqueue", enqueueAutomation ? "true" : "false");
+            // El worker del motor de Automations tampoco corre solo: reclamaría las filas que las pruebas de la cola inspeccionan.
+            builder.UseSetting("Automations:Workers:InboxPollSeconds", "3600");
 
             builder.ConfigureTestServices(services =>
             {

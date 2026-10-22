@@ -122,6 +122,24 @@ public sealed class AutomationConversationsAdapterTests
         Assert.Equal([$"changed {f.ConversationId}", $"inbound {f.ConversationId} {last} -"], f.Notifier.Events);
     }
 
+    /// <summary>Ruling P2-R22: el cambio ya se confirmó en Mensajería; un aviso que falla no puede hacer que el motor deshaga su unidad y
+    /// reintente un traspaso que ya ocurrió.</summary>
+    [Fact]
+    public async Task AFailedNotifyAfterTheCommitDoesNotThrow()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await SeedInboundAsync(f, "hola", 5);
+        f.Notifier.Fail = true;
+
+        await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), "Menú", Ct));
+        await WithAdapterAsync(f, adapter => adapter.SetStepAsync(f.TenantId, f.ConversationId, "Documento", Ct));
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, Ct));
+
+        Assert.Equal("Paused|Handoff|Documento", await RowAsync(f, "automation_status || '|' || automation_pause_reason || '|' || automation_step"));
+    }
+
     [Fact]
     public async Task HandoffWithoutInboundsOnlyNotifiesTheChange()
     {
@@ -291,8 +309,16 @@ public sealed class AutomationConversationsAdapterTests
     {
         public List<string> Events { get; } = [];
 
+        /// <summary>Un pg_notify que falla (P2-R22).</summary>
+        public bool Fail { get; set; }
+
         public Task ConversationChangedAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
         {
+            if (Fail)
+            {
+                throw new InvalidOperationException("pg_notify falló.");
+            }
+
             lock (Events)
             {
                 Events.Add($"changed {conversationId}");

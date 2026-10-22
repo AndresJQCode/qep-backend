@@ -19,6 +19,7 @@ using Modules.Audit.Infrastructure;
 using Modules.Authorization.Application;
 using Modules.Authorization.Infrastructure;
 using Modules.Automations.Application;
+using Modules.Automations.Application.Engine;
 using Modules.Automations.Infrastructure;
 using Modules.Catalog.Application;
 using Modules.Catalog.Infrastructure;
@@ -898,6 +899,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAutomationMessenger, AutomationMessenger>();
         services.AddScoped<IAutomationMedia, AutomationMedia>();
         services.AddScoped<IAutomationTenantNames, AutomationTenantNames>();
+        // Spec 2026-10-21 §5.2: una unidad del motor por fila del inbox, en el scope que abre AutomationInboxWorker.
+        services.AddScoped<RunEffects>();
+        services.AddScoped<RunProcessor>();
         // Spec 2026-10-12 §3.3 (D-Q5): el nombre del tenant para las variables de las respuestas rápidas, por Tenancy.
         services.AddScoped<IMessagingTenantNames, MessagingTenantNames>();
         // Spec 2026-10-11 §4.2: el autor de una nota de cliente (usuario, no membresía) con su nombre visible.

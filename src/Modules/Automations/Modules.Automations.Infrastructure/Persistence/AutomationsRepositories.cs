@@ -17,6 +17,29 @@ internal sealed class ChatbotRepository(AutomationsDbContext dbContext) : IChatb
                 && chatbot.Connections.Any(connection => connection.ConnectionId == connectionId && connection.Active),
             cancellationToken);
 
+    // Ruling P2-R6: el motor consulta esto por cada entrante sin corrida; el agregado traería el flujo de todas las versiones.
+    public Task<ServingChatbot?> FindServingByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        dbContext.Chatbots.AsNoTracking()
+            .Where(chatbot => chatbot.TenantId == tenantId
+                && chatbot.PublishedVersionId != null
+                && chatbot.Connections.Any(connection => connection.ConnectionId == connectionId && connection.Active))
+            .Select(chatbot => new ServingChatbot(
+                chatbot.Id, chatbot.Name, chatbot.Status, chatbot.Trigger, chatbot.Keywords, chatbot.RestartKeyword, chatbot.MaxAttempts,
+                chatbot.PublishedVersionId!.Value))
+            .SingleOrDefaultAsync(cancellationToken);
+
+    public Task<string?> GetVersionFlowAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken) =>
+        dbContext.ChatbotVersions.AsNoTracking()
+            .Where(version => version.TenantId == tenantId && version.Id == versionId)
+            .Select(version => (string?)version.FlowJson)
+            .SingleOrDefaultAsync(cancellationToken);
+
+    public Task<EngineSettings?> FindEngineSettingsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken) =>
+        dbContext.Chatbots.AsNoTracking()
+            .Where(chatbot => chatbot.TenantId == tenantId && chatbot.Id == chatbotId)
+            .Select(chatbot => new EngineSettings(chatbot.RestartKeyword, chatbot.MaxAttempts))
+            .SingleOrDefaultAsync(cancellationToken);
+
     // Proyección: la lista no necesita el borrador ni el flujo de cada versión publicada (jsonb de hasta 512 KB cada uno).
     public async Task<IReadOnlyList<ChatbotSummaryRow>> ListSummariesAsync(Guid tenantId, string? search, CancellationToken cancellationToken)
     {

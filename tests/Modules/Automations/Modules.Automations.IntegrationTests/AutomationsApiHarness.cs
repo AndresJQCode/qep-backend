@@ -1,4 +1,8 @@
+using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
@@ -6,7 +10,10 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+using Modules.Automations.Api;
 using Modules.Automations.Application;
+using Modules.Automations.Infrastructure.Engine;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
 using Npgsql;
@@ -28,6 +35,25 @@ internal static class AutomationsApiHarness
     public const string SentinelMetaAccessToken = "meta-access-token-SENTINEL-m3";
 
     public const string SentinelInstagramAccessToken = "ig-access-token-SENTINEL-m5";
+
+    /// <summary>Los de <c>MessagingApiHarness</c>: el secreto firma el webhook de WhatsApp (<see cref="PostWebhookAsync"/>).</summary>
+    public const string TestAppSecret = "meta-app-secret-SENTINEL-m1";
+
+    public const string TestVerifyToken = "meta-verify-token-SENTINEL-m2-0123456789abcdef";
+
+    public const string MetaAppId = "100200300";
+
+    public const string MetaConfigId = "400500600";
+
+    public const string WebhookUrl = "/api/webhooks/whatsapp";
+
+    /// <summary>Los clientes de Graph de Integrations y de Mensajería (sus nombres son internal de cada módulo), que el host apunta a
+    /// <see cref="QepApiFactory.MetaHandler"/>: ninguna prueba sale a Meta.</summary>
+    private static readonly string[] GraphClientNames =
+    [
+        "integrations.meta-graph", "messaging.meta-graph", "messaging.meta-graph-upload", "messaging.meta-graph-media",
+        "messaging.instagram-graph", "messaging.instagram-download", "integrations.instagram-graph",
+    ];
 
     public static readonly string[] ReadPermissions = [AutomationsPermissions.ChatbotRead];
 
@@ -134,11 +160,25 @@ internal static class AutomationsApiHarness
         public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.UtcNow;
     }
 
-    public sealed class QepApiFactory(string connectionString, FakeExternalApis? externalApis = null, TestClock? clock = null)
+    /// <param name="enqueueAutomation">Spec 2026-10-21 D-M1: <c>Messaging:Automation:Enqueue</c>, fijado siempre (nunca heredado);
+    /// prendido por defecto como en producción desde que el motor existe.</param>
+    public sealed class QepApiFactory(
+        string connectionString, FakeExternalApis? externalApis = null, TestClock? clock = null, bool enqueueAutomation = true)
         : WebApplicationFactory<Program>
     {
+        /// <summary>Lo que sale hacia Graph —desde Integrations y desde Mensajería— lo ve este handler.</summary>
+        public FakeMetaGraphHandler MetaHandler { get; } = new();
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            builder.ConfigureTestServices(services =>
+            {
+                foreach (var name in GraphClientNames)
+                {
+                    services.AddHttpClient(name).ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
+                }
+            });
+
             if (clock is not null)
             {
                 // IClock es scoped en AddQepPlatform: se reemplaza por la instancia de la prueba.
@@ -159,6 +199,8 @@ internal static class AutomationsApiHarness
             }
 
             builder.UseEnvironment("Development");
+            // Sin vigilar archivos de configuración (MessagingApiHarness explica el límite de FSEvents de macOS).
+            builder.UseSetting("hostBuilder:reloadConfigOnChange", "false");
             builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 40 }.ConnectionString);
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
@@ -182,6 +224,15 @@ internal static class AutomationsApiHarness
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:CampaignPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:PurgeIntervalHours", "24");
+            // Spec 2026-10-09 §9: las de Meta:App con los centinelas de MessagingApiHarness; el secreto valida la firma del webhook.
+            builder.UseSetting("Meta:App:AppId", MetaAppId);
+            builder.UseSetting("Meta:App:ConfigId", MetaConfigId);
+            builder.UseSetting("Meta:App:GraphApiVersion", "v24.0");
+            builder.UseSetting("Meta:App:AppSecret", TestAppSecret);
+            builder.UseSetting("Meta:App:WebhookVerifyToken", TestVerifyToken);
+            builder.UseSetting("Messaging:Automation:Enqueue", enqueueAutomation ? "true" : "false");
+            // El motor tampoco corre solo: la prueba llama DrainAutomationsAsync.
+            builder.UseSetting("Automations:Workers:InboxPollSeconds", "3600");
         }
     }
 
@@ -338,6 +389,71 @@ internal static class AutomationsApiHarness
     /// <c>externalApis</c> por la API real queda con <c>Skip</c> y el adaptador se prueba con un doble en <c>AutomationAdaptersTests</c>.</summary>
     public static Task<Guid> SeedExternalApiConnectionAsync(WebApplicationFactory<Program> host, Guid tenantId, string name, string status) =>
         throw new NotSupportedException("El proveedor external-api llega con el plan 2.");
+
+    /// <summary>La firma que Meta pone en <c>X-Hub-Signature-256</c>: HMAC-SHA256 del cuerpo con el AppSecret.</summary>
+    public static string Sign(byte[] body) =>
+        "sha256=" + Convert.ToHexStringLower(HMACSHA256.HashData(Encoding.UTF8.GetBytes(TestAppSecret), body));
+
+    /// <summary>Sin <c>X-Qep-Client</c>: el webhook está exento de CSRF por ruta. Copia de <c>MessagingApiHarness.PostWebhookAsync</c>.</summary>
+    public static async Task<HttpResponseMessage> PostWebhookAsync(HttpClient client, string json, string? signature = null)
+    {
+        var bytes = Encoding.UTF8.GetBytes(json);
+        using var request = new HttpRequestMessage(HttpMethod.Post, WebhookUrl);
+        request.Content = new ByteArrayContent(bytes);
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        request.Headers.TryAddWithoutValidation("X-Hub-Signature-256", signature ?? Sign(bytes));
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Una pasada del worker de entregas de Mensajería: la ingesta del webhook, que llena <c>automation_inbox</c>.</summary>
+    public static Task DrainDeliveriesAsync(WebApplicationFactory<Program> host) =>
+        HostedService<Modules.Messaging.Infrastructure.Webhook.WebhookDeliveryWorker>(host).DrainAsync(TestContext.Current.CancellationToken);
+
+    /// <summary>Una pasada de la copia de medios de Mensajería (§8.6).</summary>
+    public static Task DrainMediaAsync(WebApplicationFactory<Program> host) =>
+        HostedService<Modules.Messaging.Infrastructure.Media.MediaCopyWorker>(host).DrainAsync(TestContext.Current.CancellationToken);
+
+    /// <summary>Spec 2026-10-21 §5.2: una pasada del motor (reclama y procesa lo pendiente del inbox).</summary>
+    public static Task DrainAutomationsAsync(WebApplicationFactory<Program> host) =>
+        HostedService<AutomationInboxWorker>(host).DrainAsync(TestContext.Current.CancellationToken);
+
+    private static T HostedService<T>(WebApplicationFactory<Program> host) =>
+        host.Services.GetServices<IHostedService>().OfType<T>().Single();
+
+    /// <summary>Responder manda el acuse de leído por la misma ruta de Graph que el envío; las pruebas que cuentan envíos lo descartan.
+    /// Copia de <c>MessagingApiHarness.IsReadReceipt</c>.</summary>
+    public static bool IsReadReceipt(string? body) =>
+        body is not null
+        && (body.Contains("\"status\":\"read\"", StringComparison.Ordinal) || body.Contains("\"sender_action\":\"mark_seen\"", StringComparison.Ordinal));
+
+    /// <summary>Un chatbot publicado por la API, como lo haría el admin: crear en blanco con la conexión, guardar el flujo y publicar.</summary>
+    public static async Task<Guid> PublishChatbotAsync(
+        HttpClient client, Guid tenantId, string flowJson, Guid connectionId, string trigger = "NewConversation", params string[] keywords)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var chatbots = $"{AutomationsUrl(tenantId)}/chatbots";
+        var created = await client.PostAsJsonAsync(
+            chatbots,
+            new CreateChatbotRequest("Servicio", "Atiende la línea de servicio.", trigger, keywords, [connectionId], new ChatbotSourceRequest("blank", null, null, null)),
+            ct);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var editor = (await created.Content.ReadFromJsonAsync<ChatbotEditorDto>(ct))!;
+
+        using var draft = new HttpRequestMessage(HttpMethod.Put, $"{chatbots}/{editor.Chatbot.Id}/draft")
+        {
+            Content = JsonContent.Create(new SaveDraftRequest(JsonDocument.Parse(flowJson).RootElement, JsonDocument.Parse("{}").RootElement)),
+        };
+        draft.Headers.TryAddWithoutValidation("If-Match", $"\"{editor.Chatbot.Version}\"");
+        var saved = await client.SendAsync(draft, ct);
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var version = (await saved.Content.ReadFromJsonAsync<DraftSavedDto>(ct))!.Version;
+
+        using var publish = new HttpRequestMessage(HttpMethod.Post, $"{chatbots}/{editor.Chatbot.Id}/publish");
+        publish.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
+        var published = await client.SendAsync(publish, ct);
+        Assert.Equal(HttpStatusCode.OK, published.StatusCode);
+        return editor.Chatbot.Id;
+    }
 
     /// <summary>El <c>code</c> y las claves de <c>errors</c> de un ProblemDetails.</summary>
     public static async Task<(string? Code, string[] ErrorKeys)> ProblemAsync(HttpResponseMessage response)

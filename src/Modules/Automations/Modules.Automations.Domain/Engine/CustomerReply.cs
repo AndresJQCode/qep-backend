@@ -272,8 +272,8 @@ internal static partial class CustomerReply
         return matches.Count == 1 ? matches[0] : null;
     }
 
-    /// <summary>§5.4: guarda los datos del adjunto, no el archivo. <c>url</c> no está aquí: la completa el procesador cuando el archivo ya
-    /// está en R2 (D-H8, tarea 6).</summary>
+    /// <summary>§5.4: guarda los datos del adjunto, no el archivo. <c>url</c> sólo si el procesador la firmó (el archivo ya está en R2,
+    /// D-M8 y D-H8); sin ella la variable no la lleva, y <c>{saveTo.url}</c> se interpola vacío.</summary>
     private static ReplyOutcome Receive(AttachmentNode node, EngineInput.CustomerMessage message)
     {
         if (message.Attachment is not { } attachment || !Accepts(node.Accept, message.Kind))
@@ -288,6 +288,11 @@ internal static partial class CustomerReply
             ["mimeType"] = attachment.MimeType,
             ["stored"] = attachment.Stored,
         };
+        if (attachment.Url is { } url)
+        {
+            saved["url"] = url;
+        }
+
         return new ReplyOutcome.Output(FlowOutputs.Received, saved);
     }
 

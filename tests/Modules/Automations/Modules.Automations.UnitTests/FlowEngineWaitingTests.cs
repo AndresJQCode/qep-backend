@@ -340,6 +340,21 @@ public sealed class FlowEngineWaitingTests
         Assert.Contains(result.State.Trace, entry => entry is { NodeId: "n1", Outcome: FlowOutputs.Received });
     }
 
+    /// <summary>D-M8: el procesador firma el enlace antes del paso, así el bloque que sigue en el mismo recorrido ya lee
+    /// <c>{factura.url}</c>.</summary>
+    [Fact]
+    public void AStoredAttachmentKeepsItsSignedUrlForTheNextBlock()
+    {
+        var flow = Flow(Invoice("n1", "any"), Message("ok", "Recibida: {factura.url}"));
+        var message = new EngineInput.CustomerMessage(
+            "Document", null, null, new AttachmentInput(InvoiceMessageId, "f.pdf", "application/pdf", Stored: true, "https://r2.test/f.pdf?firma=1"));
+
+        var result = Reply(flow, Start(flow), message);
+
+        Assert.Equal("https://r2.test/f.pdf?firma=1", result.State.Variables.TextOf("factura.url"));
+        Assert.Contains(new Effect.SendText("ok", "Recibida: https://r2.test/f.pdf?firma=1"), result.Effects);
+    }
+
     [Fact]
     public void TheRestartKeywordRestartsFromTheFirstNode()
     {
