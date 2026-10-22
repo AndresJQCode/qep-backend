@@ -64,6 +64,19 @@ public static class PosEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        group.MapGet("/customers", SearchCustomersAsync)
+            .RequireAuthorization(PosPermissions.SaleCustomer)
+            .Produces<PosCustomerOptionsResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/customers", CreateCustomerAsync)
+            .RequireAuthorization(PosPermissions.SaleCustomer)
+            .Accepts<CreatePosCustomerRequest>("application/json")
+            .Produces<PosCustomerOptionResponse>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPost("/sales/preview", PreviewSaleAsync)
             .RequireAuthorization(PosPermissions.SaleCreate)
             .Accepts<PreviewPosSaleRequest>("application/json")
@@ -170,6 +183,20 @@ public static class PosEndpoints
         Results.Ok(await dispatcher.QueryAsync(
             new FindPosProductByCodeQuery(tenantId, code?.Trim() ?? string.Empty), cancellationToken));
 
+    private static async Task<IResult> SearchCustomersAsync(
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken, string? search = null) =>
+        Results.Ok(await dispatcher.QueryAsync(new SearchPosCustomersQuery(tenantId, search), cancellationToken));
+
+    private static async Task<IResult> CreateCustomerAsync(
+        Guid tenantId, CreatePosCustomerRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var customer = await dispatcher.SendAsync(
+            new CreatePosCustomerCommand(tenantId, request.Name, request.IdentificationType, request.IdentificationNumber, request.Phone),
+            cancellationToken);
+        // No existe un GET por id: el Location es informativo, como en las otras altas del módulo.
+        return Results.Created($"/api/v1/tenants/{tenantId}/pos/customers/{customer.Id}", customer);
+    }
+
     private static async Task<IResult> PreviewSaleAsync(
         Guid tenantId, PreviewPosSaleRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
@@ -242,3 +269,5 @@ public sealed record CreatePosSaleRequest(
     IReadOnlyList<PosPaymentRequest>? Payments);
 
 public sealed record VoidPosSaleRequest(string? Reason);
+
+public sealed record CreatePosCustomerRequest(string? Name, string? IdentificationType, string? IdentificationNumber, string? Phone);

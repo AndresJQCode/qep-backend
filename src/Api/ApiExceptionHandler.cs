@@ -74,6 +74,15 @@ internal sealed class ApiExceptionHandler(
             problem.Extensions["errors"] = withFieldErrors.FieldErrors;
         }
 
+        if (exception is IHasProblemExtensions withExtensions)
+        {
+            // TryAdd: un dato extra nunca reemplaza el contrato (code, traceId, errors).
+            foreach (var (key, value) in withExtensions.ProblemExtensions)
+            {
+                problem.Extensions.TryAdd(key, value);
+            }
+        }
+
         await RecordAsync(httpContext, exception, status, code);
 
         httpContext.Response.StatusCode = status;

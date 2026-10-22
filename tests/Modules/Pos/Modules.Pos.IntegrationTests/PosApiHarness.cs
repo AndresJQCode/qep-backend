@@ -27,6 +27,7 @@ internal static class PosApiHarness
         PosPermissions.SaleRead,
         PosPermissions.SaleCreate,
         PosPermissions.RegisterOperate,
+        PosPermissions.SaleCustomer,
     ];
 
     public static readonly string[] AdminPosPermissions =
@@ -122,10 +123,15 @@ internal static class PosApiHarness
 
     // Spec 2026-10-08 §3: apagar ya no borra la fila, la deja inactiva (el SQL de respaldo del README).
     public static Task DisablePosAsync(PostgreSqlContainer database, Guid tenantId) =>
+        DisableModuleAsync(database, tenantId, "pos");
+
+    /// <summary>Lo mismo para cualquier módulo: `customers` se apaga igual que `pos`, dejando la fila inactiva.</summary>
+    public static Task DisableModuleAsync(PostgreSqlContainer database, Guid tenantId, string moduleKey) =>
         ExecuteSqlAsync(
             database,
-            "UPDATE tenancy.tenant_modules SET status = 'inactive', status_changed_at = now() WHERE tenant_id = @tenantId AND module_key = 'pos'",
-            ("tenantId", tenantId));
+            "UPDATE tenancy.tenant_modules SET status = 'inactive', status_changed_at = now() WHERE tenant_id = @tenantId AND module_key = @moduleKey",
+            ("tenantId", tenantId),
+            ("moduleKey", moduleKey));
 
     public static async Task ExecuteSqlAsync(
         PostgreSqlContainer database, string sql, params (string Name, object Value)[] parameters)

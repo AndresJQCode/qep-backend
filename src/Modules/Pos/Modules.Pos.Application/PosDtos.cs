@@ -160,6 +160,17 @@ public sealed record PosIssuerResponse(string Name, string TaxId, string? Addres
 
 public sealed record PosCustomerResponse(string Name, string? IdentificationType, string IdentificationNumber);
 
+/// <summary>
+/// El selector de la caja (spec «Endpoints nuevos»): sin teléfono, correo, dirección ni clasificación, porque el
+/// cajero no tiene el padrón (decisión 4). IsActive viaja para el 422 de identification_taken: la caja dice por qué
+/// no puede elegir a un inactivo; en la búsqueda siempre es true.
+/// </summary>
+public sealed record PosCustomerOptionResponse(
+    Guid Id, string Name, string IdentificationType, string IdentificationNumber, bool IsComplete, bool IsActive);
+
+/// <summary>Un selector, no una lista paginada: siempre hasta 20, sin total.</summary>
+public sealed record PosCustomerOptionsResponse(IReadOnlyList<PosCustomerOptionResponse> Items);
+
 /// <param name="Name">La foto del nombre visible de la variante al vender: es lo que imprime el ticket.</param>
 public sealed record PosSaleLineResponse(
     int Position,

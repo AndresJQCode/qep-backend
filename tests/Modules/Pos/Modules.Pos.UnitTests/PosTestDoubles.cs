@@ -361,6 +361,82 @@ internal sealed class FakeProductLookup : IPosProductLookup
 }
 
 /// <summary>Todo lo que un handler del POS necesita, con el cajero del ejemplo ya miembro activo.</summary>
+/// <summary>
+/// El adaptador de Customers en memoria. Guarda por tenant las referencias del selector (con documento) y las
+/// fotos que lee la venta (con o sin documento, activas o no), y anota cada llamada en <see cref="Calls"/>
+/// para que una prueba pueda afirmar que algo NO se llamó.
+/// </summary>
+internal sealed class FakeCustomerLookup : IPosCustomerLookup
+{
+    public List<(Guid TenantId, PosCustomerRef Customer)> Refs { get; } = [];
+
+    public List<(Guid TenantId, PosCustomerSnapshot Customer)> Snapshots { get; } = [];
+
+    /// <summary>Cada llamada con sus argumentos, p. ej. <c>Search:Laura:20</c> o <c>Create:CC:1020304050</c>.</summary>
+    public List<string> Calls { get; } = [];
+
+    public PosCustomerRef AddRef(
+        string name, string type = "CC", string number = "1020304050", bool complete = false, bool active = true,
+        Guid? id = null, Guid? tenantId = null)
+    {
+        var customer = new PosCustomerRef(id ?? Guid.CreateVersion7(), name, type, number, complete, active);
+        Refs.Add((tenantId ?? PosFixtures.TenantId, customer));
+        Snapshots.Add((tenantId ?? PosFixtures.TenantId, new PosCustomerSnapshot(customer.Id, name, type, number, active)));
+        return customer;
+    }
+
+    /// <summary>Un cliente que la venta puede leer: sin documento (nació por WhatsApp) o inactivo.</summary>
+    public PosCustomerSnapshot AddSnapshot(
+        string name, string? type = null, string? number = null, bool active = true, Guid? id = null, Guid? tenantId = null)
+    {
+        var snapshot = new PosCustomerSnapshot(id ?? Guid.CreateVersion7(), name, type, number, active);
+        Snapshots.Add((tenantId ?? PosFixtures.TenantId, snapshot));
+        return snapshot;
+    }
+
+    public Task<IReadOnlyList<PosCustomerRef>> SearchAsync(
+        Guid tenantId, string? search, int take, CancellationToken cancellationToken)
+    {
+        Calls.Add($"Search:{search}:{take}");
+        IReadOnlyList<PosCustomerRef> found = Refs
+            .Where(entry => entry.TenantId == tenantId && entry.Customer.IsActive)
+            .Select(entry => entry.Customer)
+            .Where(customer => search is null || customer.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
+            .Take(take)
+            .ToList();
+        return Task.FromResult(found);
+    }
+
+    public Task<PosCustomerSnapshot?> FindAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)
+    {
+        Calls.Add($"Find:{customerId}");
+        return Task.FromResult(Snapshots
+            .Where(entry => entry.TenantId == tenantId && entry.Customer.Id == customerId)
+            .Select(entry => (PosCustomerSnapshot?)entry.Customer)
+            .FirstOrDefault());
+    }
+
+    public Task<PosCustomerRef?> FindByIdentificationAsync(
+        Guid tenantId, string type, string number, CancellationToken cancellationToken)
+    {
+        Calls.Add($"FindByIdentification:{type}:{number}");
+        return Task.FromResult(Refs
+            .Where(entry => entry.TenantId == tenantId
+                && entry.Customer.IdentificationType == type
+                && entry.Customer.IdentificationNumber == number)
+            .Select(entry => (PosCustomerRef?)entry.Customer)
+            .FirstOrDefault());
+    }
+
+    public Task<PosCustomerRef> CreateFromRegisterAsync(
+        Guid tenantId, NewPosCustomer input, CancellationToken cancellationToken)
+    {
+        Calls.Add($"Create:{input.IdentificationType}:{input.IdentificationNumber}");
+        return Task.FromResult(AddRef(
+            input.Name, input.IdentificationType, input.IdentificationNumber, complete: false, active: true, tenantId: tenantId));
+    }
+}
+
 internal sealed class PosTestBed
 {
     public static readonly Guid UserId = Guid.Parse("01930000-0000-7000-8000-000000000001");
@@ -396,6 +472,8 @@ internal sealed class PosTestBed
     public FakeCashierLookup Cashiers { get; } = new();
 
     public FakeProductLookup Products { get; } = new();
+
+    public FakeCustomerLookup Customers { get; } = new();
 
     public FakeClock Clock { get; } = new(PosFixtures.Now);
 
