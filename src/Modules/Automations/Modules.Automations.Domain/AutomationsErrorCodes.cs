@@ -37,6 +37,9 @@ public static class AutomationsErrorCodes
     /// <summary>Al borrar: hay corridas vivas (<c>Running</c> o <c>Waiting</c>).</summary>
     public const string ChatbotHasLiveRuns = "automations.chatbot.has_live_runs";
 
+    /// <summary><c>IX_chatbot_templates_tenant_name</c>: el nombre de la plantilla se compara sin mayúsculas.</summary>
+    public const string TemplateNameTaken = "automations.template.name_taken";
+
     public const string TemplateNotFound = "automations.template.not_found";
 
     public const string SimulationNotFound = "automations.simulation.not_found";

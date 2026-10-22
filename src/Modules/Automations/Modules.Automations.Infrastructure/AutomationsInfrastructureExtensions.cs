@@ -18,6 +18,13 @@ public static class AutomationsInfrastructureExtensions
 
         // La membresía de quien llama, una vez por request: autor del borrador, de la publicación y de la auditoría.
         services.AddScoped<AutomationsCaller>();
+
+        services.AddScoped<IChatbotRepository, ChatbotRepository>();
+        services.AddScoped<IChatbotTemplateRepository, ChatbotTemplateRepository>();
+        services.AddScoped<IConversationRunQueries, ConversationRunQueries>();
+        services.AddScoped<IAutomationsUnitOfWork, AutomationsUnitOfWork>();
+        // Auditoría atómica: la entrada viaja en el mismo SaveChanges del cambio (ADR 0019).
+        services.AddScoped<IAutomationsAuditRecorder, AutomationsAuditRecorder>();
         return services;
     }
 }
