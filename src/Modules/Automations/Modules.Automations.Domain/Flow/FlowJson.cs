@@ -7,9 +7,9 @@ namespace Modules.Automations.Domain.Flow;
 
 /// <summary>
 /// El JSON no es un flujo. Los códigos son <c>flow.unknown_kind</c> (un <c>kind</c> que no es ninguno de §5.4) y
-/// <c>flow.malformed</c> (todo lo demás: JSON inválido, un campo que falta o tiene el tipo equivocado, un valor fuera de su lista
-/// cerrada, ids repetidos o con otra forma). Lo que tiene forma de flujo pero no se puede publicar no es esto: es un
-/// <see cref="FlowIssue"/> de <see cref="FlowValidator"/>.
+/// <c>flow.malformed</c> (todo lo demás: JSON inválido, <c>schema</c> distinto de 1, un campo con el tipo equivocado, un valor
+/// fuera de su lista cerrada, un id de bloque que falta, repetido o con otra forma). Lo que tiene forma de flujo pero no se
+/// puede publicar no es esto: es un <see cref="FlowIssue"/> de <see cref="FlowValidator"/>.
 /// </summary>
 public sealed class FlowFormatException(string code, string message) : Exception(message)
 {
@@ -21,9 +21,15 @@ public sealed class FlowFormatException(string code, string message) : Exception
 
 /// <summary>
 /// Spec 2026-10-21 §4.3 y Anexo A: lee y escribe el flujo con <c>System.Text.Json</c>, en camelCase y polimórfico por
-/// <c>kind</c> (<see cref="FlowNodeJsonConverter"/>). Lo estructural se rechaza al leer, porque el editor arma ids y valores
-/// cerrados y un error ahí es del cliente, no del admin; lo que el admin escribe (textos, rutas, nombres de variable) pasa y lo
-/// marca el validador, para poder guardar un borrador a medio hacer.
+/// <c>kind</c> (<see cref="FlowNodeJsonConverter"/>).
+/// <para>
+/// D-C3: un borrador a medio hacer siempre se guarda. Por eso todo lo que el admin escribe (textos, títulos, etiquetas,
+/// <c>saveTo</c>, ruta, query, mapeo, la variable de una regla, los ids de botón y fila) se lee aunque falte o venga
+/// <c>null</c> (como <c>""</c>), y lo marca <see cref="FlowValidator"/>. Sólo se rechaza al leer lo que el editor arma solo:
+/// los ids de bloque y los campos de lista cerrada (<c>kind</c>, <c>method</c>, <c>operator</c>, <c>match</c>, <c>accept</c>,
+/// <c>validation.kind</c>, <c>options.kind</c>, <c>body.kind</c>, <c>fallback</c>). El editor siempre manda un valor por
+/// defecto en esos campos, así que uno que falte o no esté en la lista es un error del cliente, no del admin.
+/// </para>
 /// </summary>
 public static partial class FlowJson
 {
@@ -53,6 +59,11 @@ public static partial class FlowJson
             const string where = "el flujo";
             JsonFields.RequireObject(root, where);
             var schema = JsonFields.RequiredInt(root, "schema", where);
+            if (schema != FlowDefinition.CurrentSchema)
+            {
+                throw JsonFields.Malformed($"El flujo es de la versión {schema}, y sólo existe la {FlowDefinition.CurrentSchema}.");
+            }
+
             var start = JsonFields.RequiredObject(root, "start", where);
             var variables = JsonFields.OptionalArray(root, "variables", where, ReadVariable) ?? [];
             var nodes = JsonFields.RequiredArray(root, "nodes", where, element => element.Deserialize<FlowNode>(Options) ?? throw JsonFields.Malformed("Un bloque del flujo es null."));
@@ -100,7 +111,7 @@ public static partial class FlowJson
         const string where = "una variable";
         JsonFields.RequireObject(element, where);
         return new FlowVariable(
-            JsonFields.RequiredString(element, "name", where),
+            JsonFields.Text(element, "name", where),
             JsonFields.RequiredOneOf(element, "type", where, FlowVariableTypes.All));
     }
 
@@ -108,8 +119,6 @@ public static partial class FlowJson
     [GeneratedRegex(@"^[a-z0-9-]{1,64}\z", RegexOptions.CultureInvariant)]
     internal static partial Regex NodeId();
 
-    [GeneratedRegex(@"^[a-zA-Z0-9_-]{1,40}\z", RegexOptions.CultureInvariant)]
-    internal static partial Regex OptionId();
 }
 
 /// <summary>El bloque según su <c>kind</c>. Lee de un <see cref="JsonElement"/> para mirar <c>kind</c> antes que el resto.</summary>
@@ -295,6 +304,14 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
     private static FlowNode ReadNode(JsonElement element)
     {
         JsonFields.RequireObject(element, "un bloque");
+
+        // El kind va primero: de un tipo que no existe no tiene sentido quejarse por su título o sus salidas.
+        var kind = JsonFields.RequiredString(element, "kind", "un bloque");
+        if (!FlowNodeKinds.All.Contains(kind))
+        {
+            throw new FlowFormatException(FlowFormatException.UnknownKind, $"Un bloque es de un tipo que no existe: «{kind}».");
+        }
+
         var id = JsonFields.RequiredString(element, "id", "un bloque");
         if (!FlowJson.NodeId().IsMatch(id))
         {
@@ -302,26 +319,25 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
         }
 
         var where = $"el bloque {id}";
-        var kind = JsonFields.RequiredString(element, "kind", where);
-        var title = JsonFields.RequiredString(element, "title", where);
+        var title = JsonFields.Text(element, "title", where);
         var outputs = ReadOutputs(element, where);
 
         return kind switch
         {
             FlowNodeKinds.Message => new MessageNode(
-                id, title, outputs, JsonFields.RequiredString(element, "text", where), ReadUrlButton(element, where)),
+                id, title, outputs, JsonFields.Text(element, "text", where), ReadUrlButton(element, where)),
             FlowNodeKinds.OpenQuestion => new OpenQuestionNode(
-                id, title, outputs, JsonFields.RequiredString(element, "text", where), JsonFields.RequiredString(element, "saveTo", where),
+                id, title, outputs, JsonFields.Text(element, "text", where), JsonFields.Text(element, "saveTo", where),
                 ReadValidation(element, where), JsonFields.OptionalInt(element, "maxAttempts", where)),
             FlowNodeKinds.Buttons => new ButtonsNode(
-                id, title, outputs, JsonFields.RequiredString(element, "text", where), ReadButtons(element, where),
-                JsonFields.OptionalString(element, "saveTo", where), JsonFields.RequiredString(element, "fallback", where)),
+                id, title, outputs, JsonFields.Text(element, "text", where), ReadButtons(element, where),
+                JsonFields.OptionalString(element, "saveTo", where), JsonFields.RequiredOneOf(element, "fallback", where, InteractiveFallbacks.All)),
             FlowNodeKinds.List => new ListNode(
-                id, title, outputs, JsonFields.RequiredString(element, "text", where), JsonFields.RequiredString(element, "buttonLabel", where),
-                ReadListOptions(element, where), JsonFields.RequiredString(element, "saveTo", where), JsonFields.RequiredString(element, "fallback", where)),
+                id, title, outputs, JsonFields.Text(element, "text", where), JsonFields.Text(element, "buttonLabel", where),
+                ReadListOptions(element, where), JsonFields.Text(element, "saveTo", where), JsonFields.RequiredOneOf(element, "fallback", where, InteractiveFallbacks.All)),
             FlowNodeKinds.Attachment => new AttachmentNode(
-                id, title, outputs, JsonFields.RequiredString(element, "text", where),
-                JsonFields.RequiredOneOf(element, "accept", where, AttachmentAccepts.All), JsonFields.RequiredString(element, "saveTo", where)),
+                id, title, outputs, JsonFields.Text(element, "text", where),
+                JsonFields.RequiredOneOf(element, "accept", where, AttachmentAccepts.All), JsonFields.Text(element, "saveTo", where)),
             FlowNodeKinds.Condition => new ConditionNode(
                 id, title, outputs, JsonFields.RequiredOneOf(element, "match", where, ConditionMatches.All),
                 JsonFields.RequiredArray(element, "rules", where, rule => ReadRule(rule, where))),
@@ -330,7 +346,7 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
             FlowNodeKinds.Handoff => new HandoffNode(id, title, outputs, JsonFields.OptionalString(element, "text", where)),
             FlowNodeKinds.Resolve => new ResolveNode(
                 id, title, outputs, JsonFields.OptionalString(element, "text", where), JsonFields.OptionalGuid(element, "reasonId", where)),
-            _ => throw new FlowFormatException(FlowFormatException.UnknownKind, $"El bloque {id} es de un tipo que no existe: «{kind}»."),
+            _ => throw new ArgumentOutOfRangeException(nameof(element), kind, "Tipo de bloque sin lectura definida."),
         };
     }
 
@@ -361,7 +377,7 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
     {
         var button = JsonFields.OptionalObject(element, "urlButton", where);
         return button is { } value
-            ? new UrlButton(JsonFields.RequiredString(value, "label", $"el botón URL {JsonFields.Of(where)}"), JsonFields.RequiredString(value, "url", $"el botón URL {JsonFields.Of(where)}"))
+            ? new UrlButton(JsonFields.Text(value, "label", $"el botón URL {JsonFields.Of(where)}"), JsonFields.Text(value, "url", $"el botón URL {JsonFields.Of(where)}"))
             : null;
     }
 
@@ -381,11 +397,9 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
         {
             JsonFields.RequireObject(button, $"un botón {JsonFields.Of(where)}");
             return new FlowButton(
-                JsonFields.RequiredString(button, "id", $"un botón {JsonFields.Of(where)}"), JsonFields.RequiredString(button, "label", $"un botón {JsonFields.Of(where)}"));
+                JsonFields.Text(button, "id", $"un botón {JsonFields.Of(where)}"), JsonFields.Text(button, "label", $"un botón {JsonFields.Of(where)}"));
         });
 
-        // El id del botón es el nombre de su salida: repetido o igual a «other» dejaría dos salidas con el mismo nombre.
-        EnsureOptionIds(buttons.Select(button => button.Id), where, reserved: FlowOutputs.Other);
         return buttons;
     }
 
@@ -403,7 +417,6 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
             JsonFields.OptionalString(options, "descriptionField", context),
             extra);
 
-        EnsureOptionIds([.. (result.Fixed ?? []).Select(row => row.Id), .. extra is null ? [] : new[] { extra.Id }], where, reserved: null);
         return result;
     }
 
@@ -412,32 +425,16 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
         var context = $"una fila {JsonFields.Of(where)}";
         JsonFields.RequireObject(row, context);
         return new ListFixedRow(
-            JsonFields.RequiredString(row, "id", context), JsonFields.RequiredString(row, "title", context), JsonFields.OptionalString(row, "description", context));
+            JsonFields.Text(row, "id", context), JsonFields.Text(row, "title", context), JsonFields.OptionalString(row, "description", context));
     }
 
-    private static void EnsureOptionIds(IEnumerable<string> ids, string where, string? reserved)
-    {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var id in ids)
-        {
-            if (!FlowJson.OptionId().IsMatch(id))
-            {
-                throw JsonFields.Malformed($"El id «{id}» {JsonFields.Of(where)} no tiene la forma ^[a-zA-Z0-9_-]{{1,40}}$.");
-            }
-
-            if (id == reserved || !seen.Add(id))
-            {
-                throw JsonFields.Malformed($"El id «{id}» está repetido en {where}.");
-            }
-        }
-    }
 
     private static ConditionRule ReadRule(JsonElement rule, string where)
     {
         var context = $"una regla {JsonFields.Of(where)}";
         JsonFields.RequireObject(rule, context);
         return new ConditionRule(
-            JsonFields.RequiredString(rule, "variable", context),
+            JsonFields.Text(rule, "variable", context),
             JsonFields.RequiredOneOf(rule, "operator", context, ConditionOperators.All),
             JsonFields.OptionalString(rule, "value", context));
     }
@@ -453,7 +450,7 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
             id, title, outputs,
             JsonFields.OptionalGuid(element, "connectionId", where),
             JsonFields.RequiredOneOf(element, "method", where, HttpMethods.All),
-            JsonFields.RequiredString(element, "path", where),
+            JsonFields.Text(element, "path", where),
             JsonFields.OptionalArray(element, "query", where, pair => ReadPair(pair, $"la query {JsonFields.Of(where)}")) ?? [],
             body,
             JsonFields.OptionalInt(element, "timeoutSeconds", where) ?? HttpNode.DefaultTimeoutSeconds,
@@ -476,14 +473,14 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
     private static KeyValue ReadPair(JsonElement pair, string where)
     {
         JsonFields.RequireObject(pair, where);
-        return new KeyValue(JsonFields.RequiredString(pair, "key", where), JsonFields.RequiredString(pair, "value", where));
+        return new KeyValue(JsonFields.Text(pair, "key", where), JsonFields.Text(pair, "value", where));
     }
 
     private static HttpMapping ReadMapping(JsonElement mapping, string where)
     {
         var context = $"el mapeo {JsonFields.Of(where)}";
         JsonFields.RequireObject(mapping, context);
-        return new HttpMapping(JsonFields.RequiredString(mapping, "from", context), JsonFields.RequiredString(mapping, "to", context));
+        return new HttpMapping(JsonFields.Text(mapping, "from", context), JsonFields.Text(mapping, "to", context));
     }
 
     private static void WriteRow(Utf8JsonWriter writer, ListFixedRow row)
@@ -596,6 +593,9 @@ internal static class JsonFields
 
         return value.ValueKind == JsonValueKind.Object ? value : throw WrongType(name, where, "un objeto");
     }
+
+    /// <summary>Un texto que el admin escribe: si falta o es null se lee como vacío, y el validador lo marca (D-C3).</summary>
+    public static string Text(JsonElement element, string name, string where) => OptionalString(element, name, where) ?? "";
 
     public static string RequiredString(JsonElement element, string name, string where) =>
         OptionalString(element, name, where) ?? throw Missing(name, where);

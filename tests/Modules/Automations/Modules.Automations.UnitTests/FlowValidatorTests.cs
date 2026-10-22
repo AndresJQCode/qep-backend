@@ -65,6 +65,26 @@ public sealed class FlowValidatorTests
         Assert.DoesNotContain(issues, i => i.Severity == FlowIssueSeverity.Error);
     }
 
+    // Que nada llegue a un bloque no lo exime: si después se conecta, su salida obligatoria sigue sin destino.
+    [Fact]
+    public void AnUnreachableNodeWithAnUnconnectedNextStillFails()
+    {
+        var issues = FlowValidator.Validate(Flow(Message("n1"), End(), Message("n9", next: null)), Ctx());
+
+        Assert.Equal(FlowIssueSeverity.Warning, Single(issues, "node.unreachable").Severity);
+        var unconnected = Single(issues, "node.output_unconnected");
+        Assert.Equal(FlowIssueSeverity.Error, unconnected.Severity);
+        Assert.Equal("n9", unconnected.NodeId);
+    }
+
+    [Fact]
+    public void ValidatingAHandBuiltFlowWithRepeatedIdsDoesNotThrow()
+    {
+        var issues = FlowValidator.Validate(Flow(Message("n1"), End(), End()), Ctx());
+
+        Assert.DoesNotContain(issues, i => i.Severity == FlowIssueSeverity.Error);
+    }
+
     [Fact]
     public void FourButtonsFail()
     {
@@ -84,6 +104,39 @@ public sealed class FlowValidatorTests
 
         Assert.Equal(FlowIssueSeverity.Error, issue.Severity);
         Assert.Equal("n1", issue.NodeId);
+    }
+
+    [Fact]
+    public void AnEmptyRepeatedOrReservedButtonIdFails()
+    {
+        var buttons = Buttons(new FlowButton("", "Uno"), new FlowButton("a", "Dos"), new FlowButton("a", "Tres")) with
+        {
+            Outputs = Out(("", "end"), ("a", "end"), ("other", "end")),
+        };
+        var reserved = Buttons(new FlowButton("other", "Otra"));
+
+        var issues = FlowValidator.Validate(Flow(buttons, End()), Ctx());
+
+        Assert.Equal(2, issues.Count(i => i.Code == "buttons.id_invalid" && i.Severity == FlowIssueSeverity.Error && i.NodeId == "n1"));
+        Assert.Single(FlowValidator.Validate(Flow(reserved, End()), Ctx()), i => i.Code == "buttons.id_invalid");
+    }
+
+    [Fact]
+    public void AnEmptyOrRepeatedRowIdFails()
+    {
+        var rows = new[] { new ListFixedRow("", "Norte", null), new ListFixedRow("s", "Sur", null), new ListFixedRow("s", "Centro", null) };
+
+        var issues = FlowValidator.Validate(Flow(FixedList(rows), End()), Ctx());
+
+        Assert.Equal(2, issues.Count(i => i.Code == "list.row_id_invalid" && i.Severity == FlowIssueSeverity.Error && i.NodeId == "n1"));
+    }
+
+    [Fact]
+    public void ABlankButtonsSaveToMeansNotSaving()
+    {
+        var buttons = Buttons(new FlowButton("a", "Uno")) with { SaveTo = " " };
+
+        Assert.Empty(FlowValidator.Validate(Flow(buttons, End()), Ctx()));
     }
 
     [Fact]
@@ -217,6 +270,15 @@ public sealed class FlowValidatorTests
         Assert.Contains("{cliente}", issue.Message, StringComparison.Ordinal);
     }
 
+    // D-M8: lo que cuenta es que un bloque la produzca; declararla en variables[] no la llena.
+    [Fact]
+    public void ADeclaredVariableThatNoBlockWritesStillWarns()
+    {
+        var flow = Flow(Message("n1", "Tu cliente es {cliente.nombre}"), End()) with { Variables = [new FlowVariable("cliente", "object")] };
+
+        Assert.Equal(FlowIssueSeverity.Warning, Single(FlowValidator.Validate(flow, Ctx()), "variable.never_set").Severity);
+    }
+
     [Fact]
     public void AnInvalidVariableNameFails()
     {
@@ -268,8 +330,7 @@ public sealed class FlowValidatorTests
         var issues = FlowValidator.Validate(AnnexAFlow.Parse(), AnnexAFlow.Context());
 
         Assert.DoesNotContain(issues, i => i.Severity == FlowIssueSeverity.Error);
-        // Lo que el anexo deja abierto a propósito: las salidas opcionales, n12 sin respuesta de ejemplo y {orden.id},
-        // que n12 no mapea.
+        // Lo que el anexo deja abierto a propósito: las salidas opcionales y n12 sin respuesta de ejemplo.
         (string Code, string NodeId)[] expected =
         [
             ("node.output_unconnected_optional", "n2"),
@@ -278,15 +339,23 @@ public sealed class FlowValidatorTests
             ("node.output_unconnected_optional", "n7"),
             ("node.output_unconnected_optional", "n10"),
             ("http.no_sample_response", "n12"),
-            ("variable.never_set", "n13"),
         ];
         Assert.Equal(expected.Order(), issues.Select(i => (i.Code, i.NodeId!)).Order());
     }
 
     private static FlowIssue Single(IReadOnlyList<FlowIssue> issues, string code) => Assert.Single(issues, i => i.Code == code);
 
-    private static Dictionary<string, string?> Out(params (string Key, string? Target)[] outputs) =>
-        outputs.ToDictionary(output => output.Key, output => output.Target);
+    // Con indexador y no ToDictionary: una prueba de ids repetidos arma salidas con la misma clave.
+    private static Dictionary<string, string?> Out(params (string Key, string? Target)[] outputs)
+    {
+        var dictionary = new Dictionary<string, string?>();
+        foreach (var (key, target) in outputs)
+        {
+            dictionary[key] = target;
+        }
+
+        return dictionary;
+    }
 
     private static FlowDefinition Flow(params FlowNode[] nodes) => new(1, new FlowStart(nodes[0].Id), [], nodes);
 

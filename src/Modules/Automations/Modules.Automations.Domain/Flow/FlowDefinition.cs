@@ -7,7 +7,11 @@ namespace Modules.Automations.Domain.Flow;
 /// Spec 2026-10-21 Anexo A: el flujo de un chatbot, versión 1 (<c>schema</c>). Es lo que guarda el jsonb del borrador y de cada
 /// versión publicada; <see cref="FlowJson"/> lo lee y lo escribe, y <see cref="FlowValidator"/> dice si se puede publicar.
 /// </summary>
-public sealed record FlowDefinition(int Schema, FlowStart Start, IReadOnlyList<FlowVariable> Variables, IReadOnlyList<FlowNode> Nodes);
+public sealed record FlowDefinition(int Schema, FlowStart Start, IReadOnlyList<FlowVariable> Variables, IReadOnlyList<FlowNode> Nodes)
+{
+    /// <summary>La única versión del Anexo A que existe; otra no se lee (<c>flow.malformed</c>).</summary>
+    public const int CurrentSchema = 1;
+}
 
 /// <summary>El bloque Inicio: sólo dice a qué bloque va primero. <c>null</c> mientras el editor no lo conecta.</summary>
 public sealed record FlowStart(string? FirstNodeId);
@@ -118,6 +122,17 @@ public static class QuestionValidationKinds
     public const string Keywords = "keywords";
 
     public static readonly IReadOnlySet<string> All = new[] { None, "digits", "number", Regex, Keywords }.ToFrozenSet(StringComparer.Ordinal);
+}
+
+/// <summary>
+/// Qué hacen Botones y Lista ante una respuesta que no es una opción. §5.4 sólo describe <c>repeat</c>; los otros dos son los
+/// que manda el editor (qep-frontend, <c>features/automations/types/automations.ts</c>) y su semántica queda para el motor.
+/// </summary>
+public static class InteractiveFallbacks
+{
+    public const string Repeat = "repeat";
+
+    public static readonly IReadOnlySet<string> All = new[] { Repeat, "otherOutput", "handoff" }.ToFrozenSet(StringComparer.Ordinal);
 }
 
 public static class ListOptionKinds

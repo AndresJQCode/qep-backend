@@ -19,7 +19,8 @@ public sealed record FlowValidationContext(
     IReadOnlySet<string> Channels, IReadOnlySet<Guid> ActiveExternalApis, IReadOnlySet<Guid> PausedExternalApis,
     bool AllConnectionsHaveBusinessHours);
 
-/// <summary>Los códigos de §4.3, más <c>node.output_unconnected_optional</c> del brief de la tarea 11.</summary>
+/// <summary>Los códigos de §4.3, más <c>node.output_unconnected_optional</c>, <c>list.channel_not_supported</c>, <c>buttons.id_invalid</c> y
+/// <c>list.row_id_invalid</c> del brief de la tarea 11 y su revisión.</summary>
 public static class FlowIssueCodes
 {
     public const string StartNoFirstNode = "start.no_first_node";
@@ -32,6 +33,12 @@ public static class FlowIssueCodes
     public const string NodeUnreachable = "node.unreachable";
     public const string ButtonsTooMany = "buttons.too_many";
     public const string ButtonsLabelTooLong = "buttons.label_too_long";
+
+    /// <summary>El id de un botón es el nombre de su salida: vacío, con otra forma, repetido o <c>other</c> no se puede seguir.</summary>
+    public const string ButtonsIdInvalid = "buttons.id_invalid";
+
+    /// <summary>El id de una fila es lo que se guarda en <c>{saveTo}.id</c>: vacío, con otra forma o repetido no distingue la fila.</summary>
+    public const string ListRowIdInvalid = "list.row_id_invalid";
     public const string ListTooManyRows = "list.too_many_rows";
     public const string ListRowTitleTooLong = "list.row_title_too_long";
     public const string ListRowDescriptionTooLong = "list.row_description_too_long";

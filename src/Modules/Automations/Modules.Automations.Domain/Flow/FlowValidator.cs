@@ -160,7 +160,10 @@ public static partial class FlowValidator
                     CheckLabel(node, button.Label, issues);
                 }
 
-                if (buttons.SaveTo is not null)
+                CheckButtonIds(buttons, issues);
+
+                // Guardar la respuesta de Botones es opcional: un saveTo en blanco es «no guardar».
+                if (!string.IsNullOrWhiteSpace(buttons.SaveTo))
                 {
                     CheckName(node, buttons.SaveTo, issues);
                 }
@@ -173,8 +176,18 @@ public static partial class FlowValidator
                 CheckText(node, attachment.Text, TextMaxLength, issues);
                 CheckName(node, attachment.SaveTo, issues);
                 break;
-            case ConditionNode { Rules.Count: 0 }:
-                issues.Add(Error(FlowIssueCodes.ConditionNoRules, node.Id, $"«{node.Title}» no tiene reglas: agrega al menos una."));
+            case ConditionNode condition:
+                if (condition.Rules.Count == 0)
+                {
+                    issues.Add(Error(FlowIssueCodes.ConditionNoRules, node.Id, $"«{node.Title}» no tiene reglas: agrega al menos una."));
+                }
+
+                // La regla nombra la variable sin llaves y puede entrar con puntos o índices (cliente.id): se valida su raíz.
+                foreach (var rule in condition.Rules)
+                {
+                    CheckName(node, RootOf(rule.Variable), issues);
+                }
+
                 break;
             case BusinessHoursNode when !context.AllConnectionsHaveBusinessHours:
                 issues.Add(Warning(
@@ -217,6 +230,7 @@ public static partial class FlowValidator
                 $"La lista de «{list.Title}» tiene {rows.Count} filas; WhatsApp permite máximo {MaxRows}."));
         }
 
+        CheckRowIds(list, rows, issues);
         foreach (var row in rows)
         {
             if (string.IsNullOrWhiteSpace(row.Title))
@@ -346,9 +360,42 @@ public static partial class FlowValidator
         }
     }
 
+    private static void CheckButtonIds(ButtonsNode buttons, List<FlowIssue> issues)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var button in buttons.Buttons)
+        {
+            // «other» es la salida de la respuesta no esperada: un botón con ese id la taparía.
+            if (!OptionId().IsMatch(button.Id) || button.Id == FlowOutputs.Other || !seen.Add(button.Id))
+            {
+                issues.Add(Error(
+                    FlowIssueCodes.ButtonsIdInvalid, buttons.Id,
+                    $"El botón «{button.Label}» de «{buttons.Title}» tiene un id vacío, repetido o reservado: vuelve a crearlo."));
+            }
+        }
+    }
+
+    private static void CheckRowIds(ListNode list, IReadOnlyList<ListFixedRow> rows, List<FlowIssue> issues)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var row in rows)
+        {
+            if (!OptionId().IsMatch(row.Id) || !seen.Add(row.Id))
+            {
+                issues.Add(Error(
+                    FlowIssueCodes.ListRowIdInvalid, list.Id,
+                    $"La fila «{row.Title}» de «{list.Title}» tiene un id vacío o repetido: vuelve a crearla."));
+            }
+        }
+    }
+
     private static void CheckName(FlowNode node, string name, List<FlowIssue> issues)
     {
-        if (!VariableName().IsMatch(name))
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            issues.Add(Error(FlowIssueCodes.VariableNameInvalid, node.Id, $"Falta el nombre de una variable en «{node.Title}»."));
+        }
+        else if (!VariableName().IsMatch(name))
         {
             issues.Add(Error(
                 FlowIssueCodes.VariableNameInvalid, node.Id,
@@ -358,8 +405,8 @@ public static partial class FlowValidator
 
     private static HashSet<string> WrittenVariables(FlowDefinition flow)
     {
+        // D-M8: cuenta lo que produce un bloque. Declarar una variable en variables[] no la llena.
         var written = new HashSet<string>(FixedVariables, StringComparer.Ordinal);
-        written.UnionWith(flow.Variables.Select(variable => variable.Name));
         foreach (var node in flow.Nodes)
         {
             switch (node)
@@ -367,7 +414,7 @@ public static partial class FlowValidator
                 case OpenQuestionNode question:
                     written.Add(question.SaveTo);
                     break;
-                case ButtonsNode { SaveTo: { } saveTo }:
+                case ButtonsNode { SaveTo: { } saveTo } when !string.IsNullOrWhiteSpace(saveTo):
                     written.Add(saveTo);
                     break;
                 case ListNode list:
@@ -401,7 +448,8 @@ public static partial class FlowValidator
 
         roots.AddRange(DirectReferences(node).Select(RootOf));
 
-        foreach (var root in roots.Distinct(StringComparer.Ordinal).Where(root => !written.Contains(root)))
+        // Una raíz en blanco (la regla sin variable) ya es variable.name_invalid.
+        foreach (var root in roots.Distinct(StringComparer.Ordinal).Where(root => root.Length > 0 && !written.Contains(root)))
         {
             issues.Add(Warning(
                 FlowIssueCodes.VariableNeverSet, node.Id,
@@ -447,7 +495,13 @@ public static partial class FlowValidator
 
     private static void CheckReachability(FlowDefinition flow, HashSet<string> ids, List<FlowIssue> issues)
     {
-        var byId = flow.Nodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
+        // FlowJson rechaza ids repetidos, pero un FlowDefinition armado a mano puede traerlos: gana el primero.
+        var byId = new Dictionary<string, FlowNode>(StringComparer.Ordinal);
+        foreach (var node in flow.Nodes)
+        {
+            byId.TryAdd(node.Id, node);
+        }
+
         var reached = new HashSet<string>(StringComparer.Ordinal) { flow.Start.FirstNodeId! };
         var pending = new Queue<string>(reached);
         while (pending.TryDequeue(out var id))
@@ -478,6 +532,10 @@ public static partial class FlowValidator
 
     [GeneratedRegex(@"\{(?<reference>[a-zA-Z][a-zA-Z0-9_.\[\]]*)\}", RegexOptions.CultureInvariant)]
     private static partial Regex VariableToken();
+
+    // Anexo A: la forma de los ids de botón y de fila.
+    [GeneratedRegex(@"^[a-zA-Z0-9_-]{1,40}\z", RegexOptions.CultureInvariant)]
+    private static partial Regex OptionId();
 
     // Empieza con una sola barra (dos serían un host: //otro.com) y no trae espacios, query ni fragmento.
     [GeneratedRegex(@"^/(?!/)[^\s?#]*\z", RegexOptions.CultureInvariant)]
