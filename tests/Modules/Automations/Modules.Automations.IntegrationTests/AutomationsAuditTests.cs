@@ -130,4 +130,20 @@ public sealed class AutomationsAuditTests
 
         Assert.Equal(2L, await DraftEntriesAsync(setup, id));
     }
+
+    // Solo cuentan las entradas draft_saved: haber creado el chatbot hace un instante no silencia el primer guardado.
+    [Fact]
+    public async Task TheFirstDraftSaveAfterCreateIsAudited()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, null, new TestClock());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+
+        await SaveDraftAsync(setup, editor.Chatbot.Id, editor.Chatbot.Version, """{ "schema": 1, "start": { "firstNodeId": null }, "variables": [], "nodes": [] }""");
+
+        Assert.Equal(1L, await DraftEntriesAsync(setup, editor.Chatbot.Id));
+    }
 }

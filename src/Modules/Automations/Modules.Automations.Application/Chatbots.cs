@@ -67,6 +67,9 @@ public static class ChatbotLimits
     /// <summary>Brief de la tarea 14: cuántas conexiones puede atender un chatbot.</summary>
     public const int MaxConnections = 10;
 
+    /// <summary>D-C15: cuántos pares de conexión puede traer una importación (un flujo no usa tantas «API externa»).</summary>
+    public const int MaxConnectionMapEntries = 50;
+
     /// <summary>El flujo de un chatbot recién creado en blanco y sus posiciones (brief de la tarea 14).</summary>
     public const string BlankFlow = """{"schema":1,"start":{"firstNodeId":null},"variables":[],"nodes":[]}""";
 
@@ -214,6 +217,11 @@ public sealed class ImportChatbotValidator : AbstractValidator<ImportChatbotComm
         When(command => command.Request is not null, () =>
         {
             RuleFor(command => command.Request.Export).NotNull().OverridePropertyName("export");
+            RuleFor(command => command.Request.ConnectionMap)
+                .Must(map => map!.Count <= ChatbotLimits.MaxConnectionMapEntries)
+                .WithMessage($"At most {ChatbotLimits.MaxConnectionMapEntries} connection mappings are allowed.")
+                .When(command => command.Request.ConnectionMap is not null)
+                .OverridePropertyName("connectionMap");
             // El nombre que se usa es el del pedido si viene; si no, el del archivo.
             ChatbotRules.Name(RuleFor(command => EffectiveName(command.Request)), "name");
             When(command => command.Request.Export is not null, () =>
@@ -476,8 +484,7 @@ public sealed class SaveChatbotDraftHandler(
         var now = clock.UtcNow;
         chatbot.SaveDraft(FlowJson.Serialize(flow), command.Layout.GetRawText(), by, now);
         // §4.6: el editor guarda solo cada pocos segundos; una entrada por guardado inundaría la auditoría. Una por minuto y chatbot.
-        if (await auditQueries.LastDraftSavedAtAsync(command.TenantId, chatbot.Id, cancellationToken) is not { } last
-            || now - last > DraftAuditInterval)
+        if (!await auditQueries.HasDraftSavedSinceAsync(command.TenantId, chatbot.Id, now - DraftAuditInterval, cancellationToken))
         {
             audit.Record(command.TenantId, executionContext.SubjectId, false, AutomationsAuditActions.ChatbotDraftSaved, AutomationsAuditActions.ResourceChatbot, chatbot.Id, now);
         }

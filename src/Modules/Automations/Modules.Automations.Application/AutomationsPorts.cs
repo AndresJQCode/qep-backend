@@ -121,8 +121,9 @@ public interface IAutomationsAuditRecorder
 /// Infrastructure).</summary>
 public interface IAutomationsAuditQueries
 {
-    /// <summary>Cuándo se auditó por última vez un guardado de borrador de este chatbot (<c>draft_saved</c>); <c>null</c> si nunca.</summary>
-    Task<DateTimeOffset?> LastDraftSavedAtAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken);
+    /// <summary>¿Se auditó un guardado de borrador (<c>draft_saved</c>) de este chatbot en <paramref name="since"/> o después? Solo cuentan
+    /// las entradas <c>draft_saved</c>: crear, editar o publicar no frenan la primera.</summary>
+    Task<bool> HasDraftSavedSinceAsync(Guid tenantId, Guid chatbotId, DateTimeOffset since, CancellationToken cancellationToken);
 }
 
 public static class AutomationsAuditActions

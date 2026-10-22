@@ -7,15 +7,19 @@ namespace Modules.Automations.Infrastructure.Persistence;
 /// el filtro es el mismo trío fuente / tipo de recurso / acción con el que se registran.</summary>
 internal sealed class AutomationsAuditQueries(AutomationsDbContext dbContext) : IAutomationsAuditQueries
 {
-    public async Task<DateTimeOffset?> LastDraftSavedAtAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken)
+    // El único índice útil de audit.entries es (tenant_id, occurred_at): sin acotar por tiempo, cada autoguardado recorrería toda la
+    // historia del tenant filtrando fila por fila. Con «desde» el índice solo lee el último minuto.
+    public Task<bool> HasDraftSavedSinceAsync(Guid tenantId, Guid chatbotId, DateTimeOffset since, CancellationToken cancellationToken)
     {
         var resourceId = chatbotId.ToString();
-        return await dbContext.AuditEntries.AsNoTracking()
-            .Where(entry => entry.TenantId == tenantId
+        var from = since.ToUniversalTime();
+        return dbContext.AuditEntries.AsNoTracking().AnyAsync(
+            entry => entry.TenantId == tenantId
+                && entry.OccurredAt >= from
                 && entry.Source == AutomationsAuditRecorder.Source
                 && entry.ResourceType == AutomationsAuditActions.ResourceChatbot
                 && entry.Action == AutomationsAuditActions.ChatbotDraftSaved
-                && entry.ResourceId == resourceId)
-            .MaxAsync(entry => (DateTimeOffset?)entry.OccurredAt, cancellationToken);
+                && entry.ResourceId == resourceId,
+            cancellationToken);
     }
 }
