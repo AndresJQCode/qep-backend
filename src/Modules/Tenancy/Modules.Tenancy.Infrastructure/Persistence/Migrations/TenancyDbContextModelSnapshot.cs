@@ -394,7 +394,7 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
 
                     b.ToTable("tenant_modules", "tenancy", t =>
                         {
-                            t.HasCheckConstraint("CK_tenant_modules_module_key", "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify')");
+                            t.HasCheckConstraint("CK_tenant_modules_module_key", "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations')");
 
                             t.HasCheckConstraint("CK_tenant_modules_source", "source IN ('backfill','signup','seed','manual','operator')");
 

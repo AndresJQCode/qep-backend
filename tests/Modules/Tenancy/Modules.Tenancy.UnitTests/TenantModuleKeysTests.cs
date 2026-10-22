@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -56,10 +56,15 @@ public sealed class TenantModuleKeysTests
     }
 
     [Fact]
-    public void ShopifyIsLastAndDependsOnOrders()
-    {
-        Assert.Same(TenantModuleKeys.Shopify, TenantModuleKeys.All[^1]);
+    public void ShopifyDependsOnOrders() =>
         Assert.Equal([TenantModuleKeys.Orders], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Shopify));
+
+    // Spec 2026-10-21 D-C11: el constructor de chatbots vive sobre la bandeja; fuera del signup.
+    [Fact]
+    public void AutomationsIsLastAndDependsOnMessaging()
+    {
+        Assert.Same(TenantModuleKeys.Automations, TenantModuleKeys.All[^1]);
+        Assert.Equal([TenantModuleKeys.Messaging], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Automations));
     }
 
     [Fact]

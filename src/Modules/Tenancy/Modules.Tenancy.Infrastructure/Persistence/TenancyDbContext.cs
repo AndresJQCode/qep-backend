@@ -111,7 +111,7 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         {
             table.HasCheckConstraint(
                 "CK_tenant_modules_module_key",
-                "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify')");
+                "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations')");
             table.HasCheckConstraint(
                 "CK_tenant_modules_source",
                 "source IN ('backfill','signup','seed','manual','operator')");

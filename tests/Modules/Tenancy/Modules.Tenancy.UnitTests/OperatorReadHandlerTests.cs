@@ -65,7 +65,7 @@ public sealed class OperatorReadHandlerTests
         var detail = await Detail(reader, new OperatorContext(Operator, OperatorPermissions.TenantsRead))
             .HandleAsync(new GetOperatorTenantQuery(Operator, Target), TestContext.Current.CancellationToken);
 
-        Assert.Equal(["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify"],
+        Assert.Equal(["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations"],
             detail.Modules.Select(module => module.Key));
         var byKey = detail.Modules.ToDictionary(module => module.Key);
         Assert.Equal("inactive", byKey["customers"].Status);

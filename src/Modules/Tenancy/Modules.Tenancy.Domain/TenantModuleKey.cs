@@ -54,8 +54,12 @@ public static class TenantModuleKeys
     /// <see cref="Orders"/> y entra en <see cref="DefaultForNewTenants"/>; sin backfill de tenants existentes.</summary>
     public static readonly TenantModuleKey Shopify = TenantModuleKey.Define("shopify");
 
+    /// <summary>Spec 2026-10-21, D-C11: el constructor de chatbots. Último de la lista, depende sólo de
+    /// <see cref="Messaging"/> y queda fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
+    public static readonly TenantModuleKey Automations = TenantModuleKey.Define("automations");
+
     public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify];
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations];
 
     /// <summary>Los seis base más <c>shopify</c>, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =
@@ -70,6 +74,8 @@ public static class TenantModuleKeys
         // Spec 2026-10-13 D30: sin messaging el triage queda vacío; sin quotations no llegan eventos.
         [Pipeline] = [Customers],
         [Shopify] = [Orders],
+        // Spec 2026-10-21 D-C11: un chatbot responde por la bandeja; sin messaging no hay conversaciones.
+        [Automations] = [Messaging],
     };
 
     public static IReadOnlyList<TenantModuleKey> DependenciesOf(TenantModuleKey key) =>
