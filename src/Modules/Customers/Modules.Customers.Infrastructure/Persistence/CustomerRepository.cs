@@ -148,6 +148,33 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         // devolveria como mucho pageSize y la UI dibujaria una sola pagina siempre.
         var total = await query.CountAsync(cancellationToken);
 
+        var orderedQuery = OrderByRelevance(
+            query, search, searchPattern, name, namePattern, identificationNumber, identificationPattern, cuc, cucPattern);
+
+        var items = await orderedQuery
+            .ThenBy(customer => customer.Name)
+            .ThenBy(customer => customer.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return (items, total);
+    }
+
+    // El orden de relevancia de SearchAsync, compartido con SearchSelectableAsync para que la caja y el listado no
+    // diverjan. Sigue siendo una sola expresion por rama (no un selector generico): EF tiene que ver
+    // `EF.Functions.TrigramsSimilarity` directo sobre el parametro del lambda para traducirlo.
+    private static IOrderedQueryable<Customer> OrderByRelevance(
+        IQueryable<Customer> query,
+        string? search,
+        string? searchPattern,
+        string? name,
+        string? namePattern,
+        string? identificationNumber,
+        string? identificationPattern,
+        string? cuc,
+        string? cucPattern)
+    {
         // Con algun filtro de texto activo, el resultado se ordena por relevancia — la fila que
         // mas se parece al termino buscado va primero, no la que gana alfabeticamente. `search`
         // (el combobox de quotes) usa un solo termino contra los tres campos; name/
@@ -167,7 +194,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         // Sin filtro de texto, el mas nuevo va primero: es el orden que importa para operar (el
         // cliente que alguien acaba de cargar aparece arriba de entrada, sin tener que buscarlo),
         // no el alfabetico que solo ayuda a ubicar un nombre que ya se conoce.
-        var orderedQuery = searchPattern is not null
+        return searchPattern is not null
             ? query.OrderByDescending(customer =>
                 EF.Functions.TrigramsSimilarity(customer.Name, searchTerm) +
                 EF.Functions.TrigramsSimilarity(customer.IdentificationNumber ?? string.Empty, searchTerm) +
@@ -178,15 +205,28 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                     EF.Functions.TrigramsSimilarity(customer.IdentificationNumber ?? string.Empty, identificationTerm) +
                     EF.Functions.TrigramsSimilarity(customer.Cuc ?? string.Empty, cucTerm))
                 : query.OrderByDescending(customer => customer.CreatedAt);
+    }
 
-        var items = await orderedQuery
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<Customer>> SearchSelectableAsync(
+        Guid tenantId,
+        string? search,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var searchPattern = LikePattern(search);
+
+        // Activo y con documento en la consulta y no despues: los incompletos de WhatsApp (sin documento) son los
+        // mas nuevos y, con el orden por fecha, llenarian el `Take` antes de llegar a un cliente que la caja si puede elegir.
+        var query = FilteredQuery(tenantId, searchPattern, null, null, null)
+            .Where(customer => customer.IsActive && customer.IdentificationNumber != null);
+
+        // Sin `CountAsync`: la caja muestra una lista corta, no pagina.
+        return await OrderByRelevance(query, search, searchPattern, null, null, null, null, null, null)
             .ThenBy(customer => customer.Name)
             .ThenBy(customer => customer.Id)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
+            .Take(take)
             .ToListAsync(cancellationToken);
-
-        return (items, total);
     }
 
     // Con tracking a proposito, a diferencia de SearchAsync: los llamadores de este mutan el

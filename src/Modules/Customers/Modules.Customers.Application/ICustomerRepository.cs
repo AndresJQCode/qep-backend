@@ -35,6 +35,13 @@ public interface ICustomerRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Desviación B1 del plan POS: los que la caja puede elegir — activos y con documento — filtrados en la consulta y no
+    /// después, porque los incompletos de WhatsApp (sin documento) son los más nuevos y llenarían la página.
+    /// Un solo término contra nombre, documento y CUC, con el orden de <see cref="SearchAsync"/>; sin término, el más nuevo primero.
+    /// </summary>
+    Task<IReadOnlyList<Customer>> SearchSelectableAsync(Guid tenantId, string? search, int take, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Un lote del padron para exportar, con los mismos filtros que <see cref="SearchAsync"/> pero
     /// sin su tope de pagina: aquel existe para acotar una respuesta HTTP, y este camino escribe un
     /// archivo. El llamador recorre con <c>skip</c>/<c>take</c> hasta recibir menos de los que
