@@ -43,6 +43,11 @@ public interface IConversationRepository
     /// guardar el agregado convertiría en 412 cada entrante que llega mientras el bot avanza. Sólo con el asistente puesto (D-M11);
     /// <c>true</c> si escribió.</summary>
     Task<bool> SetAutomationStepAsync(Guid tenantId, Guid conversationId, string? stepTitle, CancellationToken cancellationToken);
+
+    /// <summary>Ruling P2-R26: el chatbot que atiende, cuando el motor arranca una corrida sobre una conversación que una persona devolvió
+    /// al asistente y la conexión ya la sirve otro chatbot. Mismo criterio que <see cref="SetAutomationStepAsync"/>: una sentencia, sin
+    /// token ni <c>version</c>, sólo con el asistente activo; <c>true</c> si escribió.</summary>
+    Task<bool> SetAutomationChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-10 §8.5 paso 5.</summary>

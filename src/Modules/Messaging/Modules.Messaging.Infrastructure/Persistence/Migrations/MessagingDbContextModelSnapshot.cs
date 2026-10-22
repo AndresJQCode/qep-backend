@@ -335,6 +335,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("automation_paused_by_member_id");
 
+                    b.Property<DateTimeOffset?>("AutomationResumedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("automation_resumed_at");
+
                     b.Property<DateTimeOffset?>("AutomationStartedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("automation_started_at");

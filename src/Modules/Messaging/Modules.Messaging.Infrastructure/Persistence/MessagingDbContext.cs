@@ -223,6 +223,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.Property(value => value.AutomationPauseReason).HasColumnName("automation_pause_reason").HasConversion<string>().HasMaxLength(32);
         conversation.Property(value => value.AutomationChatbotId).HasColumnName("automation_chatbot_id");
         conversation.Property(value => value.AutomationStep).HasColumnName("automation_step").HasMaxLength(120);
+        conversation.Property(value => value.AutomationResumedAt).HasColumnName("automation_resumed_at");
         conversation.Ignore(value => value.CustomerWindowExpiresAt);
 
         // Todos con el overload con nombre: sin nombre en HasIndex, EF funde los que tienen las mismas columnas

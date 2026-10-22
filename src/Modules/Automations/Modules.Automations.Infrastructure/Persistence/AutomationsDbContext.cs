@@ -197,6 +197,7 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
         run.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         run.Property(value => value.EndedAt).HasColumnName("ended_at");
         run.Property(value => value.FailureCode).HasColumnName("failure_code").HasMaxLength(64);
+        run.Property(value => value.LastInboundMessageId).HasColumnName("last_inbound_message_id");
         run.HasIndex(value => value.ConversationId, LiveRunIndex).IsUnique().HasFilter(LiveRunFilter);
         // «Hoy» de la lista y el historial por chatbot, lo más nuevo primero.
         run.HasIndex(value => new { value.TenantId, value.ChatbotId, value.StartedAt }, "IX_conversation_runs_tenant_chatbot_started")

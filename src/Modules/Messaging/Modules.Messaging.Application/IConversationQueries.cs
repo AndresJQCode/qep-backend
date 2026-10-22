@@ -33,7 +33,8 @@ public sealed record ConversationRow(
     Guid? AutomationPausedByMemberId = null,
     AutomationPauseReason? AutomationPauseReason = null,
     Guid? AutomationChatbotId = null,
-    string? AutomationStep = null);
+    string? AutomationStep = null,
+    DateTimeOffset? AutomationResumedAt = null);
 
 /// <summary>Spec 2026-10-10 §5.1: <c>assigned=all|me|none</c>.</summary>
 public enum AssignedFilter

@@ -36,7 +36,9 @@ public sealed partial class RunEffects(
         ArgumentNullException.ThrowIfNull(unit);
         var run = unit.Run;
         var state = run.ToState();
-        // P2-R5: el orden de cada envío dentro de la unidad, también los que siguen a un HTTP o a un horario.
+        // P2-R5: el orden de cada envío dentro de la unidad, también los que siguen a un HTTP o a un horario. Riesgo aceptado (raro): si
+        // el reintento de una unidad deshecha toma otra rama (el horario cambió de abierto a cerrado entre los dos intentos), su envío
+        // número N reusa el clientId del N del primer intento; si ése había salido, Mensajería lo da por enviado y el mensaje nuevo no sale.
         var sends = 0;
         EngineInput? next = input;
         while (next is not null)

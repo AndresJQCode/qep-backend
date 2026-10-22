@@ -389,6 +389,28 @@ public sealed class ConversationTests
         Assert.Equal(new ConversationEvent(ConversationEventType.AutomationResumed, Actor: Beatriz), Assert.Single(events));
     }
 
+    /// <summary>Spec 2026-10-21 D-M15, ruling P2-R25: sólo devolver al asistente marca la hora (el motor la compara con su corrida
+    /// viva); arrancar no, y terminar o resolver la borran con el resto del asistente.</summary>
+    [Fact]
+    public void ResumingStampsTheResumeAndEndingOrResolvingClearsIt()
+    {
+        var conversation = Active();
+        Assert.Null(conversation.AutomationResumedAt);
+        conversation.Take(Andres, Now);
+
+        conversation.ResumeAutomation(Beatriz, Now.AddMinutes(1));
+
+        Assert.Equal(Now.AddMinutes(1), conversation.AutomationResumedAt);
+        conversation.EndAutomation(Now.AddMinutes(2));
+        Assert.Null(conversation.AutomationResumedAt);
+
+        var resolved = Active();
+        resolved.PauseAutomation(Andres, AutomationPauseReason.Manual, Now);
+        resolved.ResumeAutomation(Beatriz, Now.AddMinutes(1));
+        resolved.Resolve(Now.AddMinutes(2));
+        Assert.Null(resolved.AutomationResumedAt);
+    }
+
     [Fact]
     public void ResumingChecksOpenBeforeTheAutomationState()
     {

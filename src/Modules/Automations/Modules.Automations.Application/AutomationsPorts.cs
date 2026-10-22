@@ -156,10 +156,11 @@ public interface IAutomationInboundQueue
 
 /// <summary>Lo que el motor necesita de la conversación (§5.2 paso 2). <see cref="Status"/> es <c>Open</c> o <c>Resolved</c>;
 /// <see cref="AutomationStatus"/>, <c>None</c>, <c>Active</c> o <c>Paused</c> (los nombres de los enums de Mensajería).
-/// <see cref="CustomerName"/> es el nombre de perfil de WhatsApp y <see cref="Phone"/>, el <c>wa_id</c>.</summary>
+/// <see cref="CustomerName"/> es el nombre de perfil de WhatsApp y <see cref="Phone"/>, el <c>wa_id</c>.
+/// <see cref="AutomationResumedAt"/> (D-M15, P2-R25) es cuándo una persona la devolvió al asistente por última vez.</summary>
 public sealed record AutomationConversationState(
     string Status, Guid? AssignedMemberId, string AutomationStatus, Guid? AutomationChatbotId, Guid ConnectionId,
-    DateTimeOffset? LastInboundAt, string? CustomerName, string? Phone);
+    DateTimeOffset? LastInboundAt, string? CustomerName, string? Phone, DateTimeOffset? AutomationResumedAt = null);
 
 /// <summary>Spec 2026-10-21 §5.3, D-M5 y D-M14: lo que el motor le hace a la conversación (adaptador en Bootstrapper sobre el agregado
 /// <c>Conversation</c> de Mensajería). Cada cambio se guarda y se notifica antes de volver. Una regla del agregado que no se cumple
@@ -176,6 +177,11 @@ public interface IAutomationConversations
     /// <summary>El paso visible en la bandeja (D-M14). No es un cambio de la conversación: no mueve su versión ni falla porque
     /// entró un mensaje; sin asistente no escribe nada.</summary>
     Task SetStepAsync(Guid tenantId, Guid conversationId, string? stepTitle, CancellationToken cancellationToken);
+
+    /// <summary>Ruling P2-R26: el chatbot que atiende, cuando una corrida arranca sobre una conversación devuelta al asistente y la conexión
+    /// ya la sirve otro (el chip de la bandeja muestra el que corre). Como <see cref="SetStepAsync"/>, no es un cambio de la conversación:
+    /// no mueve su versión; sin asistente activo no escribe nada.</summary>
+    Task SetChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken);
 
     /// <summary>D-M5: <c>Paused</c> con motivo <c>Handoff</c>, sin asesor, con evento en el hilo, auditoría de sistema y aviso a todo el
     /// tenant como un entrante sin asignar.</summary>

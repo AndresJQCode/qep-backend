@@ -52,6 +52,11 @@ public sealed class ConversationRun
 
     public string? FailureCode { get; private set; }
 
+    /// <summary>Ruling P2-R24: el último entrante del inbox que procesó la corrida, escrito en la misma transacción que su estado. Si la fila
+    /// se vuelve a reclamar después de confirmada la unidad (el cierre de la fila falló o el lease venció), el procesador la reconoce y no la
+    /// toma por una respuesta nueva.</summary>
+    public Guid? LastInboundMessageId { get; private set; }
+
     public bool IsLive => Status is RunStatus.Running or RunStatus.Waiting;
 
     /// <summary>Ruling P2-R5: el <paramref name="id"/> lo deriva el procesador del messageId del inbox, así un Start deshecho y
@@ -130,6 +135,10 @@ public sealed class ConversationRun
         Apply(state with { Status = status }, now);
         FailureCode = failureCode;
     }
+
+    /// <summary>P2-R24: también sobre una corrida ya terminada en esta unidad (resuelta, interrumpida): el reintento la encuentra por
+    /// <c>FindLatestAsync</c>.</summary>
+    public void MarkInbound(Guid messageId) => LastInboundMessageId = messageId;
 
     public RunState ToState()
     {

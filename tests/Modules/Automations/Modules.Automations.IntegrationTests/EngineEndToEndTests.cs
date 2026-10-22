@@ -17,7 +17,7 @@ namespace Modules.Automations.IntegrationTests;
 /// <c>automation_inbox</c> y el worker del motor lo procesa contra el chatbot publicado por la API. Graph es un doble
 /// (<see cref="FakeMetaGraphHandler"/>) que responde <c>wamid.N</c> a cada envío.
 /// </summary>
-public sealed class EngineEndToEndTests
+public sealed partial class EngineEndToEndTests
 {
     private const string PhoneNumberId = "111";
     private const string WaId = "573001234567";
@@ -55,7 +55,7 @@ public sealed class EngineEndToEndTests
     }
 
     private static async Task<Fixture> ArrangeAsync(
-        TestDatabase database, string trigger = "NewConversation", string[]? keywords = null, bool enqueue = true)
+        TestDatabase database, string trigger = "NewConversation", string[]? keywords = null, bool enqueue = true, string flowJson = FlowJson)
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString, enqueueAutomation: enqueue);
@@ -69,7 +69,7 @@ public sealed class EngineEndToEndTests
         await EnableAutomationsAsync(connectionString, tenant.TenantId);
         var connectionId = await SeedWhatsAppConnectionAsync(host, tenant.TenantId, "Servicio", PhoneNumberId, "222");
         using var admin = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
-        var chatbotId = await PublishChatbotAsync(admin, tenant.TenantId, FlowJson, connectionId, trigger, keywords ?? []);
+        var chatbotId = await PublishChatbotAsync(admin, tenant.TenantId, flowJson, connectionId, trigger, keywords ?? []);
         var meta = new BotMeta(factory.MetaHandler);
         return new Fixture(factory, host, connectionString, tenant, connectionId, chatbotId, host.CreateClient(), notifier, meta);
     }
@@ -79,9 +79,9 @@ public sealed class EngineEndToEndTests
     private static long Timestamp(string wamid) =>
         DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 600 + long.Parse(wamid.AsSpan(1), CultureInfo.InvariantCulture);
 
-    private static async Task InboundAsync(Fixture f, string wamid, string text)
+    private static async Task InboundAsync(Fixture f, string wamid, string text, long? timestamp = null)
     {
-        var response = await PostWebhookAsync(f.Anonymous, Payloads.InboundText(PhoneNumberId, WaId, wamid, Timestamp(wamid), text));
+        var response = await PostWebhookAsync(f.Anonymous, Payloads.InboundText(PhoneNumberId, WaId, wamid, timestamp ?? Timestamp(wamid), text));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         await DrainDeliveriesAsync(f.Host);
     }

@@ -455,6 +455,24 @@ internal static class AutomationsApiHarness
         return editor.Chatbot.Id;
     }
 
+    /// <summary>Una versión nueva de un chatbot ya publicado (D-C1): guardar otro borrador y publicar, con el <c>If-Match</c> de cada paso.</summary>
+    public static async Task RepublishChatbotAsync(HttpClient client, Guid tenantId, Guid chatbotId, string flowJson)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var url = $"{AutomationsUrl(tenantId)}/chatbots/{chatbotId}";
+        var editor = (await client.GetFromJsonAsync<ChatbotEditorDto>(url, ct))!;
+        using var draft = new HttpRequestMessage(HttpMethod.Put, $"{url}/draft")
+        {
+            Content = JsonContent.Create(new SaveDraftRequest(JsonDocument.Parse(flowJson).RootElement, JsonDocument.Parse("{}").RootElement)),
+        };
+        draft.Headers.TryAddWithoutValidation("If-Match", $"\"{editor.Chatbot.Version}\"");
+        var saved = await client.SendAsync(draft, ct);
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        using var publish = new HttpRequestMessage(HttpMethod.Post, $"{url}/publish");
+        publish.Headers.TryAddWithoutValidation("If-Match", $"\"{(await saved.Content.ReadFromJsonAsync<DraftSavedDto>(ct))!.Version}\"");
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(publish, ct)).StatusCode);
+    }
+
     /// <summary>El <c>code</c> y las claves de <c>errors</c> de un ProblemDetails.</summary>
     public static async Task<(string? Code, string[] ErrorKeys)> ProblemAsync(HttpResponseMessage response)
     {

@@ -104,6 +104,14 @@ public sealed partial class Conversation
     /// <summary>El paso del flujo donde va la conversación; lo escribe el motor.</summary>
     public string? AutomationStep { get; private set; }
 
+    /// <summary>
+    /// Spec 2026-10-21 D-M15 y ruling P2-R25: cuándo una persona devolvió la conversación al asistente (<see cref="ResumeAutomation"/>). El
+    /// motor no ve el ida y vuelta (tomar pausa y no encola entrantes; devolver vuelve a <c>Active</c>), así que compara esta hora con el
+    /// arranque de su corrida viva: si es posterior, esa corrida sobrevivió a un humano y termina <c>Interrupted</c>. Arrancar no la
+    /// escribe; se borra con el resto del asistente.
+    /// </summary>
+    public DateTimeOffset? AutomationResumedAt { get; private set; }
+
     public int UnreadCount { get; private set; }
 
     public DateTimeOffset? LastInboundAt { get; private set; }
@@ -399,6 +407,7 @@ public sealed partial class Conversation
         AutomationPausedAt = null;
         AutomationPausedByMemberId = null;
         AutomationPauseReason = null;
+        AutomationResumedAt = now;
         Touch(now);
         events.Add(new ConversationEvent(ConversationEventType.AutomationResumed, Actor: actorMemberId));
         return events;
@@ -433,6 +442,7 @@ public sealed partial class Conversation
         AutomationPauseReason = null;
         AutomationChatbotId = null;
         AutomationStep = null;
+        AutomationResumedAt = null;
     }
 
     private void EnsureOpenForAutomation()

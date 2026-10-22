@@ -47,21 +47,25 @@ internal sealed partial class AutomationInboxWorker(
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
-    /// <summary>Una pasada: internal para las pruebas.</summary>
+    /// <summary>
+    /// Una pasada: hasta <c>InboxBatchSize</c> filas. Ruling P2-R24: se reclaman de a una, justo antes de procesarla, para que cada unidad
+    /// empiece con su lease entero (30 s el primer intento). Reclamadas en lote, la vigésima esperaría a las diecinueve de antes con su lease
+    /// corriendo, y otra réplica podría volver a tomarla a mitad de su unidad. Internal para las pruebas.
+    /// </summary>
     internal async Task DrainAsync(CancellationToken cancellationToken)
     {
-        IReadOnlyList<InboundQueueItem> claimed;
-        await using (var scope = scopeFactory.CreateAsyncScope())
-        {
-            var now = scope.ServiceProvider.GetRequiredService<IClock>().UtcNow;
-            claimed = await scope.ServiceProvider.GetRequiredService<IAutomationInboundQueue>()
-                .ClaimAsync(now, Math.Max(1, options.Value.InboxBatchSize), cancellationToken);
-        }
-
-        foreach (var item in claimed)
+        for (var processed = 0; processed < Math.Max(1, options.Value.InboxBatchSize); processed++)
         {
             // Un scope por fila: el tracker de Automations y la transacción de la unidad no se comparten entre conversaciones.
             await using var scope = scopeFactory.CreateAsyncScope();
+            var now = scope.ServiceProvider.GetRequiredService<IClock>().UtcNow;
+            var claimed = await scope.ServiceProvider.GetRequiredService<IAutomationInboundQueue>().ClaimAsync(now, 1, cancellationToken);
+            if (claimed.Count == 0)
+            {
+                return;
+            }
+
+            var item = claimed[0];
             try
             {
                 await scope.ServiceProvider.GetRequiredService<RunProcessor>().ProcessAsync(item, cancellationToken);

@@ -38,6 +38,9 @@ public sealed partial class RunProcessor(
     [LoggerMessage(Level = LogLevel.Information, Message = "Automation inbox row {MessageId} of tenant {TenantId} was re-claimed after attempt {Attempts}; this result does not count.")]
     private static partial void LogReclaimed(ILogger logger, Guid tenantId, Guid messageId, int attempts);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Chatbot version {VersionId} of tenant {TenantId} has a flow that cannot be read; the bot does not run it.")]
+    private static partial void LogUnreadableFlow(ILogger logger, Guid tenantId, Guid versionId);
+
     /// <summary>
     /// Devuelve el resultado escrito en la fila, o <see cref="RunOutcomes.Retry"/> si un cambio concurrente de la conversación la
     /// reprogramó. Una excepción no prevista sale de acá con la transacción ya deshecha: la fila queda para su reintento por lease (a los
@@ -76,13 +79,23 @@ public sealed partial class RunProcessor(
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         await unitOfWork.LockConversationAsync(item.ConversationId, cancellationToken);
         var run = await runs.FindLiveForUpdateAsync(item.TenantId, item.ConversationId, cancellationToken);
+
+        // Ruling P2-R24: la unidad de este entrante ya se confirmó (el cierre de la fila falló o el lease venció antes de cerrarla). Sin
+        // esto el reintento lo tomaría por una respuesta nueva, o arrancaría otra corrida con el mismo RunIdFor. Nada se toca.
+        var latest = run ?? await runs.FindLatestAsync(item.TenantId, item.ConversationId, cancellationToken);
+        if (latest?.LastInboundMessageId == item.MessageId)
+        {
+            return RunOutcomes.Duplicate;
+        }
+
         var conversation = await conversations.GetAsync(item.TenantId, item.ConversationId, cancellationToken);
 
         // D-M15: una acción humana termina la corrida viva; Mensajería no conoce Automations, así que se detecta acá.
         var interrupted = false;
-        if (run is not null && (conversation is null || HumanTookOver(conversation)))
+        if (run is not null && (conversation is null || HumanTookOver(conversation, run)))
         {
             run.Finish(RunStatus.Interrupted, null, now);
+            run.MarkInbound(item.MessageId);
             run = null;
             interrupted = true;
         }
@@ -93,10 +106,13 @@ public sealed partial class RunProcessor(
         return outcome ?? (interrupted ? RunOutcomes.Interrupted : RunOutcomes.Skipped);
     }
 
-    private static bool HumanTookOver(AutomationConversationState conversation) =>
+    /// <summary>D-M15. Tomar y devolver al asistente no deja rastro en el estado (tomar pausa y no encola, devolver vuelve a
+    /// <c>Active</c>): por eso P2-R25 compara la hora en que una persona la devolvió con el arranque de la corrida.</summary>
+    private static bool HumanTookOver(AutomationConversationState conversation, ConversationRun run) =>
         conversation.AssignedMemberId is not null
         || conversation.Status == ConversationStates.Resolved
-        || conversation.AutomationStatus is AutomationStates.Paused or AutomationStates.None;
+        || conversation.AutomationStatus is AutomationStates.Paused or AutomationStates.None
+        || conversation.AutomationResumedAt > run.StartedAt;
 
     /// <summary>§5.2 pasos 2 a 4; <c>null</c> = el entrante no le toca al bot.</summary>
     private async Task<string?> DecideAsync(
@@ -169,6 +185,12 @@ public sealed partial class RunProcessor(
             return null;
         }
 
+        // P2-R26: la conexión puede servirla ya otro chatbot que el que la conversación tenía cuando una persona la devolvió.
+        if (conversation.AutomationChatbotId != chatbot.ChatbotId)
+        {
+            await conversations.SetChatbotAsync(item.TenantId, item.ConversationId, chatbot.ChatbotId, cancellationToken);
+        }
+
         return await StartRunAsync(item, conversation, chatbot, flow, now, cancellationToken);
     }
 
@@ -183,6 +205,7 @@ public sealed partial class RunProcessor(
         var run = ConversationRun.Start(
             DeterministicClientId.RunIdFor(item.MessageId), item.TenantId, item.ConversationId, item.ConnectionId, chatbot.ChatbotId,
             chatbot.PublishedVersionId, RunState.Initial(variables), now);
+        run.MarkInbound(item.MessageId);
         await runs.AddAsync(run, cancellationToken);
         audit.Record(item.TenantId, Guid.Empty, bySystem: true, AutomationsAuditActions.RunStarted, AutomationsAuditActions.ResourceRun, run.Id, now);
 
@@ -194,6 +217,7 @@ public sealed partial class RunProcessor(
     /// <summary>§5.2 paso 4: la corrida viva sigue con la versión con que empezó (D-C1).</summary>
     private async Task<string?> ContinueAsync(InboundQueueItem item, ConversationRun run, DateTimeOffset now, CancellationToken cancellationToken)
     {
+        run.MarkInbound(item.MessageId);
         // Ruling P2-R6: un chatbot borrado mientras la corrida esperaba (la carrera del plan 1) se lleva sus versiones.
         var flow = await LoadFlowAsync(item.TenantId, run.ChatbotVersionId, cancellationToken);
         var settings = await chatbots.FindEngineSettingsAsync(item.TenantId, run.ChatbotId, cancellationToken);
@@ -269,6 +293,7 @@ public sealed partial class RunProcessor(
         }
         catch (FlowFormatException)
         {
+            LogUnreadableFlow(logger, tenantId, versionId);
             return null;
         }
     }

@@ -342,7 +342,7 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
                     b.ToTable("chatbot_versions", "automations");
                 });
 
-            modelBuilder.Entity("Modules.Automations.Infrastructure.Persistence.ConversationRunRecord", b =>
+            modelBuilder.Entity("Modules.Automations.Domain.ConversationRun", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
@@ -383,6 +383,10 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)")
                         .HasColumnName("failure_code");
+
+                    b.Property<Guid?>("LastInboundMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("last_inbound_message_id");
 
                     b.Property<DateTimeOffset>("StartedAt")
                         .HasColumnType("timestamp with time zone")

@@ -40,7 +40,7 @@ internal sealed partial class AutomationConversations(
         await queries.FindAsync(tenantId, conversationId, cancellationToken) is { } row
             ? new AutomationConversationState(
                 row.Status.ToString(), row.AssignedMemberId, row.AutomationStatus.ToString(), row.AutomationChatbotId, row.ConnectionId,
-                row.LastInboundAt, row.ProfileName, row.WaId)
+                row.LastInboundAt, row.ProfileName, row.WaId, row.AutomationResumedAt)
             : null;
 
     public async Task StartAsync(Guid tenantId, Guid conversationId, Guid chatbotId, string? firstStepTitle, CancellationToken cancellationToken)
@@ -61,6 +61,15 @@ internal sealed partial class AutomationConversations(
         // UPDATE directo y no el agregado: SetAutomationStep no hace Touch, pero guardar el agregado igual compara la versión, y cada
         // entrante que llega mientras el bot avanza la sube (InboundIngestion.cs).
         if (await repository.SetAutomationStepAsync(tenantId, conversationId, stepTitle, cancellationToken))
+        {
+            await NotifyAsync(tenantId, conversationId, () => notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken));
+        }
+    }
+
+    public async Task SetChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken)
+    {
+        // UPDATE directo por la misma razón que SetStepAsync: el agregado compararía una versión que la ingesta sube por SQL.
+        if (await repository.SetAutomationChatbotAsync(tenantId, conversationId, chatbotId, cancellationToken))
         {
             await NotifyAsync(tenantId, conversationId, () => notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken));
         }

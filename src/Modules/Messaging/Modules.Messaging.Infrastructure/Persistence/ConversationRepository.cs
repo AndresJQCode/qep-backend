@@ -20,6 +20,13 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
             """, cancellationToken) > 0;
     }
 
+    public async Task<bool> SetAutomationChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken) =>
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE messaging.conversations SET automation_chatbot_id = {chatbotId}
+             WHERE id = {conversationId} AND tenant_id = {tenantId} AND automation_status = 'Active'
+            """, cancellationToken) > 0;
+
     public async Task<ReadReceiptTarget?> MarkReadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         // Spec 2026-10-09 §8.4: una sentencia, sin comparar version. La fila queda con su candado sólo mientras
