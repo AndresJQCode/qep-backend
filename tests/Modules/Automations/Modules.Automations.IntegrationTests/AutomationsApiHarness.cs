@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Automations.Application;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
 using Npgsql;
@@ -24,6 +25,10 @@ internal static class AutomationsApiHarness
     public const string SentinelMetaAccessToken = "meta-access-token-SENTINEL-m3";
 
     public const string SentinelInstagramAccessToken = "ig-access-token-SENTINEL-m5";
+
+    public static readonly string[] ReadPermissions = [AutomationsPermissions.ChatbotRead];
+
+    public static readonly string[] ManagePermissions = [AutomationsPermissions.ChatbotRead, AutomationsPermissions.ChatbotManage];
 
     private const string TemplateDatabase = "qep_template_automations";
 

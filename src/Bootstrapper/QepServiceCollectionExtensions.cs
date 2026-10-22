@@ -18,6 +18,7 @@ using Microsoft.IdentityModel.Tokens;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Application;
 using Modules.Authorization.Infrastructure;
+using Modules.Automations.Application;
 using Modules.Automations.Infrastructure;
 using Modules.Catalog.Application;
 using Modules.Catalog.Infrastructure;
@@ -1127,7 +1128,10 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-10-13 D32: el embudo de ventas completo. De núcleo; la capacidad pipeline la revisa cada handler.
                 PipelinePermissions.DealRead,
                 PipelinePermissions.DealManage,
-                PipelinePermissions.SettingsManage
+                PipelinePermissions.SettingsManage,
+                // Spec 2026-10-21 D-C10: el chatbot atiende en nombre de la empresa; de fábrica sólo en admin. De núcleo.
+                AutomationsPermissions.ChatbotRead,
+                AutomationsPermissions.ChatbotManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -1663,6 +1667,22 @@ public static class QepServiceCollectionExtensions
             "Pipeline",
             "medium",
             RequiredModules: []));
+        // Spec 2026-10-21 D-C10: categoría "Automations" y núcleo (RequiredModules vacío), como Pipeline: con [automations] el 403
+        // con la capacidad apagada saldría authorization.denied en vez de tenancy.module_not_enabled.
+        services.AddSingleton(new PermissionDefinition(
+            AutomationsPermissions.ChatbotRead,
+            "Ver chatbots",
+            "Permite ver los chatbots, sus plantillas y las conexiones que atienden.",
+            "Automations",
+            "low",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            AutomationsPermissions.ChatbotManage,
+            "Gestionar chatbots",
+            "Permite crear, editar, publicar, pausar y borrar chatbots y sus plantillas.",
+            "Automations",
+            "medium",
+            RequiredModules: []));
     }
 
     private static void AddAuthentication(
@@ -1983,7 +2003,14 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, PipelinePermissions.DealManage))
             .AddPolicy(
                 PipelinePermissions.SettingsManage,
-                policy => AddPermissionRequirement(policy, PipelinePermissions.SettingsManage));
+                policy => AddPermissionRequirement(policy, PipelinePermissions.SettingsManage))
+            // Spec 2026-10-21 D-C10: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                AutomationsPermissions.ChatbotRead,
+                policy => AddPermissionRequirement(policy, AutomationsPermissions.ChatbotRead))
+            .AddPolicy(
+                AutomationsPermissions.ChatbotManage,
+                policy => AddPermissionRequirement(policy, AutomationsPermissions.ChatbotManage));
     }
 
     private static void AddPermissionRequirement(

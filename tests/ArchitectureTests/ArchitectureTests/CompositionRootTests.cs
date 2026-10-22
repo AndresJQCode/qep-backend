@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Modules.Authorization.Application;
+using Modules.Automations.Application;
 using Modules.Integrations.Application;
 using Modules.Messaging.Application;
 using Modules.Pipeline.Application;
@@ -171,15 +172,15 @@ public sealed class CompositionRootTests
     /// entitlements, las 6 de POS, las tres <c>operator.*</c> y las dos <c>integrations.*</c> de los
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
-    /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21.</summary>
+    /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheFiftyEightConstants()
+    public void PermissionDiscoveryFindsTheSixtyConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
         // + el de plantillas (spec 2026-10-14 D-T5) + el de motivos de resolución (spec 2026-10-15 D-R8)
-        // + el de horarios de atención (spec 2026-10-21 D-H8).
-        Assert.Equal(58, PermissionConstants().Length);
+        // + el de horarios de atención (spec 2026-10-21 D-H8) + los dos de chatbots (spec 2026-10-21 D-C10).
+        Assert.Equal(60, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-11 §6.4 y decisión 16: de núcleo (el módulo lo revisa cada handler) y de fábrica sólo en <c>admin</c>:
@@ -346,6 +347,33 @@ public sealed class CompositionRootTests
         Assert.All(definitions, definition =>
         {
             Assert.Equal("Pipeline", definition.Category);
+            Assert.Empty(definition.RequiredModules!);
+        });
+    }
+
+    /// <summary>Spec 2026-10-21 D-C10: de núcleo (con <c>[automations]</c> el 403 saldría <c>authorization.denied</c> y no
+    /// <c>tenancy.module_not_enabled</c>; cada handler revisa la capacidad) y de fábrica sólo en <c>admin</c>.</summary>
+    [Fact]
+    public void TheAutomationsPermissionsAreCoreAndGoOnlyToAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        string[] automationsPermissions = [AutomationsPermissions.ChatbotRead, AutomationsPermissions.ChatbotManage];
+
+        Assert.Equal(["automations.chatbot.read", "automations.chatbot.manage"], automationsPermissions);
+        Assert.All(automationsPermissions, permission => Assert.Contains(permission, catalog.PermissionsFor("admin")));
+        foreach (var role in new[] { "advisor", "billing", "cashier" })
+        {
+            Assert.All(automationsPermissions, permission => Assert.DoesNotContain(permission, catalog.PermissionsFor(role)));
+        }
+
+        var definitions = catalog.ListPermissions()
+            .Where(definition => automationsPermissions.Contains(definition.Permission))
+            .ToArray();
+        Assert.Equal(2, definitions.Length);
+        Assert.All(definitions, definition =>
+        {
+            Assert.Equal("Automations", definition.Category);
             Assert.Empty(definition.RequiredModules!);
         });
     }
