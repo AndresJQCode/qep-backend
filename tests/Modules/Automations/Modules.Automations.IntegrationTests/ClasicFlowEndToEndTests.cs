@@ -87,9 +87,9 @@ public sealed class ClasicFlowEndToEndTests
         using (var admin = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions))
         {
             var imported = await ImportChatbotAsync(
-                admin, tenant.TenantId, flowJson ?? ClasicSubset.Json, new Dictionary<Guid, Guid> { [ClasicSubset.ClasicApi] = apiConnectionId });
+                admin, tenant.TenantId, flowJson ?? ClasicFlow.FlowJson, new Dictionary<Guid, Guid> { [ClasicFlow.ClasicApi] = apiConnectionId });
             // D-C15: el mapa reescribió la conexión de todos los bloques HTTP (si quedara una, publicar fallaría por http.connection_missing).
-            Assert.DoesNotContain(ClasicSubset.ClasicApi.ToString(), imported.Draft.Flow.GetRawText(), StringComparison.Ordinal);
+            Assert.DoesNotContain(ClasicFlow.ClasicApi.ToString(), imported.Draft.Flow.GetRawText(), StringComparison.Ordinal);
             await PublishImportedAsync(admin, tenant.TenantId, imported, whatsApp);
         }
 
@@ -341,7 +341,7 @@ public sealed class ClasicFlowEndToEndTests
     public async Task ATimeoutHandsOffWithinTheLease()
     {
         await using var database = await StartDatabaseAsync();
-        using var f = await ArrangeAsync(database, ClasicSubset.WithTimeout("find-customer", 1));
+        using var f = await ArrangeAsync(database, ClasicFlow.WithTimeout("find-customer", 1));
         f.Api.RespondAfter(@"^/customers\?", TimeSpan.FromSeconds(5), HttpStatusCode.OK, CustomerFound);
         await SayAsync(f, "w1", "Hola");
 

@@ -1,0 +1,1112 @@
+{
+  "flow": {
+    "schema": 1,
+    "start": {
+      "firstNodeId": "policy-lookup"
+    },
+    "variables": [
+      {
+        "name": "clientesPorTelefono",
+        "type": "list"
+      },
+      {
+        "name": "aceptacion",
+        "type": "text"
+      },
+      {
+        "name": "cedula",
+        "type": "text"
+      },
+      {
+        "name": "cliente",
+        "type": "object"
+      },
+      {
+        "name": "equipos",
+        "type": "list"
+      },
+      {
+        "name": "equipo",
+        "type": "object"
+      },
+      {
+        "name": "motivo",
+        "type": "object"
+      },
+      {
+        "name": "fallas",
+        "type": "list"
+      },
+      {
+        "name": "falla",
+        "type": "object"
+      },
+      {
+        "name": "contacto",
+        "type": "text"
+      },
+      {
+        "name": "telefonoContacto",
+        "type": "text"
+      },
+      {
+        "name": "servicio",
+        "type": "object"
+      },
+      {
+        "name": "fallaMantenimiento",
+        "type": "object"
+      },
+      {
+        "name": "orden",
+        "type": "object"
+      },
+      {
+        "name": "nombres",
+        "type": "text"
+      },
+      {
+        "name": "apellidos",
+        "type": "text"
+      },
+      {
+        "name": "direccion",
+        "type": "text"
+      },
+      {
+        "name": "barrio",
+        "type": "text"
+      },
+      {
+        "name": "ciudad",
+        "type": "text"
+      },
+      {
+        "name": "factura",
+        "type": "attachment"
+      },
+      {
+        "name": "numeroSolicitud",
+        "type": "text"
+      },
+      {
+        "name": "direccionNueva",
+        "type": "text"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "policy-lookup",
+        "kind": "http",
+        "title": "Buscar cliente por teléfono",
+        "connectionId": "11111111-1111-1111-1111-111111111111",
+        "method": "GET",
+        "path": "/customers",
+        "query": [
+          {
+            "key": "phone",
+            "value": "{telefono}"
+          }
+        ],
+        "body": null,
+        "timeoutSeconds": 10,
+        "okWhen": null,
+        "mapping": [
+          {
+            "from": "items",
+            "to": "clientesPorTelefono"
+          }
+        ],
+        "sampleResponse": {
+          "items": [
+            {
+              "id": 7,
+              "firstName": "Laura",
+              "lastName": "Gómez",
+              "acceptPolicy": true
+            }
+          ],
+          "total": 1
+        },
+        "outputs": {
+          "ok": "policy-check",
+          "error": "handoff"
+        }
+      },
+      {
+        "id": "policy-check",
+        "kind": "condition",
+        "title": "¿Aceptó la política?",
+        "match": "any",
+        "rules": [
+          {
+            "variable": "clientesPorTelefono",
+            "operator": "isEmpty"
+          },
+          {
+            "variable": "clientesPorTelefono[0].acceptPolicy",
+            "operator": "equals",
+            "value": "true"
+          }
+        ],
+        "outputs": {
+          "yes": "welcome",
+          "no": "policy"
+        }
+      },
+      {
+        "id": "policy",
+        "kind": "openQuestion",
+        "title": "Política de datos",
+        "text": "Hola, te damos la bienvenida a CLASIC, especialistas en calentamiento de agua. Para continuar debes aceptar la política de tratamiento de datos: https://clasic.com.co/politica-de-privacidad/ Responde ACEPTO si la aceptas.",
+        "saveTo": "aceptacion",
+        "validation": {
+          "kind": "keywords",
+          "keywords": [
+            "acepto",
+            "acepto.",
+            "si acepto",
+            "sí acepto",
+            "si, acepto",
+            "sí, acepto"
+          ]
+        },
+        "maxAttempts": null,
+        "outputs": {
+          "answered": "policy-save",
+          "invalid": null
+        }
+      },
+      {
+        "id": "policy-save",
+        "kind": "http",
+        "title": "Guardar aceptación",
+        "connectionId": "11111111-1111-1111-1111-111111111111",
+        "method": "PUT",
+        "path": "/customers/{clientesPorTelefono[0].id}",
+        "query": [],
+        "body": {
+          "kind": "json",
+          "template": "{ \"acceptPolicy\": \"true\", \"sourceAcceptPolicy\": \"Whatsapp\" }"
+        },
+        "timeoutSeconds": 10,
+        "okWhen": null,
+        "mapping": [],
+        "sampleResponse": {},
+        "outputs": {
+          "ok": "welcome",
+          "error": "handoff"
+        }
+      },
+      {
+        "id": "welcome",
+        "kind": "message",
+        "title": "Bienvenida",
+        "text": "Hola, te damos la bienvenida a CLASIC, especialistas en calentamiento de agua. Recuerda que puedes reiniciar la conversación en cualquier momento escribiendo *REINICIAR*.",
+        "outputs": {
+          "next": "document"
+        }
+      },
+      {
+        "id": "document",
+        "kind": "openQuestion",
+        "title": "Número de documento",
+        "text": "Para solicitar un servicio o una asistencia técnica, escribe tu número de documento.",
+        "saveTo": "cedula",
+        "validation": {
+          "kind": "digits"
+        },
+        "maxAttempts": null,
+        "outputs": {
+          "answered": "find-customer",
+          "invalid": null
+        }
+      },
+      {
+        "id": "find-customer",
+        "kind": "http",
+        "title": "Buscar cliente por documento",
+        "connectionId": "11111111-1111-1111-1111-111111111111",
+        "method": "GET",
+        "path": "/customers",
+        "query": [
+          {
+            "key": "identificationNumber",
+            "value": "{cedula}"
+          }
+        ],
+        "body": null,
+        "timeoutSeconds": 10,
+        "okWhen": null,
+        "mapping": [
+          {
+            "from": "items[0]",
+            "to": "cliente"
+          }
+        ],
+        "sampleResponse": {
+          "items": [
+            {
+              "id": 7,
+              "firstName": "Laura",
+              "lastName": "Gómez",
+              "acceptPolicy": true
+            }
+          ],
+          "total": 1
+        },
+        "outputs": {
+          "ok": "customer-found",
+          "error": "handoff"
+        }
+      },
+      {
+        "id": "customer-found",
+        "kind": "condition",
+        "title": "¿Cliente encontrado?",
+        "match": "all",
+        "rules": [
+          {
+            "variable": "cliente",
+            "operator": "isNotEmpty"
+          }
+        ],
+        "outputs": {
+          "yes": "invoice-items",
+          "no": "not-found"
+        }
+      },
+      {
+        "id": "not-found",
+        "kind": "message",
+        "title": "Usuario no encontrado",
+        "text": "No te encuentras registrado en nuestra base de datos. Puedes dejar tus datos para agendar tu visita de asistencia técnica o ingresar otro número de documento.",
+        "urlButton": {
+          "label": "Registrarme",
+          "url": "https://app.clasic.com.co/registro-clientes"
+        },
+        "outputs": {
+          "next": "not-found-options"
+        }
+      },
+      {
+        "id": "not-found-options",
+        "kind": "buttons",
+        "title": "¿Cómo seguimos?",
+        "text": "¿Qué prefieres hacer?",
+        "buttons": [
+          {
+            "id": "leave",
+            "label": "Dejar mis datos"
+          },
+          {
+            "id": "other-doc",
+            "label": "Otro documento"
+          }
+        ],
+        "saveTo": null,
+        "fallback": "repeat",
+        "outputs": {
+          "leave": "new-first-name",
+          "other-doc": "document",
+          "other": null
+        }
+      },
+      {
+        "id": "new-first-name",
+        "kind": "openQuestion",
+        "title": "Nombres",
+        "text": "¿Cuáles son tus nombres?",
+        "saveTo": "nombres",
+        "validation": {
+          "kind": "none"
+        },
+        "maxAttempts": null,
+        "outputs": {
+          "answered": "new-last-name",
+          "invalid": null
+        }
+      },
+      {
+        "id": "new-last-name",
+        "kind": "openQuestion",
+        "title": "Apellidos",
+        "text": "¿Y tus apellidos?",
+        "saveTo": "apellidos",
+        "validation": {
+          "kind": "none"
+        },
+        "maxAttempts": null,
+        "outputs": {
+          "answered": "new-address",
+          "invalid": null
+        }
+      },
+      {
+        "id": "new-address",
+        "kind": "openQuestion",
+        "title": "Dirección",
+        "text": "Escribe la dirección donde está el calentador.",
+        "saveTo": "direccion",
+        "validation": {
+          "kind": "none"
+        },
+        "maxAttempts": null,
+        "outputs": {
+          "answered": "new-neighborhood",
+          "invalid": null
+        }
+      },
+      {
+        "id": "new-neighborhood",
+        "kind": "openQuestion",
+        "title": "Barrio",
+        "text": "¿En qué barrio?",
+        "saveTo": "barrio",
+        "validation": {
+          "kind": "none"
+        },
+        "maxAttempts": null,
+        "outputs": {
+          "answered": "new-city",
+          "invalid": null
+        }
+      },
+      {
+        "id": "new-city",
+        "kind": "openQuestion",
+        "title": "Ciudad",
+        "text": "¿En qué ciudad?",
+        "saveTo": "ciudad",
+        "validation": {
+          "kind": "none"
+        },
+        "maxAttempts": null,
+        "outputs": {
+          "answered": "new-failures",
+          "invalid": null
+        }
+      },
+      {
+        "id": "new-failures",
+        "kind": "http",
+        "title": "Buscar fallas (cliente nuevo)",
+        "connectionId": "11111111-1111-1111-1111-111111111111",
+        "method": "GET",
+        "path": "/failures",
+        "query": [],
+        "body": null,
+        "timeoutSeconds": 10,
+        "okWhen": null,
+        "mapping": [
+          {
+            "from": "$",
+            "to": "fallas"
+          }
+        ],
+        "sampleResponse": [
+          {
+            "id": 3,
+            "description": "No enciende"
+          },
+          {
+            "id": 4,
+            "description": "Fuga de agua"
+          }
+        ],
+        "outputs": {
+          "ok": "new-failure",
+          "error": "handoff"
+        }
+      },
+      {
+        "id": "new-failure",
+        "kind": "list",
+        "title": "Falla del calentador",
+        "text": "¿Qué falla presenta el calentador?",
+        "buttonLabel": "Ver fallas",
+        "options": {
+          "kind": "dynamic",
+          "collection": "fallas",
+          "idField": "id",
+          "titleField": "description",
+          "descriptionField": null,
+          "extraOption": null
+        },
+        "saveTo": "falla",
+        "fallback": "repeat",
+        "outputs": {
+          "chosen": "invoice-photo",
+          "tooMany": "handoff",
+          "other": null
+        }
+      },
+      {
+        "id": "invoice-photo",
+        "kind": "attachment",
+        "title": "Foto de la factura",
+        "text": "Envía la foto o el PDF de la factura de compra del calentador.",
+        "accept": "any",
+        "saveTo": "factura",
+        "outputs": {
+          "received": "new-customer",
+          "invalid": null
+        }
+      },
+      {
+        "id": "new-customer",
+        "kind": "http",
+        "title": "Registrar cliente nuevo",
+        "connectionId": "11111111-1111-1111-1111-111111111111",
+        "method": "POST",
+        "path": "/customers/new-customer",
+        "query": [],
+        "body": {
+          "kind": "multipart",
+          "fields": [
+            {
+              "key": "identificationNumber",
+              "value": "{cedula}"
+            },
+            {
+              "key": "firstName",
+              "value": "{nombres}"
+            },
+            {
+              "key": "lastName",
+              "value": "{apellidos}"
+            },
+            {
+              "key": "address",
+              "value": "{direccion}"
+            },
+            {
+              "key": "neighborhood",
+              "value": "{barrio}"
+            },
+            {
+              "key": "addressDescription",
+              "value": "Ciudad: {ciudad}"
+            },
+            {
+              "key": "phone",
+              "value": "{telefono}"
+            },
+            {
+              "key": "departmentId",
+              "value": "5"
+            },
+            {
+              "key": "cityId",
+              "value": "5001000"
+            },
+            {
+              "key": "failureId",
+              "value": "{falla.id}"
+            }
+          ],
+          "fileField": "file",
+          "fileVariable": "factura"
+        },
+        "timeoutSeconds": 10,
+        "okWhen": null,
+        "mapping": [
+          {
+            "from": "serviceOrderNumber",
+            "to": "numeroSolicitud"
+          }
+        ],
+        "sampleResponse": {
+          "serviceOrderNumber": "OS-123"
+        },
+        "outputs": {
+          "ok": "registered",
+          "error": "handoff"
+        }
+      },
+      {
+        "id": "registered",
+        "kind": "resolve",
+        "title": "Datos recibidos",
+        "text": "Recibimos tus datos. Tu solicitud quedó registrada con el número {numeroSolicitud}; un agente se comunicará contigo para confirmar la visita."
+      },
+      {
+        "id": "invoice-items",
+        "kind": "http",
+        "title": "Buscar equipos",
+        "connectionId": "11111111-1111-1111-1111-111111111111",
+        "method": "GET",
+        "path": "/invoices/customer/{cliente.id}/all-invoice-items",
+        "query": [],
+        "body": null,
+        "timeoutSeconds": 10,
+        "okWhen": null,
+        "mapping": [
+          {
+            "from": "$",
+            "to": "equipos"
+          }
+        ],
+        "sampleResponse": [
+          {
+            "id": 1,
+            "referenceCode": "CAL-001",
+            "address": "Calle 1 # 2-3",
+            "haveOrderOpen": false
+          }
+        ],
+        "outputs": {
+          "ok": "equipment",
+          "error": "handoff"
+        }
+      },
+      {
+        "id": "equipment",
+        "kind": "list",
+        "title": "¿Cuál equipo?",
+        "text": "Elige el equipo o la dirección donde necesitas el servicio.",
+        "buttonLabel": "Ver equipos",
+        "options": {
+          "kind": "dynamic",
+          "collection": "equipos",
+          "idField": "id",
+          "titleField": "referenceCode",
+          "descriptionField": "address",
+          "extraOption": {
+            "id": "other",
+            "title": "Otra dirección"
+          }
+        },
+        "saveTo": "equipo",
+        "fallback": "repeat",
+        "outputs": {
+          "chosen": "open-order-check",
+          "extra": "other-address",
+          "tooMany": "handoff",
+          "other": null
+        }
+      },
+      {
+        "id": "open-order-check",
+        "kind": "condition",
+        "title": "¿Orden abierta?",
+        "match": "all",
+        "rules": [
+          {
+            "variable": "equipo.item.haveOrderOpen",
+            "operator": "equals",
+            "value": "true"
+          }
+        ],
+        "outputs": {
+          "yes": "open-order-notice",
+          "no": "service-kind"
+        }
+      },
+      {
+        "id": "open-order-notice",
+        "kind": "message",
+        "title": "Orden abierta",
+        "text": "Ya hay una orden de servicio abierta para esa dirección. Elige otro equipo o escribe REINICIAR.",
+        "outputs": {
+          "next": "equipment"
+        }
+      },
+      {
+        "id": "other-address",
+        "kind": "openQuestion",
+        "title": "Dirección nueva",
+        "text": "Escribe la dirección, el barrio y la ciudad de la nueva dirección.",
+        "saveTo": "direccionNueva",
+        "validation": {
+          "kind": "none"
+        },
+        "maxAttempts": null,
+        "outputs": {
+          "answered": "other-address-handoff",
+          "invalid": null
+        }
+      },
+      {
+        "id": "other-address-handoff",
+        "kind": "handoff",
+        "title": "Asesor: dirección nueva",
+        "text": "Gracias. Te paso con un asesor para registrar la dirección nueva."
+      },
+      {
+        "id": "service-kind",
+        "kind": "buttons",
+        "title": "¿Qué tipo de servicio?",
+        "text": "¿Qué tipo de servicio necesitas?",
+        "buttons": [
+          {
+            "id": "tech",
+            "label": "Servicio técnico"
+          },
+          {
+            "id": "maint",
+            "label": "Mantenimiento"
+          }
+        ],
+        "saveTo": "motivo",
+        "fallback": "repeat",
+        "outputs": {
+          "tech": "failures",
+          "maint": "maintenance-service",
+          "other": null
+        }
+      },
+      {
+        "id": "failures",
+        "kind": "http",
+        "title": "Buscar fallas",
+        "connectionId": "11111111-1111-1111-1111-111111111111",
+        "method": "GET",
+        "path": "/failures",
+        "query": [],
+        "body": null,
+        "timeoutSeconds": 10,
+        "okWhen": null,
+        "mapping": [
+          {
+            "from": "$",
+            "to": "fallas"
+          }
+        ],
+        "sampleResponse": [
+          {
+            "id": 3,
+            "description": "No enciende"
+          },
+          {
+            "id": 4,
+            "description": "Fuga de agua"
+          }
+        ],
+        "outputs": {
+          "ok": "failure",
+          "error": "handoff"
+        }
+      },
+      {
+        "id": "failure",
+        "kind": "list",
+        "title": "¿Qué falla tiene?",
+        "text": "¿Qué falla presenta el calentador?",
+        "buttonLabel": "Ver fallas",
+        "options": {
+          "kind": "dynamic",
+          "collection": "fallas",
+          "idField": "id",
+          "titleField": "description",
+          "descriptionField": null,
+          "extraOption": null
+        },
+        "saveTo": "falla",
+        "fallback": "repeat",
+        "outputs": {
+          "chosen": "contact-name",
+          "tooMany": "handoff",
+          "other": null
+        }
+      },
+      {
+        "id": "maintenance-service",
+        "kind": "http",
+        "title": "Servicio de mantenimiento",
+        "connectionId": "11111111-1111-1111-1111-111111111111",
+        "method": "GET",
+        "path": "/services",
+        "query": [
+          {
+            "key": "name",
+            "value": "STM"
+          }
+        ],
+        "body": null,
+        "timeoutSeconds": 10,
+        "okWhen": null,
+        "mapping": [
+          {
+            "from": "$[0]",
+            "to": "servicio"
+          }
+        ],
+        "sampleResponse": [
+          {
+            "id": 2,
+            "name": "STM",
+            "description": "Servicio técnico de mantenimiento"
+          }
+        ],
+        "outputs": {
+          "ok": "maintenance-failure",
+          "error": "handoff"
+        }
+      },
+      {
+        "id": "maintenance-failure",
+        "kind": "http",
+        "title": "Falla de mantenimiento",
+        "connectionId": "11111111-1111-1111-1111-111111111111",
+        "method": "GET",
+        "path": "/failures",
+        "query": [
+          {
+            "key": "cause",
+            "value": "MANTENIMIENTO"
+          }
+        ],
+        "body": null,
+        "timeoutSeconds": 10,
+        "okWhen": null,
+        "mapping": [
+          {
+            "from": "$[0]",
+            "to": "fallaMantenimiento"
+          }
+        ],
+        "sampleResponse": [
+          {
+            "id": 9,
+            "description": "Mantenimiento"
+          }
+        ],
+        "outputs": {
+          "ok": "contact-name",
+          "error": "handoff"
+        }
+      },
+      {
+        "id": "contact-name",
+        "kind": "openQuestion",
+        "title": "Nombre de contacto",
+        "text": "¿Cómo se llama la persona de contacto para la visita?",
+        "saveTo": "contacto",
+        "validation": {
+          "kind": "none"
+        },
+        "maxAttempts": null,
+        "outputs": {
+          "answered": "contact-phone",
+          "invalid": null
+        }
+      },
+      {
+        "id": "contact-phone",
+        "kind": "openQuestion",
+        "title": "Teléfono de contacto",
+        "text": "¿A qué número la llamamos?",
+        "saveTo": "telefonoContacto",
+        "validation": {
+          "kind": "digits"
+        },
+        "maxAttempts": null,
+        "outputs": {
+          "answered": "which-order",
+          "invalid": null
+        }
+      },
+      {
+        "id": "which-order",
+        "kind": "condition",
+        "title": "¿Mantenimiento?",
+        "match": "all",
+        "rules": [
+          {
+            "variable": "motivo.id",
+            "operator": "equals",
+            "value": "maint"
+          }
+        ],
+        "outputs": {
+          "yes": "maintenance-order",
+          "no": "service-type"
+        }
+      },
+      {
+        "id": "service-type",
+        "kind": "http",
+        "title": "Tipo de servicio",
+        "connectionId": "11111111-1111-1111-1111-111111111111",
+        "method": "GET",
+        "path": "/service-orders/auto-select-service-type",
+        "query": [
+          {
+            "key": "invoiceItemId",
+            "value": "{equipo.id}"
+          }
+        ],
+        "body": null,
+        "timeoutSeconds": 10,
+        "okWhen": null,
+        "mapping": [
+          {
+            "from": "$",
+            "to": "servicio"
+          }
+        ],
+        "sampleResponse": {
+          "id": 1,
+          "name": "STT",
+          "description": "Servicio técnico"
+        },
+        "outputs": {
+          "ok": "create-order",
+          "error": "handoff"
+        }
+      },
+      {
+        "id": "create-order",
+        "kind": "http",
+        "title": "Crear orden",
+        "connectionId": "11111111-1111-1111-1111-111111111111",
+        "method": "POST",
+        "path": "/service-orders",
+        "query": [],
+        "body": {
+          "kind": "json",
+          "template": "{ \"customerId\": {cliente.id}, \"failureId\": {falla.item.id}, \"serviceId\": {servicio.id}, \"invoiceItems\": [ { \"id\": \"{equipo.id}\", \"contact\": \"{contacto}\", \"optionalPhone\": \"{telefonoContacto}\", \"update\": true } ] }"
+        },
+        "timeoutSeconds": 10,
+        "okWhen": null,
+        "mapping": [
+          {
+            "from": "$",
+            "to": "orden"
+          }
+        ],
+        "sampleResponse": {
+          "id": 55
+        },
+        "outputs": {
+          "ok": "summary",
+          "error": "order-error"
+        }
+      },
+      {
+        "id": "summary",
+        "kind": "resolve",
+        "title": "Resumen",
+        "text": "Resumen de la solicitud:\n\nServicio: {servicio.description}\nTipo de daño: {falla.title}\nNombre de contacto: {contacto}\nNúmero de contacto: {telefonoContacto}\nNúmero de identificación: {cedula}\nDirección de visita: {equipo.item.address}\n\nGracias por contactarnos. Tu servicio será atendido con la orden N° {orden.id}; un agente se comunicará contigo para confirmar la fecha y hora de la visita."
+      },
+      {
+        "id": "maintenance-order",
+        "kind": "http",
+        "title": "Crear orden de mantenimiento",
+        "connectionId": "11111111-1111-1111-1111-111111111111",
+        "method": "POST",
+        "path": "/service-orders",
+        "query": [],
+        "body": {
+          "kind": "json",
+          "template": "{ \"customerId\": {cliente.id}, \"failureId\": {fallaMantenimiento.id}, \"serviceId\": {servicio.id}, \"invoiceItems\": [ { \"id\": \"{equipo.id}\", \"contact\": \"{contacto}\", \"optionalPhone\": \"{telefonoContacto}\", \"update\": true } ] }"
+        },
+        "timeoutSeconds": 10,
+        "okWhen": null,
+        "mapping": [
+          {
+            "from": "$",
+            "to": "orden"
+          }
+        ],
+        "sampleResponse": {
+          "id": 56
+        },
+        "outputs": {
+          "ok": "maintenance-summary",
+          "error": "order-error"
+        }
+      },
+      {
+        "id": "maintenance-summary",
+        "kind": "resolve",
+        "title": "Resumen de mantenimiento",
+        "text": "Resumen de la solicitud:\n\nServicio: {servicio.description}\nNombre de contacto: {contacto}\nNúmero de contacto: {telefonoContacto}\nNúmero de identificación: {cedula}\nDirección de visita: {equipo.item.address}\n\nGracias por contactarnos. Tu servicio será atendido con la orden N° {orden.id}; un agente se comunicará contigo para confirmar la fecha y hora de la visita.\n\nEl mantenimiento te cubre desarme y limpieza general, calibración, lubricación y reparación, NO INCLUYE REPUESTOS.\nValor calentador de paso: $120.000\nValor calentador de acumulación: $150.000\nCalentador jacuzzi / generador de vapor: $150.000"
+      },
+      {
+        "id": "order-error",
+        "kind": "message",
+        "title": "No se pudo crear la orden",
+        "text": "No pudimos crear la orden: puede que ya exista una abierta para esa dirección o que haya un bloqueo. Te paso con un asesor.",
+        "outputs": {
+          "next": "handoff"
+        }
+      },
+      {
+        "id": "handoff",
+        "kind": "handoff",
+        "title": "Pasar a un asesor",
+        "text": "Te paso con un asesor."
+      }
+    ]
+  },
+  "layout": {
+    "positions": {
+      "policy-lookup": {
+        "x": 0,
+        "y": 0
+      },
+      "policy-check": {
+        "x": 320,
+        "y": 0
+      },
+      "policy": {
+        "x": 640,
+        "y": 0
+      },
+      "policy-save": {
+        "x": 960,
+        "y": 0
+      },
+      "welcome": {
+        "x": 1280,
+        "y": 0
+      },
+      "document": {
+        "x": 1600,
+        "y": 0
+      },
+      "find-customer": {
+        "x": 0,
+        "y": 180
+      },
+      "customer-found": {
+        "x": 320,
+        "y": 180
+      },
+      "not-found": {
+        "x": 640,
+        "y": 180
+      },
+      "not-found-options": {
+        "x": 960,
+        "y": 180
+      },
+      "new-first-name": {
+        "x": 1280,
+        "y": 180
+      },
+      "new-last-name": {
+        "x": 1600,
+        "y": 180
+      },
+      "new-address": {
+        "x": 0,
+        "y": 360
+      },
+      "new-neighborhood": {
+        "x": 320,
+        "y": 360
+      },
+      "new-city": {
+        "x": 640,
+        "y": 360
+      },
+      "new-failures": {
+        "x": 960,
+        "y": 360
+      },
+      "new-failure": {
+        "x": 1280,
+        "y": 360
+      },
+      "invoice-photo": {
+        "x": 1600,
+        "y": 360
+      },
+      "new-customer": {
+        "x": 0,
+        "y": 540
+      },
+      "registered": {
+        "x": 320,
+        "y": 540
+      },
+      "invoice-items": {
+        "x": 640,
+        "y": 540
+      },
+      "equipment": {
+        "x": 960,
+        "y": 540
+      },
+      "open-order-check": {
+        "x": 1280,
+        "y": 540
+      },
+      "open-order-notice": {
+        "x": 1600,
+        "y": 540
+      },
+      "other-address": {
+        "x": 0,
+        "y": 720
+      },
+      "other-address-handoff": {
+        "x": 320,
+        "y": 720
+      },
+      "service-kind": {
+        "x": 640,
+        "y": 720
+      },
+      "failures": {
+        "x": 960,
+        "y": 720
+      },
+      "failure": {
+        "x": 1280,
+        "y": 720
+      },
+      "maintenance-service": {
+        "x": 1600,
+        "y": 720
+      },
+      "maintenance-failure": {
+        "x": 0,
+        "y": 900
+      },
+      "contact-name": {
+        "x": 320,
+        "y": 900
+      },
+      "contact-phone": {
+        "x": 640,
+        "y": 900
+      },
+      "which-order": {
+        "x": 960,
+        "y": 900
+      },
+      "service-type": {
+        "x": 1280,
+        "y": 900
+      },
+      "create-order": {
+        "x": 1600,
+        "y": 900
+      },
+      "summary": {
+        "x": 0,
+        "y": 1080
+      },
+      "maintenance-order": {
+        "x": 320,
+        "y": 1080
+      },
+      "maintenance-summary": {
+        "x": 640,
+        "y": 1080
+      },
+      "order-error": {
+        "x": 960,
+        "y": 1080
+      },
+      "handoff": {
+        "x": 1280,
+        "y": 1080
+      }
+    }
+  }
+}
