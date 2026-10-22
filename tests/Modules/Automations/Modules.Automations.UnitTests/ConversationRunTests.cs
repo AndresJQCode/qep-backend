@@ -73,6 +73,15 @@ public sealed class ConversationRunTests
     }
 
     [Fact]
+    public void FinishRejectsARunThatAlreadyEnded()
+    {
+        var run = NewRun(RunState.Initial(RunVariables.Empty()));
+        run.Finish(RunStatus.Interrupted, null, Now);
+
+        Assert.Throws<InvalidOperationException>(() => run.Finish(RunStatus.Failed, "x", Now.AddMinutes(1)));
+    }
+
+    [Fact]
     public void FinishCannotLeaveTheRunAlive() =>
         Assert.Throws<ArgumentOutOfRangeException>(
             () => NewRun(RunState.Initial(RunVariables.Empty())).Finish(RunStatus.Waiting, null, Now));

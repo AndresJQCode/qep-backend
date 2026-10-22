@@ -107,6 +107,7 @@ internal sealed class ConversationRunRepository(AutomationsDbContext dbContext) 
 
     public async Task<ConversationRun?> FindLiveForUpdateAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
     {
+        RequireTransaction();
         var running = nameof(RunStatus.Running);
         var waiting = nameof(RunStatus.Waiting);
         var rows = await dbContext.Runs.FromSql($"""
@@ -115,6 +116,15 @@ internal sealed class ConversationRunRepository(AutomationsDbContext dbContext) 
             FOR UPDATE
             """).ToListAsync(cancellationToken);
         return rows.SingleOrDefault();
+    }
+
+    // Sin transacción el lock de fila se suelta al terminar la sentencia y otro barrido o entrante tomaría la misma fila sin avisar.
+    private void RequireTransaction()
+    {
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("Las lecturas FOR UPDATE exigen la transacción de BeginTransactionAsync.");
+        }
     }
 
     public Task<ConversationRun?> FindLatestAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
@@ -144,11 +154,8 @@ internal sealed class ConversationRunRepository(AutomationsDbContext dbContext) 
     public async Task<IReadOnlyList<ConversationRun>> ClaimAbandonedAsync(
         DateTimeOffset waitingBefore, int limit, CancellationToken cancellationToken)
     {
-        if (dbContext.Database.CurrentTransaction is null)
-        {
-            // Sin transacción el lock de fila se suelta al terminar la consulta y otro barrido tomaría las mismas filas.
-            throw new InvalidOperationException("ClaimAbandonedAsync exige la transacción de BeginTransactionAsync.");
-        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+        RequireTransaction();
 
         var waiting = nameof(RunStatus.Waiting);
         var cutoff = waitingBefore.ToUniversalTime();

@@ -4,8 +4,7 @@ using Modules.Automations.Domain.Engine;
 
 namespace Modules.Automations.Infrastructure.Persistence;
 
-/// <summary>SQL sobre <c>automations.conversation_runs</c>: el registro es interno de Infrastructure, así que Application lo lee por
-/// este puerto. La ventana del día ya viene en UTC desde el reloj del tenant.</summary>
+/// <summary>SQL sobre <c>automations.conversation_runs</c>: Application lo lee por este puerto, sin conocer el esquema. La ventana del día ya viene en UTC desde el reloj del tenant.</summary>
 internal sealed class ConversationRunQueries(AutomationsDbContext dbContext) : IConversationRunQueries
 {
     public async Task<IReadOnlyDictionary<Guid, (int Handled, int HandedOff)>> TodayAsync(

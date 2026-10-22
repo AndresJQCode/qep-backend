@@ -183,4 +183,102 @@ public sealed class RunsPersistenceTests
 
         Assert.Equal(AutomationsErrorCodes.RunAlreadyLive, error.Code);
     }
+
+    [Fact]
+    public async Task FindLiveForUpdateWithoutATransactionThrows()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var scope = factory.Services.CreateScope();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => scope.ServiceProvider.GetRequiredService<IConversationRunRepository>()
+                .FindLiveForUpdateAsync(Guid.CreateVersion7(), Guid.CreateVersion7(), Ct));
+    }
+
+    [Fact]
+    public async Task ClaimAbandonedRejectsANonPositiveLimit()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var scope = factory.Services.CreateScope();
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => scope.ServiceProvider.GetRequiredService<IConversationRunRepository>().ClaimAbandonedAsync(Now, 0, Ct));
+    }
+
+    [Fact]
+    public async Task VariablesAndTraceSurviveTheDatabase()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var conversationId = Guid.CreateVersion7();
+        var trace = new[] { new TraceEntry(Now, "ask", "openQuestion", TraceOutcomes.Waiting) };
+        var variables = RunVariables.Parse("""{"nombre":"José Ñandú","edad":42,"pedido":{"id":7,"items":["a","b"]}}""");
+        var run = ConversationRun.Start(
+            Guid.CreateVersion7(), tenantId, conversationId, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(),
+            new RunState(RunStatus.Waiting, "ask", 3, 1, variables, trace), Now);
+        await SeedAsync(factory, run);
+
+        using var scope = factory.Services.CreateScope();
+        var loaded = await scope.ServiceProvider.GetRequiredService<IConversationRunRepository>()
+            .FindLatestAsync(tenantId, conversationId, Ct);
+
+        var state = loaded!.ToState();
+        Assert.Equal("José Ñandú", state.Variables.TextOf("nombre"));
+        Assert.Equal("42", state.Variables.TextOf("edad"));
+        Assert.Equal("7", state.Variables.TextOf("pedido.id"));
+        Assert.Equal(trace, state.Trace);
+        Assert.Equal(3, state.StepNumber);
+        Assert.Equal(1, state.Attempts);
+    }
+
+    [Fact]
+    public async Task ASecondLiveRunInsideATransactionIsRejectedByTheIndex()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var conversationId = Guid.CreateVersion7();
+        await SeedAsync(factory, NewRun(tenantId, conversationId, RunStatus.Waiting, Now));
+
+        using var scope = factory.Services.CreateScope();
+        var unit = scope.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>();
+        await using var transaction = await unit.BeginTransactionAsync(Ct);
+        await scope.ServiceProvider.GetRequiredService<IConversationRunRepository>()
+            .AddAsync(NewRun(tenantId, conversationId, RunStatus.Running, Now), Ct);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() => unit.SaveChangesAsync(Ct));
+
+        Assert.Equal(AutomationsErrorCodes.RunAlreadyLive, error.Code);
+    }
+
+    // READ COMMITTED vuelve a evaluar el WHERE de la fila bloqueada cuando el primero commitea: si la dejó terminada, el segundo no la ve.
+    [Fact]
+    public async Task AfterTheFirstTransactionFinishesTheRunTheSecondFindsNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var conversationId = Guid.CreateVersion7();
+        await SeedAsync(factory, NewRun(tenantId, conversationId, RunStatus.Waiting, Now));
+
+        using var firstScope = factory.Services.CreateScope();
+        using var secondScope = factory.Services.CreateScope();
+        var firstUnit = firstScope.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>();
+        await using var first = await firstUnit.BeginTransactionAsync(Ct);
+        var live = await firstScope.ServiceProvider.GetRequiredService<IConversationRunRepository>()
+            .FindLiveForUpdateAsync(tenantId, conversationId, Ct);
+
+        await using var second = await secondScope.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().BeginTransactionAsync(Ct);
+        var waiting = secondScope.ServiceProvider.GetRequiredService<IConversationRunRepository>()
+            .FindLiveForUpdateAsync(tenantId, conversationId, Ct);
+        Assert.NotSame(waiting, await Task.WhenAny(waiting, Task.Delay(500, Ct)));
+
+        live!.Finish(RunStatus.Interrupted, null, Now.AddMinutes(1));
+        await firstUnit.SaveChangesAsync(Ct);
+
+        Assert.Null(await waiting.WaitAsync(TimeSpan.FromSeconds(10), Ct));
+    }
 }

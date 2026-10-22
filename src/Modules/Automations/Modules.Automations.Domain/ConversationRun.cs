@@ -92,6 +92,11 @@ public sealed class ConversationRun
     /// <summary>Termina la corrida por fuera del motor: <c>Interrupted</c>, <c>WindowClosed</c>, <c>Failed</c> o <c>Abandoned</c>.</summary>
     public void Finish(RunStatus status, string? failureCode, DateTimeOffset now)
     {
+        if (!IsLive)
+        {
+            throw new InvalidOperationException($"La corrida {Id} ya terminó como {Status}.");
+        }
+
         if (status is RunStatus.Running or RunStatus.Waiting)
         {
             throw new ArgumentOutOfRangeException(nameof(status), status, "Finish cierra la corrida; no puede dejarla viva.");

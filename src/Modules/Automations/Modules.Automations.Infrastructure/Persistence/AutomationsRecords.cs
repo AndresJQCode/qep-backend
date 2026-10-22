@@ -1,6 +1,6 @@
 namespace Modules.Automations.Infrastructure.Persistence;
 
-// Spec 2026-10-21 §4.2 y §5.2: filas de trabajo del motor, del bloque HTTP y del simulador. No son agregados: las escribe y las
+// Spec 2026-10-21 §4.2 y §5.2: filas de trabajo del bloque HTTP y del simulador. No son agregados: las escribe y las
 // lee la infraestructura (el worker del plan 2), así que viven acá y no en Domain.
 
 /// <summary>Una llamada del bloque HTTP, de una corrida o de una simulación. El path va interpolado y sin query: la query puede

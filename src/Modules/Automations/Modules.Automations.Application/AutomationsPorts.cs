@@ -60,7 +60,7 @@ public interface IChatbotTemplateRepository
     void Remove(ChatbotTemplate chatbotTemplate);
 }
 
-/// <summary>Lecturas sobre las corridas del motor (el registro es interno de Infrastructure).</summary>
+/// <summary>Lecturas sobre las corridas del motor (el esquema es de Infrastructure).</summary>
 public interface IConversationRunQueries
 {
     /// <summary>Corridas con <c>started_at</c> en la ventana, por chatbot: <c>Handled</c> todas, <c>HandedOff</c> las terminadas así.
@@ -106,12 +106,15 @@ public interface IAutomationsUnitOfWork
 {
     Task SaveChangesAsync(CancellationToken cancellationToken);
 
-    /// <summary>Abre la transacción de una unidad del motor. <see cref="SaveChangesAsync"/> la confirma; disponer el handle sin haber
-    /// guardado la deshace. Los <c>FOR UPDATE</c> y el lock por conversación sólo valen dentro de ella.</summary>
+    /// <summary>Abre la transacción de una unidad del motor. <see cref="SaveChangesAsync"/> la confirma y da la unidad por terminada:
+    /// un segundo guardado en el mismo scope corre sin la transacción ni los locks, así que el procesador guarda una sola vez por
+    /// unidad. Disponer el handle sin haber guardado la deshace. Los <c>FOR UPDATE</c> y el lock por conversación sólo valen dentro
+    /// de ella.</summary>
     Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken);
 
     /// <summary>D-M12: <c>pg_advisory_xact_lock</c> sobre la conversación, también cuando aún no tiene corrida que bloquear (dos
-    /// entrantes que la inician a la vez). Exige la transacción abierta.</summary>
+    /// entrantes que la inician a la vez). Exige la transacción abierta. Se toma primero y después se lee con
+    /// <see cref="IConversationRunRepository.FindLiveForUpdateAsync"/> (P2-R20).</summary>
     Task LockConversationAsync(Guid conversationId, CancellationToken cancellationToken);
 }
 
@@ -119,7 +122,8 @@ public interface IAutomationsUnitOfWork
 /// la transacción de <see cref="IAutomationsUnitOfWork.BeginTransactionAsync"/>.</summary>
 public interface IConversationRunRepository
 {
-    /// <summary>La corrida viva de la conversación, bloqueada con <c>SELECT … FOR UPDATE</c>.</summary>
+    /// <summary>La corrida viva de la conversación, bloqueada con <c>SELECT … FOR UPDATE</c>. Llamar antes a
+    /// <see cref="IAutomationsUnitOfWork.LockConversationAsync"/> (P2-R20). Exige la transacción abierta.</summary>
     Task<ConversationRun?> FindLiveForUpdateAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
 
     Task<ConversationRun?> FindLatestAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);

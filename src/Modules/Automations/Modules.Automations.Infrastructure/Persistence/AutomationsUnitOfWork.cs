@@ -12,6 +12,10 @@ namespace Modules.Automations.Infrastructure.Persistence;
 /// referencia Npgsql.</summary>
 internal sealed class AutomationsUnitOfWork(AutomationsDbContext dbContext) : IAutomationsUnitOfWork
 {
+    /// <summary>Primera clave del lock de dos claves: la fecha del plan. Cualquier constante sirve mientras ningún otro lock de dos
+    /// claves la use (hoy sólo está <c>TenantChangeLock.Namespace</c> = 20261008).</summary>
+    private const int ConversationLockNamespace = 20261022;
+
     public async Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken) =>
         await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
@@ -23,8 +27,10 @@ internal sealed class AutomationsUnitOfWork(AutomationsDbContext dbContext) : IA
             throw new InvalidOperationException("LockConversationAsync exige la transacción de BeginTransactionAsync.");
         }
 
+        // Forma de dos claves: es un espacio aparte del de una sola clave, donde viven UserLifecycleLockKey y PosSaleIdLock, así que
+        // ningún hash de ellos puede chocar con el de una conversación (mismo criterio de TenantChangeLock.cs:3-13).
         await dbContext.Database.ExecuteSqlAsync(
-            $"SELECT pg_advisory_xact_lock(hashtext({conversationId.ToString()}))", cancellationToken);
+            $"SELECT pg_advisory_xact_lock({ConversationLockNamespace}, hashtext({conversationId.ToString()}))", cancellationToken);
     }
 
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
