@@ -130,10 +130,25 @@ visita; IA; bots creados por el operador; migración de lulo-chat.
 
 | ID | Decisión | Motivo |
 | --- | --- | --- |
-| D-K1 | **`JwtAuthGuard` acepta JWT o clave de API** (header `x-api-key` igual a `BOT_API_KEY`): con clave, pone `req.user = { id: BOT_USER_ID, role: 'Administrador' }`. Sin `BOT_API_KEY` configurada, la rama de clave no existe. | Pedido del owner: reutilizar los endpoints que ya existen con un solo guard. Los 11 controladores que usan `JwtAuthGuard` quedan cubiertos sin tocarlos. |
-| D-K2 | **Usuario «bot»** real en la tabla `users` de Clasic (rol Administrador, nombre «Chatbot QEP»), porque `POST /service-orders` arma `createdBy` con `firstName + lastName` del `req.user.id`. | `service-orders.service.ts:create` lee el usuario por id. |
-| D-K3 | **`GET /customers` gana el filtro `phone`** (últimos 10 dígitos, como `findCustomersByPhone`). Es el único endpoint nuevo o cambiado. | Política de datos: hoy el bot la consulta por teléfono antes de tener la cédula. |
+| D-K1 | **`JwtAuthGuard` acepta JWT o clave de API** (header `x-api-key` igual a `BOT_API_KEY`): con clave, pone `req.user = { id: 0, role: 'Administrador' }` (D-K11; decía `BOT_USER_ID`). Sin `BOT_API_KEY` configurada, o con el token del pipeline sin resolver (`#{…}#`), la rama de clave no existe. | Pedido del owner: reutilizar los endpoints que ya existen con un solo guard. Los 11 controladores que usan `JwtAuthGuard` quedan cubiertos sin tocarlos. |
+| D-K2 | ~~**Usuario «bot»** real en la tabla `users` de Clasic~~. **Anulada por D-K11** (decidido en el plan 4, 2026-10-23): no hay usuario bot. | `POST /service-orders` sólo tomaba del usuario el `createdBy`, y sin usuario escribe `'Whatsapp'`, que es lo que ya escribía el bot. |
+| D-K3 | **`GET /customers` gana los filtros `phone` y `document`.** `phone`: últimos 10 dígitos, como `findCustomersByPhone`; el bot manda el `wa_id` completo (`57…`) y Clasic lo recorta; vacío responde 400 a propósito. `document` (decidido en la revisión final del plan 4, 2026-10-23): igualdad exacta sobre `identificationNumber`, 0 o 1 elemento. La respuesta es `{ items, totalCount }`. No son los únicos cambios en Clasic: ver D-K5, D-K6 y D-K9. | Política de datos: hoy el bot la consulta por teléfono antes de tener la cédula. `?identificationNumber=` es la búsqueda del admin y casa por subcadena (con «1» el bot leería a otra persona); el bot viejo buscaba exacto. QEP manda `telefono = ''` cuando la conversación no tiene `wa_id`: si Clasic ignorara el filtro vacío, el bot leería un cliente cualquiera y aceptaría la política en su nombre. |
 | D-K4 | **`POST /customers/new-customer` sigue público** y se usa tal cual: crea cliente, factura ficticia y orden en borrador. Su envío de la plantilla `solicitud_os_creada` por lulo-chat queda **pendiente de mover al envío proactivo** (spec 3) y, mientras lulo exista, sigue saliendo por ahí. | Fuera del alcance de este spec; se deja escrito. |
+
+D-K5 a D-K12, **decididas en el plan 4 (2026-10-22/23)**
+([`2026-10-22-constructor-de-chatbots-clasic-4.md`](../plans/2026-10-22-constructor-de-chatbots-clasic-4.md)), donde está el
+detalle de cada una:
+
+| ID | Decisión | Motivo |
+| --- | --- | --- |
+| D-K5 | **`new-customer` guarda el teléfono como sus últimos 10 dígitos**, con el mismo helper del filtro `phone`. | El motor manda `{telefono}` como `573004445566`; sin esto, un cliente creado por el bot nunca se encuentra por teléfono. |
+| D-K6 | **`GET /services` gana el filtro `name` y `GET /failures` el filtro `cause`**, de igualdad exacta y sensibles a mayúsculas (`STM`, `MANTENIMIENTO`); los dos responden el arreglo en la raíz. | El flujo no puede filtrar una lista por campo; ids fijos en el flujo cambiarían por ambiente. |
+| D-K7 | **La ciudad del cliente nuevo va como texto en `addressDescription` («Ciudad: …»)**, y `departmentId`/`cityId` van fijos en el bloque HTTP (`5` / `5001000`, Antioquia / Medellín), editables en el editor. No hay lista de departamentos ni de ciudades. | Una lista de WhatsApp tiene 10 filas; Colombia tiene 33 departamentos. La orden nace en borrador y un agente la confirma, como hoy. |
+| D-K8 | **«Otra dirección» de un cliente existente termina en un asesor**, después de pedir la dirección como texto (queda en «Datos capturados»). | `new-customer` rechaza un documento ya registrado. |
+| D-K9 | **`PUT /customers/{id}` acepta cuerpo parcial** y, con `acceptPolicy: "true"` sin fecha, pone `acceptPolicyDate` él mismo. **`POST /service-orders` sin `serviceDate` usa la fecha actual.** | El motor no tiene variable «ahora»; los dos endpoints rompían con campos ausentes. |
+| D-K10 | **La ruta de prueba de la conexión «API externa» es `/failures`.** | El probador sólo mira el status: la ruta tiene que estar protegida. `/services`, `/departments/*` y `/health/*` son públicas; `testPath` no admite query. |
+| D-K11 | **No hay usuario bot (anula D-K2).** El guard pone `{ id: 0, role: 'Administrador' }` y `POST /service-orders` escribe `createdBy = 'Whatsapp'` cuando no hay usuario. | Menor impacto en Clasic; es la misma marca que deja hoy el bot. |
+| D-K12 | **La clave va al ConfigMap de Clasic, sin Secret**: `BOT_API_KEY` en el pod, desde la variable secreta `CLASIC_BOT_API_KEY` del grupo `Backend-prod`. | Decisión del owner: en Clasic no se trabaja con Secrets en los YAML. |
 
 ## 3. Trazabilidad: historias → componentes
 
@@ -149,7 +164,7 @@ visita; IA; bots creados por el operador; migración de lulo-chat.
 | 8 | «Como asesor, cuando el bot me la pasa, la veo en la bandeja y el bot se calla» | efecto `Handoff` → `PauseAutomation(null, Handoff)`, `notify` |
 | 9 | «Como admin, pruebo el borrador sin gastar mensajes» | `automations.simulations`, pestaña Simular |
 | 10 | «Como admin, guardo mi flujo como plantilla y lo reutilizo» | `chatbot_templates`, `POST …/save-as-template` |
-| 11 | «Como Clasic, QEP consume mi API con una clave» | `JwtAuthGuard` dual, usuario bot, filtro `phone` |
+| 11 | «Como Clasic, QEP consume mi API con una clave» | `JwtAuthGuard` dual, filtros `phone` y `document` (sin usuario bot: D-K11) |
 
 ## 4. Backend: módulo `Automations`
 
@@ -533,15 +548,19 @@ AH-01..AH-09) para el chip y los botones del asistente en la bandeja; lo de este
 
 ## 10. Clasic (`calentadores-classic-backend`)
 
+Corregido en el plan 4 (2026-10-22/23): sin usuario bot (D-K11) y sin Secret (D-K12).
+
 - `src/auth/guards/jwt-auth.guard.ts`: `canActivate` mira `x-api-key`; si coincide con `BOT_API_KEY`
-  (comparación de tiempo constante), pone `request.user = { id: Number(BOT_USER_ID), role: 'Administrador' }` y
-  devuelve `true`; si no, delega en `super.canActivate`. Variables en `configurations.ts`, `.env.example` y
-  `k8s/prod-configMap.yaml` (el valor de la clave en el Secret del clúster, nunca en el ConfigMap).
-- `CustomersQueryDto` gana `phone?: string`; `UsersService.findAllByRoleId` filtra por los últimos 10 dígitos
-  cuando viene.
-- Usuario «Chatbot QEP» creado por migración de datos (Prisma seed) con rol Administrador y sin credenciales
-  utilizables.
-- Contrato que QEP consume, en el Anexo C. Nada más cambia.
+  (comparación de tiempo constante), pone `request.user = { id: 0, role: 'Administrador' }` y devuelve `true`; si no,
+  delega en `super.canActivate`. Variable en `configurations.ts`, `.env.example` y `k8s/prod-configMap.yaml`, donde
+  el valor es el token `#{CLASIC_BOT_API_KEY}#` que el pipeline sustituye desde el grupo `Backend-prod` (D-K12); el
+  token sin resolver apaga la rama de clave.
+- `CustomersQueryDto` gana `phone?: string` (últimos 10 dígitos; vacío es 400) y `document?: string` (igualdad exacta)
+  (D-K3); `new-customer` guarda el teléfono en 10 dígitos (D-K5).
+- `GET /services?name=` y `GET /failures?cause=` (D-K6); `PUT /customers/{id}` parcial y `POST /service-orders` sin
+  `serviceDate` ni usuario (D-K9, D-K11).
+- No hay usuario «Chatbot QEP» ni migración de datos (D-K11).
+- Contrato que QEP consume, en el Anexo C.
 
 ## 11. Despliegue y orden de construcción
 
@@ -556,7 +575,8 @@ Backend QEP primero, en este orden, cada fase mergeable sola a `develop`:
 5. **Integrations + bloque HTTP:** proveedor `external-api`, política de URL, ejecutor, `http_calls`.
 6. **Simulador.**
 7. **Frontend** (sobre AH-01..09).
-8. **Clasic:** guard, filtro, usuario bot; conexión «API externa» creada en el tenant Clasic; flujo importado.
+8. **Clasic:** guard, filtros y ajustes de la API (sin usuario bot: D-K11); conexión «API externa» creada en el tenant
+   Clasic; flujo importado. El paso a paso está en el README de `qep-backend`, § «Clasic: conexión, importación y corte».
 9. **Corte:** el número de Clasic pasa de lulo-chat a QEP (webhook de Meta apuntando a QEP) con el chatbot
    activo; lulo-chat deja de reenviar.
 
@@ -587,8 +607,9 @@ migrar. `docs/estado.md` se actualiza en `develop` al mergear cada fase.
 - **ArchitectureTests:** `AutomationsLayerTests`, `CompositionRootTests` (handlers registrados).
 - **Frontend:** por ruta con `render-route.tsx`: carga, vacío, error y éxito de lista, creación, editor
   (autoguardado 412, validación, publicar 422), simulador; bandeja con autoría bot y chip de paso.
-- **Clasic (Jest):** `JwtAuthGuard` acepta clave correcta, rechaza incorrecta, sin `BOT_API_KEY` ignora el
-  header; `GET /customers?phone=` filtra.
+- **Clasic:** sin pruebas automáticas (decisión del developer, 2026-10-23: no se instala Jest ni se escriben pruebas
+  unitarias en Clasic por ahora). Cada cambio se verifica a mano con `curl.exe` contra la app local; lo que el flujo espera
+  de la API lo fijan `ClasicFlowTests` y `ClasicFlowEndToEndTests` en QEP, contra el contrato del Anexo C.
 
 ## 13. Fuera de alcance
 
@@ -628,56 +649,67 @@ nombres de variable `^[a-z][a-zA-Z0-9]{0,39}$`; los `id` de botón y fila `^[a-z
 ## Anexo B. El flujo de Clasic en bloques
 
 Derivado de `calentadores-classic-backend/src/whatsapp-bot/step-services` (2026-10-21). Se carga por
-`POST /chatbots/import` en el tenant Clasic y se ajusta desde el editor.
+`POST /chatbots/import` en el tenant Clasic y se ajusta desde el editor. **Corregido en el plan 4 (2026-10-22/23)**: el flujo
+importable es `tests/Modules/Automations/Modules.Automations.IntegrationTests/Fixtures/clasic.json` (41 bloques; los ids entre
+paréntesis son los suyos), y donde este anexo y el fixture discrepen, gana el fixture.
 
 1. **Horario**? No: el bot actual atiende 24/7. Inicio `NewConversation`, reinicio «reiniciar», 3 intentos.
-2. **HTTP** `GET /customers?phone={telefono}` → `{clientePorTelefono}`. **Condición** «¿Aceptó la política?»
-   (`clientePorTelefono[0].acceptPolicy` es `true`) → sí: paso 4; no: paso 3.
-3. **Pregunta abierta** «Política de tratamiento de datos» (texto de `accept-policy.message.ts`), validación
-   `keywords: ["acepto"]`, `invalid` → repite. **HTTP** `PUT /customers/{clientePorTelefono[0].id}` con
-   `{ acceptPolicy: "true", sourceAcceptPolicy: "Whatsapp", acceptPolicyDate: now }` (sólo si el cliente
-   existe por teléfono; si no, se registra al crear).
-4. **Mensaje** bienvenida (`welcome.message.ts`). **Pregunta abierta** «Número de documento», `digits`,
-   `saveTo: cedula`.
-5. **HTTP** `GET /customers?identificationNumber={cedula}` → `{cliente}` (primer elemento). **Condición**
+2. **HTTP** `GET /customers?phone={telefono}` → `{clientesPorTelefono}` (`items`; `policy-lookup`). **Condición** «¿Aceptó
+   la política?» (`policy-check`, `match: any`): la lista vacía o `clientesPorTelefono[0].acceptPolicy` igual a `true` → paso 4;
+   si no, paso 3. Sólo se mira al **primer** cliente con ese teléfono (el bot viejo miraba a todos).
+3. **Pregunta abierta** «Política de datos» (texto de `accept-policy.message.ts`, tuteando), validación `keywords` («acepto»,
+   «acepto.», «si acepto», «sí acepto», «si, acepto», «sí, acepto»), `invalid` → repite. **HTTP**
+   `PUT /customers/{clientesPorTelefono[0].id}` con `{ "acceptPolicy": "true", "sourceAcceptPolicy": "Whatsapp" }`: Clasic
+   pone `acceptPolicyDate` (D-K9). Un teléfono que Clasic no conoce no tiene a quién guardarle la aceptación y salta al paso 4.
+4. **Mensaje** bienvenida (`welcome`, con la palabra REINICIAR; no repite el saludo de la política). **Pregunta abierta**
+   «Número de documento», `digits`, `saveTo: cedula`.
+5. **HTTP** `GET /customers?document={cedula}` (filtro exacto, D-K3) → `{cliente}` (`items[0]`). **Condición**
    «¿Cliente encontrado?» → no: paso 6; sí: paso 7.
-6. **Mensaje** «Usuario no encontrado» con botón URL «Registrarme» (app.clasic.com.co/registro-clientes) y
-   **Botones** «Dejar mis datos» / «Ingresar otro documento» → otro documento: vuelve al paso 4; dejar datos:
-   subflujo de registro: **Pregunta abierta** nombre, documento, dirección y barrio, **Lista** de departamento
-   (`GET /departments/all`) y **Lista** de ciudad (`GET /cities?departmentId=`, Anexo C), **Pregunta abierta**
-   calentador y falla, **Pedir adjunto** factura, **HTTP** `POST /customers/new-customer` (multipart) → **Resolver**
-   «Recibimos tus datos».
+6. **Mensaje** «Usuario no encontrado» con botón URL «Registrarme» (app.clasic.com.co/registro-clientes) y **Botones**
+   «Dejar mis datos» / «Otro documento» (el tope de un botón es 20 caracteres) → otro documento: vuelve a la pregunta del
+   documento; dejar datos: **Pregunta abierta** nombres, apellidos, dirección, barrio y **ciudad como texto** (D-K7: sin
+   lista de departamentos ni de ciudades), **HTTP** `GET /failures` y **Lista** dinámica de fallas, **Pedir adjunto**
+   factura, **HTTP** `POST /customers/new-customer` (multipart, con `addressDescription` = «Ciudad: {ciudad}» y
+   `departmentId`/`cityId` fijos `5` / `5001000`) → **Resolver** «Recibimos tus datos» con el `serviceOrderNumber`.
 7. **HTTP** `GET /invoices/customer/{cliente.id}/all-invoice-items` → `{equipos}`. **Lista** «¿Cuál equipo?»
-   dinámica (`referenceCode` / `address`, filtrando `haveOrderOpen` falso en la Condición previa o avisando),
-   extra «Otra dirección» → subflujo del paso 6 desde «dirección».
-8. **Condición** «¿Tiene orden abierta?» (`equipo.haveOrderOpen`) → sí: **Mensaje** «Existe una orden abierta
-   para esa dirección» y vuelve a la Lista; no: paso 9.
-9. **Botones** «¿Qué tipo de servicio?» Servicio técnico / Mantenimiento → técnico: **Lista** fija de fallas
-   (`GET /failures` como dinámica); mantenimiento: falla «Mantenimiento».
+   dinámica (`referenceCode` / `address`), extra «Otra dirección» → **Pregunta abierta** con la dirección, el barrio y la
+   ciudad → **Pasar a un asesor** (D-K8; la dirección queda en «Datos capturados»).
+8. **Condición** «¿Tiene orden abierta?» (`equipo.item.haveOrderOpen`) → sí: **Mensaje** «Ya hay una orden de servicio
+   abierta para esa dirección» y vuelve a la Lista; no: paso 9.
+9. **Botones** «¿Qué tipo de servicio?» Servicio técnico / Mantenimiento → técnico: **HTTP** `GET /failures` y **Lista**
+   dinámica de fallas; mantenimiento: **HTTP** `GET /services?name=STM` → `{servicio}` y `GET /failures?cause=MANTENIMIENTO`
+   → `{fallaMantenimiento}` (los dos `$[0]`, D-K6).
 10. **Pregunta abierta** nombre de contacto y **Pregunta abierta** teléfono de contacto (`digits`).
-11. **HTTP** `GET /service-orders/auto-select-service-type?invoiceItemId={equipo.id}` (técnico) o `GET /services`
-    y tomar `STM` (mantenimiento) → `{servicio}`. **HTTP** `POST /service-orders` con `customerId`, `failureId`,
-    `serviceId`, `serviceDate`, `invoiceItems: [{ id, contact, optionalPhone, update: true }]` → `ok`:
-    **Resolver** con el resumen (`summary.message.ts`); `error` (409 orden abierta, 400 bloqueado): **Mensaje**
-    y **Pasar a un asesor**.
+11. **Dos bloques de crear orden**, según el motivo. Técnico: **HTTP** `GET /service-orders/auto-select-service-type?invoiceItemId={equipo.id}`
+    → `{servicio}` y **HTTP** `POST /service-orders` (`create-order`) con `customerId`, `failureId` (la falla elegida),
+    `serviceId`, `invoiceItems: [{ id, contact, optionalPhone, update: true }]` → **Resolver** con el resumen
+    (`summary.message.ts`). Mantenimiento: **HTTP** `POST /service-orders` (`maintenance-order`) con
+    `failureId = {fallaMantenimiento.id}` → **Resolver** con el resumen sin «Tipo de daño» y con los precios del
+    mantenimiento. Ninguno manda `serviceDate` (D-K9). `error` de cualquiera de los dos (409 orden abierta, 400 bloqueado):
+    **Mensaje** y **Pasar a un asesor**. Todo otro bloque HTTP que sale por `error` pasa a un asesor.
 
 Lo que el bot de hoy hace y acá cambia de forma: el correo de cliente nuevo se reemplaza por `new-customer`
-(crea la orden en borrador y es lo que ya usa el formulario web); la ciudad deja de ser texto libre.
+(crea la orden en borrador y es lo que ya usa el formulario web), y el correo de «otra dirección» por un asesor (D-K8). La
+ciudad **sigue** siendo texto libre (D-K7; este anexo decía lo contrario).
 
 ## Anexo C. Contrato de la API de Clasic que consume QEP
 
-Todos con header `x-api-key: <BOT_API_KEY>` (D-K1). Rutas relativas a la `baseUrl` de la conexión.
+**Corregido contra el código de Clasic en el plan 4 (2026-10-22/23).** Rutas relativas a la `baseUrl` de la conexión
+(`https://api-clasic.qcode.co`). Las protegidas por `JwtAuthGuard` reciben el header `x-api-key: <BOT_API_KEY>` (D-K1) y actúan
+como `{ id: 0, role: 'Administrador' }` (D-K11); el bloque HTTP manda la clave en todas, también en las públicas.
 
-| Uso | Método y ruta | Entrada | Salida que usa el flujo |
-| --- | --- | --- | --- |
-| Cliente por teléfono | `GET /customers?phone={10 dígitos}` | — | `data[0].id`, `.acceptPolicy` (**nuevo filtro**, D-K3) |
-| Cliente por cédula | `GET /customers?identificationNumber=` | — | `data[0].id`, `.firstName`, `.lastName`, `.acceptPolicy` |
-| Aceptar política | `PUT /customers/{id}` | `UpdateCustomerRequestDto` con `acceptPolicy`, `sourceAcceptPolicy: "Whatsapp"`, `acceptPolicyDate` | 200 |
-| Direcciones | `GET /invoices/customer/{id}/all-invoice-items` | — | `[].id`, `.referenceCode`, `.address`, `.neighborhood`, `.city.name`, `.haveOrderOpen`, `.isLocked` |
-| Fallas / servicios | `GET /failures`, `GET /services`, `GET /service-orders/auto-select-service-type?invoiceItemId=` | — | `[].id`, `.description` / `.name` |
-| Departamentos y ciudades | `GET /departments/all`, `GET /cities?departmentId=` | — | `[].id`, `.name` (verificar la ruta de ciudades al construir) |
-| Crear orden | `POST /service-orders` | `CreateServiceOrderDto` | `id`; 409 orden abierta; 400 cliente o dirección bloqueados |
-| Cliente nuevo | `POST /customers/new-customer` (multipart) | `CreateCustomerWhatsappDto` + `file` | `serviceOrderNumber` |
+| Uso | Método y ruta | Acceso | Entrada | Salida que usa el flujo |
+| --- | --- | --- | --- | --- |
+| Cliente por teléfono | `GET /customers?phone={telefono}` | protegida | `wa_id` completo; Clasic compara los últimos 10 dígitos; vacío es 400 (D-K3) | `items[0].id`, `.acceptPolicy`; `totalCount` |
+| Cliente por cédula | `GET /customers?document={cedula}` | protegida | igualdad exacta, 0 o 1 elemento (D-K3) | `items[0].id` (vacío: «Usuario no encontrado») |
+| Aceptar política | `PUT /customers/{id}` | protegida (Administrador) | cuerpo parcial `{ "acceptPolicy": "true", "sourceAcceptPolicy": "Whatsapp" }`; Clasic pone `acceptPolicyDate` (D-K9) | 200 |
+| Direcciones | `GET /invoices/customer/{id}/all-invoice-items` | protegida | — | `[].id`, `.referenceCode`, `.address`, `.haveOrderOpen` |
+| Fallas | `GET /failures`, `GET /failures?cause=MANTENIMIENTO` | protegida (es la ruta de prueba, D-K10) | `cause` exacto y sensible a mayúsculas (D-K6) | arreglo en la raíz: `[].id`, `.description` |
+| Servicio de mantenimiento | `GET /services?name=STM` | pública | `name` exacto y sensible a mayúsculas (D-K6) | arreglo en la raíz: `[0].id`, `.description` |
+| Servicio técnico | `GET /service-orders/auto-select-service-type?invoiceItemId=` | protegida | — | objeto: `id`, `.description` |
+| Crear orden | `POST /service-orders` | protegida | `customerId`, `failureId`, `serviceId`, `invoiceItems: [{ id, contact, optionalPhone, update: true }]`; sin `serviceDate` usa ahora (D-K9) | `id`; 409 orden abierta; 400 cliente o dirección bloqueados. `createdBy = 'Whatsapp'` (D-K11) |
+| Cliente nuevo | `POST /customers/new-customer` | pública, multipart | `identificationNumber`, `firstName`, `lastName`, `address`, `neighborhood`, `addressDescription`, `phone`, `departmentId`, `cityId`, `failureId` + `file`; el teléfono se guarda en 10 dígitos (D-K5) | `serviceOrderNumber` |
 
-La forma exacta de `GET /customers` (paginada: `data`, `total`) se confirma contra `findAllByRoleId` al construir
-la fase 8; el flujo importado se ajusta a lo que responda.
+Fuera del contrato: `GET /departments/{id}` (pública) devuelve el departamento con sus `cities`, pero el flujo no la usa
+(D-K7), y **no existe** `GET /cities`. `GET /customers` sin filtro trae todos los clientes, y `?identificationNumber=` es la
+búsqueda del admin, por subcadena: el bot no la usa.

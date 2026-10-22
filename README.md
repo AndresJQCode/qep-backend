@@ -3065,6 +3065,136 @@ Desvíos de D-H8 y límites conocidos:
   escribir. Un mensaje a una simulación terminada la devuelve sin cambios, y una vencida (2 h) es 404
   `automations.simulation.expired` o `not_found` si ya se borró.
 
+#### Clasic: conexión, importación y corte
+
+El bot de WhatsApp de Clasic (spec 2026-10-21 Anexo B, plan 4) es el archivo
+`tests/Modules/Automations/Modules.Automations.IntegrationTests/Fixtures/clasic.json`: `{ "flow", "layout" }`, 41 bloques en
+cuadrícula, 12 de ellos HTTP y todos contra una sola conexión «API externa» con el id fijo
+`11111111-1111-1111-1111-111111111111`, que la importación cambia por la del tenant. `ClasicFlowTests` lo valida y
+`ClasicFlowEndToEndTests` lo corre de punta a punta contra el contrato real de la API de Clasic (spec, Anexo C). Lo que sigue
+son las fases 8 y 9 del spec §11, y todo es operación: en QEP no hay código ni migración que desplegar.
+
+Las variables que usan los comandos, una vez por sesión de PowerShell. Ninguna clave se escribe en la línea de comandos: se
+pide sin eco, así no queda en el historial.
+
+```powershell
+$api      = "https://qep-api.qcode.co"
+$tenantId = "<id del tenant Clasic>"
+# Tu sesión de QEP: DevTools de https://qep.qcode.co → Application → Cookies → qep_session. No la pegues en ningún otro lado.
+$env:QEP_SESSION = [Net.NetworkCredential]::new("", (Read-Host -AsSecureString "Cookie qep_session")).Password
+$auth = @("-b", "qep_session=$env:QEP_SESSION", "-H", "X-Tenant-Id: $tenantId", "-H", "X-Qep-Client: web")
+# Contra un host local con el stub, en vez de la cookie (el sujeto tiene que ser miembro activo del tenant):
+# $api = "http://localhost:5000"
+# $auth = @("-H", "X-Subject-Id: <id de usuario>", "-H", "X-Tenant-Id: $tenantId",
+#           "-H", "X-Permissions: automations.chatbot.manage,integrations.connection.read,integrations.connection.manage")
+```
+
+1. **En Clasic: variable y despliegue.** El paso a paso está en el README de `calentadores-classic-backend`, § «Chatbot de
+   QEP»: generar la clave, crearla como variable secreta `CLASIC_BOT_API_KEY` del grupo `Backend-prod` (el pipeline la escribe en
+   el ConfigMap como `BOT_API_KEY`; no hay Secret, D-K12) y desplegar. No hay migración de base: no existe un usuario bot
+   (D-K11, que anula D-K2), y las órdenes que crea el bot quedan con `createdBy = "Whatsapp"`, como hoy. Comprobación
+   después del despliegue:
+
+   ```powershell
+   $env:CLASIC_BOT_API_KEY = [Net.NetworkCredential]::new("", (Read-Host -AsSecureString "Clave del bot")).Password
+   curl.exe -s -o NUL -w "%{http_code}`n" https://api-clasic.qcode.co/failures                                      # 401
+   curl.exe -s -o NUL -w "%{http_code}`n" -H "x-api-key: $env:CLASIC_BOT_API_KEY" https://api-clasic.qcode.co/failures  # 200
+   ```
+
+   Un 401 en la segunda es que la clave no es la misma o que la variable no llegó al pod: el token `#{CLASIC_BOT_API_KEY}#` sin
+   resolver apaga el acceso por clave, a propósito.
+
+   Dos filtros de `GET /customers` (responde `{ "items": [...], "totalCount": n }`, no `data`/`total`) que el flujo usa tal
+   como están, y que no se «arreglan» en Clasic:
+
+   - **`document`** (igualdad exacta sobre el documento, 0 o 1 elemento) es el que busca al cliente por cédula.
+     `identificationNumber` es la búsqueda del admin y casa por **subcadena**: con «1» el bot leería el cliente, las
+     direcciones y la orden de otra persona.
+   - **`phone`** recibe el `wa_id` completo (`573004445566`) y Clasic compara los últimos diez dígitos. Con el valor vacío
+     responde **400 a propósito**: QEP manda `telefono = ''` cuando la conversación no tiene `wa_id`, y si Clasic ignorara el
+     filtro vacío el bot leería un cliente cualquiera y aceptaría la política en su nombre. Ese 400 sale por `error` del bloque
+     «Buscar cliente por teléfono» hacia el asesor.
+2. **Módulo `automations` del tenant Clasic**, desde la [consola de operador](#consola-de-operador) (el SQL de respaldo está
+   en [Módulos por tenant](#módulos-por-tenant)). Va **antes** que la conexión: el proveedor «API externa» sólo sale en el
+   catálogo de Integraciones con `automations` activo, y `automations` exige `messaging`.
+3. **Conexión «API externa»**, desde Integraciones del tenant Clasic:
+
+   | Campo | Valor |
+   | --- | --- |
+   | Nombre | `API de Clasic` |
+   | URL base (`baseUrl`) | `https://api-clasic.qcode.co` |
+   | Header (`authHeader`) | `x-api-key` |
+   | Ruta de prueba (`testPath`) | `/failures` (D-K10) |
+   | Clave (`apiKey`) | la de `CLASIC_BOT_API_KEY` |
+
+   La ruta de prueba tiene que ser una **protegida**: `/services`, `/departments/*` y `/health/*` son públicas en Clasic y
+   «probarían» bien con cualquier clave; `/customers` a secas devuelve todos los clientes, y `testPath` no admite query.
+   Crear y editar la conexión prueban la clave antes de guardar: una equivocada responde 422
+   `integrations.connection.credentials_rejected` en `secrets.apiKey` y no guarda nada. Haz esa prueba negativa una vez, con
+   la clave cambiada a propósito, y después guarda con la buena; «Probar» tiene que dar OK. El id de la conexión, para el
+   paso siguiente:
+
+   ```powershell
+   $connectionId = ((curl.exe -s @auth "$api/api/v1/tenants/$tenantId/integrations/connections" | ConvertFrom-Json).items |
+     Where-Object name -eq "API de Clasic").id
+   ```
+
+4. **Importar el chatbot.** Desde la raíz de `qep-backend`; el cuerpo es el de `POST …/automations/chatbots/import` (ver la
+   tabla de rutas), armado con el `flow` y el `layout` del fixture:
+
+   ```powershell
+   $clasicApi = "11111111-1111-1111-1111-111111111111"   # el id de conexión de los bloques HTTP del fixture
+   $fixture = Get-Content -Raw -Encoding UTF8 tests/Modules/Automations/Modules.Automations.IntegrationTests/Fixtures/clasic.json | ConvertFrom-Json
+   $export = [ordered]@{
+     schema = 1; name = "Clasic"; description = "Servicio técnico de calentadores."; trigger = "NewConversation"; keywords = @()
+     restartKeyword = "reiniciar"; maxAttempts = 3; flow = $fixture.flow; layout = $fixture.layout
+     externalApis = @([ordered]@{ id = $clasicApi; name = "API de Clasic"; status = "Active" })
+     exportedAt = (Get-Date).ToUniversalTime().ToString("o")
+   }
+   $body = [ordered]@{ export = $export; connectionMap = @{ $clasicApi = $connectionId } } | ConvertTo-Json -Depth 50
+   [IO.File]::WriteAllText((Join-Path $PWD "import.json"), $body)   # UTF-8 sin BOM, también en Windows PowerShell 5.1
+   curl.exe -s -o import-response.json -w "%{http_code}`n" -X POST "$api/api/v1/tenants/$tenantId/automations/chatbots/import" `
+     @auth -H "Content-Type: application/json" -d "@import.json"
+   (Get-Content -Raw import-response.json | ConvertFrom-Json).chatbot.id
+   ```
+
+   Responde `201` y el id del chatbot, que queda en `Draft` y sin conexión de WhatsApp. Un `409` es que el tenant ya tiene un
+   chatbot que se llama «Clasic». Borra `import.json` e `import-response.json` al terminar: no se commitean.
+5. **Revisar en el editor.** El bloque «Registrar cliente nuevo» manda `departmentId = 5` y `cityId = 5001000` (Antioquia,
+   Medellín, los ids de `departments.json`/`cities.json` de Clasic) para todo cliente nuevo: la ciudad que escribe el
+   cliente viaja como texto en `addressDescription` («Ciudad: …») y un agente la confirma por teléfono, porque una lista de
+   WhatsApp tiene 10 filas (D-K7). Si el owner quiere otros ids, se cambian ahí. Los avisos de bloque sin conectar
+   (`node.output_unconnected_optional`) son esperados; un error `http.connection_missing` es que el `connectionMap` no
+   encontró la conexión. Todavía **no** se publica: la conexión de WhatsApp de Clasic nace en el corte (paso 7).
+6. **Simular contra la API real, antes del corte.** En el simulador del editor, con «Llamar a la API de verdad» (`liveHttp:
+   true`), recorre el camino de un cliente que ya existe en Clasic hasta el resumen. **Crea una orden de verdad:** usa la
+   cédula de un cliente de prueba de Clasic y avísale a Clasic para que la anule. Dos cosas que conviene saber: el simulador
+   llama con `{telefono}` = `3000000000`, así que mira antes que `GET /customers?phone=3000000000` responda
+   `{"items":[],"totalCount":0}` (si no, la política se le pregunta a ese cliente y un «ACEPTO» se guarda en su ficha); y el
+   registro de un cliente nuevo no se puede probar en vivo, porque el simulador no sube el archivo de la factura
+   (`media_not_ready`, ver [Simulador](#simulador)).
+
+   ```powershell
+   curl.exe -s -H "x-api-key: $env:CLASIC_BOT_API_KEY" "https://api-clasic.qcode.co/customers?phone=3000000000"
+   ```
+
+7. **Corte del número.** En este orden y seguido:
+   1. El número de Clasic entra a QEP por **Embedded Signup** en Integraciones del tenant Clasic (ver
+      [Mensajería (WhatsApp Cloud)](#mensajería-whatsapp-cloud); es el paso 1 de §7 del spec de migración,
+      [`2026-10-21-migracion-lulo-chat-design.md`](docs/superpowers/specs/2026-10-21-migracion-lulo-chat-design.md)).
+      Desde ahí QEP recibe el webhook del número.
+   2. En el editor, ajustes del chatbot: se le asigna esa conexión de WhatsApp y se publica.
+      `Messaging:Automation:Enqueue` ya está prendido (`appsettings.json`). Con el disparador `NewConversation` el bot toma
+      la conversación que se abre o se reabre **después** de publicar: una que se abrió entre el Embedded Signup y la
+      publicación sigue sin bot hasta que se resuelva y vuelva a abrir, así que este paso va enseguida del anterior.
+   3. lulo-chat deja de reenviar los mensajes del número a `whatsapp-bot/webhook` de Clasic. Mientras los dos reciban,
+      contestan los dos bots: el spec de migración cuenta con que lulo siga recibiendo hasta que se apague (§7, paso 6), así
+      que este paso no se deja para después.
+
+   Lo que sigue saliendo por lulo, y por eso lulo no se apaga para este número todavía: la plantilla `solicitud_os_creada`
+   que manda Clasic al crear un cliente por `new-customer` (D-K4) y los avisos de visita, las dos hasta que exista el envío
+   proactivo (spec 3).
+
 ### Integración con Shopify
 
 Los pedidos de la tienda Shopify del tenant entran solos como pedidos de QEP (spec

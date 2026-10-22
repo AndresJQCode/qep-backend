@@ -185,12 +185,12 @@
   | `policy-check` | condition | `match: any`: `clientesPorTelefono isEmpty`; `clientesPorTelefono[0].acceptPolicy equals "true"` (`equals` compara `TextOf`, y un booleano es `true`; el bot viejo mira `every`, el flujo sólo mira al primero: se documenta; si `IsEmpty` no tratara una lista vacía, usar `countEquals "0"`) | yes `welcome`, no `policy` |
   | `policy` | openQuestion | texto de `accept-policy.message.ts` tuteando («Hola, te damos la bienvenida a CLASIC, especialistas en calentamiento de agua. Para continuar debes aceptar la política de tratamiento de datos: https://clasic.com.co/politica-de-privacidad/ Responde ACEPTO si la aceptas.»); `saveTo: aceptacion`; `validation: { kind: "keywords", keywords: ["acepto", "acepto.", "si acepto", "sí acepto", "si, acepto", "sí, acepto"] }`; `maxAttempts: null` | answered `policy-save`, invalid `null` |
   | `policy-save` | http | `PUT /customers/{clientesPorTelefono[0].id}`, body json `{ "acceptPolicy": "true", "sourceAcceptPolicy": "Whatsapp" }`, mapping `[]` | ok `welcome`, error `handoff` |
-  | `welcome` | message | texto de `welcome.message.ts` tuteando, con «Recuerda que puedes reiniciar la conversación en cualquier momento escribiendo *REINICIAR*.» | next `document` |
-  | `document` | openQuestion | «Para solicitar un servicio o una asistencia técnica, escribe tu número de documento.», `digits`, `saveTo: cedula` | answered `find-customer` |
-  | `find-customer` | http | `GET /customers`, query `identificationNumber={cedula}`, mapping `items[0]` → `cliente` | ok `customer-found`, error `handoff` |
+  | `welcome` | message | «Para solicitar un servicio o una asistencia técnica, te vamos a pedir unos datos. Recuerda que puedes reiniciar la conversación en cualquier momento escribiendo *REINICIAR*.» (sin el saludo de `policy`, tarea 7) | next `document` |
+  | `document` | openQuestion | «Escribe tu número de documento.» (tarea 7), `digits`, `saveTo: cedula` | answered `find-customer` |
+  | `find-customer` | http | `GET /customers`, query `document={cedula}` (filtro exacto; `identificationNumber` casa por subcadena: revisión final, 2026-10-23), mapping `items[0]` → `cliente` | ok `customer-found`, error `handoff` |
   | `customer-found` | condition | `cliente isNotEmpty` | yes `invoice-items`, no `not-found` |
   | `not-found` | message | texto de `document.service.ts:87` tuteando, `urlButton { "Registrarme", "https://app.clasic.com.co/registro-clientes" }` | next `not-found-options` |
-  | `not-found-options` | buttons | `leave` «Dejar mis datos», `other-doc` «Ingresar otro documento»; `fallback: repeat` | leave `new-first-name`, other-doc `document` |
+  | `not-found-options` | buttons | `leave` «Dejar mis datos», `other-doc` «Otro documento» (el validador corta un botón en 20 caracteres); `fallback: repeat` | leave `new-first-name`, other-doc `document` |
   | `new-first-name` … `new-city` | openQuestion ×5 | «¿Cuáles son tus nombres?» → `nombres`; «¿Y tus apellidos?» → `apellidos`; «Escribe la dirección donde está el calentador.» → `direccion`; «¿En qué barrio?» → `barrio`; «¿En qué ciudad?» → `ciudad`; todas `none` | cada una a la siguiente; la última a `new-failures` |
   | `new-failures` | http | `GET /failures`, mapping `$` → `fallas` | ok `new-failure`, error `handoff` |
   | `new-failure` | list | «¿Qué falla presenta el calentador?», botón «Ver fallas», dynamic `fallas` (`id`, `description`), `saveTo: falla`, `fallback: repeat` | chosen `invoice-photo`, tooMany `handoff` |
@@ -215,7 +215,7 @@
   | `summary` | resolve | el resumen de `summary.message.ts` tuteando y sin erratas: «Resumen de la solicitud:\n\nServicio: {servicio.description}\nTipo de daño: {falla.title}\nNombre de contacto: {contacto}\nNúmero de contacto: {telefonoContacto}\nNúmero de identificación: {cedula}\nDirección de visita: {equipo.item.address}\n\nGracias por contactarnos. Tu servicio será atendido con la orden N° {orden.id}; un agente se comunicará contigo para confirmar la fecha y hora de la visita.» | — |
   | `maintenance-order` | http | como `create-order` con `"failureId": {fallaMantenimiento.id}` | ok `maintenance-summary`, error `order-error` |
   | `maintenance-summary` | resolve | el mismo resumen sin «Tipo de daño» más el bloque de precios de `summary.message.ts` (desarme y limpieza…, $120.000, $150.000, $150.000) | — |
-  | `order-error` | message | «No pudimos crear la orden: puede que ya exista una abierta para esa dirección o que haya un bloqueo. Te paso con un asesor.» | next `handoff` |
+  | `order-error` | message | «No pudimos crear la orden: puede que ya exista una abierta para esa dirección o que haya un bloqueo.» (la frase del asesor la dice `handoff`, tarea 7) | next `handoff` |
   | `handoff` | handoff | «Te paso con un asesor.» | — |
 
   Los `{…}` de un cuerpo JSON siguen P2-R11: `{cliente.id}` suelto interpola el número; `"{equipo.id}"` entre comillas, el texto. `falla.id` es el id de la fila (texto) y `falla.item.id` el número del objeto: en el multipart va el texto; en el JSON, el número.

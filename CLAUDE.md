@@ -502,6 +502,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   mismo). Con `liveHttp` un bucle de HTTP puede tardar `25 × timeoutSeconds` en un solo request. El bloque HTTP del simulador usa
   `JsonPath.SelectResponse`, el mismo mapeo del ejecutor.
 - **Las plantillas del sistema de Automatizaciones se cargan al arrancar**: un JSON embebido roto tumba el host (a propósito).
+- **`GET /customers` de Clasic responde `items`/`totalCount`, no `data`/`total`, y el cliente se busca con `?document=`, no con
+  `?identificationNumber=`** (plan 4, 2026-10-23). `identificationNumber` es la búsqueda del admin y casa por subcadena: con «1» el
+  bot leería el cliente, las direcciones y la orden de otra persona; `document` es igualdad exacta. `?phone=` recibe el `wa_id`
+  completo (`57…`) y Clasic recorta a diez dígitos; con el valor vacío responde **400 a propósito** (QEP manda `telefono = ''` sin
+  `wa_id`, y un filtro vacío ignorado le aceptaría la política a un cliente cualquiera): ese 400 va por `error` al asesor, no se
+  «arregla» en Clasic. Y `/services` y `/departments/*` son públicas, así que la ruta de prueba de la conexión «API externa» tiene
+  que ser una protegida (`/failures`, D-K10): con una pública, «Probar» da OK con cualquier clave.
 
 ## Verificación
 
