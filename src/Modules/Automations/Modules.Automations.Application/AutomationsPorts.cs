@@ -16,6 +16,14 @@ public interface IChatbotRepository
     /// <c>Status</c> antes de responder.</summary>
     Task<Chatbot?> FindPublishedByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Lo que la lista pinta, proyectado y sin seguimiento: sin los jsonb del borrador ni de las versiones. Mismo orden y
+    /// mismo filtro que <see cref="ListAsync"/>.</summary>
+    Task<IReadOnlyList<ChatbotSummaryRow>> ListSummariesAsync(Guid tenantId, string? search, CancellationToken cancellationToken);
+
+    /// <summary>Qué chatbot publicado (activo o en pausa, D-C13) ocupa cada conexión: las filas activas de <c>chatbot_connections</c>.
+    /// Proyectado y sin seguimiento, para el <c>servedBy</c> del editor.</summary>
+    Task<IReadOnlyList<ChatbotServingConnection>> ListServingConnectionsAsync(Guid tenantId, CancellationToken cancellationToken);
+
     Task AddAsync(Chatbot chatbot, CancellationToken cancellationToken);
 
     void Remove(Chatbot chatbot);
@@ -23,6 +31,26 @@ public interface IChatbotRepository
     /// <summary>Misma regla que el índice único: <c>lower(name)</c> dentro del tenant.</summary>
     Task<bool> NameExistsAsync(Guid tenantId, string name, Guid? exceptId, CancellationToken cancellationToken);
 }
+
+/// <summary>Una fila de la lista de chatbots (§4.4). <see cref="PublishedNumber"/> y <see cref="PublishedAt"/> son los de la versión
+/// publicada, <c>null</c> mientras es borrador.</summary>
+public sealed record ChatbotSummaryRow(
+    Guid Id,
+    string Name,
+    string Description,
+    ChatbotStatus Status,
+    ChatbotTrigger Trigger,
+    IReadOnlyList<Guid> ConnectionIds,
+    int? PublishedNumber,
+    DateTimeOffset? PublishedAt,
+    DateTimeOffset DraftUpdatedAt,
+    long Version)
+{
+    public bool HasDraftChanges => Chatbot.DraftChangedSince(DraftUpdatedAt, PublishedAt);
+}
+
+/// <summary>La conexión <see cref="ConnectionId"/> la atiende el chatbot publicado <see cref="ChatbotId"/>.</summary>
+public sealed record ChatbotServingConnection(Guid ConnectionId, Guid ChatbotId, string Name);
 
 public interface IChatbotTemplateRepository
 {

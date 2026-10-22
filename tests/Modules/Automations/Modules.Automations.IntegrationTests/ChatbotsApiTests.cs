@@ -229,12 +229,15 @@ public sealed class ChatbotsApiTests
         var missing = await PutAsync(setup, url, body, null);
         var stale = await PutAsync(setup, url, body, editor.Chatbot.Version + 5);
         var draftMissing = await PutAsync(setup, $"{url}/draft", new SaveDraftRequest(editor.Draft.Flow, editor.Draft.Layout), null);
+        var draftStale = await PutAsync(setup, $"{url}/draft", new SaveDraftRequest(editor.Draft.Flow, editor.Draft.Layout), editor.Chatbot.Version + 5);
 
         Assert.Equal(HttpStatusCode.PreconditionRequired, missing.StatusCode);
         Assert.Equal("precondition.if_match_required", (await ProblemAsync(missing)).Code);
         Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
         Assert.Equal("concurrency.conflict", (await ProblemAsync(stale)).Code);
         Assert.Equal(HttpStatusCode.PreconditionRequired, draftMissing.StatusCode);
+        Assert.Equal(HttpStatusCode.PreconditionFailed, draftStale.StatusCode);
+        Assert.Equal("concurrency.conflict", (await ProblemAsync(draftStale)).Code);
         Assert.Equal("Servicio técnico", (await GetAsync(setup, editor.Chatbot.Id)).Chatbot.Name);
     }
 
@@ -378,6 +381,79 @@ public sealed class ChatbotsApiTests
         Assert.Equal(editor.Chatbot.Version, (await GetAsync(setup, editor.Chatbot.Id)).Chatbot.Version);
     }
 
+    // §4.4: el layout no se valida (D-C2) pero tiene tope; y los topes se miden en bytes UTF-8, no en caracteres.
+    [Fact]
+    public async Task SaveDraftRejectsAnOversizedLayoutAndMeasuresInBytes()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+        var bigLayout = $$"""{ "positions": {}, "note": "{{new string('a', 270_000)}}" }""";
+        // 200 000 «ñ» son 200 000 caracteres pero 400 000 bytes: pasa el tope de 256 KB sólo si se cuentan caracteres.
+        var multiByteLayout = $$"""{ "positions": {}, "note": "{{new string('ñ', 200_000)}}" }""";
+
+        var tooBig = await SaveDraftAsync(setup, editor, ChatbotLimits.BlankFlow, bigLayout);
+        // Crudo y sin escapar: JsonContent escribiría cada «ñ» como \u00f1 y la prueba ya no distinguiría bytes de caracteres.
+        var multiByte = await SendDraftBodyAsync(
+            setup, $"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/draft",
+            new StringContent($$"""{ "flow": {{ChatbotLimits.BlankFlow}}, "layout": {{multiByteLayout}} }""", System.Text.Encoding.UTF8, "application/json"),
+            editor.Chatbot.Version);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, tooBig.StatusCode);
+        Assert.Equal(("validation.failed", "layout"), await CodeAndKeyAsync(tooBig));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, multiByte.StatusCode);
+        Assert.Equal(("validation.failed", "layout"), await CodeAndKeyAsync(multiByte));
+        Assert.Equal(editor.Chatbot.Version, (await GetAsync(setup, editor.Chatbot.Id)).Chatbot.Version);
+    }
+
+    // El tope del cuerpo corta antes de leerlo entero: declarado de más (Content-Length) o sin declarar (chunked).
+    [Fact]
+    public async Task SaveDraftWithABodyOverTheCapIs413()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+        var url = $"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/draft";
+        var body = $$"""{ "flow": {{ChatbotLimits.BlankFlow}}, "layout": { "positions": {}, "note": "{{new string('a', 900_000)}}" } }""";
+
+        var declared = await SendDraftBodyAsync(setup, url, new StringContent(body, System.Text.Encoding.UTF8, "application/json"), editor.Chatbot.Version);
+        var chunked = await SendDraftBodyAsync(setup, url, new UnknownLengthContent(body), editor.Chatbot.Version);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, declared.StatusCode);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, chunked.StatusCode);
+        Assert.Equal(0L, await CountAsync(connectionString,
+            "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.draft_saved'", ("id", editor.Chatbot.Id.ToString())));
+    }
+
+    // Un borrador guardado que ya no se lee (dato viejo, cambio de esquema) abre el editor con un error en vez de un 500.
+    [Fact]
+    public async Task AStoredFlowThatNoLongerParsesIsAnIssueNotA500()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+        await ExecuteAsync(connectionString,
+            """UPDATE automations.chatbots SET draft_flow = '{"schema": 2, "start": {}, "nodes": []}'::jsonb WHERE id = @id""", ("id", editor.Chatbot.Id));
+
+        var reloaded = await GetAsync(setup, editor.Chatbot.Id);
+        var validate = await setup.Client.PostAsync($"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/validate", null, Ct);
+
+        var issue = Assert.Single(reloaded.Issues);
+        Assert.Equal(("Error", FlowFormatException.Malformed, (string?)null), (issue.Severity, issue.Code, issue.NodeId));
+        Assert.Equal(["nombre", "telefono", "empresa", "conexion"], reloaded.Variables);
+        Assert.Equal(HttpStatusCode.OK, validate.StatusCode);
+        Assert.Equal(reloaded.Issues, (await validate.Content.ReadFromJsonAsync<List<FlowIssueDto>>(Ct))!);
+    }
+
     [Fact]
     public async Task ValidateReturnsTheSameIssuesAsGet()
     {
@@ -389,18 +465,24 @@ public sealed class ChatbotsApiTests
         var editor = await CreateAsync(setup);
         var flow = JsonNode.Parse(AnnexA.Json)!;
         flow["nodes"]![0]!["outputs"]!["next"] = null;
-        Assert.Equal(HttpStatusCode.OK, (await SaveDraftAsync(setup, editor, flow.ToJsonString())).StatusCode);
+        var save = await SaveDraftAsync(setup, editor, flow.ToJsonString());
+        Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+        var saved = (await save.Content.ReadFromJsonAsync<DraftSavedDto>(Ct))!;
         using var reader = CreateClient(factory, setup.Tenant.OwnerUserId, setup.Tenant.TenantId, ReadPermissions);
+        const string auditSql = "SELECT count(*) FROM audit.entries WHERE resource_id = @id";
+        var auditBefore = await CountAsync(connectionString, auditSql, ("id", editor.Chatbot.Id.ToString()));
 
         var response = await reader.PostAsync($"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/validate", null, Ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var issues = (await response.Content.ReadFromJsonAsync<List<FlowIssueDto>>(Ct))!;
-        var reloaded = await GetAsync(setup, editor.Chatbot.Id);
         Assert.NotEmpty(issues);
-        Assert.Equal(reloaded.Issues, issues);
+        Assert.Equal(saved.Issues, issues);
         // Sin efectos: ni versión nueva ni auditoría.
-        Assert.Equal(reloaded.Chatbot.Version, (await GetAsync(setup, editor.Chatbot.Id)).Chatbot.Version);
+        var reloaded = await GetAsync(setup, editor.Chatbot.Id);
+        Assert.Equal(reloaded.Issues, issues);
+        Assert.Equal(saved.Version, reloaded.Chatbot.Version);
+        Assert.Equal(auditBefore, await CountAsync(connectionString, auditSql, ("id", editor.Chatbot.Id.ToString())));
     }
 
     [Fact]
@@ -422,6 +504,33 @@ public sealed class ChatbotsApiTests
         Assert.Equal((editor.Chatbot.Id, "Draft", true, new ChatbotTodayDto(0, 0)), (item.Id, item.Status, item.HasDraftChanges, item.Today));
         Assert.Equal(((int?)null, (DateTimeOffset?)null), (item.PublishedVersion, item.PublishedAt));
         Assert.Equal([setup.WhatsAppId], item.Connections.Select(connection => connection.Id));
+    }
+
+    private static Task<HttpResponseMessage> SendDraftBodyAsync(Setup setup, string url, HttpContent content, long version)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Put, url) { Content = content };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
+        return setup.Client.SendAsync(request, Ct);
+    }
+
+    /// <summary>Un cuerpo sin <c>Content-Length</c>, como uno chunked.</summary>
+    private sealed class UnknownLengthContent : HttpContent
+    {
+        private readonly byte[] _bytes;
+
+        public UnknownLengthContent(string body)
+        {
+            _bytes = System.Text.Encoding.UTF8.GetBytes(body);
+            Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        }
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => stream.WriteAsync(_bytes).AsTask();
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
     }
 
     private static async Task<(string? Code, string Key)> CodeAndKeyAsync(HttpResponseMessage response)

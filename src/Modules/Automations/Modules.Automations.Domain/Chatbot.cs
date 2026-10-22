@@ -174,9 +174,13 @@ public sealed class Chatbot
         get
         {
             var published = PublishedVersionId is null ? null : _versions.FirstOrDefault(version => version.Id == PublishedVersionId);
-            return published is null || DraftUpdatedAt > published.PublishedAt;
+            return DraftChangedSince(DraftUpdatedAt, published?.PublishedAt);
         }
     }
+
+    /// <summary>La regla de <see cref="HasDraftChanges"/> para quien lee sin el agregado (la lista proyectada): sin publicar, siempre.</summary>
+    public static bool DraftChangedSince(DateTimeOffset draftUpdatedAt, DateTimeOffset? publishedAt) =>
+        publishedAt is null || draftUpdatedAt > publishedAt;
 
     public Guid Id { get; private set; }
 

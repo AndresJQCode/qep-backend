@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using BuildingBlocks.Application;
 using FluentValidation;
@@ -37,11 +38,14 @@ public sealed record ValidateChatbotQuery(Guid TenantId, Guid ChatbotId) : IQuer
 /// <summary>Los límites del cuerpo (§4.4) y de los campos que comparten crear y editar.</summary>
 public static class ChatbotLimits
 {
-    /// <summary>§4.4: el borrador pesa a lo sumo 512 KB serializado.</summary>
+    /// <summary>§4.4: el borrador pesa a lo sumo 512 KB serializado, en bytes UTF-8 (lo que viaja y lo que guarda el jsonb).</summary>
     public const int FlowMaxLength = 512 * 1024;
 
-    /// <summary>Las posiciones no se validan (D-C2), pero no pueden crecer sin tope.</summary>
+    /// <summary>Las posiciones no se validan (D-C2), pero no pueden crecer sin tope. En bytes UTF-8.</summary>
     public const int LayoutMaxLength = 256 * 1024;
+
+    /// <summary>El tope del cuerpo de <c>PUT /draft</c>, antes de leerlo: flujo, posiciones y margen para el sobre JSON.</summary>
+    public const int DraftBodyMaxBytes = 800 * 1024;
 
     /// <summary>Brief de la tarea 14: cuántas conexiones puede atender un chatbot.</summary>
     public const int MaxConnections = 10;
@@ -129,14 +133,14 @@ public sealed class SaveChatbotDraftValidator : AbstractValidator<SaveChatbotDra
             .Cascade(CascadeMode.Stop)
             .Must(flow => flow.ValueKind == JsonValueKind.Object)
             .WithMessage(FlowFormatException.Malformed)
-            .Must(flow => flow.GetRawText().Length <= ChatbotLimits.FlowMaxLength)
+            .Must(flow => Encoding.UTF8.GetByteCount(flow.GetRawText()) <= ChatbotLimits.FlowMaxLength)
             .WithMessage($"The flow cannot exceed {ChatbotLimits.FlowMaxLength / 1024} KB.")
             .OverridePropertyName("flow");
         RuleFor(command => command.Layout)
             .Cascade(CascadeMode.Stop)
             .Must(layout => layout.ValueKind == JsonValueKind.Object)
             .WithMessage("The layout must be a JSON object.")
-            .Must(layout => layout.GetRawText().Length <= ChatbotLimits.LayoutMaxLength)
+            .Must(layout => Encoding.UTF8.GetByteCount(layout.GetRawText()) <= ChatbotLimits.LayoutMaxLength)
             .WithMessage($"The layout cannot exceed {ChatbotLimits.LayoutMaxLength / 1024} KB.")
             .OverridePropertyName("layout");
     }
@@ -147,15 +151,9 @@ internal static class ChatbotConnectionCheck
 {
     private const string WhatsApp = "WhatsApp";
 
-    public static async Task EnsureAsync(
-        IAutomationConnections connections, Guid tenantId, IReadOnlyList<Guid> connectionIds, CancellationToken cancellationToken)
+    public static void Ensure(IReadOnlyList<AutomationConnectionRef> tenantConnections, IReadOnlyList<Guid> connectionIds)
     {
-        if (connectionIds.Count == 0)
-        {
-            return;
-        }
-
-        var byId = (await connections.ListAsync(tenantId, cancellationToken)).ToDictionary(connection => connection.Id);
+        var byId = tenantConnections.ToDictionary(connection => connection.Id);
         foreach (var id in connectionIds)
         {
             if (!byId.TryGetValue(id, out var connection))
@@ -189,8 +187,8 @@ public sealed class ListChatbotsHandler(
     public async Task<ChatbotListResponse> HandleAsync(ListChatbotsQuery query, CancellationToken cancellationToken)
     {
         await AutomationsAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, AutomationsPermissions.ChatbotRead, cancellationToken);
-        var items = await chatbots.ListAsync(query.TenantId, query.Search, cancellationToken);
-        return await builder.BuildListAsync(query.TenantId, items, cancellationToken);
+        var rows = await chatbots.ListSummariesAsync(query.TenantId, query.Search, cancellationToken);
+        return await builder.BuildListAsync(query.TenantId, rows, cancellationToken);
     }
 }
 
@@ -226,7 +224,8 @@ public sealed class CreateChatbotHandler(
         await AutomationsAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AutomationsPermissions.ChatbotManage, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var by = await caller.RequireAsync(command.TenantId, cancellationToken);
-        await ChatbotConnectionCheck.EnsureAsync(connections, command.TenantId, command.ConnectionIds, cancellationToken);
+        var tenantConnections = await connections.ListAsync(command.TenantId, cancellationToken);
+        ChatbotConnectionCheck.Ensure(tenantConnections, command.ConnectionIds);
         await ChatbotConnectionCheck.EnsureNameIsFreeAsync(chatbots, command.TenantId, command.Name, null, cancellationToken);
 
         var now = clock.UtcNow;
@@ -238,7 +237,7 @@ public sealed class CreateChatbotHandler(
         audit.Record(command.TenantId, executionContext.SubjectId, false, AutomationsAuditActions.ChatbotCreated, AutomationsAuditActions.ResourceChatbot, chatbot.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await builder.BuildAsync(chatbot, cancellationToken);
+        return await builder.BuildAsync(chatbot, tenantConnections, cancellationToken);
     }
 }
 
@@ -263,7 +262,8 @@ public sealed class UpdateChatbotHandler(
         var chatbot = await chatbots.FindAsync(command.TenantId, command.ChatbotId, cancellationToken)
             ?? throw AutomationsNotFound.Chatbot(command.ChatbotId);
         AutomationsVersions.Ensure(chatbot.Version, command.Version);
-        await ChatbotConnectionCheck.EnsureAsync(connections, command.TenantId, command.ConnectionIds, cancellationToken);
+        var tenantConnections = await connections.ListAsync(command.TenantId, cancellationToken);
+        ChatbotConnectionCheck.Ensure(tenantConnections, command.ConnectionIds);
         await ChatbotConnectionCheck.EnsureNameIsFreeAsync(chatbots, command.TenantId, command.Name, chatbot.Id, cancellationToken);
 
         var now = clock.UtcNow;
@@ -273,7 +273,7 @@ public sealed class UpdateChatbotHandler(
         audit.Record(command.TenantId, executionContext.SubjectId, false, AutomationsAuditActions.ChatbotUpdated, AutomationsAuditActions.ResourceChatbot, chatbot.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await builder.BuildAsync(chatbot, cancellationToken);
+        return await builder.BuildAsync(chatbot, tenantConnections, cancellationToken);
     }
 }
 
@@ -334,6 +334,6 @@ public sealed class ValidateChatbotHandler(
         await AutomationsAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, AutomationsPermissions.ChatbotRead, cancellationToken);
         var chatbot = await chatbots.FindAsync(query.TenantId, query.ChatbotId, cancellationToken)
             ?? throw AutomationsNotFound.Chatbot(query.ChatbotId);
-        return await builder.ValidateAsync(chatbot, FlowJson.Parse(chatbot.DraftFlowJson), cancellationToken);
+        return await builder.ValidateStoredAsync(chatbot, cancellationToken);
     }
 }

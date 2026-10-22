@@ -27,6 +27,40 @@ internal sealed class ChatbotRepository(AutomationsDbContext dbContext) : IChatb
                 && chatbot.Connections.Any(connection => connection.ConnectionId == connectionId && connection.Active),
             cancellationToken);
 
+    // Proyección: la lista no necesita el borrador ni el flujo de cada versión publicada (jsonb de hasta 512 KB cada uno).
+    public async Task<IReadOnlyList<ChatbotSummaryRow>> ListSummariesAsync(Guid tenantId, string? search, CancellationToken cancellationToken)
+    {
+        var query = dbContext.Chatbots.AsNoTracking().Where(chatbot => chatbot.TenantId == tenantId);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            query = query.Where(chatbot => EF.Functions.ILike(chatbot.Name, $"%{EscapeLike(search.Trim())}%", "\\"));
+        }
+
+        return await query
+            .OrderBy(chatbot => chatbot.Name)
+            .ThenBy(chatbot => chatbot.Id)
+            .Select(chatbot => new ChatbotSummaryRow(
+                chatbot.Id,
+                chatbot.Name,
+                chatbot.Description,
+                chatbot.Status,
+                chatbot.Trigger,
+                chatbot.Connections.Select(connection => connection.ConnectionId).ToList(),
+                chatbot.Versions.Where(version => version.Id == chatbot.PublishedVersionId).Select(version => (int?)version.Number).FirstOrDefault(),
+                chatbot.Versions.Where(version => version.Id == chatbot.PublishedVersionId).Select(version => (DateTimeOffset?)version.PublishedAt).FirstOrDefault(),
+                chatbot.DraftUpdatedAt,
+                chatbot.Version))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ChatbotServingConnection>> ListServingConnectionsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        await dbContext.Chatbots.AsNoTracking()
+            .Where(chatbot => chatbot.TenantId == tenantId && chatbot.PublishedVersionId != null)
+            .SelectMany(
+                chatbot => chatbot.Connections.Where(connection => connection.Active),
+                (chatbot, connection) => new ChatbotServingConnection(connection.ConnectionId, chatbot.Id, chatbot.Name))
+            .ToListAsync(cancellationToken);
+
     public async Task AddAsync(Chatbot chatbot, CancellationToken cancellationToken) =>
         await dbContext.Chatbots.AddAsync(chatbot, cancellationToken);
 

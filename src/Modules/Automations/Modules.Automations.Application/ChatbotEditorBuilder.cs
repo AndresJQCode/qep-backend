@@ -7,8 +7,8 @@ namespace Modules.Automations.Application;
 
 /// <summary>
 /// Spec 2026-10-21 §4.4 (BFF): arma lo que el editor y la lista pintan sin encadenar llamados. Las conexiones de Mensajería, las «API
-/// externa» y los horarios llegan por los puertos; el chatbot que ocupa cada conexión se resuelve listando los del tenant una sola vez
-/// (nunca uno por conexión). El validador recibe el contexto real del chatbot (D-C2).
+/// externa» y los horarios llegan por los puertos; el chatbot que ocupa cada conexión sale de una sola proyección
+/// (<see cref="IChatbotRepository.ListServingConnectionsAsync"/>), nunca uno por conexión. El validador recibe el contexto real del chatbot (D-C2).
 /// </summary>
 public sealed class ChatbotEditorBuilder(
     IAutomationConnections connections,
@@ -27,21 +27,31 @@ public sealed class ChatbotEditorBuilder(
     public async Task<ChatbotEditorDto> BuildAsync(Chatbot chatbot, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(chatbot);
-        var tenantConnections = await connections.ListAsync(chatbot.TenantId, cancellationToken);
+        return await BuildAsync(chatbot, await connections.ListAsync(chatbot.TenantId, cancellationToken), cancellationToken);
+    }
+
+    /// <summary>Con las conexiones del tenant ya leídas (crear y editar las leen para revisarlas): una sola lectura por request.</summary>
+    public async Task<ChatbotEditorDto> BuildAsync(
+        Chatbot chatbot, IReadOnlyList<AutomationConnectionRef> tenantConnections, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(chatbot);
+        ArgumentNullException.ThrowIfNull(tenantConnections);
         var scheduleNames = await businessHours.ScheduleNamesAsync(
             chatbot.TenantId, [.. tenantConnections.Select(connection => connection.Id)], cancellationToken);
         var apis = await externalApis.ListAsync(chatbot.TenantId, cancellationToken);
-        var servedBy = await ServedByAsync(chatbot.TenantId, cancellationToken);
+        var servedBy = (await chatbots.ListServingConnectionsAsync(chatbot.TenantId, cancellationToken))
+            .GroupBy(serving => serving.ConnectionId)
+            .ToDictionary(group => group.Key, group => new ServedByDto(group.First().ChatbotId, group.First().Name));
         var today = await TodayAsync(chatbot.TenantId, [chatbot.Id], cancellationToken);
 
-        var flow = FlowJson.Parse(chatbot.DraftFlowJson);
-        var issues = Validate(chatbot, flow, tenantConnections, apis, scheduleNames);
+        var (flow, problem) = ParseStored(chatbot);
+        var issues = flow is null ? [problem!] : Validate(chatbot, flow, tenantConnections, apis, scheduleNames);
         var published = chatbot.PublishedVersionId is { } publishedId
             ? chatbot.Versions.FirstOrDefault(version => version.Id == publishedId)
             : null;
 
         return new ChatbotEditorDto(
-            ToSummary(chatbot, tenantConnections, today),
+            ToSummary(Row(chatbot), tenantConnections, today),
             chatbot.Keywords,
             chatbot.RestartKeyword,
             chatbot.MaxAttempts,
@@ -58,11 +68,10 @@ public sealed class ChatbotEditorBuilder(
                 servedBy.GetValueOrDefault(connection.Id),
                 scheduleNames.GetValueOrDefault(connection.Id)))],
             [.. apis.Select(api => new ExternalApiRefDto(api.Id, api.Name, api.Status))],
-            FlowValidator.KnownVariables(flow));
+            FlowValidator.KnownVariables(flow ?? EmptyFlow));
     }
 
-    /// <summary>La validación del borrador con el contexto del chatbot, sin armar el resto del editor (<c>/validate</c> y el
-    /// guardado).</summary>
+    /// <summary>La validación de un flujo recién leído con el contexto del chatbot, sin armar el resto del editor (el guardado).</summary>
     public async Task<IReadOnlyList<FlowIssueDto>> ValidateAsync(Chatbot chatbot, FlowDefinition flow, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(chatbot);
@@ -73,14 +82,39 @@ public sealed class ChatbotEditorBuilder(
         return Validate(chatbot, flow, tenantConnections, apis, scheduleNames);
     }
 
-    /// <summary>La lista (§4.4): una sola lectura de conexiones y de corridas para todos los chatbots.</summary>
-    public async Task<ChatbotListResponse> BuildListAsync(Guid tenantId, IReadOnlyList<Chatbot> items, CancellationToken cancellationToken)
+    /// <summary>La validación del borrador guardado (<c>/validate</c>): la misma que trae <see cref="BuildAsync(Chatbot, CancellationToken)"/>.</summary>
+    public async Task<IReadOnlyList<FlowIssueDto>> ValidateStoredAsync(Chatbot chatbot, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(items);
-        var tenantConnections = await connections.ListAsync(tenantId, cancellationToken);
-        var today = await TodayAsync(tenantId, [.. items.Select(chatbot => chatbot.Id)], cancellationToken);
-        return new ChatbotListResponse([.. items.Select(chatbot => ToSummary(chatbot, tenantConnections, today))]);
+        ArgumentNullException.ThrowIfNull(chatbot);
+        var (flow, problem) = ParseStored(chatbot);
+        return flow is null ? [problem!] : await ValidateAsync(chatbot, flow, cancellationToken);
     }
+
+    /// <summary>La lista (§4.4): filas proyectadas y una sola lectura de conexiones y de corridas para todos los chatbots.</summary>
+    public async Task<ChatbotListResponse> BuildListAsync(Guid tenantId, IReadOnlyList<ChatbotSummaryRow> rows, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        var tenantConnections = await connections.ListAsync(tenantId, cancellationToken);
+        var today = await TodayAsync(tenantId, [.. rows.Select(row => row.Id)], cancellationToken);
+        return new ChatbotListResponse([.. rows.Select(row => ToSummary(row, tenantConnections, today))]);
+    }
+
+    /// <summary>El borrador guardado siempre pasó por <see cref="FlowJson.Parse"/>, pero un dato viejo o un cambio de esquema puede
+    /// dejarlo ilegible: se muestra como un error del flujo (no deja publicar) en vez de un 500 que deja el editor sin abrir, y el
+    /// siguiente guardado lo reemplaza.</summary>
+    private static (FlowDefinition? Flow, FlowIssueDto? Problem) ParseStored(Chatbot chatbot)
+    {
+        try
+        {
+            return (FlowJson.Parse(chatbot.DraftFlowJson), null);
+        }
+        catch (FlowFormatException exception)
+        {
+            return (null, new FlowIssueDto(nameof(FlowIssueSeverity.Error), exception.Code, null, exception.Message));
+        }
+    }
+
+    private static readonly FlowDefinition EmptyFlow = new(FlowDefinition.CurrentSchema, new FlowStart(null), [], []);
 
     private static IReadOnlyList<FlowIssueDto> Validate(
         Chatbot chatbot,
@@ -104,27 +138,6 @@ public sealed class ChatbotEditorBuilder(
         return [.. FlowValidator.Validate(flow, context).Select(issue => new FlowIssueDto(issue.Severity.ToString(), issue.Code, issue.NodeId, issue.Message))];
     }
 
-    /// <summary>D-C13: la conexión la ocupa el chatbot publicado (activo o en pausa) con la fila activa. Un tenant tiene pocos chatbots:
-    /// leerlos todos una vez es más barato que preguntar conexión por conexión.</summary>
-    private async Task<Dictionary<Guid, ServedByDto>> ServedByAsync(Guid tenantId, CancellationToken cancellationToken)
-    {
-        var servedBy = new Dictionary<Guid, ServedByDto>();
-        foreach (var chatbot in await chatbots.ListAsync(tenantId, null, cancellationToken))
-        {
-            if (chatbot.PublishedVersionId is null)
-            {
-                continue;
-            }
-
-            foreach (var connection in chatbot.Connections.Where(connection => connection.Active))
-            {
-                servedBy[connection.ConnectionId] = new ServedByDto(chatbot.Id, chatbot.Name);
-            }
-        }
-
-        return servedBy;
-    }
-
     /// <summary>§4.4: «hoy» es el día del tenant (su zona horaria), no el de UTC.</summary>
     private async Task<IReadOnlyDictionary<Guid, (int Handled, int HandedOff)>> TodayAsync(
         Guid tenantId, IReadOnlyCollection<Guid> chatbotIds, CancellationToken cancellationToken)
@@ -139,28 +152,36 @@ public sealed class ChatbotEditorBuilder(
             tenantId, chatbotIds, calendar.StartOfDayUtc(calendar.Today), calendar.EndOfDayExclusiveUtc(calendar.Today), cancellationToken);
     }
 
-    private static ChatbotSummaryDto ToSummary(
-        Chatbot chatbot, IReadOnlyList<AutomationConnectionRef> tenantConnections, IReadOnlyDictionary<Guid, (int Handled, int HandedOff)> today)
+    private static ChatbotSummaryRow Row(Chatbot chatbot)
     {
-        var own = chatbot.Connections.Select(connection => connection.ConnectionId).ToHashSet();
         var published = chatbot.PublishedVersionId is { } publishedId
             ? chatbot.Versions.FirstOrDefault(version => version.Id == publishedId)
             : null;
-        var (handled, handedOff) = today.GetValueOrDefault(chatbot.Id);
+        return new ChatbotSummaryRow(
+            chatbot.Id, chatbot.Name, chatbot.Description, chatbot.Status, chatbot.Trigger,
+            [.. chatbot.Connections.Select(connection => connection.ConnectionId)], published?.Number, published?.PublishedAt,
+            chatbot.DraftUpdatedAt, chatbot.Version);
+    }
+
+    private static ChatbotSummaryDto ToSummary(
+        ChatbotSummaryRow row, IReadOnlyList<AutomationConnectionRef> tenantConnections, IReadOnlyDictionary<Guid, (int Handled, int HandedOff)> today)
+    {
+        var own = row.ConnectionIds.ToHashSet();
+        var (handled, handedOff) = today.GetValueOrDefault(row.Id);
         return new ChatbotSummaryDto(
-            chatbot.Id,
-            chatbot.Name,
-            chatbot.Description,
-            chatbot.Status.ToString(),
-            chatbot.Trigger.ToString(),
+            row.Id,
+            row.Name,
+            row.Description,
+            row.Status.ToString(),
+            row.Trigger.ToString(),
             // Una conexión que Integrations ya borró no se muestra (allá el borrado es físico, D-H10).
             [.. tenantConnections.Where(connection => own.Contains(connection.Id))
                 .Select(connection => new ChatbotConnectionDto(connection.Id, connection.Name, connection.Channel, connection.Handle))],
-            published?.Number,
-            published?.PublishedAt,
-            chatbot.HasDraftChanges,
+            row.PublishedNumber,
+            row.PublishedAt,
+            row.HasDraftChanges,
             new ChatbotTodayDto(handled, handedOff),
-            chatbot.Version);
+            row.Version);
     }
 
     // El jsonb vuelve como objeto JSON, no como texto escapado: el editor lo lee tal cual.

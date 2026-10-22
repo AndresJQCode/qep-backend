@@ -172,6 +172,80 @@ public sealed class AutomationsPersistenceTests
     }
 
     // D-C13: pausar no libera la conexión; el motor decide por Status.
+    // D-C13: ocupan la conexión el activo y el pausado (fila activa); el borrador no, ni el de otro tenant.
+    [Fact]
+    public async Task ListServingConnectionsProjectsThePublishedOnes()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var (first, second, third) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+        var active = NewChatbot(tenantId, "Activo");
+        active.SetConnections([first], Now);
+        active.Publish([], Guid.CreateVersion7(), Now);
+        var paused = NewChatbot(tenantId, "Pausado");
+        paused.SetConnections([second], Now);
+        paused.Publish([], Guid.CreateVersion7(), Now);
+        paused.Pause(Now);
+        var draft = NewChatbot(tenantId, "Borrador");
+        draft.SetConnections([third], Now);
+        var foreign = NewChatbot(Guid.CreateVersion7(), "Ajeno");
+        foreign.SetConnections([third], Now);
+        foreign.Publish([], Guid.CreateVersion7(), Now);
+        using (var seed = factory.Services.CreateScope())
+        {
+            var repository = seed.ServiceProvider.GetRequiredService<IChatbotRepository>();
+            foreach (var chatbot in new[] { active, paused, draft, foreign })
+            {
+                await repository.AddAsync(chatbot, Ct);
+            }
+
+            await seed.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var scope = factory.Services.CreateScope();
+        var serving = await scope.ServiceProvider.GetRequiredService<IChatbotRepository>().ListServingConnectionsAsync(tenantId, Ct);
+
+        Assert.Equal(
+            [new ChatbotServingConnection(first, active.Id, "Activo"), new ChatbotServingConnection(second, paused.Id, "Pausado")],
+            serving.OrderBy(row => row.Name, StringComparer.Ordinal));
+    }
+
+    // La lista proyectada: número e instante de la versión publicada (no de otra), conexiones y cambios del borrador.
+    [Fact]
+    public async Task ListSummariesProjectsThePublishedVersionAndTheConnections()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var published = NewChatbot(tenantId, "Ventas");
+        published.SetConnections([connectionId], Now);
+        published.Publish([], Guid.CreateVersion7(), Now);
+        published.Publish([], Guid.CreateVersion7(), Now.AddMinutes(5));
+        var draft = NewChatbot(tenantId, "Agenda");
+        using (var seed = factory.Services.CreateScope())
+        {
+            var repository = seed.ServiceProvider.GetRequiredService<IChatbotRepository>();
+            await repository.AddAsync(published, Ct);
+            await repository.AddAsync(draft, Ct);
+            await seed.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var scope = factory.Services.CreateScope();
+        var repositoryUnderTest = scope.ServiceProvider.GetRequiredService<IChatbotRepository>();
+        var rows = await repositoryUnderTest.ListSummariesAsync(tenantId, null, Ct);
+        var searched = await repositoryUnderTest.ListSummariesAsync(tenantId, "ven", Ct);
+
+        Assert.Equal(["Agenda", "Ventas"], rows.Select(row => row.Name));
+        var agenda = rows[0];
+        Assert.Equal(((int?)null, (DateTimeOffset?)null, true, ChatbotStatus.Draft), (agenda.PublishedNumber, agenda.PublishedAt, agenda.HasDraftChanges, agenda.Status));
+        var ventas = Assert.Single(searched);
+        Assert.Equal(((int?)2, (DateTimeOffset?)Now.AddMinutes(5), false, ChatbotStatus.Active), (ventas.PublishedNumber, ventas.PublishedAt, ventas.HasDraftChanges, ventas.Status));
+        Assert.Equal([connectionId], ventas.ConnectionIds);
+        Assert.Equal(published.Version, ventas.Version);
+    }
+
     [Fact]
     public async Task FindPublishedByConnectionReturnsAPausedChatbot()
     {
