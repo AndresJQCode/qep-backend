@@ -147,6 +147,37 @@ public sealed partial class EngineEndToEndTests
         Assert.Equal(4, f.Meta.Sends().Count);
     }
 
+    /// <summary>D-M15, P2-R25: tomar, atender más de 24 h y devolver al asistente deja la corrida vieja en espera. El barrido la termina
+    /// <c>Interrupted</c> (una persona intervino), no la abandona ni suelta la conversación: sigue <c>Active</c> y el siguiente entrante
+    /// arranca otra corrida desde el primer nodo, sin el disparador.</summary>
+    [Fact]
+    public async Task TheSweepDoesNotUndoAHumanResume()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        Assert.Equal(HttpStatusCode.OK, (await ConversationActionAsync(f, "take")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await ConversationActionAsync(f, "automation/resume")).StatusCode);
+        await ExecuteAsync(f.ConnectionString, "UPDATE automations.conversation_runs SET updated_at = now() - interval '25 hours'");
+
+        await SweepAutomationsAsync(f.Host, DateTimeOffset.UtcNow);
+
+        Assert.Equal("Interrupted", await RunAsync(f, "status"));
+        Assert.Equal("Open|Active", await ConversationAsync(f, "status || '|' || automation_status"));
+        Assert.Equal(0L, await AuditAsync(f, "automations.run.abandoned"));
+
+        await InboundAsync(f, "w2", "Ya volví");
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal("Interrupted,Waiting", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT string_agg(status, ',' ORDER BY started_at) FROM automations.conversation_runs"));
+        Assert.Equal("started,started", await OutcomesAsync(f));
+        var sends = f.Meta.Sends();
+        Assert.Equal(4, sends.Count);
+        Assert.Equal(sends[0], sends[2]);
+    }
+
     /// <summary>P2-R7: el barrido purga las filas del inbox procesadas hace más de <c>InboxRetentionDays</c>; las recientes y las pendientes
     /// quedan.</summary>
     [Fact]

@@ -85,7 +85,10 @@ public sealed class RunProcessorTests
     public async Task AStaleWaitingRunIsAbandoned()
     {
         var now = DateTimeOffset.UtcNow;
-        var bed = new Bed(startFailure: null);
+        // Con el bot atendiendo (Active) y sin devolución humana posterior al arranque de la corrida.
+        var bed = new Bed(
+            startFailure: null,
+            new AutomationConversationState("Open", null, "Active", ChatbotId, ConnectionId, now.AddHours(-26), "Laura", "573001234567"));
         var run = WaitingRun(now.AddHours(-25));
         bed.Runs.Added.Add(run);
 
@@ -95,6 +98,46 @@ public sealed class RunProcessorTests
         Assert.Equal(now, run.EndedAt);
         Assert.Equal(1, bed.Conversations.Ended);
         Assert.Equal([AutomationsAuditActions.RunAbandoned], bed.Audit.Actions);
+    }
+
+    /// <summary>D-M15 y P2-R25: una persona la tomó, la atendió más de 24 h y la devolvió al asistente; la corrida vieja sigue en espera. El
+    /// barrido la termina <c>Interrupted</c> sin llamar a <c>EndAsync</c>: la conversación se queda <c>Active</c> para que el siguiente
+    /// entrante arranque desde el primer nodo, y no queda auditoría de abandono.</summary>
+    [Fact]
+    public async Task ARunResumedByAHumanIsInterruptedNotAbandoned()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var bed = new Bed(
+            startFailure: null,
+            new AutomationConversationState("Open", null, "Active", ChatbotId, ConnectionId, now.AddHours(-30), "Laura", "573001234567", now.AddMinutes(-5)));
+        var run = WaitingRun(now.AddHours(-25));
+        bed.Runs.Added.Add(run);
+
+        Assert.True(await bed.Processor().AbandonAsync(new AbandonedRun(TenantId, ConversationId, run.Id), now, TestContext.Current.CancellationToken));
+
+        Assert.Equal(RunStatus.Interrupted, run.Status);
+        Assert.Equal(0, bed.Conversations.Ended);
+        Assert.Empty(bed.Audit.Actions);
+    }
+
+    /// <summary>D-M15: si una persona la tiene (pausada, con asesor o resuelta), la corrida termina <c>Interrupted</c> y no <c>Abandoned</c>.</summary>
+    [Theory]
+    [InlineData("Open", "Paused")]
+    [InlineData("Resolved", "Active")]
+    public async Task ARunOfAConversationAHumanHoldsIsInterruptedNotAbandoned(string status, string automationStatus)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var bed = new Bed(
+            startFailure: null,
+            new AutomationConversationState(status, null, automationStatus, ChatbotId, ConnectionId, now.AddHours(-30), "Laura", "573001234567"));
+        var run = WaitingRun(now.AddHours(-25));
+        bed.Runs.Added.Add(run);
+
+        Assert.True(await bed.Processor().AbandonAsync(new AbandonedRun(TenantId, ConversationId, run.Id), now, TestContext.Current.CancellationToken));
+
+        Assert.Equal(RunStatus.Interrupted, run.Status);
+        Assert.Equal(0, bed.Conversations.Ended);
+        Assert.Empty(bed.Audit.Actions);
     }
 
     /// <summary>P2-R20: entre la elección y el lock un entrante movió la corrida (o es otra la viva); ya no está abandonada y no se toca.</summary>

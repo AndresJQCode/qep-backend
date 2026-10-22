@@ -146,6 +146,17 @@ public sealed partial class RunProcessor(
             return false;
         }
 
+        // D-M15: una persona tomó la conversación, la resolvió o la devolvió al asistente (P2-R25) mientras la corrida esperaba. Es una acción
+        // humana, así que la corrida termina Interrupted como en ProcessUnitAsync, sin auditoría, y la conversación no se toca: una devuelta
+        // queda Active para que el siguiente entrante arranque desde el primer nodo. Leerla va después del lock (P2-R20).
+        var conversation = await conversations.GetAsync(run.TenantId, run.ConversationId, cancellationToken);
+        if (conversation is null || HumanTookOver(conversation, run))
+        {
+            run.Finish(RunStatus.Interrupted, null, now);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            return true;
+        }
+
         try
         {
             // EndAsync no hace nada si el asistente ya no está activo (una persona la pausó o la resolvió y nadie volvió a escribir).
