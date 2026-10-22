@@ -41,6 +41,14 @@ public static class PosCustomerRules
 
     public const int Take = 20;
 
+    // Los anchos de customers.customers (nombre, documento y teléfono), copiados porque Pos no ve Customers;
+    // PosCustomerLookupTests los compara con las constantes del dominio.
+    public const int NameMaxLength = 160;
+
+    public const int IdentificationNumberMaxLength = 32;
+
+    public const int PhoneMaxLength = 32;
+
     // Copia de IdentificationTypeParser.SupportedWireValues: Pos.Application no ve Customers. La prueba
     // PosCustomerLookupTests.TheIdentificationTypesMatchTheCustomersModule las compara.
     public static readonly IReadOnlyList<string> IdentificationTypes = ["NIT", "CC", "CE", "PASAPORTE"];

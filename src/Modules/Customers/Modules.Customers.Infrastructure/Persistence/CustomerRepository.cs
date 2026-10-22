@@ -45,7 +45,8 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         // vivo para el combobox de clientes de quotes, que necesita un unico cuadro de texto.
         if (searchPattern is not null)
         {
-            // Spec 2026-10-10 §6.2: un incompleto no tiene documento ni CUC; sólo coincide por nombre.
+            // Un incompleto no tiene CUC, pero desde el alta rápida del POS (POSC-05) sí puede tener documento:
+            // el filtro por número tiene que seguir alcanzándolo.
             query = query.Where(customer =>
                 EF.Functions.ILike(customer.Name, searchPattern, LikeEscapeCharacter) ||
                 (customer.IdentificationNumber != null && EF.Functions.ILike(
@@ -216,10 +217,10 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
     {
         var searchPattern = LikePattern(search);
 
-        // Activo y con documento en la consulta y no despues: los incompletos de WhatsApp (sin documento) son los
+        // Activo y con documento (numero Y tipo: el lookup de Pos desreferencia el tipo) en la consulta y no despues: los incompletos de WhatsApp (sin documento) son los
         // mas nuevos y, con el orden por fecha, llenarian el `Take` antes de llegar a un cliente que la caja si puede elegir.
         var query = FilteredQuery(tenantId, searchPattern, null, null, null)
-            .Where(customer => customer.IsActive && customer.IdentificationNumber != null);
+            .Where(customer => customer.IsActive && customer.IdentificationNumber != null && customer.IdentificationType != null);
 
         // Sin `CountAsync`: la caja muestra una lista corta, no pagina.
         return await OrderByRelevance(query, search, searchPattern, null, null, null, null, null, null)
@@ -277,7 +278,8 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
 
         var candidates = await dbContext.Customers
             .AsNoTracking()
-            // Un incompleto no tiene documento (spec 2026-10-10 §6.2): nunca es dueño de uno.
+            // Un incompleto también puede ser dueño de un documento (alta rápida del POS, POSC-05): no filtrar por
+            // `Completeness == Complete`, el pre-chequeo de Pos depende de que estos aparezcan.
             .Where(customer =>
                 customer.TenantId == tenantId &&
                 customer.IdentificationType != null &&

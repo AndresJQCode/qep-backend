@@ -103,6 +103,15 @@ public sealed class PosCustomerLookupTests
                 .SetEquals(IdentificationTypeParser.SupportedWireValues));
     }
 
+    // Pos copia los anchos de nombre, documento y teléfono; si Customers los cambia, el alta rápida debe seguirlos.
+    [Fact]
+    public void TheLengthLimitsMatchTheCustomersModule()
+    {
+        Assert.Equal(Customer.NameMaxLength, PosCustomerRules.NameMaxLength);
+        Assert.Equal(CustomerIdentification.NumberMaxLength, PosCustomerRules.IdentificationNumberMaxLength);
+        Assert.Equal(CustomerContactInfo.PhoneMaxLength, PosCustomerRules.PhoneMaxLength);
+    }
+
     private static PosCustomerLookup Lookup(
         PosFakeCustomers customers, PosFakeProvisioning provisioning, PosFakeExecutionContext context) =>
         new(customers, provisioning, context);

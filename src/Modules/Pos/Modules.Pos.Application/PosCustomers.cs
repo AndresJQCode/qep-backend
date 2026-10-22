@@ -34,21 +34,14 @@ public sealed class SearchPosCustomersValidator : AbstractValidator<SearchPosCus
 
 public sealed class CreatePosCustomerValidator : AbstractValidator<CreatePosCustomerCommand>
 {
-    // Los anchos de customers.customers (nombre 160, documento y teléfono 32), copiados porque Pos no ve Customers.
-    private const int NameMaxLength = 160;
-
-    private const int IdentificationNumberMaxLength = 32;
-
-    private const int PhoneMaxLength = 32;
-
     public CreatePosCustomerValidator()
     {
-        RuleFor(command => command.Name).NotEmpty().MaximumLength(NameMaxLength);
+        RuleFor(command => command.Name).NotEmpty().MaximumLength(PosCustomerRules.NameMaxLength);
         RuleFor(command => command.IdentificationType)
             .Must(type => type is not null && PosCustomerRules.IdentificationTypes.Contains(type, StringComparer.Ordinal))
             .WithMessage("The identification type must be one of: " + string.Join(", ", PosCustomerRules.IdentificationTypes) + ".");
-        RuleFor(command => command.IdentificationNumber).NotEmpty().MaximumLength(IdentificationNumberMaxLength);
-        RuleFor(command => command.Phone).MaximumLength(PhoneMaxLength);
+        RuleFor(command => command.IdentificationNumber).NotEmpty().MaximumLength(PosCustomerRules.IdentificationNumberMaxLength);
+        RuleFor(command => command.Phone).MaximumLength(PosCustomerRules.PhoneMaxLength);
     }
 }
 

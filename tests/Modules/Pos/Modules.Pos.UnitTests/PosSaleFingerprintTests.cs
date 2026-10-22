@@ -160,4 +160,16 @@ public sealed class PosSaleFingerprintTests
             PosSaleFingerprint.Compute(Command(customerId: customer)),
             PosSaleFingerprint.Compute(Command(customerId: customer)));
     }
+
+    // El literal fija la forma canónica [..., customerId] (decisión 6): sólo cambia con una migración
+    // deliberada de los reintentos en vuelo, que si no fallarían con `id_conflict`.
+    [Fact]
+    public void WithACustomerTheFingerprintIsAPinnedLiteral()
+    {
+        var customer = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+        Assert.Equal(
+            "4066c2d639157c127616de079e89ce17e576dcd83c5399899ecfa1d770567b59",
+            PosSaleFingerprint.Compute(Command(customerId: customer)));
+    }
 }

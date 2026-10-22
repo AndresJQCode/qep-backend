@@ -274,9 +274,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `null` y dos conversaciones con BSUID pueden compartir número (reciclado). Un cuerpo de webhook de prueba
   sin `from_user_id` se descarta en silencio —la entrega queda procesada y no aparece nada—: es el síntoma,
   no un bug de la ingesta.
-- **Un cliente puede ser `Incomplete`** (sin CUC, documento, dirección ni clasificación): lo crean la ingesta
-  de Messaging y la importación de pedidos de Shopify (`Customer.CreateIncompleteFromExternalSale`, sin BSUID ni IGSID),
-  nunca un endpoint. Todo código nuevo que lea `Cuc`, `IdentificationType`, `Address`,
+- **Un cliente puede ser `Incomplete`** (sin CUC, dirección ni clasificación): lo crean la ingesta
+  de Messaging, la importación de pedidos de Shopify (`Customer.CreateIncompleteFromExternalSale`, sin BSUID ni IGSID)
+  y `POST /pos/customers` (incompleto **con** documento y teléfono, sin CUC; spec 2026-10-14, POSC-05). Los de
+  Messaging y Shopify no traen documento, los del POS sí: el pre-chequeo de identificación de Pos (el 422 con `existing`)
+  depende de que `FindExistingIdentificationsAsync` devuelva también a los incompletos dueños de un documento; no lo
+  "optimices" con `Completeness == Complete`. Todo código nuevo que lea `Cuc`, `IdentificationType`, `Address`,
   `Country` o `ClassificationId` de un `Customer` tiene que tratar el `null`; Quotations lo rechaza con
   `client_incomplete` **antes** que `client_cuc_missing`, y un reporte que agrupe por clasificación o ciudad
   filtra `Completeness == Complete`.
