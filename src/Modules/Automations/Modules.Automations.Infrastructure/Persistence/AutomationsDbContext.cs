@@ -202,6 +202,11 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
         // «Hoy» de la lista y el historial por chatbot, lo más nuevo primero.
         run.HasIndex(value => new { value.TenantId, value.ChatbotId, value.StartedAt }, "IX_conversation_runs_tenant_chatbot_started")
             .IsDescending(false, false, true);
+        // Ruling P2-R44: FindLatestAsync corre en cada unidad sin corrida viva (el marcador de P2-R24), y sin esto es un seq scan.
+        run.HasIndex(value => new { value.TenantId, value.ConversationId, value.StartedAt }, "IX_conversation_runs_tenant_conversation_started")
+            .IsDescending(false, false, true);
+        // D-M13 y P2-R44: el barrido de abandonadas lee sólo las Waiting por updated_at; parcial, porque casi todas las filas ya terminaron.
+        run.HasIndex(value => value.UpdatedAt, "IX_conversation_runs_waiting_updated").HasFilter("status = 'Waiting'");
     }
 
     private static void ConfigureHttpCall(ModelBuilder modelBuilder)

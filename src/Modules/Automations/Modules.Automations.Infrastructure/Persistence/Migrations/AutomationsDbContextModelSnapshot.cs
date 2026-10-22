@@ -435,6 +435,12 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "TenantId", "ChatbotId", "StartedAt" }, "IX_conversation_runs_tenant_chatbot_started")
                         .IsDescending(false, false, true);
 
+                    b.HasIndex(new[] { "TenantId", "ConversationId", "StartedAt" }, "IX_conversation_runs_tenant_conversation_started")
+                        .IsDescending(false, false, true);
+
+                    b.HasIndex(new[] { "UpdatedAt" }, "IX_conversation_runs_waiting_updated")
+                        .HasFilter("status = 'Waiting'");
+
                     b.ToTable("conversation_runs", "automations");
                 });
 

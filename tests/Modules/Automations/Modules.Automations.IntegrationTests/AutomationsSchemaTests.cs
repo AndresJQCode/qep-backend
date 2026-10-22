@@ -64,6 +64,23 @@ public sealed class AutomationsSchemaTests
         Assert.Contains("lower((name)::text)", nameIndex, StringComparison.Ordinal);
     }
 
+    /// <summary>Ruling P2-R44: las dos lecturas del motor que corren sin la corrida viva (la última corrida de la conversación en cada
+    /// unidad sin corrida, P2-R24, y el barrido de abandonadas, D-M13) tienen su índice; sin ellos son un seq scan de conversation_runs.</summary>
+    [Fact]
+    public async Task TheEngineReadsHaveTheirIndexes()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+
+        var latest = await ScalarAsync<string>(connectionString,
+            "SELECT indexdef FROM pg_indexes WHERE schemaname = 'automations' AND indexname = 'IX_conversation_runs_tenant_conversation_started'");
+        var waiting = await ScalarAsync<string>(connectionString,
+            "SELECT indexdef FROM pg_indexes WHERE schemaname = 'automations' AND indexname = 'IX_conversation_runs_waiting_updated'");
+
+        Assert.EndsWith("(tenant_id, conversation_id, started_at DESC)", latest, StringComparison.Ordinal);
+        Assert.Contains("(updated_at) WHERE ((status)::text = 'Waiting'::text)", waiting, StringComparison.Ordinal);
+    }
+
     // D-C4: una conexión, un chatbot activo.
     [Fact]
     public async Task OnlyOneActiveChatbotPerConnection()
