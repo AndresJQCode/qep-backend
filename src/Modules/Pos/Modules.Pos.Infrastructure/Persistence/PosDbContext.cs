@@ -142,6 +142,12 @@ public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbCon
         sale.HasIndex(value => new { value.TenantId, value.CreatedAt })
             .IsDescending(false, true)
             .HasDatabaseName("IX_sales_tenant_created");
+        // Queda para el filtro de ventas por cliente (fuera de alcance hoy): parcial porque la mayoría de las
+        // ventas son de mostrador y no llevan cliente. Sin FK a customers (decisión 8): el cliente es de otro
+        // módulo y la venta guarda su foto, así que el índice es lo único que respalda la columna.
+        sale.HasIndex(value => new { value.TenantId, value.CustomerId })
+            .HasFilter("customer_id IS NOT NULL")
+            .HasDatabaseName("IX_sales_tenant_customer");
     }
 
     private static void ConfigureSaleLine(ModelBuilder modelBuilder)

@@ -335,6 +335,10 @@ namespace Modules.Pos.Infrastructure.Persistence.Migrations
                         .IsDescending(false, true)
                         .HasDatabaseName("IX_sales_tenant_created");
 
+                    b.HasIndex("TenantId", "CustomerId")
+                        .HasDatabaseName("IX_sales_tenant_customer")
+                        .HasFilter("customer_id IS NOT NULL");
+
                     b.HasIndex("TenantId", "SaleNumber")
                         .IsUnique()
                         .HasDatabaseName("IX_sales_tenant_number");

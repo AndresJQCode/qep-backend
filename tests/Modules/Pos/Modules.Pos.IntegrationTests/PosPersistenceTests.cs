@@ -224,4 +224,24 @@ public sealed class PosPersistenceTests
         Assert.Equal(voidedBy, loaded.VoidedBy);
         Assert.Equal(new string('e', 64), loaded.RequestFingerprint);
     }
+
+    // Sin FK a customers.customers (decisión 8): el índice parcial es lo único que sostiene el filtro por cliente.
+    [Fact]
+    public async Task TheSaleCustomerIndexIsPartialOnCustomerId()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PosDbContext>();
+
+        var definitions = await db.Database
+            .SqlQueryRaw<string>(
+                "SELECT indexdef AS \"Value\" FROM pg_indexes WHERE schemaname = 'pos' AND indexname = 'IX_sales_tenant_customer'")
+            .ToListAsync(TestContext.Current.CancellationToken);
+
+        var definition = Assert.Single(definitions);
+        Assert.Contains("(tenant_id, customer_id)", definition);
+        Assert.Contains("WHERE (customer_id IS NOT NULL)", definition);
+    }
 }
