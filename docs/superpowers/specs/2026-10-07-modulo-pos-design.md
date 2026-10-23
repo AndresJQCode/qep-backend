@@ -1444,7 +1444,8 @@ Contenido, en `font-mono` 11 px, negro sobre blanco, sin colores del tema:
   dibuja con `pos.sale.void`; con el permiso, se habilita con `voidable` de cada fila, sin que
   la pantalla deduzca nada; si es `false`, queda deshabilitado con un `Tooltip` sacado de
   `VOID_BLOCKED_REASON_LABELS[voidBlockedReason]` ("Ya está anulada", "La caja de esta venta ya
-  se cerró"). Filtros: hoy por defecto, rango, estado, número, documento del cliente. `VoidSaleDialog` pide motivo
+  se cerró"). Filtros: hoy por defecto, rango, estado, número, documento del cliente; buscar por
+  número o documento sobre el «hoy» sin tocar quita el rango (owner, 2026-10-23). `VoidSaleDialog` pide motivo
   (3–500) y confirma. Si la respuesta es `pos.sale.already_voided` (su request anterior llegó y
   se perdió la respuesta, o alguien más la anuló), recarga la venta y cierra como éxito.
 - `/pos/sessions`: tabla de cajas (cajero sólo con `pos.register.read`, empresa,

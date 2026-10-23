@@ -191,8 +191,11 @@ facturación esté completa; cambiaría D-S7 y D-S15.
   `customer_identification_number` de la venta) y `number` deja de ser exacto: los dos coinciden por un pedazo con
   `ILIKE` y comodines escapados, y se combinan con Y. En el popover de Ventas, «Documento del cliente» junto a «Número de
   venta». Pruebas: Pos unitarias 226/226, integración 61/61, `ArchitectureTests` 125/125; frontend `src/features/pos`
-  341/341. Pendiente del owner: la lista abre en «hoy», así que buscar una venta de otro día exige cambiar el rango.
-  Sin push.
+  341/341. Sin push.
+- 2026-10-23 — Decisión del owner: buscar una venta del POS por número o documento recorre todas las fechas. Lo resuelve
+  el frontend (`aac349fc`, ff a `develop`): aplicar una búsqueda sobre el «hoy» sin tocar quita el rango, y el chip de
+  fechas desaparece con él; un rango elegido por el cajero se conserva. El backend no cambia. Frontend `src/features/pos`
+  344/344. Sin push.
 - 2026-10-23 — Mergeado a `develop` el arreglo del entrante fuera de orden (`35799550`, ff): el bot volvía a mandar el
   mensaje de fuera de horario sin que el cliente escribiera, porque Meta reintentó 19 min tarde un «hola» de las 21:42
   que llegó detrás de uno de las 21:56 ya contestado (`dev_qep`, 2026-10-22). `InboundIngestion.ShouldEnqueue` ya no
