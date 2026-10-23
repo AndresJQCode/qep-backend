@@ -693,6 +693,197 @@ public sealed class ChatbotsApiTests
         Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
     }
 
+    // Spec 2026-10-23 D-X1, D-X2, D-X5, D-X6: publicar con la lista toma la conexión; el que la tenía queda sin ella, sigue Active, sube
+    // version (la otra pestaña recibe 412) y la pérdida queda auditada sobre él.
+    [Fact]
+    public async Task PublishWithTakeOverMovesTheConnection()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (first, firstVersion) = await PublishableAsync(setup);
+        var (second, secondVersion) = await PublishableAsync(setup, "Ventas");
+        var firstPublished = await ReadEditorAsync(await ActAsync(setup.Client, setup, first, "publish", firstVersion));
+
+        var response = await PublishAsync(setup.Client, setup, second, secondVersion, [setup.WhatsAppId]);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+        var taker = await GetAsync(setup, second);
+        Assert.Equal([setup.WhatsAppId], taker.Chatbot.Connections.Select(connection => connection.Id));
+        Assert.Equal(new ServedByDto(second, "Ventas"), taker.Connections.Single(connection => connection.Id == setup.WhatsAppId).ServedBy);
+        var former = await GetAsync(setup, first);
+        Assert.Empty(former.Chatbot.Connections);
+        Assert.Equal("Active", former.Chatbot.Status);
+        Assert.True(former.Chatbot.Version > firstPublished.Chatbot.Version);
+        Assert.Equal(1L, await ReleasedAsync(connectionString, first));
+    }
+
+    // D-X1: el PUT sobre un chatbot publicado también toma, al guardar los ajustes.
+    [Fact]
+    public async Task UpdateAPublishedChatbotWithTakeOverMovesTheConnection()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var other = await SeedWhatsAppConnectionAsync(factory, setup.Tenant.TenantId, "Ventas", Digits(), Digits());
+        var (first, firstVersion) = await PublishableAsync(setup);
+        await ReadEditorAsync(await ActAsync(setup.Client, setup, first, "publish", firstVersion));
+        var second = await PublishedOnAsync(setup, "Ventas", other);
+
+        var response = await SetConnectionsAsync(setup, second.Chatbot.Id, "Ventas", second.Chatbot.Version, [other, setup.WhatsAppId], [setup.WhatsAppId]);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Empty((await GetAsync(setup, first)).Chatbot.Connections);
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+        Assert.Equal(1L, await ReleasedAsync(connectionString, first));
+    }
+
+    // D-X4: un borrador no ocupa, así que sobre él la lista se ignora; el traspaso se confirma al publicar.
+    [Fact]
+    public async Task UpdateADraftWithTakeOverTouchesNobody()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (first, firstVersion) = await PublishableAsync(setup);
+        var (second, secondVersion) = await PublishableAsync(setup, "Ventas");
+        await ReadEditorAsync(await ActAsync(setup.Client, setup, first, "publish", firstVersion));
+
+        var response = await SetConnectionsAsync(setup, second, "Ventas", secondVersion, [setup.WhatsAppId], [setup.WhatsAppId]);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal([setup.WhatsAppId], (await GetAsync(setup, first)).Chatbot.Connections.Select(connection => connection.Id));
+        Assert.Equal(0L, await AllReleasedAsync(connectionString));
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+    }
+
+    // D-X3: una conexión de la lista que nadie atiende no cambia nada.
+    [Fact]
+    public async Task TakeOverOfAFreeConnectionIsIgnored()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (first, _) = await PublishableAsync(setup);
+        var (second, secondVersion) = await PublishableAsync(setup, "Ventas");
+
+        var response = await PublishAsync(setup.Client, setup, second, secondVersion, [setup.WhatsAppId]);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(0L, await AllReleasedAsync(connectionString));
+        Assert.Equal([setup.WhatsAppId], (await GetAsync(setup, first)).Chatbot.Connections.Select(connection => connection.Id));
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+    }
+
+    // D-X3: tampoco una que el chatbot ya atiende: volver a publicar con ella en la lista sólo numera la versión.
+    [Fact]
+    public async Task TakeOverOfAConnectionTheChatbotAlreadyServesChangesNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (first, firstVersion) = await PublishableAsync(setup);
+        var published = await ReadEditorAsync(await ActAsync(setup.Client, setup, first, "publish", firstVersion));
+
+        var response = await PublishAsync(setup.Client, setup, first, published.Chatbot.Version, [setup.WhatsAppId]);
+
+        var republished = await ReadEditorAsync(response);
+        Assert.Equal(2, republished.Published!.Number);
+        Assert.True(republished.Chatbot.Version > published.Chatbot.Version);
+        Assert.Equal([setup.WhatsAppId], republished.Chatbot.Connections.Select(connection => connection.Id));
+        Assert.Equal(0L, await AllReleasedAsync(connectionString));
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+    }
+
+    // D-X1, D-X3: la lista sólo actúa sobre las conexiones del chatbot; un id fuera de ellas no le quita nada a nadie.
+    [Fact]
+    public async Task TakeOverOutsideConnectionIdsIsIgnored()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var other = await SeedWhatsAppConnectionAsync(factory, setup.Tenant.TenantId, "Ventas", Digits(), Digits());
+        var (first, firstVersion) = await PublishableAsync(setup);
+        await ReadEditorAsync(await ActAsync(setup.Client, setup, first, "publish", firstVersion));
+        var (second, secondVersion) = await PublishableAsync(setup, "Ventas");
+        var moved = await ReadEditorAsync(await SetConnectionsAsync(setup, second, "Ventas", secondVersion, [other], []));
+
+        var response = await PublishAsync(setup.Client, setup, second, moved.Chatbot.Version, [setup.WhatsAppId]);
+
+        var published = await ReadEditorAsync(response);
+        Assert.Equal([other], published.Chatbot.Connections.Select(connection => connection.Id));
+        Assert.Equal([setup.WhatsAppId], (await GetAsync(setup, first)).Chatbot.Connections.Select(connection => connection.Id));
+        Assert.Equal(0L, await AllReleasedAsync(connectionString));
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+    }
+
+    // D-X2, D-X6: si las conexiones tomadas las atienden dos chatbots distintos, cada uno pierde la suya y queda auditado aparte.
+    [Fact]
+    public async Task TakeOverFromTwoHoldersReleasesBoth()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var other = await SeedWhatsAppConnectionAsync(factory, setup.Tenant.TenantId, "Ventas", Digits(), Digits());
+        var (a, aVersion) = await PublishableAsync(setup);
+        await ReadEditorAsync(await ActAsync(setup.Client, setup, a, "publish", aVersion));
+        var b = await PublishedOnAsync(setup, "Ventas", other);
+        var (c, cVersion) = await PublishableAsync(setup, "Soporte");
+        var both = await ReadEditorAsync(await SetConnectionsAsync(setup, c, "Soporte", cVersion, [setup.WhatsAppId, other], []));
+
+        var response = await PublishAsync(setup.Client, setup, c, both.Chatbot.Version, [setup.WhatsAppId, other]);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Empty((await GetAsync(setup, a)).Chatbot.Connections);
+        Assert.Empty((await GetAsync(setup, b.Chatbot.Id)).Chatbot.Connections);
+        Assert.Equal(1L, await ReleasedAsync(connectionString, a));
+        Assert.Equal(1L, await ReleasedAsync(connectionString, b.Chatbot.Id));
+        Assert.Equal(2L, await AllReleasedAsync(connectionString));
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, other));
+    }
+
+    // D-X10: un chatbot en pausa puede tomar una conexión (sus filas nacen activas, D-C13) y sigue en pausa.
+    [Fact]
+    public async Task APausedChatbotCanTakeOverAConnection()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var other = await SeedWhatsAppConnectionAsync(factory, setup.Tenant.TenantId, "Ventas", Digits(), Digits());
+        var published = await PublishedOnAsync(setup, "Ventas", other);
+        var second = published.Chatbot.Id;
+        var paused = await ReadEditorAsync(await ActAsync(setup.Client, setup, second, "pause", published.Chatbot.Version));
+        var (first, firstVersion) = await PublishableAsync(setup);
+        await ReadEditorAsync(await ActAsync(setup.Client, setup, first, "publish", firstVersion));
+
+        var response = await SetConnectionsAsync(setup, second, "Ventas", paused.Chatbot.Version, [other, setup.WhatsAppId], [setup.WhatsAppId]);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var taker = await GetAsync(setup, second);
+        Assert.Equal("Paused", taker.Chatbot.Status);
+        Assert.Equal(new ServedByDto(second, "Ventas"), taker.Connections.Single(connection => connection.Id == setup.WhatsAppId).ServedBy);
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+        Assert.Empty((await GetAsync(setup, first)).Chatbot.Connections);
+    }
+
     // D-C13: la pausa conserva la conexión; D-C5: reanudar vuelve a Active.
     [Fact]
     public async Task PauseKeepsTheConnectionAndResumeWorks()
@@ -1012,6 +1203,32 @@ public sealed class ChatbotsApiTests
         request.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
         return client.SendAsync(request, Ct);
     }
+
+    /// <summary><c>PUT /chatbots/{id}</c> con los ajustes de <see cref="PublishableAsync"/>, cambiando sólo las conexiones y la lista
+    /// de las que se le quitan a otro chatbot (spec 2026-10-23 D-X1).</summary>
+    private static Task<HttpResponseMessage> SetConnectionsAsync(
+        Setup setup, Guid chatbotId, string name, long version, IReadOnlyList<Guid> connectionIds, IReadOnlyList<Guid> takeOver) =>
+        PutAsync(
+            setup,
+            $"{ChatbotsUrl(setup.Tenant.TenantId)}/{chatbotId}",
+            new UpdateChatbotRequest(name, "Atiende la línea de servicio.", "NewConversation", [], "reiniciar", 3, connectionIds, takeOver),
+            version);
+
+    /// <summary>Un chatbot publicado que atiende sólo <paramref name="connectionId"/>: nace en la conexión de WhatsApp del setup como
+    /// borrador (no la ocupa), se mueve y se publica.</summary>
+    private static async Task<ChatbotEditorDto> PublishedOnAsync(Setup setup, string name, Guid connectionId)
+    {
+        var (id, version) = await PublishableAsync(setup, name);
+        var moved = await ReadEditorAsync(await SetConnectionsAsync(setup, id, name, version, [connectionId], []));
+        return await ReadEditorAsync(await ActAsync(setup.Client, setup, id, "publish", moved.Chatbot.Version));
+    }
+
+    private static Task<long> ReleasedAsync(string connectionString, Guid chatbotId) =>
+        CountAsync(connectionString,
+            "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.connection_released'", ("id", chatbotId.ToString()));
+
+    private static Task<long> AllReleasedAsync(string connectionString) =>
+        CountAsync(connectionString, "SELECT count(*) FROM audit.entries WHERE action = 'automations.chatbot.connection_released'");
 
     private static Task<HttpResponseMessage> DeleteAsync(Setup setup, Guid chatbotId, long? version)
     {
