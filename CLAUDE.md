@@ -515,6 +515,10 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `wa_id`, y un filtro vacío ignorado le aceptaría la política a un cliente cualquiera): ese 400 va por `error` al asesor, no se
   «arregla» en Clasic. Y `/services` y `/departments/*` son públicas, así que la ruta de prueba de la conexión «API externa» tiene
   que ser una protegida (`/failures`, D-K10): con una pública, «Probar» da OK con cualquier clave.
+- **En una Lista dinámica, `x.id` es el id de la fila (texto) y `x.item.id` es el valor del elemento.** Un cuerpo JSON hacia
+  una API que espera un número lleva `{x.item.id}` sin comillas: `"{x.id}"` compila, pasa las pruebas con el fake y Clasic
+  responde 500 (`invoiceItems[0].id` como string; verificado el 2026-10-23 en la revisión final del plan 4). En una query de
+  URL sí va `{x.id}`, porque es texto.
 
 ## Verificación
 
