@@ -135,6 +135,8 @@ internal static class ChatbotEndpoints
     private static async Task<IResult> GetAsync(Guid tenantId, Guid chatbotId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetChatbotQuery(tenantId, chatbotId), cancellationToken));
 
+    /// <summary><c>takeOverConnectionIds</c> (opcional) quita esas conexiones al otro chatbot publicado que las tenga; lo que no esté ocupado o
+    /// no esté en <c>connectionIds</c> se ignora, y en un borrador se ignora entera (spec 2026-10-23 D-X1, D-X4).</summary>
     private static async Task<IResult> UpdateAsync(
         Guid tenantId, Guid chatbotId, UpdateChatbotRequest request, HttpContext httpContext, IRequestDispatcher dispatcher,
         CancellationToken cancellationToken) =>
@@ -236,7 +238,8 @@ internal static class ChatbotEndpoints
     private static async Task<IResult> ValidateAsync(Guid tenantId, Guid chatbotId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ValidateChatbotQuery(tenantId, chatbotId), cancellationToken));
 
-    /// <summary>El cuerpo es opcional (spec 2026-10-23 D-X1): el frontend publica sin cuerpo cuando no hay conexiones que mover.</summary>
+    /// <summary>El cuerpo es opcional (spec 2026-10-23 D-X1): el frontend publica sin cuerpo cuando no hay conexiones que mover. Las de
+    /// <c>takeOverConnectionIds</c> se le quitan al otro chatbot publicado que las tenga; lo que no esté ocupado o no sea del chatbot se ignora.</summary>
     private static async Task<IResult> PublishAsync(
         Guid tenantId, Guid chatbotId, PublishChatbotRequest? request, HttpContext httpContext, IRequestDispatcher dispatcher,
         CancellationToken cancellationToken) =>
@@ -286,6 +289,7 @@ public sealed record ChatbotSourceRequest(string Kind, string? TemplateId, Guid?
 public sealed record CreateChatbotRequest(
     string Name, string Description, string Trigger, IReadOnlyList<string> Keywords, IReadOnlyList<Guid> ConnectionIds, ChatbotSourceRequest Source);
 
+/// <summary><c>TakeOverConnectionIds</c>: conexiones que se le quitan a otro chatbot publicado; en un borrador se ignora (spec 2026-10-23 D-X1, D-X4).</summary>
 public sealed record UpdateChatbotRequest(
     string Name, string Description, string Trigger, IReadOnlyList<string> Keywords, string RestartKeyword, int MaxAttempts,
     IReadOnlyList<Guid> ConnectionIds, IReadOnlyList<Guid>? TakeOverConnectionIds = null);

@@ -29,6 +29,8 @@ public sealed record CreateChatbotCommand(
     Guid TenantId, string Name, string Description, string Trigger, IReadOnlyList<string> Keywords, IReadOnlyList<Guid> ConnectionIds,
     ChatbotSource Source) : ICommand<ChatbotEditorDto>;
 
+/// <summary><paramref name="TakeOverConnectionIds"/>: conexiones que se le quitan a otro chatbot publicado; sólo rige si este ya está publicado,
+/// en un <c>Draft</c> se ignora (spec 2026-10-23 D-X1, D-X4).</summary>
 public sealed record UpdateChatbotCommand(
     Guid TenantId, Guid ChatbotId, long Version, string Name, string Description, string Trigger, IReadOnlyList<string> Keywords,
     string RestartKeyword, int MaxAttempts, IReadOnlyList<Guid> ConnectionIds, IReadOnlyList<Guid> TakeOverConnectionIds)
@@ -471,7 +473,8 @@ public sealed class CreateChatbotHandler(
 
 /// <summary>Nombre, descripción, disparador, palabras, reinicio, intentos y conexiones, todo junto (§4.4). En un chatbot publicado las
 /// conexiones nuevas nacen ocupadas, y si otro activo ya tiene una el índice responde 409 <c>connection_taken</c>, salvo que esté en
-/// <c>TakeOverConnectionIds</c>: ésa se le quita al otro (spec 2026-10-23 D-X1).</summary>
+/// <c>TakeOverConnectionIds</c>: ésa se le quita al otro (spec 2026-10-23 D-X1); lo que no está ocupado o no está en las conexiones
+/// del chatbot se ignora, y en un <c>Draft</c> la lista se ignora entera (D-X4: no ocupa, el traspaso se confirma al publicar).</summary>
 public sealed class UpdateChatbotHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
