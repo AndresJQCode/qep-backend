@@ -1,4 +1,11 @@
 {
+  "schema": 1,
+  "name": "Clasic",
+  "description": "Servicio técnico de calentadores.",
+  "trigger": "NewConversation",
+  "keywords": [],
+  "restartKeyword": "reiniciar",
+  "maxAttempts": 3,
   "flow": {
     "schema": 1,
     "start": {
@@ -11,7 +18,7 @@
       },
       {
         "name": "aceptacion",
-        "type": "text"
+        "type": "object"
       },
       {
         "name": "cedula",
@@ -156,18 +163,25 @@
       },
       {
         "id": "policy",
-        "kind": "openQuestion",
+        "kind": "buttons",
         "title": "Política de datos",
-        "text": "Hola, te damos la bienvenida a CLASIC, especialistas en calentamiento de agua. Para continuar debes aceptar la política de tratamiento de datos: https://clasic.com.co/politica-de-privacidad/ Responde ACEPTO si la aceptas.",
+        "text": "Hola, te damos la bienvenida a CLASIC, especialistas en calentamiento de agua. Para continuar debes aceptar la política de tratamiento de datos: https://clasic.com.co/politica-de-privacidad/",
+        "buttons": [
+          {
+            "id": "acepto",
+            "label": "Acepto"
+          },
+          {
+            "id": "no-acepto",
+            "label": "No acepto"
+          }
+        ],
         "saveTo": "aceptacion",
-        "validation": {
-          "kind": "regex",
-          "pattern": "(?i)^(?![\\s\\S]*\\bno\\b)[\\s\\S]*acepto[\\s\\S]*$"
-        },
-        "maxAttempts": null,
+        "fallback": "repeat",
         "outputs": {
-          "answered": "policy-save",
-          "invalid": null
+          "acepto": "policy-save",
+          "no-acepto": "policy-declined",
+          "other": "handoff"
         }
       },
       {
@@ -190,6 +204,12 @@
           "ok": "welcome",
           "error": "handoff"
         }
+      },
+      {
+        "id": "policy-declined",
+        "kind": "resolve",
+        "title": "Política no aceptada",
+        "text": "Entendido. Sin la aceptación de la política de tratamiento de datos no podemos atender tu solicitud. Si cambias de opinión, escríbenos de nuevo."
       },
       {
         "id": "welcome",
@@ -309,7 +329,7 @@
         "outputs": {
           "leave": "new-first-name",
           "other-doc": "document",
-          "other": null
+          "other": "handoff"
         }
       },
       {
@@ -324,7 +344,7 @@
         "maxAttempts": null,
         "outputs": {
           "answered": "new-last-name",
-          "invalid": null
+          "invalid": "handoff"
         }
       },
       {
@@ -339,7 +359,7 @@
         "maxAttempts": null,
         "outputs": {
           "answered": "new-address",
-          "invalid": null
+          "invalid": "handoff"
         }
       },
       {
@@ -354,7 +374,7 @@
         "maxAttempts": null,
         "outputs": {
           "answered": "new-neighborhood",
-          "invalid": null
+          "invalid": "handoff"
         }
       },
       {
@@ -369,7 +389,7 @@
         "maxAttempts": null,
         "outputs": {
           "answered": "new-city",
-          "invalid": null
+          "invalid": "handoff"
         }
       },
       {
@@ -384,7 +404,7 @@
         "maxAttempts": null,
         "outputs": {
           "answered": "new-failures",
-          "invalid": null
+          "invalid": "handoff"
         }
       },
       {
@@ -438,7 +458,7 @@
         "outputs": {
           "chosen": "invoice-photo",
           "tooMany": "handoff",
-          "other": null
+          "other": "handoff"
         }
       },
       {
@@ -450,7 +470,7 @@
         "saveTo": "factura",
         "outputs": {
           "received": "new-customer",
-          "invalid": null
+          "invalid": "handoff"
         }
       },
       {
@@ -583,7 +603,7 @@
           "chosen": "open-order-check",
           "extra": "other-address",
           "tooMany": "handoff",
-          "other": null
+          "other": "handoff"
         }
       },
       {
@@ -623,7 +643,7 @@
         "outputs": {
           "another": "equipment",
           "agent": "handoff",
-          "other": null
+          "other": "handoff"
         }
       },
       {
@@ -638,7 +658,7 @@
         "maxAttempts": null,
         "outputs": {
           "answered": "other-address-handoff",
-          "invalid": null
+          "invalid": "handoff"
         }
       },
       {
@@ -667,7 +687,7 @@
         "outputs": {
           "tech": "failures",
           "maint": "maintenance-service",
-          "other": null
+          "other": "handoff"
         }
       },
       {
@@ -721,7 +741,7 @@
         "outputs": {
           "chosen": "contact-name",
           "tooMany": "handoff",
-          "other": null
+          "other": "handoff"
         }
       },
       {
@@ -823,7 +843,7 @@
         "maxAttempts": null,
         "outputs": {
           "answered": "contact-phone",
-          "invalid": null
+          "invalid": "handoff"
         }
       },
       {
@@ -979,176 +999,188 @@
     "positions": {
       "policy-lookup": {
         "x": 0,
-        "y": 0
+        "y": 156
       },
       "policy-check": {
-        "x": 320,
-        "y": 0
+        "x": 0,
+        "y": 366
       },
       "policy": {
-        "x": 640,
-        "y": 0
+        "x": 0,
+        "y": 576
       },
       "policy-save": {
-        "x": 960,
-        "y": 0
+        "x": 0,
+        "y": 866
+      },
+      "policy-declined": {
+        "x": 320,
+        "y": 866
       },
       "welcome": {
-        "x": 1280,
-        "y": 0
+        "x": 0,
+        "y": 1076
       },
       "document": {
-        "x": 1600,
-        "y": 0
+        "x": 0,
+        "y": 1350
+      },
+      "document-handoff": {
+        "x": -160,
+        "y": 1608
       },
       "find-customer": {
-        "x": 0,
-        "y": 180
+        "x": 160,
+        "y": 1608
       },
       "customer-found": {
-        "x": 320,
-        "y": 180
+        "x": 160,
+        "y": 1844
       },
       "not-found": {
-        "x": 640,
-        "y": 180
+        "x": 0,
+        "y": 2054
       },
       "not-found-options": {
-        "x": 960,
-        "y": 180
+        "x": 0,
+        "y": 2358
       },
       "new-first-name": {
-        "x": 1280,
-        "y": 180
+        "x": -112,
+        "y": 2656
       },
       "new-last-name": {
-        "x": 1600,
-        "y": 180
+        "x": -272,
+        "y": 2914
       },
       "new-address": {
-        "x": 0,
-        "y": 360
+        "x": -368,
+        "y": 3228
       },
       "new-neighborhood": {
-        "x": 320,
-        "y": 360
+        "x": -368,
+        "y": 3486
       },
       "new-city": {
-        "x": 640,
-        "y": 360
+        "x": -368,
+        "y": 3728
       },
       "new-failures": {
-        "x": 960,
-        "y": 360
+        "x": -368,
+        "y": 3970
       },
       "new-failure": {
-        "x": 1280,
-        "y": 360
+        "x": -368,
+        "y": 4228
       },
       "invoice-photo": {
-        "x": 1600,
-        "y": 360
+        "x": -368,
+        "y": 4486
       },
       "new-customer": {
-        "x": 0,
-        "y": 540
+        "x": -480,
+        "y": 4744
       },
       "registered": {
-        "x": 320,
-        "y": 540
+        "x": -480,
+        "y": 4954
       },
       "invoice-items": {
-        "x": 640,
-        "y": 540
+        "x": 320,
+        "y": 2054
       },
       "equipment": {
-        "x": 960,
-        "y": 540
+        "x": 320,
+        "y": 2358
       },
       "open-order-check": {
-        "x": 1280,
-        "y": 540
+        "x": 208,
+        "y": 2656
       },
       "open-order-notice": {
-        "x": 1600,
-        "y": 540
+        "x": 48,
+        "y": 2914
       },
       "other-address": {
-        "x": 0,
-        "y": 720
+        "x": 528,
+        "y": 2656
       },
       "other-address-handoff": {
-        "x": 320,
-        "y": 720
+        "x": 688,
+        "y": 2914
       },
       "service-kind": {
-        "x": 640,
-        "y": 720
+        "x": 368,
+        "y": 2914
       },
       "failures": {
-        "x": 960,
-        "y": 720
+        "x": 272,
+        "y": 3228
       },
       "failure": {
-        "x": 1280,
-        "y": 720
+        "x": 272,
+        "y": 3486
       },
       "maintenance-service": {
-        "x": 1600,
-        "y": 720
+        "x": 592,
+        "y": 3228
       },
       "maintenance-failure": {
-        "x": 0,
-        "y": 900
+        "x": 592,
+        "y": 3486
+      },
+      "maintenance-check": {
+        "x": 592,
+        "y": 3728
       },
       "contact-name": {
-        "x": 320,
-        "y": 900
+        "x": 432,
+        "y": 3970
       },
       "contact-phone": {
-        "x": 640,
-        "y": 900
+        "x": 432,
+        "y": 4228
       },
       "which-order": {
-        "x": 960,
-        "y": 900
+        "x": 432,
+        "y": 4486
       },
       "service-type": {
-        "x": 1280,
-        "y": 900
+        "x": 320,
+        "y": 4744
       },
       "create-order": {
-        "x": 1600,
-        "y": 900
+        "x": 320,
+        "y": 4954
       },
       "summary": {
-        "x": 0,
-        "y": 1080
+        "x": 240,
+        "y": 5222
       },
       "maintenance-order": {
-        "x": 320,
-        "y": 1080
+        "x": 640,
+        "y": 4744
       },
       "maintenance-summary": {
         "x": 640,
-        "y": 1080
+        "y": 4954
       },
       "order-error": {
-        "x": 960,
-        "y": 1080
+        "x": 560,
+        "y": 5222
       },
       "handoff": {
-        "x": 1280,
-        "y": 1080
-      },
-      "document-handoff": {
-        "x": 1600,
-        "y": 1080
-      },
-      "maintenance-check": {
-        "x": 0,
-        "y": 1260
+        "x": 192,
+        "y": 5490
       }
     }
-  }
+  },
+  "externalApis": [
+    {
+      "id": "11111111-1111-1111-1111-111111111111",
+      "name": "API de Clasic",
+      "status": "Active"
+    }
+  ],
+  "exportedAt": "2026-10-23T00:00:00+00:00"
 }

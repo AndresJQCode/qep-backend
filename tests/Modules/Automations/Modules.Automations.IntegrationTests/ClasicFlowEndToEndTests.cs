@@ -483,8 +483,8 @@ public sealed class ClasicFlowEndToEndTests
         }
     }
 
-    /// <summary>D-K3: el teléfono del cliente encuentra a alguien que no ha aceptado la política. El bot la pide antes que nada y, con
-    /// «Acepto.», la guarda en Clasic (<c>PUT /customers/{id}</c>) y sigue con la bienvenida.</summary>
+    /// <summary>D-K3: el teléfono del cliente encuentra a alguien que no ha aceptado la política. El bot la pide antes que nada con dos
+    /// botones y, con «Acepto», la guarda en Clasic (<c>PUT /customers/{id}</c>) y sigue con la bienvenida.</summary>
     [Fact]
     public async Task ACustomerWhoHasNotAcceptedThePolicyIsAskedAndTheAcceptanceIsSaved()
     {
@@ -497,7 +497,7 @@ public sealed class ClasicFlowEndToEndTests
         Assert.Contains("política de tratamiento de datos", policy, StringComparison.Ordinal);
         Assert.Equal([$"GET /customers?phone={WaId}"], f.Api.Requests.Select(request => $"{request.Method} {request.Uri.PathAndQuery}"));
 
-        await SayAsync(f, "w2", "Acepto.");
+        await TapAsync(f, "w2", "acepto", "Acepto");
 
         var save = Assert.Single(f.Api.Requests, request => request.Method == HttpMethod.Put);
         Assert.Equal("/customers/7", save.Uri.PathAndQuery);
@@ -511,6 +511,24 @@ public sealed class ClasicFlowEndToEndTests
     }
 
     /// <summary>Un teléfono que Clasic no conoce no tiene a quién guardarle la aceptación: el bot da la bienvenida sin preguntar.</summary>
+    /// <summary>«No acepto» no guarda nada en Clasic: el bot explica que sin la política no puede atender y resuelve la conversación,
+    /// así el siguiente mensaje del cliente vuelve a empezar (D-M12).</summary>
+    [Fact]
+    public async Task ACustomerWhoDeclinesThePolicyIsToldAndTheConversationIsResolved()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        f.Api.Respond(@"^/customers\?phone=", HttpStatusCode.OK, CustomerWithoutPolicy);
+
+        await SayAsync(f, "w1", "Hola");
+        await TapAsync(f, "w2", "no-acepto", "No acepto");
+
+        Assert.DoesNotContain(f.Api.Requests, request => request.Method == HttpMethod.Put);
+        Assert.Contains("Sin la aceptación de la política", f.Graph.Sends()[^1], StringComparison.Ordinal);
+        Assert.Equal("Resolved|None", await TextAsync(f, "SELECT status || '|' || automation_status FROM messaging.conversations"));
+        Assert.Equal("Resolved", await TextAsync(f, "SELECT status FROM automations.conversation_runs"));
+    }
+
     [Fact]
     public async Task AnUnknownPhoneSkipsThePolicy()
     {
