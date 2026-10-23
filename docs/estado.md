@@ -196,9 +196,10 @@ facturación esté completa; cambiaría D-S7 y D-S15.
   el fixture de Clasic pasó a ser el archivo de exportación completo, con layout por niveles (antes cuadrícula de 180 px), las
   salidas opcionales (`invalid`, `other`, `tooMany`) conectadas a «Pasar a un asesor» (sin conectar terminaban la corrida en
   silencio) y «Política de datos» como Botones «Acepto»/«No acepto» con el cierre «Política no aceptada» (15 pruebas e2e, una
-  nueva). El borrador «Clasic» de `dev_qep` lleva los mismos cambios (versión 39). Pendientes: (a) decisión del owner sobre
-  pedir la política también a un teléfono que Clasic no conoce (hoy D-K3 la salta; propuesta en la sesión: preguntar siempre
-  que no conste `acceptPolicy = true`, `PUT` sólo si hay cliente por teléfono y `acceptPolicy = true` en `new-customer`);
+  nueva). El borrador «Clasic» de `dev_qep` lleva los mismos cambios (versión 39). Más tarde ese día (developer, al probar con un número que
+  Clasic no tiene): la política se pide a todo cliente sin `acceptPolicy = true` (D-K3 ya no la salta con teléfono desconocido);
+  «Acepto» guarda con `PUT` sólo si hay cliente por teléfono, `new-customer` manda `acceptPolicy = true` y, si la ficha que
+  aparece por cédula no tiene la política, se guarda ahí la aceptación de este chat (47 bloques, 16 pruebas e2e). Pendientes:
   (b) tarea 6 del plan, dibujar la salida «otra respuesta» de Botones abajo y no como cuarto chip; (c) menores de la revisión
   final (otros `export.*` del 422 muestran el texto en inglés; «Cargando conexiones…» también cuando `/external-apis` falla;
   preseleccionar la conexión cuando el id del archivo ya existe en el tenant).

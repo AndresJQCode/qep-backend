@@ -144,12 +144,8 @@
         "id": "policy-check",
         "kind": "condition",
         "title": "¿Aceptó la política?",
-        "match": "any",
+        "match": "all",
         "rules": [
-          {
-            "variable": "clientesPorTelefono",
-            "operator": "isEmpty"
-          },
           {
             "variable": "clientesPorTelefono[0].acceptPolicy",
             "operator": "equals",
@@ -179,9 +175,25 @@
         "saveTo": "aceptacion",
         "fallback": "repeat",
         "outputs": {
-          "acepto": "policy-save",
+          "acepto": "policy-known-phone",
           "no-acepto": "policy-declined",
           "other": "handoff"
+        }
+      },
+      {
+        "id": "policy-known-phone",
+        "kind": "condition",
+        "title": "¿Clasic conoce el teléfono?",
+        "match": "all",
+        "rules": [
+          {
+            "variable": "clientesPorTelefono",
+            "operator": "isNotEmpty"
+          }
+        ],
+        "outputs": {
+          "yes": "policy-save",
+          "no": "welcome"
         }
       },
       {
@@ -292,8 +304,46 @@
           }
         ],
         "outputs": {
-          "yes": "invoice-items",
+          "yes": "document-policy-check",
           "no": "not-found"
+        }
+      },
+      {
+        "id": "document-policy-check",
+        "kind": "condition",
+        "title": "¿Le falta la política?",
+        "match": "all",
+        "rules": [
+          {
+            "variable": "cliente.acceptPolicy",
+            "operator": "notEquals",
+            "value": "true"
+          }
+        ],
+        "outputs": {
+          "yes": "document-policy-save",
+          "no": "invoice-items"
+        }
+      },
+      {
+        "id": "document-policy-save",
+        "kind": "http",
+        "title": "Guardar aceptación (por documento)",
+        "connectionId": "11111111-1111-1111-1111-111111111111",
+        "method": "PUT",
+        "path": "/customers/{cliente.id}",
+        "query": [],
+        "body": {
+          "kind": "json",
+          "template": "{ \"acceptPolicy\": \"true\", \"sourceAcceptPolicy\": \"Whatsapp\" }"
+        },
+        "timeoutSeconds": 10,
+        "okWhen": null,
+        "mapping": [],
+        "sampleResponse": {},
+        "outputs": {
+          "ok": "invoice-items",
+          "error": "handoff"
         }
       },
       {
@@ -519,6 +569,10 @@
             {
               "key": "cityId",
               "value": "5001000"
+            },
+            {
+              "key": "acceptPolicy",
+              "value": "true"
             },
             {
               "key": "failureId",
@@ -1009,169 +1063,181 @@
         "x": 0,
         "y": 576
       },
+      "policy-known-phone": {
+        "x": -160,
+        "y": 938
+      },
       "policy-save": {
-        "x": 0,
-        "y": 866
+        "x": -160,
+        "y": 1206
       },
       "policy-declined": {
-        "x": 320,
-        "y": 866
+        "x": 160,
+        "y": 938
       },
       "welcome": {
-        "x": 0,
-        "y": 1076
+        "x": -112,
+        "y": 1416
       },
       "document": {
-        "x": 0,
-        "y": 1350
+        "x": -112,
+        "y": 1690
       },
       "document-handoff": {
-        "x": -160,
-        "y": 1608
+        "x": -272,
+        "y": 1948
       },
       "find-customer": {
-        "x": 160,
-        "y": 1608
+        "x": 48,
+        "y": 1948
       },
       "customer-found": {
-        "x": 160,
-        "y": 1844
+        "x": 48,
+        "y": 2184
+      },
+      "document-policy-check": {
+        "x": -112,
+        "y": 2394
+      },
+      "document-policy-save": {
+        "x": -112,
+        "y": 2698
       },
       "not-found": {
-        "x": 0,
-        "y": 2054
+        "x": 208,
+        "y": 2394
       },
       "not-found-options": {
-        "x": 0,
-        "y": 2358
+        "x": 208,
+        "y": 2698
       },
       "new-first-name": {
-        "x": -112,
-        "y": 2656
+        "x": 208,
+        "y": 2996
       },
       "new-last-name": {
-        "x": -272,
-        "y": 2914
+        "x": 208,
+        "y": 3238
       },
       "new-address": {
-        "x": -368,
-        "y": 3228
+        "x": 320,
+        "y": 3496
       },
       "new-neighborhood": {
-        "x": -368,
-        "y": 3486
+        "x": 400,
+        "y": 3754
       },
       "new-city": {
-        "x": -368,
-        "y": 3728
+        "x": 288,
+        "y": 4068
       },
       "new-failures": {
-        "x": -368,
-        "y": 3970
+        "x": 288,
+        "y": 4310
       },
       "new-failure": {
-        "x": -368,
-        "y": 4228
+        "x": 288,
+        "y": 4552
       },
       "invoice-photo": {
-        "x": -368,
-        "y": 4486
+        "x": 288,
+        "y": 4794
       },
       "new-customer": {
-        "x": -480,
-        "y": 4744
+        "x": 288,
+        "y": 5052
       },
       "registered": {
-        "x": -480,
-        "y": 4954
+        "x": 288,
+        "y": 5310
       },
       "invoice-items": {
-        "x": 320,
-        "y": 2054
+        "x": -112,
+        "y": 2996
       },
       "equipment": {
-        "x": 320,
-        "y": 2358
+        "x": -112,
+        "y": 3238
       },
       "open-order-check": {
-        "x": 208,
-        "y": 2656
+        "x": -320,
+        "y": 3496
       },
       "open-order-notice": {
-        "x": 48,
-        "y": 2914
+        "x": -560,
+        "y": 3754
       },
       "other-address": {
-        "x": 528,
-        "y": 2656
+        "x": 0,
+        "y": 3496
       },
       "other-address-handoff": {
-        "x": 688,
-        "y": 2914
+        "x": 80,
+        "y": 3754
       },
       "service-kind": {
-        "x": 368,
-        "y": 2914
+        "x": -240,
+        "y": 3754
       },
       "failures": {
-        "x": 272,
-        "y": 3228
+        "x": -352,
+        "y": 4068
       },
       "failure": {
-        "x": 272,
-        "y": 3486
+        "x": -352,
+        "y": 4310
       },
       "maintenance-service": {
-        "x": 592,
-        "y": 3228
+        "x": -32,
+        "y": 4068
       },
       "maintenance-failure": {
-        "x": 592,
-        "y": 3486
+        "x": -32,
+        "y": 4310
       },
       "maintenance-check": {
-        "x": 592,
-        "y": 3728
+        "x": -32,
+        "y": 4552
       },
       "contact-name": {
-        "x": 432,
-        "y": 3970
+        "x": -192,
+        "y": 4794
       },
       "contact-phone": {
-        "x": 432,
-        "y": 4228
+        "x": -192,
+        "y": 5052
       },
       "which-order": {
-        "x": 432,
-        "y": 4486
+        "x": -192,
+        "y": 5310
       },
       "service-type": {
-        "x": 320,
-        "y": 4744
+        "x": -352,
+        "y": 5578
       },
       "create-order": {
-        "x": 320,
-        "y": 4954
+        "x": -352,
+        "y": 5788
       },
       "summary": {
-        "x": 240,
-        "y": 5222
+        "x": -432,
+        "y": 6056
       },
       "maintenance-order": {
-        "x": 640,
-        "y": 4744
+        "x": -32,
+        "y": 5578
       },
       "maintenance-summary": {
-        "x": 640,
-        "y": 4954
+        "x": -32,
+        "y": 5788
       },
       "order-error": {
-        "x": 560,
-        "y": 5222
+        "x": -112,
+        "y": 6056
       },
       "handoff": {
-        "x": 192,
-        "y": 5490
+        "x": -16,
+        "y": 6324
       }
     }
   },

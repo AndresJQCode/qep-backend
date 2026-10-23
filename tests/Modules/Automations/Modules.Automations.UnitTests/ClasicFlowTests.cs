@@ -36,7 +36,8 @@ public sealed class ClasicFlowTests
     {
         string[] contract =
         [
-            "GET /customers", "PUT /customers/{clientesPorTelefono[0].id}", "GET /invoices/customer/{cliente.id}/all-invoice-items",
+            "GET /customers", "PUT /customers/{clientesPorTelefono[0].id}", "PUT /customers/{cliente.id}",
+            "GET /invoices/customer/{cliente.id}/all-invoice-items",
             "GET /failures", "GET /services", "GET /service-orders/auto-select-service-type", "POST /service-orders",
             "POST /customers/new-customer",
         ];
@@ -80,11 +81,14 @@ public sealed class ClasicFlowTests
 
     /// <summary>La política se acepta con dos botones (2026-10-23; antes era una pregunta abierta que pedía escribir «acepto»). Un
     /// toque se resuelve por id; lo escrito se compara contra la etiqueta sin tildes ni mayúsculas (§5.4), y cualquier otro texto
-    /// repite la pregunta. «No acepto» termina la conversación con su propio mensaje (<c>policy-declined</c>).</summary>
+    /// repite la pregunta. «No acepto» termina la conversación con su propio mensaje (<c>policy-declined</c>). Aquí Clasic no
+    /// conoce el teléfono (<c>clientesPorTelefono</c> vacía), así que «Acepto» sigue a la bienvenida sin guardar nada; con cliente
+    /// por teléfono iría por <c>policy-save</c> (lo cubre <c>ClasicFlowEndToEndTests</c>). La bienvenida es un mensaje que no espera,
+    /// así que la corrida queda esperando en <c>document</c>.</summary>
     [Theory]
-    [InlineData("acepto", "Acepto", "policy-save")]
+    [InlineData("acepto", "Acepto", "document")]
     [InlineData("no-acepto", "No acepto", "policy-declined")]
-    [InlineData(null, "acepto", "policy-save")]
+    [InlineData(null, "acepto", "document")]
     [InlineData(null, "NO ACEPTO", "policy-declined")]
     [InlineData(null, "Acepto la política", "policy")]
     public void ThePolicyButtonsDecideWhereTheFlowGoes(string? replyId, string text, string expectedNode)

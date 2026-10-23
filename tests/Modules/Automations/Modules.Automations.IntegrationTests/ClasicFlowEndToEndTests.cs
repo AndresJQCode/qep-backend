@@ -529,18 +529,45 @@ public sealed class ClasicFlowEndToEndTests
         Assert.Equal("Resolved", await TextAsync(f, "SELECT status FROM automations.conversation_runs"));
     }
 
+    /// <summary>Un teléfono que Clasic no conoce también tiene que aceptar la política antes de dar su cédula (2026-10-23; antes D-K3 la
+    /// saltaba). Como no hay cliente por teléfono, «Acepto» no guarda nada en Clasic y sigue a la bienvenida.</summary>
     [Fact]
-    public async Task AnUnknownPhoneSkipsThePolicy()
+    public async Task AnUnknownPhoneIsAskedThePolicyAndNothingIsSaved()
     {
         await using var database = await StartDatabaseAsync();
         using var f = await ArrangeAsync(database);
         f.Api.Respond(@"^/customers\?phone=", HttpStatusCode.OK, NoCustomers);
 
         await SayAsync(f, "w1", "Hola");
+        Assert.Contains("política de tratamiento de datos", Assert.Single(f.Graph.Sends()), StringComparison.Ordinal);
 
-        Assert.Equal([Welcome, AskDocument], f.Graph.Sends());
+        await TapAsync(f, "w2", "acepto", "Acepto");
+
+        Assert.Equal([Welcome, AskDocument], f.Graph.Sends()[1..]);
         Assert.Equal([$"GET /customers?phone={WaId}"], f.Api.Requests.Select(request => $"{request.Method} {request.Uri.PathAndQuery}"));
         Assert.DoesNotContain(f.Api.Requests, request => request.Method == HttpMethod.Put);
+    }
+
+    /// <summary>El cliente escribe desde un número que Clasic no tiene y da la cédula de una ficha sin la política aceptada: la
+    /// aceptación que dio en este chat se guarda en esa ficha (<c>PUT /customers/{cliente.id}</c>) antes de pedir el equipo
+    /// (2026-10-23).</summary>
+    [Fact]
+    public async Task ACustomerFoundByDocumentWithoutThePolicyGetsTheAcceptanceOfThisChat()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        f.Api.Respond(@"^/customers\?phone=", HttpStatusCode.OK, NoCustomers);
+        f.Api.Respond(@"^/customers\?document=", HttpStatusCode.OK, CustomerWithoutPolicy);
+
+        await SayAsync(f, "w1", "Hola");
+        await TapAsync(f, "w2", "acepto", "Acepto");
+        await SayAsync(f, "w3", "10203");
+
+        var save = Assert.Single(f.Api.Requests, request => request.Method == HttpMethod.Put);
+        Assert.Equal("/customers/7", save.Uri.PathAndQuery);
+        Assert.Equal("true", JsonNode.Parse(save.Body!)!["acceptPolicy"]!.GetValue<string>());
+        Assert.Equal(AskEquipment, f.Graph.Sends()[^1]);
+        Assert.Equal("Waiting|equipment", await TextAsync(f, "SELECT status || '|' || current_node_id FROM automations.conversation_runs"));
     }
 
     /// <summary>Anexo B §8: un equipo con orden abierta no deja seguir. El bot avisa con dos botones; «Elegir otro equipo» vuelve a mandar la
@@ -681,7 +708,8 @@ public sealed class ClasicFlowEndToEndTests
     }
 
     /// <summary>Anexo C: <c>POST /customers/new-customer</c> recibe exactamente los campos de <c>CreateCustomerWhatsappDto</c> más el archivo;
-    /// departamento y ciudad van fijos (Antioquia, Medellín) y la falla es el id de la fila que eligió el cliente.</summary>
+    /// departamento y ciudad van fijos (Antioquia, Medellín), la falla es el id de la fila que eligió el cliente y <c>acceptPolicy</c> va
+    /// en <c>true</c> porque a este bloque sólo se llega habiendo aceptado la política (2026-10-23).</summary>
     [Fact]
     public async Task RegistrationSendsTheRealMultipartFields()
     {
@@ -695,7 +723,7 @@ public sealed class ClasicFlowEndToEndTests
         string[] expected =
         [
             "identificationNumber", "firstName", "lastName", "address", "neighborhood", "addressDescription", "phone", "departmentId", "cityId",
-            "failureId", "file",
+            "acceptPolicy", "failureId", "file",
         ];
         Assert.Equal(expected.Order(StringComparer.Ordinal), registration.Parts.Select(part => part.Name).Order(StringComparer.Ordinal));
         var fields = registration.Parts.Where(part => part.Name != "file").ToDictionary(part => part.Name, part => part.Text, StringComparer.Ordinal);
