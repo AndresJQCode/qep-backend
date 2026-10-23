@@ -118,7 +118,9 @@ internal sealed class InMemoryPosSaleRepository(InMemoryCashSessionRepository se
             .Where(sale => filter.FromUtc is not { } from || sale.CreatedAt >= from)
             .Where(sale => filter.ToUtc is not { } to || sale.CreatedAt < to)
             .Where(sale => filter.Status is not { } status || sale.Status == status)
-            .Where(sale => filter.Number is null || sale.SaleNumber == filter.Number)
+            .Where(sale => filter.Number is null || sale.SaleNumber.Contains(filter.Number, StringComparison.OrdinalIgnoreCase))
+            .Where(sale => filter.CustomerDocument is null
+                || sale.CustomerIdentificationNumber.Contains(filter.CustomerDocument, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(sale => sale.CreatedAt)
             .ToList();
         var rows = matches

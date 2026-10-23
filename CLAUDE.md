@@ -463,6 +463,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   migración normaliza esas filas a 'None'.
 - **El motor sólo responde una conversación `Open`, sin asesor y con el asistente `Active`; `IBotOutbound` lo vuelve a verificar al
   enviar** (`RunProcessor.DecideAsync`): entre el claim del inbox y el envío un asesor puede haber tomado la conversación.
+- **Un entrante que llega fuera de orden no se encola para el bot** (`InboundIngestion.ShouldEnqueue`, 2026-10-23). La cola
+  ordena por llegada y Meta reintenta una entrega fallida hasta horas después: el 2026-10-22, con QEP sin recibir unos diez
+  minutos, un «hola» de las 21:42 llegó a las 22:01 detrás de uno de las 21:56 que el bot ya había contestado, y el bot mandó
+  el mismo mensaje otra vez sin que el cliente escribiera. Por eso se compara su `occurred_at` contra el `last_inbound_at`
+  **de antes** (el CTE `old`; el `SET` ya lo pisó con `GREATEST`). No lo muevas al motor: ahí sólo cubriría uno de los tres
+  caminos. Una prueba que postee webhooks con timestamps decrecientes ya no ejerce el bot desde el segundo.
 - **El `clientId` de un mensaje del bot no depende del `attempts` de la fila.** Es `DeterministicClientId.For(runId,
   baseStepNumber, effectIndex)` y el id de una corrida nueva sale del id del mensaje del inbox (`RunIdFor`), así un reintento de la
   fila —o un `Start` que se deshizo— reusa corrida y `clientId`s y Mensajería, idempotente por `clientId`, no duplica (P2-R5). El

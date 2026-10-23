@@ -384,6 +384,14 @@ transacción inserta en `messaging.automation_inbox` **si** `assigned_member_id 
 Los ecos de Instagram y los eventos nunca encolan. `IngestedInbound` gana esos campos para que el procesador
 no vuelva a leer.
 
+**Tampoco encola un entrante fuera de orden** (corrección del 2026-10-23): si su `occurred_at` es anterior al
+`last_inbound_at` que la conversación tenía antes de él, entra al hilo en su lugar pero no le toca al bot. La cola
+ordena por llegada (`created_at`), y Meta reintenta una entrega fallida hasta horas después: el 2026-10-22 un «hola»
+de las 21:42 llegó a las 22:01, detrás de uno de las 21:56 que el bot ya había contestado, y el bot volvió a mandar
+el mismo mensaje sin que el cliente escribiera. El mismo segundo sí encola (el timestamp de Meta no tiene más
+resolución). La regla vive en `ShouldEnqueue`, no en el motor: corta los tres caminos (disparador, «devolver al
+asistente» y corrida en espera) antes de la cola.
+
 `Messaging.Application` expone el puerto **`IAutomationInbox`**: `ClaimAsync(now, batch, lease) →
 IReadOnlyList<InboxItem>` (SQL: `UPDATE … SET attempts = attempts + 1, next_attempt_at = now + lease FROM (SELECT
 … WHERE processed_at IS NULL AND next_attempt_at <= now AND NOT EXISTS (otra fila pendiente más vieja de la

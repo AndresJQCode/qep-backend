@@ -169,11 +169,11 @@ public sealed class SaleReadAndVoidHandlersTests
         StoreSale(bed, foreignSession);
 
         var mine = await List(bed, Reader).HandleAsync(
-            new ListPosSalesQuery(TenantId, null, null, null, null, null, 1, 20), TestContext.Current.CancellationToken);
+            new ListPosSalesQuery(TenantId, null, null, null, null, null, null, 1, 20), TestContext.Current.CancellationToken);
         var sneaky = await List(bed, Reader).HandleAsync(
-            new ListPosSalesQuery(TenantId, foreignSession.Id.Value, null, null, null, null, 1, 20), TestContext.Current.CancellationToken);
+            new ListPosSalesQuery(TenantId, foreignSession.Id.Value, null, null, null, null, null, 1, 20), TestContext.Current.CancellationToken);
         var all = await List(bed, Supervisor).HandleAsync(
-            new ListPosSalesQuery(TenantId, null, null, null, null, null, 1, 20), TestContext.Current.CancellationToken);
+            new ListPosSalesQuery(TenantId, null, null, null, null, null, null, 1, 20), TestContext.Current.CancellationToken);
 
         Assert.Equal([own.Id.Value], mine.Items.Select(item => item.Id).ToArray());
         Assert.Empty(sneaky.Items);
@@ -196,7 +196,7 @@ public sealed class SaleReadAndVoidHandlersTests
         var day = new DateOnly(2026, 10, 7);
 
         var page = await List(bed, Reader).HandleAsync(
-            new ListPosSalesQuery(TenantId, null, day, day, null, null, 1, 20), TestContext.Current.CancellationToken);
+            new ListPosSalesQuery(TenantId, null, day, day, null, null, null, 1, 20), TestContext.Current.CancellationToken);
 
         Assert.Equal([lateOnThe7th.Id.Value], page.Items.Select(item => item.Id).ToArray());
         Assert.Equal(new DateTimeOffset(2026, 10, 7, 23, 30, 0, TimeSpan.FromHours(-5)), page.Items[0].CreatedAtLocal);
@@ -204,7 +204,7 @@ public sealed class SaleReadAndVoidHandlersTests
     }
 
     [Fact]
-    public async Task ListFiltersByStatusAndExactNumberAndValidatesItsInputs()
+    public async Task ListFiltersByStatusNumberAndCustomerDocumentAndValidatesItsInputs()
     {
         var bed = new PosTestBed();
         var session = bed.OpenSessionInStore();
@@ -213,18 +213,28 @@ public sealed class SaleReadAndVoidHandlersTests
         await Void(bed, Voider).HandleAsync(new VoidPosSaleCommand(TenantId, first.Id.Value, "Motivo"), TestContext.Current.CancellationToken);
 
         var voided = await List(bed, Reader).HandleAsync(
-            new ListPosSalesQuery(TenantId, null, null, null, "Voided", null, 1, 20), TestContext.Current.CancellationToken);
+            new ListPosSalesQuery(TenantId, null, null, null, "Voided", null, null, 1, 20), TestContext.Current.CancellationToken);
         var byNumber = await List(bed, Reader).HandleAsync(
-            new ListPosSalesQuery(TenantId, null, null, null, null, "POS-000002", 1, 20), TestContext.Current.CancellationToken);
+            new ListPosSalesQuery(TenantId, null, null, null, null, "POS-000002", null, 1, 20), TestContext.Current.CancellationToken);
+
+        // El documento llega recortado al repositorio: con los espacios no coincidiría con nada.
+        var byDocument = await List(bed, Reader).HandleAsync(
+            new ListPosSalesQuery(TenantId, null, null, null, null, null, "  22222  ", 1, 20), TestContext.Current.CancellationToken);
+        var byOtherDocument = await List(bed, Reader).HandleAsync(
+            new ListPosSalesQuery(TenantId, null, null, null, null, null, "1020", 1, 20), TestContext.Current.CancellationToken);
 
         Assert.Equal([first.Id.Value], voided.Items.Select(item => item.Id).ToArray());
         Assert.Equal("POS-000002", Assert.Single(byNumber.Items).SaleNumber);
+        Assert.Equal(2, byDocument.Total);
+        Assert.Empty(byOtherDocument.Items);
         await Assert.ThrowsAsync<ValidationException>(() => List(bed, Reader).HandleAsync(
-            new ListPosSalesQuery(TenantId, null, null, null, "Anulada", null, 1, 20), TestContext.Current.CancellationToken));
+            new ListPosSalesQuery(TenantId, null, null, null, null, null, new string('1', 33), 1, 20), TestContext.Current.CancellationToken));
         await Assert.ThrowsAsync<ValidationException>(() => List(bed, Reader).HandleAsync(
-            new ListPosSalesQuery(TenantId, null, null, null, null, null, 1, 101), TestContext.Current.CancellationToken));
+            new ListPosSalesQuery(TenantId, null, null, null, "Anulada", null, null, 1, 20), TestContext.Current.CancellationToken));
         await Assert.ThrowsAsync<ValidationException>(() => List(bed, Reader).HandleAsync(
-            new ListPosSalesQuery(TenantId, null, new DateOnly(2026, 10, 8), new DateOnly(2026, 10, 7), null, null, 1, 20), TestContext.Current.CancellationToken));
+            new ListPosSalesQuery(TenantId, null, null, null, null, null, null, 1, 101), TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<ValidationException>(() => List(bed, Reader).HandleAsync(
+            new ListPosSalesQuery(TenantId, null, new DateOnly(2026, 10, 8), new DateOnly(2026, 10, 7), null, null, null, 1, 20), TestContext.Current.CancellationToken));
     }
 
     // Cada fila trae su moneda: una caja que corrió en USD no se rotula con la de la caja abierta hoy.
@@ -236,7 +246,7 @@ public sealed class SaleReadAndVoidHandlersTests
         StoreSale(bed, session);
 
         var sales = await List(bed, Reader).HandleAsync(
-            new ListPosSalesQuery(TenantId, null, null, null, null, null, 1, 20), TestContext.Current.CancellationToken);
+            new ListPosSalesQuery(TenantId, null, null, null, null, null, null, 1, 20), TestContext.Current.CancellationToken);
         var sessions = await Sessions(bed, Reader).HandleAsync(
             new ListCashSessionsQuery(TenantId, null, null, null, 1, 20), TestContext.Current.CancellationToken);
         var summary = await Session(bed, Reader).HandleAsync(

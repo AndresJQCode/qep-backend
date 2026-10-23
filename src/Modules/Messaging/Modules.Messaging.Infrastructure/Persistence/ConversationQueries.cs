@@ -114,7 +114,10 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
         var automated = await dbContext.Conversations.AsNoTracking().CountAsync(
             conversation => conversation.TenantId == tenantId && conversation.Status == ConversationStatus.Open
                 && conversation.AutomationStatus != ConversationAutomationStatus.None, cancellationToken);
-        return new ConversationCountsDto(open, unread, mine, unassigned, automated);
+        var automationActive = await dbContext.Conversations.AsNoTracking().CountAsync(
+            conversation => conversation.TenantId == tenantId && conversation.Status == ConversationStatus.Open
+                && conversation.AutomationStatus == ConversationAutomationStatus.Active, cancellationToken);
+        return new ConversationCountsDto(open, unread, mine, unassigned, automated, automationActive);
     }
 
     public Task<ConversationRow?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>

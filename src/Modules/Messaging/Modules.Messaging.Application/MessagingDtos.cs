@@ -60,8 +60,10 @@ public sealed record ConversationAutomationDto(string Status, DateTimeOffset Sta
 /// <c>unread_count</c> del tenant (§5.4: la pantalla lo dibuja como «N sin leer»). Ninguno respeta la
 /// búsqueda: son los números de las pestañas, no de la página. <c>Mine</c> y <c>Unassigned</c> cuentan sólo
 /// abiertas (D-A10): son las pestañas de la cola de trabajo. <c>Automated</c> = abiertas con asistente (activo o pausado); es una
-/// colección de tamaño fijo del BFF: viaja siempre, también en cero, para que la pestaña dibuje «0» sin lógica propia.</summary>
-public sealed record ConversationCountsDto(int Open, int Unread, int Mine, int Unassigned, int Automated);
+/// colección de tamaño fijo del BFF: viaja siempre, también en cero, para que la pestaña dibuje «0» sin lógica propia.
+/// <c>AutomationActive</c> = abiertas con el asistente activo: el número del botón «Con asistente», que lista
+/// <c>automation=active</c>; una pausada ya la atiende una persona y no entra.</summary>
+public sealed record ConversationCountsDto(int Open, int Unread, int Mine, int Unassigned, int Automated, int AutomationActive);
 
 /// <summary><c>Total</c> es exacto: la consulta infinita del frontend se detiene en
 /// <c>page * pageSize &gt;= total</c>.</summary>

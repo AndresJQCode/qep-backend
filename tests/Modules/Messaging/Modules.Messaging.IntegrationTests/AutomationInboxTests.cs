@@ -160,6 +160,39 @@ public sealed class AutomationInboxTests
         Assert.Equal(1L, await InboxCountAsync(f));
     }
 
+    /// <summary>Meta reintenta una entrega fallida hasta horas después (precedente 2026-10-22: un «hola» de las 21:42 llegó a las 22:01,
+    /// detrás de otro de las 21:56 que el bot ya había contestado, y el bot lo contestó otra vez). Un entrante anterior al último que la
+    /// conversación ya tiene entra al hilo en su lugar, pero no le toca al bot.</summary>
+    [Fact]
+    public async Task ALateInboundOlderThanTheLastOneIsNotEnqueued()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        await PostTextAsync(f, "w-new", 10);
+        await PostTextAsync(f, "w-old");
+
+        Assert.Equal(2L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 1"));
+        Assert.Equal(1L, await InboxCountAsync(f));
+        Assert.Equal("w-new", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT message.wamid FROM messaging.automation_inbox AS inbox JOIN messaging.messages AS message ON message.id = inbox.message_id"));
+    }
+
+    /// <summary>El timestamp de Meta tiene resolución de segundos: dos entrantes del mismo segundo no están fuera de orden.</summary>
+    [Fact]
+    public async Task AnInboundInTheSameSecondAsTheLastOneIsEnqueued()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        await PostTextAsync(f, "w1", 10);
+        await PostTextAsync(f, "w2", 10);
+
+        Assert.Equal(2L, await InboxCountAsync(f));
+    }
+
     [Fact]
     public async Task WithTheFlagOffNothingIsEnqueued()
     {

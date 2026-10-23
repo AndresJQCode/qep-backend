@@ -315,7 +315,8 @@ internal sealed class InMemoryConversationQueries : IConversationQueries
             Rows.Where(row => row.TenantId == tenantId).Sum(row => row.UnreadCount),
             memberId is { } me ? open.Count(row => row.AssignedMemberId == me) : 0,
             open.Count(row => row.AssignedMemberId is null),
-            open.Count(row => row.AutomationStatus != ConversationAutomationStatus.None)));
+            open.Count(row => row.AutomationStatus != ConversationAutomationStatus.None),
+            open.Count(row => row.AutomationStatus == ConversationAutomationStatus.Active)));
     }
 
     public Task<ConversationRow?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>

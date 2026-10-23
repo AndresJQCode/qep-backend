@@ -191,6 +191,39 @@ public sealed class PosRegisterEdgeApiTests
         Assert.Empty(closedList.Items);
     }
 
+    // Número y documento coinciden por un pedazo, sin distinguir mayúsculas, y se combinan con Y.
+    // Los comodines de LIKE que escribe el cajero son texto: un «%» no lista todas las ventas.
+    [Fact]
+    public async Task SalesListMatchesPartOfTheNumberAndOfTheCustomerDocument()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await PosWorld.ArrangeAsync(factory, database);
+        var session = await world.OpenSessionAsync(world.Admin);
+        var identifiedId = Guid.CreateVersion7();
+        await PostSaleAsync(world, identifiedId, session.Id);
+        await PostSaleAsync(world, Guid.CreateVersion7(), session.Id);
+        await ExecuteSqlAsync(
+            database,
+            "UPDATE pos.sales SET customer_identification_number = '1020304050' WHERE id = @id",
+            ("id", identifiedId));
+
+        var byDigits = await GetPageAsync<PosSaleListItemResponse>(world, "/sales?number=000002");
+        var byLowerCase = await GetPageAsync<PosSaleListItemResponse>(world, "/sales?number=pos-000001");
+        var byDocument = await GetPageAsync<PosSaleListItemResponse>(world, "/sales?customerDocument=20304");
+        var byBoth = await GetPageAsync<PosSaleListItemResponse>(world, "/sales?number=000002&customerDocument=20304");
+        var byWildcard = await GetPageAsync<PosSaleListItemResponse>(world, "/sales?customerDocument=%25");
+        var tooLong = await world.Admin.GetAsync(
+            $"{world.Url}/sales?customerDocument={new string('1', 33)}", TestContext.Current.CancellationToken);
+
+        Assert.Equal("POS-000002", Assert.Single(byDigits.Items).SaleNumber);
+        Assert.Equal(identifiedId, Assert.Single(byLowerCase.Items).Id);
+        Assert.Equal(identifiedId, Assert.Single(byDocument.Items).Id);
+        Assert.Empty(byBoth.Items);
+        Assert.Empty(byWildcard.Items);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, tooLong.StatusCode);
+    }
+
     // Ruling B11: empate de marca de tiempo → desempate por Id, o la paginación repite y salta filas.
     [Fact]
     public async Task ListsBreakTimestampTiesById()

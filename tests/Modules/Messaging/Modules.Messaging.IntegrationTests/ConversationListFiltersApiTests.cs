@@ -76,6 +76,7 @@ public sealed class ConversationListFiltersApiTests
         var all = await ListAsync(f, "");
         Assert.Equal([paused, plain, active], Ids(all));
         Assert.Equal(2, all.GetProperty("counts").GetProperty("automated").GetInt32());
+        Assert.Equal(1, all.GetProperty("counts").GetProperty("automationActive").GetInt32());
         Assert.Equal("Paused", all.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == paused)
             .GetProperty("automation").GetProperty("status").GetString());
         var items = all.GetProperty("items").EnumerateArray().ToDictionary(item => item.GetProperty("id").GetGuid());

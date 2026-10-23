@@ -530,7 +530,7 @@ carrito con productos a precio 0 se tiene que poder dibujar; lo que no se puede 
 | `PreviewPosSaleCommand(Lines)` | command sin efectos | `pos.sale.create` (+ `pos.sale.discount` con descuento de línea) | líneas |
 | `CreatePosSaleCommand(Id, CashSessionId, Lines, Payments)` | command | `pos.sale.create` (+ `pos.sale.discount` con descuento o total 0) | líneas, pagos, `Reference` ≤ 60 |
 | `GetPosSaleQuery(SaleId)` | query | `pos.sale.read` | — |
-| `ListPosSalesQuery(SessionId?, From?, To?, Status?, Number?, Page, PageSize)` | query | `pos.sale.read` | — |
+| `ListPosSalesQuery(SessionId?, From?, To?, Status?, Number?, CustomerDocument?, Page, PageSize)` | query | `pos.sale.read` | `Number` ≤ 20, `CustomerDocument` ≤ 32 |
 | `VoidPosSaleCommand(SaleId, Reason)` | command | `pos.sale.void` | `Reason` 3..500 (texto libre) |
 
 Los validadores de FluentValidation dan el campo (`422 validation.failed` con `errors`); el
@@ -917,12 +917,15 @@ fila. El permiso no entra: sin `pos.sale.void` la pantalla no dibuja la acción.
 el tenant → `404 pos.sale.not_found`; ajena sin `pos.register.read` → `403`. Es también el
 "Verificar" del cobro incierto.
 
-**11. `GET /pos/sales?sessionId=&from=&to=&status=&number=&page=1&pageSize=20`** —
+**11. `GET /pos/sales?sessionId=&from=&to=&status=&number=&customerDocument=&page=1&pageSize=20`** —
 `pos.sale.read` — `{ "items": [ { "id", "saleNumber", "createdAtLocal", "cashierName",
 "customerName", "total", "status", "paymentMethods": ["Card","Cash"], "voidable",
 "voidBlockedReason" } ], "page", "pageSize", "total" }`. Sin `pos.register.read`, filtra al cajero
 llamador aunque mande otro `sessionId`. `voidable` como en el punto 9, resuelto con un join a
-`cash_sessions.status`, no una consulta por fila.
+`cash_sessions.status`, no una consulta por fila. `number` y `customerDocument` (2026-10-23) coinciden
+por un pedazo y sin distinguir mayúsculas (`ILIKE '%…%'`, con `%`, `_` y `\` escapados): `15` encuentra
+`POS-000015`. El documento es la foto de la venta (`customer_identification_number`), así que el
+consumidor final responde a `222222222222`; los dos filtros se combinan con Y.
 
 **12. `POST /pos/sales/{saleId}/void`** — `pos.sale.void` — `{ "reason": "Cliente se arrepintió" }`
 → `200 PosSaleResponse`. Errores: `pos.sale.not_found` (404), `pos.sale.already_voided`,
@@ -1441,7 +1444,8 @@ Contenido, en `font-mono` 11 px, negro sobre blanco, sin colores del tema:
   dibuja con `pos.sale.void`; con el permiso, se habilita con `voidable` de cada fila, sin que
   la pantalla deduzca nada; si es `false`, queda deshabilitado con un `Tooltip` sacado de
   `VOID_BLOCKED_REASON_LABELS[voidBlockedReason]` ("Ya está anulada", "La caja de esta venta ya
-  se cerró"). Filtros: hoy por defecto, rango, estado, número. `VoidSaleDialog` pide motivo
+  se cerró"). Filtros: hoy por defecto, rango, estado, número, documento del cliente; buscar por
+  número o documento sobre el «hoy» sin tocar quita el rango (owner, 2026-10-23). `VoidSaleDialog` pide motivo
   (3–500) y confirma. Si la respuesta es `pos.sale.already_voided` (su request anterior llegó y
   se perdió la respuesta, o alguien más la anuló), recarga la venta y cierra como éxito.
 - `/pos/sessions`: tabla de cajas (cajero sólo con `pos.register.read`, empresa,
