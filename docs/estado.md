@@ -87,7 +87,8 @@ copia del frontend para los códigos nuevos.
 | 2026-10-21 Automatizaciones: investigación y roadmap | Concepto; specs 2–3 y migración de lulo-chat sin escribir (el 4 se escribió y se está construyendo) | Orden: interactivos → claves de API y envío proactivo → constructor (motor, editor React Flow, bloque HTTP) → migración. IA diferida |
 
 Construido sin spec propio: enviar el pedido por WhatsApp (`POST /orders/{id}/send`, `OrderEndpoints.cs:114`; frontend
-`3e7e4c00`), clasificación opcional del cliente, país del tenant, mensajería en tiempo real y filtros de la bandeja.
+`3e7e4c00`), clasificación opcional del cliente, país del tenant, mensajería en tiempo real, filtros de la bandeja y filtro de ventas
+del POS por número parcial y documento del cliente (2026-10-23).
 
 Los specs `2026-09-*` que el README cita (`README.md:449`, `:564`, `:2028`) se borraron en `8662d50c` («limpieza»); el
 historial de `git` los conserva.
@@ -185,6 +186,13 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-23 — Mergeado a `develop` de los dos repos el filtro de ventas del POS por documento del cliente (backend
+  `a11da4f9`, frontend `4ea1a9e4`, ff). `GET /pos/sales` acepta `customerDocument` (≤ 32, contra la foto
+  `customer_identification_number` de la venta) y `number` deja de ser exacto: los dos coinciden por un pedazo con
+  `ILIKE` y comodines escapados, y se combinan con Y. En el popover de Ventas, «Documento del cliente» junto a «Número de
+  venta». Pruebas: Pos unitarias 226/226, integración 61/61, `ArchitectureTests` 125/125; frontend `src/features/pos`
+  341/341. Pendiente del owner: la lista abre en «hoy», así que buscar una venta de otro día exige cambiar el rango.
+  Sin push.
 - 2026-10-23 — Mergeado a `develop` el arreglo del entrante fuera de orden (`35799550`, ff): el bot volvía a mandar el
   mensaje de fuera de horario sin que el cliente escribiera, porque Meta reintentó 19 min tarde un «hola» de las 21:42
   que llegó detrás de uno de las 21:56 ya contestado (`dev_qep`, 2026-10-22). `InboundIngestion.ShouldEnqueue` ya no
