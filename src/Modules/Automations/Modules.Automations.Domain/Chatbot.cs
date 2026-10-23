@@ -167,6 +167,17 @@ public sealed class Chatbot
         Touch(now);
     }
 
+    /// <summary>Quita una conexión del conjunto cuando otro chatbot la toma (spec 2026-10-23 D-X2, D-X5). El estado no cambia: un
+    /// chatbot publicado sigue activo o en pausa sin esa fila. El <c>Touch</c> es lo que mueve <c>UpdatedAt</c> y hace que otra
+    /// pestaña con este chatbot abierto reciba 412 en vez de pisar el traspaso. Si la conexión no estaba, no hace nada (ni <c>Touch</c>).</summary>
+    public void ReleaseConnection(Guid connectionId, DateTimeOffset now)
+    {
+        if (_connections.RemoveAll(connection => connection.ConnectionId == connectionId) > 0)
+        {
+            Touch(now);
+        }
+    }
+
     /// <summary>¿El borrador se editó después de la última publicación? Con <c>SaveDraft</c> y <c>Publish</c> en el mismo instante
     /// da <c>false</c>: el borrador publicado es el que está guardado.</summary>
     public bool HasDraftChanges

@@ -191,4 +191,32 @@ public sealed class ChatbotTests
         Check(() => chatbot.Resume(T0.AddMinutes(7)));
         Assert.Equal(T0.AddMinutes(7), chatbot.UpdatedAt);
     }
+
+    [Fact]
+    public void ReleaseConnectionRemovesTheRowAndTouches()
+    {
+        var chatbot = NewChatbot();
+        var kept = Guid.NewGuid();
+        var released = Guid.NewGuid();
+        chatbot.SetConnections([kept, released], T0);
+        chatbot.Publish(NoIssues, Member, T0.AddMinutes(1));
+
+        chatbot.ReleaseConnection(released, T0.AddMinutes(2));
+
+        Assert.Equal([kept], chatbot.Connections.Select(connection => connection.ConnectionId));
+        Assert.Equal(T0.AddMinutes(2), chatbot.UpdatedAt);
+        Assert.Equal(ChatbotStatus.Active, chatbot.Status);
+    }
+
+    [Fact]
+    public void ReleaseConnectionOfAnUnknownIdChangesNothing()
+    {
+        var chatbot = NewChatbot();
+        chatbot.SetConnections([Guid.NewGuid()], T0);
+
+        chatbot.ReleaseConnection(Guid.NewGuid(), T0.AddMinutes(2));
+
+        Assert.Single(chatbot.Connections);
+        Assert.Equal(T0, chatbot.UpdatedAt);
+    }
 }
