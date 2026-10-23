@@ -761,6 +761,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<ListChatbotsQuery, ChatbotListResponse>, ListChatbotsHandler>();
         services.AddScoped<IQueryHandler<GetChatbotQuery, ChatbotEditorDto>, GetChatbotHandler>();
         services.AddScoped<IQueryHandler<ListSelectableConnectionsQuery, IReadOnlyList<SelectableConnectionDto>>, ListSelectableConnectionsHandler>();
+        services.AddScoped<IQueryHandler<ListExternalApisQuery, IReadOnlyList<ExternalApiRefDto>>, ListExternalApisHandler>();
         services.AddScoped<IQueryHandler<ListRunsQuery, IReadOnlyList<RunDto>>, ListRunsHandler>();
         services.AddScoped<ICommandHandler<CreateChatbotCommand, ChatbotEditorDto>, CreateChatbotHandler>();
         services.AddScoped<ICommandHandler<UpdateChatbotCommand, ChatbotEditorDto>, UpdateChatbotHandler>();

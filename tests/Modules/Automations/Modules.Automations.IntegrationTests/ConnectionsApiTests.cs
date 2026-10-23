@@ -16,6 +16,8 @@ public sealed class ConnectionsApiTests
 
     private static string ConnectionsUrl(Guid tenantId) => $"{AutomationsUrl(tenantId)}/connections";
 
+    private static string ExternalApisUrl(Guid tenantId) => $"{AutomationsUrl(tenantId)}/external-apis";
+
     [Fact]
     public async Task ListsTheTenantConnectionsWithServedByAndBusinessHours()
     {
@@ -81,6 +83,36 @@ public sealed class ConnectionsApiTests
         var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, "something.else");
 
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(ConnectionsUrl(tenant.TenantId), Ct)).StatusCode);
+    }
+
+    [Fact]
+    public async Task ListsTheTenantExternalApis()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableAutomationsAsync(connectionString, tenant.TenantId);
+        var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ReadPermissions);
+
+        var items = await client.GetFromJsonAsync<List<ExternalApiRefDto>>(ExternalApisUrl(tenant.TenantId), Ct);
+
+        Assert.NotNull(items);
+        Assert.Equal(["Clientes", "Órdenes"], items.Select(item => item.Name));
+        Assert.All(items, item => Assert.Equal("Active", item.Status));
+    }
+
+    [Fact]
+    public async Task ExternalApisNeedChatbotRead()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableAutomationsAsync(connectionString, tenant.TenantId);
+        var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, "something.else");
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(ExternalApisUrl(tenant.TenantId), Ct)).StatusCode);
     }
 
     // Spec 2026-10-21 D-H4: el editor lista las conexiones «API externa» reales del tenant, activas y pausadas, sin la clave.
