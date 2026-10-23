@@ -14,12 +14,15 @@ public sealed class ClasicFlowTests
         var issues = FlowValidator.Validate(ClasicFlow.Parse(), ClasicFlow.Context());
 
         // Los defectos reales de un fixture de este tamaño (node.unreachable, variable.never_set, http.no_sample_response) salen como
-        // warnings: el conjunto se fija exacto. Sólo quedan las salidas opcionales que el flujo deja sin conectar a propósito.
+        // warnings: el conjunto se fija exacto. Sólo quedan las salidas opcionales que el flujo deja sin conectar a propósito: el
+        // `invalid` de una pregunta o un adjunto y el `other` de unos botones o una lista, que al agotar los intentos reinician el flujo.
+        // `document` y `contact-phone` no están porque agotarlos pasa a un asesor (revisión final, 2026-10-23); `open-order-notice` sí,
+        // porque ahora son botones y su `other` queda sin conectar como el de los demás.
         Assert.DoesNotContain(issues, i => i.Severity == FlowIssueSeverity.Error);
         string[] unconnected =
         [
-            "policy", "document", "not-found-options", "new-first-name", "new-last-name", "new-address", "new-neighborhood", "new-city",
-            "new-failure", "invoice-photo", "equipment", "other-address", "service-kind", "failure", "contact-name", "contact-phone",
+            "policy", "not-found-options", "new-first-name", "new-last-name", "new-address", "new-neighborhood", "new-city",
+            "new-failure", "invoice-photo", "equipment", "open-order-notice", "other-address", "service-kind", "failure", "contact-name",
         ];
         Assert.Equal(
             unconnected.Select(nodeId => ("node.output_unconnected_optional", nodeId)).Order(),
@@ -82,10 +85,18 @@ public sealed class ClasicFlowTests
         Assert.Equal("file", node.Body.FileField);
     }
 
+    /// <summary>Como el bot viejo (<c>includes('acepto')</c>): cualquier texto con «acepto», sin importar mayúsculas, puntuación ni emoji,
+    /// pero no si dice «no» (revisión final, 2026-10-23: con palabras clave «Sí, acepto.» no valía).</summary>
     [Theory]
     [InlineData("ACEPTO", true)]
     [InlineData("Acepto.", true)]
     [InlineData("sí, acepto", true)]
+    [InlineData("Sí, acepto.", true)]
+    [InlineData("Acepto!", true)]
+    [InlineData("acepto 👍", true)]
+    [InlineData("Acepto la política", true)]
+    [InlineData("no acepto", false)]
+    [InlineData("No acepto", false)]
     [InlineData("no", false)]
     public void ThePolicyQuestionAcceptsTheUsualWaysOfSayingYes(string reply, bool accepted)
     {
@@ -100,6 +111,45 @@ public sealed class ClasicFlowTests
         // Aceptada, guarda la respuesta y sigue por policy-save (HTTP); rechazada, sigue esperando en la misma pregunta.
         Assert.Equal(accepted ? "policy-save" : "policy", after.State.CurrentNodeId);
         Assert.Equal(accepted, after.State.Variables.Has("aceptacion"));
+    }
+
+    /// <summary>Un documento que no son sólo dígitos («1.036.123.456») tres veces seguidas no reinicia el flujo desde la política: pasa a un
+    /// asesor con su propio aviso (revisión final, 2026-10-23).</summary>
+    [Fact]
+    public void ExhaustingTheDocumentAttemptsHandsOff()
+    {
+        var flow = ClasicFlow.Parse() with { Start = new FlowStart("document") };
+        var settings = new EngineSettings("reiniciar", 3);
+        var now = new DateTimeOffset(2026, 10, 23, 15, 0, 0, TimeSpan.Zero);
+        var step = FlowEngine.Step(flow, settings, RunState.Initial(RunVariables.Empty()), new EngineInput.Start(), now);
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            step = FlowEngine.Step(flow, settings, step.State, new EngineInput.CustomerMessage("Text", "1.036.123.456", null, null), now);
+        }
+
+        Assert.Equal((RunStatus.HandedOff, "document-handoff"), (step.State.Status, step.State.CurrentNodeId));
+        Assert.False(step.State.Variables.Has("cedula"));
+    }
+
+    [Theory]
+    [InlineData("1036123456", true)]
+    [InlineData("1234", true)]
+    [InlineData("123", false)]
+    [InlineData("1.036.123.456", false)]
+    [InlineData("1036 123 456", false)]
+    [InlineData("١٢٣٤٥", false)]
+    public void TheDocumentQuestionAcceptsOnlyAsciiDigits(string reply, bool accepted)
+    {
+        var flow = ClasicFlow.Parse() with { Start = new FlowStart("document") };
+        var settings = new EngineSettings("reiniciar", 3);
+        var now = new DateTimeOffset(2026, 10, 23, 15, 0, 0, TimeSpan.Zero);
+        var waiting = FlowEngine.Step(flow, settings, RunState.Initial(RunVariables.Empty()), new EngineInput.Start(), now);
+
+        var after = FlowEngine.Step(flow, settings, waiting.State, new EngineInput.CustomerMessage("Text", reply, null, null), now);
+
+        // Aceptado, sigue a la búsqueda por documento (HTTP); rechazado, sigue esperando en la misma pregunta.
+        Assert.Equal(accepted ? "find-customer" : "document", after.State.CurrentNodeId);
     }
 
     [Fact]

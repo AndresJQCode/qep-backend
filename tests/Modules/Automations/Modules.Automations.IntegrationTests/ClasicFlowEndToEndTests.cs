@@ -61,13 +61,15 @@ public sealed class ClasicFlowEndToEndTests
     private const string Welcome =
         "Hola. Para solicitar un servicio o una asistencia técnica, te vamos a pedir unos datos. Recuerda que puedes reiniciar la conversación en cualquier momento escribiendo *REINICIAR*.";
 
-    private const string AskDocument = "Escribe tu número de documento.";
+    private const string AskDocument = "Escribe tu número de documento, sólo números, sin puntos ni espacios.";
 
     private const string AskEquipment = "[list] Elige el equipo o la dirección donde necesitas el servicio.";
 
     private const string AskServiceKind = "[button] ¿Qué tipo de servicio necesitas?";
 
     private const string AskContact = "¿Cómo se llama la persona de contacto para la visita?";
+
+    private const string OpenOrderNotice = "[button] Ese equipo ya tiene una orden de servicio abierta.";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -141,7 +143,8 @@ public sealed class ClasicFlowEndToEndTests
         factory.ExternalApi.Respond(@"^/services\?name=STM$", HttpStatusCode.OK, MaintenanceService);
         factory.ExternalApi.Respond(@"^/service-orders/auto-select-service-type\?", HttpStatusCode.OK, WarrantyService);
         factory.ExternalApi.Respond(@"^/service-orders$", HttpStatusCode.Created, """{"id":55}""");
-        factory.ExternalApi.Respond(@"^/customers/new-customer$", HttpStatusCode.Created, """{"serviceOrderNumber":"OS-123"}""");
+        // Anexo C: serviceOrderNumber es un número (verificado contra Clasic local, revisión final 2026-10-23).
+        factory.ExternalApi.Respond(@"^/customers/new-customer$", HttpStatusCode.Created, """{"serviceOrderNumber":3}""");
 
         // §8.6: la copia del adjunto baja de Graph la URL firmada y luego los bytes, que se verifican contra el sha256.
         var sha = Convert.ToHexStringLower(SHA256.HashData(InvoiceBytes));
@@ -280,16 +283,17 @@ public sealed class ClasicFlowEndToEndTests
             requests.Select(request => $"{request.Method} {request.Uri.PathAndQuery}"));
         Assert.All(requests, request => Assert.Equal(("api-clasic.test", ApiKey), (request.Uri.Host, request.ApiKey)));
 
-        // P2-R11: el token suelto escribe el número tal cual; el que va dentro de comillas, su texto.
+        // P2-R11: el token suelto escribe el número tal cual; el que va dentro de comillas, su texto. invoiceItems[0].id es el número del
+        // elemento (equipo.item.id), no el id de la fila (texto): Clasic responde 500 con "id": "1" (revisión final, 2026-10-23).
         var order = JsonNode.Parse(requests[^1].Body!)!;
         Assert.Equal(JsonValueKind.Number, order["customerId"]!.GetValueKind());
         Assert.Equal(7, order["customerId"]!.GetValue<int>());
         Assert.Equal(3, order["failureId"]!.GetValue<int>());
         Assert.Equal(9, order["serviceId"]!.GetValue<int>());
         var item = order["invoiceItems"]![0]!;
-        Assert.Equal(JsonValueKind.String, item["id"]!.GetValueKind());
-        Assert.Equal(("1", "Ana", "3001234567", true),
-            (item["id"]!.GetValue<string>(), item["contact"]!.GetValue<string>(), item["optionalPhone"]!.GetValue<string>(), item["update"]!.GetValue<bool>()));
+        Assert.Equal(JsonValueKind.Number, item["id"]!.GetValueKind());
+        Assert.Equal((1, "Ana", "3001234567", true),
+            (item["id"]!.GetValue<int>(), item["contact"]!.GetValue<string>(), item["optionalPhone"]!.GetValue<string>(), item["update"]!.GetValue<bool>()));
 
         // D-H6: una fila por llamada, de esta corrida, con la ruta interpolada y sin query; la tabla no tiene dónde guardar un cuerpo.
         Assert.Equal(
@@ -319,8 +323,8 @@ public sealed class ClasicFlowEndToEndTests
         // Anexo B paso 6: el botón URL de registro y las dos opciones.
         Assert.Equal(
             [
-                "[cta_url] No te encuentras registrado en nuestra base de datos. Puedes dejar tus datos para agendar tu visita de asistencia "
-                + "técnica o ingresar otro número de documento.",
+                "[cta_url] No te encuentras registrado en nuestra base de datos. Puedes dejarnos tus datos por aquí para agendar tu visita de "
+                + "asistencia técnica o volver a intentarlo con otro documento usando los botones.",
                 "[button] ¿Qué prefieres hacer?",
             ],
             f.Graph.Sends()[^2..]);
@@ -349,7 +353,7 @@ public sealed class ClasicFlowEndToEndTests
                 fields["addressDescription"], fields["phone"], fields["failureId"]));
 
         Assert.Equal(
-            "Recibimos tus datos. Tu solicitud quedó registrada con el número OS-123; un agente se comunicará contigo para confirmar la visita.",
+            "Recibimos tus datos. Tu solicitud quedó registrada con el número 3; un agente se comunicará contigo para confirmar la visita.",
             f.Graph.Sends()[^1]);
         Assert.Equal("Resolved|None", await TextAsync(f, "SELECT status || '|' || automation_status FROM messaging.conversations"));
         Assert.Equal(
@@ -521,8 +525,9 @@ public sealed class ClasicFlowEndToEndTests
         Assert.DoesNotContain(f.Api.Requests, request => request.Method == HttpMethod.Put);
     }
 
-    /// <summary>Anexo B: un equipo con orden abierta no deja seguir. El bot avisa y vuelve a mandar la misma lista; con otro equipo sigue a
-    /// los botones del tipo de servicio, sin haber intentado crear la orden.</summary>
+    /// <summary>Anexo B §8: un equipo con orden abierta no deja seguir. El bot avisa con dos botones; «Elegir otro equipo» vuelve a mandar la
+    /// misma lista y con otro equipo sigue a los botones del tipo de servicio, sin haber intentado crear la orden (revisión final,
+    /// 2026-10-23).</summary>
     [Fact]
     public async Task AnEquipmentWithAnOpenOrderIsRefusedAndTheListIsSentAgain()
     {
@@ -536,16 +541,37 @@ public sealed class ClasicFlowEndToEndTests
         await SayAsync(f, "w2", "10203");
         await ChooseAsync(f, "w3", "1", "CAL-001");
 
-        Assert.Equal(
-            ["Ya hay una orden de servicio abierta para esa dirección. Elige otro equipo o escribe REINICIAR.", AskEquipment],
-            f.Graph.Sends()[^2..]);
+        Assert.Equal(OpenOrderNotice, f.Graph.Sends()[^1]);
+        await TapAsync(f, "w4", "another", "Elegir otro equipo");
+
+        Assert.Equal(AskEquipment, f.Graph.Sends()[^1]);
         Assert.Equal(2, f.Graph.Sends().Count(sent => sent == AskEquipment));
         Assert.Equal(["1", "2", "other"], f.Graph.LastListRowIds());
 
-        await ChooseAsync(f, "w4", "2", "CAL-002");
+        await ChooseAsync(f, "w5", "2", "CAL-002");
 
         Assert.Equal(AskServiceKind, f.Graph.Sends()[^1]);
         Assert.DoesNotContain(f.Api.Requests, request => request.Uri.AbsolutePath.StartsWith("/service-orders", StringComparison.Ordinal));
+    }
+
+    /// <summary>Anexo B §8: desde el aviso de la orden abierta el cliente puede pedir un asesor (revisión final, 2026-10-23).</summary>
+    [Fact]
+    public async Task AnEquipmentWithAnOpenOrderCanGoToAnAgent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        f.Api.Respond(@"^/invoices/customer/7/all-invoice-items$", HttpStatusCode.OK, """
+            [{"id":1,"referenceCode":"CAL-001","address":"Calle 1 # 2-3","haveOrderOpen":true}]
+            """);
+
+        await SayAsync(f, "w1", "Hola");
+        await SayAsync(f, "w2", "10203");
+        await ChooseAsync(f, "w3", "1", "CAL-001");
+        await TapAsync(f, "w4", "agent", "Hablar con un asesor");
+
+        Assert.Equal([OpenOrderNotice, "Te paso con un asesor."], f.Graph.Sends()[^2..]);
+        Assert.Equal("Open|Paused", await TextAsync(f, "SELECT status || '|' || automation_status FROM messaging.conversations"));
+        Assert.Equal("HandedOff", await TextAsync(f, "SELECT status FROM automations.conversation_runs"));
     }
 
     /// <summary>Anexo B, mantenimiento: el servicio sale de <c>/services?name=STM</c> y la falla de <c>/failures?cause=MANTENIMIENTO</c>, sin
@@ -573,8 +599,9 @@ public sealed class ClasicFlowEndToEndTests
         var order = JsonNode.Parse(f.Api.Requests.Last().Body!)!;
         Assert.Equal((7, 5, 12), (order["customerId"]!.GetValue<int>(), order["failureId"]!.GetValue<int>(), order["serviceId"]!.GetValue<int>()));
         var item = order["invoiceItems"]![0]!;
-        Assert.Equal(("1", "Ana", "3001234567"),
-            (item["id"]!.GetValue<string>(), item["contact"]!.GetValue<string>(), item["optionalPhone"]!.GetValue<string>()));
+        Assert.Equal(JsonValueKind.Number, item["id"]!.GetValueKind());
+        Assert.Equal((1, "Ana", "3001234567"),
+            (item["id"]!.GetValue<int>(), item["contact"]!.GetValue<string>(), item["optionalPhone"]!.GetValue<string>()));
 
         var summary = f.Graph.Sends()[^1];
         Assert.Contains("Servicio: Servicio técnico de mantenimiento", summary, StringComparison.Ordinal);
@@ -582,6 +609,28 @@ public sealed class ClasicFlowEndToEndTests
         Assert.Contains("orden N° 55", summary, StringComparison.Ordinal);
         Assert.Contains("$120.000", summary, StringComparison.Ordinal);
         Assert.Equal("Resolved|None", await TextAsync(f, "SELECT status || '|' || automation_status FROM messaging.conversations"));
+    }
+
+    /// <summary>Plan 4 Task 3 (revisión final, 2026-10-23): si Clasic no tiene el servicio STM, <c>/services?name=STM</c> responde <c>[]</c>,
+    /// el mapeo <c>$[0]</c> deja <c>servicio</c> en <c>null</c> y el bloque sale por <c>ok</c>. La condición <c>maintenance-check</c> lo ve
+    /// y pasa a un asesor antes de pedir el contacto, en vez de crear una orden sin servicio.</summary>
+    [Fact]
+    public async Task AMissingStmServiceHandsOff()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        f.Api.Respond(@"^/services\?name=STM$", HttpStatusCode.OK, "[]");
+
+        await SayAsync(f, "w1", "Hola");
+        await SayAsync(f, "w2", "10203");
+        await ChooseAsync(f, "w3", "1", "CAL-001");
+        await TapAsync(f, "w4", "maint", "Mantenimiento");
+
+        Assert.Equal("Te paso con un asesor.", f.Graph.Sends()[^1]);
+        Assert.DoesNotContain(AskContact, f.Graph.Sends());
+        Assert.Equal("HandedOff", await TextAsync(f, "SELECT status FROM automations.conversation_runs"));
+        Assert.DoesNotContain(f.Api.Requests, request => request.Method == HttpMethod.Post);
+        Assert.EndsWith("GET /services 200 ok -,GET /failures 200 ok -", await HttpCallsAsync(f), StringComparison.Ordinal);
     }
 
     /// <summary>D-K8: «Otra dirección» de un cliente que ya existe no se puede registrar por la API (new-customer rechaza el documento), así

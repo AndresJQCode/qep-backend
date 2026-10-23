@@ -161,15 +161,8 @@
         "text": "Hola, te damos la bienvenida a CLASIC, especialistas en calentamiento de agua. Para continuar debes aceptar la política de tratamiento de datos: https://clasic.com.co/politica-de-privacidad/ Responde ACEPTO si la aceptas.",
         "saveTo": "aceptacion",
         "validation": {
-          "kind": "keywords",
-          "keywords": [
-            "acepto",
-            "acepto.",
-            "si acepto",
-            "sí acepto",
-            "si, acepto",
-            "sí, acepto"
-          ]
+          "kind": "regex",
+          "pattern": "(?i)^(?![\\s\\S]*\\bno\\b)[\\s\\S]*acepto[\\s\\S]*$"
         },
         "maxAttempts": null,
         "outputs": {
@@ -211,16 +204,23 @@
         "id": "document",
         "kind": "openQuestion",
         "title": "Número de documento",
-        "text": "Escribe tu número de documento.",
+        "text": "Escribe tu número de documento, sólo números, sin puntos ni espacios.",
         "saveTo": "cedula",
         "validation": {
-          "kind": "digits"
+          "kind": "regex",
+          "pattern": "^[0-9]{4,15}$"
         },
         "maxAttempts": null,
         "outputs": {
           "answered": "find-customer",
-          "invalid": null
+          "invalid": "document-handoff"
         }
+      },
+      {
+        "id": "document-handoff",
+        "kind": "handoff",
+        "title": "Asesor: documento ilegible",
+        "text": "No logré leer tu documento. Te paso con un asesor."
       },
       {
         "id": "find-customer",
@@ -280,7 +280,7 @@
         "id": "not-found",
         "kind": "message",
         "title": "Usuario no encontrado",
-        "text": "No te encuentras registrado en nuestra base de datos. Puedes dejar tus datos para agendar tu visita de asistencia técnica o ingresar otro número de documento.",
+        "text": "No te encuentras registrado en nuestra base de datos. Puedes dejarnos tus datos por aquí para agendar tu visita de asistencia técnica o volver a intentarlo con otro documento usando los botones.",
         "urlButton": {
           "label": "Registrarme",
           "url": "https://app.clasic.com.co/registro-clientes"
@@ -517,7 +517,7 @@
           }
         ],
         "sampleResponse": {
-          "serviceOrderNumber": "OS-123"
+          "serviceOrderNumber": 3
         },
         "outputs": {
           "ok": "registered",
@@ -605,11 +605,25 @@
       },
       {
         "id": "open-order-notice",
-        "kind": "message",
+        "kind": "buttons",
         "title": "Orden abierta",
-        "text": "Ya hay una orden de servicio abierta para esa dirección. Elige otro equipo o escribe REINICIAR.",
+        "text": "Ese equipo ya tiene una orden de servicio abierta.",
+        "buttons": [
+          {
+            "id": "another",
+            "label": "Elegir otro equipo"
+          },
+          {
+            "id": "agent",
+            "label": "Hablar con un asesor"
+          }
+        ],
+        "saveTo": null,
+        "fallback": "repeat",
         "outputs": {
-          "next": "equipment"
+          "another": "equipment",
+          "agent": "handoff",
+          "other": null
         }
       },
       {
@@ -773,8 +787,28 @@
           }
         ],
         "outputs": {
-          "ok": "contact-name",
+          "ok": "maintenance-check",
           "error": "handoff"
+        }
+      },
+      {
+        "id": "maintenance-check",
+        "kind": "condition",
+        "title": "¿Hay servicio y falla de mantenimiento?",
+        "match": "all",
+        "rules": [
+          {
+            "variable": "servicio",
+            "operator": "isNotEmpty"
+          },
+          {
+            "variable": "fallaMantenimiento",
+            "operator": "isNotEmpty"
+          }
+        ],
+        "outputs": {
+          "yes": "contact-name",
+          "no": "handoff"
         }
       },
       {
@@ -796,7 +830,7 @@
         "id": "contact-phone",
         "kind": "openQuestion",
         "title": "Teléfono de contacto",
-        "text": "¿A qué número la llamamos?",
+        "text": "¿A qué número la llamamos? Sólo números, sin espacios.",
         "saveTo": "telefonoContacto",
         "validation": {
           "kind": "digits"
@@ -804,7 +838,7 @@
         "maxAttempts": null,
         "outputs": {
           "answered": "which-order",
-          "invalid": null
+          "invalid": "handoff"
         }
       },
       {
@@ -866,7 +900,7 @@
         "query": [],
         "body": {
           "kind": "json",
-          "template": "{ \"customerId\": {cliente.id}, \"failureId\": {falla.item.id}, \"serviceId\": {servicio.id}, \"invoiceItems\": [ { \"id\": \"{equipo.id}\", \"contact\": \"{contacto}\", \"optionalPhone\": \"{telefonoContacto}\", \"update\": true } ] }"
+          "template": "{ \"customerId\": {cliente.id}, \"failureId\": {falla.item.id}, \"serviceId\": {servicio.id}, \"invoiceItems\": [ { \"id\": {equipo.item.id}, \"contact\": \"{contacto}\", \"optionalPhone\": \"{telefonoContacto}\", \"update\": true } ] }"
         },
         "timeoutSeconds": 10,
         "okWhen": null,
@@ -900,7 +934,7 @@
         "query": [],
         "body": {
           "kind": "json",
-          "template": "{ \"customerId\": {cliente.id}, \"failureId\": {fallaMantenimiento.id}, \"serviceId\": {servicio.id}, \"invoiceItems\": [ { \"id\": \"{equipo.id}\", \"contact\": \"{contacto}\", \"optionalPhone\": \"{telefonoContacto}\", \"update\": true } ] }"
+          "template": "{ \"customerId\": {cliente.id}, \"failureId\": {fallaMantenimiento.id}, \"serviceId\": {servicio.id}, \"invoiceItems\": [ { \"id\": {equipo.item.id}, \"contact\": \"{contacto}\", \"optionalPhone\": \"{telefonoContacto}\", \"update\": true } ] }"
         },
         "timeoutSeconds": 10,
         "okWhen": null,
@@ -1106,6 +1140,14 @@
       "handoff": {
         "x": 1280,
         "y": 1080
+      },
+      "document-handoff": {
+        "x": 1600,
+        "y": 1080
+      },
+      "maintenance-check": {
+        "x": 0,
+        "y": 1260
       }
     }
   }
