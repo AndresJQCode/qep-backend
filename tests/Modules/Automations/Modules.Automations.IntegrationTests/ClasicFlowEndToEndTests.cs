@@ -56,10 +56,10 @@ public sealed class ClasicFlowEndToEndTests
 
     private const string NoCustomers = """{"items":[],"totalCount":0}""";
 
-    // Lo que manda el bot en los pasos que más se miran, tal como está en el fixture. La bienvenida no saluda: el saludo ya lo dio la
-    // política a quien pasa por ella, y abría igual.
+    // Lo que manda el bot en los pasos que más se miran, tal como está en el fixture. La bienvenida saluda corto: no repite la
+    // presentación de la política a quien pasa por ella, pero quien ya la aceptó también recibe un saludo.
     private const string Welcome =
-        "Para solicitar un servicio o una asistencia técnica, te vamos a pedir unos datos. Recuerda que puedes reiniciar la conversación en cualquier momento escribiendo *REINICIAR*.";
+        "Hola. Para solicitar un servicio o una asistencia técnica, te vamos a pedir unos datos. Recuerda que puedes reiniciar la conversación en cualquier momento escribiendo *REINICIAR*.";
 
     private const string AskDocument = "Escribe tu número de documento.";
 

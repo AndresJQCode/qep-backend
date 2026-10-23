@@ -22,6 +22,7 @@
 | D-K10 | **La ruta de prueba de la conexión «API externa» es `/failures`.** | El probador hace `GET {baseUrl}{testPath}` y sólo mira el status: la ruta tiene que estar protegida por `JwtAuthGuard` para que una clave mala dé 401. `/services`, `/departments/*` y `/health/*` son públicas y «probarían» bien con cualquier clave. `testPath` no admite query (patrón del catálogo), así que `/customers?take=1` no sirve y `/customers` a secas trae todos los clientes (`take` por defecto `9999999`). |
 | D-K11 | **No se crea un usuario bot: D-K2 queda sin efecto.** El guard pone `req.user = { id: 0, role: 'Administrador' }` y `ServiceOrdersService.create` escribe `createdBy: 'Whatsapp'` cuando no hay usuario, que es exactamente lo que hoy escribe el bot al crear la orden directo con Prisma (`phone-contact.service.ts:88`, `summary.service.ts:83`). | Pedido del developer (2026-10-23): el menor impacto posible en Clasic y nada cambia de cara al usuario de Clasic. `createdBy` es el único dato que `create` toma del usuario, así que una fila nueva en `User` no aportaba nada y sí aparecía en la lista de usuarios. |
 | D-K12 | **La clave va al ConfigMap de Clasic, sin Secret** (decisión del owner, 2026-10-23: en Clasic no se trabaja con Secrets en los YAML). En el grupo `Backend-prod` se llama `CLASIC_BOT_API_KEY` (variable secreta del grupo); dentro del pod es `BOT_API_KEY`. | El spec §10 pedía un Secret, pero Clasic no tiene ninguno y todas sus credenciales (`JWT_SECRET`, AWS, SendGrid) ya viven en `prod-configMap.yaml`; una sola clave en un Secret aparte no cambia la postura y agrega un manifiesto al pipeline. Los pipelines de Clasic y de QEP leen el mismo grupo de variables (`Backend-${env}`): el prefijo evita confundirla con la clave de QEP. |
+| D-K13 | **`GET /customers?document=` exacto para el bot**; `identificationNumber=` sigue siendo el buscador por subcadena del admin. | Revisión final de Clasic, 2026-10-23: con la subcadena cualquiera leía las direcciones de otro cliente. |
 
 ## Global Constraints
 
@@ -107,7 +108,9 @@
   Y un `POST /customers/new-customer` (multipart, `-F`) con `phone=573007654321` y un documento nuevo: el cliente creado tiene `phone = '3007654321'` (`GET /customers?identificationNumber=`). Pegar en el reporte las respuestas recortadas.
 - [ ] **Step 3: Commit** — `git commit -m "feat(customers): filtro phone en GET /customers y teléfono de diez dígitos (spec 2026-10-21 D-K3)"`
 
-### Task 3: La API lista para un flujo sin lógica (D-K6, D-K9, D-K11, límites multipart)
+### Task 3: La API lista para un flujo sin lógica (D-K6, D-K9, D-K11, ~~límites multipart~~)
+
+> **Revertido en la revisión final (2026-10-23):** los `limits` de `@fastify/multipart` no aplican a `new-customer` (lo procesa `fastify-multer`/busboy); `main.ts` quedó como estaba y ningún documento afirma un límite. Lo que sigue sobre `main.ts` es el plan original.
 
 **Files:**
 - Modify: `src/users/users.service.ts` (`updateCustomer`)
@@ -185,7 +188,7 @@
   | `policy-check` | condition | `match: any`: `clientesPorTelefono isEmpty`; `clientesPorTelefono[0].acceptPolicy equals "true"` (`equals` compara `TextOf`, y un booleano es `true`; el bot viejo mira `every`, el flujo sólo mira al primero: se documenta; si `IsEmpty` no tratara una lista vacía, usar `countEquals "0"`) | yes `welcome`, no `policy` |
   | `policy` | openQuestion | texto de `accept-policy.message.ts` tuteando («Hola, te damos la bienvenida a CLASIC, especialistas en calentamiento de agua. Para continuar debes aceptar la política de tratamiento de datos: https://clasic.com.co/politica-de-privacidad/ Responde ACEPTO si la aceptas.»); `saveTo: aceptacion`; `validation: { kind: "keywords", keywords: ["acepto", "acepto.", "si acepto", "sí acepto", "si, acepto", "sí, acepto"] }`; `maxAttempts: null` | answered `policy-save`, invalid `null` |
   | `policy-save` | http | `PUT /customers/{clientesPorTelefono[0].id}`, body json `{ "acceptPolicy": "true", "sourceAcceptPolicy": "Whatsapp" }`, mapping `[]` | ok `welcome`, error `handoff` |
-  | `welcome` | message | «Para solicitar un servicio o una asistencia técnica, te vamos a pedir unos datos. Recuerda que puedes reiniciar la conversación en cualquier momento escribiendo *REINICIAR*.» (sin el saludo de `policy`, tarea 7) | next `document` |
+  | `welcome` | message | «Hola. Para solicitar un servicio o una asistencia técnica, te vamos a pedir unos datos. Recuerda que puedes reiniciar la conversación en cualquier momento escribiendo *REINICIAR*.» (saludo corto, sin repetir la presentación de `policy`, tarea 7) | next `document` |
   | `document` | openQuestion | «Escribe tu número de documento.» (tarea 7), `digits`, `saveTo: cedula` | answered `find-customer` |
   | `find-customer` | http | `GET /customers`, query `document={cedula}` (filtro exacto; `identificationNumber` casa por subcadena: revisión final, 2026-10-23), mapping `items[0]` → `cliente` | ok `customer-found`, error `handoff` |
   | `customer-found` | condition | `cliente isNotEmpty` | yes `invoice-items`, no `not-found` |
@@ -241,7 +244,7 @@
 - Modify: `tests/Modules/Automations/Modules.Automations.IntegrationTests/ClasicFlowEndToEndTests.cs`, `AutomationsApiHarness.cs:539-552` (`ImportChatbotAsync` recibe `layoutJson`)
 
 **Interfaces:**
-- `ArrangeAsync` importa `ClasicFlow.FlowJson` con `ClasicFlow.LayoutJson` y registra las respuestas por defecto con la **forma real**: `GET /customers?phone=` y `?identificationNumber=` → `{"items":[{"id":7,"firstName":"Laura","lastName":"Gómez","acceptPolicy":true}],"totalCount":1}`; `all-invoice-items` → arreglo con `haveOrderOpen:false`; `/failures` (sin query) → arreglo; `/failures?cause=MANTENIMIENTO` → `[{"id":5,"description":"MANTENIMIENTO","cause":"MANTENIMIENTO"}]`; `/services?name=STM` → `[{"id":12,"name":"STM","description":"Servicio técnico de mantenimiento"}]`; `auto-select-service-type` → `{"id":9,"name":"STG","description":"Servicio técnico en garantía"}`; `POST /service-orders` → 201 `{"id":55}`; `new-customer` → 201 `{"serviceOrderNumber":"OS-123"}`.
+- `ArrangeAsync` importa `ClasicFlow.FlowJson` con `ClasicFlow.LayoutJson` y registra las respuestas por defecto con la **forma real**: `GET /customers?phone=` y `?document=` (D-K13; el plan decía `?identificationNumber=`) → `{"items":[{"id":7,"firstName":"Laura","lastName":"Gómez","acceptPolicy":true}],"totalCount":1}`; `all-invoice-items` → arreglo con `haveOrderOpen:false`; `/failures` (sin query) → arreglo; `/failures?cause=MANTENIMIENTO` → `[{"id":5,"description":"MANTENIMIENTO","cause":"MANTENIMIENTO"}]`; `/services?name=STM` → `[{"id":12,"name":"STM","description":"Servicio técnico de mantenimiento"}]`; `auto-select-service-type` → `{"id":9,"name":"STG","description":"Servicio técnico en garantía"}`; `POST /service-orders` → 201 `{"id":55}`; `new-customer` → 201 `{"serviceOrderNumber":"OS-123"}`.
 - Las pruebas existentes (`TheHappyPathCreatesAServiceOrder`, `AnUnknownCustomerGoesToRegistrationAndUploadsTheInvoice`, `AnApiErrorHandsOff`, el bucle, el timeout y la fuga de la clave) se ajustan al flujo completo: el camino ahora empieza por `policy-lookup`, y el registro pide nombres, apellidos, dirección, barrio, ciudad y la falla antes de la foto.
 
 - [ ] **Step 1: Escribir las pruebas que fallan** (las nuevas; las viejas fallan solas al cambiar el fixture):

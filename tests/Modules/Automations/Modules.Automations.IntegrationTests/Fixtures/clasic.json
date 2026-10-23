@@ -202,7 +202,7 @@
         "id": "welcome",
         "kind": "message",
         "title": "Bienvenida",
-        "text": "Para solicitar un servicio o una asistencia técnica, te vamos a pedir unos datos. Recuerda que puedes reiniciar la conversación en cualquier momento escribiendo *REINICIAR*.",
+        "text": "Hola. Para solicitar un servicio o una asistencia técnica, te vamos a pedir unos datos. Recuerda que puedes reiniciar la conversación en cualquier momento escribiendo *REINICIAR*.",
         "outputs": {
           "next": "document"
         }

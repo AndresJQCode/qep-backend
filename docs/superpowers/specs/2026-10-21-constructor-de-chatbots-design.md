@@ -44,7 +44,8 @@ demás del concepto queda para una entrega siguiente.
 - Simulador contra el borrador, con el paso actual marcado en el lienzo.
 - Frontend: el módulo deja de ser maqueta, el editor se alinea al canvas aprobado, la bandeja muestra la autoría
   del bot y el paso.
-- Clasic: guard que acepta JWT **o** clave de API, usuario «bot», filtro `phone` en `GET /customers`.
+- Clasic: guard dual (JWT o clave de API), filtros `phone` y `document` en `GET /customers`, sin usuario bot (D-K11;
+  corregido en el plan 4, 2026-10-23).
 
 **Fuera** (§13): Instagram en el motor, los bloques Plantilla, Imagen o archivo, Esperar, Etiquetar cliente,
 Completar ficha, Negocio e Ir a otro flujo; compositor de interactivos para asesores; envío proactivo y aviso de
@@ -145,7 +146,7 @@ detalle de cada una:
 | D-K6 | **`GET /services` gana el filtro `name` y `GET /failures` el filtro `cause`**, de igualdad exacta y sensibles a mayúsculas (`STM`, `MANTENIMIENTO`); los dos responden el arreglo en la raíz. | El flujo no puede filtrar una lista por campo; ids fijos en el flujo cambiarían por ambiente. |
 | D-K7 | **La ciudad del cliente nuevo va como texto en `addressDescription` («Ciudad: …»)**, y `departmentId`/`cityId` van fijos en el bloque HTTP (`5` / `5001000`, Antioquia / Medellín), editables en el editor. No hay lista de departamentos ni de ciudades. | Una lista de WhatsApp tiene 10 filas; Colombia tiene 33 departamentos. La orden nace en borrador y un agente la confirma, como hoy. |
 | D-K8 | **«Otra dirección» de un cliente existente termina en un asesor**, después de pedir la dirección como texto (queda en «Datos capturados»). | `new-customer` rechaza un documento ya registrado. |
-| D-K9 | **`PUT /customers/{id}` acepta cuerpo parcial** y, con `acceptPolicy: "true"` sin fecha, pone `acceptPolicyDate` él mismo. **`POST /service-orders` sin `serviceDate` usa la fecha actual.** | El motor no tiene variable «ahora»; los dos endpoints rompían con campos ausentes. |
+| D-K9 | **`PUT /customers/{id}` acepta cuerpo parcial** y, cuando `acceptPolicy` **pasa** a `true` sin fecha, pone `acceptPolicyDate` él mismo (un `PUT` con `"true"` sobre un cliente que ya la había aceptado no mueve la fecha). **`POST /service-orders` sin `serviceDate` usa la fecha actual.** | El motor no tiene variable «ahora»; los dos endpoints rompían con campos ausentes. |
 | D-K10 | **La ruta de prueba de la conexión «API externa» es `/failures`.** | El probador sólo mira el status: la ruta tiene que estar protegida. `/services`, `/departments/*` y `/health/*` son públicas; `testPath` no admite query. |
 | D-K11 | **No hay usuario bot (anula D-K2).** El guard pone `{ id: 0, role: 'Administrador' }` y `POST /service-orders` escribe `createdBy = 'Whatsapp'` cuando no hay usuario. | Menor impacto en Clasic; es la misma marca que deja hoy el bot. |
 | D-K12 | **La clave va al ConfigMap de Clasic, sin Secret**: `BOT_API_KEY` en el pod, desde la variable secreta `CLASIC_BOT_API_KEY` del grupo `Backend-prod`. | Decisión del owner: en Clasic no se trabaja con Secrets en los YAML. |
@@ -164,7 +165,7 @@ detalle de cada una:
 | 8 | «Como asesor, cuando el bot me la pasa, la veo en la bandeja y el bot se calla» | efecto `Handoff` → `PauseAutomation(null, Handoff)`, `notify` |
 | 9 | «Como admin, pruebo el borrador sin gastar mensajes» | `automations.simulations`, pestaña Simular |
 | 10 | «Como admin, guardo mi flujo como plantilla y lo reutilizo» | `chatbot_templates`, `POST …/save-as-template` |
-| 11 | «Como Clasic, QEP consume mi API con una clave» | `JwtAuthGuard` dual, filtros `phone` y `document` (sin usuario bot: D-K11) |
+| 11 | «Como Clasic, QEP consume mi API con una clave» | `JwtAuthGuard` dual, filtros `phone` y `document` (sin usuario bot: D-K11; plan 4, 2026-10-23) |
 
 ## 4. Backend: módulo `Automations`
 
@@ -575,7 +576,7 @@ Backend QEP primero, en este orden, cada fase mergeable sola a `develop`:
 5. **Integrations + bloque HTTP:** proveedor `external-api`, política de URL, ejecutor, `http_calls`.
 6. **Simulador.**
 7. **Frontend** (sobre AH-01..09).
-8. **Clasic:** guard, filtros y ajustes de la API (sin usuario bot: D-K11); conexión «API externa» creada en el tenant
+8. **Clasic:** guard, filtros y ajustes de la API (sin usuario bot: D-K11; corregido en el plan 4, 2026-10-23); conexión «API externa» creada en el tenant
    Clasic; flujo importado. El paso a paso está en el README de `qep-backend`, § «Clasic: conexión, importación y corte».
 9. **Corte:** el número de Clasic pasa de lulo-chat a QEP (webhook de Meta apuntando a QEP) con el chatbot
    activo; lulo-chat deja de reenviar.
@@ -645,6 +646,9 @@ migrar. `docs/estado.md` se actualiza en `develop` al mergear cada fase.
 
 `layout`: `{ "positions": { "n1": { "x": 20, "y": 100 }, … } }`. Los `id` de nodo son `^[a-z0-9-]{1,64}$`; los
 nombres de variable `^[a-z][a-zA-Z0-9]{0,39}$`; los `id` de botón y fila `^[a-zA-Z0-9_-]{1,40}$`.
+
+El bloque `n3` es ilustrativo (`identificationNumber`, `data[0]`): el contrato real de Clasic está en el Anexo C
+(`?document=`, `items[0]`; plan 4, 2026-10-23).
 
 ## Anexo B. El flujo de Clasic en bloques
 
