@@ -3068,7 +3068,7 @@ Desvíos de D-H8 y límites conocidos:
 #### Clasic: conexión, importación y corte
 
 El bot de WhatsApp de Clasic (spec 2026-10-21 Anexo B, plan 4) es el archivo
-`tests/Modules/Automations/Modules.Automations.IntegrationTests/Fixtures/clasic.json`: `{ "flow", "layout" }`, 41 bloques en
+`tests/Modules/Automations/Modules.Automations.IntegrationTests/Fixtures/clasic.json`: `{ "flow", "layout" }`, 43 bloques en
 cuadrícula, 12 de ellos HTTP y todos contra una sola conexión «API externa» con el id fijo
 `11111111-1111-1111-1111-111111111111`, que la importación cambia por la del tenant. `ClasicFlowTests` lo valida y
 `ClasicFlowEndToEndTests` lo corre de punta a punta contra el contrato real de la API de Clasic (spec, Anexo C). Lo que sigue
@@ -3178,6 +3178,19 @@ $auth = @("-b", "qep_session=$env:QEP_SESSION", "-H", "X-Tenant-Id: $tenantId", 
    curl.exe -s -H "x-api-key: $env:CLASIC_BOT_API_KEY" "https://api-clasic.qcode.co/customers?phone=3000000000"
    ```
 
+   Antes de publicar, cuenta las fallas de producción. Los dos bloques «Buscar fallas» leen `GET /failures` sin filtro y
+   alimentan una Lista de WhatsApp, que tiene diez filas como máximo: con once fallas o más la Lista sale por `tooMany` y la
+   conversación pasa a un asesor **sin explicarle nada al cliente**, en todo registro y en todo servicio técnico. Tiene que
+   dar 10 o menos:
+
+   ```powershell
+   (curl.exe -s -H "x-api-key: $env:CLASIC_BOT_API_KEY" https://api-clasic.qcode.co/failures | ConvertFrom-Json).Count
+   ```
+
+   Si da más, no se publica todavía: o el owner de Clasic depura la tabla de fallas, o los bloques «Buscar fallas» y
+   «Buscar fallas (cliente nuevo)» pasan a filtrar con la query `cause=` desde el editor, igual que «Falla de mantenimiento»
+   (revisión final, 2026-10-23).
+
 7. **Corte del número.** En este orden y seguido:
    1. El número de Clasic entra a QEP por **Embedded Signup** en Integraciones del tenant Clasic (ver
       [Mensajería (WhatsApp Cloud)](#mensajería-whatsapp-cloud); es el paso 1 de §7 del spec de migración,
@@ -3194,6 +3207,12 @@ $auth = @("-b", "qep_session=$env:QEP_SESSION", "-H", "X-Tenant-Id: $tenantId", 
    Lo que sigue saliendo por lulo, y por eso lulo no se apaga para este número todavía: la plantilla `solicitud_os_creada`
    que manda Clasic al crear un cliente por `new-customer` (D-K4) y los avisos de visita, las dos hasta que exista el envío
    proactivo (spec 3).
+
+Al terminar, borra de la sesión de PowerShell las dos variables que guardan una credencial:
+
+```powershell
+Remove-Item Env:QEP_SESSION, Env:CLASIC_BOT_API_KEY
+```
 
 ### Integración con Shopify
 

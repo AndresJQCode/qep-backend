@@ -654,19 +654,22 @@ El bloque `n3` es ilustrativo (`identificationNumber`, `data[0]`): el contrato r
 
 Derivado de `calentadores-classic-backend/src/whatsapp-bot/step-services` (2026-10-21). Se carga por
 `POST /chatbots/import` en el tenant Clasic y se ajusta desde el editor. **Corregido en el plan 4 (2026-10-22/23)**: el flujo
-importable es `tests/Modules/Automations/Modules.Automations.IntegrationTests/Fixtures/clasic.json` (41 bloques; los ids entre
+importable es `tests/Modules/Automations/Modules.Automations.IntegrationTests/Fixtures/clasic.json` (43 bloques desde la revisión final, 2026-10-23; los ids entre
 paréntesis son los suyos), y donde este anexo y el fixture discrepen, gana el fixture.
 
 1. **Horario**? No: el bot actual atiende 24/7. Inicio `NewConversation`, reinicio «reiniciar», 3 intentos.
 2. **HTTP** `GET /customers?phone={telefono}` → `{clientesPorTelefono}` (`items`; `policy-lookup`). **Condición** «¿Aceptó
    la política?» (`policy-check`, `match: any`): la lista vacía o `clientesPorTelefono[0].acceptPolicy` igual a `true` → paso 4;
    si no, paso 3. Sólo se mira al **primer** cliente con ese teléfono (el bot viejo miraba a todos).
-3. **Pregunta abierta** «Política de datos» (texto de `accept-policy.message.ts`, tuteando), validación `keywords` («acepto»,
-   «acepto.», «si acepto», «sí acepto», «si, acepto», «sí, acepto»), `invalid` → repite. **HTTP**
+3. **Pregunta abierta** «Política de datos» (texto de `accept-policy.message.ts`, tuteando), validación `regex`
+   `(?i)^(?![\s\S]*\bno\b)[\s\S]*acepto[\s\S]*$`: cualquier texto con «acepto» que no diga «no», como el
+   `includes('acepto')` del bot viejo (revisión final, 2026-10-23: las palabras clave rechazaban «Sí, acepto.» o «Acepto!»),
+   `invalid` → repite. **HTTP**
    `PUT /customers/{clientesPorTelefono[0].id}` con `{ "acceptPolicy": "true", "sourceAcceptPolicy": "Whatsapp" }`: Clasic
    pone `acceptPolicyDate` (D-K9). Un teléfono que Clasic no conoce no tiene a quién guardarle la aceptación y salta al paso 4.
 4. **Mensaje** bienvenida (`welcome`, con la palabra REINICIAR; no repite el saludo de la política). **Pregunta abierta**
-   «Número de documento», `digits`, `saveTo: cedula`.
+   «Número de documento» («sólo números, sin puntos ni espacios»), `regex` `^[0-9]{4,15}$`, `saveTo: cedula`; agotar los
+   intentos pasa a un asesor (`document-handoff`) en vez de reiniciar el flujo desde la política (revisión final, 2026-10-23).
 5. **HTTP** `GET /customers?document={cedula}` (filtro exacto, D-K3) → `{cliente}` (`items[0]`). **Condición**
    «¿Cliente encontrado?» → no: paso 6; sí: paso 7.
 6. **Mensaje** «Usuario no encontrado» con botón URL «Registrarme» (app.clasic.com.co/registro-clientes) y **Botones**
@@ -678,15 +681,22 @@ paréntesis son los suyos), y donde este anexo y el fixture discrepen, gana el f
 7. **HTTP** `GET /invoices/customer/{cliente.id}/all-invoice-items` → `{equipos}`. **Lista** «¿Cuál equipo?»
    dinámica (`referenceCode` / `address`), extra «Otra dirección» → **Pregunta abierta** con la dirección, el barrio y la
    ciudad → **Pasar a un asesor** (D-K8; la dirección queda en «Datos capturados»).
-8. **Condición** «¿Tiene orden abierta?» (`equipo.item.haveOrderOpen`) → sí: **Mensaje** «Ya hay una orden de servicio
-   abierta para esa dirección» y vuelve a la Lista; no: paso 9.
+8. **Condición** «¿Tiene orden abierta?» (`equipo.item.haveOrderOpen`) → sí: **Botones** «Ese equipo ya tiene una orden de
+   servicio abierta.» con «Elegir otro equipo» (vuelve a la Lista) y «Hablar con un asesor» (`handoff`); no: paso 9
+   (revisión final, 2026-10-23: era un mensaje que sólo volvía a la Lista). La regla es **por equipo**, porque
+   `haveOrderOpen` es lo que la API expone por elemento; el bot viejo la aplicaba por dirección. **Pendiente del owner:** si
+   la quiere por dirección, como el bot viejo, la API tiene que exponer la orden abierta por dirección; hoy la expone por equipo.
 9. **Botones** «¿Qué tipo de servicio?» Servicio técnico / Mantenimiento → técnico: **HTTP** `GET /failures` y **Lista**
    dinámica de fallas; mantenimiento: **HTTP** `GET /services?name=STM` → `{servicio}` y `GET /failures?cause=MANTENIMIENTO`
-   → `{fallaMantenimiento}` (los dos `$[0]`, D-K6).
-10. **Pregunta abierta** nombre de contacto y **Pregunta abierta** teléfono de contacto (`digits`).
+   → `{fallaMantenimiento}` (los dos `$[0]`, D-K6). Sobre `[]` el mapeo deja la variable en `null` y el bloque sale por `ok`,
+   así que la **Condición** `maintenance-check` (los dos no vacíos) va antes del paso 10 y, si falta uno, pasa a un asesor
+   (revisión final, 2026-10-23).
+10. **Pregunta abierta** nombre de contacto y **Pregunta abierta** teléfono de contacto («Sólo números, sin espacios.»,
+    `digits`; agotar los intentos pasa a un asesor: revisión final, 2026-10-23).
 11. **Dos bloques de crear orden**, según el motivo. Técnico: **HTTP** `GET /service-orders/auto-select-service-type?invoiceItemId={equipo.id}`
     → `{servicio}` y **HTTP** `POST /service-orders` (`create-order`) con `customerId`, `failureId` (la falla elegida),
-    `serviceId`, `invoiceItems: [{ id, contact, optionalPhone, update: true }]` → **Resolver** con el resumen
+    `serviceId`, `invoiceItems: [{ id, contact, optionalPhone, update: true }]` (`id` es el número del equipo,
+    `{equipo.item.id}` sin comillas: con un id de texto Clasic responde 500, revisión final, 2026-10-23) → **Resolver** con el resumen
     (`summary.message.ts`). Mantenimiento: **HTTP** `POST /service-orders` (`maintenance-order`) con
     `failureId = {fallaMantenimiento.id}` → **Resolver** con el resumen sin «Tipo de daño» y con los precios del
     mantenimiento. Ninguno manda `serviceDate` (D-K9). `error` de cualquiera de los dos (409 orden abierta, 400 bloqueado):
@@ -711,8 +721,8 @@ como `{ id: 0, role: 'Administrador' }` (D-K11); el bloque HTTP manda la clave e
 | Fallas | `GET /failures`, `GET /failures?cause=MANTENIMIENTO` | protegida (es la ruta de prueba, D-K10) | `cause` exacto y sensible a mayúsculas (D-K6) | arreglo en la raíz: `[].id`, `.description` |
 | Servicio de mantenimiento | `GET /services?name=STM` | pública | `name` exacto y sensible a mayúsculas (D-K6) | arreglo en la raíz: `[0].id`, `.description` |
 | Servicio técnico | `GET /service-orders/auto-select-service-type?invoiceItemId=` | protegida | — | objeto: `id`, `.description` |
-| Crear orden | `POST /service-orders` | protegida | `customerId`, `failureId`, `serviceId`, `invoiceItems: [{ id, contact, optionalPhone, update: true }]`; sin `serviceDate` usa ahora (D-K9) | `id`; 409 orden abierta; 400 cliente o dirección bloqueados. `createdBy = 'Whatsapp'` (D-K11) |
-| Cliente nuevo | `POST /customers/new-customer` | pública, multipart | `identificationNumber`, `firstName`, `lastName`, `address`, `neighborhood`, `addressDescription`, `phone`, `departmentId`, `cityId`, `failureId` + `file`; el teléfono se guarda en 10 dígitos (D-K5) | `serviceOrderNumber` |
+| Crear orden | `POST /service-orders` | protegida | `customerId`, `failureId`, `serviceId`, `invoiceItems: [{ id, contact, optionalPhone, update: true }]` (todos los ids son números; `"id": "1"` da 500, revisión final, 2026-10-23); sin `serviceDate` usa ahora (D-K9) | `id`; 409 orden abierta; 400 cliente o dirección bloqueados. `createdBy = 'Whatsapp'` (D-K11) |
+| Cliente nuevo | `POST /customers/new-customer` | pública, multipart | `identificationNumber`, `firstName`, `lastName`, `address`, `neighborhood`, `addressDescription`, `phone`, `departmentId`, `cityId`, `failureId` + `file`; el teléfono se guarda en 10 dígitos (D-K5) | `serviceOrderNumber` (un número) |
 
 Fuera del contrato: `GET /departments/{id}` (pública) devuelve el departamento con sus `cities`, pero el flujo no la usa
 (D-K7), y **no existe** `GET /cities`. `GET /customers` sin filtro trae todos los clientes, y `?identificationNumber=` es la
