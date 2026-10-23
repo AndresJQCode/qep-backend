@@ -719,6 +719,43 @@ public sealed class ChatbotsApiTests
         Assert.Equal("Active", former.Chatbot.Status);
         Assert.True(former.Chatbot.Version > firstPublished.Chatbot.Version);
         Assert.Equal(1L, await ReleasedAsync(connectionString, first));
+        var list = (await setup.Client.GetFromJsonAsync<ChatbotListResponse>(ChatbotsUrl(setup.Tenant.TenantId), Ct))!;
+        var listed = list.Items.Single(item => item.Id == first);
+        Assert.Empty(listed.Connections);
+        Assert.Equal("Active", listed.Status);
+    }
+
+    // D-X1: una conexión ocupada que no está en la lista sigue dando 409 y no queda nada a medias: la que sí estaba en la lista no se
+    // libera, y el mensaje nombra al que ocupa la que faltaba.
+    [Fact]
+    public async Task TakeOverWithAPartialListIs409AndReleasesNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var other = await SeedWhatsAppConnectionAsync(factory, setup.Tenant.TenantId, "Ventas", Digits(), Digits());
+        var (holderX, xVersion) = await PublishableAsync(setup, "Chatbot X");
+        await ReadEditorAsync(await ActAsync(setup.Client, setup, holderX, "publish", xVersion));
+        var holderXBefore = await GetAsync(setup, holderX);
+        await PublishedOnAsync(setup, "Chatbot Y", other);
+        var (taker, takerVersion) = await PublishableAsync(setup, "Chatbot Z");
+        var withBoth = await ReadEditorAsync(await SetConnectionsAsync(setup, taker, "Chatbot Z", takerVersion, [setup.WhatsAppId, other], []));
+
+        var response = await PublishAsync(setup.Client, setup, taker, withBoth.Chatbot.Version, [setup.WhatsAppId]);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        Assert.Equal("automations.chatbot.connection_taken", problem.RootElement.GetProperty("code").GetString());
+        Assert.Contains("Chatbot Y", problem.RootElement.GetProperty("detail").GetString(), StringComparison.Ordinal);
+        var holderXAfter = await GetAsync(setup, holderX);
+        Assert.Equal([setup.WhatsAppId], holderXAfter.Chatbot.Connections.Select(connection => connection.Id));
+        Assert.Equal(holderXBefore.Chatbot.Version, holderXAfter.Chatbot.Version);
+        Assert.Equal(0L, await AllReleasedAsync(connectionString));
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+        Assert.Equal(1L, await ActiveRowsAsync(connectionString, other));
+        Assert.Equal("Draft", (await GetAsync(setup, taker)).Chatbot.Status);
     }
 
     // D-X1: el PUT sobre un chatbot publicado también toma, al guardar los ajustes.

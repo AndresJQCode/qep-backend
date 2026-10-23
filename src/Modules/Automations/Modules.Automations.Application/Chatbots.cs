@@ -333,6 +333,8 @@ internal static class ChatbotConnectionCheck
 
             foreach (var serving in served)
             {
+                // La version del holder es token de concurrencia: si alguien lo edita entre la lectura y el guardado, quien toma recibe 412
+                // concurrency.conflict y no 409 (spec 2026-10-23 D-X11 lo acepta; reintentar funciona).
                 holder.ReleaseConnection(serving.ConnectionId, now);
                 audit.Record(
                     chatbot.TenantId, actorId, false, AutomationsAuditActions.ChatbotConnectionReleased, AutomationsAuditActions.ResourceChatbot,
@@ -345,9 +347,13 @@ internal static class ChatbotConnectionCheck
     /// D-C4: el 409 <c>connection_taken</c> lo decide el índice parcial (<c>IX_chatbot_connections_active</c>) al guardar, no un chequeo
     /// previo: dos publicaciones simultáneas lo pasarían las dos. Sólo cuando choca se busca quién la ocupa, para que el mensaje lo
     /// nombre («con el nombre del que la ocupa»); la publicación que ganó ya está confirmada, así que la proyección la ve.
+    /// Con una lista parcial (spec 2026-10-23 D-X1) el 409 viene de una conexión que el usuario no autorizó tomar, así que se nombra al
+    /// que ocupa una conexión fuera de <paramref name="takeOverConnectionIds"/>; sólo si no hay, a cualquiera de las propias (una carrera
+    /// sobre una conexión de la lista), para no perder el nombre.
     /// </summary>
     public static async Task SaveNamingTheHolderAsync(
-        IAutomationsUnitOfWork unitOfWork, IChatbotRepository chatbots, Chatbot chatbot, CancellationToken cancellationToken)
+        IAutomationsUnitOfWork unitOfWork, IChatbotRepository chatbots, Chatbot chatbot, IReadOnlySet<Guid> takeOverConnectionIds,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -356,8 +362,10 @@ internal static class ChatbotConnectionCheck
         catch (ResourceConflictException exception) when (exception.Code == AutomationsErrorCodes.ChatbotConnectionTaken)
         {
             var own = chatbot.Connections.Select(connection => connection.ConnectionId).ToHashSet();
-            var holder = (await chatbots.ListServingConnectionsAsync(chatbot.TenantId, cancellationToken))
-                .FirstOrDefault(serving => serving.ChatbotId != chatbot.Id && own.Contains(serving.ConnectionId));
+            var holders = (await chatbots.ListServingConnectionsAsync(chatbot.TenantId, cancellationToken))
+                .Where(serving => serving.ChatbotId != chatbot.Id && own.Contains(serving.ConnectionId))
+                .ToList();
+            var holder = holders.FirstOrDefault(serving => !takeOverConnectionIds.Contains(serving.ConnectionId)) ?? holders.FirstOrDefault();
             if (holder is null)
             {
                 throw;
@@ -510,7 +518,8 @@ public sealed class UpdateChatbotHandler(
         }
 
         audit.Record(command.TenantId, executionContext.SubjectId, false, AutomationsAuditActions.ChatbotUpdated, AutomationsAuditActions.ResourceChatbot, chatbot.Id, now);
-        await ChatbotConnectionCheck.SaveNamingTheHolderAsync(unitOfWork, chatbots, chatbot, cancellationToken);
+        await ChatbotConnectionCheck.SaveNamingTheHolderAsync(
+            unitOfWork, chatbots, chatbot, command.TakeOverConnectionIds.ToHashSet(), cancellationToken);
 
         return await builder.BuildAsync(chatbot, tenantConnections, cancellationToken);
     }
@@ -630,7 +639,8 @@ public sealed class PublishChatbotHandler(
         await ChatbotConnectionCheck.TakeOverAsync(
             chatbots, audit, executionContext.SubjectId, chatbot, command.TakeOverConnectionIds, now, cancellationToken);
         audit.Record(command.TenantId, executionContext.SubjectId, false, AutomationsAuditActions.ChatbotPublished, AutomationsAuditActions.ResourceChatbot, chatbot.Id, now);
-        await ChatbotConnectionCheck.SaveNamingTheHolderAsync(unitOfWork, chatbots, chatbot, cancellationToken);
+        await ChatbotConnectionCheck.SaveNamingTheHolderAsync(
+            unitOfWork, chatbots, chatbot, command.TakeOverConnectionIds.ToHashSet(), cancellationToken);
 
         return await builder.BuildAsync(chatbot, tenantConnections, cancellationToken);
     }
