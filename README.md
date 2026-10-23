@@ -3146,11 +3146,11 @@ $auth = @("-b", "qep_session=$env:QEP_SESSION", "-H", "X-Tenant-Id: $tenantId", 
 4. **Importar el chatbot.** Lo normal es hacerlo desde el frontend: en la lista de chatbots (`/automations/chatbots`),
    «Importar» recibe `Fixtures/clasic.json` tal cual, te deja editar el nombre y, para la «API externa» que nombra el
    archivo, te deja elegir la conexión del tenant (la «API de Clasic» del paso 3; si la dejas en «Elegir después en el
-   editor», los bloques HTTP quedan con `http.connection_missing` hasta que la elijas allí); al confirmar abre el
-   editor del chatbot nuevo como borrador. Un `409` marca el campo «Nombre». Si no tienes el frontend a mano, el
-   script de PowerShell hace lo mismo; se corre desde la raíz de `qep-backend`, y el cuerpo es el de `POST
-   …/automations/chatbots/import` (ver la tabla de rutas): el archivo entero como `export` y el mapa de la conexión
-   del fixture a la del tenant:
+   editor», los bloques HTTP quedan con `http.connection_missing` hasta que la elijas allí); al confirmar abre el editor
+   del chatbot nuevo como borrador. Un `409` marca el campo «Nombre». Si no tienes el frontend a mano, el script de
+   PowerShell hace lo mismo; se corre desde la raíz de `qep-backend`, y el cuerpo es el de
+   `POST …/automations/chatbots/import` (ver la tabla de rutas): el archivo entero como `export` y el mapa de la
+   conexión del fixture a la del tenant:
 
    ```powershell
    $clasicApi = "11111111-1111-1111-1111-111111111111"   # el id de conexión de los bloques HTTP del fixture (externalApis[0].id)
