@@ -1,7 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Automations.Api;
 using Modules.Automations.Application;
 using Modules.Automations.Infrastructure.Engine;
 using static Modules.Automations.IntegrationTests.AutomationsApiHarness;
@@ -228,6 +230,61 @@ public sealed partial class EngineEndToEndTests
         Assert.Equal("started,advanced,ended,started", await OutcomesAsync(f));
         Assert.Equal($"Open|Active|{f.ChatbotId}", await ConversationAsync(f, "status || '|' || automation_status || '|' || automation_chatbot_id"));
         Assert.Equal(6, f.Meta.Sends().Count);
+    }
+
+    // Spec 2026-10-23 D-X7: lo que el chatbot viejo ya atiende termina con él; lo nuevo lo arranca el nuevo.
+    [Fact]
+    public async Task ALiveRunOfTheFormerChatbotFinishesWithItAfterATakeOver()
+    {
+        const string secondWaId = "573009998877";
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        Assert.Equal("Waiting|n2", await RunAsync(f, "status || '|' || current_node_id"));
+
+        // «Ventas» (mismo flujo) pide la conexión y la toma al publicar con takeOverConnectionIds, como lo hace la pantalla al confirmar.
+        using var admin = CreateClient(f.Host, f.Tenant.OwnerUserId, f.Tenant.TenantId, ManagePermissions);
+        var chatbots = $"{AutomationsUrl(f.Tenant.TenantId)}/chatbots";
+        var created = await admin.PostAsJsonAsync(
+            chatbots,
+            new CreateChatbotRequest("Ventas", "Atiende ventas.", "NewConversation", [], [f.ConnectionId], new ChatbotSourceRequest("blank", null, null, null)),
+            Ct);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var editor = (await created.Content.ReadFromJsonAsync<ChatbotEditorDto>(Ct))!;
+        var ventasId = editor.Chatbot.Id;
+        using var draft = new HttpRequestMessage(HttpMethod.Put, $"{chatbots}/{ventasId}/draft")
+        {
+            Content = JsonContent.Create(new SaveDraftRequest(JsonDocument.Parse(FlowJson).RootElement, JsonDocument.Parse("{}").RootElement)),
+        };
+        draft.Headers.TryAddWithoutValidation("If-Match", $"\"{editor.Chatbot.Version}\"");
+        var saved = await admin.SendAsync(draft, Ct);
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var version = (await saved.Content.ReadFromJsonAsync<DraftSavedDto>(Ct))!.Version;
+        using var publish = new HttpRequestMessage(HttpMethod.Post, $"{chatbots}/{ventasId}/publish")
+        {
+            Content = JsonContent.Create(new { takeOverConnectionIds = new[] { f.ConnectionId } }),
+        };
+        publish.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
+        Assert.Equal(HttpStatusCode.OK, (await admin.SendAsync(publish, Ct)).StatusCode);
+
+        await TapAsync(f, "w2", "tech", "Servicio técnico");
+        await DrainAutomationsAsync(f.Host);
+        var response = await PostWebhookAsync(f.Anonymous, Payloads.InboundText(PhoneNumberId, secondWaId, "w3", Timestamp("w3"), "Hola"));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await DrainDeliveriesAsync(f.Host);
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal($"{f.ChatbotId}|Waiting|n3", await ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT string_agg(r.chatbot_id::text || '|' || r.status || '|' || r.current_node_id, ',')
+            FROM automations.conversation_runs r JOIN messaging.conversations c ON c.id = r.conversation_id WHERE c.wa_id = @wa
+            """, ("wa", WaId)));
+        Assert.Equal($"{ventasId}|Waiting|n2", await ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT string_agg(r.chatbot_id::text || '|' || r.status || '|' || r.current_node_id, ',')
+            FROM automations.conversation_runs r JOIN messaging.conversations c ON c.id = r.conversation_id WHERE c.wa_id = @wa
+            """, ("wa", secondWaId)));
     }
 
     /// <summary>§5.2 paso 3 y D-M14: devuelta al asistente (Active sin corrida) con el chatbot de la conexión en pausa, la conversación
