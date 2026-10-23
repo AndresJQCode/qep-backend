@@ -31,14 +31,18 @@ public sealed record CreateChatbotCommand(
 
 public sealed record UpdateChatbotCommand(
     Guid TenantId, Guid ChatbotId, long Version, string Name, string Description, string Trigger, IReadOnlyList<string> Keywords,
-    string RestartKeyword, int MaxAttempts, IReadOnlyList<Guid> ConnectionIds) : ICommand<ChatbotEditorDto>;
+    string RestartKeyword, int MaxAttempts, IReadOnlyList<Guid> ConnectionIds, IReadOnlyList<Guid> TakeOverConnectionIds)
+    : ICommand<ChatbotEditorDto>;
 
 public sealed record SaveChatbotDraftCommand(Guid TenantId, Guid ChatbotId, long Version, JsonElement Flow, JsonElement Layout)
     : ICommand<DraftSavedDto>;
 
 public sealed record ValidateChatbotQuery(Guid TenantId, Guid ChatbotId) : IQuery<IReadOnlyList<FlowIssueDto>>;
 
-public sealed record PublishChatbotCommand(Guid TenantId, Guid ChatbotId, long Version) : ICommand<ChatbotEditorDto>;
+/// <summary><paramref name="TakeOverConnectionIds"/>: conexiones que el chatbot le quita a otro publicado al activarse (spec 2026-10-23
+/// D-X1). Sin cuerpo en el endpoint llega vacía; el handler la normaliza con <c>Distinct()</c> en vez de un validador.</summary>
+public sealed record PublishChatbotCommand(Guid TenantId, Guid ChatbotId, long Version, IReadOnlyList<Guid> TakeOverConnectionIds)
+    : ICommand<ChatbotEditorDto>;
 
 public sealed record PauseChatbotCommand(Guid TenantId, Guid ChatbotId, long Version) : ICommand<ChatbotEditorDto>;
 
@@ -183,6 +187,10 @@ public sealed class UpdateChatbotValidator : AbstractValidator<UpdateChatbotComm
         RuleFor(command => command.RestartKeyword).NotEmpty().MaximumLength(Chatbot.RestartKeywordMaxLength);
         RuleFor(command => command.MaxAttempts).InclusiveBetween(Chatbot.MinAttempts, Chatbot.MaxAttemptsLimit);
         ChatbotRules.ConnectionIds(RuleFor(command => command.ConnectionIds));
+        // Mismo tope que ConnectionIds (spec 2026-10-23 D-X1): no se puede quitar más de lo que un chatbot puede tener.
+        RuleFor(command => command.TakeOverConnectionIds).NotNull()
+            .Must(ids => ids.Count <= ChatbotLimits.MaxConnections)
+            .WithMessage($"At most {ChatbotLimits.MaxConnections} connections can be taken over.");
     }
 }
 

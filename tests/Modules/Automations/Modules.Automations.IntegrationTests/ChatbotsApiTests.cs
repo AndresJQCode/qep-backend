@@ -584,6 +584,67 @@ public sealed class ChatbotsApiTests
             "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.published'", ("id", id.ToString())));
     }
 
+    // Spec 2026-10-23 D-X1: el cuerpo de publish es opcional; sin él, publicar sigue igual que antes.
+    [Fact]
+    public async Task PublishWithoutABodyStillPublishes()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (id, version) = await PublishableAsync(setup);
+
+        var response = await ActAsync(setup.Client, setup, id, "publish", version);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var published = (await response.Content.ReadFromJsonAsync<ChatbotEditorDto>(Ct))!;
+        Assert.Equal("Active", published.Chatbot.Status);
+    }
+
+    // Con cuerpo JSON y la lista vacía, publicar sigue igual.
+    [Fact]
+    public async Task PublishWithAnEmptyTakeOverListPublishes()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (id, version) = await PublishableAsync(setup);
+
+        var response = await PublishAsync(setup.Client, setup, id, version, []);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var published = (await response.Content.ReadFromJsonAsync<ChatbotEditorDto>(Ct))!;
+        Assert.Equal("Active", published.Chatbot.Status);
+    }
+
+    // Más de 10 ids en la lista del PUT: 422 validation.failed bajo la clave takeOverConnectionIds.
+    [Fact]
+    public async Task UpdateWithMoreThanTenTakeOverIdsIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+        var url = $"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}";
+
+        var response = await PutAsync(
+            setup, url,
+            new UpdateChatbotRequest(
+                "Servicio", "", "NewConversation", [], "reiniciar", 3, [setup.WhatsAppId],
+                Enumerable.Range(0, 11).Select(_ => Guid.NewGuid()).ToList()),
+            editor.Chatbot.Version);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var (code, keys) = await ProblemAsync(response);
+        Assert.Equal("validation.failed", code);
+        Assert.Contains("takeOverConnectionIds", keys, StringComparer.OrdinalIgnoreCase);
+    }
+
     // D-C4: la conexión la ocupa el primero; el 409 nombra al que la tiene.
     [Fact]
     public async Task PublishASecondChatbotOnTheSameConnectionIs409()
@@ -937,6 +998,17 @@ public sealed class ChatbotsApiTests
     private static Task<HttpResponseMessage> ActAsync(HttpClient client, Setup setup, Guid chatbotId, string action, long version)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, $"{ChatbotsUrl(setup.Tenant.TenantId)}/{chatbotId}/{action}");
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
+        return client.SendAsync(request, Ct);
+    }
+
+    /// <summary><c>POST …/publish</c> con cuerpo: la lista de conexiones que se le quitan a otro chatbot (spec 2026-10-23 D-X1).</summary>
+    private static Task<HttpResponseMessage> PublishAsync(HttpClient client, Setup setup, Guid chatbotId, long version, IReadOnlyList<Guid> takeOver)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, $"{ChatbotsUrl(setup.Tenant.TenantId)}/{chatbotId}/publish")
+        {
+            Content = JsonContent.Create(new { takeOverConnectionIds = takeOver }),
+        };
         request.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
         return client.SendAsync(request, Ct);
     }
