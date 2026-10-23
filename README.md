@@ -3069,10 +3069,13 @@ Desvíos de D-H8 y límites conocidos:
 #### Clasic: conexión, importación y corte
 
 El bot de WhatsApp de Clasic (spec 2026-10-21 Anexo B, plan 4) es el archivo
-`tests/Modules/Automations/Modules.Automations.IntegrationTests/Fixtures/clasic.json`: `{ "flow", "layout" }`, 43 bloques en
-cuadrícula, 12 de ellos HTTP y todos contra una sola conexión «API externa» con el id fijo
-`11111111-1111-1111-1111-111111111111`, que la importación cambia por la del tenant. `ClasicFlowTests` lo valida y
-`ClasicFlowEndToEndTests` lo corre de punta a punta contra el contrato real de la API de Clasic (spec, Anexo C). Lo que sigue
+`tests/Modules/Automations/Modules.Automations.IntegrationTests/Fixtures/clasic.json`: el **archivo de exportación completo**
+(la forma de `GET …/chatbots/{id}/export`: nombre, disparador, palabra de reinicio, `flow`, `layout` y `externalApis`), listo
+para mandarse tal cual como `export` al importar. Son 44 bloques, 12 de ellos HTTP y todos contra una sola conexión «API
+externa» con el id fijo `11111111-1111-1111-1111-111111111111`, que la importación cambia por la del tenant. El `layout` ya viene ordenado por niveles de arriba hacia abajo —el camino principal al
+centro, el registro de cliente nuevo a la izquierda y el mantenimiento a la derecha—, así el editor lo abre legible sin pasar
+por «Ordenar». `ClasicFlowTests` lo valida y `ClasicFlowEndToEndTests` lo corre de punta a punta contra el contrato real de la
+API de Clasic (spec, Anexo C). Lo que sigue
 son las fases 8 y 9 del spec §11, y todo es operación: en QEP no hay código ni migración que desplegar.
 
 Las variables que usan los comandos, una vez por sesión de PowerShell. Ninguna clave se escribe en la línea de comandos: se
@@ -3141,17 +3144,11 @@ $auth = @("-b", "qep_session=$env:QEP_SESSION", "-H", "X-Tenant-Id: $tenantId", 
    ```
 
 4. **Importar el chatbot.** Desde la raíz de `qep-backend`; el cuerpo es el de `POST …/automations/chatbots/import` (ver la
-   tabla de rutas), armado con el `flow` y el `layout` del fixture:
+   tabla de rutas): el archivo entero como `export` y el mapa de la conexión del fixture a la del tenant:
 
    ```powershell
-   $clasicApi = "11111111-1111-1111-1111-111111111111"   # el id de conexión de los bloques HTTP del fixture
-   $fixture = Get-Content -Raw -Encoding UTF8 tests/Modules/Automations/Modules.Automations.IntegrationTests/Fixtures/clasic.json | ConvertFrom-Json
-   $export = [ordered]@{
-     schema = 1; name = "Clasic"; description = "Servicio técnico de calentadores."; trigger = "NewConversation"; keywords = @()
-     restartKeyword = "reiniciar"; maxAttempts = 3; flow = $fixture.flow; layout = $fixture.layout
-     externalApis = @([ordered]@{ id = $clasicApi; name = "API de Clasic"; status = "Active" })
-     exportedAt = (Get-Date).ToUniversalTime().ToString("o")
-   }
+   $clasicApi = "11111111-1111-1111-1111-111111111111"   # el id de conexión de los bloques HTTP del fixture (externalApis[0].id)
+   $export = Get-Content -Raw -Encoding UTF8 tests/Modules/Automations/Modules.Automations.IntegrationTests/Fixtures/clasic.json | ConvertFrom-Json
    $body = [ordered]@{ export = $export; connectionMap = @{ $clasicApi = $connectionId } } | ConvertTo-Json -Depth 50
    [IO.File]::WriteAllText((Join-Path $PWD "import.json"), $body)   # UTF-8 sin BOM, también en Windows PowerShell 5.1
    curl.exe -s -o import-response.json -w "%{http_code}`n" -X POST "$api/api/v1/tenants/$tenantId/automations/chatbots/import" `
@@ -3171,7 +3168,7 @@ $auth = @("-b", "qep_session=$env:QEP_SESSION", "-H", "X-Tenant-Id: $tenantId", 
    true`), recorre el camino de un cliente que ya existe en Clasic hasta el resumen. **Crea una orden de verdad:** usa la
    cédula de un cliente de prueba de Clasic y avísale a Clasic para que la anule. Dos cosas que conviene saber: el simulador
    llama con `{telefono}` = `3000000000`, así que mira antes que `GET /customers?phone=3000000000` responda
-   `{"items":[],"totalCount":0}` (si no, la política se le pregunta a ese cliente y un «ACEPTO» se guarda en su ficha); y el
+   `{"items":[],"totalCount":0}` (si no, la política se le pregunta a ese cliente y un toque en «Acepto» se guarda en su ficha); y el
    registro de un cliente nuevo no se puede probar en vivo, porque el simulador no sube el archivo de la factura
    (`media_not_ready`, ver [Simulador](#simulador)).
 

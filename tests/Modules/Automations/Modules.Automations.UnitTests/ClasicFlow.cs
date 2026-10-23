@@ -22,13 +22,16 @@ internal static class ClasicFlow
         new HashSet<Guid>(),
         AllConnectionsHaveBusinessHours: false);
 
-    private static JsonNode Document()
+    /// <summary>El archivo entero, tal como se manda en <c>export</c> al importar.</summary>
+    public static string Raw()
     {
         var assembly = typeof(ClasicFlow).Assembly;
         var name = assembly.GetManifestResourceNames().Single(resource => resource.EndsWith("clasic.json", StringComparison.Ordinal));
         using var stream = assembly.GetManifestResourceStream(name)
             ?? throw new InvalidOperationException($"No está el recurso {name}.");
         using var reader = new StreamReader(stream);
-        return JsonNode.Parse(reader.ReadToEnd())!;
+        return reader.ReadToEnd();
     }
+
+    private static JsonNode Document() => JsonNode.Parse(Raw())!;
 }

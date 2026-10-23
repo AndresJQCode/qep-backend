@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Modules.Automations.Application;
 using Modules.Automations.Domain.Engine;
 using Modules.Automations.Domain.Flow;
 
@@ -14,19 +16,10 @@ public sealed class ClasicFlowTests
         var issues = FlowValidator.Validate(ClasicFlow.Parse(), ClasicFlow.Context());
 
         // Los defectos reales de un fixture de este tamaño (node.unreachable, variable.never_set, http.no_sample_response) salen como
-        // warnings: el conjunto se fija exacto. Sólo quedan las salidas opcionales que el flujo deja sin conectar a propósito: el
-        // `invalid` de una pregunta o un adjunto y el `other` de unos botones o una lista, que al agotar los intentos reinician el flujo.
-        // `document` y `contact-phone` no están porque agotarlos pasa a un asesor (revisión final, 2026-10-23); `open-order-notice` sí,
-        // porque ahora son botones y su `other` queda sin conectar como el de los demás.
-        Assert.DoesNotContain(issues, i => i.Severity == FlowIssueSeverity.Error);
-        string[] unconnected =
-        [
-            "policy", "not-found-options", "new-first-name", "new-last-name", "new-address", "new-neighborhood", "new-city",
-            "new-failure", "invoice-photo", "equipment", "open-order-notice", "other-address", "service-kind", "failure", "contact-name",
-        ];
-        Assert.Equal(
-            unconnected.Select(nodeId => ("node.output_unconnected_optional", nodeId)).Order(),
-            issues.Select(i => (i.Code, i.NodeId!)).Order());
+        // warnings, así que el conjunto se fija exacto: vacío. Las salidas opcionales (`invalid`, `other`, `tooMany`) van todas a
+        // «Pasar a un asesor» (2026-10-23): sin conectar, agotar los intentos terminaba la corrida en silencio y el cliente se
+        // quedaba sin respuesta hasta volver a escribir, donde el bot arrancaba de cero.
+        Assert.Empty(issues);
     }
 
     [Fact]
@@ -85,20 +78,16 @@ public sealed class ClasicFlowTests
         Assert.Equal("file", node.Body.FileField);
     }
 
-    /// <summary>Como el bot viejo (<c>includes('acepto')</c>): cualquier texto con «acepto», sin importar mayúsculas, puntuación ni emoji,
-    /// pero no si dice «no» (revisión final, 2026-10-23: con palabras clave «Sí, acepto.» no valía).</summary>
+    /// <summary>La política se acepta con dos botones (2026-10-23; antes era una pregunta abierta que pedía escribir «acepto»). Un
+    /// toque se resuelve por id; lo escrito se compara contra la etiqueta sin tildes ni mayúsculas (§5.4), y cualquier otro texto
+    /// repite la pregunta. «No acepto» termina la conversación con su propio mensaje (<c>policy-declined</c>).</summary>
     [Theory]
-    [InlineData("ACEPTO", true)]
-    [InlineData("Acepto.", true)]
-    [InlineData("sí, acepto", true)]
-    [InlineData("Sí, acepto.", true)]
-    [InlineData("Acepto!", true)]
-    [InlineData("acepto 👍", true)]
-    [InlineData("Acepto la política", true)]
-    [InlineData("no acepto", false)]
-    [InlineData("No acepto", false)]
-    [InlineData("no", false)]
-    public void ThePolicyQuestionAcceptsTheUsualWaysOfSayingYes(string reply, bool accepted)
+    [InlineData("acepto", "Acepto", "policy-save")]
+    [InlineData("no-acepto", "No acepto", "policy-declined")]
+    [InlineData(null, "acepto", "policy-save")]
+    [InlineData(null, "NO ACEPTO", "policy-declined")]
+    [InlineData(null, "Acepto la política", "policy")]
+    public void ThePolicyButtonsDecideWhereTheFlowGoes(string? replyId, string text, string expectedNode)
     {
         // El mismo camino que FlowEngineWaitingTests: el flujo arranca en la pregunta, espera, y la respuesta decide a dónde va.
         var flow = ClasicFlow.Parse() with { Start = new FlowStart("policy") };
@@ -106,11 +95,11 @@ public sealed class ClasicFlowTests
         var now = new DateTimeOffset(2026, 10, 22, 15, 0, 0, TimeSpan.Zero);
         var waiting = FlowEngine.Step(flow, settings, RunState.Initial(RunVariables.Empty()), new EngineInput.Start(), now);
 
-        var after = FlowEngine.Step(flow, settings, waiting.State, new EngineInput.CustomerMessage("Text", reply, null, null), now);
+        var after = FlowEngine.Step(
+            flow, settings, waiting.State, new EngineInput.CustomerMessage(replyId is null ? "Text" : "Interactive", text, replyId, null), now);
 
-        // Aceptada, guarda la respuesta y sigue por policy-save (HTTP); rechazada, sigue esperando en la misma pregunta.
-        Assert.Equal(accepted ? "policy-save" : "policy", after.State.CurrentNodeId);
-        Assert.Equal(accepted, after.State.Variables.Has("aceptacion"));
+        Assert.Equal(expectedNode, after.State.CurrentNodeId);
+        Assert.Equal(expectedNode != "policy", after.State.Variables.Has("aceptacion"));
     }
 
     /// <summary>Un documento que no son sólo dígitos («1.036.123.456») tres veces seguidas no reinicia el flujo desde la política: pasa a un
@@ -150,6 +139,24 @@ public sealed class ClasicFlowTests
 
         // Aceptado, sigue a la búsqueda por documento (HTTP); rechazado, sigue esperando en la misma pregunta.
         Assert.Equal(accepted ? "find-customer" : "document", after.State.CurrentNodeId);
+    }
+
+    /// <summary>El fixture es el archivo que se importa en producción tal cual (README, «Clasic: conexión, importación y corte»): la
+    /// forma entera de <see cref="ChatbotExportDto"/>, no sólo <c>flow</c> y <c>layout</c>, con la conexión «API externa» del fixture
+    /// declarada en <c>externalApis</c> para que quien importa sepa qué mapear.</summary>
+    [Fact]
+    public void TheFixtureIsAnImportableExportFile()
+    {
+        var export = JsonSerializer.Deserialize<ChatbotExportDto>(ClasicFlow.Raw(), JsonSerializerOptions.Web)!;
+
+        Assert.Equal(ChatbotExportDto.CurrentSchema, export.Schema);
+        Assert.Equal("Clasic", export.Name);
+        Assert.Equal("NewConversation", export.Trigger);
+        Assert.Equal("reiniciar", export.RestartKeyword);
+        Assert.Equal(3, export.MaxAttempts);
+        var api = Assert.Single(export.ExternalApis);
+        Assert.Equal(ClasicFlow.ClasicApi, api.Id);
+        Assert.Equal(ClasicFlow.ClasicApi, Assert.Single(HttpNodes(ClasicFlow.Parse()).Select(n => n.ConnectionId).Distinct()));
     }
 
     [Fact]
