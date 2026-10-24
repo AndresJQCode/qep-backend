@@ -60,8 +60,14 @@ public sealed partial class HttpBlockExecutor(
     [LoggerMessage(Level = LogLevel.Warning, Message = "Chatbot HTTP block {NodeId} of tenant {TenantId} failed: {Outcome} (status {Status}) in {DurationMs} ms")]
     private static partial void LogFailed(ILogger logger, Guid tenantId, string nodeId, string outcome, int? status, int durationMs);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Chatbot HTTP block {NodeId} of tenant {TenantId} has no usable connection: {Outcome}")]
-    private static partial void LogUnavailable(ILogger logger, Guid tenantId, string nodeId, string outcome);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Chatbot HTTP block {NodeId} of tenant {TenantId} has no usable connection: {Outcome} ({ErrorCode})")]
+    private static partial void LogUnavailable(ILogger logger, Guid tenantId, string nodeId, string outcome, string errorCode);
+
+    /// <summary>Spec 2026-10-24 §3.4.</summary>
+    internal const string NotChosen = "not_chosen";
+
+    /// <summary>Spec 2026-10-24 §3.4 (P2-R30).</summary>
+    internal const string AuthHeaderReserved = "auth_header_reserved";
 
     // Sin la excepción: su mensaje podría traer lo que la base devolvió sobre la fila.
     [LoggerMessage(Level = LogLevel.Error, Message = "Chatbot HTTP block {NodeId} of tenant {TenantId} could not record its call ({Outcome}): {ErrorType}")]
@@ -83,13 +89,21 @@ public sealed partial class HttpBlockExecutor(
         ArgumentNullException.ThrowIfNull(variables);
 
         // Sin conexión no hay fila que registrar (http_calls.connection_id no admite null). Un header reservado (P2-R30/P2-R31) es una conexión
-        // guardada antes de la regla: no se usa, igual que una pausada.
-        if (node.ConnectionId is not { } connectionId
-            || await externalApis.ResolveAsync(context.TenantId, connectionId, cancellationToken) is not { } credentials
-            || urlPolicy.IsReservedHeader(credentials.AuthHeader))
+        // guardada antes de la regla: no se usa, igual que una pausada. Spec 2026-10-24 D-T5: el motivo va en ErrorCode.
+        if (node.ConnectionId is not { } connectionId)
         {
-            LogUnavailable(logger, context.TenantId, context.NodeId, HttpCallOutcomes.ConnectionUnavailable);
-            return new HttpCallResult(false, null, RunVariables.Empty(), HttpCallOutcomes.ConnectionUnavailable, HttpCallOutcomes.ConnectionUnavailable);
+            return Unavailable(context, NotChosen, null);
+        }
+
+        var resolution = await externalApis.ResolveAsync(context.TenantId, connectionId, cancellationToken);
+        if (resolution.Credentials is not { } credentials)
+        {
+            return Unavailable(context, resolution.UnavailableReason ?? HttpCallOutcomes.ConnectionUnavailable, resolution.ConnectionName);
+        }
+
+        if (urlPolicy.IsReservedHeader(credentials.AuthHeader))
+        {
+            return Unavailable(context, AuthHeaderReserved, resolution.ConnectionName);
         }
 
         // D-H8 con el desvío de MediaWaitRetries: un solo presupuesto de espera por bloque, lo usen la url de un adjunto o el archivo del
@@ -97,7 +111,7 @@ public sealed partial class HttpBlockExecutor(
         var mediaWait = new MediaWait();
         var (effective, notReady) = await WithAttachmentUrlsAsync(context.TenantId, node, variables, mediaWait, cancellationToken);
         var request = HttpBlockRequest.Build(node, effective);
-        var call = new Call(context, connectionId, request.Method, request.Path, clock.UtcNow);
+        var call = new Call(context, connectionId, resolution.ConnectionName, request.Method, request.Path, clock.UtcNow);
         if (notReady is not null)
         {
             return await FinishAsync(call, notReady, cancellationToken);
@@ -400,6 +414,13 @@ public sealed partial class HttpBlockExecutor(
     private static HttpCallResult Failure(string outcome, int? status, string errorCode) =>
         new(false, status, RunVariables.Empty(), outcome, errorCode);
 
+    // Sin fila: http_calls.connection_id no admite null y una conexión que no se usó no es una llamada. El log no lleva URL ni clave.
+    private HttpCallResult Unavailable(HttpCallContext context, string reason, string? connectionName)
+    {
+        LogUnavailable(logger, context.TenantId, context.NodeId, HttpCallOutcomes.ConnectionUnavailable, reason);
+        return new HttpCallResult(false, null, RunVariables.Empty(), HttpCallOutcomes.ConnectionUnavailable, reason, connectionName);
+    }
+
     private async Task<HttpCallResult> FinishAsync(Call call, HttpCallResult result, CancellationToken cancellationToken)
     {
         // Sin llamada (url rechazada, adjunto que no llegó, cuerpo que no se armó) no hay duración que medir.
@@ -428,11 +449,13 @@ public sealed partial class HttpBlockExecutor(
             LogNotRecorded(logger, call.Context.TenantId, call.Context.NodeId, result.Outcome, exception.GetType().Name);
         }
 
-        return result;
+        return result with { ConnectionName = call.ConnectionName };
     }
 
-    /// <summary><see cref="SentAt"/>: el <c>Stopwatch</c> justo antes de mandar; <c>null</c> si el bloque no llegó a llamar.</summary>
-    private sealed record Call(HttpCallContext Context, Guid ConnectionId, string Method, string Path, DateTimeOffset CalledAt, long? SentAt = null);
+    /// <summary><see cref="SentAt"/>: el <c>Stopwatch</c> justo antes de mandar; <c>null</c> si el bloque no llegó a llamar.
+    /// <see cref="ConnectionName"/> viaja con el resultado (spec 2026-10-24 §3.2), no a la fila.</summary>
+    private sealed record Call(
+        HttpCallContext Context, Guid ConnectionId, string? ConnectionName, string Method, string Path, DateTimeOffset CalledAt, long? SentAt = null);
 
     /// <summary>Los reintentos de espera del adjunto que le quedan al bloque (D-H8 con el desvío: 4 × 5 s en total).</summary>
     private sealed class MediaWait

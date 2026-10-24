@@ -19,8 +19,11 @@ public sealed class ConsumerPortsTests
         var bed = new IntegrationsTestBed();
         var connection = bed.Seed();
 
-        var resolved = await bed.ConnectionsPort().ResolveAsync(bed.TenantId, connection.Id, Ct);
+        var resolution = await bed.ConnectionsPort().ResolveAsync(bed.TenantId, connection.Id, Ct);
 
+        Assert.Null(resolution.Unavailable);
+        Assert.Equal(connection.Name, resolution.Name);
+        var resolved = resolution.Connection;
         Assert.NotNull(resolved);
         Assert.Equal(connection.Id, resolved.Id);
         Assert.Equal("zenvia", resolved.ProviderKey);
@@ -29,8 +32,9 @@ public sealed class ConsumerPortsTests
         Assert.DoesNotContain(IntegrationsTestBed.Token, resolved.ToString(), StringComparison.Ordinal);
     }
 
+    // Spec 2026-10-24 D-T4: el motivo de la primera comprobación que falla, con el nombre si la conexión existe.
     [Fact]
-    public async Task ResolveIsNullForPausedNeedsAttentionMissingOtherTenantHiddenOrUnreadable()
+    public async Task ResolveExplainsWhyAConnectionCannotBeUsed()
     {
         var bed = new IntegrationsTestBed();
         var paused = bed.Seed("Pausada");
@@ -42,15 +46,36 @@ public sealed class ConsumerPortsTests
         bed.Protector.Unreadable.Add((unreadable.Id, ZenviaFieldKeys.ApiToken));
         var port = bed.ConnectionsPort();
 
-        Assert.Null(await port.ResolveAsync(bed.TenantId, paused.Id, Ct));
-        Assert.Null(await port.ResolveAsync(bed.TenantId, attention.Id, Ct));
-        Assert.Null(await port.ResolveAsync(bed.TenantId, Guid.CreateVersion7(), Ct));
-        Assert.Null(await port.ResolveAsync(bed.TenantId, foreign.Id, Ct));
-        Assert.Null(await port.ResolveAsync(bed.TenantId, unreadable.Id, Ct));
+        async Task<(ConnectionUnavailableReason?, string?, bool)> Of(Guid id)
+        {
+            var resolution = await port.ResolveAsync(bed.TenantId, id, Ct);
+            return (resolution.Unavailable, resolution.Name, resolution.Connection is null);
+        }
+
+        Assert.Equal((ConnectionUnavailableReason.Paused, "Pausada", true), await Of(paused.Id));
+        Assert.Equal((ConnectionUnavailableReason.NeedsAttention, "Atención", true), await Of(attention.Id));
+        Assert.Equal((ConnectionUnavailableReason.NotFound, (string?)null, true), await Of(Guid.CreateVersion7()));
+        Assert.Equal((ConnectionUnavailableReason.NotFound, (string?)null, true), await Of(foreign.Id));
+        Assert.Equal((ConnectionUnavailableReason.SecretUnreadable, "Ilegible", true), await Of(unreadable.Id));
 
         var hidden = bed.Seed("Oculta");
         bed.HideQuotations();
-        Assert.Null(await port.ResolveAsync(bed.TenantId, hidden.Id, Ct));
+        Assert.Equal((ConnectionUnavailableReason.ProviderHidden, "Oculta", true), await Of(hidden.Id));
+    }
+
+    // Zenvia exige que el operador lo habilite para el tenant (plan 2026-10-21): un conjunto vacío lo apaga.
+    [Fact]
+    public async Task ResolveSaysProviderDisabledWhenTheTenantTurnedItOff()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.Seed("Apagada");
+        bed.Providers.Sets[bed.TenantId] = new HashSet<string>(StringComparer.Ordinal);
+
+        var resolution = await bed.ConnectionsPort().ResolveAsync(bed.TenantId, connection.Id, Ct);
+
+        Assert.Null(resolution.Connection);
+        Assert.Equal(ConnectionUnavailableReason.ProviderDisabled, resolution.Unavailable);
+        Assert.Equal("Apagada", resolution.Name);
     }
 
     [Fact]

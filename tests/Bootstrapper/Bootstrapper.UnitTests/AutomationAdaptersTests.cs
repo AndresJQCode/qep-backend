@@ -71,8 +71,10 @@ public sealed class AutomationAdaptersTests
             new Dictionary<string, string> { ["baseUrl"] = "https://api.clasic.test/v1", ["authHeader"] = " " },
             new Dictionary<string, string> { ["apiKey"] = "KEY-SENTINEL" }));
 
-        var credentials = await new AutomationExternalApis(connections).ResolveAsync(TenantId, id, Ct);
+        var resolution = await new AutomationExternalApis(connections).ResolveAsync(TenantId, id, Ct);
+        var credentials = resolution.Credentials;
 
+        Assert.Equal((null, "Clasic"), (resolution.UnavailableReason, resolution.ConnectionName));
         Assert.Equal(
             (new Uri("https://api.clasic.test/v1"), "x-api-key", "KEY-SENTINEL"), (credentials?.BaseUrl, credentials?.AuthHeader, credentials?.ApiKey));
         Assert.DoesNotContain("KEY-SENTINEL", credentials!.ToString(), StringComparison.Ordinal);
@@ -88,20 +90,63 @@ public sealed class AutomationAdaptersTests
             new Dictionary<string, string> { ["baseUrl"] = "https://api.clasic.test", ["authHeader"] = "X-Token" },
             new Dictionary<string, string> { ["apiKey"] = "K" }));
 
-        Assert.Equal("X-Token", (await new AutomationExternalApis(connections).ResolveAsync(TenantId, id, Ct))?.AuthHeader);
+        Assert.Equal("X-Token", (await new AutomationExternalApis(connections).ResolveAsync(TenantId, id, Ct)).Credentials?.AuthHeader);
     }
 
-    /// <summary>Una conexión de otro proveedor (un WhatsApp con el id de un bloque mal importado) no es una API externa.</summary>
+    /// <summary>Una conexión de otro proveedor (un WhatsApp con el id de un bloque mal importado) no es una API externa (spec 2026-10-24
+    /// §3.2: <c>wrong_provider</c>, con su nombre, sin credenciales).</summary>
     [Fact]
-    public async Task ResolveIgnoresAnotherProviderAndAnUnresolvedConnection()
+    public async Task ResolveOfAnotherProviderIsWrongProvider()
     {
         var other = new StubIntegrationConnections([], new ResolvedConnection(
             Guid.CreateVersion7(), "meta-whatsapp", "Ventas",
             new Dictionary<string, string> { ["baseUrl"] = "https://api.clasic.test" }, new Dictionary<string, string> { ["apiKey"] = "K" }));
         var none = new StubIntegrationConnections([]);
 
-        Assert.Null(await new AutomationExternalApis(other).ResolveAsync(TenantId, Guid.CreateVersion7(), Ct));
-        Assert.Null(await new AutomationExternalApis(none).ResolveAsync(TenantId, Guid.CreateVersion7(), Ct));
+        Assert.Equal(
+            new ExternalApiResolution(null, "wrong_provider", "Ventas"),
+            await new AutomationExternalApis(other).ResolveAsync(TenantId, Guid.CreateVersion7(), Ct));
+        Assert.Equal(
+            new ExternalApiResolution(null, "not_found", null),
+            await new AutomationExternalApis(none).ResolveAsync(TenantId, Guid.CreateVersion7(), Ct));
+    }
+
+    // Spec 2026-10-24 §3.2: el motivo de Integrations viaja como código, con el nombre para el hilo; nunca con credenciales.
+    [Fact]
+    public async Task ResolveCarriesTheReasonAndTheNameOfAnUnusableConnection()
+    {
+        var connections = new StubIntegrationConnections(
+            [], resolution: ConnectionResolution.Unusable(ConnectionUnavailableReason.SecretUnreadable, "API de Clasic"));
+
+        Assert.Equal(
+            new ExternalApiResolution(null, "secret_unreadable", "API de Clasic"),
+            await new AutomationExternalApis(connections).ResolveAsync(TenantId, Guid.CreateVersion7(), Ct));
+    }
+
+    [Theory]
+    [InlineData("api.clasic.test", "K")]
+    [InlineData("https://api.clasic.test", "")]
+    [InlineData(null, "K")]
+    [InlineData("https://api.clasic.test", null)]
+    public async Task ResolveWithoutBaseUrlOrKeyIsIncomplete(string? baseUrl, string? apiKey)
+    {
+        var fields = new Dictionary<string, string>();
+        if (baseUrl is not null)
+        {
+            fields["baseUrl"] = baseUrl;
+        }
+
+        var secrets = new Dictionary<string, string>();
+        if (apiKey is not null)
+        {
+            secrets["apiKey"] = apiKey;
+        }
+
+        var connections = new StubIntegrationConnections([], new ResolvedConnection(Guid.CreateVersion7(), "external-api", "Clasic", fields, secrets));
+
+        Assert.Equal(
+            new ExternalApiResolution(null, "incomplete", "Clasic"),
+            await new AutomationExternalApis(connections).ResolveAsync(TenantId, Guid.CreateVersion7(), Ct));
     }
 
     /// <summary>D-H2 y P2-R30/P2-R31: la política del bloque HTTP es la misma de Integrations, también al reconocer el rechazo al conectar.</summary>
@@ -213,6 +258,9 @@ public sealed class AutomationAdaptersTests
             (new BotSendResult.NotAutomated(), new BotSendOutcome.NotAutomated()),
             (new BotSendResult.WindowClosed(), new BotSendOutcome.WindowClosed()),
             (new BotSendResult.ConnectionUnavailable(), new BotSendOutcome.Rejected(MessagingErrorCodes.ConnectionUnavailable)),
+            // Spec 2026-10-24 §3.3: el motivo y el nombre de la conexión de WhatsApp pasan al motor.
+            (new BotSendResult.ConnectionUnavailable("secret_unreadable", "Servicio Clasic"),
+                new BotSendOutcome.Rejected(MessagingErrorCodes.ConnectionUnavailable, "secret_unreadable", "Servicio Clasic")),
             (new BotSendResult.Rejected("messaging.interactive.invalid"), new BotSendOutcome.Rejected("messaging.interactive.invalid")),
         ];
 
@@ -399,6 +447,9 @@ public sealed class AutomationAdaptersTests
 
         public Task<MessagingSender?> ResolveSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
+        public Task<MessagingSenderResolution> ResolveSenderWithReasonAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlyDictionary<Guid, string>> ListNamesAsync(Guid tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<MessagingTemplateSource?> ResolveTemplateSourceAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -412,7 +463,8 @@ public sealed class AutomationAdaptersTests
         public Task<ConversationChannel?> FindChannelAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
-    private sealed class StubIntegrationConnections(IReadOnlyList<ConnectionListing> listings, ResolvedConnection? resolved = null) : IIntegrationConnections
+    private sealed class StubIntegrationConnections(
+        IReadOnlyList<ConnectionListing> listings, ResolvedConnection? resolved = null, ConnectionResolution? resolution = null) : IIntegrationConnections
     {
         public string? RequestedProvider { get; private set; }
 
@@ -424,10 +476,12 @@ public sealed class AutomationAdaptersTests
             return Task.FromResult(listings);
         }
 
-        public Task<ResolvedConnection?> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+        public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
         {
             Resolved = (tenantId, connectionId);
-            return Task.FromResult(resolved);
+            return Task.FromResult(resolution ?? (resolved is null
+                ? ConnectionResolution.Unusable(ConnectionUnavailableReason.NotFound, null)
+                : ConnectionResolution.Resolved(resolved)));
         }
 
         public Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) => throw new NotSupportedException();

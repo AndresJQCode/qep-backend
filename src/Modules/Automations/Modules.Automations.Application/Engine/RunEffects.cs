@@ -50,6 +50,9 @@ public sealed partial class RunEffects(
             // P2-R43: el motor interpola los textos de SendText y SendInteractive dentro del paso, así que el refresco de los adjuntos va
             // antes de cada paso (el de la unidad y el de cada reentrada); un adjunto que se recibe en este mismo paso todavía no tiene url.
             state = await RefreshAttachmentsAsync(run, state, attachments, cancellationToken);
+            // Spec 2026-10-24 D-T6: un recorrido sólo se corta al esperar o al pedir un efecto externo, así que todo traspaso de este paso
+            // es consecuencia de la entrada que lo arrancó. Si fue un HTTP fallido, la causa lo nombra.
+            var http = FailedHttpOf(unit.Flow, next);
             var step = FlowEngine.Step(unit.Flow, unit.Settings, state, next, now);
             state = step.State;
             next = null;
@@ -61,7 +64,7 @@ public sealed partial class RunEffects(
                         var clientId = DeterministicClientId.For(run.Id, unit.BaseStepNumber, sends++);
                         if (await SendAsync(run, effect, clientId, cancellationToken) is not BotSendOutcome.Sent and var refused)
                         {
-                            await StopAsync(run, state, refused, now, cancellationToken);
+                            await StopAsync(run, state, refused, effect, TitleOf(unit.Flow, effect.NodeId), http, now, cancellationToken);
                             return;
                         }
 
@@ -74,7 +77,11 @@ public sealed partial class RunEffects(
                         // de P2-R13. FailAsync traspasa al final, como cualquier traspaso (P2-R23).
                         if (++reentries > EngineReentries.Max)
                         {
-                            await FailAsync(run, state, AutomationsRunFailures.Of(EndReasons.LoopDetected), now, cancellationToken);
+                            await FailAsync(
+                                run, state,
+                                HandoffCause.FlowFailed(
+                                    AutomationsRunFailures.Of(EndReasons.LoopDetected), effect.NodeId, TitleOf(unit.Flow, effect.NodeId), http),
+                                now, cancellationToken);
                             return;
                         }
 
@@ -88,8 +95,12 @@ public sealed partial class RunEffects(
 
                         next = await ExternalAsync(run, effect, state.Variables, cancellationToken);
                         break;
-                    case Effect.Handoff:
-                        if (!await HandsOverAsync(run, state, () => conversations.HandoffAsync(run.TenantId, run.ConversationId, cancellationToken), now))
+                    case Effect.Handoff handoff:
+                        // D-T9: el motor dice por qué camino llegó; el procesador no lo deduce por el tipo de bloque.
+                        var cause = new HandoffCause(
+                            handoff.Reason == HandoffReasons.InvalidReply ? HandoffCauseKind.InvalidReply : HandoffCauseKind.Block,
+                            null, handoff.NodeId, TitleOf(unit.Flow, handoff.NodeId), null, null, http);
+                        if (!await HandsOverAsync(run, state, () => conversations.HandoffAsync(run.TenantId, run.ConversationId, cause, cancellationToken), now))
                         {
                             return;
                         }
@@ -111,7 +122,9 @@ public sealed partial class RunEffects(
                         break;
                     case Effect.EndRun end:
                         // P2-R13/R14/R17: un ciclo o un bloque que no existe; que lo vea una persona.
-                        await FailAsync(run, state, AutomationsRunFailures.Of(end.Reason), now, cancellationToken);
+                        await FailAsync(
+                            run, state, HandoffCause.FlowFailed(AutomationsRunFailures.Of(end.Reason), end.NodeId, TitleOf(unit.Flow, end.NodeId), http),
+                            now, cancellationToken);
                         return;
                     default:
                         throw new InvalidOperationException($"Efecto del motor desconocido: {effect.GetType().Name}.");
@@ -142,11 +155,19 @@ public sealed partial class RunEffects(
         };
     }
 
-    /// <summary>D-M14: <c>Failed</c> pasa a <c>Paused</c> con <c>Handoff</c> para que la vea un asesor.</summary>
-    public async Task FailAsync(ConversationRun run, RunState state, string failureCode, DateTimeOffset now, CancellationToken cancellationToken)
+    /// <summary>D-M14: <c>Failed</c> pasa a <c>Paused</c> con <c>Handoff</c> para que la vea un asesor. Spec 2026-10-24: la corrida cierra con
+    /// <c>cause.Code</c> como <c>failure_code</c>, así la causa del hilo y el código guardado no pueden divergir. D-T2: no le escribe al
+    /// cliente; sólo pausa, cierra y audita.</summary>
+    public async Task FailAsync(ConversationRun run, RunState state, HandoffCause cause, DateTimeOffset now, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(run);
-        if (!await HandsOverAsync(run, state, () => conversations.HandoffAsync(run.TenantId, run.ConversationId, cancellationToken), now))
+        ArgumentNullException.ThrowIfNull(cause);
+        if (cause.Code is not { } failureCode)
+        {
+            throw new ArgumentException("A failed run needs its failure code.", nameof(cause));
+        }
+
+        if (!await HandsOverAsync(run, state, () => conversations.HandoffAsync(run.TenantId, run.ConversationId, cause, cancellationToken), now))
         {
             return;
         }
@@ -154,6 +175,20 @@ public sealed partial class RunEffects(
         run.Close(state, RunStatus.Failed, failureCode, now);
         Audit(run, AutomationsAuditActions.RunFailed, now);
     }
+
+    /// <summary>Spec 2026-10-24 §4.1: el título del primer bloque con ese id, como lo busca el motor; <c>null</c> si no está (el Inicio, una
+    /// versión corrupta).</summary>
+    public static string? TitleOf(FlowDefinition flow, string? nodeId)
+    {
+        ArgumentNullException.ThrowIfNull(flow);
+        return nodeId is null ? null : flow.Nodes.FirstOrDefault(node => node.Id == nodeId)?.Title;
+    }
+
+    private static HandoffHttpFailure? FailedHttpOf(FlowDefinition flow, EngineInput input) =>
+        input is EngineInput.HttpResult { Ok: false } failed
+            ? new HandoffHttpFailure(
+                failed.NodeId, TitleOf(flow, failed.NodeId), failed.Outcome ?? FlowOutputs.Error, failed.ErrorCode, failed.Status, failed.ConnectionName)
+            : null;
 
     private async Task<RunState> RefreshAttachmentsAsync(ConversationRun run, RunState state, string[] attachments, CancellationToken cancellationToken)
     {
@@ -173,8 +208,11 @@ public sealed partial class RunEffects(
         _ => throw new ArgumentOutOfRangeException(nameof(effect), effect.GetType().Name, "No es un envío."),
     };
 
-    /// <summary>§5.2 paso 5: un envío que Mensajería no hizo corta la unidad.</summary>
-    private async Task StopAsync(ConversationRun run, RunState state, BotSendOutcome refused, DateTimeOffset now, CancellationToken cancellationToken)
+    /// <summary>§5.2 paso 5: un envío que Mensajería no hizo corta la unidad. Spec 2026-10-24 §4.1 fila 3: un rechazo traspasa con el bloque
+    /// cuyo mensaje no salió, la conexión de WhatsApp y su motivo, y el HTTP fallido que arrancó el paso.</summary>
+    private async Task StopAsync(
+        ConversationRun run, RunState state, BotSendOutcome refused, Effect effect, string? nodeTitle, HandoffHttpFailure? http, DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
         switch (refused)
         {
@@ -189,7 +227,11 @@ public sealed partial class RunEffects(
                 break;
             case BotSendOutcome.Rejected rejected:
                 // P2-R21: el código es el de Mensajería (messaging.message.rejected, messaging.connection_unavailable, …).
-                await FailAsync(run, state, rejected.Code, now, cancellationToken);
+                await FailAsync(
+                    run, state,
+                    new HandoffCause(
+                        HandoffCauseKind.SendFailed, rejected.Code, effect.NodeId, nodeTitle, rejected.ConnectionName, rejected.ConnectionReason, http),
+                    now, cancellationToken);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(refused), refused.GetType().Name, "Resultado de envío desconocido.");
@@ -233,7 +275,8 @@ public sealed partial class RunEffects(
     private async Task<EngineInput> CallHttpAsync(ConversationRun run, Effect.CallHttp http, RunVariables variables, CancellationToken cancellationToken)
     {
         var result = await httpBlocks.ExecuteAsync(new HttpCallContext(run.TenantId, run.Id, null, http.NodeId), http.Node, variables, cancellationToken);
-        return new EngineInput.HttpResult(http.NodeId, result.Ok, result.Status, result.Mapped, result.ErrorCode);
+        // Spec 2026-10-24 §4.2: el outcome y el nombre de la conexión no los lee el motor; viajan para explicar un traspaso.
+        return new EngineInput.HttpResult(http.NodeId, result.Ok, result.Status, result.Mapped, result.ErrorCode, result.Outcome, result.ConnectionName);
     }
 
     private void Audit(ConversationRun run, string action, DateTimeOffset now) =>

@@ -63,6 +63,9 @@ public sealed class WebhookRoutingTests
         public Task<MessagingSender?> ResolveSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<MessagingSenderResolution> ResolveSenderWithReasonAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlyDictionary<Guid, string>> ListNamesAsync(Guid tenantId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

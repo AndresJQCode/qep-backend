@@ -348,7 +348,7 @@ public sealed partial class RunProcessor(
         var settings = await chatbots.FindEngineSettingsAsync(item.TenantId, run.ChatbotId, cancellationToken);
         if (flow is null || settings is null)
         {
-            await effects.FailAsync(run, run.ToState(), AutomationsRunFailures.VersionMissing, now, cancellationToken);
+            await effects.FailAsync(run, run.ToState(), HandoffCause.FlowFailed(AutomationsRunFailures.VersionMissing, null, null), now, cancellationToken);
             return OutcomeOf(run, RunOutcomes.Advanced);
         }
 
@@ -378,7 +378,10 @@ public sealed partial class RunProcessor(
         }
         else
         {
-            await effects.FailAsync(run, run.ToState(), AutomationsRunFailures.Of(EndReasons.TargetMissing), now, cancellationToken);
+            await effects.FailAsync(
+                run, run.ToState(),
+                HandoffCause.FlowFailed(AutomationsRunFailures.Of(EndReasons.TargetMissing), run.CurrentNodeId, RunEffects.TitleOf(flow, run.CurrentNodeId)),
+                now, cancellationToken);
             return OutcomeOf(run, RunOutcomes.Advanced);
         }
 

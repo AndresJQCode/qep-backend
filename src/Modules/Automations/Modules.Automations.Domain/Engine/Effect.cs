@@ -19,7 +19,9 @@ public abstract record Effect(string NodeId)
     /// <summary><see cref="StepTitle"/> es el título del bloque: lo que la bandeja muestra como paso del asistente.</summary>
     public sealed record WaitForCustomer(string NodeId, string StepTitle) : Effect(NodeId);
 
-    public sealed record Handoff(string NodeId) : Effect(NodeId);
+    /// <summary>Spec 2026-10-24 D-T9: <see cref="Reason"/> es uno de <see cref="HandoffReasons"/>; lo dice el motor, que es quien sabe por
+    /// qué camino llegó, en vez de que el procesador lo deduzca por el tipo de bloque.</summary>
+    public sealed record Handoff(string NodeId, string Reason = HandoffReasons.Block) : Effect(NodeId);
 
     public sealed record Resolve(string NodeId, Guid? ReasonId) : Effect(NodeId);
 
@@ -28,6 +30,16 @@ public abstract record Effect(string NodeId)
     /// llama <c>EndRun</c> porque <c>End</c> es palabra reservada de VB (CA1716, que el build trata como error).
     /// </summary>
     public sealed record EndRun(string NodeId, string Reason) : Effect(NodeId);
+}
+
+/// <summary>Spec 2026-10-24 D-T9: por qué el motor pidió un <see cref="Effect.Handoff"/>.</summary>
+public static class HandoffReasons
+{
+    /// <summary>El flujo llegó a un bloque «Pasar a un asesor».</summary>
+    public const string Block = "block";
+
+    /// <summary>Botones o Lista con <c>fallback = handoff</c> y una respuesta inválida.</summary>
+    public const string InvalidReply = "invalid_reply";
 }
 
 public static class EndReasons

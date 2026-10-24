@@ -15,7 +15,7 @@
     "variables": [],
     "nodes": [
       { "id": "n1", "kind": "businessHours", "title": "¿Estamos atendiendo?", "outputs": { "open": "n2", "closed": "n3" } },
-      { "id": "n2", "kind": "handoff", "title": "Pasar a un asesor", "text": "Te paso con un asesor." },
+      { "id": "n2", "kind": "handoff", "title": "Pasar a un asesor", "text": null },
       {
         "id": "n3", "kind": "message", "title": "Aviso de fuera de horario", "text": "{param.closedMessage}", "urlButton": null,
         "outputs": { "next": "n4" }

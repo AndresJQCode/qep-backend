@@ -431,7 +431,8 @@ public sealed class FlowEngineWaitingTests
 
         var result = Reply(flow, Start(flow, Equipment(2)), Typed("ninguno"));
 
-        Assert.Equal<Effect>([new Effect.Handoff("l")], result.Effects);
+        // Spec 2026-10-24 D-T9: el traspaso por respuesta inválida lleva su motivo explícito.
+        Assert.Equal<Effect>([new Effect.Handoff("l", HandoffReasons.InvalidReply)], result.Effects);
         Assert.Equal(RunStatus.HandedOff, result.State.Status);
         Assert.Equal("l", result.State.CurrentNodeId);
     }

@@ -535,6 +535,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   unidad»). No vuelvas al `pg_advisory_xact_lock` que espera.
 - **`http_calls.outcome` mide 24, no 16** (spec §4.2 dice 16; `response_too_large` ya tiene 18, migración `WidenHttpCallOutcome`).
   Un outcome nuevo más largo es otra migración.
+- **La causa de un traspaso del bot vive en el evento `AutomationPaused` (`details.handoff`), no en la corrida** (spec 2026-10-24).
+  `conversation_runs.failure_code` sólo la tiene cuando falló; un bloque «Pasar a un asesor» alcanzado deja `HandedOff` sin código. Un
+  `connection_unavailable` del bloque HTTP lleva el motivo en `ErrorCode` (`secret_unreadable`, `not_chosen`, …) y sigue sin fila en
+  `http_calls`. `IIntegrationConnections.ResolveAsync` devuelve `ConnectionResolution`: un consumidor nuevo lee `.Connection` y decide qué
+  hace con `.Unavailable`, y los códigos `snake_case` los arma sólo `ConnectionReasonCodes` (Bootstrapper). `HandoffCauseKind`
+  (Automations) y `AutomationHandoffKind` (Messaging) se cambian juntos: los amarra `HandoffCauseKindParityTests`.
 - **El simulador corre el borrador, no la versión publicada, y `Start` exige cuerpo** (`{ "liveHttp": false }`; sin cuerpo no es lo
   mismo). Con `liveHttp` un bucle de HTTP puede tardar `25 × timeoutSeconds` en un solo request. El bloque HTTP del simulador usa
   `JsonPath.SelectResponse`, el mismo mapeo del ejecutor.

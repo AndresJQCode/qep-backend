@@ -17,6 +17,11 @@ public sealed record MessagingSender(string PhoneNumberId, string AccessToken)
     public override string ToString() => $"MessagingSender {{ PhoneNumberId = {PhoneNumberId} }}";
 }
 
+/// <summary>Spec 2026-10-24 D-T11: el remitente o, si no se puede usar, por qué. <see cref="UnavailableReason"/> es un código
+/// <c>snake_case</c> de spec §3.4 (<c>paused</c>, <c>secret_unreadable</c>, <c>wrong_provider</c>, <c>incomplete</c>, …), <c>null</c> si hay
+/// remitente; <see cref="ConnectionName"/>, el nombre de la conexión cuando existe, también si no se puede usar.</summary>
+public sealed record MessagingSenderResolution(MessagingSender? Sender, string? UnavailableReason, string? ConnectionName);
+
 /// <summary>Spec 2026-10-14 §6.2: con qué se envía por Instagram: el id de la cuenta profesional y el token en claro para ese
 /// request. <see cref="ToString"/> no lo imprime.</summary>
 public sealed record InstagramSender(string IgUserId, string AccessToken)
@@ -43,6 +48,10 @@ public interface IMessagingConnectionDirectory
 
     /// <summary>Sólo <c>Active</c> y visible, con el token en claro; <c>null</c> si no.</summary>
     Task<MessagingSender?> ResolveSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-24 D-T11: lo mismo que <see cref="ResolveSenderAsync"/>, con el motivo cuando no hay remitente. Sólo lo usa
+    /// el envío del bot (<c>BotOutbound</c>), que explica el traspaso; los demás envíos no necesitan la causa.</summary>
+    Task<MessagingSenderResolution> ResolveSenderWithReasonAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
     /// <summary>Nombre de cada conexión whatsapp-cloud del tenant, Active o no.</summary>
     Task<IReadOnlyDictionary<Guid, string>> ListNamesAsync(Guid tenantId, CancellationToken cancellationToken);

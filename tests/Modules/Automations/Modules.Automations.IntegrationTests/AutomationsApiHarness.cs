@@ -164,8 +164,8 @@ internal static class AutomationsApiHarness
             Task.FromResult<IReadOnlyList<ExternalApiRef>>([.. Items]);
 
         /// <summary>Las del Anexo A sólo se listan: ninguna de estas pruebas llama a la API (eso lo prueba la tarea 12 con una conexión real).</summary>
-        public Task<ExternalApiCredentials?> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
-            Task.FromResult<ExternalApiCredentials?>(null);
+        public Task<ExternalApiResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            Task.FromResult(new ExternalApiResolution(null, "not_found", null));
     }
 
     /// <summary>Un reloj que la prueba mueve. Copia de <c>TestClock</c> de <c>MessagingApiHarness</c>: arranca en el instante real para que

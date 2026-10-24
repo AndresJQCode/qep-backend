@@ -366,17 +366,17 @@ internal sealed class FakeConnectionRepository(params IntegrationConnection[] co
 
 internal sealed class FakeIntegrationConnections(params IntegrationConnection[] connections) : IIntegrationConnections
 {
-    public Task<ResolvedConnection?> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
     {
         var connection = connections.FirstOrDefault(candidate =>
             candidate.TenantId == tenantId && candidate.Id == connectionId && candidate.Status == ConnectionStatus.Active);
         return Task.FromResult(connection is null
-            ? null
-            : new ResolvedConnection(
+            ? ConnectionResolution.Unusable(ConnectionUnavailableReason.NotFound, null)
+            : ConnectionResolution.Resolved(new ResolvedConnection(
                 connection.Id, connection.ProviderKey, connection.Name,
                 new Dictionary<string, string>(connection.Fields, StringComparer.Ordinal),
                 connection.Secrets.ToDictionary(
-                    secret => secret.FieldKey, secret => Encoding.UTF8.GetString(secret.Protected.Ciphertext), StringComparer.Ordinal)));
+                    secret => secret.FieldKey, secret => Encoding.UTF8.GetString(secret.Protected.Ciphertext), StringComparer.Ordinal))));
     }
 
     public Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
