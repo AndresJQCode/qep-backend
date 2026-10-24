@@ -14,22 +14,12 @@ internal sealed class CustomerAudienceRepository(CustomersDbContext dbContext) :
     public async Task<CustomerContact?> FindContactAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)
     {
         var id = new CustomerId(customerId);
-        var row = await dbContext.Customers
-            .AsNoTracking()
-            .Where(customer => customer.TenantId == tenantId && customer.Id == id)
-            .Select(customer => new
-            {
-                customer.Name,
-                customer.PhoneE164,
-                customer.WhatsAppUserId,
-                customer.IsActive,
-                customer.MarketingOptOut,
-            })
+        var row = await ProjectContact(
+                dbContext.Customers.AsNoTracking().Where(customer => customer.TenantId == tenantId && customer.Id == id),
+                tenantId)
             .SingleOrDefaultAsync(cancellationToken);
 
-        return row is null
-            ? null
-            : new CustomerContact(customerId, row.Name, row.PhoneE164, row.WhatsAppUserId, row.IsActive, row.MarketingOptOut);
+        return row is null ? null : ToContact(row);
     }
 
     public async Task<IReadOnlyList<CustomerContact>> ListAudienceBatchAsync(
@@ -44,51 +34,37 @@ internal sealed class CustomerAudienceRepository(CustomersDbContext dbContext) :
         // anteriores en cada lote. La comparación va en SQL porque el orden de bytes de un uuid en PostgreSQL no es el
         // de Guid.CompareTo en .NET, y mezclar los dos saltaría o repetiría filas.
         var after = afterId ?? Guid.Empty;
-        var rows = await InAudience(
-                dbContext.Customers.FromSql(
-                    $"SELECT * FROM customers.customers WHERE tenant_id = {tenantId} AND id > {after}"),
-                tenantId,
-                tagIds,
-                customerIds)
-            .AsNoTracking()
-            .OrderBy(customer => customer.Id)
-            .Take(take)
-            .Select(customer => new
-            {
-                customer.Id,
-                customer.Name,
-                customer.PhoneE164,
-                customer.WhatsAppUserId,
-                customer.IsActive,
-                customer.MarketingOptOut,
-            })
+        var rows = await ProjectContact(
+                InAudience(
+                        dbContext.Customers.FromSql(
+                            $"SELECT * FROM customers.customers WHERE tenant_id = {tenantId} AND id > {after}"),
+                        tenantId,
+                        tagIds,
+                        customerIds)
+                    .AsNoTracking()
+                    .OrderBy(customer => customer.Id)
+                    .Take(take),
+                tenantId)
             .ToListAsync(cancellationToken);
 
-        return rows
-            .Select(row => new CustomerContact(row.Id.Value, row.Name, row.PhoneE164, row.WhatsAppUserId, row.IsActive, row.MarketingOptOut))
-            .ToArray();
+        return rows.Select(ToContact).ToArray();
     }
 
     public async Task<AudienceCount> CountAudienceAsync(
         Guid tenantId, IReadOnlyCollection<Guid> tagIds, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
     {
-        var groups = await InAudience(dbContext.Customers, tenantId, tagIds, customerIds)
-            .AsNoTracking()
-            .GroupBy(customer => new
-            {
-                customer.IsActive,
-                customer.MarketingOptOut,
-                HasWhatsApp = customer.PhoneE164 != null || customer.WhatsAppUserId != null,
-            })
-            .Select(group => new { group.Key.IsActive, group.Key.MarketingOptOut, group.Key.HasWhatsApp, Count = group.Count() })
-            .ToListAsync(cancellationToken);
-
+        // Cuatro conteos y no un GroupBy: EF no traduce el GroupBy sobre una proyección con la subconsulta correlacionada
+        // del opt-out por número. Cada conteo es un solo SELECT count(*) sobre la misma proyección de ProjectContact.
+        var rows = ProjectContact(InAudience(dbContext.Customers, tenantId, tagIds, customerIds).AsNoTracking(), tenantId);
+        var total = await rows.CountAsync(cancellationToken);
         // Cubos excluyentes con precedencia: inactivo, luego sin WhatsApp, luego con opt-out.
-        var inactive = groups.Where(group => !group.IsActive).Sum(group => group.Count);
-        var withoutWhatsApp = groups.Where(group => group.IsActive && !group.HasWhatsApp).Sum(group => group.Count);
-        var optedOut = groups.Where(group => group.IsActive && group.HasWhatsApp && group.MarketingOptOut).Sum(group => group.Count);
+        var inactive = await rows.CountAsync(row => !row.IsActive, cancellationToken);
+        var withoutWhatsApp = await rows.CountAsync(
+            row => row.IsActive && row.PhoneE164 == null && row.WhatsAppUserId == null, cancellationToken);
+        var optedOut = await rows.CountAsync(
+            row => row.IsActive && (row.PhoneE164 != null || row.WhatsAppUserId != null) && row.OptedOut, cancellationToken);
 
-        return new AudienceCount(groups.Sum(group => group.Count), inactive, optedOut, withoutWhatsApp);
+        return new AudienceCount(total, inactive, optedOut, withoutWhatsApp);
     }
 
     // UPDATE condicional, como los del BSUID: dos respuestas 131050 seguidas no se pisan y la primera deja el rastro.
@@ -106,6 +82,39 @@ internal sealed class CustomerAudienceRepository(CustomersDbContext dbContext) :
                     .SetProperty(customer => customer.MarketingOptOutSource, (MarketingConsentSource?)source),
                 cancellationToken);
     }
+
+    // Clase con inicializadores y no record posicional: EF compone un Where/Count sobre un member-init, no sobre un constructor.
+    private sealed class ContactRow
+    {
+        public required CustomerId Id { get; init; }
+        public required string Name { get; init; }
+        public required string? PhoneE164 { get; init; }
+        public required string? WhatsAppUserId { get; init; }
+        public required bool IsActive { get; init; }
+        public required bool OptedOut { get; init; }
+    }
+
+    private static CustomerContact ToContact(ContactRow row) =>
+        new(row.Id.Value, row.Name, row.PhoneE164, row.WhatsAppUserId, row.IsActive, row.OptedOut);
+
+    // Spec 2026-10-24 §4.4: el opt-out de marketing es del número. Un cliente cuenta como excluido si él, o cualquier
+    // otro cliente del tenant con el mismo phone_e164, tiene la bandera; sin teléfono sólo mira la suya. Se calcula al
+    // leer y marcar no cambia (MarkMarketingOptOutAsync sigue marcando sólo la ficha). Es el único lugar de la regla:
+    // los tres lectores pasan por acá, y lo que se agregue a la proyección se agrega acá. La subconsulta filtra por
+    // tenant y usa IX_customers_tenant_phone_e164.
+    private IQueryable<ContactRow> ProjectContact(IQueryable<Customer> customers, Guid tenantId) =>
+        customers.Select(customer => new ContactRow
+        {
+            Id = customer.Id,
+            Name = customer.Name,
+            PhoneE164 = customer.PhoneE164,
+            WhatsAppUserId = customer.WhatsAppUserId,
+            IsActive = customer.IsActive,
+            OptedOut = customer.MarketingOptOut
+                || (customer.PhoneE164 != null
+                    && dbContext.Customers.Any(other =>
+                        other.TenantId == tenantId && other.PhoneE164 == customer.PhoneE164 && other.MarketingOptOut)),
+        });
 
     private IQueryable<Customer> InAudience(
         IQueryable<Customer> customers, Guid tenantId, IReadOnlyCollection<Guid> tagIds, IReadOnlyCollection<Guid> customerIds)

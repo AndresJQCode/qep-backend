@@ -70,7 +70,9 @@ public interface ICustomerAuthorNames
     Task<IReadOnlyDictionary<Guid, string>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> userIds, CancellationToken cancellationToken);
 }
 
-/// <summary>Quién es el cliente para efectos de mensajería (spec 2026-10-11 §4.4). Sin teléfono ni BSUID no se le puede escribir.</summary>
+/// <summary>Quién es el cliente para efectos de mensajería (spec 2026-10-11 §4.4). Sin teléfono ni BSUID no se le puede escribir.
+/// <c>MarketingOptOut</c> es del número (spec 2026-10-24 §4.4): vale <c>true</c> si la ficha, o cualquier otro cliente del
+/// tenant con el mismo teléfono, tiene la bandera; una ficha sin teléfono sólo mira la suya.</summary>
 public sealed record CustomerContact(
     Guid CustomerId, string Name, string? PhoneE164, string? WhatsAppUserId, bool IsActive, bool MarketingOptOut);
 

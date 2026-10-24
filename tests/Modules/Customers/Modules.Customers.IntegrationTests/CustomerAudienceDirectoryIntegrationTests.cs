@@ -37,13 +37,13 @@ public sealed class CustomerAudienceDirectoryIntegrationTests
 
     // Clientes incompletos por SQL: crearlos uno a uno por el directorio tardaría minutos y esta prueba trata de la consulta.
     private static Task InsertCustomersAsync(
-        string connectionString, Guid tenant, int count, string prefix, string columns = "", string values = "") =>
+        string connectionString, Guid tenant, int count, string prefix, string columns = "", string values = "", int phoneOffset = 0) =>
         ExecuteAsync(
             connectionString,
             $"""
             INSERT INTO customers.customers
                 (id, tenant_id, name, is_active, with_retention, vat_surplus, version, created_at, updated_at, completeness, phone_e164{columns})
-            SELECT gen_random_uuid(), '{tenant}', '{prefix} ' || n, true, false, false, 1, now(), now(), 'Incomplete', '+5730000' || lpad(n::text, 5, '0'){values}
+            SELECT gen_random_uuid(), '{tenant}', '{prefix} ' || n, true, false, false, 1, now(), now(), 'Incomplete', '+5730000' || lpad((n + {phoneOffset})::text, 5, '0'){values}
             FROM generate_series(1, {count}) AS n
             """);
 
@@ -72,6 +72,20 @@ public sealed class CustomerAudienceDirectoryIntegrationTests
         }
 
         return list;
+    }
+
+    // Un cliente incompleto con teléfono (o sin él) y bandera de opt-out elegidos, para las pruebas del opt-out por número.
+    private static async Task<Guid> InsertWithPhoneAsync(string connectionString, Guid tenant, string name, string? phone, bool optOut)
+    {
+        var id = Guid.NewGuid();
+        await ExecuteAsync(
+            connectionString,
+            $"""
+            INSERT INTO customers.customers
+                (id, tenant_id, name, is_active, with_retention, vat_surplus, version, created_at, updated_at, completeness, phone_e164, marketing_opt_out)
+            VALUES ('{id}', '{tenant}', '{name}', true, false, false, 1, now(), now(), 'Incomplete', {(phone is null ? "NULL" : $"'{phone}'")}, {(optOut ? "true" : "false")})
+            """);
+        return id;
     }
 
     [Fact]
@@ -147,11 +161,12 @@ public sealed class CustomerAudienceDirectoryIntegrationTests
         var tag = Guid.NewGuid();
         await InsertTagAsync(connection, Tenant, tag, "Todos");
         await InsertCustomersAsync(connection, Tenant, 4, "Normal");
-        await InsertCustomersAsync(connection, Tenant, 2, "Inactivo", ", marketing_opt_out", ", true");
+        // Cada grupo con su rango de teléfonos: el opt-out es del número, y compartirlos mezclaría los cubos.
+        await InsertCustomersAsync(connection, Tenant, 2, "Inactivo", ", marketing_opt_out", ", true", phoneOffset: 100);
         await ExecuteAsync(connection, "UPDATE customers.customers SET is_active = false WHERE name LIKE 'Inactivo %'");
         await InsertCustomersAsync(connection, Tenant, 3, "SinWa");
         await ExecuteAsync(connection, "UPDATE customers.customers SET phone_e164 = NULL WHERE name LIKE 'SinWa %'");
-        await InsertCustomersAsync(connection, Tenant, 5, "Opt", ", marketing_opt_out", ", true");
+        await InsertCustomersAsync(connection, Tenant, 5, "Opt", ", marketing_opt_out", ", true", phoneOffset: 200);
         foreach (var prefix in new[] { "Normal", "Inactivo", "SinWa", "Opt" })
         {
             await TagAllAsync(connection, Tenant, tag, prefix);
@@ -211,5 +226,85 @@ public sealed class CustomerAudienceDirectoryIntegrationTests
 
         Assert.Equal(new CustomerContact(id, "Laura 1", "+573000000001", null, true, false), mine);
         Assert.Null(foreign);
+    }
+
+    [Fact]
+    public async Task AnOptOutOnANumberCoversEveryCustomerWithThatNumber()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        var connection = database.GetConnectionString();
+        var a = await InsertWithPhoneAsync(connection, Tenant, "A", "+573001112233", true);
+        var b = await InsertWithPhoneAsync(connection, Tenant, "B", "+573001112233", false);
+        var c = await InsertWithPhoneAsync(connection, Tenant, "C", "+573009998877", false);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var directory = scope.ServiceProvider.GetRequiredService<ICustomerWhatsAppDirectory>();
+        var contactB = await directory.FindContactAsync(Tenant, b, TestContext.Current.CancellationToken);
+        var audience = await AudienceAsync(factory, Tenant, [], [a, b, c]);
+        var count = await directory.CountAudienceAsync(Tenant, [], [a, b, c], TestContext.Current.CancellationToken);
+
+        Assert.True(contactB!.MarketingOptOut);
+        Assert.Equal(
+            [(a, true), (b, true), (c, false)],
+            audience.OrderBy(contact => contact.Name, StringComparer.Ordinal).Select(contact => (contact.CustomerId, contact.MarketingOptOut)));
+        Assert.Equal(new AudienceCount(Total: 3, Inactive: 0, OptedOut: 2, WithoutWhatsApp: 0), count);
+    }
+
+    [Fact]
+    public async Task AnOptOutOfAnotherTenantWithTheSameNumberDoesNotCount()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        var connection = database.GetConnectionString();
+        await InsertWithPhoneAsync(connection, OtherTenant, "Ajeno", "+573001112233", true);
+        var mine = await InsertWithPhoneAsync(connection, Tenant, "Mio", "+573001112233", false);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var directory = scope.ServiceProvider.GetRequiredService<ICustomerWhatsAppDirectory>();
+
+        Assert.False((await directory.FindContactAsync(Tenant, mine, TestContext.Current.CancellationToken))!.MarketingOptOut);
+        Assert.Equal(0, (await directory.CountAudienceAsync(Tenant, [], [mine], TestContext.Current.CancellationToken)).OptedOut);
+        Assert.False(Assert.Single(await AudienceAsync(factory, Tenant, [], [mine])).MarketingOptOut);
+    }
+
+    [Fact]
+    public async Task ACustomerWithoutPhoneOnlyLooksAtItsOwnFlag()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        var connection = database.GetConnectionString();
+        // Dos sin teléfono: que no tengan número no los vuelve «el mismo número» (NULL no es igual a NULL).
+        await InsertWithPhoneAsync(connection, Tenant, "Marcado", null, true);
+        var clean = await InsertWithPhoneAsync(connection, Tenant, "Limpio", null, false);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var directory = scope.ServiceProvider.GetRequiredService<ICustomerWhatsAppDirectory>();
+
+        Assert.False((await directory.FindContactAsync(Tenant, clean, TestContext.Current.CancellationToken))!.MarketingOptOut);
+        Assert.False(Assert.Single(await AudienceAsync(factory, Tenant, [], [clean])).MarketingOptOut);
+    }
+
+    [Fact]
+    public async Task MarkingTheOptOutStillMarksOnlyThatCustomer()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        var connection = database.GetConnectionString();
+        var a = await InsertWithPhoneAsync(connection, Tenant, "A", "+573001112233", false);
+        var b = await InsertWithPhoneAsync(connection, Tenant, "B", "+573001112233", false);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ICustomerWhatsAppDirectory>()
+                .MarkMarketingOptOutAsync(Tenant, a, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal("True", (await ColumnAsync(connection, $"SELECT marketing_opt_out FROM customers.customers WHERE id = '{a}'"))[0]);
+        Assert.Equal("False", (await ColumnAsync(connection, $"SELECT marketing_opt_out FROM customers.customers WHERE id = '{b}'"))[0]);
     }
 }

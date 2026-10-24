@@ -12,8 +12,9 @@ public sealed record MessagingContact(
 public sealed record MessagingEnsuredCustomer(Guid CustomerId, bool Created);
 
 /// <summary>Spec 2026-10-11 §4.4: cómo escribirle a un cliente. <c>PhoneE164</c> con «+» (el <c>waId</c> son sus dígitos) y
-/// <c>WhatsAppUserId</c> es el BSUID; sin ninguno de los dos no se le puede escribir. <c>MarketingOptOut</c> es la bandera de
-/// la ficha: las plantillas <c>MARKETING</c> lo excluyen y las <c>UTILITY</c> no.</summary>
+/// <c>WhatsAppUserId</c> es el BSUID; sin ninguno de los dos no se le puede escribir. <c>MarketingOptOut</c> vale para todo el
+/// número (spec 2026-10-24 §4.4): es <c>true</c> si la ficha o cualquier otro cliente del tenant con el mismo teléfono tiene
+/// la bandera. Las plantillas <c>MARKETING</c> lo excluyen y las <c>UTILITY</c> no.</summary>
 public sealed record MessagingCustomerContact(
     Guid CustomerId, string Name, string? PhoneE164, string? WhatsAppUserId, bool IsActive, bool MarketingOptOut);
 

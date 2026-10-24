@@ -480,6 +480,22 @@ public sealed class CampaignApiTests
         Assert.Equal(0, (await empty.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("total").GetInt32());
     }
 
+    [Fact]
+    public async Task ThePreviewCountsTheNumberOptOut()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var pair = await CreateCustomersAsync(f.Factory, f.Tenant, ("Laura Gómez", "300 123 4567"), ("Laura Segunda", "300 123 4567"));
+        var (a, b) = (pair[0], pair[1]);
+        await ExecuteAsync(f.ConnectionString, "UPDATE customers.customers SET marketing_opt_out = true WHERE id = @id", ("id", a));
+
+        var preview = await SendAsync(f.Client, HttpMethod.Post, $"{CampaignsUrl(f.Tenant.TenantId)}/audience-preview", new { tagIds = Array.Empty<Guid>(), customerIds = new[] { a, b }, templateCategory = "MARKETING" });
+
+        var counts = await preview.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal((2, 0, 2), (counts.GetProperty("total").GetInt32(), counts.GetProperty("reachable").GetInt32(), counts.GetProperty("optedOut").GetInt32()));
+    }
+
     private static Dictionary<string, object?> ToDictionary(object value) =>
         JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(value))!.ToDictionary(pair => pair.Key, pair => (object?)pair.Value);
 

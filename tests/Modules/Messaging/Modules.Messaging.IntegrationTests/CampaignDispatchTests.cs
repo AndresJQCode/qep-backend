@@ -707,6 +707,61 @@ public sealed class CampaignDispatchTests
     }
 
     [Fact]
+    public async Task AMarketingCampaignSkipsTheWholeNumberWhenOneOfItsCustomersOptedOut()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Ruiz", "300 111 2222"), ("Ana Segunda", "300 111 2222"), ("Carla Sol", "320 333 4444"));
+        await ExecuteAsync(f.ConnectionString, "UPDATE customers.customers SET marketing_opt_out = true WHERE id = @id", ("id", customers[0]));
+        await LaunchAsync(f, Input(f, [.. customers]));
+
+        await DrainCampaignsAsync(f.Host);
+
+        Assert.Equal(("Skipped", "Skipped", "Sent"), (await RecipientStatusAsync(f, "Ana Ruiz"), await RecipientStatusAsync(f, "Ana Segunda"), await RecipientStatusAsync(f, "Carla Sol")));
+        Assert.Equal(2L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaign_recipients WHERE failure_code = 'opted_out'"));
+        Assert.Equal(1, MetaSends(f.Pod.MetaHandler));
+    }
+
+    [Fact]
+    public async Task AnUtilityCampaignStillReachesANumberWithAnOptOut()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Ruiz", "300 111 2222"), ("Ana Segunda", "300 111 2222"));
+        await ExecuteAsync(f.ConnectionString, "UPDATE customers.customers SET marketing_opt_out = true WHERE id = @id", ("id", customers[0]));
+        await LaunchAsync(f, Input(f, [.. customers], template: "aviso"));
+
+        await DrainCampaignsAsync(f.Host);
+
+        Assert.Equal(("Sent", "Sent"), (await RecipientStatusAsync(f, "Ana Ruiz"), await RecipientStatusAsync(f, "Ana Segunda")));
+    }
+
+    [Fact]
+    public async Task AnOptOutOnTheNumberAfterTheFreezeSkipsTheOtherCustomerBeforeSending()
+    {
+        // R6/R7 con el opt-out por número (desvío A6): la bandera va en A y el destinatario que se re-verifica es B.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Ruiz", "300 111 2222"), ("Ana Segunda", "300 111 2222"));
+        await LaunchAsync(f, Input(f, [customers[1]]));
+        using var scope = f.Host.Services.CreateScope();
+        var dispatcher = scope.ServiceProvider.GetRequiredService<CampaignDispatcher>();
+        await dispatcher.PrepareTickAsync(Ct);
+        var claimed = Assert.Single(await dispatcher.ClaimAsync(20, Ct));
+        await ExecuteAsync(f.ConnectionString, "UPDATE customers.customers SET marketing_opt_out = true WHERE id = @id", ("id", customers[0]));
+
+        await dispatcher.SendAsync(claimed, Ct);
+
+        Assert.Equal(0, MetaSends(f.Pod.MetaHandler));
+        Assert.Equal(("Skipped", "opted_out"), (
+            await RecipientStatusAsync(f, "Ana Segunda"),
+            await ScalarAsync<string>(f.ConnectionString, "SELECT failure_code FROM messaging.campaign_recipients")));
+    }
+
+    [Fact]
     public async Task ACampaignCancelledWhileItsAudienceIsBeingWrittenGetsNoNewPendingRecipients()
     {
         // R9: el INSERT de cada lote sólo corre mientras la campaña sigue Sending.
