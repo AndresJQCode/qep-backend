@@ -20,6 +20,16 @@ public sealed class MessagingCustomerDirectoryAudienceTests
 
         public Task<IReadOnlyList<string>> FindPhonesByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public List<CustomerPhoneMatch>? ByPhone { get; init; }
+
+        public (string E164, int Take)? LastListByPhone { get; private set; }
+
+        public Task<IReadOnlyList<CustomerPhoneMatch>> ListByPhoneAsync(Guid tenantId, string e164, int take, CancellationToken cancellationToken)
+        {
+            LastListByPhone = (e164, take);
+            return ByPhone is null ? throw new NotSupportedException() : Task.FromResult<IReadOnlyList<CustomerPhoneMatch>>(ByPhone);
+        }
     }
 
     private sealed class FakeWhatsApp : ICustomerWhatsAppDirectory
@@ -98,8 +108,8 @@ public sealed class MessagingCustomerDirectoryAudienceTests
             throw new NotSupportedException();
     }
 
-    private static MessagingCustomerDirectory AdapterOver(FakeWhatsApp whatsApp, FakeTagLookup? tags = null) =>
-        new(new FakePhones(), whatsApp, new FakeInstagram(), tags ?? new FakeTagLookup(), NullLogger<MessagingCustomerDirectory>.Instance);
+    private static MessagingCustomerDirectory AdapterOver(FakeWhatsApp whatsApp, FakeTagLookup? tags = null, FakePhones? phones = null) =>
+        new(phones ?? new FakePhones(), whatsApp, new FakeInstagram(), tags ?? new FakeTagLookup(), NullLogger<MessagingCustomerDirectory>.Instance);
 
     [Fact]
     public async Task FindTagsMapsToTheMessagingRecordAndSkipsWhatDoesNotExist()
@@ -170,5 +180,18 @@ public sealed class MessagingCustomerDirectoryAudienceTests
 
         Assert.Equal([customer], whatsApp.OptedOutByButton);
         Assert.Empty(whatsApp.OptedOut);
+    }
+
+    [Fact]
+    public async Task ListByPhoneAddsThePlusAndMapsToCustomerRefs()
+    {
+        var first = new CustomerPhoneMatch(Guid.NewGuid(), "Laura", true);
+        var second = new CustomerPhoneMatch(Guid.NewGuid(), "Pedro", false);
+        var phones = new FakePhones { ByPhone = [first, second] };
+
+        var refs = await AdapterOver(new FakeWhatsApp(), phones: phones).ListByPhoneAsync(Tenant, "573001112233", 11, TestContext.Current.CancellationToken);
+
+        Assert.Equal(("+573001112233", 11), phones.LastListByPhone);
+        Assert.Equal([new CustomerRefDto(first.Id, "Laura", true), new CustomerRefDto(second.Id, "Pedro", false)], refs);
     }
 }

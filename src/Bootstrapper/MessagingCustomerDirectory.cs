@@ -26,6 +26,9 @@ internal sealed partial class MessagingCustomerDirectory(
         return matches.ToDictionary(pair => pair.Key.TrimStart('+'), pair => new CustomerRefDto(pair.Value.Id, pair.Value.Name, pair.Value.IsComplete), StringComparer.Ordinal);
     }
 
+    public async Task<IReadOnlyList<CustomerRefDto>> ListByPhoneAsync(Guid tenantId, string waId, int take, CancellationToken cancellationToken) =>
+        [.. (await phones.ListByPhoneAsync(tenantId, "+" + waId, take, cancellationToken)).Select(match => new CustomerRefDto(match.Id, match.Name, match.IsComplete))];
+
     public async Task<IReadOnlyDictionary<Guid, CustomerRefDto>> FindRefsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
         ids.Count == 0
             ? new Dictionary<Guid, CustomerRefDto>()

@@ -13,6 +13,11 @@ public interface ICustomerPhoneDirectory
     Task<IReadOnlyDictionary<string, CustomerPhoneMatch>> MatchAsync(
         Guid tenantId, IReadOnlyCollection<string> e164, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-24 §4.1: todos los clientes del tenant con ese número —activos o no, completos o no—, el creado
+    /// primero antes (<c>created_at, id</c>). Es la consulta de <see cref="MatchAsync"/> sin quedarse con el primero; el
+    /// <paramref name="take"/> se aplica en SQL.</summary>
+    Task<IReadOnlyList<CustomerPhoneMatch>> ListByPhoneAsync(Guid tenantId, string e164, int take, CancellationToken cancellationToken);
+
     /// <summary>Los <c>phone_e164</c> de los clientes cuyo nombre contiene <paramref name="term"/>
     /// (usa <c>IX_customers_name_trgm</c>), hasta <paramref name="cap"/>; con más, la búsqueda queda
     /// incompleta y se registra.</summary>

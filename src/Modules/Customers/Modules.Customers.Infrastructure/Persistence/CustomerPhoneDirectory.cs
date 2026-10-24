@@ -38,6 +38,21 @@ internal sealed partial class CustomerPhoneDirectory(CustomersDbContext dbContex
         return result;
     }
 
+    public async Task<IReadOnlyList<CustomerPhoneMatch>> ListByPhoneAsync(
+        Guid tenantId, string e164, int take, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(e164);
+
+        var rows = await dbContext.Customers
+            .AsNoTracking()
+            .Where(customer => customer.TenantId == tenantId && customer.PhoneE164 == e164)
+            .OrderBy(customer => customer.CreatedAt).ThenBy(customer => customer.Id)
+            .Take(take)
+            .Select(customer => new { customer.Id, customer.Name, customer.Completeness })
+            .ToListAsync(cancellationToken);
+        return [.. rows.Select(row => new CustomerPhoneMatch(row.Id.Value, row.Name, row.Completeness == CustomerCompleteness.Complete))];
+    }
+
     public async Task<IReadOnlyList<string>> FindPhonesByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(term);

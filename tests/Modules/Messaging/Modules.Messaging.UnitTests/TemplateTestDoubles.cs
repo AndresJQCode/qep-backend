@@ -54,6 +54,12 @@ internal sealed class FakeCustomerDirectory : IMessagingCustomerDirectory
         return Task.CompletedTask;
     }
 
+    /// <summary>Los clientes que devuelve <see cref="ListByPhoneAsync"/> (CD-07), en el orden del puerto.</summary>
+    public List<CustomerRefDto> ByPhone { get; } = [];
+
+    public Task<IReadOnlyList<CustomerRefDto>> ListByPhoneAsync(Guid tenantId, string waId, int take, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<CustomerRefDto>>([.. ByPhone.Take(take)]);
+
     public Task<IReadOnlyDictionary<Guid, CustomerRefDto>> FindRefsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyDictionary<Guid, CustomerRefDto>>(
             Contacts.Values.Where(contact => ids.Contains(contact.CustomerId)).ToDictionary(contact => contact.CustomerId, contact => new CustomerRefDto(contact.CustomerId, contact.Name, true)));

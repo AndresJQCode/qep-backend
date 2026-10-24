@@ -36,6 +36,10 @@ public interface IMessagingCustomerDirectory
     /// sin <c>customer_id</c> (spec 2026-10-10 §6.1.2).</summary>
     Task<IReadOnlyDictionary<string, CustomerRefDto>> MatchAsync(Guid tenantId, IReadOnlyCollection<string> waIds, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-24 §4.1: todos los clientes del tenant con ese número (<paramref name="waId"/> son los dígitos),
+    /// el creado primero antes y hasta <paramref name="take"/>. Incluye inactivos e incompletos.</summary>
+    Task<IReadOnlyList<CustomerRefDto>> ListByPhoneAsync(Guid tenantId, string waId, int take, CancellationToken cancellationToken);
+
     /// <summary>Spec 2026-10-10 §6.1.2: nombre e isComplete de los clientes de una página, por id.</summary>
     Task<IReadOnlyDictionary<Guid, CustomerRefDto>> FindRefsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
 
