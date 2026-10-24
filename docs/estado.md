@@ -96,6 +96,7 @@ copia del frontend para los códigos nuevos.
 | 2026-10-23 ventas POS en el reporte de pedidos | Aprobado, sin empezar (plan backend escrito) | Ver «Trabajo en curso» |
 | 2026-10-23 formato regional en PDF, correos y WhatsApp | Aprobado en conversación, sin empezar (pendiente) | D-R1 fecha larga en PDF/WhatsApp con separadores del tenant; D-R3 el PDF guardado se regenera si cambia el formato numérico (migración chica) |
 | 2026-10-21 Automatizaciones: investigación y roadmap | Concepto; specs 2–3 y migración de lulo-chat sin escribir (el 4 se escribió y se está construyendo) | Orden: interactivos → claves de API y envío proactivo → constructor (motor, editor React Flow, bloque HTTP) → migración. IA diferida |
+| 2026-10-23 proveedores (directorio) | Aprobado, sin empezar; planes en `feature/proveedores` de los dos repos | Módulo `Suppliers`; «terceros» diferido hasta el segundo rol fuera de ventas (fila nueva en `open-decisions.md` de `qep-docs`, pendiente); compras e inventario después |
 
 Construido sin spec propio: enviar el pedido por WhatsApp (`POST /orders/{id}/send`, `OrderEndpoints.cs:114`; frontend
 `3e7e4c00`), clasificación opcional del cliente, país del tenant, mensajería en tiempo real, filtros de la bandeja y filtro de ventas
@@ -195,6 +196,7 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-24 — Spec y planes de **Proveedores** (directorio) listos para ejecutar: spec aprobada por el owner el 2026-10-23 (`qep-frontend` `feature/proveedores`, `2a47bc6d`), plan backend `10e388bb` y plan frontend `9490220e` en las ramas `feature/proveedores` de cada repo, sin código. El pedido original («compras a proveedores y manejo de inventario») se recortó al directorio; se revisó «proveedores vs. terceros» y se eligió entidad propia con la identidad de `Customer` copiada campo por campo. Decisiones del owner: `suppliers` fuera del default (D-12), `advisor` sin permiso (D-14), renombrar la sección del operador (D-17).
 - 2026-10-24 — Mergeados a `develop` (con push) tres ramas del backend: `feature/chatbot-mover-conexion` (`353e09bb`,
   código: traspaso de conexión entre chatbots con `takeOverConnectionIds`, con una corrección de la revisión final
   `4adce1dc`), `feature/reportes-ventas-pos` (`3244e9ff`, sólo spec y plan) y `feature/proveedores` (`64b38e86`, sólo
