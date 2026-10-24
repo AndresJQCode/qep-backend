@@ -514,6 +514,21 @@ public sealed class ImportCustomersHandler(
                     ?? throw new InvalidOperationException(
                         $"Customer '{targetId}' resolved by Cuc suffix was not found when applying the update.");
 
+                // Spec 2026-10-24 §3.3 (D-F6): el CUC impreso de un fusionado no lo actualiza. Va antes del chequeo de
+                // inactivo (un fusionado siempre lo está) para que la fila diga «fusionado» y traiga el CUC del que quedó.
+                if (customer.MergedIntoId is { } survivorId)
+                {
+                    var survivorCuc = (await customerRepository.FindAsync(tenantId, survivorId, cancellationToken))?.Cuc;
+                    errors.Add(new ImportRowError(
+                        candidate.RowNumber,
+                        "customers.import.row.customer_merged",
+                        $"The customer with that Cuc was merged into {survivorCuc}.",
+                        nameof(ExcelCustomerRow.Cuc),
+                        ToRowData(candidate.SourceRow),
+                        survivorCuc));
+                    continue;
+                }
+
                 // Mismo chequeo que UpdateCustomerHandler hace via Customer.Update, pero
                 // adelantado: Update() lanza CustomersDomainException si el cliente esta
                 // inactivo, y esta funcion no tiene un try/catch por fila — dejarlo pasar

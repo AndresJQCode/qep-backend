@@ -68,13 +68,16 @@ internal sealed class CustomerAudienceRepository(CustomersDbContext dbContext) :
     }
 
     // UPDATE condicional, como los del BSUID: dos respuestas 131050 seguidas no se pisan y la primera deja el rastro.
-    // No sube la versión del cliente.
+    // No sube la versión del cliente. Sobre un fusionado marca al que quedó, en la misma sentencia (spec 2026-10-24, desvío F5):
+    // el opt-out es de la persona, y el fusionado no se escribe.
     public async Task MarkMarketingOptOutAsync(
         Guid tenantId, Guid customerId, MarketingConsentSource source, DateTimeOffset occurredAt, CancellationToken cancellationToken)
     {
         var id = new CustomerId(customerId);
         _ = await dbContext.Customers
-            .Where(customer => customer.TenantId == tenantId && customer.Id == id && !customer.MarketingOptOut)
+            .Where(customer => customer.TenantId == tenantId && !customer.MarketingOptOut &&
+                ((customer.Id == id && customer.MergedIntoId == null) ||
+                 dbContext.Customers.Any(merged => merged.TenantId == tenantId && merged.Id == id && merged.MergedIntoId == customer.Id)))
             .ExecuteUpdateAsync(
                 setters => setters
                     .SetProperty(customer => customer.MarketingOptOut, true)
@@ -130,6 +133,9 @@ internal sealed class CustomerAudienceRepository(CustomersDbContext dbContext) :
             // Un fusionado no recibe campañas (spec 2026-10-24 §3.3). `FindContactAsync` no filtra: el destinatario ya congelado se omite como inactivo.
             && customer.MergedIntoId == null
             && (ids.Contains(customer.Id)
+                // La fusión reescribe las audiencias Draft/Scheduled, no una Sending que todavía no congeló: el id del fusionado
+                // que sigue en la lista trae al que quedó (§3.3), una sola vez aunque también esté. Las etiquetas ya se movieron.
+                || dbContext.Customers.Any(merged => merged.TenantId == tenantId && ids.Contains(merged.Id) && merged.MergedIntoId == customer.Id)
                 || dbContext.CustomerTagAssignments.Any(assignment =>
                     assignment.TenantId == tenantId && assignment.CustomerId == customer.Id && tags.Contains(assignment.TagId))));
     }

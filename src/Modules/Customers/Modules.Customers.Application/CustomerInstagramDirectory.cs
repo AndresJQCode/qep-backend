@@ -19,9 +19,10 @@ public sealed class CustomerInstagramDirectory(
     public async Task<EnsuredCustomer> EnsureAsync(Guid tenantId, InstagramContact contact, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(contact);
+        // Spec 2026-10-24 §3.3: el IGSID que se quedó en un fusionado resuelve al que quedó, y no nace otro (un salto basta, D-F2).
         if (await repository.FindByInstagramUserIdAsync(tenantId, contact.UserId, cancellationToken) is { } known)
         {
-            return new EnsuredCustomer(known.Id.Value, EnsureOutcome.Existing);
+            return new EnsuredCustomer((known.MergedIntoId ?? known.Id).Value, EnsureOutcome.Existing);
         }
 
         var now = clock.UtcNow;
@@ -37,7 +38,7 @@ public sealed class CustomerInstagramDirectory(
         {
             var winner = await repository.FindByInstagramUserIdAsync(tenantId, contact.UserId, cancellationToken)
                 ?? throw new InvalidOperationException("The Instagram user id was taken but its customer cannot be read back.");
-            return new EnsuredCustomer(winner.Id.Value, EnsureOutcome.Existing);
+            return new EnsuredCustomer((winner.MergedIntoId ?? winner.Id).Value, EnsureOutcome.Existing);
         }
 
         return new EnsuredCustomer(customer.Id.Value, EnsureOutcome.Created);

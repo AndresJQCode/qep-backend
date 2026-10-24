@@ -256,9 +256,18 @@ public sealed record CustomerImportRowData(
 /// porque no son culpa de una sola columna.
 ///
 /// <c>RowData</c> viaja siempre — ver <see cref="CustomerImportRowData"/>.
+///
+/// <c>MergedIntoCuc</c> sólo lo llena <c>customers.import.row.customer_merged</c> (spec 2026-10-24
+/// D-F6): el CUC del cliente que quedó, en un campo propio para que el frontend arme el texto con
+/// su diccionario sin leer el mensaje. Las demás filas lo traen en <c>null</c>.
 /// </summary>
 public sealed record ImportRowError(
-    int RowNumber, string Code, string Message, string? Field, CustomerImportRowData? RowData = null);
+    int RowNumber,
+    string Code,
+    string Message,
+    string? Field,
+    CustomerImportRowData? RowData = null,
+    string? MergedIntoCuc = null);
 
 /// <summary>
 /// El resultado de una importacion. A diferencia del acuse original (`CLI-01` dejaba el

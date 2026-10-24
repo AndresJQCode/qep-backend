@@ -52,7 +52,12 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                 EF.Functions.ILike(customer.Name, searchPattern, LikeEscapeCharacter) ||
                 (customer.IdentificationNumber != null && EF.Functions.ILike(
                     customer.IdentificationNumber, searchPattern, LikeEscapeCharacter)) ||
-                (customer.Cuc != null && EF.Functions.ILike(customer.Cuc, searchPattern, LikeEscapeCharacter)));
+                (customer.Cuc != null && EF.Functions.ILike(customer.Cuc, searchPattern, LikeEscapeCharacter)) ||
+                // El CUC impreso de un fusionado sigue resolviendo hacia el que quedó (spec 2026-10-24 §3.3, ruling C2). Sólo el
+                // CUC: su nombre y su documento ya no son de nadie que se liste.
+                dbContext.Customers.Any(merged =>
+                    merged.TenantId == tenantId && merged.MergedIntoId == customer.Id && merged.Cuc != null &&
+                    EF.Functions.ILike(merged.Cuc, searchPattern, LikeEscapeCharacter)));
         }
 
         // Tres cajas separadas en el listado (CLI-FILTROS-01), cada una filtra su propia columna
@@ -72,8 +77,12 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
 
         if (cucPattern is not null)
         {
+            // Como en el criterio combinado: el CUC de un fusionado trae al que quedó (ruling C2).
             query = query.Where(customer =>
-                customer.Cuc != null && EF.Functions.ILike(customer.Cuc, cucPattern, LikeEscapeCharacter));
+                (customer.Cuc != null && EF.Functions.ILike(customer.Cuc, cucPattern, LikeEscapeCharacter)) ||
+                dbContext.Customers.Any(merged =>
+                    merged.TenantId == tenantId && merged.MergedIntoId == customer.Id && merged.Cuc != null &&
+                    EF.Functions.ILike(merged.Cuc, cucPattern, LikeEscapeCharacter)));
         }
 
         return query;
@@ -319,16 +328,16 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             return new HashSet<Guid>();
         }
 
-        var ids = await dbContext.Customers
+        var rows = await dbContext.Customers
             .AsNoTracking()
             .Where(customer =>
                 customer.TenantId == tenantId &&
                 customer.IdentificationNumber != null &&
                 EF.Functions.ILike(customer.IdentificationNumber, pattern, LikeEscapeCharacter))
-            .Select(customer => customer.Id.Value)
+            .Select(customer => new { customer.Id, customer.MergedIntoId })
             .ToListAsync(cancellationToken);
 
-        return ids.ToHashSet();
+        return WithSurvivors(rows.Select(row => (row.Id, row.MergedIntoId)));
     }
 
     public async Task<IReadOnlySet<Guid>> SearchIdsByCucAsync(
@@ -342,16 +351,34 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             return new HashSet<Guid>();
         }
 
-        var ids = await dbContext.Customers
+        var rows = await dbContext.Customers
             .AsNoTracking()
             .Where(customer =>
                 customer.TenantId == tenantId &&
                 customer.Cuc != null &&
                 EF.Functions.ILike(customer.Cuc, pattern, LikeEscapeCharacter))
-            .Select(customer => customer.Id.Value)
+            .Select(customer => new { customer.Id, customer.MergedIntoId })
             .ToListAsync(cancellationToken);
 
-        return ids.ToHashSet();
+        return WithSurvivors(rows.Select(row => (row.Id, row.MergedIntoId)));
+    }
+
+    // Spec 2026-10-24 §3.3 (desvío F7): el filtro de cotizaciones (por documento) y el de pedidos (por CUC) siguen trayendo lo
+    // del fusionado, que ya se movió al que quedó, así que cada fusionado que coincide suma el id del que quedó. Un salto basta
+    // (D-F2), y el que quedó es del mismo tenant: lo escribió la fusión.
+    private static HashSet<Guid> WithSurvivors(IEnumerable<(CustomerId Id, CustomerId? MergedIntoId)> rows)
+    {
+        var ids = new HashSet<Guid>();
+        foreach (var (id, mergedIntoId) in rows)
+        {
+            ids.Add(id.Value);
+            if (mergedIntoId is { } survivor)
+            {
+                ids.Add(survivor.Value);
+            }
+        }
+
+        return ids;
     }
 
     public async Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(
@@ -438,6 +465,8 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
     // lower() de los dos lados y en SQL: la expresión exacta de IX_customers_tenant_email. Bajarlo en .NET con
     // ToLowerInvariant podría discrepar de la base con letras como «Ó» y además deja de usar el índice. Mismo criterio
     // que ResolutionReasonRepository. Sólo el id, así que no aplica la regla de listar todas las columnas del FromSql.
+    // Los fusionados van al final, como en FindOldestByPhoneE164Async (spec 2026-10-24 §3.3): uno sólo sale si es el único con
+    // ese correo, y el adaptador de Shopify lo cambia por el que quedó.
     public async Task<CustomerId?> FindIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(email);
@@ -451,7 +480,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             .SqlQuery<Guid>($"""
                 SELECT id AS "Value" FROM customers.customers
                 WHERE tenant_id = {tenantId} AND lower(email) = lower({trimmed})
-                ORDER BY created_at, id
+                ORDER BY merged_into_id IS NOT NULL, created_at, id
                 LIMIT 1
                 """)
             .ToListAsync(cancellationToken);
@@ -472,7 +501,9 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         dbContext.Customers
             .AsNoTracking()
             .Where(customer => customer.TenantId == tenantId && customer.PhoneE164 == phoneE164)
-            .OrderBy(customer => customer.CreatedAt).ThenBy(customer => customer.Id)
+            // Spec 2026-10-24 §3.3: un fusionado nunca es «el más viejo» del número. Sólo sale si es el único, y el llamador lo
+            // redirige al que quedó (CustomerWhatsAppDirectory, ShopifyCustomerDirectory).
+            .OrderBy(customer => customer.MergedIntoId != null).ThenBy(customer => customer.CreatedAt).ThenBy(customer => customer.Id)
             .FirstOrDefaultAsync(cancellationToken);
 
     // Un UPDATE condicional y no el agregado + SaveChanges: el BSUID no sube la versión (P4), así que el chequeo de
