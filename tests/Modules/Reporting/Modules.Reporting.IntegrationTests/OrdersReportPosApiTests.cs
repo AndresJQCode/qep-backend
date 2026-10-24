@@ -396,6 +396,33 @@ public sealed class OrdersReportPosApiTests
         Assert.Equal(1, summary.WithoutClient.Count);
     }
 
+    /// <summary>
+    /// <c>source=Pos</c> con un estado de pago que una venta nunca tiene omite las dos ramas de la
+    /// unión: la base queda en un <c>SELECT</c> vacío con las mismas columnas, y el listado y el
+    /// resumen responden ceros, no 500.
+    /// </summary>
+    [Fact]
+    public async Task PosSourceWithAnUnpaidStatusIsAnEmptyReportNotAnError()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await ArrangeAsync(factory, database);
+        await world.CreateQuotationOrderAsync(factory);
+        await SellToFinalConsumerAsync(world, PosPrice);
+        const string query = "source=Pos&paymentStatus=PaymentPending";
+
+        var page = await world.Client.GetFromJsonAsync<ReportPageDto<OrdersReportItem>>(
+            $"{ReportsUrl(world.TenantId)}/orders?{query}", TestContext.Current.CancellationToken);
+        var summary = await GetSummaryAsync(world, query);
+
+        Assert.NotNull(page);
+        Assert.Equal(0, page.Total);
+        Assert.Empty(page.Items);
+        Assert.Equal(0, summary.OrderCount);
+        Assert.Equal([0, 0, 0, 0], summary.BySource.Select(slice => slice.Count));
+        Assert.Equal(0, summary.WithoutClient.Count);
+    }
+
     private static async Task<OrdersReportSummary> GetSummaryAsync(PosWorld world, string query = "")
     {
         var summary = await world.Client.GetFromJsonAsync<OrdersReportSummary>(
