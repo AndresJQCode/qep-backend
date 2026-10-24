@@ -1011,6 +1011,29 @@ public sealed class CampaignDispatchTests
     }
 
     [Fact]
+    public async Task AFailedCampaignStillDeduplicatesSoARetryCannotResendTheDuplicate()
+    {
+        // Fallida a mitad del congelado: el perdedor queda duplicate_contact (que el reintento manual no reencola) y el ganador
+        // campaign_failed (que sí). Si los dos quedaran campaign_failed, el reintento volvería a dejar a los dos Pending.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var id = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()]));
+        using var scope = f.Host.Services.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<ICampaignDispatchStore>();
+        var now = DateTimeOffset.UtcNow;
+        await store.AddRecipientsAsync(
+            new CampaignFreezeTarget(id, f.Tenant.TenantId, "MARKETING", [], []),
+            [PendingSeed(Guid.CreateVersion7(), "Ana Vieja", "573001112222", now.AddYears(-1)), PendingSeed(Guid.CreateVersion7(), "Beto Nuevo", "573001112222", now)],
+            now, Ct);
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaigns SET status = 'Failed' WHERE id = @id", ("id", id));
+
+        await store.MarkFrozenAsync(id, now, Ct);
+
+        Assert.Equal(("campaign_failed", "duplicate_contact"), (await RecipientCodeAsync(f, "Ana Vieja"), await RecipientCodeAsync(f, "Beto Nuevo")));
+    }
+
+    [Fact]
     public async Task ABatchWrittenAfterTheMarkInsertsNothing()
     {
         // Ruling de CD-11: un segundo congelado (otro pod) que llega tarde no puede dejar un Pending que el desduplicado ya no ve.

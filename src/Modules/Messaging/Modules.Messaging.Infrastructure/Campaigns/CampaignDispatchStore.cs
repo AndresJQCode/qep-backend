@@ -93,15 +93,16 @@ internal sealed class CampaignDispatchStore(MessagingDbContext dbContext, IConve
         // otro motivo (inactive, unreachable, opted_out) no le quita el envío a nadie. Gana el cliente de la conversación de ese contacto en la
         // conexión de la campaña —la que recibe las respuestas (§4.3): primero la del BSUID, como prefiere ConversationOpener (CD-10), y luego
         // la más reciente— si está entre los Pending; si no, el más viejo por fecha de alta y luego id (decisión del owner, §10.2).
-        // Idempotente: los perdedores dejan de ser Pending y repetirlo no toca nada. Sólo con la campaña Sending: una cancelada o detenida la
-        // barre R9 con su motivo terminal.
+        // Idempotente: los perdedores dejan de ser Pending y repetirlo no toca nada. Sólo con la campaña Sending o Failed: una Failed a mitad del
+        // congelado también se desduplica, porque el reintento manual reencola sus campaign_failed y, si los dos quedaran así, volvería a
+        // mandar a ambos; una cancelada la barre R9 con su motivo terminal.
         var duplicate = CampaignFailureReasons.For(CampaignFailureCodes.DuplicateContact);
         await dbContext.Database.ExecuteSqlAsync(
             $"""
             WITH live AS (
                 SELECT r.id, r.wa_id, r.customer_id, r.customer_created_at, c.connection_id, c.tenant_id
                   FROM messaging.campaign_recipients r JOIN messaging.campaigns c ON c.id = r.campaign_id
-                 WHERE r.campaign_id = {campaignId} AND r.status = 'Pending' AND r.wa_id IS NOT NULL AND c.status = 'Sending'),
+                 WHERE r.campaign_id = {campaignId} AND r.status = 'Pending' AND r.wa_id IS NOT NULL AND c.status IN ('Sending', 'Failed')),
             principal AS (
                 SELECT DISTINCT ON (l.wa_id) l.wa_id, v.customer_id
                   FROM live l JOIN messaging.conversations v

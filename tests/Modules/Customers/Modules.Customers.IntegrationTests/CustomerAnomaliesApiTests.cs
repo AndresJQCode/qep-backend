@@ -196,6 +196,20 @@ public sealed class CustomerAnomaliesApiTests
     }
 
     [Fact]
+    public async Task AHugePageIs422OnPageInsteadOfAnOverflowingOffset()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+
+        var response = await client.GetAsync(
+            AnomaliesUrl("?kind=SharedPhone&page=2147483647"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("Page", await ValidationFieldsAsync(response));
+    }
+
+    [Fact]
     public async Task AnotherTenantIs403AndItsGroupsNeverShow()
     {
         await using var database = await StartDatabaseAsync();

@@ -154,12 +154,16 @@ public static class CustomerAnomalyPaging
     public const int DefaultPageSize = 20;
     public const int MaxPageSize = 50;
 
+    /// <summary>Como <c>OperatorInput.MaxPage</c>: con este tope, <c>(page - 1) * pageSize</c> no da la vuelta a un OFFSET
+    /// negativo (que sería un 500). Un número mayor es 422 en <c>errors.Page</c>.</summary>
+    public const int MaxPage = int.MaxValue / MaxPageSize;
+
     /// <summary>Clientes que viajan por grupo; el que sobra sólo sirve para marcar <c>truncated</c>.</summary>
     public const int GroupCustomersCap = 50;
 }
 
 /// <param name="Kind">Nombre de <see cref="CustomerAnomalyKind"/>; obligatorio.</param>
-/// <param name="Page">Menor que 1 se recorta a 1.</param>
+/// <param name="Page">Menor que 1 se recorta a 1; mayor que <see cref="CustomerAnomalyPaging.MaxPage"/> es 422.</param>
 /// <param name="PageSize">Menor que 1 vale el default y mayor que el máximo se recorta, en silencio, como el resto de listas.</param>
 public sealed record ListCustomerAnomaliesQuery(Guid TenantId, string? Kind, int Page, int PageSize)
     : IQuery<CustomerAnomaliesResponse>;
@@ -173,6 +177,9 @@ public sealed class ListCustomerAnomaliesValidator : AbstractValidator<ListCusto
         RuleFor(query => query.Kind)
             .Must(kind => kind is not null && names.Contains(kind, StringComparer.Ordinal))
             .WithMessage($"La clase de anomalía debe ser una de {string.Join(", ", names)}.");
+        RuleFor(query => query.Page)
+            .LessThanOrEqualTo(CustomerAnomalyPaging.MaxPage)
+            .WithMessage($"La página no puede pasar de {CustomerAnomalyPaging.MaxPage}.");
     }
 }
 
