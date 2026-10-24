@@ -2,8 +2,11 @@ namespace Modules.Suppliers.Domain;
 
 /// <summary>
 /// Un proveedor del tenant: la contraparte a la que se le compra. Directorio simple (SUP-01): sin
-/// código emitido, sin libreta de direcciones y sin unicidad de documento, porque cargar dos veces
-/// al mismo proveedor es un descuido corregible y no un invariante que valga un índice.
+/// código emitido y sin libreta de direcciones. El documento (tipo + número) es **único por tenant**,
+/// también entre inactivos (spec D-5): lo arbitra el índice <c>IX_suppliers_tenant_identification</c>,
+/// sin filtro parcial, y el UnitOfWork de Infrastructure (SUP-05) lo traduce a
+/// <c>suppliers.supplier.identification_taken</c>. Este agregado no lo comprueba: reactivar es el
+/// camino, no duplicar.
 ///
 /// Núcleo de identidad idéntico a <c>Customer</c> (longitudes, normalización, carril de ciudad por
 /// país). Lo que cambia es lo opcional: teléfono, correo y dirección pueden faltar, y cuentas

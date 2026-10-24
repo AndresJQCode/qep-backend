@@ -35,8 +35,9 @@ public sealed class SuppliersLayerTests
             typeof(SupplierEndpoints).Assembly);
     }
 
-    // Traducir un error de base es tarea de Infrastructure, no de Application: el día que
-    // proveedores tenga un índice único, su violación se traduce en el SuppliersUnitOfWork.
+    // Traducir un error de base es tarea de Infrastructure, no de Application: desde SUP-05 existe
+    // el índice único IX_suppliers_tenant_identification, y el SuppliersUnitOfWork traduce su
+    // violación a suppliers.supplier.identification_taken.
     [Fact]
     public void ApplicationDoesNotReferencePersistenceLibraries()
     {

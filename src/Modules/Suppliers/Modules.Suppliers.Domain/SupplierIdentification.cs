@@ -3,8 +3,10 @@ namespace Modules.Suppliers.Domain;
 /// <summary>
 /// El documento con el que se identifica al proveedor: tipo y número, juntos, porque el par es
 /// lo que se muestra y se busca, y separarlos permite armar un proveedor con el tipo de uno y el
-/// número de otro sin queja del compilador. A diferencia de Customers, el par **no** es único por
-/// tenant: dos fichas del mismo proveedor no rompen nada.
+/// número de otro sin queja del compilador. Como en Customers, el par es la **clave de unicidad** del
+/// proveedor dentro del tenant, también entre inactivos (spec D-5): la arbitra el índice
+/// <c>IX_suppliers_tenant_identification</c> y la traduce el UnitOfWork a
+/// <c>suppliers.supplier.identification_taken</c>, no este record.
 /// </summary>
 public sealed record SupplierIdentification(IdentificationType Type, string Number)
 {
