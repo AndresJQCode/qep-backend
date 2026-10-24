@@ -1,3 +1,4 @@
+using Modules.Automations.Application.Engine;
 using Modules.Automations.Domain;
 using Modules.Automations.Domain.Engine;
 
@@ -237,7 +238,7 @@ public interface IAutomationConversations
 
     /// <summary>D-M5: <c>Paused</c> con motivo <c>Handoff</c>, sin asesor, con evento en el hilo, auditoría de sistema y aviso a todo el
     /// tenant como un entrante sin asignar.</summary>
-    Task HandoffAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+    Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, CancellationToken cancellationToken);
 
     /// <summary>D-M5: resuelta con el motivo (si sigue activo en el tenant), con evento <c>Resolved</c> sin actor y auditoría de sistema.</summary>
     Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken);

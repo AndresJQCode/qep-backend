@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Automations.Application;
+using Modules.Automations.Application.Engine;
 using Modules.Messaging.Application;
 using static Modules.Automations.IntegrationTests.AutomationsApiHarness;
 
@@ -17,6 +18,9 @@ public sealed class AutomationConversationsAdapterTests
     private const string WaId = "573001234567";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    /// <summary>Spec 2026-10-24: el traspaso más simple, el de un bloque alcanzado.</summary>
+    private static readonly HandoffCause BlockCause = new(HandoffCauseKind.Block, null, "handoff", "Pasar a un asesor", null, null, null);
 
     private sealed record Fixture(QepApiFactory Factory, WebApplicationFactory<Program> Host, string ConnectionString, Guid TenantId, Guid ConversationId, RecordingNotifier Notifier);
 
@@ -109,7 +113,7 @@ public sealed class AutomationConversationsAdapterTests
         await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), "Menú", Ct));
         f.Notifier.Events.Clear();
 
-        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, Ct));
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, Ct));
 
         Assert.Equal("Paused|Handoff|true|true|true",
             await RowAsync(f, "automation_status || '|' || automation_pause_reason || '|' || (automation_paused_by_member_id IS NULL)::text || '|' || (assigned_member_id IS NULL)::text || '|' || (automation_paused_at IS NOT NULL)::text"));
@@ -135,7 +139,7 @@ public sealed class AutomationConversationsAdapterTests
 
         await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), "Menú", Ct));
         await WithAdapterAsync(f, adapter => adapter.SetStepAsync(f.TenantId, f.ConversationId, "Documento", Ct));
-        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, Ct));
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, Ct));
 
         Assert.Equal("Paused|Handoff|Documento", await RowAsync(f, "automation_status || '|' || automation_pause_reason || '|' || automation_step"));
     }
@@ -149,7 +153,7 @@ public sealed class AutomationConversationsAdapterTests
         await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), null, Ct));
         f.Notifier.Events.Clear();
 
-        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, Ct));
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, Ct));
 
         Assert.Equal("Paused", await RowAsync(f, "automation_status"));
         Assert.Equal([$"changed {f.ConversationId}"], f.Notifier.Events);
@@ -167,7 +171,7 @@ public sealed class AutomationConversationsAdapterTests
         {
             await adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), null, Ct);
             await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET version = version + 1");
-            await adapter.HandoffAsync(f.TenantId, f.ConversationId, Ct);
+            await adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, Ct);
         });
 
         Assert.Equal("Paused|4", await RowAsync(f, "automation_status || '|' || version"));

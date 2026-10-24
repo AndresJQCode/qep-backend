@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Modules.Automations.Application;
+using Modules.Automations.Application.Engine;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
 
@@ -75,7 +76,7 @@ internal sealed partial class AutomationConversations(
         }
     }
 
-    public async Task HandoffAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+    public async Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, CancellationToken cancellationToken)
     {
         await using var scope = scopes.CreateAsyncScope();
         var services = new Services(scope.ServiceProvider);
