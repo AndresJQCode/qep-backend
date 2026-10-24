@@ -206,6 +206,15 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-24 — Mergeado a `develop` de los dos repos **Causa del traspaso** (spec 2026-10-24): backend `--no-ff`, sin push
+  (`feature/causa-del-traspaso`, que integró `develop` `edcc4fe0` en `9f47de8d`; cinco conflictos en Messaging resueltos
+  conservando los dos lados: `ConversationEvent` lleva `PreviousCustomerId` y después `Handoff`, `MessageEventDto` lleva
+  `TargetCustomer`, `PreviousCustomer` y `Handoff`, y el JSON del evento escribe `previousCustomerId` y `handoff`);
+  frontend merge `95e99419` en `develop` del frontend, ya en `origin/develop`. El `AutomationPaused` de un traspaso lleva su
+  causa en códigos (`handoff`) y `ConversationAutomationDetailsDto` suma `FailureCode`. Verificado sobre el merge de la
+  rama: build 0/0; Architecture 132/132; unitarias Messaging 1323/1323, Automations 357/357, Bootstrapper 325/325 y el
+  resto de los proyectos unitarios en verde; integración Messaging 563/563 y Automations 179/179. Rama y worktree se
+  conservan.
 - 2026-10-24 — Proveedores: **backend construido y mergeado a `develop`** (`feature/proveedores`, `d8d1f9e4..eaafba36`, merge `95e0fbc9`; rama y worktree borrados). La entrada siguiente («borradas las ramas… arranca en una sesión nueva») se escribió en paralelo sin ver ese merge y quedó superada: el backend ya no se vuelve a ejecutar; falta el frontend. Pendientes: fila «terceros» en `qep-docs` `open-decisions.md` y prueba manual.
 - 2026-10-24 — Proveedores: borradas las ramas y worktrees `feature/proveedores` de los dos repos (todo ya en `develop`: spec `2a47bc6d`, plan frontend `9490220e`, plan backend `10e388bb`). El trabajo arranca en una sesión nueva siguiendo «Cómo seguir» de su fila en «Trabajo en curso». Corrige la nota anterior: la spec sí está, en `qep-frontend/docs/superpowers/specs/`.
 - 2026-10-24 — Mergeado a `develop` del frontend (ff, sin push) **Ventas POS en el reporte de pedidos**: `5b07d246` (`feature/reportes-ventas-pos-front`, RVP-10..12 con revisión por tarea, revisión final y una tanda de correcciones; integró `develop` `bc0b4713` sin conflictos). Reportes 234/234; la suite completa deja 5 fallas previas de `product-form.test.tsx` en `develop` («Found multiple elements with the text: Tasa de impuesto», desde `faee9836`) y otras por tiempo bajo carga que pasan solas. Queda un «Intentá de nuevo» con voseo en `customers-report-page.tsx`.
