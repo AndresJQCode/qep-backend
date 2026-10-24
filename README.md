@@ -819,6 +819,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/catalog/options`       | `GET`, `POST`, y por opción `PUT`, `DELETE`                                                 | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 | `/api/v1/tenants/{tenantId}/customers`             | `identification-matches` (`GET`) y `anomalies` (`GET`); el resto del módulo está en sus secciones (ver [Clientes: documento repetido](#clientes-documento-repetido-coincidencias-y-anomalías)) | `customers.customer.read` |
+| `/api/v1/tenants/{tenantId}/customers/{customerId}` | `merge-preview` (`GET`) y `merge` (`POST`, `If-Match`); ver [Clientes: fusión](#clientes-fusión) | `customers.customer.merge` |
 | `/api/v1/tenants/{tenantId}/orders`                | `GET` (filtros, entre ellos `source` y `timeZone`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `approve`, `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`), `send` (`POST`, cuerpo opcional) (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual) y [Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp)) | `quotations.order.read` / `.manage` / `.approve` / `.cancel` / `.invoice` |
 | `/api/v1/tenants/{tenantId}/pos`                   | 14 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void` / `.customer`                 |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
@@ -1636,6 +1637,38 @@ Spec `2026-10-24-clientes-duplicados`. Tres reglas, cada una con su respuesta:
 que crea `IX_customers_tenant_identification_normalized` sobre `(tenant_id, <expresión>) WHERE identification_number IS NOT NULL`.
 No es único. Si la expresión de la consulta y la del índice difieren en un carácter, Postgres no usa el índice y la consulta
 recorre la tabla; `TheMatchQueryUsesTheNormalizedIndex` lo amarra.
+
+### Clientes: fusión
+
+Spec `2026-10-24-fusion-de-clientes`. Junta clientes duplicados en uno; **no se puede deshacer**.
+
+- **Rutas** (`customers.customer.merge`, riesgo `high`; entra por los roles de sistema, en código):
+  `GET /customers/{survivorId}/merge-preview?mergedCustomerIds=…` (1 a 10 ids distintos, sin el que queda) y
+  `POST /customers/{survivorId}/merge` con `If-Match: "<survivor.version>"` y `{ "mergedCustomerIds": [...] }`. Sin `If-Match`
+  responde 428; con una versión vieja, 412 `concurrency.conflict` (la pantalla pide de nuevo la vista previa).
+- **Reglas.** El que queda debe estar activo (`customers.merge.survivor_inactive`) y no puede ser incompleto si algún fusionado
+  es completo (`customers.merge.survivor_incomplete`); nadie que ya esté fusionado entra de nuevo
+  (`customers.merge.already_merged`); un id inexistente es `customers.merge.customer_not_found`. Un fusionado inactivo vale.
+  El que queda sólo se llena donde está vacío (correo, razón social, teléfono, BSUID, IGSID y, si es incompleto, documento,
+  país y dirección) y hereda el opt-out de marketing; nunca la clasificación ni el CUC. La respuesta del `POST` es el
+  `CustomerResponse` del que queda más `droppedTags`.
+- **Vista previa.** Devuelve `survivor`, `merged`, `documentsDiffer`, `filledFields` y `moves`, siempre con los ocho conteos y en
+  este orden: `Quotations`, `Orders`, `Conversations`, `PosSales`, `Deals`, `Notes`, `Addresses`, `Tags`.
+- **Qué guarda el fusionado.** Dos columnas nuevas en `customers.customers`, `merged_into_id` y `merged_at`, e `IsActive = false`.
+  `merged_into_id` apunta siempre a un cliente no fusionado (la fusión reescribe los que ya apuntaban al fusionado): quien lee un
+  fusionado sigue un solo salto. `IX_customers_tenant_merged_into` es parcial (`merged_into_id IS NOT NULL`) e
+  `IX_customers_tenant_identification` pasó a ser único **parcial** (`merged_into_id IS NULL`): el documento de un fusionado
+  queda libre para un cliente nuevo.
+- **Qué se mueve, en una sola transacción.** Cotizaciones y pedidos (`client_id`), ventas del POS, negocios de Pipeline con sus
+  cotizaciones, pedidos y decisiones de triage, conversaciones de Messaging, la audiencia de las campañas (las Draft/Scheduled
+  suben su versión) y los pedidos espejo de Shopify; de Customers, notas, direcciones y etiquetas (las que sobran salen en
+  `droppedTags`). El SQL de los otros esquemas vive en `CustomerMergeReferences` (Bootstrapper).
+- **Qué se excluye y qué se redirige.** Un fusionado sale de `GET /customers`, de los buscadores, de las coincidencias y
+  anomalías y de los reportes; `GET /customers/{id}` sí responde su ficha (`isActive: false`) con
+  `mergedInto: { id, name } | null`. Cualquier escritura sobre un fusionado responde 422 `customers.customer.merged`. Su CUC,
+  teléfono, BSUID e IGSID resuelven al que quedó, y los eventos tardíos de Quotations que traen su id caen en el negocio del
+  que quedó. La importación responde `customers.import.row.customer_merged` con `mergedIntoCuc` cuando una fila trae el CUC de
+  un fusionado.
 
 ### Aceptación de la invitación
 
