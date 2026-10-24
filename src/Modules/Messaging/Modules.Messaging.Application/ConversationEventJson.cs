@@ -27,6 +27,11 @@ public static class ConversationEventJson
                 writer.WriteString("pauseReason", pauseReason.ToString());
             }
 
+            if (value.Handoff is { } handoff)
+            {
+                WriteHandoff(writer, handoff);
+            }
+
             writer.WriteEndObject();
         }
 
@@ -60,7 +65,7 @@ public static class ConversationEventJson
 
             return new ConversationEvent(
                 parsed, ReadId(root, "actor"), ReadId(root, "target"), ReadId(root, "previous"), ReadId(root, "customerId"),
-                ReadId(root, "linkedConversationId"), ReadId(root, "reasonId"), pauseReason);
+                ReadId(root, "linkedConversationId"), ReadId(root, "reasonId"), pauseReason, ReadHandoff(root));
         }
         catch (JsonException)
         {
@@ -78,4 +83,73 @@ public static class ConversationEventJson
 
     private static Guid? ReadId(JsonElement root, string name) =>
         root.TryGetProperty(name, out var element) && element.ValueKind == JsonValueKind.String && element.TryGetGuid(out var id) ? id : null;
+
+    /// <summary>Spec 2026-10-24 §5.2: las claves <c>null</c> se omiten, como los ids.</summary>
+    private static void WriteHandoff(Utf8JsonWriter writer, AutomationHandoff handoff)
+    {
+        writer.WriteStartObject("handoff");
+        writer.WriteString("kind", handoff.Kind.ToString());
+        WriteText(writer, "code", handoff.Code);
+        WriteText(writer, "nodeId", handoff.NodeId);
+        WriteText(writer, "nodeTitle", handoff.NodeTitle);
+        WriteText(writer, "connectionName", handoff.ConnectionName);
+        WriteText(writer, "connectionReason", handoff.ConnectionReason);
+        if (handoff.Http is { } http)
+        {
+            writer.WriteStartObject("http");
+            WriteText(writer, "nodeId", http.NodeId);
+            WriteText(writer, "nodeTitle", http.NodeTitle);
+            WriteText(writer, "outcome", http.Outcome);
+            WriteText(writer, "errorCode", http.ErrorCode);
+            if (http.Status is { } status)
+            {
+                writer.WriteNumber("status", status);
+            }
+
+            WriteText(writer, "connectionName", http.ConnectionName);
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndObject();
+    }
+
+    private static void WriteText(Utf8JsonWriter writer, string name, string? value)
+    {
+        if (value is not null)
+        {
+            writer.WriteString(name, value);
+        }
+    }
+
+    /// <summary>Tolerante como <c>pauseReason</c>: un <c>handoff</c> que no es objeto o un <c>kind</c> desconocido dejan la causa en
+    /// <c>null</c>; un campo de otro tipo se lee <c>null</c>. Lo leído pasa por <see cref="AutomationHandoff.Create"/>, la misma
+    /// limpieza que lo escrito. Nunca tumba el hilo.</summary>
+    private static AutomationHandoff? ReadHandoff(JsonElement root)
+    {
+        if (!root.TryGetProperty("handoff", out var handoff) || handoff.ValueKind != JsonValueKind.Object
+            || ReadText(handoff, "kind") is not { } kindName
+            || !Enum.TryParse<AutomationHandoffKind>(kindName, ignoreCase: false, out var kind) || !Enum.IsDefined(kind))
+        {
+            return null;
+        }
+
+        AutomationHandoffHttp? http = null;
+        if (handoff.TryGetProperty("http", out var element) && element.ValueKind == JsonValueKind.Object)
+        {
+            int? status = element.TryGetProperty("status", out var statusElement) && statusElement.ValueKind == JsonValueKind.Number
+                && statusElement.TryGetInt32(out var parsedStatus)
+                    ? parsedStatus
+                    : null;
+            http = new AutomationHandoffHttp(
+                ReadText(element, "nodeId"), ReadText(element, "nodeTitle"), ReadText(element, "outcome"),
+                ReadText(element, "errorCode"), status, ReadText(element, "connectionName"));
+        }
+
+        return AutomationHandoff.Create(
+            kind, ReadText(handoff, "code"), ReadText(handoff, "nodeId"), ReadText(handoff, "nodeTitle"),
+            ReadText(handoff, "connectionName"), ReadText(handoff, "connectionReason"), http);
+    }
+
+    private static string? ReadText(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 }

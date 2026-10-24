@@ -78,4 +78,82 @@ public sealed class ConversationEventJsonTests
         Assert.Equal(
             new ConversationEvent(ConversationEventType.AutomationPaused),
             ConversationEventJson.Parse("""{"type":"AutomationPaused","pauseReason":"Whatever"}"""));
+
+    // Spec 2026-10-24 §5.2: el caso 1 del owner.
+    private static readonly ConversationEvent HandoffEvent = new(
+        ConversationEventType.AutomationPaused,
+        PauseReason: AutomationPauseReason.Handoff,
+        Handoff: AutomationHandoff.Create(
+            AutomationHandoffKind.SendFailed, "messaging.connection_unavailable", "handoff", "Pasar a un asesor",
+            "Servicio Clasic", "secret_unreadable",
+            new AutomationHandoffHttp(
+                "policy-lookup", "Buscar cliente por teléfono", "connection_unavailable", "secret_unreadable", null, "API de Clasic")));
+
+    [Fact]
+    public void AHandoffRoundTrips() =>
+        Assert.Equal(HandoffEvent, ConversationEventJson.Parse(ConversationEventJson.Serialize(HandoffEvent)));
+
+    [Fact]
+    public void TheHandoffIsWrittenWithItsNames()
+    {
+        var json = ConversationEventJson.Serialize(HandoffEvent);
+
+        Assert.Contains(
+            "\"handoff\":{\"kind\":\"SendFailed\",\"code\":\"messaging.connection_unavailable\",\"nodeId\":\"handoff\","
+            + "\"nodeTitle\":\"Pasar a un asesor\",\"connectionName\":\"Servicio Clasic\",\"connectionReason\":\"secret_unreadable\","
+            + "\"http\":{\"nodeId\":\"policy-lookup\",",
+            json,
+            StringComparison.Ordinal);
+        Assert.Contains("\"outcome\":\"connection_unavailable\",\"errorCode\":\"secret_unreadable\",\"connectionName\":\"API de Clasic\"}}", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("null", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"status\"", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnEventWithoutHandoffReadsAsBefore()
+    {
+        var parsed = ConversationEventJson.Parse("""{"type":"AutomationPaused","pauseReason":"Handoff"}""");
+
+        Assert.NotNull(parsed);
+        Assert.Null(parsed.Handoff);
+        Assert.Equal(AutomationPauseReason.Handoff, parsed.PauseReason);
+        Assert.DoesNotContain("handoff", ConversationEventJson.Serialize(parsed), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("""{"type":"AutomationPaused","pauseReason":"Handoff","handoff":{"kind":"Future"}}""")]
+    [InlineData("""{"type":"AutomationPaused","pauseReason":"Handoff","handoff":"x"}""")]
+    [InlineData("""{"type":"AutomationPaused","pauseReason":"Handoff","handoff":{"kind":7}}""")]
+    [InlineData("""{"type":"AutomationPaused","pauseReason":"Handoff","handoff":{}}""")]
+    public void AnUnknownKindOrAMalformedHandoffReadsAsNull(string json)
+    {
+        var parsed = ConversationEventJson.Parse(json);
+
+        Assert.NotNull(parsed);
+        Assert.Null(parsed.Handoff);
+        Assert.Equal(AutomationPauseReason.Handoff, parsed.PauseReason);
+    }
+
+    [Fact]
+    public void AFieldOfAnotherTypeReadsAsNullAndTheRestIsRead()
+    {
+        var parsed = ConversationEventJson.Parse(
+            """{"type":"AutomationPaused","pauseReason":"Handoff","handoff":{"kind":"Block","nodeId":"handoff","code":5,"http":{"nodeId":"policy-lookup","outcome":"error_status","status":"404","errorCode":"http_404"}}}""");
+
+        Assert.Equal(
+            AutomationHandoff.Create(
+                AutomationHandoffKind.Block, null, "handoff", null, null, null,
+                new AutomationHandoffHttp("policy-lookup", null, "error_status", "http_404", null, null)),
+            parsed!.Handoff);
+    }
+
+    [Fact]
+    public void WhatIsReadIsCleanedLikeWhatIsWritten()
+    {
+        var parsed = ConversationEventJson.Parse(
+            """{"type":"AutomationPaused","pauseReason":"Handoff","handoff":{"kind":"SendFailed","code":"Ya existe una orden","http":{"nodeId":"policy-lookup","outcome":"error_status","status":700}}}""");
+
+        Assert.Null(parsed!.Handoff!.Code);
+        Assert.Null(parsed.Handoff.Http!.Status);
+    }
 }

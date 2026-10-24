@@ -93,8 +93,22 @@ public sealed record ResolutionReasonRefDto(Guid Id, string Name);
 /// «Cliente» o «Equipo» por <c>direction</c> (P21).</summary>
 public sealed record ReplyToDto(Guid Id, string Direction, string Kind, string? Preview);
 
-/// <summary>§5.1 y §6.1.5: <c>actor</c> es null cuando lo hizo el sistema.</summary>
-public sealed record MessageEventDto(string Type, MemberRefDto? Actor, MemberRefDto? Target, MemberRefDto? Previous, ResolutionReasonRefDto? Reason = null, string? PauseReason = null);
+/// <summary>§5.1 y §6.1.5: <c>actor</c> es null cuando lo hizo el sistema. <c>handoff</c> sólo en un <c>AutomationPaused</c> con
+/// <c>pauseReason = Handoff</c> (spec 2026-10-24 §6); ausente en eventos viejos.</summary>
+public sealed record MessageEventDto(
+    string Type, MemberRefDto? Actor, MemberRefDto? Target, MemberRefDto? Previous, ResolutionReasonRefDto? Reason = null, string? PauseReason = null,
+    AutomationHandoffDto? Handoff = null);
+
+/// <summary>Spec 2026-10-24 (BFF): la causa del traspaso, en códigos; el texto lo arma el frontend, que es dueño del diccionario
+/// (D-T3). <c>Kind</c> viaja por nombre (<c>Block</c>, <c>InvalidReply</c>, <c>SendFailed</c>, <c>FlowFailed</c>): uno desconocido
+/// lo pinta con el texto genérico. Ningún campo trae texto de una API externa: sólo títulos de bloques y nombres de conexiones.</summary>
+public sealed record AutomationHandoffDto(
+    string Kind, string? Code, string? NodeId, string? NodeTitle, string? ConnectionName, string? ConnectionReason,
+    AutomationHandoffHttpDto? Http);
+
+/// <summary>Spec 2026-10-24 §6: el bloque HTTP fallido que arrancó el paso del traspaso. <c>Status</c> sólo si la API respondió.</summary>
+public sealed record AutomationHandoffHttpDto(
+    string? NodeId, string? NodeTitle, string? Outcome, string? ErrorCode, int? Status, string? ConnectionName);
 
 /// <param name="UnsupportedReason">Sólo en un <c>Unsupported</c> cuyo error de Meta tiene texto (<c>131060</c>, <c>131051</c>);
 /// si no, <c>null</c> y la burbuja dibuja la etiqueta del kind. BFF: viaja en español, como <c>failureReason</c>, porque
