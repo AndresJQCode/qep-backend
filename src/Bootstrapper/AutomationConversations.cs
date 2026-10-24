@@ -82,7 +82,8 @@ internal sealed partial class AutomationConversations(
         var services = new Services(scope.ServiceProvider);
         var conversation = await services.LoadAsync(tenantId, conversationId, cancellationToken);
         var now = services.Clock.UtcNow;
-        var change = conversation.PauseAutomation(actorMemberId: null, AutomationPauseReason.Handoff, now);
+        // Spec 2026-10-24 §5.3: la causa viaja en el mismo evento, un solo cambio con el mismo now; el dominio de Mensajería la limpia.
+        var change = conversation.PauseAutomation(actorMemberId: null, AutomationPauseReason.Handoff, now, ToHandoff(cause));
         services.Events.Record(tenantId, conversation.ConnectionId, conversation.Id, change, now);
         services.Audit.RecordBySystem(tenantId, MessagingAuditActions.AutomationPaused, conversation.Id, now);
         await services.UnitOfWork.SaveChangesAsync(cancellationToken);
@@ -95,6 +96,22 @@ internal sealed partial class AutomationConversations(
                 await services.Notifier.InboundMessageAsync(tenantId, conversationId, lastInbound, assignedMemberId: null, cancellationToken);
             }
         });
+    }
+
+    /// <summary>Spec 2026-10-24 §5.3: el kind se traduce por nombre (<c>HandoffCauseKindParityTests</c> amarra los dos enums).</summary>
+    private static AutomationHandoff ToHandoff(HandoffCause cause)
+    {
+        ArgumentNullException.ThrowIfNull(cause);
+        return AutomationHandoff.Create(
+            Enum.Parse<AutomationHandoffKind>(cause.Kind.ToString()),
+            cause.Code,
+            cause.NodeId,
+            cause.NodeTitle,
+            cause.ConnectionName,
+            cause.ConnectionReason,
+            cause.Http is { } http
+                ? new AutomationHandoffHttp(http.NodeId, http.NodeTitle, http.Outcome, http.ErrorCode, http.Status, http.ConnectionName)
+                : null);
     }
 
     public async Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken)
