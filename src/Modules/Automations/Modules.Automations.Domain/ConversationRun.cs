@@ -94,7 +94,8 @@ public sealed class ConversationRun
         EndedAt = IsLive ? null : now;
     }
 
-    /// <summary>Termina la corrida por fuera del motor: <c>Interrupted</c>, <c>WindowClosed</c>, <c>Failed</c> o <c>Abandoned</c>.</summary>
+    /// <summary>Termina la corrida por fuera del motor: <c>Interrupted</c>, <c>WindowClosed</c>, <c>Failed</c>, <c>Abandoned</c> o
+    /// <c>Completed</c> (la palabra de reinicio con una versión nueva publicada, 2026-10-23).</summary>
     public void Finish(RunStatus status, string? failureCode, DateTimeOffset now)
     {
         if (!IsLive)
