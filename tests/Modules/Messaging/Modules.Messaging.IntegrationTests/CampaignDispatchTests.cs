@@ -817,6 +817,27 @@ public sealed class CampaignDispatchTests
         Assert.Equal("Pending", await RecipientStatusAsync(f, "Normal"));
     }
 
+    [Fact]
+    public async Task NothingIsClaimedBeforeTheAudienceIsFrozen()
+    {
+        // A9: otro pod escribe lotes de 500 que ya son Pending mientras congela; reclamar antes dejaría salir a un destinatario que el
+        // desduplicado del final todavía puede descartar. Nada se reclama hasta que audience_frozen_at esté puesto.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var id = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()]));
+        await SeedPendingRecipientAsync(f, id, "Lote ya insertado", "573009990001");
+        using var scope = f.Host.Services.CreateScope();
+        var dispatcher = scope.ServiceProvider.GetRequiredService<CampaignDispatcher>();
+
+        Assert.Empty(await dispatcher.ClaimAsync(20, Ct));
+        Assert.Equal("Pending", await RecipientStatusAsync(f, "Lote ya insertado"));
+
+        await scope.ServiceProvider.GetRequiredService<ICampaignDispatchStore>().MarkFrozenAsync(id, DateTimeOffset.UtcNow, Ct);
+
+        Assert.Equal("Lote ya insertado", Assert.Single(await dispatcher.ClaimAsync(20, Ct)).CustomerName);
+    }
+
     private static Task<int> SeedSendingRecipientAsync(
         Fixture f, Guid campaignId, string name, string waId, Guid? messageId, Guid? conversationId, string lockedUntil, int attempts = 1, Guid? customerId = null) =>
         ExecuteAsync(f.ConnectionString,

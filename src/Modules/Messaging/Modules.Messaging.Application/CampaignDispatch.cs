@@ -61,7 +61,8 @@ public interface ICampaignDispatchStore
     Task MarkFrozenAsync(Guid campaignId, DateTimeOffset now, CancellationToken cancellationToken);
 
     /// <summary>Paso 3: hasta <paramref name="take"/> <c>Pending</c> vencidos de campañas <c>Sending</c>, con <c>FOR UPDATE SKIP LOCKED</c>,
-    /// pasados a <c>Sending</c> con lease de <paramref name="lease"/> y un intento más.</summary>
+    /// pasados a <c>Sending</c> con lease de <paramref name="lease"/> y un intento más. Sólo de campañas con <c>audience_frozen_at</c> puesto:
+    /// mientras se congela, los lotes ya insertados no se reclaman.</summary>
     Task<IReadOnlyList<ClaimedRecipient>> ClaimAsync(int take, DateTimeOffset now, TimeSpan lease, CancellationToken cancellationToken);
 
     /// <summary>

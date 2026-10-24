@@ -95,6 +95,10 @@ internal sealed class CampaignDispatchStore(MessagingDbContext dbContext, IConve
 
     public async Task<IReadOnlyList<ClaimedRecipient>> ClaimAsync(int take, DateTimeOffset now, TimeSpan lease, CancellationToken cancellationToken)
     {
+        // A9: nada se reclama antes de que la audiencia esté congelada. El congelado de otro pod escribe lotes de 500 que ya son Pending y el
+        // desduplicado por número (CD-12) corre al terminar, dentro de MarkFrozenAsync: reclamar antes dejaría salir a un destinatario
+        // que ese UPDATE todavía puede descartar. Compatible hacia atrás: una campaña congelada antes del despliegue ya tiene la marca, y
+        // una que quedó a medias (el pod murió) la recupera ListUnfrozenAsync, que repite el congelado (inocuo) y termina en MarkFrozenAsync.
         // R5: reparto por turnos. Primero se numera a los vencidos dentro de cada campaña (una campaña grande no se come el lote de las
         // chicas) y luego dentro de cada conexión por ese número (el ritmo es por conexión: una con mucha cola no frena a las demás); se
         // toman los de número más bajo. `picked` no bloquea —una ventana no se lleva con FOR UPDATE—; el candado va en `due`, que vuelve a
@@ -106,7 +110,7 @@ internal sealed class CampaignDispatchStore(MessagingDbContext dbContext, IConve
                        ROW_NUMBER() OVER (PARTITION BY r.campaign_id ORDER BY r.next_attempt_at, r.id) AS campaign_rank
                   FROM messaging.campaign_recipients r
                   JOIN messaging.campaigns c ON c.id = r.campaign_id
-                 WHERE r.status = 'Pending' AND r.next_attempt_at <= {now} AND c.status = 'Sending'),
+                 WHERE r.status = 'Pending' AND r.next_attempt_at <= {now} AND c.status = 'Sending' AND c.audience_frozen_at IS NOT NULL),
             fair AS (
                 SELECT id, next_attempt_at,
                        ROW_NUMBER() OVER (PARTITION BY connection_id ORDER BY campaign_rank, next_attempt_at, id) AS connection_rank
