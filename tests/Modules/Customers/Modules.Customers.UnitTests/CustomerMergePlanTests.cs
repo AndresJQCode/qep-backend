@@ -264,6 +264,23 @@ public sealed class CustomerMergePlanTests
         Assert.Equal(Now, merged.UpdatedAt);
     }
 
+    // Revisión final #3: la versión de CADA fusionado sube, no sólo la del primero. Es el token de concurrencia que impide fusionar
+    // a C en dos que-quedan a la vez: la segunda fusión manda su UPDATE de C con la versión vieja y EF la rechaza (412).
+    [Fact]
+    public void MarkMergedBumpsTheVersionOfEveryMerged()
+    {
+        var survivor = Complete();
+        var first = Complete();
+        var second = WhatsApp();
+        var third = Register();
+        var before = new[] { first.Version, second.Version, third.Version };
+
+        CustomerMergePlan.Create(survivor, [first, second, third]).MarkMerged(Now);
+
+        Assert.Equal(before.Select(version => version + 1), new[] { first.Version, second.Version, third.Version });
+        Assert.Equal(1, survivor.Version);
+    }
+
     [Fact]
     public void CreateDoesNotWrite()
     {

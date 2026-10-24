@@ -45,6 +45,12 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
         {
             return await dbContext.SaveChangesAsync(cancellationToken);
         }
+        // Un deadlock o una falla de serialización (CustomersWriteRaces): 412, no 500 ni 409. La estrategia de Npgsql lo
+        // envuelve en un InvalidOperationException, así que no lo atrapa ninguna rama de DbUpdateException de abajo.
+        catch (Exception exception) when (CustomersWriteRaces.IsRace(exception))
+        {
+            throw CustomersWriteRaces.ToConflict(exception);
+        }
         // Va antes que las ramas de DbUpdateException porque DbUpdateConcurrencyException hereda de
         // ella: al reves, el filtro de indice unico la dejaria pasar sin traducir y saldria como
         // 500. Mismo patron que TenancyUnitOfWork, CatalogUnitOfWork y CompaniesUnitOfWork.
@@ -178,7 +184,8 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
 
     private sealed class CustomersTransaction(IDbContextTransaction transaction) : ICustomersTransaction
     {
-        public Task CommitAsync(CancellationToken cancellationToken) => transaction.CommitAsync(cancellationToken);
+        public Task CommitAsync(CancellationToken cancellationToken) =>
+            CustomersWriteRaces.RunAsync(() => transaction.CommitAsync(cancellationToken));
 
         public ValueTask DisposeAsync() => transaction.DisposeAsync();
     }

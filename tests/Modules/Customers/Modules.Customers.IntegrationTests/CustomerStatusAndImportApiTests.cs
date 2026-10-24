@@ -108,9 +108,10 @@ public sealed class CustomerStatusAndImportApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    // Inactivar no libera el documento: IX_customers_tenant_identification es unico **sin filtro
-    // parcial**. De eso depende que reactivar no tenga que revalidar unicidad; si alguien le agrega
-    // un filtro parcial al indice, esta prueba avisa.
+    // Inactivar no libera el documento: IX_customers_tenant_identification sólo filtra a los
+    // fusionados (`merged_into_id IS NULL`, spec 2026-10-24), no a los inactivos. De eso depende
+    // que reactivar no tenga que revalidar unicidad; si alguien amplía el filtro a `is_active`,
+    // esta prueba avisa.
     [Fact]
     public async Task DeactivatingDoesNotFreeTheIdentification()
     {
@@ -551,6 +552,46 @@ public sealed class CustomerStatusAndImportApiTests
         Assert.Equal(System.Text.Json.JsonValueKind.Null, otherRow.GetProperty("mergedIntoCuc").ValueKind);
 
         // El fusionado no se tocó.
+        Assert.Equal("El Fusionado", (await GetAsync(manager, merged.Id)).Name);
+    }
+
+    // Revisión final #4 (ruling de FC-08): con el CUC de un fusionado, `customer_merged` le gana a `identification_taken`
+    // aunque el documento de la fila sea el del que quedó. Dice qué pasó y qué CUC usar; el otro mandaría a corregir el
+    // documento, que está bien.
+    [Fact]
+    public async Task ARowWithTheCucOfAMergedAndTheSurvivorsDocumentStillFailsWithCustomerMerged()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(manager);
+        var survivor = await CreateCustomerAsync(manager, city.CityId, classification.Id, "Quien Queda", "900.222.222-2");
+        var merged = await CreateCustomerAsync(manager, city.CityId, classification.Id, "El Fusionado", "830.111.111-1");
+        await MarkMergedAsync(database.GetConnectionString(), merged.Id, survivor.Id);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Cuc: merged.Cuc,
+                    Name: "Nombre Nuevo",
+                    IdentificationType: survivor.IdentificationType,
+                    IdentificationNumber: survivor.IdentificationNumber,
+                    Department: city.DepartmentName,
+                    City: city.CityName,
+                    Classification: classification.Name)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(TestContext.Current.CancellationToken);
+        var row = Assert.Single(body.GetProperty("errors").EnumerateArray());
+        Assert.Equal("customers.import.row.customer_merged", row.GetProperty("code").GetString());
+        Assert.Equal("Cuc", row.GetProperty("field").GetString());
+        Assert.Equal(survivor.Cuc, row.GetProperty("mergedIntoCuc").GetString());
         Assert.Equal("El Fusionado", (await GetAsync(manager, merged.Id)).Name);
     }
 

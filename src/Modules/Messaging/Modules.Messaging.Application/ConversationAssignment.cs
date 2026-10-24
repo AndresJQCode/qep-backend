@@ -143,7 +143,9 @@ public sealed class ChangeConversationCustomerHandler(
         ArgumentNullException.ThrowIfNull(command);
         var (conversation, member) = await steps.LoadAsync(command.TenantId, command.ConversationId, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
-        var customerId = command.CustomerId!.Value;
+        // Spec 2026-10-24 §3.3: nada nuevo se le asigna a un fusionado. Elegirlo desde una pestaña vieja deja la conversación a
+        // nombre del que quedó (si ya era ese, responde como «el mismo cliente»).
+        var customerId = await customers.ResolveSurvivorAsync(command.TenantId, command.CustomerId!.Value, cancellationToken);
         var found = await customers.FindRefsAsync(command.TenantId, [customerId], cancellationToken);
         if (!found.ContainsKey(customerId))
         {

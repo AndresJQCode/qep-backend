@@ -10,8 +10,9 @@ namespace Modules.Customers.Infrastructure.Persistence;
 /// <see cref="CustomersUnitOfWork.BeginTransactionAsync"/> abierta, usan su conexión y quedan dentro de ella.
 ///
 /// Ninguna de estas sentencias puede violar un índice único (mueven filas por <c>customer_id</c>, que no es único, o
-/// reescriben <c>merged_into_id</c>, que tampoco), así que no hay traducción que hacer acá: las violaciones de la fusión salen
-/// de los <c>SaveChanges</c> del agregado y las traduce <see cref="CustomersUnitOfWork"/> por nombre de índice.
+/// reescriben <c>merged_into_id</c>, que tampoco): las violaciones de la fusión salen de los <c>SaveChanges</c> del agregado
+/// y las traduce <see cref="CustomersUnitOfWork"/> por nombre de índice. Lo único que se traduce acá es la carrera (deadlock o
+/// serialización, <see cref="CustomersWriteRaces"/>), porque estas sentencias no pasan por el unit of work.
 /// </summary>
 internal sealed class CustomerMergeStore(CustomersDbContext dbContext) : ICustomerMergeStore
 {
@@ -45,9 +46,9 @@ internal sealed class CustomerMergeStore(CustomersDbContext dbContext) : ICustom
         }
 
         CustomerId? survivor = new CustomerId(survivorId);
-        _ = await dbContext.Customers
+        await CustomersWriteRaces.RunAsync(() => dbContext.Customers
             .Where(customer => customer.TenantId == tenantId && ids.Contains(customer.Id) && customer.MergedIntoId != null)
-            .ExecuteUpdateAsync(setters => setters.SetProperty(customer => customer.MergedIntoId, survivor), cancellationToken);
+            .ExecuteUpdateAsync(setters => setters.SetProperty(customer => customer.MergedIntoId, survivor), cancellationToken));
     }
 
     public async Task<CustomerMergeOwnedCounts> CountOwnedAsync(
@@ -75,6 +76,11 @@ internal sealed class CustomerMergeStore(CustomersDbContext dbContext) : ICustom
         }
 
         var survivor = new CustomerId(survivorId);
+        await CustomersWriteRaces.RunAsync(() => MoveOwnedCoreAsync(tenantId, survivor, ids, cancellationToken));
+    }
+
+    private async Task MoveOwnedCoreAsync(Guid tenantId, CustomerId survivor, CustomerId[] ids, CancellationToken cancellationToken)
+    {
         // La nota es su propio agregado y su versión es la del texto: moverla de cliente no la edita, así que no la sube
         // (una pestaña con la nota abierta puede seguir editándola).
         _ = await dbContext.CustomerNotes

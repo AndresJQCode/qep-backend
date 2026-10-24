@@ -95,6 +95,46 @@ public sealed class CustomerMergeRedirectTests
         Assert.Equal(pair.Survivor.Id, found?.Value);
     }
 
+    // Revisión final #5, §3.3: el teléfono del webhook de WhatsApp y del resolver de Shopify. Un fusionado más viejo con el mismo
+    // número nunca gana sobre un vivo; sólo sale si es el único, y el llamador lo cambia por el que quedó.
+    [Fact]
+    public async Task ThePhoneLookupNeverPicksAMergedAsTheOldest()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var pair = await ArrangeAsync(factory, database.GetConnectionString()); // los dos con el mismo teléfono; el fusionado, más nuevo
+        using var client = pair.Client;
+        string? phone;
+        await using (var connection = new Npgsql.NpgsqlConnection(database.GetConnectionString()))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using (var older = new Npgsql.NpgsqlCommand(
+                "UPDATE customers.customers SET created_at = created_at - interval '1 day' WHERE id = @merged", connection))
+            {
+                older.Parameters.AddWithValue("merged", pair.Merged.Id);
+                Assert.Equal(1, await older.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+            }
+
+            await using var shared = new Npgsql.NpgsqlCommand(
+                """
+                SELECT phone_e164 FROM customers.customers
+                WHERE id IN (@merged, @survivor) AND phone_e164 IS NOT NULL
+                GROUP BY phone_e164 HAVING count(*) = 2
+                """,
+                connection);
+            shared.Parameters.AddWithValue("merged", pair.Merged.Id);
+            shared.Parameters.AddWithValue("survivor", pair.Survivor.Id);
+            phone = await shared.ExecuteScalarAsync(TestContext.Current.CancellationToken) as string;
+        }
+
+        Assert.NotNull(phone);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var found = await scope.ServiceProvider.GetRequiredService<ICustomerRepository>()
+            .FindOldestByPhoneE164Async(Tenant, phone, TestContext.Current.CancellationToken);
+
+        Assert.Equal(pair.Survivor.Id, found?.Id.Value);
+    }
+
     // Ruling C2: el CUC de un fusionado, en la caja de CUC del listado y en el criterio combinado, devuelve al que quedó. El
     // documento del fusionado no (CustomerMergeExclusionTests): sólo el CUC es lo impreso que sigue resolviendo.
     [Fact]

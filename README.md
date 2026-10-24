@@ -1642,7 +1642,7 @@ recorre la tabla; `TheMatchQueryUsesTheNormalizedIndex` lo amarra.
 
 Spec `2026-10-24-fusion-de-clientes`. Junta clientes duplicados en uno; **no se puede deshacer**.
 
-- **Rutas** (`customers.customer.merge`, riesgo `high`; entra por los roles de sistema, en código):
+- **Rutas** (`customers.customer.merge`, riesgo `high`; lo tienen por defecto los roles de sistema `admin` y `advisor`, en código):
   `GET /customers/{survivorId}/merge-preview?mergedCustomerIds=…` (1 a 10 ids distintos, sin el que queda) y
   `POST /customers/{survivorId}/merge` con `If-Match: "<survivor.version>"` y `{ "mergedCustomerIds": [...] }`. Sin `If-Match`
   responde 428; con una versión vieja, 412 `concurrency.conflict` (la pantalla pide de nuevo la vista previa).
@@ -1668,7 +1668,11 @@ Spec `2026-10-24-fusion-de-clientes`. Junta clientes duplicados en uno; **no se 
   `mergedInto: { id, name } | null`. Cualquier escritura sobre un fusionado responde 422 `customers.customer.merged`. Su CUC,
   teléfono, BSUID e IGSID resuelven al que quedó, y los eventos tardíos de Quotations que traen su id caen en el negocio del
   que quedó. La importación responde `customers.import.row.customer_merged` con `mergedIntoCuc` cuando una fila trae el CUC de
-  un fusionado.
+  un fusionado. Crear un negocio o cambiar el cliente de una conversación con el id de un fusionado lo deja a nombre del que
+  quedó.
+- **Despliegue.** La migración `AddCustomerMerge` no tiene vuelta atrás limpia: su `Down` recrea
+  `IX_customers_tenant_identification` sin filtro y falla si ya hay una fusión en la que el fusionado y el que queda comparten
+  tipo y número de documento. Para bajarla en un ambiente con fusiones, primero hay que resolver esos pares a mano.
 
 ### Aceptación de la invitación
 

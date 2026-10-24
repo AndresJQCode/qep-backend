@@ -180,6 +180,35 @@ public sealed class ConversationCustomerApiTests
         Assert.Equal([shown], Shared(summary).Select(item => item.Id));
     }
 
+    // Spec 2026-10-24 §3.3 (ruling final #1): nada nuevo se le asigna a un fusionado. Elegir al fusionado desde una pestaña vieja
+    // deja la conversación a nombre del que quedó: acá el que quedó es el que ya mostraba, así que responde como «el mismo
+    // cliente» (200, sin evento) en vez de pasarla al fusionado.
+    [Fact]
+    public async Task ChangingToAMergedCustomerLeavesTheConversationOnTheSurvivor()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var detail = await DetailAsync(f);
+        var other = OtherThan(f, detail);
+        var survivor = detail.GetProperty("customer").GetProperty("id").GetGuid();
+        Assert.Equal(1, await ExecuteAsync(f.ConnectionString,
+            """
+            UPDATE customers.customers
+            SET merged_into_id = @survivor, merged_at = now(), is_active = false, version = version + 1
+            WHERE id = @merged
+            """,
+            ("survivor", survivor), ("merged", other)));
+
+        var response = await ChangeAsync(f.Client, f, detail, new { customerId = other });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var summary = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal(survivor, summary.GetProperty("customer").GetProperty("id").GetGuid());
+        Assert.Equal(survivor, await ScalarAsync<Guid>(f.ConnectionString,
+            "SELECT customer_id FROM messaging.conversations WHERE id = @id", ("id", detail.GetProperty("id").GetGuid())));
+    }
+
     [Fact]
     public async Task TheChangeIsInTheThreadAndInTheAudit()
     {

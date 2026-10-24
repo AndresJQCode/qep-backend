@@ -4,8 +4,9 @@ namespace Modules.Customers.Domain;
 /// Un cliente del tenant: la contraparte a la que se le cotiza y se le vende. Guarda solo los
 /// datos maestros vivos; una cotizacion congela su propia copia de a quien se le emitio.
 ///
-/// La identificacion (tipo + numero) es **unica por tenant**; esa unicidad la arbitra
-/// <c>IX_customers_tenant_identification</c> y la traduce <c>CustomersUnitOfWork</c>. El CUC lo
+/// La identificacion (tipo + numero) es **unica por tenant entre los clientes no fusionados**: un fusionado completo
+/// conserva su documento y otro cliente puede tenerlo (spec 2026-10-24 §3.1). Esa unicidad la arbitra
+/// <c>IX_customers_tenant_identification</c>, parcial (<c>merged_into_id IS NULL</c>), y la traduce <c>CustomersUnitOfWork</c>. El CUC lo
 /// emite el backend al crear; su prefijo se reescribe cuando cambia la clasificacion del cliente
 /// (ver <see cref="Cuc"/> y <see cref="Update"/>), pero el departamento y el consecutivo no.
 /// </summary>

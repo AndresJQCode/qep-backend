@@ -37,7 +37,13 @@ internal sealed class CustomerMergeReferences(CustomersDbContext customers) : IC
             return;
         }
 
-        var ids = mergedIds.Distinct().ToArray();
+        // Un deadlock o una falla de serialización con otra escritura de estas tablas es 412, no 500 (CustomersWriteRaces): este
+        // SQL no pasa por el unit of work de Customers, así que la traducción va acá.
+        await CustomersWriteRaces.RunAsync(() => MoveCoreAsync(tenantId, survivorId, mergedIds.Distinct().ToArray(), cancellationToken));
+    }
+
+    private async Task MoveCoreAsync(Guid tenantId, Guid survivorId, Guid[] ids, CancellationToken cancellationToken)
+    {
         var database = customers.Database;
 
         // Orden fijo, Shopify último: la prueba de atomicidad de FC-09 rompe la última sentencia.

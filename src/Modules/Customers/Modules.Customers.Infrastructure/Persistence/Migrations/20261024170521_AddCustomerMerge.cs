@@ -47,6 +47,9 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
         }
 
         /// <inheritdoc />
+        // El Down recrea IX_customers_tenant_identification único SIN filtro: falla con 23505 si ya hay una fusión en la que el
+        // fusionado y el que queda comparten tipo y número de documento (el índice parcial lo permitía). Esos pares se resuelven
+        // a mano antes de bajar la migración (README, «Clientes: fusión», Despliegue).
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropIndex(

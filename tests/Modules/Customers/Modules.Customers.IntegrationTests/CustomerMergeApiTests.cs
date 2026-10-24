@@ -563,6 +563,49 @@ public sealed class CustomerMergeApiTests
         Assert.Null(await MergedIntoAsync(arranged.ConnectionString, arranged.Merged));
     }
 
+    // Revisión final #2: un deadlock (40P01) o una falla de serialización (40001) a mitad de la fusión es una carrera con otra
+    // escritura, no un error del servidor ni un choque de datos (409): 412 concurrency.conflict, para que el frontend pida otra
+    // vista previa, y nada cambia. Un trigger por sentencia la simula en cada camino: el SaveChanges del agregado
+    // (CustomersUnitOfWork), el SQL de notas y direcciones (CustomerMergeStore) y el de los otros módulos
+    // (CustomerMergeReferences, en Bootstrapper).
+    [Theory]
+    [InlineData("customers.customers", "40P01")]
+    [InlineData("customers.customers", "40001")]
+    [InlineData("customers.customer_notes", "40P01")]
+    [InlineData("shopify.orders", "40001")]
+    public async Task ADeadlockOrASerializationFailureIs412AndNothingChanges(string table, string sqlState)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        await PostNoteAsync(client, arranged.Merged, "del fusionado");
+        var version = await VersionAsync(arranged.ConnectionString, arranged.Survivor);
+        var before = await TextAsync(arranged.ConnectionString, State);
+        await using (var connection = new NpgsqlConnection(arranged.ConnectionString))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var command = new NpgsqlCommand(
+                $"""
+                CREATE FUNCTION public.race_customer_merge() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    RAISE EXCEPTION 'carrera simulada' USING ERRCODE = '{sqlState}';
+                END $$;
+                CREATE TRIGGER race_customer_merge BEFORE UPDATE ON {table}
+                    FOR EACH STATEMENT EXECUTE FUNCTION public.race_customer_merge();
+                """,
+                connection);
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var conflict = await BodyAsync(
+            await PostMergeAsync(client, arranged.Survivor, $"\"{version}\"", [arranged.Merged]), HttpStatusCode.PreconditionFailed);
+
+        Assert.Equal("concurrency.conflict", conflict.GetProperty("code").GetString());
+        Assert.Equal(before, await TextAsync(arranged.ConnectionString, State));
+        Assert.Null(await MergedIntoAsync(arranged.ConnectionString, arranged.Merged));
+    }
+
     private sealed class FailingMergeReferences : ICustomerMergeReferences
     {
         public Task MoveAsync(Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>

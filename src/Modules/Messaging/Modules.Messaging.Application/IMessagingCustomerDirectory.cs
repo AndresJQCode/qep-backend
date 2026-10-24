@@ -41,6 +41,10 @@ public interface IMessagingCustomerDirectory
     /// el creado primero antes y hasta <paramref name="take"/>. Incluye inactivos e incompletos.</summary>
     Task<IReadOnlyList<CustomerRefDto>> ListByPhoneAsync(Guid tenantId, string waId, int take, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-24 §3.3: el cliente que quedó si <paramref name="customerId"/> se fusionó; si no (o si no existe en
+    /// el tenant), el mismo id. Para que nada nuevo se le asigne a un fusionado.</summary>
+    Task<Guid> ResolveSurvivorAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
+
     /// <summary>Spec 2026-10-10 §6.1.2: nombre e isComplete de los clientes de una página, por id.</summary>
     Task<IReadOnlyDictionary<Guid, CustomerRefDto>> FindRefsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
 
