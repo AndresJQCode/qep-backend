@@ -1,9 +1,12 @@
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
 using Modules.Reporting.Application;
 using Modules.Reporting.Domain;
 using Modules.Tenancy.Application;
+using Npgsql;
+using NpgsqlTypes;
 
 namespace Bootstrapper;
 
@@ -24,6 +27,16 @@ namespace Bootstrapper;
 /// Desde el spec 2026-10-15 el pedido tiene sus propios cliente, asesor, moneda e importes, y
 /// puede no tener cotización (manual o de una integración): todo se lee del pedido, sin join. El
 /// número de la cotización de origen, cuando la hay, se resuelve aparte para la página.
+///
+/// **Desde el spec 2026-10-23 también lee <c>pos.sales</c>**: una venta POS es una fila más del
+/// reporte, con origen <c>Pos</c>. Las dos tablas son de <c>DbContext</c> distintos
+/// (<c>QuotationsDbContext</c> y <c>PosDbContext</c>) y EF no une dos contextos, así que la base del
+/// reporte es SQL crudo con un <c>UNION ALL</c> (<see cref="ReportRowsSql"/>) que lee
+/// <c>quotations.orders</c> y <c>pos.sales</c> **por nombre de tabla y de columna**. Renombrar una
+/// columna de cualquiera de las dos compila y deja <c>/reports/orders</c> respondiendo 500: lo
+/// amarran <c>OrdersReportPosApiTests</c> y el resto de las pruebas <c>OrdersReport*</c>, que
+/// corren contra el esquema migrado. Paginar o rankear la unión en memoria está prohibido por la
+/// misma razón por la que existe el resumen.
 /// </summary>
 internal sealed class OrdersReportSource(
     QuotationsDbContext quotations,
@@ -31,20 +44,67 @@ internal sealed class OrdersReportSource(
     ReportingPeopleLookup peopleLookup,
     ITenantDefaultCurrency tenantDefaultCurrency) : IOrdersReportSource
 {
+    /// <summary>
+    /// Orden explícito y total sobre las dos fuentes: sin él, dos páginas consecutivas pueden
+    /// repetir u omitir filas, porque PostgreSQL no garantiza ningún orden sin <c>ORDER BY</c>. Lo
+    /// más nuevo primero, que es como se lee un reporte de pedidos; después el número, y el id como
+    /// último desempate, porque <c>POS-…</c> y el número de pedido no son únicos entre ellos.
+    /// </summary>
     public async Task<(IReadOnlyList<OrdersReportItemDto> Items, int Total)> ListAsync(
         OrdersReportCriteria criteria,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
-        var query = BuildQuery(criteria);
-        var total = await query.CountAsync(cancellationToken);
-        var rows = await query
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .ToListAsync(cancellationToken);
+        var counted = await QueryAsync<int>(
+            criteria,
+            """SELECT count(*)::int AS "Value" FROM (""",
+            ") AS r",
+            [],
+            cancellationToken);
+        var total = counted.Count == 0 ? 0 : counted[0];
+
+        var rows = await QueryAsync<ReportRow>(
+            criteria,
+            """
+            SELECT r.id AS "Id", r.number AS "Number", r.source AS "Source", r.quotation_id AS "QuotationId",
+                   r.occurred_at AS "OccurredAt", r.advisor_id AS "AdvisorId", r.client_id AS "ClientId",
+                   r.status AS "Status", r.payment_status AS "PaymentStatus", r.currency AS "Currency",
+                   r.subtotal AS "Subtotal", r.tax_amount AS "TaxAmount", r.freight_subtotal AS "FreightSubtotal",
+                   r.freight_tax_amount AS "FreightTaxAmount", r.total AS "Total", r.is_void AS "IsVoid",
+                   r.snapshot_client_name AS "SnapshotClientName"
+            FROM (
+            """,
+            """
+            ) AS r
+            ORDER BY r.occurred_at DESC, r.number, r.id
+            LIMIT @page_limit OFFSET @page_offset
+            """,
+            [
+                new NpgsqlParameter("page_limit", NpgsqlDbType.Integer) { Value = pageSize },
+                new NpgsqlParameter("page_offset", NpgsqlDbType.Integer) { Value = (page - 1) * pageSize },
+            ],
+            cancellationToken);
 
         return (await ToDtosAsync(criteria.TenantId, rows, cancellationToken), total);
+    }
+
+    /// <summary>
+    /// Corre <c>prefix + base + suffix</c>, con la base de <see cref="ReportRowsSql"/> y sus
+    /// parámetros más los propios de la consulta. Los dos fragmentos son constantes del llamador:
+    /// el texto nunca lleva un valor.
+    /// </summary>
+    private Task<List<T>> QueryAsync<T>(
+        OrdersReportCriteria criteria,
+        string prefix,
+        string suffix,
+        IReadOnlyList<NpgsqlParameter> extraParameters,
+        CancellationToken cancellationToken)
+    {
+        var (baseSql, parameters) = ReportRowsSql(criteria);
+        var sql = string.Concat(prefix, "\n", baseSql, "\n", suffix);
+        object[] arguments = [.. parameters, .. extraParameters];
+        return quotations.Database.SqlQueryRaw<T>(sql, arguments).ToListAsync(cancellationToken);
     }
 
     /// <summary>
@@ -334,40 +394,142 @@ internal sealed class OrdersReportSource(
     }
 
     /// <summary>
-    /// El conjunto ya ordenado, que es lo que necesita el listado.
+    /// La base del reporte: un <c>UNION ALL</c> de <c>quotations.orders</c> y <c>pos.sales</c> ya
+    /// filtrado por el criterio, con las mismas columnas en las dos ramas (ver
+    /// <see cref="ReportRow"/>). El listado la ordena y la pagina, y cada agregado del resumen la
+    /// agrupa: todo en la base.
     ///
-    /// Orden explicito y total: sin el, dos paginas consecutivas pueden repetir u omitir filas,
-    /// porque PostgreSQL no garantiza ningun orden sin <c>ORDER BY</c>. Lo mas nuevo primero, que
-    /// es como se lee un reporte de pedidos, y el numero de pedido como desempate porque es unico
-    /// por tenant.
+    /// <para>
+    /// **Cada rama lleva todos los filtros en su propio <c>WHERE</c>**, para que sirvan
+    /// <c>IX_sales_tenant_created</c> y los índices de pedidos. Una rama que el criterio no puede
+    /// traer se omite entera: <c>source</c> distinto de <c>Pos</c> omite las ventas, <c>Pos</c>
+    /// omite los pedidos, y un estado de pago distinto de <c>FullPaymentReceived</c> omite las ventas
+    /// (una venta POS siempre está pagada). Sin ninguna rama queda un <c>SELECT</c> vacío con las
+    /// mismas columnas.
+    /// </para>
+    /// <para>
+    /// El SQL se compone **sólo con fragmentos constantes**: ningún valor se interpola en el texto.
+    /// Un filtro ausente no se escribe, en vez de mandarse como parámetro nulo —PostgreSQL no sabe
+    /// tipar un <c>NULL</c> suelto (<c>could not determine data type of parameter</c>)—, y los
+    /// presentes van como <see cref="NpgsqlParameter"/> con tipo explícito. Los parámetros se crean
+    /// de nuevo en cada llamada: Npgsql no deja que uno pertenezca a dos comandos.
+    /// </para>
     /// </summary>
-    private IQueryable<OrderRow> BuildQuery(OrdersReportCriteria criteria)
+    private static (string Sql, NpgsqlParameter[] Parameters) ReportRowsSql(OrdersReportCriteria criteria)
     {
-        return FilterOrders(criteria)
-            .OrderByDescending(row => row.ConvertedAt)
-            .ThenBy(row => row.OrderNumber)
-            .Select(row => new OrderRow(
-                row.Id,
-                row.OrderNumber,
-                row.Source,
-                row.QuotationId,
-                row.ConvertedAt,
-                row.AdvisorId,
-                row.ClientId,
-                row.Status,
-                row.PaymentStatus,
-                row.Currency,
-                row.Subtotal,
-                row.TaxAmount,
-                row.FreightSubtotal,
-                row.FreightTaxAmount,
-                row.Total));
+        var parameters = new List<NpgsqlParameter>
+        {
+            new("tenant_id", NpgsqlDbType.Uuid) { Value = criteria.TenantId },
+            new("order_cancelled", NpgsqlDbType.Text) { Value = OrderStatus.Cancelled.ToString() },
+            new("sale_voided", NpgsqlDbType.Text) { Value = Modules.Pos.Domain.PosSaleStatus.Voided.ToString() },
+            new("sale_source", NpgsqlDbType.Text) { Value = OrderSourceFilter.Pos.ToString() },
+            new("sale_payment_status", NpgsqlDbType.Text) { Value = OrderPaymentStatus.FullPaymentReceived.ToString() },
+        };
+        var orderFilters = new StringBuilder();
+        var saleFilters = new StringBuilder();
+
+        // Instantes ya cortados en el día del tenant (spec 2026-09-17, punto 4): acá no se decide huso.
+        if (criteria.Period.Start is { } start)
+        {
+            parameters.Add(new NpgsqlParameter("period_start", NpgsqlDbType.TimestampTz) { Value = start.UtcDateTime });
+            orderFilters.Append(" AND o.converted_at >= @period_start");
+            saleFilters.Append(" AND s.created_at >= @period_start");
+        }
+
+        if (criteria.Period.EndExclusive is { } end)
+        {
+            parameters.Add(new NpgsqlParameter("period_end", NpgsqlDbType.TimestampTz) { Value = end.UtcDateTime });
+            orderFilters.Append(" AND o.converted_at < @period_end");
+            saleFilters.Append(" AND s.created_at < @period_end");
+        }
+
+        // El asesor del pedido y el cajero de la venta son el mismo tipo de id, una membresía: el
+        // alcance que fija ScopeAdvisorAsync vale igual para los dos (spec 2026-10-23 §4).
+        if (criteria.AdvisorId is { } advisorId)
+        {
+            parameters.Add(new NpgsqlParameter("advisor_id", NpgsqlDbType.Uuid) { Value = advisorId });
+            orderFilters.Append(" AND o.advisor_id = @advisor_id");
+            saleFilters.Append(" AND s.cashier_id = @advisor_id");
+        }
+
+        // Una venta a consumidor final no tiene customer_id: nunca coincide con un cliente.
+        if (criteria.ClientId is { } clientId)
+        {
+            parameters.Add(new NpgsqlParameter("client_id", NpgsqlDbType.Uuid) { Value = clientId });
+            orderFilters.Append(" AND o.client_id = @client_id");
+            saleFilters.Append(" AND s.customer_id = @client_id");
+        }
+
+        var includeOrders = criteria.Source is not OrderSourceFilter.Pos;
+        var includeSales = criteria.Source is null or OrderSourceFilter.Pos;
+
+        if (criteria.Source is { } source && MapSource(source) is { } orderSource)
+        {
+            parameters.Add(new NpgsqlParameter("order_source", NpgsqlDbType.Text) { Value = orderSource.ToString() });
+            orderFilters.Append(" AND o.source = @order_source");
+        }
+
+        if (criteria.PaymentStatus is { } paymentStatus)
+        {
+            var mapped = MapPaymentStatus(paymentStatus);
+            parameters.Add(new NpgsqlParameter("payment_status", NpgsqlDbType.Text) { Value = mapped.ToString() });
+            orderFilters.Append(" AND o.payment_status = @payment_status");
+            includeSales &= mapped == OrderPaymentStatus.FullPaymentReceived;
+        }
+
+        var branches = new List<string>(2);
+        if (includeOrders)
+        {
+            branches.Add(OrdersBranch + orderFilters);
+        }
+
+        if (includeSales)
+        {
+            branches.Add(SalesBranch + saleFilters);
+        }
+
+        var sql = branches.Count == 0 ? EmptyBranch : string.Join("\nUNION ALL\n", branches);
+        return (sql, [.. parameters]);
     }
+
+    // Las columnas de las dos ramas, en el mismo orden y con el mismo tipo: UNION ALL las empareja
+    // por posición. Los textos van a ::text para que la unión no dependa del largo de cada varchar.
+    private const string OrdersBranch = """
+        SELECT o.id AS id, o.order_number::text AS number, o.source::text AS source,
+               o.quotation_id AS quotation_id, o.converted_at AS occurred_at, o.advisor_id AS advisor_id,
+               o.client_id AS client_id, o.status::text AS status, o.payment_status::text AS payment_status,
+               o.currency::text AS currency, o.subtotal AS subtotal, o.tax_amount AS tax_amount,
+               o.freight_subtotal AS freight_subtotal, o.freight_tax_amount AS freight_tax_amount,
+               o.total AS total, (o.status = @order_cancelled) AS is_void, NULL::text AS snapshot_client_name
+        FROM quotations.orders AS o
+        WHERE o.tenant_id = @tenant_id
+        """;
+
+    private const string SalesBranch = """
+        SELECT s.id AS id, s.sale_number::text AS number, @sale_source::text AS source,
+               NULL::uuid AS quotation_id, s.created_at AS occurred_at, s.cashier_id AS advisor_id,
+               s.customer_id AS client_id, s.status::text AS status, @sale_payment_status::text AS payment_status,
+               s.currency::text AS currency, s.subtotal AS subtotal, s.tax_amount AS tax_amount,
+               0::numeric(14, 2) AS freight_subtotal, 0::numeric(14, 2) AS freight_tax_amount,
+               s.total AS total, (s.status = @sale_voided) AS is_void, s.customer_name::text AS snapshot_client_name
+        FROM pos.sales AS s
+        WHERE s.tenant_id = @tenant_id
+        """;
+
+    private const string EmptyBranch = """
+        SELECT NULL::uuid AS id, NULL::text AS number, NULL::text AS source, NULL::uuid AS quotation_id,
+               NULL::timestamptz AS occurred_at, NULL::uuid AS advisor_id, NULL::uuid AS client_id,
+               NULL::text AS status, NULL::text AS payment_status, NULL::text AS currency,
+               NULL::numeric(14, 2) AS subtotal, NULL::numeric(14, 2) AS tax_amount,
+               NULL::numeric(14, 2) AS freight_subtotal, NULL::numeric(14, 2) AS freight_tax_amount,
+               NULL::numeric(14, 2) AS total, NULL::boolean AS is_void, NULL::text AS snapshot_client_name
+        WHERE false
+        """;
 
     // Tres consultas para toda la pagina, no tres por fila.
     private async Task<IReadOnlyList<OrdersReportItemDto>> ToDtosAsync(
         Guid tenantId,
-        IReadOnlyList<OrderRow> rows,
+        IReadOnlyList<ReportRow> rows,
         CancellationToken cancellationToken)
     {
         if (rows.Count == 0)
@@ -376,12 +538,14 @@ internal sealed class OrdersReportSource(
         }
 
         var advisors = await peopleLookup.EmailsByMembershipIdAsync(
-            rows.Select(row => row.AdvisorId.Value).ToArray(), cancellationToken);
+            rows.Select(row => row.AdvisorId).ToArray(), cancellationToken);
         var clients = await clientLookup.FindAsync(
-            tenantId, rows.Select(row => row.ClientId).ToArray(), cancellationToken);
+            tenantId,
+            rows.Where(row => row.ClientId is not null).Select(row => row.ClientId!.Value).ToArray(),
+            cancellationToken);
         var quotationIds = rows
             .Where(row => row.QuotationId is not null)
-            .Select(row => row.QuotationId!.Value)
+            .Select(row => new QuotationId(row.QuotationId!.Value))
             .Distinct()
             .ToArray();
         var quotationNumbers = quotationIds.Length == 0
@@ -394,21 +558,30 @@ internal sealed class OrdersReportSource(
         return rows
             .Select(row =>
             {
-                clients.TryGetValue(row.ClientId, out var client);
+                // Una venta a consumidor final no tiene ficha: el nombre es el que guardó la venta
+                // («Consumidor final») y el CUC queda nulo.
+                ReportingClientRef? client = null;
+                if (row.ClientId is { } clientId)
+                {
+                    clients.TryGetValue(clientId, out client);
+                }
+
                 return new OrdersReportItemDto(
-                    row.OrderId.Value,
-                    row.OrderNumber,
-                    row.Source.ToString(),
-                    row.QuotationId?.Value,
-                    row.QuotationId is { } quotationId ? quotationNumbers.GetValueOrDefault(quotationId) : null,
-                    row.ConvertedAt,
-                    row.AdvisorId.Value,
-                    advisors.GetValueOrDefault(row.AdvisorId.Value),
+                    row.Id,
+                    row.Number,
+                    row.Source,
+                    row.QuotationId,
+                    row.QuotationId is { } quotationId
+                        ? quotationNumbers.GetValueOrDefault(new QuotationId(quotationId))
+                        : null,
+                    row.OccurredAt,
+                    row.AdvisorId,
+                    advisors.GetValueOrDefault(row.AdvisorId),
                     row.ClientId,
-                    client?.Name,
+                    row.ClientId is null ? row.SnapshotClientName : client?.Name,
                     client?.Cuc,
-                    row.Status.ToString(),
-                    row.PaymentStatus.ToString(),
+                    row.Status,
+                    row.PaymentStatus,
                     row.Currency,
                     row.Subtotal,
                     row.TaxAmount,
@@ -455,23 +628,47 @@ internal sealed class OrdersReportSource(
             })
             .ToArray();
 
-    /// <summary>La fila cruda del pedido, con los tipos del dominio de <c>quotations</c>: los
-    /// <c>.Value</c> de los identificadores se desenvuelven ya en memoria, porque EF no traduce
-    /// el acceso a un miembro de una propiedad con conversor de valor.</summary>
-    private sealed record OrderRow(
-        OrderId OrderId,
-        string OrderNumber,
-        OrderSource Source,
-        QuotationId? QuotationId,
-        DateTimeOffset ConvertedAt,
-        MemberId AdvisorId,
-        Guid ClientId,
-        OrderStatus Status,
-        OrderPaymentStatus PaymentStatus,
-        string Currency,
-        decimal Subtotal,
-        decimal TaxAmount,
-        decimal FreightSubtotal,
-        decimal FreightTaxAmount,
-        decimal Total);
+    /// <summary>
+    /// Una fila de la base, pedido o venta POS, con los alias de <see cref="ReportRowsSql"/> en
+    /// PascalCase. Clase con <c>init</c> y no un record: EF no ve a través del constructor de un
+    /// record en <c>SqlQuery</c> (precedente <c>PipelineConversationDirectory</c>).
+    /// </summary>
+    private sealed class ReportRow
+    {
+        public Guid Id { get; init; }
+
+        public string Number { get; init; } = string.Empty;
+
+        public string Source { get; init; } = string.Empty;
+
+        public Guid? QuotationId { get; init; }
+
+        public DateTimeOffset OccurredAt { get; init; }
+
+        public Guid AdvisorId { get; init; }
+
+        /// <summary>Nulo sólo en una venta POS a consumidor final.</summary>
+        public Guid? ClientId { get; init; }
+
+        public string Status { get; init; } = string.Empty;
+
+        public string PaymentStatus { get; init; } = string.Empty;
+
+        public string Currency { get; init; } = string.Empty;
+
+        public decimal Subtotal { get; init; }
+
+        public decimal TaxAmount { get; init; }
+
+        public decimal FreightSubtotal { get; init; }
+
+        public decimal FreightTaxAmount { get; init; }
+
+        public decimal Total { get; init; }
+
+        public bool IsVoid { get; init; }
+
+        /// <summary>El nombre que guardó la venta POS; nulo en los pedidos.</summary>
+        public string? SnapshotClientName { get; init; }
+    }
 }
