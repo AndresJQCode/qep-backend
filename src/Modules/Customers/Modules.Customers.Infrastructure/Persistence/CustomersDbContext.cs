@@ -66,6 +66,10 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
                 "marketing_opt_out_source IS NULL OR marketing_opt_out_source IN ('manual', 'meta', 'button')");
         });
         customer.HasKey(value => value.Id);
+        // FC-02 reemplaza estos dos Ignore por el mapeo de las columnas de la fusión.
+        customer.Ignore(value => value.MergedIntoId);
+        customer.Ignore(value => value.MergedAt);
+        customer.Ignore(value => value.IsMerged);
         customer.Property(value => value.Id)
             .HasColumnName("id")
             .HasConversion(id => id.Value, value => new CustomerId(value))

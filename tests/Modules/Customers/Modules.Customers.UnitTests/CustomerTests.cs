@@ -1141,4 +1141,40 @@ public sealed class CustomerTests
         Assert.Null(customer.Email);
         Assert.Null(customer.Country);
     }
+
+    public static TheoryData<string> Writes() =>
+        ["Update", "Complete", "Activate", "Deactivate", "AddAddress", "UpdateAddress", "MakeAddressPrincipal", "RemoveAddress", "OptOut", "OptIn"];
+
+    // Spec 2026-10-24 §3.1: el código dice «fusionado» y no «inactivo», aunque el fusionado también lo esté.
+    [Theory]
+    [MemberData(nameof(Writes))]
+    public void AMergedCustomerRejectsEveryWrite(string write)
+    {
+        var survivor = Create(cuc: "CLI08000001");
+        var merged = write == "Complete"
+            ? Customer.CreateFromRegister(
+                CustomerId.New(), TenantId, "Laura", Identification(IdentificationType.Cc, "1020"), null, Now, new StubPhoneNormalizer())
+            : Create();
+        var addressId = merged.Addresses.FirstOrDefault()?.Id ?? new CustomerAddressId(Guid.NewGuid());
+        CustomerMergePlan.Create(survivor, [merged]).MarkMerged(Now);
+
+        Action action = write switch
+        {
+            "Update" => () => merged.Update("Nuevo", null, Identification(), ValidContact(), Commercial(), ClassificationPrefix, Now),
+            "Complete" => () => merged.Complete(
+                "CLI08000002", "Laura", null, null, Identification(IdentificationType.Cc, "1020"), ValidContact(), Commercial(), Now),
+            "Activate" => () => merged.Activate(Now),
+            "Deactivate" => () => merged.Deactivate(Now),
+            "AddAddress" => () => merged.AddAddress(Warehouse(), false, Now),
+            "UpdateAddress" => () => merged.UpdateAddress(addressId, Warehouse(), false, Now),
+            "MakeAddressPrincipal" => () => merged.MakeAddressPrincipal(addressId, Now),
+            "RemoveAddress" => () => merged.RemoveAddress(addressId, Now),
+            "OptOut" => () => merged.OptOutOfMarketing(MarketingConsentSource.Manual, Now),
+            "OptIn" => () => merged.OptInToMarketing(),
+            _ => throw new ArgumentOutOfRangeException(nameof(write)),
+        };
+
+        var error = Assert.Throws<CustomersDomainException>(action);
+        Assert.Equal("customers.customer.merged", error.Code);
+    }
 }

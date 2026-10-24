@@ -166,4 +166,43 @@ public sealed class TagTests
         Assert.Equal(user, assignment.AssignedByUserId);
         Assert.Equal(Now, assignment.AssignedAt);
     }
+
+    [Fact]
+    public void PlanMergeKeepsTheSurvivorsFirstAndSkipsRepeats()
+    {
+        var a = TagId.New();
+        var b = TagId.New();
+        var c = TagId.New();
+
+        var plan = CustomerTagAssignment.PlanMerge([a, b], [b, c]);
+
+        Assert.Equal([c], plan.Added);
+        Assert.Empty(plan.Dropped);
+    }
+
+    [Fact]
+    public void PlanMergeStopsAtTheCapAndReportsTheRest()
+    {
+        var survivor = Enumerable.Range(0, CustomerTagAssignment.MaxPerCustomer - 1).Select(_ => TagId.New()).ToArray();
+        var x = TagId.New();
+        var y = TagId.New();
+        var z = TagId.New();
+
+        var plan = CustomerTagAssignment.PlanMerge(survivor, [x, y, z]);
+
+        Assert.Equal([x], plan.Added);
+        Assert.Equal([y, z], plan.Dropped);
+    }
+
+    [Fact]
+    public void ASurvivorAtTheCapGainsNothing()
+    {
+        var survivor = Enumerable.Range(0, CustomerTagAssignment.MaxPerCustomer).Select(_ => TagId.New()).ToArray();
+        var extra = TagId.New();
+
+        var plan = CustomerTagAssignment.PlanMerge(survivor, [survivor[0], extra]);
+
+        Assert.Empty(plan.Added);
+        Assert.Equal([extra], plan.Dropped);
+    }
 }
