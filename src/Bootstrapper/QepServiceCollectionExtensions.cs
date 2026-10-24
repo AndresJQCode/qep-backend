@@ -52,6 +52,8 @@ using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
+using Modules.Suppliers.Application;
+using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
@@ -245,6 +247,32 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeleteCompanyCommand, CompanyDeletedResult>,
             DeleteCompanyHandler>();
+        // Suppliers, spec 2026-10-23. Los ocho a mano, como los demás: un handler olvidado compila y
+        // responde 500 en runtime.
+        services.AddScoped<
+            IQueryHandler<ListSuppliersQuery, SupplierPage>,
+            ListSuppliersHandler>();
+        services.AddScoped<
+            IQueryHandler<ListSupplierCategoriesQuery, IReadOnlyList<string>>,
+            ListSupplierCategoriesHandler>();
+        services.AddScoped<
+            IQueryHandler<GetSupplierQuery, SupplierResponse>,
+            GetSupplierHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateSupplierCommand, SupplierResponse>,
+            CreateSupplierHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateSupplierCommand, SupplierResponse>,
+            UpdateSupplierHandler>();
+        services.AddScoped<
+            ICommandHandler<ActivateSupplierCommand, SupplierResponse>,
+            ActivateSupplierHandler>();
+        services.AddScoped<
+            ICommandHandler<DeactivateSupplierCommand, SupplierResponse>,
+            DeactivateSupplierHandler>();
+        services.AddScoped<
+            ICommandHandler<ExportSuppliersCommand, ExportSuppliersResult>,
+            ExportSuppliersHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -794,6 +822,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCustomerValidator>();
+        services.AddValidatorsFromAssemblyContaining<CreateSupplierValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
         services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
@@ -805,6 +834,7 @@ public static class QepServiceCollectionExtensions
         services.AddStorageInfrastructure(configuration);
         services.AddCatalogInfrastructure(configuration);
         services.AddCompaniesInfrastructure(configuration);
+        services.AddSuppliersInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
         services.AddQuotationsInfrastructure(configuration);
@@ -968,6 +998,9 @@ public static class QepServiceCollectionExtensions
         // bucket y firmar su enlace de descarga.
         services.AddScoped<ICustomerExportStorage, CustomerExportStorage>();
 
+        // Y entre `suppliers` y `storage`, con el mismo adaptador para su exportación.
+        services.AddScoped<ISupplierExportStorage, SupplierExportStorage>();
+
         // Y entre `quotations` y `storage`, para el Excel de las exportaciones asíncronas.
         services.AddScoped<IExportFileStorage, ExportFileStorage>();
         services.AddScoped<IQuotationPdfStorage, QuotationPdfStorage>();
@@ -986,6 +1019,10 @@ public static class QepServiceCollectionExtensions
         // otro, y el composition root cablea el puerto que declara `companies` contra los
         // repositorios que ya registró AddGeographyInfrastructure.
         services.AddScoped<ICompanyGeographyLookup, CompanyGeographyLookup>();
+
+        // Mismo patrón para `suppliers`: el puerto es suyo y el composition root lo cablea contra
+        // los repositorios de Geography.
+        services.AddScoped<ISupplierGeographyLookup, SupplierGeographyLookup>();
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
@@ -1202,7 +1239,10 @@ public static class QepServiceCollectionExtensions
                 PipelinePermissions.SettingsManage,
                 // Spec 2026-10-21 D-C10: el chatbot atiende en nombre de la empresa; de fábrica sólo en admin. De núcleo.
                 AutomationsPermissions.ChatbotRead,
-                AutomationsPermissions.ChatbotManage
+                AutomationsPermissions.ChatbotManage,
+                // Spec 2026-10-23 D-14: el directorio de proveedores lo administra quien administra la empresa.
+                SuppliersPermissions.Read,
+                SuppliersPermissions.Manage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -1284,7 +1324,10 @@ public static class QepServiceCollectionExtensions
                 // Ver los comprobantes desde el detalle del pedido: el pedido sólo guarda el fileId,
                 // y el enlace lo emite POST /files/{id}/download-url, que exige este permiso. Sin él,
                 // OrderRead muestra la lista de comprobantes pero ninguno se abre (403).
-                StoragePermissions.FileRead
+                StoragePermissions.FileRead,
+                // Spec 2026-10-23 D-14: facturación paga a los proveedores, así que ve y gestiona el directorio.
+                SuppliersPermissions.Read,
+                SuppliersPermissions.Manage
             ]));
         // Spec 2026-10-07, decisión 4: vende, abre y cierra su caja y lee sus ventas. Sin
         // descuentos ni anulación, y sin catálogo ni clientes: /pos/products le da lo que la caja
@@ -1763,6 +1806,21 @@ public static class QepServiceCollectionExtensions
             "Automations",
             "medium",
             RequiredModules: []));
+        // Spec 2026-10-23 D-14: proveedores exige el módulo suppliers.
+        services.AddSingleton(new PermissionDefinition(
+            SuppliersPermissions.Read,
+            "Ver proveedores",
+            "Permite ver el directorio de proveedores y exportarlo.",
+            "Suppliers",
+            "low",
+            RequiredModules: [ModuleKeys.Suppliers]));
+        services.AddSingleton(new PermissionDefinition(
+            SuppliersPermissions.Manage,
+            "Gestionar proveedores",
+            "Permite crear, editar, activar y desactivar proveedores.",
+            "Suppliers",
+            "medium",
+            RequiredModules: [ModuleKeys.Suppliers]));
     }
 
     private static void AddAuthentication(
@@ -2093,7 +2151,14 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, AutomationsPermissions.ChatbotRead))
             .AddPolicy(
                 AutomationsPermissions.ChatbotManage,
-                policy => AddPermissionRequirement(policy, AutomationsPermissions.ChatbotManage));
+                policy => AddPermissionRequirement(policy, AutomationsPermissions.ChatbotManage))
+            // Spec 2026-10-23 D-14: la otra mitad de los permisos de proveedores; sin ella el síntoma es 500.
+            .AddPolicy(
+                SuppliersPermissions.Read,
+                policy => AddPermissionRequirement(policy, SuppliersPermissions.Read))
+            .AddPolicy(
+                SuppliersPermissions.Manage,
+                policy => AddPermissionRequirement(policy, SuppliersPermissions.Manage));
     }
 
     private static void AddPermissionRequirement(
