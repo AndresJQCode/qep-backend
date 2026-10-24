@@ -728,6 +728,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<TakeConversationCommand, ConversationSummary>, TakeConversationHandler>();
         services.AddScoped<ICommandHandler<TransferConversationCommand, ConversationSummary>, TransferConversationHandler>();
         services.AddScoped<ICommandHandler<ReleaseConversationCommand, ConversationSummary>, ReleaseConversationHandler>();
+        // Spec 2026-10-24 §4.2: cambiar el cliente principal de la conversación.
+        services.AddScoped<ICommandHandler<ChangeConversationCustomerCommand, ConversationSummary>, ChangeConversationCustomerHandler>();
         // Spec 2026-10-21: pausar y devolver el asistente. Sin registro, 500.
         services.AddScoped<ICommandHandler<PauseAutomationCommand, ConversationSummary>, PauseAutomationHandler>();
         services.AddScoped<ICommandHandler<ResumeAutomationCommand, ConversationSummary>, ResumeAutomationHandler>();

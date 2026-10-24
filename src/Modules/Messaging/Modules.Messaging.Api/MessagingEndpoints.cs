@@ -189,6 +189,17 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        // Spec 2026-10-24 §4.2: cambiar el cliente principal, con If-Match como take/transfer.
+        group.MapPut("/conversations/{conversationId:guid}/customer", ChangeCustomerAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Accepts<ChangeConversationCustomerRequest>("application/json")
+            .Produces<ConversationSummary>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
         // Spec 2026-10-21 §4: pausar el asistente y devolvérselo, con If-Match como take/release.
         group.MapPost("/conversations/{conversationId:guid}/automation/pause", PauseAutomationAsync)
             .RequireAuthorization(MessagingPermissions.ConversationManage)
@@ -467,6 +478,10 @@ public static class MessagingEndpoints
         Guid tenantId, Guid conversationId, TransferConversationRequest request, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new TransferConversationCommand(tenantId, conversationId, request.MemberId, RequireVersion(httpContext)), cancellationToken));
 
+    private static async Task<IResult> ChangeCustomerAsync(
+        Guid tenantId, Guid conversationId, ChangeConversationCustomerRequest request, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new ChangeConversationCustomerCommand(tenantId, conversationId, request.CustomerId, RequireVersion(httpContext)), cancellationToken));
+
     private static async Task<IResult> ReleaseAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new ReleaseConversationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
 
@@ -523,6 +538,9 @@ public sealed record CreateMediaUploadSessionRequest(string? FileName, string? M
 
 /// <summary>Spec 2026-10-10 §5.1.</summary>
 public sealed record TransferConversationRequest(Guid? MemberId);
+
+/// <summary>Spec 2026-10-24 §4.2.</summary>
+public sealed record ChangeConversationCustomerRequest(Guid? CustomerId);
 
 /// <summary>Spec 2026-10-15 §3.3: todo opcional. <c>reasonId</c> elige un motivo vigente; <c>reasonName</c> busca o crea por nombre (D-R4).
 /// BFF: el selector manda el texto tal cual lo escribió la persona y el servidor decide si ya existía, así la pantalla no tiene que crear

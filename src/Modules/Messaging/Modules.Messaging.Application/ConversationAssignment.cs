@@ -11,6 +11,9 @@ public sealed record TransferConversationCommand(Guid TenantId, Guid Conversatio
 
 public sealed record ReleaseConversationCommand(Guid TenantId, Guid ConversationId, long ExpectedVersion) : ICommand<ConversationSummary>;
 
+public sealed record ChangeConversationCustomerCommand(Guid TenantId, Guid ConversationId, Guid? CustomerId, long ExpectedVersion)
+    : ICommand<ConversationSummary>;
+
 public sealed class TransferConversationValidator : AbstractValidator<TransferConversationCommand>
 {
     public TransferConversationValidator() =>
@@ -115,4 +118,40 @@ public sealed class ReleaseConversationHandler(ConversationAssignmentSteps steps
     }
 
     private static IReadOnlyList<ConversationEvent> ReleasedAsList(ConversationEvent? change) => change is null ? [] : [change];
+}
+
+public sealed class ChangeConversationCustomerValidator : AbstractValidator<ChangeConversationCustomerCommand>
+{
+    public ChangeConversationCustomerValidator() =>
+        RuleFor(command => command.CustomerId).NotNull().NotEqual(Guid.Empty).OverridePropertyName("customerId")
+            .WithMessage("Elige el cliente de la conversación.");
+}
+
+/// <summary>Spec 2026-10-24 §4.2: cambia el cliente principal de la conversación. Autoriza antes de validar (no copia el orden de
+/// transferir): tenant, permiso y módulo → conversación (404) → membresía activa → validación → el cliente existe en el tenant
+/// (422, igual si es de otro tenant) → If-Match (412) → agregado → evento y auditoría. Sirve cualquier cliente del tenant, activo
+/// o no (D-D7). El mismo cliente responde 200 sin evento, auditoría ni versión nueva.
+/// <para>Lo que <b>no</b> se mueve (D-D8): el BSUID (sigue siendo del cliente que lo registró), los negocios y el triage del
+/// embudo y los mensajes ya enviados. Lo que sigue a la conversación porque lee <c>customer_id</c>: el opt-out por botón y por
+/// 131050, el asignado heredero, la búsqueda y el filtro por etiqueta y el triage pendiente.</para></summary>
+public sealed class ChangeConversationCustomerHandler(
+    ConversationAssignmentSteps steps, IMessagingCustomerDirectory customers, IValidator<ChangeConversationCustomerCommand> validator)
+    : ICommandHandler<ChangeConversationCustomerCommand, ConversationSummary>
+{
+    public async Task<ConversationSummary> HandleAsync(ChangeConversationCustomerCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        var (conversation, member) = await steps.LoadAsync(command.TenantId, command.ConversationId, cancellationToken);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var customerId = command.CustomerId!.Value;
+        var found = await customers.FindRefsAsync(command.TenantId, [customerId], cancellationToken);
+        if (!found.ContainsKey(customerId))
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.ConversationCustomerNotFound, "That customer does not exist in this tenant.");
+        }
+
+        ConversationConcurrency.EnsureVersion(conversation, command.ExpectedVersion);
+        var now = steps.Now;
+        return await steps.CommitAsync(command.TenantId, conversation, conversation.ChangeCustomer(customerId, member, now), now, cancellationToken);
+    }
 }
