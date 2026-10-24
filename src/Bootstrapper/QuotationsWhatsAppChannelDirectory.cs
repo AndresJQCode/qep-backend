@@ -17,7 +17,7 @@ internal sealed class QuotationsWhatsAppChannelDirectory(IIntegrationConnections
         var channels = new List<WhatsAppChannel>();
         foreach (var summary in await connections.ListActiveAsync(tenantId, IntegrationProviders.Zenvia.Key, cancellationToken))
         {
-            var resolved = await connections.ResolveAsync(tenantId, summary.Id, cancellationToken);
+            var resolved = (await connections.ResolveAsync(tenantId, summary.Id, cancellationToken)).Connection;
             if (resolved is null
                 || Value(resolved.Secrets, ZenviaFieldKeys.ApiToken) is not { } token
                 || Value(resolved.Fields, ZenviaFieldKeys.FromNumber) is not { } fromNumber

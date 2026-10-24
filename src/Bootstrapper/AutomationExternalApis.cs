@@ -21,7 +21,7 @@ internal sealed class AutomationExternalApis(IIntegrationConnections connections
     /// bloque importado con el id de una conexión de WhatsApp) y una URL que ni siquiera se arma.</summary>
     public async Task<ExternalApiCredentials?> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
     {
-        if (await connections.ResolveAsync(tenantId, connectionId, cancellationToken) is not { ProviderKey: ProviderKey } connection
+        if ((await connections.ResolveAsync(tenantId, connectionId, cancellationToken)).Connection is not { ProviderKey: ProviderKey } connection
             || !Uri.TryCreate(connection.Fields.GetValueOrDefault(ExternalApiFieldKeys.BaseUrl), UriKind.Absolute, out var baseUrl)
             || connection.Secrets.GetValueOrDefault(ExternalApiFieldKeys.ApiKey) is not { Length: > 0 } apiKey)
         {

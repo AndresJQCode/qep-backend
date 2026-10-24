@@ -119,8 +119,10 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
             return this;
         }
 
-        public Task<ResolvedConnection?> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
-            Task.FromResult(tenantId == TenantId ? resolved.GetValueOrDefault(connectionId) : null);
+        public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            Task.FromResult(tenantId == TenantId && resolved.GetValueOrDefault(connectionId) is { } connection
+                ? ConnectionResolution.Resolved(connection)
+                : ConnectionResolution.Unusable(ConnectionUnavailableReason.NotFound, null));
 
         public Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken)
         {

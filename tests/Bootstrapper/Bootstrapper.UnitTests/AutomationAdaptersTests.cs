@@ -424,10 +424,12 @@ public sealed class AutomationAdaptersTests
             return Task.FromResult(listings);
         }
 
-        public Task<ResolvedConnection?> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+        public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
         {
             Resolved = (tenantId, connectionId);
-            return Task.FromResult(resolved);
+            return Task.FromResult(resolved is null
+                ? ConnectionResolution.Unusable(ConnectionUnavailableReason.NotFound, null)
+                : ConnectionResolution.Resolved(resolved));
         }
 
         public Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) => throw new NotSupportedException();
