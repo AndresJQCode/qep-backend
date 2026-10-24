@@ -12,6 +12,7 @@ using Modules.Messaging.Application;
 using Modules.Pipeline.Application;
 using Modules.Pos.Application;
 using Modules.Shopify.Application;
+using Modules.Suppliers.Application;
 using Modules.Tenancy.Application;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
@@ -174,14 +175,15 @@ public sealed class CompositionRootTests
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheSixtyOneConstants()
+    public void PermissionDiscoveryFindsTheSixtyThreeConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
         // + el de plantillas (spec 2026-10-14 D-T5) + el de motivos de resolución (spec 2026-10-15 D-R8)
         // + el de horarios de atención (spec 2026-10-21 D-H8) + los dos de chatbots (spec 2026-10-21 D-C10)
-        // + el del cliente de la venta de POS (spec 2026-10-14, decisión 4).
-        Assert.Equal(61, PermissionConstants().Length);
+        // + el del cliente de la venta de POS (spec 2026-10-14, decisión 4)
+        // + los dos de proveedores (suppliers, spec 2026-10-23).
+        Assert.Equal(63, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-11 §6.4 y decisión 16: de núcleo (el módulo lo revisa cada handler) y de fábrica sólo en <c>admin</c>:
@@ -445,6 +447,29 @@ public sealed class CompositionRootTests
         Assert.Contains(PosPermissions.SaleCustomer, catalog.PermissionsFor("cashier"));
         Assert.DoesNotContain(PosPermissions.SaleCustomer, catalog.PermissionsFor("advisor"));
         Assert.DoesNotContain(PosPermissions.SaleCustomer, catalog.PermissionsFor("billing"));
+    }
+
+    /// <summary>
+    /// Spec 2026-10-23 D-14 y B3: los dos permisos de proveedores exigen sólo el módulo <c>suppliers</c>, van a admin y a
+    /// facturación (que paga a los proveedores) y no a asesor ni cajero.
+    /// </summary>
+    [Fact]
+    public void TheSuppliersPermissionsRequireTheSuppliersModuleAndGoToAdminAndBilling()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+
+        foreach (var permission in new[] { SuppliersPermissions.Read, SuppliersPermissions.Manage })
+        {
+            Assert.Equal("Suppliers", definitions[permission].Category);
+            Assert.Equal([ModuleKeys.Suppliers], definitions[permission].RequiredModules!.ToArray());
+            Assert.Contains(permission, catalog.PermissionsFor("admin"));
+            Assert.Contains(permission, catalog.PermissionsFor("billing"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+        }
     }
 
     /// <summary>
