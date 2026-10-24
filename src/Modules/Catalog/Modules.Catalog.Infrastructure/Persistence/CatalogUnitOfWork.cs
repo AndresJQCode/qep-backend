@@ -180,9 +180,17 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
         }
     }
 
+    // Las tres FK que se traducen acá son ON DELETE RESTRICT, y Postgres no responde lo mismo
+    // según el lado: insertar o actualizar la fila hija da 23503 (foreign_key_violation), pero
+    // borrar la padre que alguien usa da 23001 (restrict_violation). Mirar sólo 23503 deja el
+    // borrado —justo la carrera para la que existe el RESTRICT— saliendo como 500. Mismo criterio
+    // que CompaniesUnitOfWork. El nombre de la constraint sigue siendo lo que decide.
+    private static bool IsForeignKeyOrRestrictViolation(PostgresException postgres) =>
+        postgres.SqlState is PostgresErrorCodes.ForeignKeyViolation or PostgresErrorCodes.RestrictViolation;
+
     private static bool IsOptionReferenceViolation(DbUpdateException exception) =>
         exception.InnerException is PostgresException postgres &&
-        postgres.SqlState == PostgresErrorCodes.ForeignKeyViolation &&
+        IsForeignKeyOrRestrictViolation(postgres) &&
         (string.Equals(postgres.ConstraintName, ProductOptionForeignKey, StringComparison.Ordinal) ||
          string.Equals(postgres.ConstraintName, VariantOptionValueForeignKey, StringComparison.Ordinal));
 
@@ -194,7 +202,7 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
 
     private static bool IsProductTaxRateViolation(DbUpdateException exception) =>
         exception.InnerException is PostgresException postgres &&
-        postgres.SqlState == PostgresErrorCodes.ForeignKeyViolation &&
+        IsForeignKeyOrRestrictViolation(postgres) &&
         string.Equals(
             postgres.ConstraintName,
             ProductTaxRateForeignKey,

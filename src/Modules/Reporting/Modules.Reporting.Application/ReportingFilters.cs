@@ -28,6 +28,9 @@ public sealed record ReportPeriod(DateTimeOffset? Start, DateTimeOffset? EndExcl
 ///
 /// El mismo record lo usan el listado y el resumen —el contrato pide exactamente los mismos
 /// filtros menos la paginación—, así que también hay un solo validador para los dos caminos.
+///
+/// <c>Source</c> es texto por el mismo motivo que <c>PaymentStatus</c>; sin él vienen los cuatro
+/// orígenes, incluidas las ventas POS (spec 2026-10-23 §2).
 /// </summary>
 public sealed record OrdersReportFilter(
     Guid TenantId,
@@ -35,7 +38,8 @@ public sealed record OrdersReportFilter(
     DateOnly? To,
     Guid? AdvisorId,
     Guid? ClientId,
-    string? PaymentStatus);
+    string? PaymentStatus,
+    string? Source);
 
 /// <summary>Los mismos filtros ya validados y parseados, que es lo que ve el adaptador. Separado
 /// del filtro de entrada para que ningún origen de datos tenga que volver a interpretar
@@ -45,7 +49,8 @@ public sealed record OrdersReportCriteria(
     ReportPeriod Period,
     Guid? AdvisorId,
     Guid? ClientId,
-    OrderPaymentStatusFilter? PaymentStatus);
+    OrderPaymentStatusFilter? PaymentStatus,
+    OrderSourceFilter? Source);
 
 /// <summary>Ver <see cref="OrdersReportFilter"/>.</summary>
 public sealed record QuotationsReportFilter(
@@ -136,7 +141,8 @@ public static class ReportFilterMapping
             ReportPeriod.Of(calendar, filter.From, filter.To),
             filter.AdvisorId,
             filter.ClientId,
-            ReportFilterParser.ParsePaymentStatus(filter.PaymentStatus));
+            ReportFilterParser.ParsePaymentStatus(filter.PaymentStatus),
+            ReportFilterParser.ParseSource(filter.Source));
 
     public static QuotationsReportCriteria ToCriteria(this QuotationsReportFilter filter, TenantCalendar calendar) =>
         new(
@@ -181,6 +187,10 @@ public sealed class OrdersReportFilterValidator : AbstractValidator<OrdersReport
             .WithMessage(
                 "paymentStatus must be one of FullPaymentReceived, PartialPaymentReceived, "
                     + "PaymentPending.");
+        RuleFor(filter => filter.Source)
+            .Must(value => ReportFilterParser.TryParseSource(value, out _))
+            .When(filter => !string.IsNullOrWhiteSpace(filter.Source))
+            .WithMessage("source must be one of Quotation, Manual, Shopify, Pos.");
         RuleFor(filter => filter.To)
             .GreaterThanOrEqualTo(filter => filter.From!.Value)
             .When(filter => filter.From is not null && filter.To is not null)

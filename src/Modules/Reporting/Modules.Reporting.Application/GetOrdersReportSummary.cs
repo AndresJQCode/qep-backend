@@ -59,6 +59,8 @@ public sealed class GetOrdersReportSummaryHandler(
             current.Monthly,
             current.ByAdvisor,
             current.ByClient,
+            current.BySource,
+            current.WithoutClient,
             await SummarizePrecedingAsync(filter, criteria, calendar, cancellationToken));
     }
 

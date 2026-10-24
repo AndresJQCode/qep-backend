@@ -266,4 +266,26 @@ public sealed class OrdersReportApiTests
         Assert.Equal((order.Subtotal, order.TaxAmount, order.Total), (row.Subtotal, row.TaxAmount, row.Total));
         Assert.True(row.Total > 0);
     }
+
+    [Fact]
+    public async Task ListFiltersBySource()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        var order = await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
+        await CreateManualOrderAsync(client, tenant.TenantId);
+
+        var page = await client.GetFromJsonAsync<ReportPageDto<OrdersReportItem>>(
+            $"{ReportsUrl(tenant.TenantId)}/orders?source=Quotation", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(page);
+        Assert.Equal(1, page.Total);
+        Assert.Equal(order.Id, Assert.Single(page.Items).OrderId);
+    }
 }
