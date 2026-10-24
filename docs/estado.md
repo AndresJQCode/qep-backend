@@ -153,7 +153,7 @@ historial de `git` los conserva.
 - USD sin IVA (hotfix 2026-10-14): sin backfill; fila de IVA oculta en el frontend; solo COP discrimina IVA. La
   generalización a otras monedas no se le consultó al owner.
 - ImageSharp exige licencia en Release: `main` ya tiene la supresión (hotfix 2026-10-14).
-- Pago parcial con redondeo (hotfix 2026-10-19): en `main` y en `develop` (`merge/hotfix-pago-parcial`).
+- Pago parcial con redondeo (hotfix 2026-10-19, `fe3d1fe1`): en `main`. **En `develop` no está** (verificado el 2026-10-24: `Order.RecalculatePaymentStatus` no redondea y `RoundToDisplayedPrecision` no existe). La adaptación a `develop` quedó **sin commitear** en el worktree `../qep-backend-merge-pago` (`Order.cs` +12, `OrderTests.cs` +21, sobre `72feeb1a`, 238 commits atrás). Pendiente del owner: portarla en una rama desde `develop` con sus pruebas. Los otros dos hotfixes del 2026-10-15 (nota al convertir, observaciones en el Excel) sí están en `develop`, reescritos.
 
 ## Defectos conocidos
 
@@ -194,6 +194,7 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-24 — Limpieza de ramas en los dos repos: borradas las ramas y worktrees ya mergeados a `develop` (backend: `automatizaciones-clasic`, `automatizaciones-constructor-backend`, `automatizaciones-motor-backend`, `chatbot-mover-conexion`, `pos-cliente-identificado`, `reportes-ventas-pos`; frontend: `pos-cliente-identificado`, `reportes-ventas-pos`, registro huérfano de `chatbot-mover-conexion`). En el frontend se integró `develop` en `feature/proveedores` y se hizo ff a `develop` (`aa517ab8`: spec y plan de proveedores). Quedan: `feature/proveedores` en ambos repos (ejecución pendiente), `feature/clientes-duplicados` en ambos (otra sesión, con cambios sin commitear) y los worktrees `hotfix/*` y `merge/hotfix-pago-parcial` del owner (ver «Hotfixes»).
 - 2026-10-24 — Spec y planes de **Proveedores** (directorio) listos para ejecutar: spec aprobada por el owner el 2026-10-23 (`qep-frontend` `feature/proveedores`, `2a47bc6d`), plan backend `10e388bb` y plan frontend `9490220e` en las ramas `feature/proveedores` de cada repo, sin código. El pedido original («compras a proveedores y manejo de inventario») se recortó al directorio; se revisó «proveedores vs. terceros» y se eligió entidad propia con la identidad de `Customer` copiada campo por campo. Decisiones del owner: `suppliers` fuera del default (D-12), `advisor` sin permiso (D-14), renombrar la sección del operador (D-17).
 - 2026-10-24 — Mergeados a `develop` (con push) tres ramas del backend: `feature/chatbot-mover-conexion` (`353e09bb`,
   código: traspaso de conexión entre chatbots con `takeOverConnectionIds`, con una corrección de la revisión final
