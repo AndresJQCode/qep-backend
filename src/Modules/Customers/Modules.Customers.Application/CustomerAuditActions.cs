@@ -18,4 +18,7 @@ public static class CustomerAuditActions
     public const string TagDeleted = "customers.tag.deleted";
     public const string TagsChanged = "customers.customer.tags_changed";
     public const string MarketingConsentChanged = "customers.customer.marketing_consent_changed";
+
+    /// <summary>Spec 2026-10-24 §3.2 paso 6: una fila por cliente de la fusión, el que queda y cada fusionado.</summary>
+    public const string Merged = "customers.customer.merged";
 }

@@ -422,3 +422,44 @@ public sealed record CustomerMergePreviewResponse(
     bool DocumentsDiffer,
     IReadOnlyList<CustomerMergeMoveDto> Moves,
     IReadOnlyList<string> FilledFields);
+
+/// <summary>D-F5: una etiqueta que no cupo en el que queda. Sólo lo que el aviso nombra: el color y el conteo no hacen falta
+/// para decir cuáles no cupieron.</summary>
+public sealed record CustomerMergeDroppedTagDto(Guid Id, string Name);
+
+/// <summary>El cuerpo de <c>POST /customers/{survivorId}/merge</c>. Opcional en el binding para que una lista ausente sea un
+/// 422 con <c>errors.MergedCustomerIds</c> del validador y no un 400 del deserializador.</summary>
+public sealed record MergeCustomersRequest(IReadOnlyList<Guid>? MergedCustomerIds);
+
+/// <summary>
+/// La respuesta de la fusión (B3). BFF: los mismos campos que <see cref="CustomerResponse"/>, en el mismo objeto, para que
+/// la pantalla repinte la ficha del que quedó con el mismo código que dibuja un <c>GET</c>, más <c>DroppedTags</c>, que viaja
+/// siempre (<c>[]</c> si todo cupo) para que el aviso no tenga que distinguir «vacío» de «ausente». Sin versión: al terminar,
+/// el frontend navega a la ficha del que quedó, y una fusión nueva pide otra vista previa, que es de donde sale el
+/// <c>If-Match</c>.
+/// </summary>
+public sealed record CustomerMergeResponse(
+    Guid Id,
+    string? Cuc,
+    string Name,
+    string? BusinessName,
+    string? IdentificationType,
+    string? IdentificationNumber,
+    string? Phone,
+    string? Email,
+    string? Address,
+    string? Country,
+    CustomerCityDto? City,
+    CustomerDepartmentDto? Department,
+    string? CityName,
+    ClientClassificationDto? Classification,
+    IReadOnlyCollection<CustomerAddressDto> Addresses,
+    bool WithRetention,
+    bool VatSurplus,
+    bool IsActive,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    bool IsComplete,
+    IReadOnlyCollection<TagDto> Tags,
+    MarketingConsentDto MarketingConsent,
+    IReadOnlyList<CustomerMergeDroppedTagDto> DroppedTags);

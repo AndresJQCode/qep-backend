@@ -63,6 +63,17 @@ public static class CustomerEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-10-24 §3.2: la fusión de verdad. If-Match con survivor.version de la vista previa; 428 sin él.
+        group.MapPost("/{customerId:guid}/merge", MergeCustomersAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerMerge)
+            .Accepts<MergeCustomersRequest>("application/json")
+            .Produces<CustomerMergeResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
         group.MapPost("/", CreateCustomerAsync)
             .RequireAuthorization(CustomersPermissions.CustomerManage)
             .Accepts<CreateCustomerRequest>("application/json")
@@ -252,6 +263,46 @@ public static class CustomerEndpoints
         Guid[]? mergedCustomerIds = null) =>
         Results.Ok(await dispatcher.QueryAsync(
             new GetCustomerMergePreviewQuery(tenantId, customerId, mergedCustomerIds), cancellationToken));
+
+    private static async Task<IResult> MergeCustomersAsync(
+        Guid tenantId,
+        Guid customerId,
+        MergeCustomersRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var expectedVersion = RequireVersion(httpContext);
+        var result = await dispatcher.SendAsync(
+            new MergeCustomersCommand(tenantId, customerId, request.MergedCustomerIds, expectedVersion), cancellationToken);
+        var survivor = result.Survivor;
+
+        return Results.Ok(new CustomerMergeResponse(
+            survivor.Id,
+            survivor.Cuc,
+            survivor.Name,
+            survivor.BusinessName,
+            survivor.IdentificationType,
+            survivor.IdentificationNumber,
+            survivor.Phone,
+            survivor.Email,
+            survivor.Address,
+            survivor.Country,
+            survivor.City,
+            survivor.Department,
+            survivor.CityName,
+            survivor.Classification,
+            survivor.Addresses,
+            survivor.WithRetention,
+            survivor.VatSurplus,
+            survivor.IsActive,
+            survivor.CreatedAt,
+            survivor.UpdatedAt,
+            survivor.IsComplete,
+            survivor.Tags,
+            survivor.MarketingConsent,
+            result.DroppedTags));
+    }
 
     private static async Task<IResult> CreateCustomerAsync(
         Guid tenantId,
@@ -466,6 +517,38 @@ public static class CustomerEndpoints
             cancellationToken);
 
         return Results.Ok(ToResponse(customer));
+    }
+
+    /// <summary>
+    /// La versión de <c>If-Match</c>; sin ella, 428 <c>precondition.if_match_required</c>. Es copia literal de las privadas de
+    /// <c>ShopifyEndpoints</c> e <c>IntegrationsEndpoints</c> y de la pública de <c>Modules.Tenancy.Api/IfMatchHeader.cs</c>:
+    /// Customers.Api no referencia esos módulos, y subir un helper compartido queda fuera de este slice (ruling B5). Si
+    /// cambias cómo se lee el header, cambia las cuatro.
+    /// </summary>
+    private static long RequireVersion(HttpContext httpContext) =>
+        TryParseVersion(httpContext.Request.Headers.IfMatch, out var version)
+            ? version
+            : throw new PreconditionRequiredException(
+                "precondition.if_match_required",
+                "A valid If-Match header containing the loaded customer version is required.");
+
+    // Acepta lo que la SPA ya manda en el resto del repo: "7" y también el débil W/"7".
+    private static bool TryParseVersion(string? etag, out long version)
+    {
+        version = 0;
+        if (string.IsNullOrWhiteSpace(etag))
+        {
+            return false;
+        }
+
+        var normalized = etag.Trim();
+        if (normalized.StartsWith("W/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[2..].Trim();
+        }
+
+        normalized = normalized.Trim('"');
+        return long.TryParse(normalized, out version) && version > 0;
     }
 
     private static CustomerResponse ToResponse(CustomerDto customer) => new(

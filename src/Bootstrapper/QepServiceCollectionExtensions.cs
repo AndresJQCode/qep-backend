@@ -302,6 +302,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetCustomerMergePreviewQuery, CustomerMergePreviewResponse>,
             GetCustomerMergePreviewHandler>();
         services.AddScoped<
+            ICommandHandler<MergeCustomersCommand, CustomerMergeResult>,
+            MergeCustomersHandler>();
+        services.AddScoped<
             IQueryHandler<FindCustomerIdentificationMatchesQuery, CustomerIdentificationMatchesResponse>,
             FindCustomerIdentificationMatchesHandler>();
         services.AddScoped<
