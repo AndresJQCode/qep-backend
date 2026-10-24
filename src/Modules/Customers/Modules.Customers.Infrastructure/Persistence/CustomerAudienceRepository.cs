@@ -127,6 +127,8 @@ internal sealed class CustomerAudienceRepository(CustomersDbContext dbContext) :
 
         return customers.Where(customer =>
             customer.TenantId == tenantId
+            // Un fusionado no recibe campañas (spec 2026-10-24 §3.3). `FindContactAsync` no filtra: el destinatario ya congelado se omite como inactivo.
+            && customer.MergedIntoId == null
             && (ids.Contains(customer.Id)
                 || dbContext.CustomerTagAssignments.Any(assignment =>
                     assignment.TenantId == tenantId && assignment.CustomerId == customer.Id && tags.Contains(assignment.TagId))));

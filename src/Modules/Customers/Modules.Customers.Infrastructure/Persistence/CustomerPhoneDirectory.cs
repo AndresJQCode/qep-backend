@@ -45,7 +45,7 @@ internal sealed partial class CustomerPhoneDirectory(CustomersDbContext dbContex
 
         var rows = await dbContext.Customers
             .AsNoTracking()
-            .Where(customer => customer.TenantId == tenantId && customer.PhoneE164 == e164)
+            .Where(customer => customer.TenantId == tenantId && customer.PhoneE164 == e164 && customer.MergedIntoId == null)
             .OrderBy(customer => customer.CreatedAt).ThenBy(customer => customer.Id)
             .Take(take)
             .Select(customer => new { customer.Id, customer.Name, customer.Completeness })

@@ -39,7 +39,8 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         var query = dbContext.Customers
             .AsNoTracking()
             .Include(customer => customer.Addresses)
-            .Where(customer => customer.TenantId == tenantId);
+            // Un fusionado ya es otra ficha (spec 2026-10-24 §3.3): no se lista, ni se busca, ni se exporta, ni se elige en POS.
+            .Where(customer => customer.TenantId == tenantId && customer.MergedIntoId == null);
 
         // El criterio combinado original: un solo termino, OR entre los tres campos. Sigue
         // vivo para el combobox de clientes de quotes, que necesita un unico cuadro de texto.

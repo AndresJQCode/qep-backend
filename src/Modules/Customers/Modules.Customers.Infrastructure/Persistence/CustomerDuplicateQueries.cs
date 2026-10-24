@@ -22,7 +22,7 @@ internal sealed class CustomerDuplicateQueries(CustomersDbContext dbContext) : I
         var query = dbContext.Customers
             .FromSqlRaw(
                 $"SELECT * FROM customers.customers WHERE tenant_id = {{0}} AND identification_type IS NOT NULL " +
-                $"AND identification_number IS NOT NULL AND {CustomerIdentificationSql.NormalizedNumber} = {{1}}",
+                $"AND identification_number IS NOT NULL AND merged_into_id IS NULL AND {CustomerIdentificationSql.NormalizedNumber} = {{1}}",
                 tenantId,
                 normalizedNumber)
             .AsNoTracking();
@@ -47,8 +47,8 @@ internal sealed class CustomerDuplicateQueries(CustomersDbContext dbContext) : I
 
     private static string FilterOf(CustomerAnomalyKind kind) =>
         kind == CustomerAnomalyKind.SharedPhone
-            ? "phone_e164 IS NOT NULL"
-            : $"identification_number IS NOT NULL AND {CustomerIdentificationSql.NormalizedNumber} <> ''";
+            ? "merged_into_id IS NULL AND phone_e164 IS NOT NULL"
+            : $"merged_into_id IS NULL AND identification_number IS NOT NULL AND {CustomerIdentificationSql.NormalizedNumber} <> ''";
 
     public async Task<IReadOnlyDictionary<CustomerAnomalyKind, int>> CountAnomalyGroupsAsync(
         Guid tenantId, CancellationToken cancellationToken)

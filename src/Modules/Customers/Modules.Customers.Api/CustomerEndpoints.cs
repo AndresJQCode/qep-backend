@@ -301,6 +301,7 @@ public static class CustomerEndpoints
             survivor.IsComplete,
             survivor.Tags,
             survivor.MarketingConsent,
+            survivor.MergedInto,
             result.DroppedTags));
     }
 
@@ -574,7 +575,8 @@ public static class CustomerEndpoints
         customer.UpdatedAt,
         customer.IsComplete,
         customer.Tags,
-        customer.MarketingConsent);
+        customer.MarketingConsent,
+        customer.MergedInto);
 
     private static CustomerListItemResponse ToListItem(CustomerDto customer) => new(
         customer.Id,
@@ -589,5 +591,6 @@ public static class CustomerEndpoints
         customer.CityName,
         customer.Classification,
         customer.IsActive,
-        customer.IsComplete);
+        customer.IsComplete,
+        customer.CreatedAt);
 }

@@ -75,7 +75,17 @@ public sealed record CustomerDto(
     /// <summary>Spec 2026-10-11 decisión 10. Viaja siempre; con <c>optedOut = false</c> sus otros campos son null.</summary>
     MarketingConsentDto MarketingConsent,
     /// <summary>Spec 2026-10-14 decisión 10: el <c>@usuario</c> de Instagram de un cliente que escribió por ese canal; null si no.</summary>
-    string? InstagramUsername = null);
+    string? InstagramUsername = null,
+    /// <summary>Spec 2026-10-24 §3.3: con un valor, la ficha es de un cliente fusionado. Sólo <c>GetCustomerHandler</c> lo llena;
+    /// los demás handlers devuelven <c>null</c> porque un fusionado no se escribe.</summary>
+    CustomerMergedIntoDto? MergedInto = null);
+
+/// <summary>
+/// A dónde fue un cliente fusionado. Es un objeto y no un id suelto (BFF): la ficha del fusionado muestra «Fusionado con
+/// <c>name</c>» y navega a <c>id</c> en un solo paso; con sólo el id, la pantalla tendría que adivinar el destino con un
+/// segundo <c>GET</c> o con un 404.
+/// </summary>
+public sealed record CustomerMergedIntoDto(Guid Id, string Name);
 
 public sealed record CustomerResponse(
     Guid Id,
@@ -101,7 +111,10 @@ public sealed record CustomerResponse(
     /// <summary>Spec 2026-10-10 §5.2: con <c>false</c>, CUC, documento, correo, dirección, país, ciudad y clasificación pueden venir en <c>null</c>.</summary>
     bool IsComplete,
     IReadOnlyCollection<TagDto> Tags,
-    MarketingConsentDto MarketingConsent);
+    MarketingConsentDto MarketingConsent,
+    /// <summary>Viaja siempre, <c>null</c> incluido (sin <c>JsonIgnore</c>): la pantalla distingue «no está fusionado» de «el campo
+    /// no existe». <c>CustomerMergeResponse</c> lo copia; una prueba de paridad amarra que los dos records tengan los mismos campos.</summary>
+    CustomerMergedIntoDto? MergedInto = null);
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>address</c> no
@@ -130,7 +143,10 @@ public sealed record CustomerListItemResponse(
     ClientClassificationDto? Classification,
     bool IsActive,
     /// <summary>Spec 2026-10-10 §5.2: con <c>false</c>, CUC, documento, correo, dirección, país, ciudad y clasificación pueden venir en <c>null</c>.</summary>
-    bool IsComplete);
+    bool IsComplete,
+    /// <summary>Spec 2026-10-24 (B4): «Fusionar con…» propone como el que queda al cliente más viejo, y la pantalla lo elige con
+    /// esta fecha sin pedir la ficha de cada candidato.</summary>
+    DateTimeOffset CreatedAt);
 
 /// <summary>
 /// El sobre del listado, con el total que la paginacion necesita.
@@ -462,4 +478,5 @@ public sealed record CustomerMergeResponse(
     bool IsComplete,
     IReadOnlyCollection<TagDto> Tags,
     MarketingConsentDto MarketingConsent,
+    CustomerMergedIntoDto? MergedInto,
     IReadOnlyList<CustomerMergeDroppedTagDto> DroppedTags);
