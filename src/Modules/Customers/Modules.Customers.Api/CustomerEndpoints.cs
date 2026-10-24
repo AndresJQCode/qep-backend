@@ -42,6 +42,13 @@ public static class CustomerEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Clientes que comparten celular o documento. Tampoco lleva {customerId:guid}.
+        group.MapGet("/anomalies", ListAnomaliesAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerRead)
+            .Produces<CustomerAnomaliesResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapGet("/{customerId:guid}", GetCustomerAsync)
             .RequireAuthorization(CustomersPermissions.CustomerRead)
             .Produces<CustomerResponse>()
@@ -203,6 +210,17 @@ public static class CustomerEndpoints
         Guid? excludeCustomerId = null) =>
         Results.Ok(await dispatcher.QueryAsync(
             new FindCustomerIdentificationMatchesQuery(tenantId, number, type, excludeCustomerId),
+            cancellationToken));
+
+    private static async Task<IResult> ListAnomaliesAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        string? kind = null,
+        int page = 1,
+        int pageSize = CustomerAnomalyPaging.DefaultPageSize) =>
+        Results.Ok(await dispatcher.QueryAsync(
+            new ListCustomerAnomaliesQuery(tenantId, kind, page, pageSize),
             cancellationToken));
 
     private static async Task<IResult> GetCustomerAsync(

@@ -347,3 +347,44 @@ public sealed record CustomerIdentificationMatchDto(
 
 /// <summary>Siempre <c>items</c>, vacía sin coincidencias; sin total: es un aviso, no un listado.</summary>
 public sealed record CustomerIdentificationMatchesResponse(IReadOnlyList<CustomerIdentificationMatchDto> Items);
+
+/// <summary>
+/// Spec 2026-10-24 §3.3: una clase de anomalía y cuántos grupos tiene. <c>counts</c> viaja con las dos clases siempre, también
+/// en cero: las pestañas dibujan su contador sin conocer el enum del backend, y una clase que desaparece de la lista obligaría
+/// a la pantalla a saber cuál falta.
+/// </summary>
+public sealed record CustomerAnomalyCountDto(string Kind, int Groups);
+
+/// <summary>
+/// Un cliente dentro de un grupo de anomalías. Trae <c>phone</c> tal cual se escribió y <c>isComplete</c>/<c>isActive</c> como
+/// campos para que la pantalla marque al incompleto o al inactivo sin comparar estados; el documento y el CUC son
+/// <c>null</c> en un cliente de WhatsApp sin ficha.
+/// </summary>
+public sealed record CustomerAnomalyCustomerDto(
+    Guid Id,
+    string Name,
+    string? IdentificationType,
+    string? IdentificationNumber,
+    string? Cuc,
+    string? Phone,
+    bool IsComplete,
+    bool IsActive,
+    DateTimeOffset CreatedAt);
+
+/// <summary>
+/// Un grupo de clientes con la misma <c>key</c> (el celular en E.164, o el número de documento normalizado), del más viejo al
+/// más nuevo. <c>truncated</c> existe siempre: un grupo de más de 50 se corta y la pantalla lo dice sin contar ni conocer el
+/// tope.
+/// </summary>
+public sealed record CustomerAnomalyGroupDto(string Key, IReadOnlyList<CustomerAnomalyCustomerDto> Customers, bool Truncated);
+
+/// <summary>
+/// Pagina grupos, no clientes, y <c>total</c> son los grupos de la clase pedida: la pantalla pagina lo que dibuja. <c>counts</c>
+/// lleva las dos clases para los contadores de las pestañas.
+/// </summary>
+public sealed record CustomerAnomaliesResponse(
+    IReadOnlyList<CustomerAnomalyCountDto> Counts,
+    IReadOnlyList<CustomerAnomalyGroupDto> Groups,
+    int Total,
+    int Page,
+    int PageSize);

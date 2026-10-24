@@ -134,3 +134,99 @@ public sealed class FindCustomerIdentificationMatchesHandler(
                 ? CustomerIdentificationMatchKind.SameIdentification
                 : CustomerIdentificationMatchKind.SameTypeOtherFormat;
 }
+
+/// <summary>Spec 2026-10-24 §3.3: por qué se agrupan dos clientes. Viaja con su nombre (<c>SharedPhone</c>).</summary>
+public enum CustomerAnomalyKind
+{
+    /// <summary>El mismo celular (<c>phone_e164</c>).</summary>
+    SharedPhone,
+
+    /// <summary>El mismo número de documento, sin importar tipo, puntos ni guiones.</summary>
+    SharedIdentificationNumber
+}
+
+/// <summary>
+/// Un grupo pesa hasta 50 clientes (spec §3.3), así que la lista no reutiliza <see cref="CustomerPaging"/>: pagina grupos y
+/// tiene sus propios topes.
+/// </summary>
+public static class CustomerAnomalyPaging
+{
+    public const int DefaultPageSize = 20;
+    public const int MaxPageSize = 50;
+
+    /// <summary>Clientes que viajan por grupo; el que sobra sólo sirve para marcar <c>truncated</c>.</summary>
+    public const int GroupCustomersCap = 50;
+}
+
+/// <param name="Kind">Nombre de <see cref="CustomerAnomalyKind"/>; obligatorio.</param>
+/// <param name="Page">Menor que 1 se recorta a 1.</param>
+/// <param name="PageSize">Menor que 1 vale el default y mayor que el máximo se recorta, en silencio, como el resto de listas.</param>
+public sealed record ListCustomerAnomaliesQuery(Guid TenantId, string? Kind, int Page, int PageSize)
+    : IQuery<CustomerAnomaliesResponse>;
+
+/// <summary><c>kind</c> ausente o que no es un nombre del enum da <c>errors.Kind</c>: el mapa que el formulario sabe leer.</summary>
+public sealed class ListCustomerAnomaliesValidator : AbstractValidator<ListCustomerAnomaliesQuery>
+{
+    public ListCustomerAnomaliesValidator()
+    {
+        var names = Enum.GetNames<CustomerAnomalyKind>();
+        RuleFor(query => query.Kind)
+            .Must(kind => kind is not null && names.Contains(kind, StringComparer.Ordinal))
+            .WithMessage($"La clase de anomalía debe ser una de {string.Join(", ", names)}.");
+    }
+}
+
+public sealed class ListCustomerAnomaliesHandler(
+    ICustomerDuplicateQueries queries,
+    IValidator<ListCustomerAnomaliesQuery> validator,
+    IExecutionContext executionContext)
+    : IQueryHandler<ListCustomerAnomaliesQuery, CustomerAnomaliesResponse>
+{
+    public async Task<CustomerAnomaliesResponse> HandleAsync(ListCustomerAnomaliesQuery query, CancellationToken cancellationToken)
+    {
+        CustomersAuthorization.EnsureAuthorized(executionContext, query.TenantId, CustomersPermissions.CustomerRead);
+        await validator.ValidateAndThrowAsync(query, cancellationToken);
+
+        var kind = Enum.Parse<CustomerAnomalyKind>(query.Kind!);
+        var page = Math.Max(query.Page, 1);
+        var pageSize = query.PageSize < 1
+            ? CustomerAnomalyPaging.DefaultPageSize
+            : Math.Min(query.PageSize, CustomerAnomalyPaging.MaxPageSize);
+
+        var found = await queries.CountAnomalyGroupsAsync(query.TenantId, cancellationToken);
+        var counts = Enum.GetValues<CustomerAnomalyKind>()
+            .Select(each => new CustomerAnomalyCountDto(each.ToString(), found.GetValueOrDefault(each)))
+            .ToArray();
+
+        var rows = await queries.ListAnomalyGroupsAsync(query.TenantId, kind, (page - 1) * pageSize, pageSize, cancellationToken);
+        var members = rows.Count == 0
+            ? new Dictionary<string, IReadOnlyList<Customer>>()
+            : await queries.ListAnomalyGroupMembersAsync(
+                query.TenantId, kind, rows.Select(row => row.Key).ToArray(), CustomerAnomalyPaging.GroupCustomersCap, cancellationToken);
+
+        var groups = rows
+            .Select(row =>
+            {
+                var customers = members.TryGetValue(row.Key, out var list) ? list : [];
+                return new CustomerAnomalyGroupDto(
+                    row.Key,
+                    customers.Take(CustomerAnomalyPaging.GroupCustomersCap).Select(ToDto).ToArray(),
+                    customers.Count > CustomerAnomalyPaging.GroupCustomersCap);
+            })
+            .ToArray();
+
+        return new CustomerAnomaliesResponse(counts, groups, found.GetValueOrDefault(kind), page, pageSize);
+    }
+
+    private static CustomerAnomalyCustomerDto ToDto(Customer customer) =>
+        new(
+            customer.Id.Value,
+            customer.Name,
+            customer.IdentificationType?.ToWireValue(),
+            customer.IdentificationNumber,
+            customer.Cuc,
+            customer.Phone,
+            customer.IsComplete,
+            customer.IsActive,
+            customer.CreatedAt);
+}
