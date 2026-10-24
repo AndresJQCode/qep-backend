@@ -250,6 +250,32 @@ public sealed class FlowEngineTests
         Assert.Equal<Effect>([new Effect.Handoff("n1")], withoutText.Effects);
     }
 
+    // Spec 2026-10-24 D-T9.
+    [Fact]
+    public void AHandoffBlockSaysBlock()
+    {
+        var result = Start(Flow(new HandoffNode("n1", "Asesor", Out(), null)));
+
+        Assert.Equal(HandoffReasons.Block, Assert.IsType<Effect.Handoff>(Assert.Single(result.Effects)).Reason);
+    }
+
+    // Spec 2026-10-24 §4.2: Outcome y ConnectionName viajan para explicar un traspaso; el motor no los lee.
+    [Fact]
+    public void TheEngineIgnoresTheOutcomeAndConnectionNameOfAnHttpResult()
+    {
+        var flow = Flow(Http("n1", ok: "n2", error: "n3"), Message("n2", "Encontrado"), Message("n3", "Falló"));
+        var started = Start(flow);
+
+        var bare = Continue(flow, started, new EngineInput.HttpResult("n1", Ok: false, 404, RunVariables.Empty(), "http_404"));
+        var named = Continue(flow, started,
+            new EngineInput.HttpResult("n1", Ok: false, 404, RunVariables.Empty(), "http_404", "error_status", "API de Clasic"));
+
+        Assert.Equal(bare.Effects, named.Effects);
+        Assert.Equal(
+            (bare.State.Status, bare.State.CurrentNodeId, bare.State.StepNumber, bare.State.Trace.Count),
+            (named.State.Status, named.State.CurrentNodeId, named.State.StepNumber, named.State.Trace.Count));
+    }
+
     [Fact]
     public void ResolveCarriesTheReasonId()
     {

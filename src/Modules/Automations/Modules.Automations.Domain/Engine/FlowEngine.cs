@@ -203,7 +203,7 @@ public static class FlowEngine
 
             if (fallback == InteractiveFallbacks.Handoff)
             {
-                effects.Add(new Effect.Handoff(node.Id));
+                effects.Add(new Effect.Handoff(node.Id, HandoffReasons.InvalidReply));
                 _ = Stop(node, RunStatus.HandedOff, TraceOutcomes.HandedOff);
                 return Result();
             }
@@ -321,7 +321,7 @@ public static class FlowEngine
                     return Stop(node, RunStatus.Running, TraceOutcomes.Pending);
                 case HandoffNode handoff:
                     SendOptional(node.Id, handoff.Text);
-                    effects.Add(new Effect.Handoff(node.Id));
+                    effects.Add(new Effect.Handoff(node.Id, HandoffReasons.Block));
                     return Stop(node, RunStatus.HandedOff, TraceOutcomes.HandedOff);
                 case ResolveNode resolve:
                     SendOptional(node.Id, resolve.Text);
