@@ -818,12 +818,13 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET` (`includeVariants`), `POST`, `export`, `price-scales/copy`, y por producto `GET`, `PUT` (`expectedVersion`), `activate`, `deactivate` (ver [Catálogo](#catálogo-opciones-variantes-y-galería)) | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/catalog/options`       | `GET`, `POST`, y por opción `PUT`, `DELETE`                                                 | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
+| `/api/v1/tenants/{tenantId}/customers` | además de lo existente: `identification-matches` (`GET`) y `anomalies` (`GET`) (ver [Clientes: documento repetido](#clientes-documento-repetido-coincidencias-y-anomalías)) | `customers.customer.read` (`identification-matches`, `anomalies`) / `customers.customer.manage` (alta y edición) |
 | `/api/v1/tenants/{tenantId}/orders`                | `GET` (filtros, entre ellos `source` y `timeZone`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `approve`, `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`), `send` (`POST`, cuerpo opcional) (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual) y [Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp)) | `quotations.order.read` / `.manage` / `.approve` / `.cancel` / `.invoice` |
 | `/api/v1/tenants/{tenantId}/pos`                   | 14 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void` / `.customer`                 |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
 | `/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup` | `POST` | `integrations.connection.manage` |
-| `/api/v1/tenants/{tenantId}/messaging` | `conversations` (`GET`), por conversación `GET`, `messages` (`GET`, `POST`), `messages/audio` (`POST`, multipart), `read` (`POST`), `resolve` (`POST`, `If-Match`, cuerpo opcional `{ reasonId }` o `{ reasonName }`) y `reopen` (`POST`, `If-Match`), `automation/pause` y `automation/resume` (`POST`, `If-Match`, `.manage`; ver [Asistente en la conversación](#asistente-en-la-conversación)); `messages/search` (`GET`); `media/{messageId}` (`GET`) | `messaging.conversation.read` / `.manage` |
+| `/api/v1/tenants/{tenantId}/messaging` | `conversations` (`GET`), por conversación `GET`, `messages` (`GET`, `POST`), `messages/audio` (`POST`, multipart), `read` (`POST`), `resolve` (`POST`, `If-Match`, cuerpo opcional `{ reasonId }` o `{ reasonName }`) y `reopen` (`POST`, `If-Match`), `automation/pause` y `automation/resume` (`POST`, `If-Match`, `.manage`; ver [Asistente en la conversación](#asistente-en-la-conversación)); `messages/search` (`GET`); `media/{messageId}` (`GET`); `conversations/{id}/customer` (`PUT`, `If-Match`, cuerpo `{ customerId }`, `.manage`; ver [Identidad, clientes y asignación](#identidad-clientes-y-asignación-spec-2026-10-10)) | `messaging.conversation.read` / `.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/quick-replies` | `GET`, `POST`; por respuesta `PUT` (`version` en el cuerpo) y `DELETE` (`?version=`) | `messaging.conversation.read` (`GET`) / `messaging.quick_reply.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/resolution-reasons` | `GET`; por motivo `PATCH` (`If-Match`) y `DELETE` (archiva). Se crean al resolver | `messaging.conversation.read` (`GET`) / `messaging.resolution_reason.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/business-hours` | `GET`, `POST`; por horario `PUT` (`If-Match`), `DELETE` (`If-Match`), `duplicate` (`POST`) y `default` (`POST`, `If-Match`) (ver [Horarios de atención](#horarios-de-atención)) | `messaging.conversation.read` (`GET`) / `messaging.business_hours.manage` |
@@ -1611,6 +1612,30 @@ el spec del slice; esta tabla es el inventario.
 | `GET /sales/{saleId}`              | `pos.sale.read`        | Detalle de una venta                                                             |
 | `GET /sales`                       | `pos.sale.read`        | Lista paginada de ventas; `number` y `customerDocument` buscan por un pedazo     |
 | `POST /sales/{saleId}/void`        | `pos.sale.void`        | Anula una venta, con motivo; sólo si su caja sigue abierta                       |
+
+### Clientes: documento repetido, coincidencias y anomalías
+
+Spec `2026-10-24-clientes-duplicados`. Tres reglas, cada una con su respuesta:
+
+- **R1, mismo tipo y mismo número: se frena.** `POST`/`PUT /customers` responde 422
+  `customers.customer.identification_taken` y ahora trae `existing: { id, name, identificationType,
+  identificationNumber, cuc | null, isComplete, isActive }`, el cliente que ya tiene ese documento. `existing` puede faltar
+  (carrera entre dos altas: el índice único gana y el dueño ya no se encuentra al releer).
+- **R2, mismo número con otro tipo, o el mismo tipo con otro formato: se avisa, no se frena.**
+  `GET …/customers/identification-matches?number=&type=&excludeCustomerId=` (`customers.customer.read`; `number` obligatorio,
+  hasta 32; `type` ∈ `NIT`, `CC`, `CE`, `PASAPORTE`) devuelve hasta 20 `items` con `match` ∈ `SameIdentification`,
+  `OtherType`, `SameTypeOtherFormat`. El formulario lo llama antes de guardar.
+- **R3, mismo celular o WhatsApp: no se frena ni se avisa al guardar.** El cliente se distingue por el documento. Lo que sí
+  hay es un reporte: `GET …/customers/anomalies?kind=&page=&pageSize=` (`customers.customer.read`; `kind` ∈ `SharedPhone`,
+  `SharedIdentificationNumber`; `pageSize` hasta 50, 20 por defecto) devuelve `counts` (siempre los dos `kind`, incluso en cero),
+  `groups` paginados (cada uno con su `key`, los `customers` y `truncated`), `total`, `page` y `pageSize`.
+
+**La expresión normalizada.** R2 y `SharedIdentificationNumber` comparan el número sin signos y en mayúsculas:
+`upper(regexp_replace(identification_number, '[^0-9A-Za-z]', '', 'g'))`. Vive en `CustomerIdentificationSql.NormalizedNumber`
+(consultas), en `CustomerIdentificationNormalizer` (C#) y **literal** en la migración `AddCustomerIdentificationNormalizedIndex`,
+que crea `IX_customers_tenant_identification_normalized` sobre `(tenant_id, <expresión>) WHERE identification_number IS NOT NULL`.
+No es único. Si la expresión de la consulta y la del índice difieren en un carácter, Postgres no usa el índice y la consulta
+recorre la tabla; `TheMatchQueryUsesTheNormalizedIndex` lo amarra.
 
 ### Aceptación de la invitación
 
@@ -2469,6 +2494,22 @@ en `true`.
   responde (`messaging.conversation.assigned_to_other`); responder una conversación sin asignar la toma;
   resolver no libera. Una conversación nueva de un cliente con dueño hereda el asignado si todavía puede
   responder. `GET /messaging/assignees` lista a quién transferir. `assignedTo.isMe` lo calcula el servidor.
+- **Número compartido.** Dos clientes pueden tener el mismo WhatsApp (R3). Toda respuesta de **una** sola conversación (el detalle y las que devuelven su resumen) lleva
+  `sharedPhoneCustomers: [{ id, name, isComplete, tags: [] }]` (hasta 10) con los otros clientes del mismo número; en el listado
+  va siempre `[]`. Se lee por el puerto `IMessagingCustomerDirectory`, no por el esquema de Customers.
+- **Cliente principal.** `PUT …/conversations/{id}/customer` con `If-Match` y `{ customerId }` cambia el cliente de la
+  conversación (`.manage`): 428 sin `If-Match`, 412 con versión vieja, 422 `messaging.conversation.customer_not_found` o
+  `validation.failed` (`errors.customerId`). Escribe el evento `CustomerChanged` en el hilo con `targetCustomer` y
+  `previousCustomer` (`{ id, name }` o `null`); `target` y `previous` quedan en `null` porque son miembros, no clientes.
+- **Iniciar una conversación** (`ConversationOpener`) busca, en este orden: (1) por BSUID del cliente, (2) la conversación con
+  BSUID de la conexión que tiene ese `wa_id` (la que recibe las respuestas), (3) por `customer_id`, la más reciente, (4) la fila
+  vieja sin BSUID con ese teléfono. El `customer_id` de la encontrada no cambia: cambiarlo es `PUT …/customer`.
+- **Campañas.** El opt-out de marketing se lee **por número**: vale `true` si la ficha, o cualquier otro cliente del tenant con el mismo
+  teléfono, tiene la bandera (una ficha sin teléfono sólo mira la suya). El worker no reclama destinatarios hasta que la campaña tiene `audience_frozen_at`. Al
+  terminar de congelar, `MarkFrozenAsync` deduplica en una transacción con la campaña bloqueada (`FOR UPDATE`; `AddRecipientsAsync`
+  inserta con `FOR SHARE` y sólo si la audiencia no está congelada): un solo envío por `wa_id`, y el resto queda `Skipped` con
+  `failureCode: "duplicate_contact"`. Gana el cliente de la conversación de ese número en la conexión de la campaña y, si no,
+  el más viejo (`customer_created_at`, columna que agregó la migración `AddCampaignRecipientCustomerCreatedAt`).
 - **Eventos del sistema** (`direction: System`, `kind: Event`) en el hilo; no suben `unreadCount` ni cambian
   la foto de la lista.
 - **Respuestas citadas.** `replyTo` al enviar (el `id` de **nuestro** mensaje) y `Message.replyTo` al leer.

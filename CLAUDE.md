@@ -288,6 +288,17 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `Authentication__UseDevelopmentStub=false`. Y su limitador `webhook` no es el `Public`: es concurrencia
   global con cola, porque un 429 hace que Meta reintente hasta 7 días. El resto está en
   [README § Mensajería](README.md#mensajería-whatsapp-cloud).
+- **La expresión normalizada del documento vive en dos lugares y tienen que ser iguales carácter por carácter** (spec 2026-10-24).
+  `CustomerIdentificationSql.NormalizedNumber` (las consultas de coincidencias y anomalías) y el literal de la migración
+  `AddCustomerIdentificationNormalizedIndex` (`upper(regexp_replace(identification_number, '[^0-9A-Za-z]', '', 'g'))`): una migración
+  no lee constantes. Si difieren, la consulta sigue dando el resultado correcto pero Postgres deja de usar
+  `IX_customers_tenant_identification_normalized` y recorre la tabla, sin error ni prueba de resultado que se ponga roja. Sólo lo
+  dice `TheMatchQueryUsesTheNormalizedIndex`; cambia las dos juntas, con una migración nueva para el índice.
+- **Todo camino que inserte o reclame destinatarios de campaña respeta el candado de `MarkFrozenAsync`** (spec 2026-10-24 §4.4). El
+  desduplicado `duplicate_contact` corre una sola vez, al terminar de congelar la audiencia, con la campaña `FOR UPDATE`;
+  `AddRecipientsAsync` inserta con `FOR SHARE` y sólo si `audience_frozen_at IS NULL`, y el worker no reclama mientras sea `NULL`. Un
+  camino nuevo que escriba en `campaign_recipients` fuera de ahí deja un `Pending` que nadie desduplica y manda dos plantillas al
+  mismo número; y un destinatario sembrado a mano en una prueba nunca sale si su campaña no tiene `audience_frozen_at`.
 - **Un fixture de `message_templates` sin `id` deja el catálogo vacío** (spec 2026-10-14). El catálogo de envío lee
   del espejo `messaging.message_templates`, que indexa por `meta_template_id`, y el refresco salta los elementos sin
   `id`: el síntoma es `messaging.template.not_available` en una prueba que antes pasaba, no un error del espejo. Y el
