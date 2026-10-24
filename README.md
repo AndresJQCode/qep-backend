@@ -1233,7 +1233,8 @@ pasos 4 y 5 de `AddOrderOwnData` acotado a `client_id IS NULL` y se restauran lo
   traen `clientId = null`, `clientName = "Consumidor final"` y `clientCuc = null`.
 - **Lo anulado no suma**: un pedido `Cancelled` y una venta `Voided` no cuentan en ningún agregado ni en el período
   anterior, pero se ven en el listado con su estado. El estado de una venta es `Completed` o `Voided`, y su
-  estado de pago siempre `FullPaymentReceived` (por eso `paymentStatus=PaymentPending` la excluye).
+  estado de pago siempre `FullPaymentReceived`: por eso `paymentStatus` con cualquier otro valor
+  (`PartialPaymentReceived` o `PaymentPending`) la excluye.
 - **El cajero entra como asesor**: `cashier_id` es una membresía, igual que el `advisor_id` del pedido. El filtro
   `advisorId`, el ranking por asesor y el alcance de quien no tiene `reporting.all_advisors.read` valen para los
   dos. No cambia ningún permiso.

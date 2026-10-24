@@ -14,6 +14,12 @@ namespace Modules.Reporting.Application;
 /// caminos compartan <see cref="OrdersReportFilter"/> es lo que hace imposible que el panel y la
 /// tabla hablen de conjuntos distintos.
 ///
+/// <para>**Desde el spec 2026-10-23 cuenta pedidos y ventas POS.** <c>OrderCount</c>, los importes,
+/// <c>Monthly</c>, <c>ByAdvisor</c> (el cajero entra como asesor) y <c>Previous</c> suman las dos
+/// fuentes, sin lo anulado: ni el pedido <c>Cancelled</c> ni la venta <c>Voided</c> cuentan. El
+/// nombre <c>OrderCount</c> se mantiene porque es el contrato con el frontend; léase «ventas del
+/// periodo». <c>BySource</c> dice cuánto aporta cada origen, y <c>WithoutClient</c> explica lo que
+/// <c>ByClient</c> no cubre.</para>
 /// <para>Subtotals, TaxAmounts and Totals carry one amount per currency with orders in the
 /// window (spec, Reports). The counts stay single numbers: an order is one order in any
 /// currency.</para>
@@ -64,7 +70,10 @@ public sealed record ReportWithoutClientDto(int Count, IReadOnlyList<ReportMoney
 /// Un mes de la serie, con su año: sin el año, doce puntos de un rango de dos años se pisan de a
 /// pares y la serie miente.
 ///
-/// **Sólo vienen los meses con pedidos.** Rellenar los vacíos con cero es una decisión de
+/// <c>Count</c> y <c>Totals</c> son de pedidos y ventas POS del mes del tenant, sin lo anulado
+/// (spec 2026-10-23 §3): la venta de las 23:00 del último día en Bogotá es de ese mes.
+///
+/// **Sólo vienen los meses con pedidos o ventas.** Rellenar los vacíos con cero es una decisión de
 /// presentación —depende del rango que el eje dibuje— y se toma en el frontend, no acá.
 /// </summary>
 public sealed record ReportMonthlyPointDto(int Year, int Month, int Count, IReadOnlyList<ReportMoneyDto> Totals);
