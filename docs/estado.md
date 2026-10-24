@@ -27,6 +27,7 @@ existe (VAR-01..13, cierre `22cde669`, en `origin/develop` del frontend; verific
 
 | Trabajo | Estado | Dónde |
 | --- | --- | --- |
+| Clientes duplicados: documento, número compartido en Messaging y anomalías | **Construido y mergeado en los dos repos** (2026-10-24, ff a `develop` de cada uno, sin push). Backend `c78792e3..f0b8dbe3` (CD-01..13 y una tanda de correcciones `ba0e71d4`): 422 `customers.customer.identification_taken` con `existing`, `GET /customers/identification-matches` (índice de expresión `IX_customers_tenant_identification_normalized`) y `GET /customers/anomalies`, opt-out de marketing leído por número, `sharedPhoneCustomers` en toda respuesta de una conversación, `PUT /messaging/conversations/{id}/customer` con `If-Match` y evento `CustomerChanged`, orden nuevo de `ConversationOpener`, worker de campañas sin reclamar antes de `audience_frozen_at` y `duplicate_contact` dentro de `MarkFrozenAsync` (`FOR UPDATE`/`FOR SHARE`). Frontend `81858acf..68d3e6c1` (CDF-01..07 y correcciones `689da229`): dueño del documento en los cuatro formularios, aviso R2 antes de guardar, pestaña «Anomalías», «Este número también es de…» y «Cambiar cliente…» en el hilo, texto de `duplicate_contact`. Falta la prueba manual. La fusión de clientes va en un spec 2 sin escribir | [spec](superpowers/specs/2026-10-24-clientes-duplicados-design.md), [plan backend](superpowers/plans/2026-10-24-clientes-duplicados-backend.md), [plan frontend](../../qep-frontend/docs/superpowers/plans/2026-10-24-clientes-duplicados-frontend.md) |
 | Cliente identificado en POS (spec 2026-10-14 + cambios del owner 2026-10-22) | Backend **construido y mergeado** (`d4d4eff3..bcc92424`, ff a `develop`, sin push): permiso `pos.sale.customer` (exige `pos` y `customers`; admin y cajero), `GET`/`POST /pos/customers` (elegibles filtrados en SQL con `SearchSelectableAsync`; alta rápida como ficha incompleta con documento, auditada con `source: "pos"`; 422 `pos.customer.identification_taken` con `existing` vía `IHasProblemExtensions`), `customerId` opcional en `POST /pos/sales` (huella sin cambio cuando no viene; 403/422 `pos.sale.customer_*` después de la repetición) e índice parcial `IX_sales_tenant_customer`. 8 tareas + POSC-09 con revisión por tarea, revisión final y una tanda de correcciones. Frontend **construido y mergeado** (POSC-11..18, revisión final `68073490`, «Crear cliente» primero `c9995f56`, en `origin/develop` del frontend) | [spec](../../qep-frontend/docs/superpowers/specs/2026-10-14-pos-cliente-identificado-design.md), [plan backend](superpowers/plans/2026-10-22-pos-cliente-identificado-backend.md) |
 | Variantes de producto | Backend **construido** (T1–T15 y T14b, revisión final `92f74496`). Pruebas escritas y **sin ejecutar** desde la T4; revisión con Fable pendiente. Frontend construido (VAR-01..13, en `origin/develop` del frontend) | [estado propio](superpowers/plans/2026-10-20-variantes-estado.md) |
 | Automatizaciones (antes «Asistentes»): spec 1, asistente en la conversación y horarios de atención | **Construido en los dos repos.** Backend (`62cb0aaf`): 7 tareas, revisión final + una ronda de corrección. Frontend (`dd22f151..551c05d3`, ff a `develop` del frontend): 9 tareas AH-01..09 con revisión por tarea y revisión final; chip y filtro «Asistente» en la bandeja, pausar/devolver desde el hilo, página `/settings/business-hours`. Falta la prueba manual contra el backend real | [spec](superpowers/specs/2026-10-21-mensajeria-asistente-y-horarios-design.md), [plan backend](superpowers/plans/2026-10-21-mensajeria-asistente-y-horarios-backend.md), [investigación](superpowers/specs/2026-10-21-asistentes-investigacion.md) |
@@ -94,6 +95,7 @@ copia del frontend para los códigos nuevos.
 | 2026-10-21 migración de lulo-chat | Escrito, sin empezar | 10 preguntas abiertas en §4 |
 | 2026-10-23 ventas POS en el reporte de pedidos | Aprobado, sin empezar (plan backend escrito) | Ver «Trabajo en curso» |
 | 2026-10-21 Automatizaciones: investigación y roadmap | Concepto; specs 2–3 y migración de lulo-chat sin escribir (el 4 se escribió y se está construyendo) | Orden: interactivos → claves de API y envío proactivo → constructor (motor, editor React Flow, bloque HTTP) → migración. IA diferida |
+| 2026-10-24 clientes duplicados | Construido en los dos repos (backend `f0b8dbe3`, frontend `68d3e6c1`) | Decisiones del owner en §2 y §10 del spec; las del spec (D-D1..D-D11) a ratificar. La fusión de clientes es un spec 2 aparte |
 | 2026-10-23 proveedores (directorio) | Aprobado, sin empezar; planes en `feature/proveedores` de los dos repos | Módulo `Suppliers`; «terceros» diferido hasta el segundo rol fuera de ventas (fila nueva en `open-decisions.md` de `qep-docs`, pendiente); compras e inventario después |
 
 Construido sin spec propio: enviar el pedido por WhatsApp (`POST /orders/{id}/send`, `OrderEndpoints.cs:114`; frontend
@@ -129,6 +131,10 @@ historial de `git` los conserva.
 - **`dotnet format`:** roto en `tests/Modules/Messaging/Modules.Messaging.IntegrationTests/ReplyMarksReadApiTests.cs`,
   `WHITESPACE` en las líneas 139 y 208 (comprobado el 2026-10-21).
 - **Meta/Instagram:** V-4 y V-8 sin verificar contra Meta real.
+- **Clientes duplicados:** backend y frontend salen juntos (spec §7): un frontend sin el `PUT …/customer` del backend
+  deja «Cambiar cliente…» con un error que no explica nada. Trae dos migraciones (`AddCustomerIdentificationNormalizedIndex`
+  en Customers, `AddCampaignRecipientCustomerCreatedAt` en Messaging); una campaña que se esté congelando en la ventana del
+  despliegue desempata sus filas viejas por id.
 
 ## Decisiones del owner pendientes
 
@@ -194,6 +200,13 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-24 — Mergeado a `develop` de los dos repos (ff, sin push) **Clientes duplicados**: backend `f0b8dbe3`
+  (`feature/clientes-duplicados`, 13 tareas con revisión por tarea, revisión final y una tanda de correcciones) y frontend
+  `68d3e6c1` (7 tareas, mismo proceso). Decisiones del owner: mismo tipo y número de documento se rechaza mostrando al dueño;
+  mismo número con otro tipo avisa sin bloquear; el teléfono compartido se permite; un chat por persona con cliente principal
+  que el asesor cambia; el opt-out de marketing vale para el número; la plantilla lleva el nombre del cliente principal y, sin
+  conversación, el del más viejo; el cliente principal vale sólo para esa conversación «por ahora». `develop` local del
+  backend sigue 3 commits detrás de `origin/develop` (sólo `docs/estado.md` de otras sesiones), sin reconciliar.
 - 2026-10-24 — Limpieza de ramas en los dos repos: borradas las ramas y worktrees ya mergeados a `develop` (backend: `automatizaciones-clasic`, `automatizaciones-constructor-backend`, `automatizaciones-motor-backend`, `chatbot-mover-conexion`, `pos-cliente-identificado`, `reportes-ventas-pos`; frontend: `pos-cliente-identificado`, `reportes-ventas-pos`, registro huérfano de `chatbot-mover-conexion`). En el frontend se integró `develop` en `feature/proveedores` y se hizo ff a `develop` (`aa517ab8`: spec y plan de proveedores). Quedan: `feature/proveedores` en ambos repos (ejecución pendiente), `feature/clientes-duplicados` en ambos (otra sesión, con cambios sin commitear) y los worktrees `hotfix/*` y `merge/hotfix-pago-parcial` del owner (ver «Hotfixes»).
 - 2026-10-24 — Spec y planes de **Proveedores** (directorio) listos para ejecutar: spec aprobada por el owner el 2026-10-23 (`qep-frontend` `feature/proveedores`, `2a47bc6d`), plan backend `10e388bb` y plan frontend `9490220e` en las ramas `feature/proveedores` de cada repo, sin código. El pedido original («compras a proveedores y manejo de inventario») se recortó al directorio; se revisó «proveedores vs. terceros» y se eligió entidad propia con la identidad de `Customer` copiada campo por campo. Decisiones del owner: `suppliers` fuera del default (D-12), `advisor` sin permiso (D-14), renombrar la sección del operador (D-17).
 - 2026-10-24 — Mergeados a `develop` (con push) tres ramas del backend: `feature/chatbot-mover-conexion` (`353e09bb`,
