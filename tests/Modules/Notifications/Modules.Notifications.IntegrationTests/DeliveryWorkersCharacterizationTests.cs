@@ -5,7 +5,7 @@ using static Modules.Notifications.IntegrationTests.NotificationsDeliveryHarness
 namespace Modules.Notifications.IntegrationTests;
 
 /// <summary>
-/// Lo que cada uno de los cinco workers hace hoy, fijado antes de pasarlos a OutboxDeliveryWorker
+/// Lo que cada uno de los seis workers hace hoy, fijado antes de pasarlos a OutboxDeliveryWorker
 /// (spec 2026-09-13, A6): su evento, su plantilla, un solo correo por mensaje y los dos caminos que
 /// terminan en Failed sin enviar. Corre con los workers hospedados de verdad, así que no depende de
 /// ninguna costura interna y vale igual antes y después del refactor.
@@ -19,6 +19,7 @@ public sealed class DeliveryWorkersCharacterizationTests
         { "catalog.product-export-ready.v1", ProductExportEmailTemplate.TemplateRef },
         { "quotations.export-ready.v1", QuotationsExportReadyEmailTemplate.TemplateRef },
         { "quotations.export-failed.v1", QuotationsExportFailedEmailTemplate.TemplateRef },
+        { "suppliers.export-ready.v1", SupplierExportEmailTemplate.TemplateRef },
     };
 
     [Theory]
@@ -121,6 +122,15 @@ public sealed class DeliveryWorkersCharacterizationTests
             expiresAt = DateTimeOffset.UtcNow.AddHours(24),
         }),
         "quotations.export-failed.v1" => JsonSerializer.Serialize(new { tenantId, subjectId, kind = "Orders" }),
+        "suppliers.export-ready.v1" => JsonSerializer.Serialize(new
+        {
+            tenantId,
+            subjectId,
+            downloadUrl = "https://r2.test/exports/proveedores.xlsx?X-Amz-Signature=abc",
+            fileName = "proveedores.xlsx",
+            supplierCount = 3,
+            expiresAt = DateTimeOffset.UtcNow.AddHours(24),
+        }),
         _ => throw new ArgumentOutOfRangeException(nameof(eventName), eventName, "No payload for this event."),
     };
 }

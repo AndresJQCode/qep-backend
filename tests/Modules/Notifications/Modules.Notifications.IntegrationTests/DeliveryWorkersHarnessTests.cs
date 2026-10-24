@@ -20,12 +20,12 @@ public sealed class DeliveryWorkersHarnessTests
     }
 
     [Fact]
-    public async Task TheSwitchPutsTheFiveWorkersBack()
+    public async Task TheSwitchPutsTheSixWorkersBack()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new NotificationsApiFactory(database.GetConnectionString(), runDeliveryWorkers: true);
 
-        Assert.Equal(5, factory.Services.GetServices<IHostedService>()
+        Assert.Equal(6, factory.Services.GetServices<IHostedService>()
             .Count(service => IsDeliveryWorker(service.GetType())));
     }
 }
