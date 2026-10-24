@@ -188,6 +188,15 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-24 — Mergeados a `develop` dos pedidos del developer al probar el bot de Clasic: (1) frontend `07c20301`,
+  «Publicar» sólo se habilita con cambios desde la última publicación (nunca publicado, guardado pendiente o posterior a
+  `published.at`; sin cambios dice «Publicado vN» deshabilitado), porque en dev quedaron dos versiones idénticas publicadas
+  con dos segundos de diferencia; (2) backend `32aaa465..58f868ec`, la palabra de reinicio («REINICIAR») termina la corrida viva
+  `Completed` y arranca otra con la última versión publicada cuando difiere (mismo chatbot, `Active`); con la misma versión,
+  chatbot pausado u otro chatbot en la conexión, reinicia la misma corrida como antes (excepción anotada en D-C1 del spec).
+  Nota para el owner: «Hoy: atendidas» cuenta corridas, así que un reinicio a versión nueva suma dos por conversación. Hallazgo
+  de la prueba manual: el túnel de Cloudflare de la máquina de dev estuvo sin red de 00:19 a 04:19 UTC del 24, así que los
+  webhooks de Meta de esa noche no llegaron; Meta los reintenta tarde y la ingesta los descarta para el bot por llegar fuera de orden.
 - 2026-10-23 — Mergeado a `develop` importar y exportar chatbots desde el frontend (plan
   `superpowers/plans/2026-10-23-importar-exportar-chatbots.md`; backend `31f7704e..3ba14717`, frontend `d3add455..ee1a1d05`, ff,
   sin push): ruta `GET /automations/external-apis`; en el frontend «Importar» en la lista de chatbots (archivo `.json`, nombre
