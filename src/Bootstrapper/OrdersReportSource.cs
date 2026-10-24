@@ -7,6 +7,7 @@ using Modules.Reporting.Domain;
 using Modules.Tenancy.Application;
 using Npgsql;
 using NpgsqlTypes;
+using PosSaleStatus = Modules.Pos.Domain.PosSaleStatus;
 
 namespace Bootstrapper;
 
@@ -56,13 +57,7 @@ internal sealed class OrdersReportSource(
         int pageSize,
         CancellationToken cancellationToken)
     {
-        var counted = await QueryAsync<int>(
-            criteria,
-            """SELECT count(*)::int AS "Value" FROM (""",
-            ") AS r",
-            [],
-            cancellationToken);
-        var total = counted.Count == 0 ? 0 : counted[0];
+        var total = await CountAsync(criteria, """SELECT count(*)::int AS "Value" FROM r""", cancellationToken);
 
         var rows = await QueryAsync<ReportRow>(
             criteria,
@@ -73,10 +68,7 @@ internal sealed class OrdersReportSource(
                    r.subtotal AS "Subtotal", r.tax_amount AS "TaxAmount", r.freight_subtotal AS "FreightSubtotal",
                    r.freight_tax_amount AS "FreightTaxAmount", r.total AS "Total", r.is_void AS "IsVoid",
                    r.snapshot_client_name AS "SnapshotClientName"
-            FROM (
-            """,
-            """
-            ) AS r
+            FROM r
             ORDER BY r.occurred_at DESC, r.number, r.id
             LIMIT @page_limit OFFSET @page_offset
             """,
@@ -90,21 +82,35 @@ internal sealed class OrdersReportSource(
     }
 
     /// <summary>
-    /// Corre <c>prefix + base + suffix</c>, con la base de <see cref="ReportRowsSql"/> y sus
-    /// parámetros más los propios de la consulta. Los dos fragmentos son constantes del llamador:
-    /// el texto nunca lleva un valor.
+    /// Corre <paramref name="query"/> sobre la base de <see cref="ReportRowsSql"/>, que queda
+    /// disponible como la CTE <c>r</c>: cada consulta se lee entera, <c>SELECT … FROM r …</c>. Desde
+    /// PostgreSQL 12 una CTE que se usa una sola vez se integra a la consulta, así que los filtros de
+    /// cada rama siguen usando sus índices.
+    ///
+    /// Van los parámetros de la base, creados de nuevo para este comando, más los propios de la
+    /// consulta. La consulta es una constante del llamador: el texto nunca lleva un valor.
     /// </summary>
     private Task<List<T>> QueryAsync<T>(
         OrdersReportCriteria criteria,
-        string prefix,
-        string suffix,
+        string query,
         IReadOnlyList<NpgsqlParameter> extraParameters,
         CancellationToken cancellationToken)
     {
         var (baseSql, parameters) = ReportRowsSql(criteria);
-        var sql = string.Concat(prefix, "\n", baseSql, "\n", suffix);
+        var sql = string.Concat("WITH r AS (\n", baseSql, "\n)\n", query);
         object[] arguments = [.. parameters, .. extraParameters];
         return quotations.Database.SqlQueryRaw<T>(sql, arguments).ToListAsync(cancellationToken);
+    }
+
+    /// <summary>Un conteo escalar sobre la base: <paramref name="query"/> devuelve una sola
+    /// columna <c>"Value"</c>, que es como EF mapea un <c>SqlQuery</c> de un tipo simple.</summary>
+    private async Task<int> CountAsync(
+        OrdersReportCriteria criteria,
+        string query,
+        CancellationToken cancellationToken)
+    {
+        var counted = await QueryAsync<int>(criteria, query, [], cancellationToken);
+        return counted.Count == 0 ? 0 : counted[0];
     }
 
     /// <summary>
@@ -112,7 +118,7 @@ internal sealed class OrdersReportSource(
     /// que es justo lo que el resumen existe para evitar.
     ///
     /// Cada agregado es una consulta sobre la base de <see cref="ReportRowsSql"/> —pedidos y ventas
-    /// POS— con <c>WHERE NOT r.is_void</c>. Son varias consultas y no una porque son agregaciones de
+    /// POS, la CTE <c>r</c>— con <c>WHERE NOT r.is_void</c>. Son varias consultas y no una porque son agregaciones de
     /// distinta granularidad —los totales por moneda, la serie por mes, el origen, lo que no tiene
     /// cliente y dos rankings—, y cada rama de la base ataca su propio índice.
     /// </summary>
@@ -126,18 +132,15 @@ internal sealed class OrdersReportSource(
         // origen, y tampoco en el período anterior, que pasa por este mismo método. El listado no
         // lo filtra: ahí lo anulado se ve con su estado.
         //
-        // One row per currency: COP and USD are never added together (spec 2026-10-08, Reports).
-        // Zero rows give a zero count below.
+        // Una fila por moneda: COP y USD nunca se suman (spec 2026-10-08, Reportes). Sin filas, el
+        // conteo de abajo da cero.
         var byCurrency = await QueryAsync<MoneyRow>(
             criteria,
             """
             SELECT r.currency AS "Currency", count(*)::int AS "Count", sum(r.subtotal) AS "Subtotal",
                    sum(r.tax_amount) AS "TaxAmount", sum(r.freight_subtotal) AS "FreightSubtotal",
                    sum(r.freight_tax_amount) AS "FreightTaxAmount", sum(r.total) AS "Total"
-            FROM (
-            """,
-            """
-            ) AS r
+            FROM r
             WHERE NOT r.is_void
             GROUP BY r.currency
             """,
@@ -163,10 +166,7 @@ internal sealed class OrdersReportSource(
             criteria,
             """
             SELECT r.source AS "Source", r.currency AS "Currency", count(*)::int AS "Count", sum(r.total) AS "Total"
-            FROM (
-            """,
-            """
-            ) AS r
+            FROM r
             WHERE NOT r.is_void
             GROUP BY r.source, r.currency
             """,
@@ -178,14 +178,11 @@ internal sealed class OrdersReportSource(
 
         // Las ventas POS a consumidor final no tienen ficha de cliente: van aparte y no al ranking
         // (ver ReportWithoutClientDto). Un pedido siempre tiene cliente.
-        var withoutClientRows = await QueryAsync<SourceRow>(
+        var withoutClientRows = await QueryAsync<CurrencyCountRow>(
             criteria,
             """
-            SELECT ''::text AS "Source", r.currency AS "Currency", count(*)::int AS "Count", sum(r.total) AS "Total"
-            FROM (
-            """,
-            """
-            ) AS r
+            SELECT r.currency AS "Currency", count(*)::int AS "Count", sum(r.total) AS "Total"
+            FROM r
             WHERE NOT r.is_void AND r.client_id IS NULL
             GROUP BY r.currency
             """,
@@ -205,24 +202,17 @@ internal sealed class OrdersReportSource(
         var monthRows = await QueryAsync<MonthRow>(
             criteria,
             """
-            SELECT m.year AS "Year", m.month AS "Month", m.currency AS "Currency",
-                   count(*)::int AS "Count", sum(m.total) AS "Total"
-            FROM (
-                SELECT extract(year FROM r.occurred_at AT TIME ZONE @time_zone)::int AS year,
-                       extract(month FROM r.occurred_at AT TIME ZONE @time_zone)::int AS month,
-                       r.currency AS currency, r.total AS total
-                FROM (
-            """,
-            """
-                ) AS r
-                WHERE NOT r.is_void
-            ) AS m
-            GROUP BY m.year, m.month, m.currency
+            SELECT extract(year FROM r.occurred_at AT TIME ZONE @time_zone)::int AS "Year",
+                   extract(month FROM r.occurred_at AT TIME ZONE @time_zone)::int AS "Month",
+                   r.currency AS "Currency", count(*)::int AS "Count", sum(r.total) AS "Total"
+            FROM r
+            WHERE NOT r.is_void
+            GROUP BY 1, 2, 3
             """,
             [new NpgsqlParameter("time_zone", NpgsqlDbType.Text) { Value = criteria.Period.TimeZone.Id }],
             cancellationToken);
 
-        // Folded in memory: one point per month, its totals per currency.
+        // Se pliega en memoria: un punto por mes, con sus totales por moneda.
         var monthly = monthRows
             .GroupBy(point => (point.Year, point.Month))
             .OrderBy(month => month.Key.Year)
@@ -238,7 +228,7 @@ internal sealed class OrdersReportSource(
 
         // El cajero de una venta entra como un asesor más, por su membresía (spec 2026-10-23 §3).
         var advisorRanking = await RankAsync(
-            criteria, AdvisorColumn, rankSize, defaultCurrency, cancellationToken);
+            criteria, RankedBy.Advisor, rankSize, defaultCurrency, cancellationToken);
         var emails = await peopleLookup.EmailsByMembershipIdAsync(
             advisorRanking.Select(entry => entry.Id).ToArray(), cancellationToken);
         var byAdvisor = advisorRanking
@@ -247,14 +237,14 @@ internal sealed class OrdersReportSource(
             .ToList();
         var otherAdvisors = await ReportRankFolding.FoldOthersAsync(
             byAdvisor, rankSize, orderCount, totals,
-            () => CountDistinctAsync(criteria, AdvisorColumn, cancellationToken));
+            () => CountDistinctAsync(criteria, RankedBy.Advisor, cancellationToken));
         if (otherAdvisors is not null)
         {
             byAdvisor.Add(otherAdvisors);
         }
 
         var clientRanking = await RankAsync(
-            criteria, ClientColumn, rankSize, defaultCurrency, cancellationToken);
+            criteria, RankedBy.Client, rankSize, defaultCurrency, cancellationToken);
         var clients = await clientLookup.FindAsync(
             criteria.TenantId, clientRanking.Select(entry => entry.Id).ToArray(), cancellationToken);
         var byClient = clientRanking
@@ -274,7 +264,7 @@ internal sealed class OrdersReportSource(
             rankSize,
             orderCount - withoutClient.Count,
             ReportMoney.Remainder(totals, [withoutClient.Totals]),
-            () => CountDistinctAsync(criteria, ClientColumn, cancellationToken));
+            () => CountDistinctAsync(criteria, RankedBy.Client, cancellationToken));
         if (otherClients is not null)
         {
             byClient.Add(otherClients);
@@ -294,35 +284,45 @@ internal sealed class OrdersReportSource(
             withoutClient);
     }
 
-    // Las dos columnas por las que se rankea. Son constantes de acá, nunca texto del llamador.
-    private const string AdvisorColumn = "advisor_id";
-    private const string ClientColumn = "client_id";
+    /// <summary>Por qué se rankea. Un tipo cerrado y no el nombre de la columna: la columna se
+    /// escribe en el SQL, así que ningún llamador puede pasar texto libre.</summary>
+    private enum RankedBy
+    {
+        Advisor,
+        Client,
+    }
+
+    // La columna de la base de cada ranking. Sin default: un valor nuevo rompe acá.
+    private static string ColumnOf(RankedBy rankedBy) => rankedBy switch
+    {
+        RankedBy.Advisor => "advisor_id",
+        RankedBy.Client => "client_id",
+        _ => throw new ArgumentOutOfRangeException(nameof(rankedBy), rankedBy, "Unknown ranking."),
+    };
 
     /// <summary>
-    /// El top <paramref name="rankSize"/> por <paramref name="column"/>, con sus totales por moneda.
+    /// El top <paramref name="rankSize"/> por asesor o por cliente, con sus totales por moneda.
     ///
-    /// Ranked by the total in the tenant default currency (plan decision A10): a single-currency
-    /// tenant ranks exactly as before, and a mixed one has a deterministic order that never adds two
-    /// currencies. Count and id break ties so the ranking does not "blink" between two identical
-    /// calls. Las filas sin valor en la columna (una venta a consumidor final, en clientes) no
-    /// entran.
+    /// Se ordena por el total en la moneda por defecto del tenant (decisión A10 del plan): un tenant
+    /// de una sola moneda rankea igual que antes, y uno mixto tiene un orden determinista que nunca
+    /// suma dos monedas. El conteo y el id desempatan, para que el ranking no «parpadee» entre dos
+    /// llamadas idénticas. Las filas sin valor en la columna (una venta a consumidor final, en
+    /// clientes) no entran.
     /// </summary>
     private async Task<IReadOnlyList<(Guid Id, int Count, IReadOnlyList<ReportMoneyDto> Totals)>> RankAsync(
         OrdersReportCriteria criteria,
-        string column,
+        RankedBy rankedBy,
         int rankSize,
         string defaultCurrency,
         CancellationToken cancellationToken)
     {
+        var column = ColumnOf(rankedBy);
         var top = await QueryAsync<RankRow>(
             criteria,
             $"""
             SELECT r.{column} AS "Id", count(*)::int AS "Count",
                    sum(CASE WHEN r.currency = @default_currency THEN r.total ELSE 0 END) AS "Ranking"
-            FROM (
-            """,
-            $"""
-            ) AS r
+            FROM r
             WHERE NOT r.is_void AND r.{column} IS NOT NULL
             GROUP BY r.{column}
             ORDER BY "Ranking" DESC, "Count" DESC, "Id"
@@ -343,10 +343,7 @@ internal sealed class OrdersReportSource(
             criteria,
             $"""
             SELECT r.{column} AS "Id", r.currency AS "Currency", sum(r.total) AS "Total"
-            FROM (
-            """,
-            $"""
-            ) AS r
+            FROM r
             WHERE NOT r.is_void AND r.{column} = ANY(@ranked_ids)
             GROUP BY r.{column}, r.currency
             """,
@@ -363,21 +360,16 @@ internal sealed class OrdersReportSource(
             .ToArray();
     }
 
-    /// <summary>Cuántas entidades distintas hay en <paramref name="column"/>, sin los nulos: el
-    /// conteo del pliegue «Otros».</summary>
-    private async Task<int> CountDistinctAsync(
+    /// <summary>Cuántos asesores o clientes distintos hay, sin los nulos: el conteo del pliegue
+    /// «Otros».</summary>
+    private Task<int> CountDistinctAsync(
         OrdersReportCriteria criteria,
-        string column,
-        CancellationToken cancellationToken)
-    {
-        var counted = await QueryAsync<int>(
+        RankedBy rankedBy,
+        CancellationToken cancellationToken) =>
+        CountAsync(
             criteria,
-            $"""SELECT count(DISTINCT r.{column})::int AS "Value" FROM (""",
-            ") AS r WHERE NOT r.is_void",
-            [],
+            $"""SELECT count(DISTINCT r.{ColumnOf(rankedBy)})::int AS "Value" FROM r WHERE NOT r.is_void""",
             cancellationToken);
-        return counted.Count == 0 ? 0 : counted[0];
-    }
 
     /// <summary>
     /// La base del reporte: un <c>UNION ALL</c> de <c>quotations.orders</c> y <c>pos.sales</c> ya
@@ -407,7 +399,7 @@ internal sealed class OrdersReportSource(
         {
             new("tenant_id", NpgsqlDbType.Uuid) { Value = criteria.TenantId },
             new("order_cancelled", NpgsqlDbType.Text) { Value = OrderStatus.Cancelled.ToString() },
-            new("sale_voided", NpgsqlDbType.Text) { Value = Modules.Pos.Domain.PosSaleStatus.Voided.ToString() },
+            new("sale_voided", NpgsqlDbType.Text) { Value = PosSaleStatus.Voided.ToString() },
             new("sale_source", NpgsqlDbType.Text) { Value = OrderSourceFilter.Pos.ToString() },
             new("sale_payment_status", NpgsqlDbType.Text) { Value = OrderPaymentStatus.FullPaymentReceived.ToString() },
         };
@@ -671,6 +663,15 @@ internal sealed class OrdersReportSource(
         public decimal FreightSubtotal { get; init; }
 
         public decimal FreightTaxAmount { get; init; }
+
+        public decimal Total { get; init; }
+    }
+
+    private sealed class CurrencyCountRow
+    {
+        public string Currency { get; init; } = string.Empty;
+
+        public int Count { get; init; }
 
         public decimal Total { get; init; }
     }
