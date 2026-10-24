@@ -58,7 +58,7 @@ internal sealed partial class MessagingCustomerDirectory(
     }
 
     private static MessagingCustomerContact ToMessaging(CustomerContact contact) =>
-        new(contact.CustomerId, contact.Name, contact.PhoneE164, contact.WhatsAppUserId, contact.IsActive, contact.MarketingOptOut);
+        new(contact.CustomerId, contact.Name, contact.PhoneE164, contact.WhatsAppUserId, contact.IsActive, contact.MarketingOptOut, contact.CreatedAt);
 
     public async Task<MessagingCustomerContact?> FindContactAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
         await whatsApp.FindContactAsync(tenantId, customerId, cancellationToken) is { } contact ? ToMessaging(contact) : null;

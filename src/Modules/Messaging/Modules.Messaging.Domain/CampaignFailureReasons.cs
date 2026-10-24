@@ -15,6 +15,9 @@ public static class CampaignFailureCodes
     public const string CampaignCancelled = "campaign_cancelled";
     public const string CampaignFailed = "campaign_failed";
 
+    /// <summary>Spec 2026-10-24 §4.4: otro destinatario de la campaña tiene el mismo WhatsApp y se le escribe a él.</summary>
+    public const string DuplicateContact = "duplicate_contact";
+
     /// <summary>El proceso cayó con la llamada a Meta en vuelo: no se sabe si salió, y no se reenvía (decisión 12).</summary>
     public const string UnknownOutcome = "unknown_outcome";
 
@@ -63,6 +66,7 @@ public static class CampaignFailureReasons
         [CampaignFailureCodes.Unreachable] = "El cliente no tiene WhatsApp.",
         [CampaignFailureCodes.CampaignCancelled] = "La campaña se canceló.",
         [CampaignFailureCodes.CampaignFailed] = "La campaña se detuvo.",
+        [CampaignFailureCodes.DuplicateContact] = "Otro cliente de la campaña tiene el mismo WhatsApp.",
         [CampaignFailureCodes.UnknownOutcome] = "No se pudo confirmar el envío; no se reintentó para evitar duplicados.",
         [CampaignFailureCodes.ConnectionUnavailable] = "La conexión de WhatsApp está pausada, necesita atención o ya no existe. Revísala en Integraciones.",
         [CampaignFailureCodes.NotSent] = "No se pudo conectar con WhatsApp; el mensaje no salió.",

@@ -36,6 +36,8 @@ public sealed class MessagingCustomerDirectoryAudienceTests
     {
         public CustomerContact? Contact { get; init; }
 
+        public DateTimeOffset? AudienceCreatedAt { get; init; }
+
         public List<Guid> OptedOut { get; } = [];
 
         public (IReadOnlyCollection<Guid> Tags, IReadOnlyCollection<Guid> Customers)? LastAudience { get; private set; }
@@ -50,8 +52,8 @@ public sealed class MessagingCustomerDirectoryAudienceTests
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
         {
             LastAudience = (tagIds, customerIds);
-            yield return new CustomerContact(Guid.NewGuid(), "Uno", "+573001112233", null, true, false);
-            yield return new CustomerContact(Guid.NewGuid(), "Dos", null, "CO.2", false, true);
+            yield return new CustomerContact(Guid.NewGuid(), "Uno", "+573001112233", null, true, false, AudienceCreatedAt);
+            yield return new CustomerContact(Guid.NewGuid(), "Dos", null, "CO.2", false, true, AudienceCreatedAt);
             await Task.CompletedTask;
         }
 
@@ -154,6 +156,22 @@ public sealed class MessagingCustomerDirectoryAudienceTests
         Assert.Equal("CO.2", seen[1].WhatsAppUserId);
         Assert.Equal(tags, whatsApp.LastAudience!.Value.Tags);
         Assert.Equal(customers, whatsApp.LastAudience!.Value.Customers);
+    }
+
+    [Fact]
+    public async Task TheAudiencePassesTheCreationDateThrough()
+    {
+        // Spec 2026-10-24 §4.4: sin conversación gana el cliente más viejo del número, y la fecha la tiene Customers.
+        var createdAt = new DateTimeOffset(2025, 3, 4, 5, 6, 7, TimeSpan.Zero);
+        var whatsApp = new FakeWhatsApp { AudienceCreatedAt = createdAt };
+        var seen = new List<MessagingCustomerContact>();
+
+        await foreach (var contact in AdapterOver(whatsApp).ListAudienceAsync(Tenant, [], [Guid.NewGuid()], TestContext.Current.CancellationToken))
+        {
+            seen.Add(contact);
+        }
+
+        Assert.All(seen, contact => Assert.Equal(createdAt, contact.CreatedAt));
     }
 
     [Fact]

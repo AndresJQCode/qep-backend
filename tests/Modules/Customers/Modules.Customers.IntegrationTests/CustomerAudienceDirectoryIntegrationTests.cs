@@ -224,8 +224,32 @@ public sealed class CustomerAudienceDirectoryIntegrationTests
         var mine = await directory.FindContactAsync(Tenant, id, TestContext.Current.CancellationToken);
         var foreign = await directory.FindContactAsync(OtherTenant, id, TestContext.Current.CancellationToken);
 
-        Assert.Equal(new CustomerContact(id, "Laura 1", "+573000000001", null, true, false), mine);
+        Assert.NotNull(mine);
+        Assert.Equal(new CustomerContact(id, "Laura 1", "+573000000001", null, true, false), mine with { CreatedAt = null });
+        Assert.NotNull(mine.CreatedAt);
         Assert.Null(foreign);
+    }
+
+    [Fact]
+    public async Task TheAudienceAndTheContactCarryTheCreationDate()
+    {
+        // Spec 2026-10-24 §4.4 (D-M7): sin conversación, de dos clientes de una campaña con el mismo WhatsApp gana el más viejo, y la
+        // fecha sale de la misma proyección que el opt-out por número.
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        var connection = database.GetConnectionString();
+        var id = await InsertWithPhoneAsync(connection, Tenant, "Ana Vieja", "+573001112222", optOut: false);
+        await ExecuteAsync(connection, $"UPDATE customers.customers SET created_at = '2024-01-02T03:04:05Z' WHERE id = '{id}'");
+        var expected = new DateTimeOffset(2024, 1, 2, 3, 4, 5, TimeSpan.Zero);
+
+        var audience = await AudienceAsync(factory, Tenant, [], [id]);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var contact = await scope.ServiceProvider.GetRequiredService<ICustomerWhatsAppDirectory>()
+            .FindContactAsync(Tenant, id, TestContext.Current.CancellationToken);
+
+        Assert.Equal(expected, Assert.Single(audience).CreatedAt);
+        Assert.Equal(expected, contact!.CreatedAt);
     }
 
     [Fact]

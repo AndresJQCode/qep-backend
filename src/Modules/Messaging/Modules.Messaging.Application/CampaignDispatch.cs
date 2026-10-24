@@ -9,9 +9,11 @@ public sealed record CampaignFreezeTarget(
     Guid CampaignId, Guid TenantId, string TemplateCategory, IReadOnlyList<Guid> TagIds, IReadOnlyList<Guid> CustomerIds);
 
 /// <summary>Un cliente de la audiencia ya clasificado: <c>Pending</c>, o <c>Skipped</c> con su motivo (<see cref="CampaignFailureCodes"/>).
-/// <c>WaId</c> son los dígitos del teléfono, como los guarda la conversación.</summary>
+/// <c>WaId</c> son los dígitos del teléfono, como los guarda la conversación. <c>CustomerCreatedAt</c> es la fecha de alta del cliente:
+/// el desempate «el más viejo» del desduplicado por contacto (spec 2026-10-24 §4.4, desvío A8), que corre al final del congelado.</summary>
 public sealed record CampaignRecipientSeed(
-    Guid CustomerId, string CustomerName, string? WaId, string? UserId, CampaignRecipientStatus Status, string? FailureCode);
+    Guid CustomerId, string CustomerName, string? WaId, string? UserId, CampaignRecipientStatus Status, string? FailureCode,
+    DateTimeOffset? CustomerCreatedAt = null);
 
 /// <summary>Un destinatario que este worker reclamó (<c>Sending</c> con lease), con lo de la campaña que hace falta para enviarlo.
 /// <c>Attempts</c> ya cuenta este intento. <c>MessageId</c> y <c>ConversationId</c> sólo vienen en un reintento.</summary>
@@ -54,10 +56,17 @@ public interface ICampaignDispatchStore
     /// <summary>Paso 2: las <c>Sending</c> sin <c>audience_frozen_at</c>.</summary>
     Task<IReadOnlyList<CampaignFreezeTarget>> ListUnfrozenAsync(CancellationToken cancellationToken);
 
-    /// <summary>Una fila por cliente, <c>ON CONFLICT DO NOTHING</c> sobre <c>(campaign_id, customer_id)</c>: repetir es inocuo.</summary>
+    /// <summary>Una fila por cliente, <c>ON CONFLICT DO NOTHING</c> sobre <c>(campaign_id, customer_id)</c>: repetir es inocuo. Sólo mientras
+    /// la campaña sigue <c>Sending</c> y sin <c>audience_frozen_at</c>: un lote de un congelado tardío (otro pod) no deja un <c>Pending</c> que
+    /// el desduplicado de <see cref="MarkFrozenAsync"/> ya no vería.</summary>
     Task AddRecipientsAsync(CampaignFreezeTarget campaign, IReadOnlyList<CampaignRecipientSeed> batch, DateTimeOffset now, CancellationToken cancellationToken);
 
-    /// <summary>Marca la audiencia como escrita completa. Sin versión: es contabilidad interna, no algo que la pantalla edite.</summary>
+    /// <summary>Marca la audiencia como escrita completa. Sin versión: es contabilidad interna, no algo que la pantalla edite. En una sola
+    /// transacción que bloquea la campaña, y en este orden: (1) un envío por contacto (spec 2026-10-24 §4.4): de los <c>Pending</c> que
+    /// comparten <c>wa_id</c> queda uno —el cliente de la conversación de ese contacto en la conexión, si no el más viejo por fecha de alta y
+    /// luego id— y los demás pasan a <c>Skipped duplicate_contact</c>; los omitidos por otro motivo no cuentan; (2) la marca; (3) el barrido
+    /// R9 de una campaña que terminó mientras se congelaba. Idempotente: repetirlo no cambia nada, y un lote que llegue después de la marca
+    /// (<see cref="AddRecipientsAsync"/>) no inserta.</summary>
     Task MarkFrozenAsync(Guid campaignId, DateTimeOffset now, CancellationToken cancellationToken);
 
     /// <summary>Paso 3: hasta <paramref name="take"/> <c>Pending</c> vencidos de campañas <c>Sending</c>, con <c>FOR UPDATE SKIP LOCKED</c>,
@@ -466,6 +475,8 @@ public sealed partial class CampaignDispatcher(
             await store.AddRecipientsAsync(target, batch, clock.UtcNow, cancellationToken);
         }
 
+        // Spec 2026-10-24 §4.4: el desduplicado por contacto corre acá, al final y no lote por lote —el ganador puede llegar en un lote
+        // posterior al perdedor—, en la misma transacción que la marca. Nada se reclama antes de la marca (A9), así que nadie sale antes.
         await store.MarkFrozenAsync(target.CampaignId, clock.UtcNow, cancellationToken);
     }
 
@@ -481,6 +492,7 @@ public sealed partial class CampaignDispatcher(
             : marketing && contact.MarketingOptOut ? CampaignFailureCodes.OptedOut
             : null;
         return new CampaignRecipientSeed(
-            contact.CustomerId, name, waId, contact.WhatsAppUserId, skip is null ? CampaignRecipientStatus.Pending : CampaignRecipientStatus.Skipped, skip);
+            contact.CustomerId, name, waId, contact.WhatsAppUserId, skip is null ? CampaignRecipientStatus.Pending : CampaignRecipientStatus.Skipped, skip,
+            contact.CreatedAt);
     }
 }

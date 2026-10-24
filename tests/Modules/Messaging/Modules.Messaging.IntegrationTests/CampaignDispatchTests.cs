@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
+using Npgsql;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
 namespace Modules.Messaging.IntegrationTests;
@@ -735,7 +736,10 @@ public sealed class CampaignDispatchTests
 
         await DrainCampaignsAsync(f.Host);
 
-        Assert.Equal(("Sent", "Sent"), (await RecipientStatusAsync(f, "Ana Ruiz"), await RecipientStatusAsync(f, "Ana Segunda")));
+        // Spec 2026-10-24 §4.4: el número recibe la plantilla una sola vez, a nombre del cliente más viejo; el otro queda duplicate_contact.
+        Assert.Equal(("Sent", "Skipped"), (await RecipientStatusAsync(f, "Ana Ruiz"), await RecipientStatusAsync(f, "Ana Segunda")));
+        Assert.Equal("duplicate_contact", await RecipientCodeAsync(f, "Ana Segunda"));
+        Assert.Equal(1, MetaSends(f.Pod.MetaHandler));
     }
 
     [Fact]
@@ -836,6 +840,269 @@ public sealed class CampaignDispatchTests
         await scope.ServiceProvider.GetRequiredService<ICampaignDispatchStore>().MarkFrozenAsync(id, DateTimeOffset.UtcNow, Ct);
 
         Assert.Equal("Lote ya insertado", Assert.Single(await dispatcher.ClaimAsync(20, Ct)).CustomerName);
+    }
+
+    private const string DuplicateText = "Otro cliente de la campaña tiene el mismo WhatsApp.";
+
+    private static Task<string> RecipientCodeAsync(Fixture f, string name) =>
+        ScalarAsync<string>(f.ConnectionString, "SELECT coalesce(failure_code, '') FROM messaging.campaign_recipients WHERE customer_name = @n", ("n", name));
+
+    private static CampaignRecipientSeed PendingSeed(Guid customerId, string name, string waId, DateTimeOffset createdAt) =>
+        new(customerId, name, waId, null, CampaignRecipientStatus.Pending, null, createdAt);
+
+    private static Task<string> RecipientsSnapshotAsync(Fixture f, Guid campaignId) =>
+        ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT string_agg(r.customer_name || '|' || r.status || '|' || coalesce(r.failure_code, '') || '|' || coalesce(r.failure_reason, ''), ';' ORDER BY r.customer_name)
+                   || '#' || c.audience_frozen_at::text
+              FROM messaging.campaign_recipients r JOIN messaging.campaigns c ON c.id = r.campaign_id
+             WHERE r.campaign_id = @id
+             GROUP BY c.audience_frozen_at
+            """, ("id", campaignId));
+
+    /// <summary>Espera a que alguna sesión de esta base esté bloqueada por un candado: la carrera de dos pods se arma de forma determinista.</summary>
+    private static async Task WaitUntilSomeoneWaitsOnALockAsync(Fixture f)
+    {
+        for (var i = 0; i < 200; i++)
+        {
+            if (await CountAsync(f.ConnectionString, "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'") > 0)
+            {
+                return;
+            }
+
+            await Task.Delay(50, Ct);
+        }
+
+        Assert.Fail("Nadie quedó esperando el candado de la campaña.");
+    }
+
+    [Fact]
+    public async Task TwoCustomersOfTheSameNumberGetOnePendingInTheSameBatch()
+    {
+        // Spec 2026-10-24 §4.4: sin conversación gana el más viejo por fecha de alta. Ana tiene el id mayor (se creó después) pero la fecha
+        // más vieja: si el desempate fuera por id, ganaría Beto.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Beto Nuevo", "300 111 2222"), ("Ana Vieja", "300 111 2222"), ("Carla Sol", "320 333 4444"));
+        await ExecuteAsync(f.ConnectionString, "UPDATE customers.customers SET created_at = now() - interval '1 year' WHERE id = @id", ("id", customers[1]));
+        await LaunchAsync(f, Input(f, [.. customers]));
+
+        await DrainCampaignsAsync(f.Host);
+
+        Assert.Equal(("Sent", "Skipped", "Sent"), (await RecipientStatusAsync(f, "Ana Vieja"), await RecipientStatusAsync(f, "Beto Nuevo"), await RecipientStatusAsync(f, "Carla Sol")));
+        Assert.Equal(("duplicate_contact", DuplicateText), (
+            await RecipientCodeAsync(f, "Beto Nuevo"),
+            await ScalarAsync<string>(f.ConnectionString, "SELECT failure_reason FROM messaging.campaign_recipients WHERE customer_name = 'Beto Nuevo'")));
+        Assert.Equal(2, MetaSends(f.Pod.MetaHandler));
+        var sent = Assert.Single(f.Pod.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal) && request.Body!.Contains("573001112222", StringComparison.Ordinal));
+        Assert.Contains("Ana Vieja", sent.Body!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheConversationCustomerWinsOverTheOldest()
+    {
+        // §4.4 regla 1: el cliente principal de la conversación de ese contacto en la conexión de la campaña gana aunque sea el más nuevo.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Vieja", "300 111 2222"), ("Beto Nuevo", "300 111 2222"));
+        await ExecuteAsync(f.ConnectionString, "UPDATE customers.customers SET created_at = now() - interval '1 year' WHERE id = @id", ("id", customers[0]));
+        var conversation = await SeedBsuidConversationAsync(f.Host, f.ConnectionString, f.Tenant.TenantId, f.ConnectionId, "CO.beto", "573001112222");
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET customer_id = @c WHERE id = @id", ("c", customers[1]), ("id", conversation));
+        await LaunchAsync(f, Input(f, [.. customers]));
+
+        await DrainCampaignsAsync(f.Host);
+
+        Assert.Equal(("Sent", "Skipped", "duplicate_contact"), (await RecipientStatusAsync(f, "Beto Nuevo"), await RecipientStatusAsync(f, "Ana Vieja"), await RecipientCodeAsync(f, "Ana Vieja")));
+        var sent = Assert.Single(f.Pod.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal));
+        Assert.Contains("Beto Nuevo", sent.Body!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TwoCustomersOfTheSameNumberInDifferentBatchesAlsoGetOne()
+    {
+        // El congelado escribe lotes por id y un INSERT no ve las filas de otra sentencia: el ganador (el más viejo) llega en el segundo
+        // lote y el perdedor ya quedó Pending en el primero. Lo decide el UPDATE de MarkFrozenAsync.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var id = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()]));
+        using var scope = f.Host.Services.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<ICampaignDispatchStore>();
+        var target = new CampaignFreezeTarget(id, f.Tenant.TenantId, "MARKETING", [], []);
+        var now = DateTimeOffset.UtcNow;
+        var newer = Guid.CreateVersion7();
+        var older = Guid.CreateVersion7();
+
+        await store.AddRecipientsAsync(target, [PendingSeed(newer, "Beto Nuevo", "573001112222", now)], now, Ct);
+        await store.AddRecipientsAsync(target, [PendingSeed(older, "Ana Vieja", "573001112222", now.AddYears(-1))], now, Ct);
+        await store.MarkFrozenAsync(id, now, Ct);
+
+        Assert.Equal(("Pending", "Skipped", "duplicate_contact"), (await RecipientStatusAsync(f, "Ana Vieja"), await RecipientStatusAsync(f, "Beto Nuevo"), await RecipientCodeAsync(f, "Beto Nuevo")));
+    }
+
+    [Fact]
+    public async Task RepeatingTheFreezeChangesNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var id = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()]));
+        using var scope = f.Host.Services.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<ICampaignDispatchStore>();
+        var target = new CampaignFreezeTarget(id, f.Tenant.TenantId, "MARKETING", [], []);
+        var now = DateTimeOffset.UtcNow;
+        await store.AddRecipientsAsync(
+            target,
+            [PendingSeed(Guid.CreateVersion7(), "Ana Vieja", "573001112222", now.AddYears(-1)), PendingSeed(Guid.CreateVersion7(), "Beto Nuevo", "573001112222", now),
+             PendingSeed(Guid.CreateVersion7(), "Carla Sol", "573203334444", now)],
+            now, Ct);
+
+        await store.MarkFrozenAsync(id, now, Ct);
+        var first = await RecipientsSnapshotAsync(f, id);
+        await store.MarkFrozenAsync(id, now.AddMinutes(5), Ct);
+        // Un congelado repetido (otro pod, o el mismo tras un reinicio) vuelve a escribir los lotes: ON CONFLICT no los toca.
+        await store.AddRecipientsAsync(target, [PendingSeed(Guid.CreateVersion7(), "Dario Tarde", "573001112222", now)], now, Ct);
+        await store.MarkFrozenAsync(id, now.AddMinutes(10), Ct);
+
+        Assert.Equal(first, await RecipientsSnapshotAsync(f, id));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaign_recipients WHERE failure_code = 'duplicate_contact'"));
+    }
+
+    [Fact]
+    public async Task AnInactiveCustomerDoesNotTakeTheSendFromTheOther()
+    {
+        // Las filas omitidas por otro motivo no cuentan: Ana es la más vieja, pero inactiva no le quita el envío a Beto.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Vieja", "300 111 2222"), ("Beto Nuevo", "300 111 2222"));
+        await ExecuteAsync(f.ConnectionString, "UPDATE customers.customers SET is_active = false WHERE id = @id", ("id", customers[0]));
+        await LaunchAsync(f, Input(f, [.. customers]));
+
+        await DrainCampaignsAsync(f.Host);
+
+        Assert.Equal(("Skipped", "inactive", "Sent"), (await RecipientStatusAsync(f, "Ana Vieja"), await RecipientCodeAsync(f, "Ana Vieja"), await RecipientStatusAsync(f, "Beto Nuevo")));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaign_recipients WHERE failure_code = 'duplicate_contact'"));
+        Assert.Equal(1, MetaSends(f.Pod.MetaHandler));
+    }
+
+    [Fact]
+    public async Task ACancelledCampaignIsNotDeduplicated()
+    {
+        // Cancelada a mitad del congelado: los rezagados quedan con el motivo terminal (R9), no con duplicate_contact.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var id = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()]));
+        using var scope = f.Host.Services.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<ICampaignDispatchStore>();
+        var now = DateTimeOffset.UtcNow;
+        await store.AddRecipientsAsync(
+            new CampaignFreezeTarget(id, f.Tenant.TenantId, "MARKETING", [], []),
+            [PendingSeed(Guid.CreateVersion7(), "Ana Vieja", "573001112222", now.AddYears(-1)), PendingSeed(Guid.CreateVersion7(), "Beto Nuevo", "573001112222", now)],
+            now, Ct);
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaigns SET status = 'Cancelled' WHERE id = @id", ("id", id));
+
+        await store.MarkFrozenAsync(id, now, Ct);
+
+        Assert.Equal(2L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaign_recipients WHERE status = 'Skipped' AND failure_code = 'campaign_cancelled'"));
+    }
+
+    [Fact]
+    public async Task ABatchWrittenAfterTheMarkInsertsNothing()
+    {
+        // Ruling de CD-11: un segundo congelado (otro pod) que llega tarde no puede dejar un Pending que el desduplicado ya no ve.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var id = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()]));
+        using var scope = f.Host.Services.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<ICampaignDispatchStore>();
+        var target = new CampaignFreezeTarget(id, f.Tenant.TenantId, "MARKETING", [], []);
+        var now = DateTimeOffset.UtcNow;
+        await store.AddRecipientsAsync(target, [PendingSeed(Guid.CreateVersion7(), "Ana Vieja", "573001112222", now.AddYears(-1))], now, Ct);
+        await store.MarkFrozenAsync(id, now, Ct);
+
+        await store.AddRecipientsAsync(target, [PendingSeed(Guid.CreateVersion7(), "Beto Tarde", "573001112222", now)], now, Ct);
+
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaign_recipients"));
+        Assert.Equal("Pending", await RecipientStatusAsync(f, "Ana Vieja"));
+    }
+
+    [Fact]
+    public async Task ABatchWaitingOnTheMarkInsertsNothingOnceTheMarkCommits()
+    {
+        // La carrera: este pod tiene la campaña bloqueada en MarkFrozenAsync (simulado con la misma secuencia en otra conexión) y el lote del
+        // otro pod espera el FOR SHARE. Al confirmar, la campaña ya está congelada y el lote no inserta nada.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var id = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()]));
+        using var scope = f.Host.Services.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<ICampaignDispatchStore>();
+        var target = new CampaignFreezeTarget(id, f.Tenant.TenantId, "MARKETING", [], []);
+        var now = DateTimeOffset.UtcNow;
+        await store.AddRecipientsAsync(target, [PendingSeed(Guid.CreateVersion7(), "Ana Vieja", "573001112222", now.AddYears(-1))], now, Ct);
+
+        await using var marker = new NpgsqlConnection(f.ConnectionString);
+        await marker.OpenAsync(Ct);
+        await using var transaction = await marker.BeginTransactionAsync(Ct);
+        await using (var lockCampaign = new NpgsqlCommand(
+            "SELECT 1 FROM messaging.campaigns WHERE id = @id FOR UPDATE; UPDATE messaging.campaigns SET audience_frozen_at = now() WHERE id = @id", marker, transaction))
+        {
+            lockCampaign.Parameters.AddWithValue("id", id);
+            await lockCampaign.ExecuteNonQueryAsync(Ct);
+        }
+
+        var late = Task.Run(() => store.AddRecipientsAsync(target, [PendingSeed(Guid.CreateVersion7(), "Beto Tarde", "573001112222", now)], now, Ct), Ct);
+        await WaitUntilSomeoneWaitsOnALockAsync(f);
+        await transaction.CommitAsync(Ct);
+        await late;
+
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaign_recipients"));
+    }
+
+    [Fact]
+    public async Task TheMarkWaitsForABatchInFlightAndDeduplicatesIt()
+    {
+        // La carrera al revés: el lote de otro pod ya tomó la campaña con FOR SHARE y no confirmó. MarkFrozenAsync espera con FOR UPDATE
+        // antes de desduplicar, así que ve ese lote: si desduplicara primero, Beto quedaría Pending y recibiría la misma plantilla.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var id = await LaunchAsync(f, Input(f, [Guid.CreateVersion7()]));
+        using var scope = f.Host.Services.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<ICampaignDispatchStore>();
+        var now = DateTimeOffset.UtcNow;
+        await store.AddRecipientsAsync(
+            new CampaignFreezeTarget(id, f.Tenant.TenantId, "MARKETING", [], []),
+            [PendingSeed(Guid.CreateVersion7(), "Ana Vieja", "573001112222", now.AddYears(-1))], now, Ct);
+
+        await using var batch = new NpgsqlConnection(f.ConnectionString);
+        await batch.OpenAsync(Ct);
+        await using var transaction = await batch.BeginTransactionAsync(Ct);
+        await using (var insert = new NpgsqlCommand(
+            """
+            SELECT 1 FROM messaging.campaigns WHERE id = @campaign FOR SHARE;
+            INSERT INTO messaging.campaign_recipients (id, campaign_id, tenant_id, customer_id, customer_name, wa_id, status, attempts, next_attempt_at)
+            VALUES (@id, @campaign, @tenant, @customer, 'Beto Nuevo', '573001112222', 'Pending', 0, now())
+            """, batch, transaction))
+        {
+            insert.Parameters.AddWithValue("id", Guid.CreateVersion7());
+            insert.Parameters.AddWithValue("campaign", id);
+            insert.Parameters.AddWithValue("tenant", f.Tenant.TenantId);
+            insert.Parameters.AddWithValue("customer", Guid.CreateVersion7());
+            await insert.ExecuteNonQueryAsync(Ct);
+        }
+
+        var mark = Task.Run(() => store.MarkFrozenAsync(id, now, Ct), Ct);
+        await WaitUntilSomeoneWaitsOnALockAsync(f);
+        await transaction.CommitAsync(Ct);
+        await mark;
+
+        Assert.Equal(("Pending", "Skipped", "duplicate_contact"), (await RecipientStatusAsync(f, "Ana Vieja"), await RecipientStatusAsync(f, "Beto Nuevo"), await RecipientCodeAsync(f, "Beto Nuevo")));
     }
 
     private static Task<int> SeedSendingRecipientAsync(

@@ -92,10 +92,11 @@ internal sealed class CustomerAudienceRepository(CustomersDbContext dbContext) :
         public required string? WhatsAppUserId { get; init; }
         public required bool IsActive { get; init; }
         public required bool OptedOut { get; init; }
+        public required DateTimeOffset CreatedAt { get; init; }
     }
 
     private static CustomerContact ToContact(ContactRow row) =>
-        new(row.Id.Value, row.Name, row.PhoneE164, row.WhatsAppUserId, row.IsActive, row.OptedOut);
+        new(row.Id.Value, row.Name, row.PhoneE164, row.WhatsAppUserId, row.IsActive, row.OptedOut, row.CreatedAt);
 
     // Spec 2026-10-24 §4.4: el opt-out de marketing es del número. Un cliente cuenta como excluido si él, o cualquier
     // otro cliente del tenant con el mismo phone_e164, tiene la bandera; sin teléfono sólo mira la suya. Se calcula al
@@ -110,6 +111,8 @@ internal sealed class CustomerAudienceRepository(CustomersDbContext dbContext) :
             PhoneE164 = customer.PhoneE164,
             WhatsAppUserId = customer.WhatsAppUserId,
             IsActive = customer.IsActive,
+            // Spec 2026-10-24 §4.4: el desempate «el más viejo» de una campaña con dos clientes del mismo WhatsApp (D-M7).
+            CreatedAt = customer.CreatedAt,
             OptedOut = customer.MarketingOptOut
                 || (customer.PhoneE164 != null
                     && dbContext.Customers.Any(other =>

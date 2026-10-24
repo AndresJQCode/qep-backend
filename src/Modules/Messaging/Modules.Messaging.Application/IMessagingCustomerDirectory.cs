@@ -14,9 +14,10 @@ public sealed record MessagingEnsuredCustomer(Guid CustomerId, bool Created);
 /// <summary>Spec 2026-10-11 §4.4: cómo escribirle a un cliente. <c>PhoneE164</c> con «+» (el <c>waId</c> son sus dígitos) y
 /// <c>WhatsAppUserId</c> es el BSUID; sin ninguno de los dos no se le puede escribir. <c>MarketingOptOut</c> vale para todo el
 /// número (spec 2026-10-24 §4.4): es <c>true</c> si la ficha o cualquier otro cliente del tenant con el mismo teléfono tiene
-/// la bandera. Las plantillas <c>MARKETING</c> lo excluyen y las <c>UTILITY</c> no.</summary>
+/// la bandera. Las plantillas <c>MARKETING</c> lo excluyen y las <c>UTILITY</c> no. <c>CreatedAt</c> es la fecha de alta del
+/// cliente: sin conversación, de dos destinatarios de una campaña con el mismo WhatsApp gana el más viejo (spec 2026-10-24 §4.4).</summary>
 public sealed record MessagingCustomerContact(
-    Guid CustomerId, string Name, string? PhoneE164, string? WhatsAppUserId, bool IsActive, bool MarketingOptOut);
+    Guid CustomerId, string Name, string? PhoneE164, string? WhatsAppUserId, bool IsActive, bool MarketingOptOut, DateTimeOffset? CreatedAt = null);
 
 /// <summary>Spec 2026-10-11 §4.4: cuántos tiene una audiencia y por qué algunos no recibirían nada. Cubos excluyentes y con
 /// precedencia —inactivo, luego sin WhatsApp, luego con opt-out—: «le llegará a» es <c>Total - Inactive - WithoutWhatsApp</c>,

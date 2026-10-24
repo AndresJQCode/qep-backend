@@ -72,9 +72,11 @@ public interface ICustomerAuthorNames
 
 /// <summary>Quién es el cliente para efectos de mensajería (spec 2026-10-11 §4.4). Sin teléfono ni BSUID no se le puede escribir.
 /// <c>MarketingOptOut</c> es del número (spec 2026-10-24 §4.4): vale <c>true</c> si la ficha, o cualquier otro cliente del
-/// tenant con el mismo teléfono, tiene la bandera; una ficha sin teléfono sólo mira la suya.</summary>
+/// tenant con el mismo teléfono, tiene la bandera; una ficha sin teléfono sólo mira la suya. <c>CreatedAt</c> es la fecha de
+/// alta, para el desempate «el más viejo» de una campaña (spec 2026-10-24 §4.4, D-M7); opcional al final para que los
+/// llamadores que no la necesitan no cambien.</summary>
 public sealed record CustomerContact(
-    Guid CustomerId, string Name, string? PhoneE164, string? WhatsAppUserId, bool IsActive, bool MarketingOptOut);
+    Guid CustomerId, string Name, string? PhoneE164, string? WhatsAppUserId, bool IsActive, bool MarketingOptOut, DateTimeOffset? CreatedAt = null);
 
 /// <summary>
 /// Cuántos clientes tiene una audiencia y por qué algunos no recibirían nada. Los cubos son excluyentes y con
