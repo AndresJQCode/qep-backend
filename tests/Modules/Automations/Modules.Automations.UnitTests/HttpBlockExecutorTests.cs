@@ -214,7 +214,7 @@ public sealed class HttpBlockExecutorTests
 
         var result = await bed.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
 
-        Assert.Equal(("connection_unavailable", false), (result.Outcome, result.Ok));
+        Assert.Equal(("connection_unavailable", "auth_header_reserved", false), (result.Outcome, result.ErrorCode, result.Ok));
         Assert.Equal(["Host"], bed.Policy.CheckedHeaders);
         Assert.Empty(bed.Handler.Requests);
         Assert.Empty(bed.Log.Entries);
@@ -350,12 +350,42 @@ public sealed class HttpBlockExecutorTests
         var byResolve = await unresolved.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
         var byNode = await unset.Executor().ExecuteAsync(Context, Node(withoutConnection: true), Variables(), Ct);
 
-        Assert.Equal(("connection_unavailable", false), (byResolve.Outcome, byResolve.Ok));
-        Assert.Equal(("connection_unavailable", false), (byNode.Outcome, byNode.Ok));
+        // Spec 2026-10-24 D-T5: el motivo va en ErrorCode; el outcome no cambia.
+        Assert.Equal(("connection_unavailable", "not_found", false), (byResolve.Outcome, byResolve.ErrorCode, byResolve.Ok));
+        Assert.Equal(("connection_unavailable", "not_chosen", false), (byNode.Outcome, byNode.ErrorCode, byNode.Ok));
         Assert.Empty(unresolved.Handler.Requests);
         Assert.Empty(unset.Handler.Requests);
         Assert.Empty(unresolved.Log.Entries);
         Assert.Empty(unset.Log.Entries);
+    }
+
+    /// <summary>Spec 2026-10-24, caso 1 del owner: la clave no se puede leer. Sin llamada y sin fila, con el motivo y el nombre de la
+    /// conexión para el hilo.</summary>
+    [Fact]
+    public async Task AnUnreadableKeyCarriesItsReasonAndTheConnectionNameWithoutARow()
+    {
+        var bed = new Bed(_ => Json(HttpStatusCode.OK, "{}"), unavailable: ("secret_unreadable", "API de Clasic"));
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+
+        Assert.Equal(
+            ("connection_unavailable", "secret_unreadable", "API de Clasic", false),
+            (result.Outcome, result.ErrorCode, result.ConnectionName, result.Ok));
+        Assert.Empty(bed.Handler.Requests);
+        Assert.Empty(bed.Log.Entries);
+    }
+
+    [Fact]
+    public async Task ASuccessfulCallCarriesTheConnectionName()
+    {
+        var bed = new Bed(_ => Json(HttpStatusCode.OK, "{}"));
+        var failing = new Bed(_ => Json(HttpStatusCode.NotFound, "{}"));
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+        var failed = await failing.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+
+        Assert.Equal((true, "API de Clasic"), (result.Ok, result.ConnectionName));
+        Assert.Equal(("error_status", "http_404", "API de Clasic"), (failed.Outcome, failed.ErrorCode, failed.ConnectionName));
     }
 
     /// <summary>P2-R11: un cuerpo que no queda en JSON no sale; la fila sí queda.</summary>
@@ -600,18 +630,21 @@ public sealed class HttpBlockExecutorTests
     {
         public Bed(
             Func<HttpRequestMessage, HttpResponseMessage> respond, string authHeader = "x-api-key", string? rejection = null, bool resolves = true,
-            CapturedLogs? logs = null)
-            : this((request, _) => Task.FromResult(respond(request)), authHeader, rejection, resolves, logs)
+            CapturedLogs? logs = null, (string Reason, string? Name)? unavailable = null)
+            : this((request, _) => Task.FromResult(respond(request)), authHeader, rejection, resolves, logs, unavailable)
         {
         }
 
         public Bed(
             Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond, string authHeader = "x-api-key", string? rejection = null,
-            bool resolves = true, CapturedLogs? logs = null)
+            bool resolves = true, CapturedLogs? logs = null, (string Reason, string? Name)? unavailable = null)
         {
             Handler = new StubHandler(respond);
             Policy = new StubPolicy(rejection);
-            Apis = new StubExternalApis(resolves ? new ExternalApiCredentials(new Uri("https://api.clasic.test/v1/"), authHeader, Key) : null);
+            Apis = new StubExternalApis(
+                unavailable is { } why ? new ExternalApiResolution(null, why.Reason, why.Name)
+                : resolves ? new ExternalApiResolution(new ExternalApiCredentials(new Uri("https://api.clasic.test/v1/"), authHeader, Key), null, "API de Clasic")
+                : new ExternalApiResolution(null, "not_found", null));
             LoggerFactory = Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddProvider(logs ?? new CapturedLogs()).SetMinimumLevel(LogLevel.Trace));
         }
 
@@ -710,12 +743,12 @@ public sealed class HttpBlockExecutorTests
             exception.InnerException is InvalidOperationException { Message: ConnectRejection } ? "resolved_to_forbidden_range" : null;
     }
 
-    internal sealed class StubExternalApis(ExternalApiCredentials? credentials) : IAutomationExternalApis
+    internal sealed class StubExternalApis(ExternalApiResolution resolution) : IAutomationExternalApis
     {
         public Task<IReadOnlyList<ExternalApiRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
-        public Task<ExternalApiCredentials?> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
-            Task.FromResult(tenantId == TenantId && connectionId == ConnectionId ? credentials : null);
+        public Task<ExternalApiResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            Task.FromResult(tenantId == TenantId && connectionId == ConnectionId ? resolution : new ExternalApiResolution(null, "not_found", null));
     }
 
     internal sealed class StubMedia : IAutomationMedia

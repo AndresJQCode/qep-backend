@@ -17,20 +17,32 @@ internal sealed class AutomationExternalApis(IIntegrationConnections connections
         [.. (await connections.ListByProviderAsync(tenantId, ProviderKey, cancellationToken))
             .Select(connection => new ExternalApiRef(connection.Id, connection.Name, connection.Status.ToString()))];
 
-    /// <summary>Integrations ya filtra tenant, estado <c>Active</c>, proveedor habilitado y clave legible; acá se descarta otro proveedor (un
-    /// bloque importado con el id de una conexión de WhatsApp) y una URL que ni siquiera se arma.</summary>
-    public async Task<ExternalApiCredentials?> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    /// <summary>Integrations ya filtra tenant, estado <c>Active</c>, proveedor habilitado y clave legible, y dice cuál falló (spec 2026-10-24
+    /// D-T4); acá se descarta además otro proveedor (un bloque importado con el id de una conexión de WhatsApp) y una URL que ni siquiera se
+    /// arma o una clave vacía. Las credenciales nunca viajan con un motivo.</summary>
+    public async Task<ExternalApiResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
     {
-        if ((await connections.ResolveAsync(tenantId, connectionId, cancellationToken)).Connection is not { ProviderKey: ProviderKey } connection
-            || !Uri.TryCreate(connection.Fields.GetValueOrDefault(ExternalApiFieldKeys.BaseUrl), UriKind.Absolute, out var baseUrl)
+        var resolution = await connections.ResolveAsync(tenantId, connectionId, cancellationToken);
+        if (resolution.Connection is not { } connection)
+        {
+            return new ExternalApiResolution(
+                null, ConnectionReasonCodes.Of(resolution.Unavailable ?? ConnectionUnavailableReason.NotFound), resolution.Name);
+        }
+
+        if (!string.Equals(connection.ProviderKey, ProviderKey, StringComparison.Ordinal))
+        {
+            return new ExternalApiResolution(null, ConnectionReasonCodes.WrongProvider, connection.Name);
+        }
+
+        if (!Uri.TryCreate(connection.Fields.GetValueOrDefault(ExternalApiFieldKeys.BaseUrl), UriKind.Absolute, out var baseUrl)
             || connection.Secrets.GetValueOrDefault(ExternalApiFieldKeys.ApiKey) is not { Length: > 0 } apiKey)
         {
-            return null;
+            return new ExternalApiResolution(null, ConnectionReasonCodes.Incomplete, connection.Name);
         }
 
         var authHeader = connection.Fields.GetValueOrDefault(ExternalApiFieldKeys.AuthHeader) is { } header && !string.IsNullOrWhiteSpace(header)
             ? header
             : DefaultAuthHeader;
-        return new ExternalApiCredentials(baseUrl, authHeader, apiKey);
+        return new ExternalApiResolution(new ExternalApiCredentials(baseUrl, authHeader, apiKey), null, connection.Name);
     }
 }

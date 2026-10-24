@@ -10,9 +10,11 @@ public sealed record HttpCallContext(Guid TenantId, Guid? RunId, Guid? Simulatio
 /// <summary>
 /// Cómo terminó el bloque (D-H4..D-H8). <see cref="Ok"/> elige la salida <c>ok</c> o <c>error</c>; <see cref="Mapped"/> trae sólo las
 /// variables del mapeo (D-H7: sin mapeo, vacío); <see cref="Outcome"/> es uno de <see cref="HttpCallOutcomes"/> y <see cref="ErrorCode"/> lo
-/// precisa (<c>http_404</c>, <c>body_not_json</c>, el motivo de la política de URL), <c>null</c> si salió bien.
+/// precisa (<c>http_404</c>, <c>body_not_json</c>, el motivo de la política de URL, el de la conexión), <c>null</c> si salió bien.
+/// <see cref="ConnectionName"/> (spec 2026-10-24 §3.2) es el nombre de la conexión cuando la resolución lo trajo, con o sin éxito: lo usa
+/// el hilo del traspaso y no va a <c>http_calls</c>.
 /// </summary>
-public sealed record HttpCallResult(bool Ok, int? Status, RunVariables Mapped, string Outcome, string? ErrorCode);
+public sealed record HttpCallResult(bool Ok, int? Status, RunVariables Mapped, string Outcome, string? ErrorCode, string? ConnectionName = null);
 
 /// <summary>Spec 2026-10-21 D-H4..D-H8: llama a la API externa de una conexión <c>external-api</c> y mapea su respuesta. Nunca lanza por la
 /// API (todo fallo sale como un <see cref="HttpCallResult"/> sin <c>Ok</c>); sólo propaga la cancelación de quien llama.</summary>
@@ -38,7 +40,8 @@ public interface IHttpCallLog
 }
 
 /// <summary>Los <c>outcome</c> de <c>http_calls</c>. D-H6 nombra los cinco primeros; el resto precisa el <c>error</c> del bloque.
-/// <see cref="ConnectionUnavailable"/> nunca se registra: sin conexión no hay fila que escribir.</summary>
+/// <see cref="ConnectionUnavailable"/> nunca se registra: sin conexión no hay fila que escribir. Lleva el motivo en <c>ErrorCode</c>
+/// (spec 2026-10-24 D-T5): <c>not_chosen</c>, <c>auth_header_reserved</c> o el que dio la resolución (<c>secret_unreadable</c>, …).</summary>
 public static class HttpCallOutcomes
 {
     public const string Ok = "ok";
