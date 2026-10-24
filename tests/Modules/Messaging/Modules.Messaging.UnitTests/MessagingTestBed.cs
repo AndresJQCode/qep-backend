@@ -361,6 +361,9 @@ internal sealed class FakeConnectionDirectory : IMessagingConnectionDirectory
     public Task<MessagingSender?> ResolveSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult(Sender);
 
+    public Task<MessagingSenderResolution> ResolveSenderWithReasonAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(new MessagingSenderResolution(Sender, Sender is null ? "not_found" : null, null));
+
     /// <summary>Spec 2026-10-11 §6.2: los nombres de las conexiones (Active o no); sin entrada, «Conexión eliminada».</summary>
     public Dictionary<Guid, string> Names { get; } = [];
 

@@ -248,7 +248,8 @@ public interface IAutomationConversations
 }
 
 /// <summary>Cómo terminó un envío del bot (D-I4). <see cref="NotAutomated"/>: la conversación ya no es del bot (resuelta, con asesor o
-/// sin asistente activo). <see cref="Rejected"/> lleva el código de Mensajería.</summary>
+/// sin asistente activo). <see cref="Rejected"/> lleva el código de Mensajería y, cuando la conexión de WhatsApp no se pudo usar, su motivo
+/// y su nombre (spec 2026-10-24 §3.3).</summary>
 public abstract record BotSendOutcome
 {
     public sealed record Sent(Guid MessageId) : BotSendOutcome;
@@ -257,7 +258,7 @@ public abstract record BotSendOutcome
 
     public sealed record WindowClosed : BotSendOutcome;
 
-    public sealed record Rejected(string Code) : BotSendOutcome;
+    public sealed record Rejected(string Code, string? ConnectionReason = null, string? ConnectionName = null) : BotSendOutcome;
 }
 
 /// <summary>Spec 2026-10-21 §5.3 y D-I4: los envíos del bot (adaptador en Bootstrapper sobre <c>IBotOutbound</c>). El

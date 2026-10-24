@@ -258,6 +258,9 @@ public sealed class AutomationAdaptersTests
             (new BotSendResult.NotAutomated(), new BotSendOutcome.NotAutomated()),
             (new BotSendResult.WindowClosed(), new BotSendOutcome.WindowClosed()),
             (new BotSendResult.ConnectionUnavailable(), new BotSendOutcome.Rejected(MessagingErrorCodes.ConnectionUnavailable)),
+            // Spec 2026-10-24 §3.3: el motivo y el nombre de la conexión de WhatsApp pasan al motor.
+            (new BotSendResult.ConnectionUnavailable("secret_unreadable", "Servicio Clasic"),
+                new BotSendOutcome.Rejected(MessagingErrorCodes.ConnectionUnavailable, "secret_unreadable", "Servicio Clasic")),
             (new BotSendResult.Rejected("messaging.interactive.invalid"), new BotSendOutcome.Rejected("messaging.interactive.invalid")),
         ];
 
@@ -443,6 +446,9 @@ public sealed class AutomationAdaptersTests
         public Task<IReadOnlyList<MessagingRoute>> FindByAccountAsync(string wabaId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<MessagingSender?> ResolveSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<MessagingSenderResolution> ResolveSenderWithReasonAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public Task<IReadOnlyDictionary<Guid, string>> ListNamesAsync(Guid tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
 

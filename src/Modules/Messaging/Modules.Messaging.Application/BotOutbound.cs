@@ -16,7 +16,9 @@ public abstract record BotSendResult
 
     public sealed record WindowClosed : BotSendResult;
 
-    public sealed record ConnectionUnavailable : BotSendResult;
+    /// <summary>Spec 2026-10-24 D-T11: <paramref name="Reason"/> es un código de spec §3.4 (<c>paused</c>, <c>secret_unreadable</c>,
+    /// <c>credentials_rejected</c>, …) y <paramref name="ConnectionName"/> el nombre de la conexión de WhatsApp, para el hilo del traspaso.</summary>
+    public sealed record ConnectionUnavailable(string? Reason = null, string? ConnectionName = null) : BotSendResult;
 
     public sealed record Rejected(string Code) : BotSendResult;
 }
@@ -42,6 +44,9 @@ public sealed class BotOutbound(
     ReadReceipts receipts,
     IClock clock) : IBotOutbound
 {
+    /// <summary>Spec 2026-10-24 §3.4: Meta rechazó el token al enviar.</summary>
+    public const string CredentialsRejected = "credentials_rejected";
+
     public async Task<BotSendResult> SendAsync(BotSend send, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(send);
@@ -106,11 +111,11 @@ public sealed class BotOutbound(
             return new BotSendResult.Sent(inFlight.Id, AlreadySent: true);
         }
 
-        var sender = await connections.ResolveSenderAsync(send.TenantId, conversation.ConnectionId, cancellationToken);
-        if (sender is null)
+        var resolution = await connections.ResolveSenderWithReasonAsync(send.TenantId, conversation.ConnectionId, cancellationToken);
+        if (resolution.Sender is not { } sender)
         {
             await claim.RollbackAsync(CancellationToken.None);
-            return new BotSendResult.ConnectionUnavailable();
+            return new BotSendResult.ConnectionUnavailable(resolution.UnavailableReason, resolution.ConnectionName);
         }
 
         // Desde acá todo cierre va con CancellationToken.None, como en SendMessageHandler: si Meta ya aceptó, cancelar no puede borrar la fila.
@@ -126,7 +131,8 @@ public sealed class BotOutbound(
         }
         catch (MessagingDomainException exception) when (exception.Code == MessagingErrorCodes.ConnectionUnavailable)
         {
-            return new BotSendResult.ConnectionUnavailable();
+            // La liquidación sólo tira este código cuando Meta rechazó la credencial o el número; la conexión ya quedó NeedsAttention.
+            return new BotSendResult.ConnectionUnavailable(CredentialsRejected, resolution.ConnectionName);
         }
         catch (MessagingDomainException exception) when (exception.Code == MessagingErrorCodes.WindowClosed)
         {

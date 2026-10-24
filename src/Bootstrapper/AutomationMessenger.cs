@@ -52,7 +52,8 @@ internal sealed class AutomationMessenger(IBotOutbound outbound) : IAutomationMe
         BotSendResult.Sent sent => new BotSendOutcome.Sent(sent.MessageId),
         BotSendResult.NotAutomated => new BotSendOutcome.NotAutomated(),
         BotSendResult.WindowClosed => new BotSendOutcome.WindowClosed(),
-        BotSendResult.ConnectionUnavailable => new BotSendOutcome.Rejected(MessagingErrorCodes.ConnectionUnavailable),
+        BotSendResult.ConnectionUnavailable unavailable =>
+            new BotSendOutcome.Rejected(MessagingErrorCodes.ConnectionUnavailable, unavailable.Reason, unavailable.ConnectionName),
         BotSendResult.Rejected rejected => new BotSendOutcome.Rejected(rejected.Code),
         _ => throw new ArgumentOutOfRangeException(nameof(result), result.GetType().Name, "Resultado de envío desconocido."),
     };
