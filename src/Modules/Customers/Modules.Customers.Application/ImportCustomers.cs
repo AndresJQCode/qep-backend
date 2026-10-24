@@ -400,6 +400,7 @@ public sealed class ImportCustomersHandler(
 
         var targetIdsBySuffix = await customerRepository.FindIdsByCucSuffixAsync(
             tenantId, suffixes, cancellationToken);
+        var survivorCucs = await SurvivorCucsAsync(tenantId, targetIdsBySuffix.Values, cancellationToken);
 
         var resolved = new List<CandidateRow>(candidates.Count);
         foreach (var candidate in candidates)
@@ -412,6 +413,22 @@ public sealed class ImportCustomersHandler(
 
             if (targetIdsBySuffix.TryGetValue(Customer.StableSuffixOf(candidate.Cuc), out var targetId))
             {
+                // Spec 2026-10-24 §3.3 (D-F6): el CUC impreso de un fusionado no lo actualiza. Se decide acá, antes de
+                // RemoveExistingIdentificationsAsync, para que la fila diga «fusionado» y traiga el CUC del que quedó aunque
+                // su documento sea el del que quedó (ese sería un identification_taken que manda a corregir el campo que
+                // está bien). También va antes del chequeo de inactivo: un fusionado siempre lo está.
+                if (survivorCucs.TryGetValue(targetId, out var survivorCuc))
+                {
+                    errors.Add(new ImportRowError(
+                        candidate.RowNumber,
+                        "customers.import.row.customer_merged",
+                        $"The customer with that Cuc was merged into {survivorCuc}.",
+                        nameof(ExcelCustomerRow.Cuc),
+                        ToRowData(candidate.SourceRow),
+                        survivorCuc));
+                    continue;
+                }
+
                 resolved.Add(candidate.WithTargetId(targetId));
             }
             else
@@ -426,6 +443,27 @@ public sealed class ImportCustomersHandler(
         }
 
         return resolved;
+    }
+
+    /// <summary>De los clientes que resolvieron un CUC, los fusionados con el CUC del que quedó (dos consultas batch, no una
+    /// por fila). El que quedó siempre es completo (<c>survivor_incomplete</c>), así que trae CUC; si faltara, el campo va
+    /// en null y la fila igual falla como fusionada.</summary>
+    private async Task<IReadOnlyDictionary<CustomerId, string?>> SurvivorCucsAsync(
+        Guid tenantId, IEnumerable<CustomerId> targetIds, CancellationToken cancellationToken)
+    {
+        var targets = await customerRepository.FindManyAsync(tenantId, targetIds.Distinct().ToArray(), cancellationToken);
+        var survivorOf = targets.Values
+            .Where(customer => customer.MergedIntoId.HasValue)
+            .ToDictionary(customer => customer.Id, customer => customer.MergedIntoId.GetValueOrDefault());
+        if (survivorOf.Count == 0)
+        {
+            return new Dictionary<CustomerId, string?>();
+        }
+
+        var survivors = await customerRepository.FindManyAsync(tenantId, survivorOf.Values.Distinct().ToArray(), cancellationToken);
+        return survivorOf.ToDictionary(
+            pair => pair.Key,
+            pair => survivors.TryGetValue(pair.Value, out var survivor) ? survivor.Cuc : null);
     }
 
     /// <summary>
@@ -514,6 +552,7 @@ public sealed class ImportCustomersHandler(
                     ?? throw new InvalidOperationException(
                         $"Customer '{targetId}' resolved by Cuc suffix was not found when applying the update.");
 
+                // Un fusionado ya salió como customer_merged en ResolveCucTargetsAsync (spec 2026-10-24 §3.3).
                 // Mismo chequeo que UpdateCustomerHandler hace via Customer.Update, pero
                 // adelantado: Update() lanza CustomersDomainException si el cliente esta
                 // inactivo, y esta funcion no tiene un try/catch por fila — dejarlo pasar

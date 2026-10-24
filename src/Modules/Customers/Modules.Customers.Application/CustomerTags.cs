@@ -182,8 +182,10 @@ public sealed class SetCustomerTagsHandler(
         CustomersAuthorization.EnsureAuthorized(executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var customerId = new CustomerId(command.CustomerId);
-        _ = await customers.FindAsync(command.TenantId, customerId, cancellationToken)
+        var customer = await customers.FindAsync(command.TenantId, customerId, cancellationToken)
             ?? throw CustomerNotFound.For(command.CustomerId);
+        // Las asignaciones son otro agregado: no pasan por Customer, así que el rechazo del fusionado se pide acá.
+        customer.EnsureNotMerged();
 
         var requested = command.TagIds.Select(id => new TagId(id)).ToArray();
         CustomerTagAssignment.EnsureValidSelection(requested);

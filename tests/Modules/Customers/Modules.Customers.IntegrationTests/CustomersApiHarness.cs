@@ -389,6 +389,23 @@ internal static class CustomersApiHarness
         return customer;
     }
 
+    /// <summary>Deja una fila como la deja la fusion: apunta al que queda, con la fecha, inactiva y con la version subida.
+    /// Las pruebas de escrituras y de lecturas sobre un fusionado la usan sin pasar por la ruta de fusion.</summary>
+    public static async Task MarkMergedAsync(string connectionString, Guid mergedId, Guid survivorId)
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE customers.customers
+            SET merged_into_id = @survivor, merged_at = now(), is_active = false, version = version + 1
+            WHERE id = @merged
+            """;
+        command.Parameters.AddWithValue("survivor", survivorId);
+        command.Parameters.AddWithValue("merged", mergedId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+    }
+
     public static async Task<CustomersResponse> ListAsync(HttpClient client, string query)
     {
         var response = await client.GetFromJsonAsync<CustomersResponse>(

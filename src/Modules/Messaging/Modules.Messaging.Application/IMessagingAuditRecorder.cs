@@ -45,6 +45,7 @@ public static class MessagingAuditActions
     public const string AutoTaken = "messaging.conversation.auto_taken";
     public const string AutomationPaused = "messaging.conversation.automation_paused";
     public const string AutomationResumed = "messaging.conversation.automation_resumed";
+    public const string CustomerChanged = "messaging.conversation.customer_changed";
 
     /// <summary>Spec 2026-10-11 decisión 9: una conversación abierta desde la plataforma, asignada a quien la inició.</summary>
     public const string Started = "messaging.conversation.started";
@@ -59,6 +60,7 @@ public static class MessagingAuditActions
         ConversationEventType.AutoTaken => AutoTaken,
         ConversationEventType.AutomationPaused => AutomationPaused,
         ConversationEventType.AutomationResumed => AutomationResumed,
+        ConversationEventType.CustomerChanged => CustomerChanged,
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, "That event type has no assignment audit action."),
     };
 

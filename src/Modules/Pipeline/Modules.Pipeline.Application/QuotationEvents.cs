@@ -22,6 +22,11 @@ public sealed record OrderCancelledFact(Guid TenantId, Guid OrderId, Guid? Quota
 /// llegada (converted aplica primero las reglas de enlace de sent, D25) y un evento repetido no duplica nada. Una principal
 /// anulada o vencida no dispara nada (D28): Quotations no emite evento por eso. Converted es terminal para sent: un sent que llega
 /// después de la conversión no toca la foto, el monto ni el enlace.
+///
+/// Spec 2026-10-24 §4 «lo que llega tarde» (desvío F16): un evento que salió antes de una fusión trae el id del fusionado. Los
+/// dos hechos que nombran cliente (<see cref="QuotationFact"/> y <see cref="OrderFact"/>) se resuelven al que quedó
+/// <b>antes</b> de usarlos: si no, el sent le abriría un negocio a un cliente que ya no aparece en ninguna lista, y la
+/// comparación del paso 2 tomaría el negocio ya movido por «de otro cliente» y desenlazaría su cotización.
 /// </summary>
 public sealed class QuotationEventApplier(
     ITenantModules tenantModules,
@@ -29,7 +34,8 @@ public sealed class QuotationEventApplier(
     IDealRepository deals,
     IDealQuotationRepository quotations,
     IDealOrderRepository orders,
-    IPipelineAuditRecorder audit)
+    IPipelineAuditRecorder audit,
+    IPipelineCustomerDirectory customers)
 {
     /// <returns><c>false</c> si el tenant no tiene la capacidad (P12): el mensaje se marca procesado sin efecto.</returns>
     public Task<bool> ApplySentAsync(QuotationFact fact, DateTimeOffset now, CancellationToken cancellationToken) =>
@@ -57,6 +63,7 @@ public sealed class QuotationEventApplier(
             return false;
         }
 
+        fact = fact with { ClientId = await customers.ResolveSurvivorAsync(fact.TenantId, fact.ClientId, cancellationToken) };
         var pipeline = await provisioner.EnsureAsync(fact.TenantId, cancellationToken);
         if (await orders.FindAsync(fact.TenantId, fact.OrderId, cancellationToken) is not null)
         {
@@ -181,6 +188,8 @@ public sealed class QuotationEventApplier(
             return false;
         }
 
+        // Antes de la foto y del paso 2: con el id del fusionado, el negocio ya movido parecería de otro cliente.
+        fact = fact with { ClientId = await customers.ResolveSurvivorAsync(fact.TenantId, fact.ClientId, cancellationToken) };
         var pipeline = await provisioner.EnsureAsync(fact.TenantId, cancellationToken);
 
         // Paso 1: la foto.

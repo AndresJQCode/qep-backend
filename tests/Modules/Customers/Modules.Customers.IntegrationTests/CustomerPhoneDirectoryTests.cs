@@ -57,6 +57,92 @@ public sealed class CustomerPhoneDirectoryTests
         Assert.Equal(smallerId, Assert.Single(matches).Value.Id);
     }
 
+    // Spec 2026-10-24 §3.3: un fusionado nunca es «el más viejo» del número, aunque lo sea por created_at.
+    [Fact]
+    public async Task MatchNeverPicksAMergedAsTheOldest()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var mine = CreateManager(factory);
+        var city = await EnsureCityAsync(mine);
+        var classification = await CreateClassificationAsync(mine);
+        var oldest = await CreateWithPhoneAsync(mine, city.CityId, classification.Id, "El Fusionado", "900.111.111-1", "300 123 4567");
+        var survivor = await CreateWithPhoneAsync(mine, city.CityId, classification.Id, "Quien Queda", "900.222.222-2", "300 123 4567");
+        await MarkMergedAsync(database.GetConnectionString(), oldest.Id, survivor.Id);
+
+        var matches = await MatchAsync(factory, ["+573001234567"]);
+
+        Assert.Equal(new CustomerPhoneMatch(survivor.Id, "Quien Queda", true), Assert.Single(matches).Value);
+    }
+
+    // §3.3: el número sólo lo tiene el fusionado; sale el que quedó, con su nombre y su completitud.
+    [Fact]
+    public async Task AMatchOnlyAMergedHasResolvesToTheSurvivor()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var mine = CreateManager(factory);
+        var city = await EnsureCityAsync(mine);
+        var classification = await CreateClassificationAsync(mine);
+        var merged = await CreateWithPhoneAsync(mine, city.CityId, classification.Id, "El Fusionado", "900.111.111-1", "300 123 4567");
+        var survivor = await CreateWithPhoneAsync(mine, city.CityId, classification.Id, "Quien Queda", "900.222.222-2", "300 999 9999");
+        await MarkMergedAsync(database.GetConnectionString(), merged.Id, survivor.Id);
+
+        var matches = await MatchAsync(factory, ["+573001234567", "+573009999999"]);
+
+        Assert.Equal(new CustomerPhoneMatch(survivor.Id, "Quien Queda", true), matches["+573001234567"]);
+        Assert.Equal(new CustomerPhoneMatch(survivor.Id, "Quien Queda", true), matches["+573009999999"]);
+    }
+
+    [Fact]
+    public async Task ListByPhoneReturnsEveryCustomerOfTheNumberOldestFirstWithinTheTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var mine = CreateManager(factory);
+        using var theirs = CreateOtherTenantManager(factory);
+        var myCity = await EnsureCityAsync(mine);
+        var myClassification = await CreateClassificationAsync(mine);
+        var theirCity = await EnsureCityAsync(theirs);
+        var theirClassification = await CreateClassificationAsync(theirs, "Mediano", "CLI", OtherTenantId);
+
+        var first = await CreateWithPhoneAsync(mine, myCity.CityId, myClassification.Id, "Primero", "900.111.111-1", "300 123 4567");
+        var second = await CreateWithPhoneAsync(mine, myCity.CityId, myClassification.Id, "Segundo", "900.222.222-2", "300 123 4567");
+        var third = await CreateWithPhoneAsync(mine, myCity.CityId, myClassification.Id, "Tercero", "900.333.333-3", "300 123 4567");
+        await CreateWithPhoneAsync(mine, myCity.CityId, myClassification.Id, "Otro numero", "900.444.444-4", "300 999 9999");
+        await CreateWithPhoneAsync(
+            theirs, theirCity.CityId, theirClassification.Id, "Ajeno", "900.555.555-5", "300 123 4567", OtherTenantId);
+        await ExecuteAsync(database.GetConnectionString(), "UPDATE customers.customers SET is_active = false WHERE id = @id", ("id", second.Id));
+        // El orden manda por created_at, no por el orden de inserción: el tercero pasa a ser el más viejo.
+        await ExecuteAsync(
+            database.GetConnectionString(),
+            "UPDATE customers.customers SET created_at = created_at - interval '1 day' WHERE id = @id",
+            ("id", third.Id));
+
+        var listed = await ListByPhoneAsync(factory, "+573001234567", 10);
+
+        Assert.Equal(
+            [new CustomerPhoneMatch(third.Id, "Tercero", true), new CustomerPhoneMatch(first.Id, "Primero", true), new CustomerPhoneMatch(second.Id, "Segundo", true)],
+            listed);
+    }
+
+    [Fact]
+    public async Task ListByPhoneHonoursTheTake()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var mine = CreateManager(factory);
+        var city = await EnsureCityAsync(mine);
+        var classification = await CreateClassificationAsync(mine);
+        await CreateWithPhoneAsync(mine, city.CityId, classification.Id, "Uno", "900.111.111-1", "300 123 4567");
+        await CreateWithPhoneAsync(mine, city.CityId, classification.Id, "Dos", "900.222.222-2", "300 123 4567");
+        await CreateWithPhoneAsync(mine, city.CityId, classification.Id, "Tres", "900.333.333-3", "300 123 4567");
+
+        var listed = await ListByPhoneAsync(factory, "+573001234567", 2);
+
+        Assert.Equal(["Uno", "Dos"], listed.Select(match => match.Name));
+    }
+
     [Fact]
     public async Task FindPhonesByNameHonoursTheCapAndTheTenant()
     {
@@ -167,6 +253,13 @@ public sealed class CustomerPhoneDirectoryTests
         await using var scope = factory.Services.CreateAsyncScope();
         var directory = scope.ServiceProvider.GetRequiredService<ICustomerPhoneDirectory>();
         return await directory.MatchAsync(Guid.Parse(TenantId), phones, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<IReadOnlyList<CustomerPhoneMatch>> ListByPhoneAsync(QepApiFactory factory, string e164, int take)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var directory = scope.ServiceProvider.GetRequiredService<ICustomerPhoneDirectory>();
+        return await directory.ListByPhoneAsync(Guid.Parse(TenantId), e164, take, TestContext.Current.CancellationToken);
     }
 
     private static Task<string?> PhoneE164Async(string connectionString, Guid customerId) =>

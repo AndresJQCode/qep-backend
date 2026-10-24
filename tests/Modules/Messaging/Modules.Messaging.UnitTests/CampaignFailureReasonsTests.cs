@@ -14,6 +14,7 @@ public sealed class CampaignFailureReasonsTests
     [InlineData("campaign_cancelled", "La campaña se canceló.")]
     [InlineData("campaign_failed", "La campaña se detuvo.")]
     [InlineData("unknown_outcome", "No se pudo confirmar el envío; no se reintentó para evitar duplicados.")]
+    [InlineData("duplicate_contact", "Otro cliente de la campaña tiene el mismo WhatsApp.")]
     public void ASkippedOrOutcomeCodeHasItsFixedText(string code, string expected) =>
         Assert.Equal(expected, CampaignFailureReasons.For(code));
 

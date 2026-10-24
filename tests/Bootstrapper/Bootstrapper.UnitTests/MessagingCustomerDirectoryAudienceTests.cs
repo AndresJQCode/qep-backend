@@ -20,11 +20,23 @@ public sealed class MessagingCustomerDirectoryAudienceTests
 
         public Task<IReadOnlyList<string>> FindPhonesByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public List<CustomerPhoneMatch>? ByPhone { get; init; }
+
+        public (string E164, int Take)? LastListByPhone { get; private set; }
+
+        public Task<IReadOnlyList<CustomerPhoneMatch>> ListByPhoneAsync(Guid tenantId, string e164, int take, CancellationToken cancellationToken)
+        {
+            LastListByPhone = (e164, take);
+            return ByPhone is null ? throw new NotSupportedException() : Task.FromResult<IReadOnlyList<CustomerPhoneMatch>>(ByPhone);
+        }
     }
 
     private sealed class FakeWhatsApp : ICustomerWhatsAppDirectory
     {
         public CustomerContact? Contact { get; init; }
+
+        public DateTimeOffset? AudienceCreatedAt { get; init; }
 
         public List<Guid> OptedOut { get; } = [];
 
@@ -40,8 +52,8 @@ public sealed class MessagingCustomerDirectoryAudienceTests
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
         {
             LastAudience = (tagIds, customerIds);
-            yield return new CustomerContact(Guid.NewGuid(), "Uno", "+573001112233", null, true, false);
-            yield return new CustomerContact(Guid.NewGuid(), "Dos", null, "CO.2", false, true);
+            yield return new CustomerContact(Guid.NewGuid(), "Uno", "+573001112233", null, true, false, AudienceCreatedAt);
+            yield return new CustomerContact(Guid.NewGuid(), "Dos", null, "CO.2", false, true, AudienceCreatedAt);
             await Task.CompletedTask;
         }
 
@@ -98,8 +110,9 @@ public sealed class MessagingCustomerDirectoryAudienceTests
             throw new NotSupportedException();
     }
 
-    private static MessagingCustomerDirectory AdapterOver(FakeWhatsApp whatsApp, FakeTagLookup? tags = null) =>
-        new(new FakePhones(), whatsApp, new FakeInstagram(), tags ?? new FakeTagLookup(), NullLogger<MessagingCustomerDirectory>.Instance);
+    private static MessagingCustomerDirectory AdapterOver(FakeWhatsApp whatsApp, FakeTagLookup? tags = null, FakePhones? phones = null) =>
+        new(phones ?? new FakePhones(), whatsApp, new FakeInstagram(), tags ?? new FakeTagLookup(), new FakeCustomerMergeStore(),
+            NullLogger<MessagingCustomerDirectory>.Instance);
 
     [Fact]
     public async Task FindTagsMapsToTheMessagingRecordAndSkipsWhatDoesNotExist()
@@ -147,6 +160,22 @@ public sealed class MessagingCustomerDirectoryAudienceTests
     }
 
     [Fact]
+    public async Task TheAudiencePassesTheCreationDateThrough()
+    {
+        // Spec 2026-10-24 §4.4: sin conversación gana el cliente más viejo del número, y la fecha la tiene Customers.
+        var createdAt = new DateTimeOffset(2025, 3, 4, 5, 6, 7, TimeSpan.Zero);
+        var whatsApp = new FakeWhatsApp { AudienceCreatedAt = createdAt };
+        var seen = new List<MessagingCustomerContact>();
+
+        await foreach (var contact in AdapterOver(whatsApp).ListAudienceAsync(Tenant, [], [Guid.NewGuid()], TestContext.Current.CancellationToken))
+        {
+            seen.Add(contact);
+        }
+
+        Assert.All(seen, contact => Assert.Equal(createdAt, contact.CreatedAt));
+    }
+
+    [Fact]
     public async Task CountAndOptOutPassThrough()
     {
         var whatsApp = new FakeWhatsApp();
@@ -170,5 +199,18 @@ public sealed class MessagingCustomerDirectoryAudienceTests
 
         Assert.Equal([customer], whatsApp.OptedOutByButton);
         Assert.Empty(whatsApp.OptedOut);
+    }
+
+    [Fact]
+    public async Task ListByPhoneAddsThePlusAndMapsToCustomerRefs()
+    {
+        var first = new CustomerPhoneMatch(Guid.NewGuid(), "Laura", true);
+        var second = new CustomerPhoneMatch(Guid.NewGuid(), "Pedro", false);
+        var phones = new FakePhones { ByPhone = [first, second] };
+
+        var refs = await AdapterOver(new FakeWhatsApp(), phones: phones).ListByPhoneAsync(Tenant, "573001112233", 11, TestContext.Current.CancellationToken);
+
+        Assert.Equal(("+573001112233", 11), phones.LastListByPhone);
+        Assert.Equal([new CustomerRefDto(first.Id, "Laura", true), new CustomerRefDto(second.Id, "Pedro", false)], refs);
     }
 }

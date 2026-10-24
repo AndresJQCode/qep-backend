@@ -45,6 +45,10 @@ internal sealed class CampaignRecipientRecord
 
     public DateTimeOffset? SentAt { get; set; }
 
+    /// <summary>Spec 2026-10-24 §4.4 (desvío A8): la fecha de alta del cliente al congelar, para el desempate «el más viejo» del desduplicado
+    /// por contacto. Messaging no lee el esquema de Customers, así que se copia acá. <c>null</c> en las campañas congeladas antes.</summary>
+    public DateTimeOffset? CustomerCreatedAt { get; set; }
+
     /// <summary>En qué reintento de la campaña se reencoló por última vez; cero si sólo vio el envío original.</summary>
     public int RetryCount { get; set; }
 }

@@ -175,6 +175,14 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(16)")
                         .HasColumnName("marketing_opt_out_source");
 
+                    b.Property<DateTimeOffset?>("MergedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("merged_at");
+
+                    b.Property<Guid?>("MergedIntoId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("merged_into_id");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(160)
@@ -237,13 +245,18 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_customers_tenant_cuc");
 
+                    b.HasIndex("TenantId", "MergedIntoId")
+                        .HasDatabaseName("IX_customers_tenant_merged_into")
+                        .HasFilter("merged_into_id IS NOT NULL");
+
                     b.HasIndex("TenantId", "PhoneE164")
                         .HasDatabaseName("IX_customers_tenant_phone_e164")
                         .HasFilter("phone_e164 IS NOT NULL");
 
                     b.HasIndex("TenantId", "IdentificationType", "IdentificationNumber")
                         .IsUnique()
-                        .HasDatabaseName("IX_customers_tenant_identification");
+                        .HasDatabaseName("IX_customers_tenant_identification")
+                        .HasFilter("merged_into_id IS NULL");
 
                     b.HasIndex(new[] { "TenantId" }, "IX_customers_tenant");
 

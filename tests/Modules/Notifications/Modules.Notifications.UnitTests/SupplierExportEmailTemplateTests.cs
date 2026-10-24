@@ -1,0 +1,85 @@
+using Modules.Notifications.Application;
+
+namespace Modules.Notifications.UnitTests;
+
+public sealed class SupplierExportEmailTemplateTests
+{
+    private static readonly DateTimeOffset ExpiresAt =
+        new(2026, 9, 1, 14, 30, 0, TimeSpan.Zero);
+
+    private static readonly TimeZoneInfo Bogota = TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");
+
+    // Una URL prefirmada real: media docena de parametros separados por `&`, que es justo lo que
+    // rompe si el cuerpo HTML no los escapa.
+    private const string SignedUrl =
+        "https://r2.example/exports/f.xlsx?X-Amz-Algorithm=AWS4-HMAC-SHA256" +
+        "&X-Amz-Credential=abc%2F20260901%2Fauto%2Fs3%2Faws4_request" +
+        "&X-Amz-Date=20260901T113000Z&X-Amz-Expires=86400&X-Amz-Signature=deadbeef";
+
+    // El enlace y el vencimiento tienen que estar en los dos cuerpos: un cliente de correo que
+    // solo renderiza texto plano dejaria al destinatario sin forma de descargar el archivo.
+    [Fact]
+    public void RenderPutsTheLinkAndTheExpiryInBothBodies()
+    {
+        var message = SupplierExportEmailTemplate.Render(
+            "compras@verde.co",
+            SignedUrl,
+            "proveedores-20260901-113000.xlsx",
+            supplierCount: 42,
+            ExpiresAt, Bogota);
+
+        Assert.Equal("compras@verde.co", message.ToAddress);
+        Assert.NotEmpty(message.Subject);
+
+        foreach (var body in new[] { message.HtmlBody, message.TextBody })
+        {
+            Assert.Contains("proveedores-20260901-113000.xlsx", body, StringComparison.Ordinal);
+            Assert.Contains("42 proveedores", body, StringComparison.Ordinal);
+            // 14:30 UTC son las 09:30 en Bogotá: la hora del tenant, sin etiqueta de huso (spec
+            // 2026-09-17, punto 8b).
+            Assert.Contains("01/09/2026 09:30", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("UTC", body, StringComparison.Ordinal);
+        }
+
+        // En texto plano la URL va cruda: escaparla ahi la romperia.
+        Assert.Contains(SignedUrl, message.TextBody, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// El `&` sin escapar dentro de un `href` es lo que rompio el enlace en produccion: R2
+    /// contesta `400 InvalidArgument / Authorization` cuando la query string le llega partida o
+    /// con `&amp;` literal, y las dos cosas pasan cuando el HTML no declara la entidad.
+    /// </summary>
+    [Fact]
+    public void RenderEscapesTheLinkInsideTheHtmlHref()
+    {
+        var message = SupplierExportEmailTemplate.Render(
+            "compras@verde.co", SignedUrl, "proveedores.xlsx", 1, ExpiresAt, Bogota);
+
+        Assert.Contains("&amp;X-Amz-Signature=", message.HtmlBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("&X-Amz-Signature=", message.HtmlBody, StringComparison.Ordinal);
+    }
+
+    // Un solo proveedor no se anuncia como "1 proveedores".
+    [Fact]
+    public void RenderUsesTheSingularForOneSupplier()
+    {
+        var message = SupplierExportEmailTemplate.Render(
+            "compras@verde.co", "https://r2.example/x", "proveedores.xlsx", 1, ExpiresAt, Bogota);
+
+        Assert.Contains("(1 proveedor)", message.TextBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("1 proveedores", message.TextBody, StringComparison.Ordinal);
+    }
+
+    // El enlace que vence el 1 de enero a las 04:00 UTC vence, para el tenant, el 31 de diciembre a
+    // las 23:00.
+    [Fact]
+    public void RenderShowsTheExpiryOnTheTenantsDay()
+    {
+        var message = SupplierExportEmailTemplate.Render(
+            "compras@verde.co", "https://r2.example/x", "proveedores.xlsx", 1,
+            new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero), Bogota);
+
+        Assert.Contains("31/12/2026 23:00", message.TextBody, StringComparison.Ordinal);
+    }
+}

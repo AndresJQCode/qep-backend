@@ -102,6 +102,29 @@ public sealed class PipelineDirectoriesTests
         Assert.Empty(await directory.FindAsync(Guid.CreateVersion7(), [customerId], Ct));
     }
 
+    // Spec 2026-10-24 §4 «lo que llega tarde»: el adaptador lee merged_into_id por el puerto de Customers. Un id de otro tenant es
+    // «no se fusionó»: el negocio se abre a nombre del id que llegó, como antes de la fusión.
+    [Fact]
+    public async Task ResolveSurvivorReturnsTheSurvivorOrTheSameId()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var (survivor, _) = await SeedCustomerAsync(factory, tenantId, "Laura");
+        var (merged, _) = await SeedCustomerAsync(factory, tenantId, "Laura G");
+        await MarkMergedAsync(connectionString, merged, survivor);
+
+        using var scope = factory.Services.CreateScope();
+        var directory = scope.ServiceProvider.GetRequiredService<IPipelineCustomerDirectory>();
+
+        Assert.Equal(survivor, await directory.ResolveSurvivorAsync(tenantId, merged, Ct));
+        Assert.Equal(survivor, await directory.ResolveSurvivorAsync(tenantId, survivor, Ct));
+        Assert.Equal(merged, await directory.ResolveSurvivorAsync(Guid.CreateVersion7(), merged, Ct));
+        var unknown = Guid.CreateVersion7();
+        Assert.Equal(unknown, await directory.ResolveSurvivorAsync(tenantId, unknown, Ct));
+    }
+
     [Fact]
     public async Task MemberNamesAreTheTenantsOnly()
     {

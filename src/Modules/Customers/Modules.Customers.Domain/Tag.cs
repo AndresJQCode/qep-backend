@@ -204,4 +204,41 @@ public sealed class CustomerTagAssignment
                 "customers.customer.tag_limit_reached", $"A customer cannot have more than {MaxPerCustomer} tags.");
         }
     }
+
+    /// <summary>
+    /// Spec 2026-10-24 D-F5: las etiquetas de la fusión. Las del que queda primero; después las de los fusionados en el
+    /// orden recibido, sin repetir, hasta <see cref="MaxPerCustomer"/>. Lo que no cabe se informa en
+    /// <see cref="CustomerTagMerge.Dropped"/>.
+    /// </summary>
+    public static CustomerTagMerge PlanMerge(IReadOnlyCollection<TagId> survivorTags, IEnumerable<TagId> mergedTagsInOrder)
+    {
+        ArgumentNullException.ThrowIfNull(survivorTags);
+        ArgumentNullException.ThrowIfNull(mergedTagsInOrder);
+        var seen = new HashSet<TagId>(survivorTags);
+        var room = MaxPerCustomer - seen.Count;
+        var added = new List<TagId>();
+        var dropped = new List<TagId>();
+        foreach (var tagId in mergedTagsInOrder)
+        {
+            if (!seen.Add(tagId))
+            {
+                continue;
+            }
+
+            if (room > 0)
+            {
+                added.Add(tagId);
+                room--;
+            }
+            else
+            {
+                dropped.Add(tagId);
+            }
+        }
+
+        return new CustomerTagMerge(added, dropped);
+    }
 }
+
+/// <summary>Lo que la fusión hace con las etiquetas: las que gana el que queda y las que no caben.</summary>
+public sealed record CustomerTagMerge(IReadOnlyList<TagId> Added, IReadOnlyList<TagId> Dropped);

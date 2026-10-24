@@ -35,11 +35,44 @@ public static class CustomerEndpoints
             .Produces<CustomersResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        // Antes de guardar: ¿quién más tiene este número? No lleva {customerId:guid}, así que no choca con la ruta de abajo.
+        group.MapGet("/identification-matches", FindIdentificationMatchesAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerRead)
+            .Produces<CustomerIdentificationMatchesResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Clientes que comparten celular o documento. Tampoco lleva {customerId:guid}.
+        group.MapGet("/anomalies", ListAnomaliesAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerRead)
+            .Produces<CustomerAnomaliesResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapGet("/{customerId:guid}", GetCustomerAsync)
             .RequireAuthorization(CustomersPermissions.CustomerRead)
             .Produces<CustomerResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
+
+        // Spec 2026-10-24 §3.4: qué pasaría si se fusionaran estos clientes en el de la ruta. No escribe nada.
+        group.MapGet("/{customerId:guid}/merge-preview", GetCustomerMergePreviewAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerMerge)
+            .Produces<CustomerMergePreviewResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Spec 2026-10-24 §3.2: la fusión de verdad. If-Match con survivor.version de la vista previa; 428 sin él.
+        group.MapPost("/{customerId:guid}/merge", MergeCustomersAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerMerge)
+            .Accepts<MergeCustomersRequest>("application/json")
+            .Produces<CustomerMergeResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
         group.MapPost("/", CreateCustomerAsync)
             .RequireAuthorization(CustomersPermissions.CustomerManage)
@@ -187,6 +220,28 @@ public static class CustomerEndpoints
             result.PageSize));
     }
 
+    private static async Task<IResult> FindIdentificationMatchesAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        string? number = null,
+        string? type = null,
+        Guid? excludeCustomerId = null) =>
+        Results.Ok(await dispatcher.QueryAsync(
+            new FindCustomerIdentificationMatchesQuery(tenantId, number, type, excludeCustomerId),
+            cancellationToken));
+
+    private static async Task<IResult> ListAnomaliesAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        string? kind = null,
+        int page = 1,
+        int pageSize = CustomerAnomalyPaging.DefaultPageSize) =>
+        Results.Ok(await dispatcher.QueryAsync(
+            new ListCustomerAnomaliesQuery(tenantId, kind, page, pageSize),
+            cancellationToken));
+
     private static async Task<IResult> GetCustomerAsync(
         Guid tenantId,
         Guid customerId,
@@ -198,6 +253,56 @@ public static class CustomerEndpoints
             cancellationToken);
 
         return Results.Ok(ToResponse(customer));
+    }
+
+    private static async Task<IResult> GetCustomerMergePreviewAsync(
+        Guid tenantId,
+        Guid customerId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        Guid[]? mergedCustomerIds = null) =>
+        Results.Ok(await dispatcher.QueryAsync(
+            new GetCustomerMergePreviewQuery(tenantId, customerId, mergedCustomerIds), cancellationToken));
+
+    private static async Task<IResult> MergeCustomersAsync(
+        Guid tenantId,
+        Guid customerId,
+        MergeCustomersRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var expectedVersion = RequireVersion(httpContext);
+        var result = await dispatcher.SendAsync(
+            new MergeCustomersCommand(tenantId, customerId, request.MergedCustomerIds, expectedVersion), cancellationToken);
+        var survivor = result.Survivor;
+
+        return Results.Ok(new CustomerMergeResponse(
+            survivor.Id,
+            survivor.Cuc,
+            survivor.Name,
+            survivor.BusinessName,
+            survivor.IdentificationType,
+            survivor.IdentificationNumber,
+            survivor.Phone,
+            survivor.Email,
+            survivor.Address,
+            survivor.Country,
+            survivor.City,
+            survivor.Department,
+            survivor.CityName,
+            survivor.Classification,
+            survivor.Addresses,
+            survivor.WithRetention,
+            survivor.VatSurplus,
+            survivor.IsActive,
+            survivor.CreatedAt,
+            survivor.UpdatedAt,
+            survivor.IsComplete,
+            survivor.Tags,
+            survivor.MarketingConsent,
+            survivor.MergedInto,
+            result.DroppedTags));
     }
 
     private static async Task<IResult> CreateCustomerAsync(
@@ -415,6 +520,38 @@ public static class CustomerEndpoints
         return Results.Ok(ToResponse(customer));
     }
 
+    /// <summary>
+    /// La versión de <c>If-Match</c>; sin ella, 428 <c>precondition.if_match_required</c>. Es copia literal de las privadas de
+    /// <c>ShopifyEndpoints</c> e <c>IntegrationsEndpoints</c> y de la pública de <c>Modules.Tenancy.Api/IfMatchHeader.cs</c>:
+    /// Customers.Api no referencia esos módulos, y subir un helper compartido queda fuera de este slice (ruling B5). Si
+    /// cambias cómo se lee el header, cambia las cuatro.
+    /// </summary>
+    private static long RequireVersion(HttpContext httpContext) =>
+        TryParseVersion(httpContext.Request.Headers.IfMatch, out var version)
+            ? version
+            : throw new PreconditionRequiredException(
+                "precondition.if_match_required",
+                "A valid If-Match header containing the loaded customer version is required.");
+
+    // Acepta lo que la SPA ya manda en el resto del repo: "7" y también el débil W/"7".
+    private static bool TryParseVersion(string? etag, out long version)
+    {
+        version = 0;
+        if (string.IsNullOrWhiteSpace(etag))
+        {
+            return false;
+        }
+
+        var normalized = etag.Trim();
+        if (normalized.StartsWith("W/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[2..].Trim();
+        }
+
+        normalized = normalized.Trim('"');
+        return long.TryParse(normalized, out version) && version > 0;
+    }
+
     private static CustomerResponse ToResponse(CustomerDto customer) => new(
         customer.Id,
         customer.Cuc,
@@ -438,7 +575,8 @@ public static class CustomerEndpoints
         customer.UpdatedAt,
         customer.IsComplete,
         customer.Tags,
-        customer.MarketingConsent);
+        customer.MarketingConsent,
+        customer.MergedInto);
 
     private static CustomerListItemResponse ToListItem(CustomerDto customer) => new(
         customer.Id,
@@ -453,5 +591,6 @@ public static class CustomerEndpoints
         customer.CityName,
         customer.Classification,
         customer.IsActive,
-        customer.IsComplete);
+        customer.IsComplete,
+        customer.CreatedAt);
 }

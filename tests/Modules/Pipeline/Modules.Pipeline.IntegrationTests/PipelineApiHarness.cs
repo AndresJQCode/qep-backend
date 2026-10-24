@@ -238,6 +238,17 @@ internal static class PipelineApiHarness
         return (ensured.CustomerId, refs[ensured.CustomerId].Name);
     }
 
+    /// <summary>Deja la fila como la deja la fusión (spec 2026-10-24 §3.2), copia de <c>CustomersApiHarness.MarkMergedAsync</c>:
+    /// apunta al que queda, inactiva y con la versión subida. Para las pruebas que sólo necesitan leer un fusionado.</summary>
+    public static async Task MarkMergedAsync(string connectionString, Guid mergedId, Guid survivorId) =>
+        Assert.Equal(1, await ExecuteAsync(connectionString,
+            """
+            UPDATE customers.customers
+            SET merged_into_id = @survivor, merged_at = now(), is_active = false, version = version + 1
+            WHERE id = @merged
+            """,
+            ("survivor", survivorId), ("merged", mergedId)));
+
     /// <summary>Una conversación con BSUID, atada al cliente si se pasa, con sus marcas de tiempo como las dejaría la ingesta.
     /// La conexión es un id suelto: Messaging no tiene FK a Integrations.</summary>
     public static async Task<Guid> SeedConversationAsync(

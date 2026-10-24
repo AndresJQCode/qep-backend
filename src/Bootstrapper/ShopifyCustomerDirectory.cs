@@ -8,9 +8,11 @@ namespace Bootstrapper;
 /// <summary>
 /// Spec 2026-10-15 §6.2.1: Customers → Shopify. Todas las lecturas van con el <c>tenantId</c>, que los repositorios de Customers
 /// ponen en la consulta. Lo que vuelve es el estado (completo, activo) y nunca los campos que un cliente incompleto no tiene.
+/// Un fusionado nunca sale de acá: por id, teléfono, correo o documento se devuelve el que quedó (spec 2026-10-24 §3.3), así un
+/// pedido que reusa su <c>qep_customer_id</c> cae en la ficha viva. Un salto basta: <c>MergedIntoId</c> apunta a un no fusionado (D-F2).
 /// </summary>
 internal sealed class ShopifyCustomerDirectory(
-    ICustomerRepository customers, ICustomerProvisioning provisioning, IPhoneNumberNormalizer phones)
+    ICustomerRepository customers, ICustomerMergeStore mergeStore, ICustomerProvisioning provisioning, IPhoneNumberNormalizer phones)
     : IShopifyCustomerDirectory
 {
     private const string ValidationFailed = "validation.failed";
@@ -36,7 +38,16 @@ internal sealed class ShopifyCustomerDirectory(
 
         var key = (IdentificationTypeParser.Parse(type), trimmed);
         var owners = await customers.FindExistingIdentificationsAsync(tenantId, [key], cancellationToken);
-        return owners.TryGetValue(key, out var ownerId) ? await FindAsync(tenantId, ownerId, cancellationToken) : null;
+        if (owners.TryGetValue(key, out var ownerId))
+        {
+            return await FindAsync(tenantId, ownerId, cancellationToken);
+        }
+
+        // Desvío F9: la búsqueda de arriba ya no ve fusionados (F8) y un fusionado completo conserva su documento (F1); sin dueño
+        // vivo, el documento todavía puede ser de alguien que se fusionó.
+        return await mergeStore.FindSurvivorIdByIdentificationAsync(tenantId, key.Item1, trimmed, cancellationToken) is { } survivorId
+            ? await FindAsync(tenantId, new CustomerId(survivorId), cancellationToken)
+            : null;
     }
 
     // §6.2.1 paso 2: phone_e164 lo escribió Customers con este mismo normalizador, así que el número de Shopify (el de la
@@ -47,7 +58,7 @@ internal sealed class ShopifyCustomerDirectory(
     {
         var region = string.IsNullOrWhiteSpace(country) ? DefaultCountry : country.Trim().ToUpperInvariant();
         var e164 = string.IsNullOrWhiteSpace(phone) ? null : phones.ToE164(phone.Trim(), region);
-        return e164 is null ? null : ToRef(await customers.FindOldestByPhoneE164Async(tenantId, e164, cancellationToken));
+        return e164 is null ? null : await ToRefAsync(tenantId, await customers.FindOldestByPhoneE164Async(tenantId, e164, cancellationToken), cancellationToken);
     }
 
     public async Task<ShopifyCustomerRef?> FindByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken)
@@ -97,8 +108,16 @@ internal sealed class ShopifyCustomerDirectory(
     }
 
     private async Task<ShopifyCustomerRef?> FindAsync(Guid tenantId, CustomerId id, CancellationToken cancellationToken) =>
-        ToRef(await customers.FindAsync(tenantId, id, cancellationToken));
+        await ToRefAsync(tenantId, await customers.FindAsync(tenantId, id, cancellationToken), cancellationToken);
 
-    private static ShopifyCustomerRef? ToRef(Customer? customer) =>
-        customer is null ? null : new ShopifyCustomerRef(customer.Id.Value, customer.IsComplete, customer.IsActive);
+    // Un fusionado se cambia por el que quedó, entero: id y estado son del que quedó, no del fusionado (que siempre está inactivo).
+    private async Task<ShopifyCustomerRef?> ToRefAsync(Guid tenantId, Customer? customer, CancellationToken cancellationToken)
+    {
+        if (customer?.MergedIntoId is { } survivorId)
+        {
+            customer = await customers.FindAsync(tenantId, survivorId, cancellationToken);
+        }
+
+        return customer is null ? null : new ShopifyCustomerRef(customer.Id.Value, customer.IsComplete, customer.IsActive);
+    }
 }

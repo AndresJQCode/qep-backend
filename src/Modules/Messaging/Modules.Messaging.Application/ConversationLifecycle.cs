@@ -187,7 +187,7 @@ public sealed class ResolveConversationHandler(
                 now, cancellationToken);
         }
 
-        return (await summaries.BuildAsync(command.TenantId, [(await queries.FindAsync(command.TenantId, conversation.Id, cancellationToken))!], cancellationToken))[0];
+        return await summaries.BuildOneAsync(command.TenantId, (await queries.FindAsync(command.TenantId, conversation.Id, cancellationToken))!, cancellationToken);
     }
 }
 
@@ -220,7 +220,7 @@ public sealed class ReopenConversationHandler(
         audit.Record(command.TenantId, executionContext.SubjectId, MessagingAuditActions.Reopened, conversation.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await notifier.ConversationChangedAsync(command.TenantId, conversation.Id, cancellationToken);
-        return (await summaries.BuildAsync(command.TenantId, [(await queries.FindAsync(command.TenantId, conversation.Id, cancellationToken))!], cancellationToken))[0];
+        return await summaries.BuildOneAsync(command.TenantId, (await queries.FindAsync(command.TenantId, conversation.Id, cancellationToken))!, cancellationToken);
     }
 }
 

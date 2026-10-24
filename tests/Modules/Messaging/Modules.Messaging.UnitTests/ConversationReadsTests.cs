@@ -35,4 +35,79 @@ public sealed class ConversationReadsTests
 
         Assert.Null(summary.LastMessage);
     }
+
+    private static readonly Guid Tenant = Guid.CreateVersion7();
+
+    private static ConversationSummaryBuilder BuilderFor(FakeCustomerDirectory customers)
+    {
+        var context = new FakeExecutionContext(Tenant, Guid.CreateVersion7());
+        return new ConversationSummaryBuilder(
+            new FakeConnectionDirectory(), customers, new FakeMemberNames(Guid.CreateVersion7()), new FakeResolutionReasonNames(),
+            new CallerMembership(new FakeMembershipDirectory(), context), new FakeChatbotNames());
+    }
+
+    private static ConversationRow RowOf(Guid? customerId, string? waId, ConversationChannel channel = ConversationChannel.WhatsApp) => new(
+        Guid.CreateVersion7(), Tenant, Guid.CreateVersion7(), UserId: "CO.1", waId, Username: null, "Laura",
+        customerId, AssignedMemberId: null, ConversationStatus.Open, 0,
+        null, null, null, null, null, null, null,
+        DateTimeOffset.UnixEpoch, 1, channel);
+
+    // Spec 2026-10-24 §4.1: los otros clientes del número, sin el que la conversación ya muestra.
+    [Fact]
+    public async Task BuildOneListsTheOthersOfTheNumberWithoutTheConversationsCustomer()
+    {
+        var customers = new FakeCustomerDirectory();
+        var own = customers.Add("Luis Alberto");
+        var other = new CustomerRefDto(Guid.CreateVersion7(), "Ziba Tienda", true);
+        customers.ByPhone.AddRange([new CustomerRefDto(own.CustomerId, own.Name, true), other]);
+
+        var summary = await BuilderFor(customers).BuildOneAsync(Tenant, RowOf(own.CustomerId, "573001234567"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(own.CustomerId, summary.Customer?.Id);
+        Assert.Equal([other.Id], summary.SharedPhoneCustomers.Select(customer => customer.Id));
+        Assert.Equal(["573001234567"], customers.ListByPhoneCalls);
+    }
+
+    // Review Focus 2: la fila vieja sin customer_id muestra al cliente que sale por teléfono; ése tampoco se lista.
+    [Fact]
+    public async Task ALegacyConversationDoesNotListItsOwnCustomerAsShared()
+    {
+        var customers = new FakeCustomerDirectory();
+        var matched = new CustomerRefDto(Guid.CreateVersion7(), "Luis Alberto", true);
+        var other = new CustomerRefDto(Guid.CreateVersion7(), "Ziba Tienda", true);
+        customers.ByWaId["573001234567"] = matched;
+        customers.ByPhone.AddRange([matched, other]);
+
+        var summary = await BuilderFor(customers).BuildOneAsync(Tenant, RowOf(customerId: null, "573001234567"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(matched.Id, summary.Customer?.Id);
+        Assert.Equal([other.Id], summary.SharedPhoneCustomers.Select(customer => customer.Id));
+    }
+
+    [Fact]
+    public async Task InstagramAndConversationsWithoutWaIdNeverAsk()
+    {
+        var customers = new FakeCustomerDirectory();
+        customers.ByPhone.Add(new CustomerRefDto(Guid.CreateVersion7(), "Ziba Tienda", true));
+        var builder = BuilderFor(customers);
+
+        var instagram = await builder.BuildOneAsync(Tenant, RowOf(null, "573001234567", ConversationChannel.Instagram), TestContext.Current.CancellationToken);
+        var withoutWaId = await builder.BuildOneAsync(Tenant, RowOf(null, waId: null), TestContext.Current.CancellationToken);
+
+        Assert.Empty(instagram.SharedPhoneCustomers);
+        Assert.Empty(withoutWaId.SharedPhoneCustomers);
+        Assert.Empty(customers.ListByPhoneCalls);
+    }
+
+    [Fact]
+    public async Task TheListIsCutAtTen()
+    {
+        var customers = new FakeCustomerDirectory();
+        customers.ByPhone.AddRange(Enumerable.Range(1, 12).Select(n => new CustomerRefDto(Guid.CreateVersion7(), $"Cliente {n}", true)));
+
+        var summary = await BuilderFor(customers).BuildOneAsync(Tenant, RowOf(null, "573001234567"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ConversationSummaryBuilder.SharedPhoneCustomersCap, summary.SharedPhoneCustomers.Count);
+        Assert.Equal(customers.ByPhone.Take(10).Select(customer => customer.Id), summary.SharedPhoneCustomers.Select(customer => customer.Id));
+    }
 }

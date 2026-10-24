@@ -32,7 +32,11 @@ public static class CustomersInfrastructureExtensions
         services.AddScoped<ICustomerTagRepository, CustomerTagRepository>();
         services.AddScoped<ICustomerAudienceRepository, CustomerAudienceRepository>();
         services.AddScoped<ICustomerTagLookup, CustomerTagLookup>();
+        // Spec 2026-10-24 §3.2: coincidencias por número de documento normalizado.
+        services.AddScoped<ICustomerDuplicateQueries, CustomerDuplicateQueries>();
         services.AddScoped<ICustomersUnitOfWork, CustomersUnitOfWork>();
+        // Spec 2026-10-24 §3.2–§3.4: lo que la fusión lee y escribe en customers sin pasar por el agregado.
+        services.AddScoped<ICustomerMergeStore, CustomerMergeStore>();
         services.AddScoped<ICustomersAuditPublisher, CustomersAuditPublisher>();
         services.AddScoped<ICucGenerator, CucGenerator>();
 

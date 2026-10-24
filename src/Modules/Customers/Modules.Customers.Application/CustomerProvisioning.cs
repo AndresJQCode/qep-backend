@@ -49,7 +49,8 @@ public interface ICustomerProvisioning
     /// clasificación no existe en el tenant, o con <c>customers.customer.city_not_found</c> si la ciudad DIVIPOLA no
     /// existe.</exception>
     /// <exception cref="InvalidOperationException">El documento quedó tomado pero el ganador no se pudo releer. No
-    /// debería pasar, porque el índice no tiene filtro y un cliente no se borra.</exception>
+    /// debería pasar: el índice es parcial sobre los no fusionados, pero un cliente no se borra y el que ganó la carrera no
+    /// está fusionado.</exception>
     Task<ProvisionedCustomer> CreateCompleteAsync(Guid tenantId, CompleteCustomerData data, CancellationToken cancellationToken);
 
     Task<ProvisionedCustomer> CreateIncompleteAsync(

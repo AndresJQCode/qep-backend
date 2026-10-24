@@ -441,6 +441,46 @@ public sealed class ConversationTests
         var expected = paused ? MessagingErrorCodes.AutomationAlreadyPaused : MessagingErrorCodes.AutomationNotAvailable;
         Assert.Equal(expected, CodeOf(() => conversation.PauseAutomation(Andres, AutomationPauseReason.Manual, Now)));
     }
+
+    [Fact]
+    public void ChangingTheCustomerBumpsTheVersionAndReturnsTheEvent()
+    {
+        var conversation = Open();
+        var a = Guid.CreateVersion7();
+        var b = Guid.CreateVersion7();
+        conversation.ChangeCustomer(a, Andres, Now);
+        var version = conversation.Version;
+
+        var events = conversation.ChangeCustomer(b, Beatriz, Now.AddMinutes(1));
+
+        Assert.Equal(b, conversation.CustomerId);
+        Assert.Equal(version + 1, conversation.Version);
+        Assert.Equal(Now.AddMinutes(1), conversation.UpdatedAt);
+        Assert.Equal([new ConversationEvent(ConversationEventType.CustomerChanged, Actor: Beatriz, CustomerId: b, PreviousCustomerId: a)], events);
+    }
+
+    [Fact]
+    public void ChangingToTheSameCustomerIsANoOp()
+    {
+        var conversation = Open();
+        var a = Guid.CreateVersion7();
+        conversation.ChangeCustomer(a, Andres, Now);
+        var version = conversation.Version;
+
+        Assert.Empty(conversation.ChangeCustomer(a, Beatriz, Now.AddMinutes(1)));
+        Assert.Equal(version, conversation.Version);
+    }
+
+    [Fact]
+    public void ALegacyConversationWithoutCustomerGetsOne()
+    {
+        var conversation = Open();
+        var b = Guid.CreateVersion7();
+
+        var events = conversation.ChangeCustomer(b, Andres, Now);
+
+        Assert.Equal([new ConversationEvent(ConversationEventType.CustomerChanged, Actor: Andres, CustomerId: b, PreviousCustomerId: null)], events);
+    }
 }
 
 /// <summary>Spec 2026-10-14 decisión 4: el canal es un dato de la conversación y decide la forma de <c>user_id</c>.</summary>

@@ -11,6 +11,7 @@ internal sealed partial class MessagingCustomerDirectory(
     ICustomerWhatsAppDirectory whatsApp,
     ICustomerInstagramDirectory instagram,
     ICustomerTagLookup tagLookup,
+    ICustomerMergeStore mergeStore,
     ILogger<MessagingCustomerDirectory> logger) : IMessagingCustomerDirectory
 {
     /// <summary>El tope de <c>FindPhonesByNameAsync</c> (spec §6.5); el puerto de Customers no tiene default.</summary>
@@ -25,6 +26,13 @@ internal sealed partial class MessagingCustomerDirectory(
         var matches = await phones.MatchAsync(tenantId, waIds.Select(waId => "+" + waId).ToArray(), cancellationToken);
         return matches.ToDictionary(pair => pair.Key.TrimStart('+'), pair => new CustomerRefDto(pair.Value.Id, pair.Value.Name, pair.Value.IsComplete), StringComparer.Ordinal);
     }
+
+    public async Task<IReadOnlyList<CustomerRefDto>> ListByPhoneAsync(Guid tenantId, string waId, int take, CancellationToken cancellationToken) =>
+        [.. (await phones.ListByPhoneAsync(tenantId, "+" + waId, take, cancellationToken)).Select(match => new CustomerRefDto(match.Id, match.Name, match.IsComplete))];
+
+    // Spec 2026-10-24 §3.3: el mismo patrón que PipelineCustomerDirectory.
+    public async Task<Guid> ResolveSurvivorAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        await mergeStore.FindSurvivorIdAsync(tenantId, customerId, cancellationToken) ?? customerId;
 
     public async Task<IReadOnlyDictionary<Guid, CustomerRefDto>> FindRefsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
         ids.Count == 0
@@ -55,7 +63,7 @@ internal sealed partial class MessagingCustomerDirectory(
     }
 
     private static MessagingCustomerContact ToMessaging(CustomerContact contact) =>
-        new(contact.CustomerId, contact.Name, contact.PhoneE164, contact.WhatsAppUserId, contact.IsActive, contact.MarketingOptOut);
+        new(contact.CustomerId, contact.Name, contact.PhoneE164, contact.WhatsAppUserId, contact.IsActive, contact.MarketingOptOut, contact.CreatedAt);
 
     public async Task<MessagingCustomerContact?> FindContactAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
         await whatsApp.FindContactAsync(tenantId, customerId, cancellationToken) is { } contact ? ToMessaging(contact) : null;

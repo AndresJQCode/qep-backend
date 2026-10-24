@@ -58,6 +58,9 @@ internal static class EngagementTestBed
             Saves++;
             return Task.FromResult(1);
         }
+
+        public Task<ICustomersTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<ICustomersTransaction>(CustomerWriteDoubles.NoTransaction.Instance);
     }
 
     public sealed class FakeAuthorNames(Dictionary<Guid, string> names) : ICustomerAuthorNames

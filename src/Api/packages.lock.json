@@ -198,6 +198,8 @@
           "Modules.Shopify.Infrastructure": "[1.0.0, )",
           "Modules.Storage.Application": "[1.0.0, )",
           "Modules.Storage.Infrastructure": "[1.0.0, )",
+          "Modules.Suppliers.Application": "[1.0.0, )",
+          "Modules.Suppliers.Infrastructure": "[1.0.0, )",
           "Modules.Tenancy.Api": "[1.0.0, )",
           "Modules.Tenancy.Application": "[1.0.0, )",
           "Modules.Tenancy.Infrastructure": "[1.0.0, )",
@@ -807,6 +809,41 @@
           "Modules.Storage.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )",
           "SixLabors.ImageSharp": "[3.1.12, )"
+        }
+      },
+      "modules.suppliers.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Suppliers.Application": "[1.0.0, )",
+          "Modules.Suppliers.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.suppliers.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Suppliers.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.suppliers.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.suppliers.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "ClosedXML": "[0.105.1, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Modules.Suppliers.Application": "[1.0.0, )",
+          "Modules.Suppliers.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )",
+          "libphonenumber-csharp": "[9.0.41, )"
         }
       },
       "modules.tenancy.api": {

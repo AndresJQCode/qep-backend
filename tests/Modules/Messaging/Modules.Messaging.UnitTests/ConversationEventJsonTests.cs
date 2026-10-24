@@ -156,4 +156,15 @@ public sealed class ConversationEventJsonTests
         Assert.Null(parsed!.Handoff!.Code);
         Assert.Null(parsed.Handoff.Http!.Status);
     }
+
+    [Fact]
+    public void CustomerChangedRoundTripsWithBothCustomers()
+    {
+        var value = new ConversationEvent(ConversationEventType.CustomerChanged, Actor, CustomerId: Guid.CreateVersion7(), PreviousCustomerId: Guid.CreateVersion7());
+
+        var json = ConversationEventJson.Serialize(value);
+
+        Assert.Contains("\"previousCustomerId\"", json);
+        Assert.Equal(value, ConversationEventJson.Parse(json));
+    }
 }

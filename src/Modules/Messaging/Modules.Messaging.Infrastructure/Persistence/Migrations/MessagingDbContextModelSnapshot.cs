@@ -811,6 +811,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("conversation_id");
 
+                    b.Property<DateTimeOffset?>("CustomerCreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("customer_created_at");
+
                     b.Property<Guid>("CustomerId")
                         .HasColumnType("uuid")
                         .HasColumnName("customer_id");

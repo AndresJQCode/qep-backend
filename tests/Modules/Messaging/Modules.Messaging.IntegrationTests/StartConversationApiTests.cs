@@ -20,14 +20,14 @@ public sealed class StartConversationApiTests
                   "components":[{"type":"BODY","text":"Hola {{first_name}}, ¿sigues interesado?"}]}]}
         """;
 
-    private static async Task<Fixture> ArrangeAsync(TestDatabase database)
+    private static async Task<Fixture> ArrangeAsync(TestDatabase database, bool withCustomer = true)
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString);
         var tenant = await RegisterTenantAsync(factory);
         await EnableMessagingAsync(connectionString, tenant.TenantId);
         var connectionId = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", "111", "222");
-        var customerId = await CreateCustomerAsync(factory, tenant, "Droguería Central", "300 123 4567");
+        var customerId = withCustomer ? await CreateCustomerAsync(factory, tenant, "Droguería Central", "300 123 4567") : Guid.Empty;
         factory.MetaHandler.Respond("/222/message_templates", HttpStatusCode.OK, Catalog);
         var sent = 0;
         factory.MetaHandler.RespondWith("/111/messages", _ => FakeMetaGraphHandler.Json(HttpStatusCode.OK, $$"""{"messaging_product":"whatsapp","messages":[{"id":"wamid.start.{{Interlocked.Increment(ref sent)}}"}]}"""));
@@ -165,6 +165,58 @@ public sealed class StartConversationApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(existing, (await response.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("conversation").GetProperty("id").GetGuid());
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
+    }
+
+    /// <summary>CD-10: dos clientes con el mismo número y una conversación con BSUID que ya recibe las respuestas (entrante a nombre del
+    /// que la ingesta eligió). Devuelve el otro cliente, el que no está en la conversación.</summary>
+    private static async Task<(Fixture F, Guid Existing, Guid ShownCustomer, Guid Other)> ArrangeSharedNumberAsync(TestDatabase database)
+    {
+        var f = await ArrangeAsync(database, withCustomer: false);
+        var customers = await CreateCustomersAsync(f.Factory, f.Tenant, ("LUIS ALBERTO", "300 123 4567"), ("ZIBA TIENDA", "300 123 4567"));
+        using var anonymous = f.Factory.CreateClient();
+        await PostWebhookAsync(anonymous, MetaPayloads.Inbound("111", "CO.1", "573001234567", "wamid.in", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 60, "hola"));
+        await DrainDeliveriesAsync(f.Factory);
+        var existing = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations");
+        var shown = await ScalarAsync<Guid>(f.ConnectionString, "SELECT customer_id FROM messaging.conversations");
+        Assert.Contains(shown, customers);
+        return (f, existing, shown, customers.Single(id => id != shown));
+    }
+
+    [Fact]
+    public async Task StartingWithACustomerThatSharesTheNumberUsesTheConversationThatReceivesTheReplies()
+    {
+        await using var database = await StartDatabaseAsync();
+        var (f, existing, shown, other) = await ArrangeSharedNumberAsync(database);
+        using var host = f.Factory;
+
+        var response = await SendAsync(f.Client, HttpMethod.Post, f.Url, Body(f, customerId: other));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(existing, (await response.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("conversation").GetProperty("id").GetGuid());
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
+        Assert.Equal(shown, await ScalarAsync<Guid>(f.ConnectionString, "SELECT customer_id FROM messaging.conversations"));
+    }
+
+    [Fact]
+    public async Task AnOrphanOfTheOldDefectDoesNotWinOverTheConversationWithBsuid()
+    {
+        await using var database = await StartDatabaseAsync();
+        var (f, existing, _, other) = await ArrangeSharedNumberAsync(database);
+        using var host = f.Factory;
+        await ExecuteAsync(f.ConnectionString,
+            """
+            INSERT INTO messaging.conversations (id, tenant_id, connection_id, user_id, wa_id, customer_id, status, unread_count,
+                                                 last_activity_at, created_at, updated_at, version)
+            VALUES (@id, @tenant, @connection, NULL, '573001234567', @customer, 'Open', 0,
+                    now() - interval '2 days', now() - interval '2 days', now() - interval '2 days', 1)
+            """,
+            ("id", Guid.CreateVersion7()), ("tenant", f.Tenant.TenantId), ("connection", f.ConnectionId), ("customer", other));
+
+        var response = await SendAsync(f.Client, HttpMethod.Post, f.Url, Body(f, customerId: other));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(existing, (await response.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("conversation").GetProperty("id").GetGuid());
+        Assert.Equal(2L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
     }
 
     [Fact]

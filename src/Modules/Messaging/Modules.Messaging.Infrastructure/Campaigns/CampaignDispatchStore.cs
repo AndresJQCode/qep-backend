@@ -58,21 +58,66 @@ internal sealed class CampaignDispatchStore(MessagingDbContext dbContext, IConve
         var statuses = batch.Select(seed => seed.Status.ToString()).ToArray();
         var codes = batch.Select(seed => seed.FailureCode).ToArray();
         var reasons = batch.Select(seed => CampaignFailureReasons.For(seed.FailureCode)).ToArray();
+        var createdAts = batch.Select(seed => seed.CustomerCreatedAt?.ToUniversalTime()).ToArray();
         // ON CONFLICT DO NOTHING: repetir el congelado (porque un pod cayó a la mitad, o dos lo hicieron a la vez) es inocuo.
         // R9: y sólo mientras la campaña sigue Sending; si alguien la canceló a mitad de un congelado largo, los lotes siguientes no insertan nada.
+        // Spec 2026-10-24 §4.4: y sólo mientras la audiencia no está congelada. El desduplicado por contacto corre una vez, en MarkFrozenAsync;
+        // un lote de otro pod que llegue después de la marca dejaría un Pending que ya nadie desduplica. FOR SHARE sobre la campaña cierra la
+        // carrera en los dos sentidos: si MarkFrozenAsync tiene la fila (FOR UPDATE), este lote espera y, al confirmar la marca, la condición
+        // se vuelve a evaluar sobre la fila nueva y no inserta; si este lote llegó primero, MarkFrozenAsync espera a que confirme y lo ve.
         await dbContext.Database.ExecuteSqlAsync(
             $"""
-            INSERT INTO messaging.campaign_recipients (id, campaign_id, tenant_id, customer_id, customer_name, wa_id, user_id, status, failure_code, failure_reason, attempts, next_attempt_at)
-            SELECT s.id, {campaign.CampaignId}, {campaign.TenantId}, s.customer_id, s.customer_name, s.wa_id, s.user_id, s.status, s.failure_code, s.failure_reason, 0, {now}
-              FROM unnest({ids}, {customerIds}, {names}, {waIds}, {userIds}, {statuses}, {codes}, {reasons})
-                   AS s(id, customer_id, customer_name, wa_id, user_id, status, failure_code, failure_reason)
-             WHERE EXISTS (SELECT 1 FROM messaging.campaigns c WHERE c.id = {campaign.CampaignId} AND c.status = 'Sending')
+            INSERT INTO messaging.campaign_recipients (id, campaign_id, tenant_id, customer_id, customer_name, wa_id, user_id, status, failure_code, failure_reason, attempts, next_attempt_at,
+                                                       customer_created_at)
+            SELECT s.id, {campaign.CampaignId}, {campaign.TenantId}, s.customer_id, s.customer_name, s.wa_id, s.user_id, s.status, s.failure_code, s.failure_reason, 0, {now},
+                   s.customer_created_at
+              FROM unnest({ids}, {customerIds}, {names}, {waIds}, {userIds}, {statuses}, {codes}, {reasons}, {createdAts})
+                   AS s(id, customer_id, customer_name, wa_id, user_id, status, failure_code, failure_reason, customer_created_at)
+             WHERE EXISTS (SELECT 1 FROM messaging.campaigns c
+                            WHERE c.id = {campaign.CampaignId} AND c.status = 'Sending' AND c.audience_frozen_at IS NULL
+                              FOR SHARE)
             ON CONFLICT (campaign_id, customer_id) DO NOTHING
             """, cancellationToken);
     }
 
     public async Task MarkFrozenAsync(Guid campaignId, DateTimeOffset now, CancellationToken cancellationToken)
     {
+        // Una transacción con la campaña bloqueada: un lote en vuelo de otro pod (que tiene la fila FOR SHARE) termina antes de que se
+        // desduplique, y uno que llegue después espera la marca y no inserta (AddRecipientsAsync). Sin SaveChanges ni índices únicos en juego,
+        // así que no hay traducción de errores que pasar por MessagingSaveChanges.
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await dbContext.Database.ExecuteSqlAsync($"SELECT 1 FROM messaging.campaigns WHERE id = {campaignId} FOR UPDATE", cancellationToken);
+
+        // Spec 2026-10-24 §4.4: un envío por contacto. Por wa_id: el user_id es único por cliente en el tenant
+        // (IX_customers_tenant_whatsapp_user_id), así que nunca se repite dentro de una campaña (desvío A7). Sólo los Pending: un omitido por
+        // otro motivo (inactive, unreachable, opted_out) no le quita el envío a nadie. Gana el cliente de la conversación de ese contacto en la
+        // conexión de la campaña —la que recibe las respuestas (§4.3): primero la del BSUID, como prefiere ConversationOpener (CD-10), y luego
+        // la más reciente— si está entre los Pending; si no, el más viejo por fecha de alta y luego id (decisión del owner, §10.2).
+        // Idempotente: los perdedores dejan de ser Pending y repetirlo no toca nada. Sólo con la campaña Sending o Failed: una Failed a mitad del
+        // congelado también se desduplica, porque el reintento manual reencola sus campaign_failed y, si los dos quedaran así, volvería a
+        // mandar a ambos; una cancelada la barre R9 con su motivo terminal.
+        var duplicate = CampaignFailureReasons.For(CampaignFailureCodes.DuplicateContact);
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            WITH live AS (
+                SELECT r.id, r.wa_id, r.customer_id, r.customer_created_at, c.connection_id, c.tenant_id
+                  FROM messaging.campaign_recipients r JOIN messaging.campaigns c ON c.id = r.campaign_id
+                 WHERE r.campaign_id = {campaignId} AND r.status = 'Pending' AND r.wa_id IS NOT NULL AND c.status IN ('Sending', 'Failed')),
+            principal AS (
+                SELECT DISTINCT ON (l.wa_id) l.wa_id, v.customer_id
+                  FROM live l JOIN messaging.conversations v
+                    ON v.tenant_id = l.tenant_id AND v.connection_id = l.connection_id AND v.wa_id = l.wa_id AND v.customer_id IS NOT NULL
+                 ORDER BY l.wa_id, (v.user_id IS NOT NULL) DESC, v.last_activity_at DESC, v.id DESC),
+            ranked AS (
+                SELECT l.id, ROW_NUMBER() OVER (PARTITION BY l.wa_id
+                           ORDER BY (l.customer_id = p.customer_id) IS TRUE DESC, l.customer_created_at NULLS LAST, l.customer_id) AS n
+                  FROM live l LEFT JOIN principal p ON p.wa_id = l.wa_id)
+            UPDATE messaging.campaign_recipients r
+               SET status = 'Skipped', failure_code = {CampaignFailureCodes.DuplicateContact}, failure_reason = {duplicate}, locked_until = NULL
+              FROM ranked
+             WHERE r.id = ranked.id AND ranked.n > 1 AND r.status = 'Pending'
+            """, cancellationToken);
+
         // Contabilidad interna: sin subir la versión, así el «Cancelar» de quien está mirando la pantalla no choca con un 412.
         await dbContext.Database.ExecuteSqlAsync(
             $"UPDATE messaging.campaigns SET audience_frozen_at = {now} WHERE id = {campaignId} AND audience_frozen_at IS NULL", cancellationToken);
@@ -91,10 +136,15 @@ internal sealed class CampaignDispatchStore(MessagingDbContext dbContext, IConve
               FROM messaging.campaigns c
              WHERE c.id = r.campaign_id AND r.campaign_id = {campaignId} AND r.status = 'Pending' AND c.status IN ('Cancelled', 'Failed')
             """, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<ClaimedRecipient>> ClaimAsync(int take, DateTimeOffset now, TimeSpan lease, CancellationToken cancellationToken)
     {
+        // A9: nada se reclama antes de que la audiencia esté congelada. El congelado de otro pod escribe lotes de 500 que ya son Pending y el
+        // desduplicado por número (CD-12) corre al terminar, dentro de MarkFrozenAsync: reclamar antes dejaría salir a un destinatario
+        // que ese UPDATE todavía puede descartar. Compatible hacia atrás: una campaña congelada antes del despliegue ya tiene la marca, y
+        // una que quedó a medias (el pod murió) la recupera ListUnfrozenAsync, que repite el congelado (inocuo) y termina en MarkFrozenAsync.
         // R5: reparto por turnos. Primero se numera a los vencidos dentro de cada campaña (una campaña grande no se come el lote de las
         // chicas) y luego dentro de cada conexión por ese número (el ritmo es por conexión: una con mucha cola no frena a las demás); se
         // toman los de número más bajo. `picked` no bloquea —una ventana no se lleva con FOR UPDATE—; el candado va en `due`, que vuelve a
@@ -106,7 +156,7 @@ internal sealed class CampaignDispatchStore(MessagingDbContext dbContext, IConve
                        ROW_NUMBER() OVER (PARTITION BY r.campaign_id ORDER BY r.next_attempt_at, r.id) AS campaign_rank
                   FROM messaging.campaign_recipients r
                   JOIN messaging.campaigns c ON c.id = r.campaign_id
-                 WHERE r.status = 'Pending' AND r.next_attempt_at <= {now} AND c.status = 'Sending'),
+                 WHERE r.status = 'Pending' AND r.next_attempt_at <= {now} AND c.status = 'Sending' AND c.audience_frozen_at IS NOT NULL),
             fair AS (
                 SELECT id, next_attempt_at,
                        ROW_NUMBER() OVER (PARTITION BY connection_id ORDER BY campaign_rank, next_attempt_at, id) AS connection_rank

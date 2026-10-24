@@ -308,6 +308,21 @@ public sealed partial class Conversation
         return new ConversationEvent(ConversationEventType.Released, Actor: actorMemberId, Previous: previous);
     }
 
+    /// <summary>Spec 2026-10-24: cambia el cliente de la conversación. El mismo cliente no hace nada (D-A2): ni evento ni versión.
+    /// El evento lleva el nuevo en <c>CustomerId</c> y el anterior en <c>PreviousCustomerId</c> (<c>null</c> en una conversación vieja sin cliente).</summary>
+    public IReadOnlyList<ConversationEvent> ChangeCustomer(Guid customerId, Guid actorMemberId, DateTimeOffset now)
+    {
+        if (CustomerId == customerId)
+        {
+            return [];
+        }
+
+        var previous = CustomerId;
+        CustomerId = customerId;
+        Touch(now);
+        return [new ConversationEvent(ConversationEventType.CustomerChanged, Actor: actorMemberId, CustomerId: customerId, PreviousCustomerId: previous)];
+    }
+
     /// <summary>Spec 2026-10-21 §4.2: arranca el asistente. Sólo sobre una conversación abierta, sin asesor y sin asistente previo:
     /// el motor no reactiva lo que un humano pausó (eso es <see cref="ResumeAutomation"/>).</summary>
     public void StartAutomation(Guid chatbotId, DateTimeOffset now)

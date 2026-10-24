@@ -646,9 +646,9 @@ Los cuerpos van a archivo y se mandan con `-f`: PowerShell rompe las comillas al
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
 fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
-`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify` y `automations`; `quotations` exige
+`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations` y `suppliers`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
-`companies`, `shopify` exige `orders` y `automations` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots; último de la lista) no viene con el signup y se prende por tenant desde la consola de operador. Sin `messaging`, el triage de `pipeline` queda vacío; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`companies`, `shopify` exige `orders` y `automations` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; último de la lista, sin dependencias) tampoco viene con el signup y se prende igual. Sin `messaging`, el triage de `pipeline` queda vacío; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
@@ -818,12 +818,15 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET` (`includeVariants`), `POST`, `export`, `price-scales/copy`, y por producto `GET`, `PUT` (`expectedVersion`), `activate`, `deactivate` (ver [Catálogo](#catálogo-opciones-variantes-y-galería)) | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/catalog/options`       | `GET`, `POST`, y por opción `PUT`, `DELETE`                                                 | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
+| `/api/v1/tenants/{tenantId}/customers`             | `identification-matches` (`GET`) y `anomalies` (`GET`); el resto del módulo está en sus secciones (ver [Clientes: documento repetido](#clientes-documento-repetido-coincidencias-y-anomalías)) | `customers.customer.read` |
+| `/api/v1/tenants/{tenantId}/customers/{customerId}` | `merge-preview` (`GET`) y `merge` (`POST`, `If-Match`); ver [Clientes: fusión](#clientes-fusión) | `customers.customer.merge` |
 | `/api/v1/tenants/{tenantId}/orders`                | `GET` (filtros, entre ellos `source` y `timeZone`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `approve`, `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`), `send` (`POST`, cuerpo opcional) (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual) y [Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp)) | `quotations.order.read` / `.manage` / `.approve` / `.cancel` / `.invoice` |
 | `/api/v1/tenants/{tenantId}/pos`                   | 14 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void` / `.customer`                 |
+| `/api/v1/tenants/{tenantId}/suppliers` | `GET` (`search`, `status`=`active`\|`inactive`, `category`, `page`, `pageSize` por defecto 50, tope 200; orden por nombre), `POST` (201 + `Location`), `categories` (`GET`, distintas y ordenadas, máx. 200), `export` (`POST`, mismos filtros sin paginación; 202 `{ fileName, supplierCount, expiresAt }` y el archivo llega por correo), y por proveedor `GET`, `PUT` (las listas `bankAccounts` y `contacts` que llegan son las que quedan), `activate` y `deactivate` (`POST`). Módulo `suppliers` (apagado por defecto). Errores propios: `suppliers.supplier.identification_taken`, `.city_not_found`, `.status_filter_invalid`, `.already_active`, `.already_inactive`, `.not_found`, `suppliers.export.empty`, `suppliers.export.too_many_rows` | `suppliers.supplier.read` (`GET`, `categories`, `export`) / `suppliers.supplier.manage` (`POST`, `PUT`, `activate`, `deactivate`) |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
 | `/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup` | `POST` | `integrations.connection.manage` |
-| `/api/v1/tenants/{tenantId}/messaging` | `conversations` (`GET`), por conversación `GET`, `messages` (`GET`, `POST`), `messages/audio` (`POST`, multipart), `read` (`POST`), `resolve` (`POST`, `If-Match`, cuerpo opcional `{ reasonId }` o `{ reasonName }`) y `reopen` (`POST`, `If-Match`), `automation/pause` y `automation/resume` (`POST`, `If-Match`, `.manage`; ver [Asistente en la conversación](#asistente-en-la-conversación)); `messages/search` (`GET`); `media/{messageId}` (`GET`) | `messaging.conversation.read` / `.manage` |
+| `/api/v1/tenants/{tenantId}/messaging` | `conversations` (`GET`), por conversación `GET`, `messages` (`GET`, `POST`), `messages/audio` (`POST`, multipart), `read` (`POST`), `resolve` (`POST`, `If-Match`, cuerpo opcional `{ reasonId }` o `{ reasonName }`) y `reopen` (`POST`, `If-Match`), `automation/pause` y `automation/resume` (`POST`, `If-Match`, `.manage`; ver [Asistente en la conversación](#asistente-en-la-conversación)); `messages/search` (`GET`); `media/{messageId}` (`GET`); `conversations/{id}/customer` (`PUT`, `If-Match`, cuerpo `{ customerId }`, `.manage`; ver [Identidad, clientes y asignación](#identidad-clientes-y-asignación-spec-2026-10-10)) | `messaging.conversation.read` / `.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/quick-replies` | `GET`, `POST`; por respuesta `PUT` (`version` en el cuerpo) y `DELETE` (`?version=`) | `messaging.conversation.read` (`GET`) / `messaging.quick_reply.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/resolution-reasons` | `GET`; por motivo `PATCH` (`If-Match`) y `DELETE` (archiva). Se crean al resolver | `messaging.conversation.read` (`GET`) / `messaging.resolution_reason.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/business-hours` | `GET`, `POST`; por horario `PUT` (`If-Match`), `DELETE` (`If-Match`), `duplicate` (`POST`) y `default` (`POST`, `If-Match`) (ver [Horarios de atención](#horarios-de-atención)) | `messaging.conversation.read` (`GET`) / `messaging.business_hours.manage` |
@@ -1635,6 +1638,66 @@ el spec del slice; esta tabla es el inventario.
 | `GET /sales/{saleId}`              | `pos.sale.read`        | Detalle de una venta                                                             |
 | `GET /sales`                       | `pos.sale.read`        | Lista paginada de ventas; `number` y `customerDocument` buscan por un pedazo     |
 | `POST /sales/{saleId}/void`        | `pos.sale.void`        | Anula una venta, con motivo; sólo si su caja sigue abierta                       |
+
+### Clientes: documento repetido, coincidencias y anomalías
+
+Spec `2026-10-24-clientes-duplicados`. Tres reglas, cada una con su respuesta:
+
+- **R1, mismo tipo y mismo número: se frena.** `POST`/`PUT /customers` responde 422
+  `customers.customer.identification_taken` y ahora trae `existing: { id, name, identificationType,
+  identificationNumber, cuc | null, isComplete, isActive }`, el cliente que ya tiene ese documento. `existing` puede faltar
+  (carrera entre dos altas: el índice único gana y el dueño ya no se encuentra al releer).
+- **R2, mismo número con otro tipo, o el mismo tipo con otro formato: se avisa, no se frena.**
+  `GET …/customers/identification-matches?number=&type=&excludeCustomerId=` (`customers.customer.read`; `number` obligatorio,
+  hasta 32; `type` opcional, ∈ `NIT`, `CC`, `CE`, `PASAPORTE`) devuelve hasta 20 `items` con `match` ∈ `SameIdentification`,
+  `OtherType`, `SameTypeOtherFormat`. El formulario lo llama antes de guardar.
+- **R3, mismo celular o WhatsApp: no se frena ni se avisa al guardar.** El cliente se distingue por el documento. Lo que sí
+  hay es un reporte: `GET …/customers/anomalies?kind=&page=&pageSize=` (`customers.customer.read`; `kind` ∈ `SharedPhone`,
+  `SharedIdentificationNumber`; `pageSize` hasta 50, 20 por defecto) devuelve `counts` (siempre los dos `kind`, incluso en cero),
+  `groups` paginados (cada uno con su `key`, los `customers` y `truncated`), `total`, `page` y `pageSize`.
+
+**La expresión normalizada.** R2 y `SharedIdentificationNumber` comparan el número sin signos y en mayúsculas:
+`upper(regexp_replace(identification_number, '[^0-9A-Za-z]', '', 'g'))`. Vive en `CustomerIdentificationSql.NormalizedNumber`
+(consultas), en `CustomerIdentificationNormalizer` (C#) y **literal** en la migración `AddCustomerIdentificationNormalizedIndex`,
+que crea `IX_customers_tenant_identification_normalized` sobre `(tenant_id, <expresión>) WHERE identification_number IS NOT NULL`.
+No es único. Si la expresión de la consulta y la del índice difieren en un carácter, Postgres no usa el índice y la consulta
+recorre la tabla; `TheMatchQueryUsesTheNormalizedIndex` lo amarra.
+
+### Clientes: fusión
+
+Spec `2026-10-24-fusion-de-clientes`. Junta clientes duplicados en uno; **no se puede deshacer**.
+
+- **Rutas** (`customers.customer.merge`, riesgo `high`; lo tienen por defecto los roles de sistema `admin` y `advisor`, en código):
+  `GET /customers/{survivorId}/merge-preview?mergedCustomerIds=…` (1 a 10 ids distintos, sin el que queda) y
+  `POST /customers/{survivorId}/merge` con `If-Match: "<survivor.version>"` y `{ "mergedCustomerIds": [...] }`. Sin `If-Match`
+  responde 428; con una versión vieja, 412 `concurrency.conflict` (la pantalla pide de nuevo la vista previa).
+- **Reglas.** El que queda debe estar activo (`customers.merge.survivor_inactive`) y no puede ser incompleto si algún fusionado
+  es completo (`customers.merge.survivor_incomplete`); nadie que ya esté fusionado entra de nuevo
+  (`customers.merge.already_merged`); un id inexistente es `customers.merge.customer_not_found`. Un fusionado inactivo vale.
+  El que queda sólo se llena donde está vacío (correo, razón social, teléfono, BSUID, IGSID y, si es incompleto, documento,
+  país y dirección) y hereda el opt-out de marketing; nunca la clasificación ni el CUC. La respuesta del `POST` es el
+  `CustomerResponse` del que queda más `droppedTags`.
+- **Vista previa.** Devuelve `survivor`, `merged`, `documentsDiffer`, `filledFields` y `moves`, siempre con los ocho conteos y en
+  este orden: `Quotations`, `Orders`, `Conversations`, `PosSales`, `Deals`, `Notes`, `Addresses`, `Tags`.
+- **Qué guarda el fusionado.** Dos columnas nuevas en `customers.customers`, `merged_into_id` y `merged_at`, e `IsActive = false`.
+  `merged_into_id` apunta siempre a un cliente no fusionado (la fusión reescribe los que ya apuntaban al fusionado): quien lee un
+  fusionado sigue un solo salto. `IX_customers_tenant_merged_into` es parcial (`merged_into_id IS NOT NULL`) e
+  `IX_customers_tenant_identification` pasó a ser único **parcial** (`merged_into_id IS NULL`): el documento de un fusionado
+  queda libre para un cliente nuevo.
+- **Qué se mueve, en una sola transacción.** Cotizaciones y pedidos (`client_id`), ventas del POS, negocios de Pipeline con sus
+  cotizaciones, pedidos y decisiones de triage, conversaciones de Messaging, la audiencia de las campañas (las Draft/Scheduled
+  suben su versión) y los pedidos espejo de Shopify; de Customers, notas, direcciones y etiquetas (las que sobran salen en
+  `droppedTags`). El SQL de los otros esquemas vive en `CustomerMergeReferences` (Bootstrapper).
+- **Qué se excluye y qué se redirige.** Un fusionado sale de `GET /customers`, de los buscadores, de las coincidencias y
+  anomalías y de los reportes; `GET /customers/{id}` sí responde su ficha (`isActive: false`) con
+  `mergedInto: { id, name } | null`. Cualquier escritura sobre un fusionado responde 422 `customers.customer.merged`. Su CUC,
+  teléfono, BSUID e IGSID resuelven al que quedó, y los eventos tardíos de Quotations que traen su id caen en el negocio del
+  que quedó. La importación responde `customers.import.row.customer_merged` con `mergedIntoCuc` cuando una fila trae el CUC de
+  un fusionado. Crear un negocio o cambiar el cliente de una conversación con el id de un fusionado lo deja a nombre del que
+  quedó.
+- **Despliegue.** La migración `AddCustomerMerge` no tiene vuelta atrás limpia: su `Down` recrea
+  `IX_customers_tenant_identification` sin filtro y falla si ya hay una fusión en la que el fusionado y el que queda comparten
+  tipo y número de documento. Para bajarla en un ambiente con fusiones, primero hay que resolver esos pares a mano.
 
 ### Aceptación de la invitación
 
@@ -2493,6 +2556,22 @@ en `true`.
   responde (`messaging.conversation.assigned_to_other`); responder una conversación sin asignar la toma;
   resolver no libera. Una conversación nueva de un cliente con dueño hereda el asignado si todavía puede
   responder. `GET /messaging/assignees` lista a quién transferir. `assignedTo.isMe` lo calcula el servidor.
+- **Número compartido.** Dos clientes pueden tener el mismo WhatsApp (R3). Toda respuesta de **una** sola conversación (el detalle y las que devuelven su resumen) lleva
+  `sharedPhoneCustomers: [{ id, name, isComplete, tags: [] }]` (hasta 10) con los otros clientes del mismo número; en el listado
+  va siempre `[]`. Se lee por el puerto `IMessagingCustomerDirectory`, no por el esquema de Customers.
+- **Cliente principal.** `PUT …/conversations/{id}/customer` con `If-Match` y `{ customerId }` cambia el cliente de la
+  conversación (`.manage`): 428 sin `If-Match`, 412 con versión vieja, 422 `messaging.conversation.customer_not_found` o
+  `validation.failed` (`errors.customerId`). Escribe el evento `CustomerChanged` en el hilo con `targetCustomer` y
+  `previousCustomer` (`{ id, name }` o `null`); `target` y `previous` quedan en `null` porque son miembros, no clientes.
+- **Iniciar una conversación** (`ConversationOpener`) busca, en este orden: (1) por BSUID del cliente, (2) la conversación con
+  BSUID de la conexión que tiene ese `wa_id` (la que recibe las respuestas), (3) por `customer_id`, la más reciente, (4) la fila
+  vieja sin BSUID con ese teléfono. El `customer_id` de la encontrada no cambia: cambiarlo es `PUT …/customer`.
+- **Campañas.** El opt-out de marketing se lee **por número**: vale `true` si la ficha, o cualquier otro cliente del tenant con el mismo
+  teléfono, tiene la bandera (una ficha sin teléfono sólo mira la suya). El worker no reclama destinatarios hasta que la campaña tiene `audience_frozen_at`. Al
+  terminar de congelar, `MarkFrozenAsync` deduplica en una transacción con la campaña bloqueada (`FOR UPDATE`; `AddRecipientsAsync`
+  inserta con `FOR SHARE` y sólo si la audiencia no está congelada): un solo envío por `wa_id`, y el resto queda `Skipped` con
+  `failureCode: "duplicate_contact"`. Gana el cliente de la conversación de ese número en la conexión de la campaña y, si no,
+  el más viejo (`customer_created_at`, columna que agregó la migración `AddCampaignRecipientCustomerCreatedAt`).
 - **Eventos del sistema** (`direction: System`, `kind: Event`) en el hilo; no suben `unreadCount` ni cambian
   la foto de la lista.
 - **Respuestas citadas.** `replyTo` al enviar (el `id` de **nuestro** mensaje) y `Message.replyTo` al leer.

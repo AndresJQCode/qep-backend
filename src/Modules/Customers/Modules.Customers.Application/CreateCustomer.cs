@@ -138,8 +138,18 @@ public sealed class CreateCustomerHandler(
         // La unicidad de la identificacion y del CUC, y la existencia de la ciudad y la
         // clasificacion en la carrera entre esta lectura y el commit, NO se comprueban con un
         // segundo SELECT: el unico arbitro real son los indices y las FK de base, y
-        // CustomersUnitOfWork traduce sus violaciones.
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        // CustomersUnitOfWork traduce sus violaciones. Cuando es la de la identificacion, el dueño se
+        // relee **despues** del indice y nunca antes (spec clientes duplicados §3.1): un pre-chequeo
+        // dejaria pasar la carrera, y el 422 lleva `existing` para que la pantalla ofrezca ir a el.
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (CustomersDomainException e) when (e.Code == CustomerIdentificationTaken.Code)
+        {
+            throw await CustomerIdentificationTaken.ResolveAsync(
+                repository, command.TenantId, customer, e, cancellationToken);
+        }
 
         return await customer.ToDtoAsync(
             geographyLookup, classificationRepository, tagRepository, cancellationToken);

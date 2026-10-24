@@ -411,6 +411,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         recipient.Property(value => value.LockedUntil).HasColumnName("locked_until");
         recipient.Property(value => value.SentAt).HasColumnName("sent_at");
         recipient.Property(value => value.RetryCount).HasColumnName("retry_count").HasDefaultValue(0);
+        recipient.Property(value => value.CustomerCreatedAt).HasColumnName("customer_created_at");
         recipient.HasOne<Campaign>().WithMany().HasForeignKey(value => value.CampaignId)
             .HasConstraintName("FK_campaign_recipients_campaign").OnDelete(DeleteBehavior.Cascade);
         // El blanco del ON CONFLICT DO NOTHING con el que el worker congela la audiencia: repetirlo es inocuo.

@@ -22,9 +22,11 @@ public sealed class CustomerWhatsAppDirectory(
     public async Task<EnsuredCustomer> EnsureAsync(Guid tenantId, WhatsAppContact contact, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(contact);
+        // Spec 2026-10-24 §3.3 (Review Focus 3): el BSUID que se quedó en un fusionado resuelve al que quedó, y no nace otro. Un
+        // salto basta: MergedIntoId siempre apunta a un no fusionado (D-F2). Igual en WinnerAsync y en CustomerInstagramDirectory.
         if (await repository.FindByWhatsAppUserIdAsync(tenantId, contact.UserId, cancellationToken) is { } known)
         {
-            return new EnsuredCustomer(known.Id.Value, EnsureOutcome.Existing);
+            return new EnsuredCustomer((known.MergedIntoId ?? known.Id).Value, EnsureOutcome.Existing);
         }
 
         // Ningún camino de acá puede dar RequestConcurrencyException: vincular es un UPDATE condicional sin chequeo de
@@ -32,17 +34,20 @@ public sealed class CustomerWhatsAppDirectory(
         // persona cambió: sólo toca whatsapp_user_id), y crear es un INSERT.
         if (contact.PhoneE164 is { } phone && await repository.FindOldestByPhoneE164Async(tenantId, phone, cancellationToken) is { } byPhone)
         {
+            // FindOldestByPhoneE164Async pone primero a los no fusionados; si el número sólo lo tiene un fusionado, se vincula
+            // al que quedó (desvío F4: el UPDATE condicional ya no le escribe a un fusionado y devolvería false).
+            var target = byPhone.MergedIntoId ?? byPhone.Id;
             try
             {
                 // D-A6: false si ya tenía otro BSUID; el cliente igual es el del teléfono y queda con el suyo.
-                _ = await repository.TryAttachWhatsAppUserIdAsync(tenantId, byPhone.Id, contact.UserId, cancellationToken);
+                _ = await repository.TryAttachWhatsAppUserIdAsync(tenantId, target, contact.UserId, cancellationToken);
             }
             catch (WhatsAppUserIdTakenException)
             {
                 return await WinnerAsync(tenantId, contact.UserId, cancellationToken);
             }
 
-            return new EnsuredCustomer(byPhone.Id.Value, EnsureOutcome.Linked);
+            return new EnsuredCustomer(target.Value, EnsureOutcome.Linked);
         }
 
         var now = clock.UtcNow;
@@ -135,6 +140,6 @@ public sealed class CustomerWhatsAppDirectory(
     {
         var winner = await repository.FindByWhatsAppUserIdAsync(tenantId, userId, cancellationToken)
             ?? throw new InvalidOperationException("The WhatsApp user id was taken but its customer cannot be read back.");
-        return new EnsuredCustomer(winner.Id.Value, EnsureOutcome.Existing);
+        return new EnsuredCustomer((winner.MergedIntoId ?? winner.Id).Value, EnsureOutcome.Existing);
     }
 }

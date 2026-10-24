@@ -231,6 +231,33 @@ internal sealed class FakeCustomerRepository(params Customer[] customers) : ICus
     public void Add(Customer customer) => throw new NotSupportedException();
 }
 
+/// <summary>La fusión vista por el adaptador de Shopify: sólo el que quedó del fusionado dueño de un documento (desvío F9).</summary>
+internal sealed class FakeCustomerMergeStore : ICustomerMergeStore
+{
+    public Dictionary<(IdentificationType Type, string Number), Guid> Survivors { get; } = [];
+
+    public Task<Guid?> FindSurvivorIdByIdentificationAsync(
+        Guid tenantId, IdentificationType type, string number, CancellationToken cancellationToken) =>
+        Task.FromResult(Survivors.TryGetValue((type, number), out var survivor) ? survivor : (Guid?)null);
+
+    public Task<IReadOnlyList<Guid>> FindIdsMergedIntoAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task RepointMergedIntoAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, Guid survivorId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<CustomerMergeOwnedCounts> CountOwnedAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task MoveOwnedAsync(
+        Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<Guid?> FindSurvivorIdAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+}
+
 internal sealed class FakeCustomerProvisioning : ICustomerProvisioning
 {
     public Action? OnComplete { get; set; }

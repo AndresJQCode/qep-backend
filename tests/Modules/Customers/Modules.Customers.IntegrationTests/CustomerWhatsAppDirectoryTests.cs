@@ -153,6 +153,75 @@ public sealed class CustomerWhatsAppDirectoryTests
         Assert.Equal("CO.NEW", await ScalarAsync(database.GetConnectionString(), $"SELECT whatsapp_user_id FROM customers.customers WHERE id = '{laura.CustomerId}'"));
     }
 
+    // Review Focus 3 (spec 2026-10-24 §3.3): el que queda ya tenía BSUID, así que el del fusionado se quedó en el fusionado.
+    // El mensaje que vuelve a llegar por ese BSUID cae en el que quedó y no nace un incompleto nuevo.
+    [Fact]
+    public async Task AnInboundWithTheBsuidLeftOnTheMergedLandsOnTheSurvivor()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        var ct = TestContext.Current.CancellationToken;
+        var survivor = await InScopeAsync(factory, d => d.EnsureAsync(Tenant, new WhatsAppContact("CO.SURVIVOR", null, "Laura", null), ct));
+        var merged = await InScopeAsync(factory, d => d.EnsureAsync(Tenant, new WhatsAppContact("CO.MERGED", null, "Laura P.", null), ct));
+        await MarkMergedAsync(database.GetConnectionString(), merged.CustomerId, survivor.CustomerId);
+
+        var again = await InScopeAsync(factory, d => d.EnsureAsync(
+            Tenant, new WhatsAppContact("CO.MERGED", "+573001234567", "Laura P.", null), ct));
+
+        Assert.Equal(new EnsuredCustomer(survivor.CustomerId, EnsureOutcome.Existing), again);
+        Assert.Equal("2", await ScalarAsync(database.GetConnectionString(), $"SELECT count(*) FROM customers.customers WHERE tenant_id = '{Tenant}'"));
+    }
+
+    // §3.3: el teléfono sólo lo tiene el fusionado. Se vincula al que quedó (el BSUID nuevo va a él) y no al fusionado, al que
+    // TryAttachWhatsAppUserIdAsync ya no le escribe (desvío F4).
+    [Fact]
+    public async Task APhoneOnlyTheMergedHasResolvesToTheSurvivorAndAttachesThere()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var survivor = await CreateCustomerAsync(client, city.CityId, classification.Id); // teléfono +573109352187
+        var ct = TestContext.Current.CancellationToken;
+        var merged = await InScopeAsync(factory, d => d.EnsureAsync(Tenant, new WhatsAppContact("CO.MERGED", "+573001112233", "Laura", null), ct));
+        await MarkMergedAsync(database.GetConnectionString(), merged.CustomerId, survivor.Id);
+
+        var linked = await InScopeAsync(factory, d => d.EnsureAsync(Tenant, new WhatsAppContact("CO.NEW", "+573001112233", "Laura", null), ct));
+
+        Assert.Equal(new EnsuredCustomer(survivor.Id, EnsureOutcome.Linked), linked);
+        Assert.Equal("CO.NEW", await ScalarAsync(database.GetConnectionString(), $"SELECT whatsapp_user_id FROM customers.customers WHERE id = '{survivor.Id}'"));
+        Assert.Equal("CO.MERGED", await ScalarAsync(database.GetConnectionString(), $"SELECT whatsapp_user_id FROM customers.customers WHERE id = '{merged.CustomerId}'"));
+        Assert.Equal("2", await ScalarAsync(database.GetConnectionString(), $"SELECT count(*) FROM customers.customers WHERE tenant_id = '{Tenant}'"));
+    }
+
+    // §3.3, el espejo de Instagram: el IGSID que se quedó en el fusionado resuelve al que quedó.
+    [Fact]
+    public async Task AnIgsidLeftOnTheMergedLandsOnTheSurvivor()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        var ct = TestContext.Current.CancellationToken;
+
+        async Task<EnsuredCustomer> EnsureInstagramAsync(InstagramContact contact)
+        {
+            await using var scope = factory.Services.CreateAsyncScope();
+            return await scope.ServiceProvider.GetRequiredService<ICustomerInstagramDirectory>().EnsureAsync(Tenant, contact, ct);
+        }
+
+        var survivor = await EnsureInstagramAsync(new InstagramContact("17841400000000001", "laura", "Laura"));
+        var merged = await EnsureInstagramAsync(new InstagramContact("17841400000000002", "laura.p", "Laura P."));
+        await MarkMergedAsync(database.GetConnectionString(), merged.CustomerId, survivor.CustomerId);
+
+        var again = await EnsureInstagramAsync(new InstagramContact("17841400000000002", "laura.p", "Laura P."));
+
+        Assert.Equal(new EnsuredCustomer(survivor.CustomerId, EnsureOutcome.Existing), again);
+        Assert.Equal("2", await ScalarAsync(database.GetConnectionString(), $"SELECT count(*) FROM customers.customers WHERE tenant_id = '{Tenant}'"));
+    }
+
     [Fact]
     public async Task RefsAndIdsByNameReadOnlyThisTenant()
     {

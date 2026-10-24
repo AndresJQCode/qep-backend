@@ -117,7 +117,7 @@ public sealed class StartConversationHandler(
             ?? await _template.SendAsync(tenantId, target, command.ClientId.Value, resolved, cancellationToken);
         // La foto de la conversación después del envío (preview, estado del último mensaje, asignado).
         var fresh = await conversations.FindAsync(tenantId, opened.ConversationId, cancellationToken) ?? row;
-        var summary = (await summaries.BuildAsync(tenantId, [fresh], cancellationToken))[0];
+        var summary = await summaries.BuildOneAsync(tenantId, fresh, cancellationToken);
         return new StartConversationResult(new StartedConversationDto(summary, message), opened.Created);
     }
 }

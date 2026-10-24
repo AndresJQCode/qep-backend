@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -61,10 +61,18 @@ public sealed class TenantModuleKeysTests
 
     // Spec 2026-10-21 D-C11: el constructor de chatbots vive sobre la bandeja; fuera del signup.
     [Fact]
-    public void AutomationsIsLastAndDependsOnMessaging()
+    public void AutomationsDependsOnMessaging()
     {
-        Assert.Same(TenantModuleKeys.Automations, TenantModuleKeys.All[^1]);
         Assert.Equal([TenantModuleKeys.Messaging], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Automations));
+    }
+
+    // Spec 2026-10-23 D-12: el directorio de proveedores; se prende por tenant.
+    [Fact]
+    public void SuppliersIsLastWithoutDependenciesAndOutsideTheDefaults()
+    {
+        Assert.Equal(TenantModuleKeys.Suppliers, TenantModuleKeys.All[^1]);
+        Assert.Empty(TenantModuleKeys.DependenciesOf(TenantModuleKeys.Suppliers));
+        Assert.DoesNotContain(TenantModuleKeys.Suppliers, TenantModuleKeys.DefaultForNewTenants);
     }
 
     [Fact]
