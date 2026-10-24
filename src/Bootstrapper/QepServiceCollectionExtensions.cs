@@ -246,6 +246,29 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeleteCompanyCommand, CompanyDeletedResult>,
             DeleteCompanyHandler>();
+        // Suppliers, spec 2026-10-23. Los siete a mano, como los demás: un handler olvidado compila y
+        // responde 500 en runtime.
+        services.AddScoped<
+            IQueryHandler<ListSuppliersQuery, SupplierPage>,
+            ListSuppliersHandler>();
+        services.AddScoped<
+            IQueryHandler<ListSupplierCategoriesQuery, IReadOnlyList<string>>,
+            ListSupplierCategoriesHandler>();
+        services.AddScoped<
+            IQueryHandler<GetSupplierQuery, SupplierResponse>,
+            GetSupplierHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateSupplierCommand, SupplierResponse>,
+            CreateSupplierHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateSupplierCommand, SupplierResponse>,
+            UpdateSupplierHandler>();
+        services.AddScoped<
+            ICommandHandler<ActivateSupplierCommand, SupplierResponse>,
+            ActivateSupplierHandler>();
+        services.AddScoped<
+            ICommandHandler<DeactivateSupplierCommand, SupplierResponse>,
+            DeactivateSupplierHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -787,6 +810,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCustomerValidator>();
+        services.AddValidatorsFromAssemblyContaining<CreateSupplierValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
         services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
