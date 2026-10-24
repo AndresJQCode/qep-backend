@@ -43,6 +43,31 @@ public sealed class ConversationSummaryBuilder(
 {
     public const string DeletedConnectionName = "Conexión eliminada";
 
+    /// <summary>Spec 2026-10-24 §4.1: cuántos otros clientes del número viaja en el resumen de una conversación.</summary>
+    public const int SharedPhoneCustomersCap = 10;
+
+    /// <summary>El resumen de una sola conversación: <see cref="BuildAsync"/> más los otros clientes de su número
+    /// (<see cref="ConversationSummary.SharedPhoneCustomers"/>). Es el único camino de las respuestas de una conversación
+    /// (detalle, transiciones, iniciar), para que ninguna se olvide de la lista. Sólo WhatsApp con <c>wa_id</c> pregunta.</summary>
+    public async Task<ConversationSummary> BuildOneAsync(Guid tenantId, ConversationRow row, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        var summary = (await BuildAsync(tenantId, [row], cancellationToken))[0];
+        if (row.Channel != ConversationChannel.WhatsApp || row.WaId is not { } waId)
+        {
+            return summary;
+        }
+
+        // Se excluye al cliente que el encabezado muestra (en una fila vieja sin customer_id sale por teléfono), no al null del
+        // row.CustomerId; por eso se pide uno de más y se recorta después.
+        var shown = summary.Customer?.Id;
+        var others = (await customers.ListByPhoneAsync(tenantId, waId, SharedPhoneCustomersCap + 1, cancellationToken))
+            .Where(customer => customer.Id != shown)
+            .Take(SharedPhoneCustomersCap)
+            .ToArray();
+        return summary with { SharedPhoneCustomers = others };
+    }
+
     public async Task<IReadOnlyList<ConversationSummary>> BuildAsync(Guid tenantId, IReadOnlyList<ConversationRow> rows, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(rows);

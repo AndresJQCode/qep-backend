@@ -20,6 +20,6 @@ public sealed class GetConversationHandler(
         await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, MessagingPermissions.ConversationRead, cancellationToken);
         var row = await queries.FindAsync(query.TenantId, query.ConversationId, cancellationToken)
             ?? throw MessagingNotFound.Conversation(query.ConversationId);
-        return (await summaries.BuildAsync(query.TenantId, [row], cancellationToken))[0];
+        return await summaries.BuildOneAsync(query.TenantId, row, cancellationToken);
     }
 }

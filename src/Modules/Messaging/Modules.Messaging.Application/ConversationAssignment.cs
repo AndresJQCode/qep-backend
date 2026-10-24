@@ -65,7 +65,7 @@ public sealed class ConversationAssignmentSteps(
             await notifier.ConversationChangedAsync(tenantId, conversation.Id, cancellationToken);
         }
 
-        return (await summaries.BuildAsync(tenantId, [(await queries.FindAsync(tenantId, conversation.Id, cancellationToken))!], cancellationToken))[0];
+        return await summaries.BuildOneAsync(tenantId, (await queries.FindAsync(tenantId, conversation.Id, cancellationToken))!, cancellationToken);
     }
 }
 

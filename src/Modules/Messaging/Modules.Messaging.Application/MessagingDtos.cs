@@ -48,7 +48,16 @@ public sealed record ConversationSummary(
     ResolutionReasonRefDto? ResolutionReason = null,
     /// <summary>Spec 2026-10-21 D-A10 (BFF): <c>null</c> cuando la conversación no tiene asistente (<c>None</c>): la bandeja no dibuja nada,
     /// y así la fila sin asistente no obliga a la pantalla a conocer el enum para saber que no hay qué mostrar.</summary>
-    ConversationAutomationDto? Automation = null);
+    ConversationAutomationDto? Automation = null)
+{
+    /// <summary>Spec 2026-10-24 §4.1 (BFF): los otros clientes del tenant con el número de la conversación, sin el que ella muestra, por
+    /// created_at, hasta 10; sin etiquetas. Viaja siempre. Se llena en toda respuesta de una sola conversación (detalle, PUT
+    /// …/customer, tomar, transferir, liberar, resolver, reabrir, pausar y devolver el asistente, iniciar): el frontend escribe
+    /// esas respuestas en la caché del detalle (patchConversationCaches) y una lista vacía apagaría la línea del encabezado
+    /// hasta el siguiente GET. Vacía en el listado y en la búsqueda <b>a propósito</b> (D-D6: ninguna fila la dibuja); no la
+    /// «arregles». Siempre vacía en Instagram y sin wa_id.</summary>
+    public IReadOnlyList<CustomerRefDto> SharedPhoneCustomers { get; init; } = [];
+}
 
 /// <summary>Spec 2026-10-21 §4.5: el asistente de la conversación. <c>Status</c> ∈ Active|Paused, por nombre. <c>PausedAt</c>,
 /// <c>PausedBy</c> y <c>PauseReason</c> sólo vienen pausada; <c>PausedBy</c> es <c>null</c> si lo pausó el sistema, y si la membresía

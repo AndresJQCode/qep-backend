@@ -57,15 +57,24 @@ internal sealed class FakeCustomerDirectory : IMessagingCustomerDirectory
     /// <summary>Los clientes que devuelve <see cref="ListByPhoneAsync"/> (CD-07), en el orden del puerto.</summary>
     public List<CustomerRefDto> ByPhone { get; } = [];
 
-    public Task<IReadOnlyList<CustomerRefDto>> ListByPhoneAsync(Guid tenantId, string waId, int take, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<CustomerRefDto>>([.. ByPhone.Take(take)]);
+    /// <summary>Los <c>waId</c> que se preguntaron a <see cref="ListByPhoneAsync"/>.</summary>
+    public List<string> ListByPhoneCalls { get; } = [];
+
+    public Task<IReadOnlyList<CustomerRefDto>> ListByPhoneAsync(Guid tenantId, string waId, int take, CancellationToken cancellationToken)
+    {
+        ListByPhoneCalls.Add(waId);
+        return Task.FromResult<IReadOnlyList<CustomerRefDto>>([.. ByPhone.Take(take)]);
+    }
+
+    /// <summary>Lo que devuelve <see cref="MatchAsync"/>, por <c>waId</c> (conversaciones viejas sin <c>customer_id</c>).</summary>
+    public Dictionary<string, CustomerRefDto> ByWaId { get; } = [];
 
     public Task<IReadOnlyDictionary<Guid, CustomerRefDto>> FindRefsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyDictionary<Guid, CustomerRefDto>>(
             Contacts.Values.Where(contact => ids.Contains(contact.CustomerId)).ToDictionary(contact => contact.CustomerId, contact => new CustomerRefDto(contact.CustomerId, contact.Name, true)));
 
     public Task<IReadOnlyDictionary<string, CustomerRefDto>> MatchAsync(Guid tenantId, IReadOnlyCollection<string> waIds, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<string, CustomerRefDto>>(new Dictionary<string, CustomerRefDto>());
+        Task.FromResult<IReadOnlyDictionary<string, CustomerRefDto>>(ByWaId.Where(pair => waIds.Contains(pair.Key)).ToDictionary());
 
     public Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, CancellationToken cancellationToken) => throw new NotSupportedException();
 
