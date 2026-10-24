@@ -379,6 +379,57 @@ public sealed partial class EngineEndToEndTests
         Assert.Equal(4, f.Meta.Sends().Count);
     }
 
+    /// <summary>
+    /// Reinicio con la última versión publicada (2026-10-23): D-C1 deja la corrida viva en su versión, pero la palabra de reinicio es un
+    /// comienzo explícito. Con una versión más nueva publicada, la corrida vieja termina <c>Completed</c> y, en la misma unidad, arranca
+    /// otra con la publicada; la conversación sigue <c>Active</c> con el mismo chatbot.
+    /// </summary>
+    [Fact]
+    public async Task RestartAfterANewPublicationStartsARunWithTheLatestVersion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        using (var admin = CreateClient(f.Host, f.Tenant.OwnerUserId, f.Tenant.TenantId, ManagePermissions))
+        {
+            await RepublishChatbotAsync(admin, f.Tenant.TenantId, f.ChatbotId, FlowJson.Replace(
+                "Hola {nombre}, bienvenido a la línea de servicio.", "Hola {nombre}, esta es la versión 2.", StringComparison.Ordinal));
+        }
+
+        await InboundAsync(f, "w2", "REINICIAR");
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal("Completed|1,Waiting|2", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT string_agg(r.status || '|' || v.number, ',' ORDER BY r.started_at) FROM automations.conversation_runs r JOIN automations.chatbot_versions v ON v.id = r.chatbot_version_id"));
+        var sends = f.Meta.Sends();
+        Assert.Equal(4, sends.Count);
+        Assert.Equal(["Hola Laura, esta es la versión 2.", "[button] ¿Qué necesitas para tu equipo?"], sends[2..]);
+        Assert.Equal("Open|Active", await ConversationAsync(f, "status || '|' || automation_status"));
+        Assert.Equal("started,started", await OutcomesAsync(f));
+        Assert.Equal(1L, await AuditAsync(f, "automations.run.completed"));
+        Assert.Equal(2L, await AuditAsync(f, "automations.run.started"));
+    }
+
+    /// <summary>Sin versión nueva, la palabra de reinicio vuelve a empezar la misma corrida (D-I5): no hay corrida nueva.</summary>
+    [Fact]
+    public async Task RestartWithTheSameVersionKeepsTheRun()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+
+        await InboundAsync(f, "w2", "REINICIAR");
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.conversation_runs"));
+        Assert.Equal("Waiting|n2", await RunAsync(f, "status || '|' || current_node_id"));
+        Assert.Equal(2, f.Meta.Sends().Count(text => text == "Hola Laura, bienvenido a la línea de servicio."));
+        Assert.Equal("started,advanced", await OutcomesAsync(f));
+        Assert.Equal(0L, await AuditAsync(f, "automations.run.completed"));
+    }
+
     /// <summary>Responde <c>wamid.N</c> a cada envío del bot (el acuse de leído aparte) y deja a la prueba meterse antes de responder.</summary>
     private sealed class BotMeta
     {

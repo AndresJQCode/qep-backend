@@ -72,10 +72,15 @@ public static class FlowEngine
 
     /// <summary>D-I5: la palabra se compara como las palabras clave (sin tildes, mayúsculas ni espacios de más). Sin palabra configurada
     /// no reinicia nada: un texto vacío no puede reiniciar la corrida. Ruling P2-R16: sólo lo escrito reinicia; un toque (con
-    /// <c>ReplyId</c>) se compara por id, así que un botón «Reiniciar» sale por su propia salida.</summary>
-    private static bool IsRestart(EngineSettings settings, EngineInput.CustomerMessage message) =>
-        message.ReplyId is null && !string.IsNullOrWhiteSpace(settings.RestartKeyword) && !string.IsNullOrWhiteSpace(message.Text)
-        && TextMatch.Same(message.Text, settings.RestartKeyword);
+    /// <c>ReplyId</c>) se compara por id, así que un botón «Reiniciar» sale por su propia salida. Pública porque el procesador hace la
+    /// misma pregunta antes del paso para decidir si el reinicio arranca con la última versión publicada (2026-10-23).</summary>
+    public static bool IsRestart(EngineSettings settings, EngineInput.CustomerMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(message);
+        return message.ReplyId is null && !string.IsNullOrWhiteSpace(settings.RestartKeyword) && !string.IsNullOrWhiteSpace(message.Text)
+            && TextMatch.Same(message.Text, settings.RestartKeyword);
+    }
 
     /// <summary>El bloque en que espera la corrida; el primero con ese id, como el diccionario de <see cref="Walk"/>.</summary>
     private static FlowNode? WaitingNode(FlowDefinition flow, string? nodeId) =>

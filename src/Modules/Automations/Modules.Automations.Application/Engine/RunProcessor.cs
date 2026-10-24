@@ -249,7 +249,7 @@ public sealed partial class RunProcessor(
 
         if (run is not null)
         {
-            return await ContinueAsync(item, run, now, cancellationToken);
+            return await ContinueAsync(item, conversation, run, now, cancellationToken);
         }
 
         return conversation.AutomationStatus switch
@@ -337,8 +337,10 @@ public sealed partial class RunProcessor(
         return OutcomeOf(run, RunOutcomes.Started);
     }
 
-    /// <summary>§5.2 paso 4: la corrida viva sigue con la versión con que empezó (D-C1).</summary>
-    private async Task<string?> ContinueAsync(InboundQueueItem item, ConversationRun run, DateTimeOffset now, CancellationToken cancellationToken)
+    /// <summary>§5.2 paso 4: la corrida viva sigue con la versión con que empezó (D-C1), salvo la palabra de reinicio con una versión más
+    /// nueva publicada (<see cref="RestartWithLatestAsync"/>).</summary>
+    private async Task<string?> ContinueAsync(
+        InboundQueueItem item, AutomationConversationState conversation, ConversationRun run, DateTimeOffset now, CancellationToken cancellationToken)
     {
         run.MarkInbound(item.MessageId);
         // Ruling P2-R6: un chatbot borrado mientras la corrida esperaba (la carrera del plan 1) se lleva sus versiones.
@@ -360,7 +362,14 @@ public sealed partial class RunProcessor(
                 return null;
             }
 
-            input = await CustomerMessageAsync(item, inbound, flow, run.CurrentNodeId, cancellationToken);
+            var message = await CustomerMessageAsync(item, inbound, flow, run.CurrentNodeId, cancellationToken);
+            if (FlowEngine.IsRestart(settings, message)
+                && await RestartWithLatestAsync(item, conversation, run, now, cancellationToken) is { } restarted)
+            {
+                return restarted;
+            }
+
+            input = message;
         }
         else if (await effects.PendingInputAsync(unit, cancellationToken) is { } pending)
         {
@@ -375,6 +384,30 @@ public sealed partial class RunProcessor(
 
         await effects.RunAsync(unit, input, now, cancellationToken);
         return OutcomeOf(run, RunOutcomes.Advanced);
+    }
+
+    /// <summary>
+    /// Reinicio con la última versión publicada (2026-10-23). D-C1 deja la corrida viva en la versión con que empezó para que publicar no
+    /// le cambie el flujo a nadie a mitad de camino; la palabra de reinicio, en cambio, es un comienzo explícito del cliente. Si el chatbot
+    /// que atiende la conexión es el de la corrida, está activo y publicó otra versión que se puede leer, la corrida termina
+    /// <c>Completed</c> (nada falló: el cliente decidió empezar de nuevo; se audita como todo <c>Completed</c>) y en la misma unidad arranca
+    /// otra con la publicada, con el id que deriva del entrante (P2-R5). La conversación no pasa por <c>EndAsync</c>: sigue <c>Active</c>
+    /// con el mismo chatbot, como en <see cref="ResumeAsync"/>. <c>null</c> = sin versión nueva; el motor reinicia la misma corrida (D-I5).
+    /// </summary>
+    private async Task<string?> RestartWithLatestAsync(
+        InboundQueueItem item, AutomationConversationState conversation, ConversationRun run, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (await chatbots.FindServingByConnectionAsync(item.TenantId, item.ConnectionId, cancellationToken) is not { Status: ChatbotStatus.Active } chatbot
+            || chatbot.ChatbotId != run.ChatbotId
+            || chatbot.PublishedVersionId == run.ChatbotVersionId
+            || await LoadFlowAsync(item.TenantId, chatbot.PublishedVersionId, cancellationToken) is not { } flow)
+        {
+            return null;
+        }
+
+        run.Finish(RunStatus.Completed, null, now);
+        audit.Record(item.TenantId, Guid.Empty, bySystem: true, AutomationsAuditActions.RunCompleted, AutomationsAuditActions.ResourceRun, run.Id, now);
+        return await StartRunAsync(item, conversation, chatbot, flow, now, cancellationToken);
     }
 
     /// <summary>

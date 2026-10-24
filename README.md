@@ -2947,7 +2947,9 @@ de leer la corrida viva, y sin esperarlo: ver abajo), decide qué le toca al bot
 state, input, now)` → estado nuevo + efectos). El motor **sólo responde** una conversación `Open`, sin asesor asignado y con
 `automation_status` `Active` (o sin asistente y con disparador que aplique); `IBotOutbound` vuelve a verificarlo al enviar, porque
 entre el claim y el envío un asesor puede haber tomado la conversación. Una corrida viva termina con **la versión con que
-empezó** (D-C1): se lee su `chatbot_version_id`, no la publicada.
+empezó** (D-C1): se lee su `chatbot_version_id`, no la publicada. La excepción es la palabra de reinicio (2026-10-23): si el
+chatbot de la conexión publicó una versión distinta de la de la corrida, ésta termina `Completed` y en la misma unidad arranca una
+corrida nueva con la publicada (la conversación sigue `Active`); con la misma versión, el motor reinicia la misma corrida.
 
 - **Reintento sin duplicar.** El `clientId` de cada envío es `DeterministicClientId.For(runId, baseStepNumber, effectIndex)`
   (P2-R5): `baseStepNumber` es el `StepNumber` persistido al empezar la unidad y `effectIndex` el ordinal del envío dentro de ella
