@@ -34,6 +34,7 @@ existe (VAR-01..13, cierre `22cde669`, en `origin/develop` del frontend; verific
 | Chatbots: mover una conexión de un chatbot a otro | Backend **construido y mergeado** (merge `353e09bb`): `takeOverConnectionIds` en `PUT /chatbots/{id}` y `POST …/publish`, `Chatbot.ReleaseConnection` y liberación en la misma transacción (D-X1, D-X2, D-X6, D-X7); sin migración ni código de error nuevo. Frontend sin código (`takeOverConnectionIds` no aparece en `src/`). El spec que cita el plan (`qep-frontend/docs/superpowers/specs/2026-10-23-chatbot-mover-conexion-design.md`) **no está en ninguno de los dos repos** | [plan backend](superpowers/plans/2026-10-23-chatbot-mover-conexion-backend.md) |
 | Ventas POS en el reporte de pedidos | Spec y plan backend mergeados (merge `3244e9ff`); sin código en ningún repo. `GET /reports/orders` y `/summary` con filtro `source`, desglose `bySource` y consumidor final en `withoutClient`, por `UNION ALL` en `OrdersReportSource` | [spec](superpowers/specs/2026-10-23-reportes-ventas-pos-design.md), [plan backend](superpowers/plans/2026-10-24-reportes-ventas-pos-backend.md) |
 | Proveedores (módulo `Suppliers`) | Plan backend mergeado (merge `64b38e86`); sin código (no existe `src/Modules/Suppliers`). Su spec no está en ninguno de los dos repos | [plan backend](superpowers/plans/2026-10-23-proveedores-backend.md) |
+| Formato regional en PDF, correos y WhatsApp | **Pendiente** por pedido del owner: spec aprobado en conversación (2026-10-23), sin plan ni código | [spec](superpowers/specs/2026-10-23-formato-regional-pdf-y-correos-design.md) |
 | Envío de cotizaciones por el canal del tenant | Spec en borrador para el owner. **Plan 1 de 3 construido** en los dos repos (proveedores habilitados por tenant); planes 2 y 3 sin escribir | [spec](superpowers/specs/2026-10-21-envio-de-cotizaciones-por-canal-del-tenant-design.md), [plan 1](superpowers/plans/2026-10-21-proveedores-habilitados-por-tenant.md) |
 | Shopify: fuente del documento del comprador | Parte 1 **construida** (`d00a20a8`, merge `b7447106`); faltan el endpoint de opciones, el select del frontend y la documentación | [detalle](#shopify-fuente-del-documento-del-comprador) |
 | Shopify: días de historial en «Sincronizar ahora» | Spec commiteado (`42565f98`); sin código en ningún repo | [spec](superpowers/specs/2026-10-21-shopify-historial-dias-design.md) |
@@ -93,6 +94,7 @@ copia del frontend para los códigos nuevos.
 | 2026-10-21 Automatizaciones: constructor de chatbots (spec 4) | Backends 1 (`ff7f6956`), 2 (`a194e6ab`) y plan 4 Clasic (`94de87c0`; Clasic `159e864`) y frontend (`208e13f2`) construidos | Toma de los specs 2 y 3 lo que el bot necesita (interactivos salientes, «API externa»). Reglas del controlador R1-R21 en el reporte de la sesión; pendientes para el backend 2 abajo, en Registro |
 | 2026-10-21 migración de lulo-chat | Escrito, sin empezar | 10 preguntas abiertas en §4 |
 | 2026-10-23 ventas POS en el reporte de pedidos | Aprobado, sin empezar (plan backend escrito) | Ver «Trabajo en curso» |
+| 2026-10-23 formato regional en PDF, correos y WhatsApp | Aprobado en conversación, sin empezar (pendiente) | D-R1 fecha larga en PDF/WhatsApp con separadores del tenant; D-R3 el PDF guardado se regenera si cambia el formato numérico (migración chica) |
 | 2026-10-21 Automatizaciones: investigación y roadmap | Concepto; specs 2–3 y migración de lulo-chat sin escribir (el 4 se escribió y se está construyendo) | Orden: interactivos → claves de API y envío proactivo → constructor (motor, editor React Flow, bloque HTTP) → migración. IA diferida |
 
 Construido sin spec propio: enviar el pedido por WhatsApp (`POST /orders/{id}/send`, `OrderEndpoints.cs:114`; frontend
@@ -193,6 +195,10 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-23 — Escrito el spec de formato regional en PDF, correos y WhatsApp
+  ([spec](superpowers/specs/2026-10-23-formato-regional-pdf-y-correos-design.md)), verificado contra `develop`
+  `baf9aba2`, y dejado **pendiente** por pedido del owner: sin plan ni código. Deja abierta DP-1 (envío por Meta, plan 3
+  del envío por canal).
 - 2026-10-24 — Mergeados a `develop` (con push) tres ramas del backend: `feature/chatbot-mover-conexion` (`353e09bb`,
   código: traspaso de conexión entre chatbots con `takeOverConnectionIds`, con una corrección de la revisión final
   `4adce1dc`), `feature/reportes-ventas-pos` (`3244e9ff`, sólo spec y plan) y `feature/proveedores` (`64b38e86`, sólo
