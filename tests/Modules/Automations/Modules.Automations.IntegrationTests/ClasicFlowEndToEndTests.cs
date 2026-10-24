@@ -384,6 +384,17 @@ public sealed class ClasicFlowEndToEndTests
         Assert.Equal(
             "POST /service-orders 409 error_status http_409",
             await TextAsync(f, "SELECT method || ' ' || path || ' ' || status_code || ' ' || outcome || ' ' || error_code FROM automations.http_calls ORDER BY id DESC LIMIT 1"));
+        // Spec 2026-10-24 D-T8: un bloque «Pasar a un asesor» alcanzado deja HandedOff sin código.
+        Assert.Null((await AutomationDetailsAsync(f)).FailureCode);
+    }
+
+    /// <summary>§5.5: «Datos capturados» de la única conversación, con el permiso de la bandeja (D-C10).</summary>
+    private static async Task<ConversationAutomationDetailsDto> AutomationDetailsAsync(Fixture f)
+    {
+        var conversationId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations");
+        using var agent = CreateClient(f.Host, f.Tenant.OwnerUserId, f.Tenant.TenantId, MessagingPermissions.ConversationRead);
+        return (await agent.GetFromJsonAsync<ConversationAutomationDetailsDto>(
+            $"/api/v1/tenants/{f.Tenant.TenantId}/messaging/conversations/{conversationId}/automation", Ct))!;
     }
 
     /// <summary>Un bloque HTTP cuya salida <c>ok</c> vuelve a él, contra una API que siempre responde 200 (el validador permite el ciclo).</summary>
@@ -418,6 +429,9 @@ public sealed class ClasicFlowEndToEndTests
         Assert.Equal(["Hola, ya te ayudamos."], f.Graph.Sends());
         Assert.Equal("1|true|run_failed", await TextAsync(f,
             "SELECT attempts || '|' || (processed_at IS NOT NULL) || '|' || coalesce(outcome, '-') FROM messaging.automation_inbox"));
+        // Spec 2026-10-24 D-T8: «Datos capturados» dice por qué falló la corrida.
+        var details = await AutomationDetailsAsync(f);
+        Assert.Equal(("Failed", "automations.run.loop_detected"), (details.Status, details.FailureCode));
     }
 
     /// <summary>D-H4 dentro del lease de 30 s del inbox (§5.2). Con un timeout de 1 s y una API que tardaría 5 s, la unidad termina en

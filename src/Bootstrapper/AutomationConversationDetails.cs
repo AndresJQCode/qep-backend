@@ -44,7 +44,8 @@ internal sealed class AutomationConversationDetails(IConversationRunRepository r
             JsonSerializer.Deserialize<JsonElement>(run.VariablesJson),
             trace,
             run.StartedAt,
-            run.EndedAt);
+            run.EndedAt,
+            run.FailureCode);
     }
 
     // El título del bloque en que espera la corrida: lo mismo que el motor le da a la bandeja como paso (WaitForCustomer.StepTitle).
