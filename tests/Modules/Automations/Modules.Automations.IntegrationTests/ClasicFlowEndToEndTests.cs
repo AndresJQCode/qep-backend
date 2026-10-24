@@ -386,6 +386,84 @@ public sealed class ClasicFlowEndToEndTests
             await TextAsync(f, "SELECT method || ' ' || path || ' ' || status_code || ' ' || outcome || ' ' || error_code FROM automations.http_calls ORDER BY id DESC LIMIT 1"));
         // Spec 2026-10-24 D-T8: un bloque «Pasar a un asesor» alcanzado deja HandedOff sin código.
         Assert.Null((await AutomationDetailsAsync(f)).FailureCode);
+        // Spec 2026-10-24 D-T6: el traspaso nombra el HTTP fallido que arrancó el paso, aunque en el medio salió un mensaje.
+        Assert.Equal("Block|create-order|http_409", await TextAsync(f,
+            """
+            SELECT concat_ws('|', details->'handoff'->>'kind', details->'handoff'->'http'->>'nodeId', details->'handoff'->'http'->>'errorCode')
+              FROM messaging.messages WHERE details->>'type' = 'AutomationPaused'
+            """));
+    }
+
+    /// <summary>
+    /// Spec 2026-10-24, caso 1 del owner: la base se restauró con otra llave y ni la clave de la «API externa» ni el token de WhatsApp
+    /// descifran. El bloque HTTP no llama y no deja fila; el texto del traspaso tampoco sale. El hilo dice las dos causas, en códigos.
+    /// </summary>
+    [Fact]
+    public async Task AnUnreadableApiKeyAndTokenHandOffWithBothCauses()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        // Un byte invertido en cada secreto: AES-GCM ya no autentica (precedente ConnectionSecretRekeyWorkerTests).
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE integrations.connection_secrets SET ciphertext = set_byte(ciphertext, 20, get_byte(ciphertext, 20) # 255)");
+
+        await SayAsync(f, "w1", "Hola");
+
+        Assert.Empty(f.Graph.Sends());
+        Assert.Empty(f.Api.Requests);
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.http_calls"));
+        Assert.Equal("Failed|messaging.connection_unavailable", await TextAsync(f,
+            "SELECT status || '|' || coalesce(failure_code, '') FROM automations.conversation_runs"));
+        Assert.Equal("Open|Paused", await TextAsync(f, "SELECT status || '|' || automation_status FROM messaging.conversations"));
+        Assert.Equal(
+            "SendFailed|messaging.connection_unavailable|handoff|Pasar a un asesor|Servicio Clasic|secret_unreadable|policy-lookup|connection_unavailable|secret_unreadable|API de Clasic",
+            await TextAsync(f,
+                """
+                SELECT concat_ws('|', details->'handoff'->>'kind', details->'handoff'->>'code', details->'handoff'->>'nodeId',
+                       details->'handoff'->>'nodeTitle', details->'handoff'->>'connectionName', details->'handoff'->>'connectionReason',
+                       details->'handoff'->'http'->>'nodeId', details->'handoff'->'http'->>'outcome', details->'handoff'->'http'->>'errorCode',
+                       details->'handoff'->'http'->>'connectionName')
+                  FROM messaging.messages WHERE details->>'type' = 'AutomationPaused'
+                """));
+        Assert.Equal("messaging.connection_unavailable", (await AutomationDetailsAsync(f)).FailureCode);
+    }
+
+    /// <summary>Spec 2026-10-24, caso 2 del owner: el túnel apuntaba a otra API y la búsqueda por teléfono respondió 404.</summary>
+    [Fact]
+    public async Task A404HandsOffNamingTheBlockAndTheStatus()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        f.Api.Respond(@"^/customers\?phone=", HttpStatusCode.NotFound, "{}");
+
+        await SayAsync(f, "w1", "Hola");
+
+        Assert.Equal("GET /customers 404 error_status http_404", await HttpCallsAsync(f));
+        Assert.Equal("HandedOff", await TextAsync(f, "SELECT status FROM automations.conversation_runs"));
+        // D-T2 y P-1 (a): el bloque manda su texto; quien arma el flujo decide si lo deja vacío.
+        Assert.Equal(["Te paso con un asesor."], f.Graph.Sends());
+        Assert.Equal(
+            "Block|handoff|Pasar a un asesor|policy-lookup|Buscar cliente por teléfono|error_status|http_404|404|API de Clasic",
+            await TextAsync(f,
+                """
+                SELECT concat_ws('|', details->'handoff'->>'kind', details->'handoff'->>'nodeId', details->'handoff'->>'nodeTitle',
+                       details->'handoff'->'http'->>'nodeId', details->'handoff'->'http'->>'nodeTitle', details->'handoff'->'http'->>'outcome',
+                       details->'handoff'->'http'->>'errorCode', details->'handoff'->'http'->>'status', details->'handoff'->'http'->>'connectionName')
+                  FROM messaging.messages WHERE details->>'type' = 'AutomationPaused'
+                """));
+
+        // §6: lo mismo por la API del hilo, con los nombres del contrato.
+        var conversationId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations");
+        using var agent = CreateClient(f.Host, f.Tenant.OwnerUserId, f.Tenant.TenantId, MessagingPermissions.ConversationRead);
+        var page = await agent.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{f.Tenant.TenantId}/messaging/conversations/{conversationId}/messages", Ct);
+        var handoff = page.GetProperty("items").EnumerateArray()
+            .Select(message => message.TryGetProperty("event", out var e) && e.ValueKind == JsonValueKind.Object ? e : default)
+            .Single(e => e.ValueKind == JsonValueKind.Object && e.GetProperty("type").GetString() == "AutomationPaused")
+            .GetProperty("handoff");
+        Assert.Equal("Block", handoff.GetProperty("kind").GetString());
+        Assert.Equal(404, handoff.GetProperty("http").GetProperty("status").GetInt32());
+        Assert.Equal("http_404", handoff.GetProperty("http").GetProperty("errorCode").GetString());
     }
 
     /// <summary>§5.5: «Datos capturados» de la única conversación, con el permiso de la bandeja (D-C10).</summary>
