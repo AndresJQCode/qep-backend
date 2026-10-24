@@ -111,42 +111,41 @@ internal sealed class OrdersReportSource(
     /// Todo se agrega **en la base**: ningun camino de aca trae filas para sumarlas en memoria,
     /// que es justo lo que el resumen existe para evitar.
     ///
-    /// Se agrega sobre la entidad <see cref="Order"/> y no sobre <see cref="OrderRow"/>: EF no ve
-    /// a traves del constructor de un record y falla con "could not be translated".
-    ///
-    /// Son varias consultas y no una porque son agregaciones de distinta granularidad —los totales
-    /// por moneda, la serie por mes y dos rankings—; una sola que las mezclara necesitaria funciones de
-    /// ventana que EF no arma. Todas atacan el mismo indice.
+    /// Cada agregado es una consulta sobre la base de <see cref="ReportRowsSql"/> —pedidos y ventas
+    /// POS— con <c>WHERE NOT r.is_void</c>. Son varias consultas y no una porque son agregaciones de
+    /// distinta granularidad —los totales por moneda, la serie por mes, el origen, lo que no tiene
+    /// cliente y dos rankings—, y cada rama de la base ataca su propio índice.
     /// </summary>
     public async Task<OrdersReportAggregate> SummarizeAsync(
         OrdersReportCriteria criteria,
         int rankSize,
         CancellationToken cancellationToken)
     {
-        // Un pedido anulado no es una venta (spec 2026-09-16, decisión 6): no suma en el total, la
-        // serie ni los rankings, y tampoco en el período anterior, que pasa por este mismo método.
-        // El listado (BuildQuery) no lo filtra: ahí el anulado se ve con su estado.
-        var orders = FilterOrders(criteria).Where(candidate => candidate.Status != OrderStatus.Cancelled);
-
+        // Lo anulado no es una venta (spec 2026-09-16, decisión 6; spec 2026-10-23 §3): un pedido
+        // cancelado y una venta POS anulada no suman en el total, la serie, los rankings ni el
+        // origen, y tampoco en el período anterior, que pasa por este mismo método. El listado no
+        // lo filtra: ahí lo anulado se ve con su estado.
+        //
         // One row per currency: COP and USD are never added together (spec 2026-10-08, Reports).
-        // Grouping by currency also replaces the old GroupBy over a constant: zero orders give zero
-        // rows, and the count below is zero.
-        var byCurrency = await orders
-            .GroupBy(row => row.Currency)
-            .Select(group => new
-            {
-                Currency = group.Key,
-                Count = group.Count(),
-                Subtotal = group.Sum(row => row.Subtotal),
-                TaxAmount = group.Sum(row => row.TaxAmount),
-                FreightSubtotal = group.Sum(row => row.FreightSubtotal),
-                FreightTaxAmount = group.Sum(row => row.FreightTaxAmount),
-                Total = group.Sum(row => row.Total),
-            })
-            .ToListAsync(cancellationToken);
+        // Zero rows give a zero count below.
+        var byCurrency = await QueryAsync<MoneyRow>(
+            criteria,
+            """
+            SELECT r.currency AS "Currency", count(*)::int AS "Count", sum(r.subtotal) AS "Subtotal",
+                   sum(r.tax_amount) AS "TaxAmount", sum(r.freight_subtotal) AS "FreightSubtotal",
+                   sum(r.freight_tax_amount) AS "FreightTaxAmount", sum(r.total) AS "Total"
+            FROM (
+            """,
+            """
+            ) AS r
+            WHERE NOT r.is_void
+            GROUP BY r.currency
+            """,
+            [],
+            cancellationToken);
 
-        // Sin pedidos no hay nada que agrupar ni ninguna etiqueta que resolver: cinco consultas
-        // menos, y el resto del metodo tendria que tratar el cero como caso especial igual.
+        // Sin filas no hay nada que agrupar ni ninguna etiqueta que resolver: varias consultas
+        // menos. Las colecciones de tamaño fijo viajan completas igual, en cero.
         var orderCount = byCurrency.Sum(row => row.Count);
         if (orderCount == 0)
         {
@@ -154,51 +153,74 @@ internal sealed class OrdersReportSource(
                 0, [], [], [], [], [], [], [], [], CompleteBySource([]), new ReportWithoutClientDto(0, []));
         }
 
-        var sourceRows = await orders
-            .GroupBy(row => new { row.Source, row.Currency })
-            .Select(group => new
-            {
-                group.Key.Source,
-                group.Key.Currency,
-                Count = group.Count(),
-                Total = group.Sum(row => row.Total),
-            })
-            .ToListAsync(cancellationToken);
-        var bySource = CompleteBySource(sourceRows
-            .Select(row => (row.Source.ToString(), row.Currency, row.Count, row.Total))
-            .ToArray());
-
         var subtotals = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.Subtotal)));
         var taxAmounts = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.TaxAmount)));
         var freightSubtotals = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.FreightSubtotal)));
         var freightTaxAmounts = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.FreightTaxAmount)));
         var totals = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.Total)));
 
-        // La serie mensual va en el mes del tenant (spec 2026-09-17, punto 5): el pedido de las 20:00
-        // del último día en Bogotá es de ese mes, aunque en UTC ya sea el siguiente. Se agrupa en SQL
-        // con `AT TIME ZONE` y el ID IANA del tenant —lo que Npgsql traduce desde
-        // TimeZoneInfo.ConvertTimeBySystemTimeZoneId sobre UtcDateTime (spike de la Task 7)—, nunca
-        // en el huso de la sesión de PostgreSQL, que haría depender el resultado de la conexión.
+        var sourceRows = await QueryAsync<SourceRow>(
+            criteria,
+            """
+            SELECT r.source AS "Source", r.currency AS "Currency", count(*)::int AS "Count", sum(r.total) AS "Total"
+            FROM (
+            """,
+            """
+            ) AS r
+            WHERE NOT r.is_void
+            GROUP BY r.source, r.currency
+            """,
+            [],
+            cancellationToken);
+        var bySource = CompleteBySource(sourceRows
+            .Select(row => (row.Source, row.Currency, row.Count, row.Total))
+            .ToArray());
+
+        // Las ventas POS a consumidor final no tienen ficha de cliente: van aparte y no al ranking
+        // (ver ReportWithoutClientDto). Un pedido siempre tiene cliente.
+        var withoutClientRows = await QueryAsync<SourceRow>(
+            criteria,
+            """
+            SELECT ''::text AS "Source", r.currency AS "Currency", count(*)::int AS "Count", sum(r.total) AS "Total"
+            FROM (
+            """,
+            """
+            ) AS r
+            WHERE NOT r.is_void AND r.client_id IS NULL
+            GROUP BY r.currency
+            """,
+            [],
+            cancellationToken);
+        var withoutClient = new ReportWithoutClientDto(
+            withoutClientRows.Sum(row => row.Count),
+            ReportMoney.From(withoutClientRows.Select(row => (row.Currency, row.Total))));
+
+        // La serie mensual va en el mes del tenant (spec 2026-09-17, punto 5): el pedido o la venta
+        // de las 20:00 del último día en Bogotá es de ese mes, aunque en UTC ya sea el siguiente. Se
+        // agrupa en SQL con `AT TIME ZONE` y el ID IANA del tenant, nunca en el huso de la sesión de
+        // PostgreSQL, que haría depender el resultado de la conexión.
         //
-        // Solo vuelven los meses con pedidos: rellenar los huecos con cero depende del rango que
-        // el eje dibuje, asi que es del frontend.
-        var timeZoneId = criteria.Period.TimeZone.Id;
-        var monthRows = await orders
-            .GroupBy(row => new
-            {
-                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(row.ConvertedAt.UtcDateTime, timeZoneId).Year,
-                TimeZoneInfo.ConvertTimeBySystemTimeZoneId(row.ConvertedAt.UtcDateTime, timeZoneId).Month,
-                row.Currency,
-            })
-            .Select(group => new
-            {
-                group.Key.Year,
-                group.Key.Month,
-                group.Key.Currency,
-                Count = group.Count(),
-                Total = group.Sum(row => row.Total),
-            })
-            .ToListAsync(cancellationToken);
+        // Solo vuelven los meses con filas: rellenar los huecos con cero depende del rango que el eje
+        // dibuje, asi que es del frontend.
+        var monthRows = await QueryAsync<MonthRow>(
+            criteria,
+            """
+            SELECT m.year AS "Year", m.month AS "Month", m.currency AS "Currency",
+                   count(*)::int AS "Count", sum(m.total) AS "Total"
+            FROM (
+                SELECT extract(year FROM r.occurred_at AT TIME ZONE @time_zone)::int AS year,
+                       extract(month FROM r.occurred_at AT TIME ZONE @time_zone)::int AS month,
+                       r.currency AS currency, r.total AS total
+                FROM (
+            """,
+            """
+                ) AS r
+                WHERE NOT r.is_void
+            ) AS m
+            GROUP BY m.year, m.month, m.currency
+            """,
+            [new NpgsqlParameter("time_zone", NpgsqlDbType.Text) { Value = criteria.Period.TimeZone.Id }],
+            cancellationToken);
 
         // Folded in memory: one point per month, its totals per currency.
         var monthly = monthRows
@@ -212,114 +234,47 @@ internal sealed class OrdersReportSource(
                 ReportMoney.From(month.Select(point => (point.Currency, point.Total)))))
             .ToArray();
 
-        // Ranked by the total in the tenant default currency (plan decision A10): a single-currency
-        // tenant ranks exactly as before, and a mixed one has a deterministic order that never adds
-        // two currencies. Count and id break ties so the ranking does not "blink" between two
-        // identical calls.
         var defaultCurrency = await tenantDefaultCurrency.GetAsync(criteria.TenantId, cancellationToken);
 
-        var topAdvisors = await orders
-            .GroupBy(row => row.AdvisorId)
-            .Select(group => new
-            {
-                AdvisorId = group.Key,
-                Count = group.Count(),
-                Ranking = group.Sum(row => row.Currency == defaultCurrency ? row.Total : 0m),
-            })
-            .OrderByDescending(entry => entry.Ranking)
-            .ThenByDescending(entry => entry.Count)
-            .ThenBy(entry => entry.AdvisorId)
-            .Take(rankSize)
-            .ToListAsync(cancellationToken);
-
-        var advisorIds = topAdvisors.Select(entry => entry.AdvisorId).ToArray();
-        var advisorTotals = await orders
-            .Where(row => advisorIds.Contains(row.AdvisorId))
-            .GroupBy(row => new { row.AdvisorId, row.Currency })
-            .Select(group => new
-            {
-                group.Key.AdvisorId,
-                group.Key.Currency,
-                Total = group.Sum(row => row.Total),
-            })
-            .ToListAsync(cancellationToken);
-
+        // El cajero de una venta entra como un asesor más, por su membresía (spec 2026-10-23 §3).
+        var advisorRanking = await RankAsync(
+            criteria, AdvisorColumn, rankSize, defaultCurrency, cancellationToken);
         var emails = await peopleLookup.EmailsByMembershipIdAsync(
-            advisorIds.Select(id => id.Value).ToArray(), cancellationToken);
-
-        var byAdvisor = topAdvisors
+            advisorRanking.Select(entry => entry.Id).ToArray(), cancellationToken);
+        var byAdvisor = advisorRanking
             .Select(entry => new ReportRankEntryDto(
-                entry.AdvisorId.Value,
-                emails.GetValueOrDefault(entry.AdvisorId.Value),
-                Secondary: null,
-                EntityCount: 1,
-                entry.Count,
-                ReportMoney.From(advisorTotals
-                    .Where(total => total.AdvisorId == entry.AdvisorId)
-                    .Select(total => (total.Currency, total.Total)))))
+                entry.Id, emails.GetValueOrDefault(entry.Id), Secondary: null, EntityCount: 1, entry.Count, entry.Totals))
             .ToList();
-
         var otherAdvisors = await ReportRankFolding.FoldOthersAsync(
             byAdvisor, rankSize, orderCount, totals,
-            () => orders
-                .Select(row => row.AdvisorId)
-                .Distinct()
-                .CountAsync(cancellationToken));
+            () => CountDistinctAsync(criteria, AdvisorColumn, cancellationToken));
         if (otherAdvisors is not null)
         {
             byAdvisor.Add(otherAdvisors);
         }
 
-        var topClients = await orders
-            .GroupBy(row => row.ClientId)
-            .Select(group => new
-            {
-                ClientId = group.Key,
-                Count = group.Count(),
-                Ranking = group.Sum(row => row.Currency == defaultCurrency ? row.Total : 0m),
-            })
-            .OrderByDescending(entry => entry.Ranking)
-            .ThenByDescending(entry => entry.Count)
-            .ThenBy(entry => entry.ClientId)
-            .Take(rankSize)
-            .ToListAsync(cancellationToken);
-
-        var clientIds = topClients.Select(entry => entry.ClientId).ToArray();
-        var clientTotals = await orders
-            .Where(row => clientIds.Contains(row.ClientId))
-            .GroupBy(row => new { row.ClientId, row.Currency })
-            .Select(group => new
-            {
-                group.Key.ClientId,
-                group.Key.Currency,
-                Total = group.Sum(row => row.Total),
-            })
-            .ToListAsync(cancellationToken);
-
-        var clients = await clientLookup.FindAsync(criteria.TenantId, clientIds, cancellationToken);
-
-        var byClient = topClients
+        var clientRanking = await RankAsync(
+            criteria, ClientColumn, rankSize, defaultCurrency, cancellationToken);
+        var clients = await clientLookup.FindAsync(
+            criteria.TenantId, clientRanking.Select(entry => entry.Id).ToArray(), cancellationToken);
+        var byClient = clientRanking
             .Select(entry =>
             {
-                clients.TryGetValue(entry.ClientId, out var client);
+                clients.TryGetValue(entry.Id, out var client);
                 return new ReportRankEntryDto(
-                    entry.ClientId,
-                    client?.Name,
-                    client?.Cuc,
-                    EntityCount: 1,
-                    entry.Count,
-                    ReportMoney.From(clientTotals
-                        .Where(total => total.ClientId == entry.ClientId)
-                        .Select(total => (total.Currency, total.Total))));
+                    entry.Id, client?.Name, client?.Cuc, EntityCount: 1, entry.Count, entry.Totals);
             })
             .ToList();
 
+        // «Otros» de clientes es el resto **sin** lo que no tiene cliente: con lo de mostrador
+        // adentro, el pliegue contaría ventas que no son de ningún cliente, y byClient +
+        // withoutClient dejaría de cerrar contra el total.
         var otherClients = await ReportRankFolding.FoldOthersAsync(
-            byClient, rankSize, orderCount, totals,
-            () => orders
-                .Select(row => row.ClientId)
-                .Distinct()
-                .CountAsync(cancellationToken));
+            byClient,
+            rankSize,
+            orderCount - withoutClient.Count,
+            ReportMoney.Remainder(totals, [withoutClient.Totals]),
+            () => CountDistinctAsync(criteria, ClientColumn, cancellationToken));
         if (otherClients is not null)
         {
             byClient.Add(otherClients);
@@ -336,61 +291,92 @@ internal sealed class OrdersReportSource(
             byAdvisor,
             byClient,
             bySource,
-            new ReportWithoutClientDto(0, []));
+            withoutClient);
     }
 
+    // Las dos columnas por las que se rankea. Son constantes de acá, nunca texto del llamador.
+    private const string AdvisorColumn = "advisor_id";
+    private const string ClientColumn = "client_id";
+
     /// <summary>
-    /// Los pedidos del tenant filtrados por el criterio: rango de conversion, estado de pago,
-    /// asesor y cliente. Todo es propio del pedido (spec 2026-10-15).
+    /// El top <paramref name="rankSize"/> por <paramref name="column"/>, con sus totales por moneda.
+    ///
+    /// Ranked by the total in the tenant default currency (plan decision A10): a single-currency
+    /// tenant ranks exactly as before, and a mixed one has a deterministic order that never adds two
+    /// currencies. Count and id break ties so the ranking does not "blink" between two identical
+    /// calls. Las filas sin valor en la columna (una venta a consumidor final, en clientes) no
+    /// entran.
     /// </summary>
-    private IQueryable<Order> FilterOrders(OrdersReportCriteria criteria)
+    private async Task<IReadOnlyList<(Guid Id, int Count, IReadOnlyList<ReportMoneyDto> Totals)>> RankAsync(
+        OrdersReportCriteria criteria,
+        string column,
+        int rankSize,
+        string defaultCurrency,
+        CancellationToken cancellationToken)
     {
-        var orders = quotations.Orders
-            .AsNoTracking()
-            .Where(order => order.TenantId == criteria.TenantId);
-
-        // Instantes ya cortados en el día del tenant (spec 2026-09-17, punto 4): acá no se decide huso.
-        if (criteria.Period.Start is { } start)
+        var top = await QueryAsync<RankRow>(
+            criteria,
+            $"""
+            SELECT r.{column} AS "Id", count(*)::int AS "Count",
+                   sum(CASE WHEN r.currency = @default_currency THEN r.total ELSE 0 END) AS "Ranking"
+            FROM (
+            """,
+            $"""
+            ) AS r
+            WHERE NOT r.is_void AND r.{column} IS NOT NULL
+            GROUP BY r.{column}
+            ORDER BY "Ranking" DESC, "Count" DESC, "Id"
+            LIMIT @rank_size
+            """,
+            [
+                new NpgsqlParameter("default_currency", NpgsqlDbType.Text) { Value = defaultCurrency },
+                new NpgsqlParameter("rank_size", NpgsqlDbType.Integer) { Value = rankSize },
+            ],
+            cancellationToken);
+        if (top.Count == 0)
         {
-            orders = orders.Where(order => order.ConvertedAt >= start);
+            return [];
         }
 
-        if (criteria.Period.EndExclusive is { } end)
-        {
-            orders = orders.Where(order => order.ConvertedAt < end);
-        }
+        var ids = top.Select(entry => entry.Id).ToArray();
+        var entityTotals = await QueryAsync<EntityTotalRow>(
+            criteria,
+            $"""
+            SELECT r.{column} AS "Id", r.currency AS "Currency", sum(r.total) AS "Total"
+            FROM (
+            """,
+            $"""
+            ) AS r
+            WHERE NOT r.is_void AND r.{column} = ANY(@ranked_ids)
+            GROUP BY r.{column}, r.currency
+            """,
+            [new NpgsqlParameter("ranked_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = ids }],
+            cancellationToken);
 
-        if (criteria.PaymentStatus is { } paymentStatus)
-        {
-            var mapped = MapPaymentStatus(paymentStatus);
-            orders = orders.Where(order => order.PaymentStatus == mapped);
-        }
+        return top
+            .Select(entry => (
+                entry.Id,
+                entry.Count,
+                ReportMoney.From(entityTotals
+                    .Where(total => total.Id == entry.Id)
+                    .Select(total => (total.Currency, total.Total)))))
+            .ToArray();
+    }
 
-        if (criteria.Source is { } source)
-        {
-            if (MapSource(source) is { } mapped)
-            {
-                orders = orders.Where(order => order.Source == mapped);
-            }
-            else
-            {
-                // Pos no es un pedido: no hay ninguno de ese origen en quotations.orders.
-                orders = orders.Where(_ => false);
-            }
-        }
-
-        if (criteria.AdvisorId is { } advisorId)
-        {
-            var advisor = new MemberId(advisorId);
-            orders = orders.Where(order => order.AdvisorId == advisor);
-        }
-
-        if (criteria.ClientId is { } clientId)
-        {
-            orders = orders.Where(order => order.ClientId == clientId);
-        }
-
-        return orders;
+    /// <summary>Cuántas entidades distintas hay en <paramref name="column"/>, sin los nulos: el
+    /// conteo del pliegue «Otros».</summary>
+    private async Task<int> CountDistinctAsync(
+        OrdersReportCriteria criteria,
+        string column,
+        CancellationToken cancellationToken)
+    {
+        var counted = await QueryAsync<int>(
+            criteria,
+            $"""SELECT count(DISTINCT r.{column})::int AS "Value" FROM (""",
+            ") AS r WHERE NOT r.is_void",
+            [],
+            cancellationToken);
+        return counted.Count == 0 ? 0 : counted[0];
     }
 
     /// <summary>
@@ -670,5 +656,64 @@ internal sealed class OrdersReportSource(
 
         /// <summary>El nombre que guardó la venta POS; nulo en los pedidos.</summary>
         public string? SnapshotClientName { get; init; }
+    }
+
+    private sealed class MoneyRow
+    {
+        public string Currency { get; init; } = string.Empty;
+
+        public int Count { get; init; }
+
+        public decimal Subtotal { get; init; }
+
+        public decimal TaxAmount { get; init; }
+
+        public decimal FreightSubtotal { get; init; }
+
+        public decimal FreightTaxAmount { get; init; }
+
+        public decimal Total { get; init; }
+    }
+
+    private sealed class SourceRow
+    {
+        public string Source { get; init; } = string.Empty;
+
+        public string Currency { get; init; } = string.Empty;
+
+        public int Count { get; init; }
+
+        public decimal Total { get; init; }
+    }
+
+    private sealed class MonthRow
+    {
+        public int Year { get; init; }
+
+        public int Month { get; init; }
+
+        public string Currency { get; init; } = string.Empty;
+
+        public int Count { get; init; }
+
+        public decimal Total { get; init; }
+    }
+
+    private sealed class RankRow
+    {
+        public Guid Id { get; init; }
+
+        public int Count { get; init; }
+
+        public decimal Ranking { get; init; }
+    }
+
+    private sealed class EntityTotalRow
+    {
+        public Guid Id { get; init; }
+
+        public string Currency { get; init; } = string.Empty;
+
+        public decimal Total { get; init; }
     }
 }

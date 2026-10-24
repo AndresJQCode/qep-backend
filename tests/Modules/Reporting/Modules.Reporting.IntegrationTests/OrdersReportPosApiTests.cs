@@ -216,6 +216,200 @@ public sealed class OrdersReportPosApiTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    /// <summary>
+    /// Spec 2026-10-23 §3: el resumen suma las dos fuentes en totales, serie, ranking por asesor (el
+    /// cajero entra como un asesor más) y <c>bySource</c>.
+    /// </summary>
+    [Fact]
+    public async Task SummaryAddsPosSalesEverywhere()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await ArrangeAsync(factory, database);
+        var order = await world.CreateQuotationOrderAsync(factory);
+        var customer = await CreateActiveCustomerAsync(world.Client, world.TenantId);
+        var sale = await CreatePosSaleAsync(
+            world.Client, world.TenantId, world.SessionId, world.PosProductId, PosPrice, customer.Id);
+
+        var summary = await GetSummaryAsync(world);
+
+        Assert.Equal(2, summary.OrderCount);
+        Assert.Equal([new MoneyAmount("COP", order.Total + sale.Total)], summary.Totals);
+        Assert.Equal([new MoneyAmount("COP", order.Subtotal + sale.Subtotal)], summary.Subtotals);
+        Assert.Equal([new MoneyAmount("COP", order.TaxAmount + sale.TaxAmount)], summary.TaxAmounts);
+        var month = Assert.Single(summary.Monthly);
+        Assert.Equal(2, month.Count);
+        Assert.Equal([new MoneyAmount("COP", order.Total + sale.Total)], month.Totals);
+        var advisor = Assert.Single(summary.ByAdvisor);
+        Assert.Equal(world.OwnerMembershipId, advisor.Id);
+        Assert.Equal(world.OwnerEmail, advisor.Label);
+        Assert.Equal(2, advisor.Count);
+        Assert.Equal(2, summary.ByClient.Count);
+        Assert.Contains(summary.ByClient, entry => entry.Id == customer.Id && entry.Count == 1);
+        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos"], summary.BySource.Select(slice => slice.Source));
+        Assert.Equal([1, 0, 0, 1], summary.BySource.Select(slice => slice.Count));
+        Assert.Equal([new MoneyAmount("COP", sale.Total)], summary.BySource[3].Totals);
+        Assert.Equal(0, summary.WithoutClient.Count);
+    }
+
+    /// <summary>Una venta anulada no es una venta: no suma en ningún agregado.</summary>
+    [Fact]
+    public async Task VoidedPosSaleDoesNotCount()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await ArrangeAsync(factory, database);
+        var order = await world.CreateQuotationOrderAsync(factory);
+        var sale = await CreatePosSaleAsync(
+            world.Client, world.TenantId, world.SessionId, world.PosProductId, PosPrice);
+        await VoidPosSaleAsync(world.Client, world.TenantId, sale.Id);
+
+        var summary = await GetSummaryAsync(world);
+
+        Assert.Equal(1, summary.OrderCount);
+        Assert.Equal([new MoneyAmount("COP", order.Total)], summary.Totals);
+        Assert.Equal(0, summary.BySource[3].Count);
+        Assert.Empty(summary.BySource[3].Totals);
+        Assert.Equal(1, Assert.Single(summary.ByAdvisor).Count);
+        Assert.Equal(1, Assert.Single(summary.Monthly).Count);
+        Assert.Equal(0, summary.WithoutClient.Count);
+        Assert.Empty(summary.WithoutClient.Totals);
+    }
+
+    /// <summary>
+    /// Review Focus 4. Las ventas a consumidor final no tienen ficha: van a <c>withoutClient</c> y no
+    /// al ranking. Con menos de cinco clientes no hay fila «Otros», así que <c>byClient</c> +
+    /// <c>withoutClient</c> tiene que cerrar contra el total sin ella.
+    /// </summary>
+    [Fact]
+    public async Task FinalConsumerSalesGoToWithoutClientNotToTheRanking()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await ArrangeAsync(factory, database);
+        await world.CreateQuotationOrderAsync(factory);
+        await world.CreateQuotationOrderAsync(factory);
+        await SellToFinalConsumerAsync(world, 10_000m);
+        await SellToFinalConsumerAsync(world, 20_000m);
+
+        var summary = await GetSummaryAsync(world);
+
+        Assert.Equal(2, summary.ByClient.Count);
+        Assert.DoesNotContain(summary.ByClient, entry => entry.Id is null);
+        Assert.Equal(2, summary.WithoutClient.Count);
+        Assert.Equal([new MoneyAmount("COP", 30_000m)], summary.WithoutClient.Totals);
+        Assert.Equal(
+            summary.OrderCount,
+            summary.ByClient.Sum(entry => entry.Count) + summary.WithoutClient.Count);
+        Assert.Equal(
+            summary.Totals.Single().Amount,
+            summary.ByClient.Sum(entry => entry.Totals.Single().Amount) + summary.WithoutClient.Totals.Single().Amount);
+    }
+
+    /// <summary>
+    /// La variante con más clientes que el tope: la fila «Otros» pliega sólo al sexto cliente, sin
+    /// las ventas de mostrador en su conteo ni en su total.
+    /// </summary>
+    [Fact]
+    public async Task FinalConsumerSalesStayOutOfTheOthersRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await ArrangeAsync(factory, database);
+        var orders = new List<Modules.Quotations.Application.OrderResponse>();
+        for (var index = 0; index < 6; index++)
+        {
+            orders.Add(await world.CreateQuotationOrderAsync(factory));
+        }
+
+        await SellToFinalConsumerAsync(world, 10_000m);
+        await SellToFinalConsumerAsync(world, 20_000m);
+
+        var summary = await GetSummaryAsync(world);
+
+        Assert.Equal(8, summary.OrderCount);
+        Assert.Equal(6, summary.ByClient.Count);
+        var others = summary.ByClient[^1];
+        Assert.Null(others.Id);
+        Assert.Equal(1, others.EntityCount);
+        Assert.Equal(1, others.Count);
+        Assert.Equal([new MoneyAmount("COP", orders[0].Total)], others.Totals);
+        Assert.Equal((2, 30_000m), (summary.WithoutClient.Count, summary.WithoutClient.Totals.Single().Amount));
+        Assert.Equal(
+            summary.Totals.Single().Amount,
+            summary.ByClient.Sum(entry => entry.Totals.Sum(money => money.Amount))
+                + summary.WithoutClient.Totals.Single().Amount);
+    }
+
+    /// <summary>
+    /// Review Focus 3: la venta de las 23:00 del 31 de diciembre en Bogotá —ya enero en UTC— cae en
+    /// la serie de diciembre del tenant, igual que un pedido.
+    /// </summary>
+    [Fact]
+    public async Task PosSaleOnNewYearsEveCountsInDecember()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), NewYearsEveInBogota);
+        var world = await ArrangeAsync(factory, database);
+        await SellToFinalConsumerAsync(world, PosPrice);
+
+        var summary = await GetSummaryAsync(world, "from=2026-12-01&to=2026-12-31");
+
+        Assert.Equal(1, summary.OrderCount);
+        var month = Assert.Single(summary.Monthly);
+        Assert.Equal((2026, 12), (month.Year, month.Month));
+    }
+
+    /// <summary>El período anterior pasa por la misma base: una venta en la ventana anterior se
+    /// cuenta en <c>previous</c>.</summary>
+    [Fact]
+    public async Task PreviousWindowIncludesPosSales()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), NewYearsEveInBogota);
+        var world = await ArrangeAsync(factory, database);
+        await SellToFinalConsumerAsync(world, PosPrice);
+
+        var summary = await GetSummaryAsync(world, "from=2027-01-01&to=2027-01-31");
+
+        Assert.Equal(0, summary.OrderCount);
+        Assert.NotNull(summary.Previous);
+        Assert.Equal(1, summary.Previous.Count);
+        Assert.Equal([new MoneyAmount("COP", PosPrice)], summary.Previous.Totals);
+    }
+
+    [Fact]
+    public async Task SourcePosLeavesOnlySales()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await ArrangeAsync(factory, database);
+        await world.CreateQuotationOrderAsync(factory);
+        await SellToFinalConsumerAsync(world, PosPrice);
+
+        var summary = await GetSummaryAsync(world, "source=Pos");
+
+        Assert.Equal(1, summary.OrderCount);
+        Assert.Equal([new MoneyAmount("COP", PosPrice)], summary.Totals);
+        Assert.Equal([0, 0, 0, 1], summary.BySource.Select(slice => slice.Count));
+        Assert.Empty(summary.ByClient);
+        Assert.Equal(1, summary.WithoutClient.Count);
+    }
+
+    private static async Task<OrdersReportSummary> GetSummaryAsync(PosWorld world, string query = "")
+    {
+        var summary = await world.Client.GetFromJsonAsync<OrdersReportSummary>(
+            $"{ReportsUrl(world.TenantId)}/orders/summary?{query}", TestContext.Current.CancellationToken);
+        Assert.NotNull(summary);
+        return summary;
+    }
+
+    private static async Task SellToFinalConsumerAsync(PosWorld world, decimal price)
+    {
+        var productId = await CreateProductAsync(world.Client, world.TenantId, baseCop: price);
+        await CreatePosSaleAsync(world.Client, world.TenantId, world.SessionId, productId, price);
+    }
+
     /// <summary>Un tenant con <c>pos</c> prendido, una caja abierta del dueño y un producto sin IVA
     /// para vender.</summary>
     internal static async Task<PosWorld> ArrangeAsync(QepApiFactory factory, Testcontainers.PostgreSql.PostgreSqlContainer database)

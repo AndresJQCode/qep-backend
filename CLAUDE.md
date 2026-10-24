@@ -446,6 +446,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   mano: no siguen solas a la migración) y las dos `TheCatalogUsageQueryFindsTheBackfilledVariant`
   (`VariantLinesMigrationTests`, `SaleLinesVariantMigrationTests`), que resuelven el checker real del contenedor y lo
   corren contra el esquema de las migraciones.
+- **`OrdersReportSource` lee `quotations.orders` y `pos.sales` por nombre** (spec 2026-10-23). Es SQL crudo en
+  Bootstrapper, un `UNION ALL` de las dos tablas (`ReportRowsSql`), porque son de `DbContext` distintos y EF no los une.
+  Renombrar una columna de cualquiera de las dos compila y deja `/reports/orders` y `/summary` respondiendo 500: lo amarran
+  `OrdersReportPosApiTests` y las demás pruebas `OrdersReport*`, que corren contra el esquema migrado. Un estado nuevo de
+  `PosSaleStatus` u `OrderStatus` que no sea venta tiene que entrar en `is_void`, o empieza a sumar en el resumen sin
+  error. Y un filtro opcional nuevo se omite del texto cuando no viene, no se manda como parámetro nulo: PostgreSQL no
+  tipa un `NULL` suelto (`could not determine data type of parameter`).
 - **Borrar una variante es explícito: `deletedVariantIds`. Omitirla del `PUT` responde `catalog.variant.missing_in_request`.**
   No lo «simplifiques» a «la que no viene se borra» (era lo que pedía el plan, y el spec §6 lo corrigió): la tabla de
   variantes llega a 2.048 filas y el formulario la pagina, así que una fila ausente puede ser una página que no se
