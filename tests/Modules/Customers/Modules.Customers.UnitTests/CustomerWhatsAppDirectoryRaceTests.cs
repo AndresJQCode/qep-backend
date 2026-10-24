@@ -39,6 +39,9 @@ public sealed class CustomerWhatsAppDirectoryRaceTests
     private sealed class TakenUnitOfWork : ICustomersUnitOfWork
     {
         public Task<int> SaveChangesAsync(CancellationToken cancellationToken) => throw new WhatsAppUserIdTakenException();
+
+        public Task<ICustomersTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<ICustomersTransaction>(CustomerWriteDoubles.NoTransaction.Instance);
     }
 
     // Estas pruebas no tocan la audiencia: cualquier uso es un error de la prueba.

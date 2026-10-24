@@ -48,6 +48,20 @@ internal static class CustomerWriteDoubles
     {
         public Task<int> SaveChangesAsync(CancellationToken cancellationToken) =>
             failure is null ? Task.FromResult(1) : Task.FromException<int>(failure);
+
+        public Task<ICustomersTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<ICustomersTransaction>(NoTransaction.Instance);
+    }
+
+    /// <summary>La transacción que no hace nada: estas pruebas no ejercen la atomicidad, que prueba
+    /// <c>CustomerMergeStoreTests</c> contra la base.</summary>
+    public sealed class NoTransaction : ICustomersTransaction
+    {
+        public static readonly NoTransaction Instance = new();
+
+        public Task CommitAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     public sealed class Classifications(List<string> calls) : IClientClassificationRepository

@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Npgsql;
@@ -168,6 +169,18 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
                 "customers.customer.city_not_found",
                 "The city was not found.");
         }
+    }
+
+    // Copia de CatalogUnitOfWork.BeginTransactionAsync. Los SaveChanges que corran dentro siguen pasando por la traducción de
+    // arriba: una violación de índice único de la fusión sale con su código y el Dispose sin Commit deshace todo.
+    public async Task<ICustomersTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        new CustomersTransaction(await dbContext.Database.BeginTransactionAsync(cancellationToken));
+
+    private sealed class CustomersTransaction(IDbContextTransaction transaction) : ICustomersTransaction
+    {
+        public Task CommitAsync(CancellationToken cancellationToken) => transaction.CommitAsync(cancellationToken);
+
+        public ValueTask DisposeAsync() => transaction.DisposeAsync();
     }
 
     private static bool IsUniqueViolationOf(DbUpdateException exception, string indexName) =>
