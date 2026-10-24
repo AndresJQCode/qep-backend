@@ -280,8 +280,11 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             .AsNoTracking()
             // Un incompleto también puede ser dueño de un documento (alta rápida del POS, POSC-05): no filtrar por
             // `Completeness == Complete`, el pre-chequeo de Pos depende de que estos aparezcan.
+            // Un fusionado puede compartir documento con el que quedó (el índice es parcial): sin excluirlo, el
+            // ToDictionary de abajo lanza con dos dueños del mismo par (spec 2026-10-24, F8).
             .Where(customer =>
                 customer.TenantId == tenantId &&
+                customer.MergedIntoId == null &&
                 customer.IdentificationType != null &&
                 customer.IdentificationNumber != null &&
                 types.Contains(customer.IdentificationType.Value) &&
@@ -478,7 +481,8 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
     {
         var normalized = Customer.NormalizeWhatsAppUserId(whatsAppUserId);
         return await TranslateTakenAsync(() => dbContext.Customers
-            .Where(customer => customer.TenantId == tenantId && customer.Id == customerId && customer.WhatsAppUserId == null)
+            .Where(customer => customer.TenantId == tenantId && customer.Id == customerId && customer.WhatsAppUserId == null &&
+                customer.MergedIntoId == null)
             .ExecuteUpdateAsync(setters => setters.SetProperty(customer => customer.WhatsAppUserId, normalized), cancellationToken)) == 1;
     }
 

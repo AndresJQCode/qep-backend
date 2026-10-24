@@ -66,9 +66,6 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
                 "marketing_opt_out_source IS NULL OR marketing_opt_out_source IN ('manual', 'meta', 'button')");
         });
         customer.HasKey(value => value.Id);
-        // FC-02 reemplaza estos dos Ignore por el mapeo de las columnas de la fusión.
-        customer.Ignore(value => value.MergedIntoId);
-        customer.Ignore(value => value.MergedAt);
         customer.Ignore(value => value.IsMerged);
         customer.Property(value => value.Id)
             .HasColumnName("id")
@@ -153,6 +150,17 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
                 id => id.Value, value => new ClientClassificationId(value)));
         customer.HasIndex(value => value.ClassificationId)
             .HasDatabaseName("IX_customers_classification");
+        // Fusión (spec 2026-10-24 §7): a quién apunta un cliente fusionado y desde cuándo. Sin FK, el spec no la pide:
+        // la fila a la que apunta nunca se borra. Conversor del tipo no anulable, como ClassificationId.
+        customer.Property(value => value.MergedIntoId)
+            .HasColumnName("merged_into_id")
+            .HasConversion(new ValueConverter<CustomerId, Guid>(
+                id => id.Value, value => new CustomerId(value)));
+        customer.Property(value => value.MergedAt).HasColumnName("merged_at");
+        // Parcial: sólo las filas fusionadas, que son pocas. Sirve la consulta «quiénes apuntan a este».
+        customer.HasIndex(value => new { value.TenantId, value.MergedIntoId })
+            .HasFilter("merged_into_id IS NOT NULL")
+            .HasDatabaseName("IX_customers_tenant_merged_into");
         customer.HasOne<ClientClassification>()
             .WithMany()
             .HasForeignKey(value => new { value.TenantId, value.ClassificationId })
@@ -211,8 +219,10 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         // SqlState, porque si no, otros indices unicos de esta base se reportarian con el codigo de
         // dominio equivocado. Esa fue la leccion de SDD-CT-06.
         //
-        // **Sin filtro parcial**: inactivar un cliente no libera su documento. De eso depende que
-        // Customer.Activate no tenga que revalidar unicidad.
+        // Filtro parcial sobre los no fusionados (spec 2026-10-24 D-F11): inactivar un cliente no libera su
+        // documento, de lo que depende que Customer.Activate no revalide unicidad, pero fusionarlo sí: el que queda
+        // puede tomar el documento del fusionado. Un fusionado no se reactiva (Customer.Activate lo rechaza), así que
+        // reactivar tampoco puede chocar.
         customer.HasIndex(value => new
         {
             value.TenantId,
@@ -220,6 +230,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             value.IdentificationNumber
         })
             .IsUnique()
+            .HasFilter("merged_into_id IS NULL")
             .HasDatabaseName("IX_customers_tenant_identification");
 
         // El CUC tambien es unico por tenant, y con su **propio** indice y su propio codigo de
