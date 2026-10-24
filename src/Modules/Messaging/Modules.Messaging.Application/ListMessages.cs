@@ -28,6 +28,7 @@ public sealed class ListMessagesHandler(
     IMessagingMemberNames memberNames,
     IResolutionReasonNames reasonNames,
     IAutomationsChatbotNames chatbotNames,
+    IMessagingCustomerDirectory customers,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IValidator<ListMessagesQuery> validator)
@@ -58,6 +59,8 @@ public sealed class ListMessagesHandler(
         var targets = await messages.FindReplyTargetsAsync(query.TenantId, MessageMapping.ReplyTargetIdsOf(page), cancellationToken);
         var reasons = await reasonNames.FindAsync(query.TenantId, MessageMapping.ReasonIdsOf(page), cancellationToken);
         var chatbots = await chatbotNames.ResolveAsync(query.TenantId, MessageMapping.ChatbotIdsOf(page), cancellationToken);
-        return new MessagePageDto(page.Select(row => MessageMapping.ToDto(row, query.TenantId, names, targets, reasons, chatbots)).ToArray(), hasMore);
+        var customerIds = MessageMapping.CustomerIdsOf(page);
+        var customerRefs = customerIds.Count == 0 ? null : await customers.FindRefsAsync(query.TenantId, customerIds, cancellationToken);
+        return new MessagePageDto(page.Select(row => MessageMapping.ToDto(row, query.TenantId, names, targets, reasons, chatbots, customerRefs)).ToArray(), hasMore);
     }
 }

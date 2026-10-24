@@ -89,4 +89,64 @@ public sealed class MessageMappingTests
     [Fact]
     public void OnlyAnUnsupportedMessageHasAReason() =>
         Assert.Null(MessageMapping.ToDto(Row(MessageDirection.Inbound, MessageKind.Location, details: UnsupportedDetails(131060)), TenantId, Names, NoTargets).UnsupportedReason);
+
+    private static readonly Guid CustomerA = Guid.CreateVersion7();
+    private static readonly Guid CustomerB = Guid.CreateVersion7();
+    private static readonly Dictionary<Guid, CustomerRefDto> CustomerRefs = new()
+    {
+        [CustomerA] = new(CustomerA, "LUIS ALBERTO MARULANDA GONZALEZ", true),
+        [CustomerB] = new(CustomerB, "ZIBA TIENDA MULTIMARCA S.A.S.", true),
+    };
+
+    private static MessageRow CustomerChangedRow() =>
+        Row(MessageDirection.System, MessageKind.Event, details: ConversationEventJson.Serialize(
+            new ConversationEvent(ConversationEventType.CustomerChanged, Actor: Andres, CustomerId: CustomerB, PreviousCustomerId: CustomerA)));
+
+    [Fact]
+    public void CustomerChangedCarriesBothCustomerNamesAndNoMemberInPreviousOrTarget()
+    {
+        var dto = MessageMapping.ToDto(CustomerChangedRow(), TenantId, Names, NoTargets, customerRefs: CustomerRefs);
+
+        Assert.Equal(
+            new MessageEventDto(
+                "CustomerChanged", new MemberRefDto(Andres, "Andrés"), null, null,
+                TargetCustomer: new EventCustomerRefDto(CustomerB, "ZIBA TIENDA MULTIMARCA S.A.S."),
+                PreviousCustomer: new EventCustomerRefDto(CustomerA, "LUIS ALBERTO MARULANDA GONZALEZ")),
+            dto.Event);
+    }
+
+    [Fact]
+    public void AnUnknownCustomerLeavesTheRefNull()
+    {
+        var refs = new Dictionary<Guid, CustomerRefDto> { [CustomerB] = CustomerRefs[CustomerB] };
+
+        var dto = MessageMapping.ToDto(CustomerChangedRow(), TenantId, Names, NoTargets, customerRefs: refs);
+
+        Assert.Null(dto.Event!.PreviousCustomer);
+        Assert.Equal(CustomerB, dto.Event.TargetCustomer!.Id);
+        Assert.Null(MessageMapping.ToDto(CustomerChangedRow(), TenantId, Names, NoTargets).Event!.TargetCustomer);
+    }
+
+    [Fact]
+    public void TheWireShapeIsTheContract()
+    {
+        var dto = MessageMapping.ToDto(CustomerChangedRow(), TenantId, Names, NoTargets, customerRefs: CustomerRefs);
+
+        using var json = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(dto.Event, System.Text.Json.JsonSerializerOptions.Web));
+        var root = json.RootElement;
+
+        Assert.Equal("ZIBA TIENDA MULTIMARCA S.A.S.", root.GetProperty("targetCustomer").GetProperty("name").GetString());
+        Assert.Equal(CustomerB, root.GetProperty("targetCustomer").GetProperty("id").GetGuid());
+        Assert.Equal(CustomerA, root.GetProperty("previousCustomer").GetProperty("id").GetGuid());
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, root.GetProperty("target").ValueKind);
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, root.GetProperty("previous").ValueKind);
+        Assert.Equal("Andrés", root.GetProperty("actor").GetProperty("displayName").GetString());
+    }
+
+    [Fact]
+    public void CustomerIdsAreNeverAskedAsMembers()
+    {
+        Assert.Equal([Andres], MessageMapping.MemberIdsOf([CustomerChangedRow()]));
+        Assert.Equal(new[] { CustomerA, CustomerB }.Order(), MessageMapping.CustomerIdsOf([CustomerChangedRow()]).Order());
+    }
 }

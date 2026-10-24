@@ -193,7 +193,8 @@ internal static class MessageMapping
 
     public static MessageDto ToDto(
         MessageRow row, Guid tenantId, IReadOnlyDictionary<Guid, string> memberNames, IReadOnlyDictionary<Guid, ReplyTargetRow> replyTargets,
-        IReadOnlyDictionary<Guid, string>? reasonNames = null, IReadOnlyDictionary<Guid, string>? chatbotNames = null)
+        IReadOnlyDictionary<Guid, string>? reasonNames = null, IReadOnlyDictionary<Guid, string>? chatbotNames = null,
+        IReadOnlyDictionary<Guid, CustomerRefDto>? customerRefs = null)
     {
         ArgumentNullException.ThrowIfNull(row);
         ArgumentNullException.ThrowIfNull(memberNames);
@@ -222,7 +223,9 @@ internal static class MessageMapping
                     conversationEvent.ReasonId is { } reasonId && reasonNames?.GetValueOrDefault(reasonId) is { } reasonName
                         ? new ResolutionReasonRefDto(reasonId, reasonName)
                         : null,
-                    conversationEvent.PauseReason?.ToString()),
+                    conversationEvent.PauseReason?.ToString(),
+                    EventCustomer(conversationEvent.CustomerId, customerRefs),
+                    EventCustomer(conversationEvent.PreviousCustomerId, customerRefs)),
             row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
             row.Kind == MessageKind.Unsupported ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson)) : null,
             row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson),
@@ -284,6 +287,22 @@ internal static class MessageMapping
             .Distinct()
             .ToArray();
     }
+
+    /// <summary>Spec 2026-10-24: los clientes que nombran los eventos de la página (el nuevo y el anterior), para una sola consulta.</summary>
+    public static IReadOnlyCollection<Guid> CustomerIdsOf(IEnumerable<MessageRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        return rows.Where(row => row.Kind == MessageKind.Event)
+            .Select(row => ConversationEventJson.Parse(row.DetailsJson))
+            .OfType<ConversationEvent>()
+            .SelectMany(value => new[] { value.CustomerId, value.PreviousCustomerId })
+            .OfType<Guid>()
+            .Distinct()
+            .ToArray();
+    }
+
+    private static EventCustomerRefDto? EventCustomer(Guid? customerId, IReadOnlyDictionary<Guid, CustomerRefDto>? refs) =>
+        customerId is { } id && refs?.GetValueOrDefault(id) is { } customer ? new EventCustomerRefDto(customer.Id, customer.Name) : null;
 
     /// <summary>Los ids de membresía que una página necesita con nombre: <c>sentBy</c> y los de cada evento.</summary>
     public static IReadOnlyCollection<Guid> MemberIdsOf(IEnumerable<MessageRow> rows)

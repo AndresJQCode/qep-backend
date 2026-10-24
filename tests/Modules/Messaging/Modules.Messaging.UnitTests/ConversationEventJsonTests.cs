@@ -78,4 +78,15 @@ public sealed class ConversationEventJsonTests
         Assert.Equal(
             new ConversationEvent(ConversationEventType.AutomationPaused),
             ConversationEventJson.Parse("""{"type":"AutomationPaused","pauseReason":"Whatever"}"""));
+
+    [Fact]
+    public void CustomerChangedRoundTripsWithBothCustomers()
+    {
+        var value = new ConversationEvent(ConversationEventType.CustomerChanged, Actor, CustomerId: Guid.CreateVersion7(), PreviousCustomerId: Guid.CreateVersion7());
+
+        var json = ConversationEventJson.Serialize(value);
+
+        Assert.Contains("\"previousCustomerId\"", json);
+        Assert.Equal(value, ConversationEventJson.Parse(json));
+    }
 }
