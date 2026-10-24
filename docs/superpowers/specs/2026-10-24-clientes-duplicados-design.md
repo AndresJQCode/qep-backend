@@ -389,7 +389,7 @@ Por pieza, como mínimo:
   un `Pending` y un `Skipped duplicate_contact`; gana el de la conversación y, sin ella, el más
   viejo; el `UPDATE` repetido no cambia nada; uno inactivo no le quita el envío al otro.
 - Opt-out por número: con opt-out en A, B (mismo número) sale `opted_out` en una campaña
-  `MARKETING`, en el conteo previo y en el envío uno a uno; en una `UTILITY` no.
+  `MARKETING`, en el conteo previo y en la revisión del worker por destinatario; en una `UTILITY` no.
 - D-D8: tras cambiar a B el cliente de la conversación de A, un entrante del mismo BSUID por otra
   conexión resuelve a A. La prueba deja amarrado ese comportamiento elegido.
 - Frontend: pruebas de los componentes de §5 con las respuestas de arriba.
