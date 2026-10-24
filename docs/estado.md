@@ -162,7 +162,7 @@ historial de `git` los conserva.
 - USD sin IVA (hotfix 2026-10-14): sin backfill; fila de IVA oculta en el frontend; solo COP discrimina IVA. La
   generalización a otras monedas no se le consultó al owner.
 - ImageSharp exige licencia en Release: `main` ya tiene la supresión (hotfix 2026-10-14).
-- Pago parcial con redondeo (hotfix 2026-10-19, `fe3d1fe1`): en `main`. **En `develop` no está** (verificado el 2026-10-24: `Order.RecalculatePaymentStatus` no redondea y `RoundToDisplayedPrecision` no existe). La adaptación a `develop` quedó **sin commitear** en el worktree `../qep-backend-merge-pago` (`Order.cs` +12, `OrderTests.cs` +21, sobre `72feeb1a`, 238 commits atrás). Pendiente del owner: portarla en una rama desde `develop` con sus pruebas. Los otros dos hotfixes del 2026-10-15 (nota al convertir, observaciones en el Excel) sí están en `develop`, reescritos.
+- Pago parcial con redondeo (hotfix 2026-10-19, `fe3d1fe1`): en `main` y, desde el 2026-10-24, **en `develop`** (rama `fix/pago-parcial-redondeo-develop`, ff): `Order.RecalculatePaymentStatus` compara contra el neto redondeado a lo que la moneda muestra; `OrderTests` cubre 116.529 (completo) y 116.528 (parcial). La adaptación venía del worktree `../qep-backend-merge-pago`, que quedó sin commitear hasta hoy; ese worktree ya se puede borrar. Los otros dos hotfixes del 2026-10-15 (nota al convertir, observaciones en el Excel) están en `develop`, reescritos.
 
 ## Defectos conocidos
 
