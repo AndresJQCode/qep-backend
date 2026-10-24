@@ -437,7 +437,7 @@ public sealed class ShopifyAdaptersTests
     public async Task CustomerDirectoryUnknownDocumentTypeIsNotCalled()
     {
         var customers = new FakeCustomerRepository();
-        var directory = new ShopifyCustomerDirectory(customers, new FakeCustomerProvisioning(), new PassThroughPhones());
+        var directory = new ShopifyCustomerDirectory(customers, new FakeCustomerMergeStore(), new FakeCustomerProvisioning(), new PassThroughPhones());
 
         Assert.Null(await directory.FindByDocumentAsync(TenantId, "RUT", "1020304050", Ct));
         Assert.Null(await directory.FindByDocumentAsync(TenantId, "CC", "   ", Ct));
@@ -454,7 +454,7 @@ public sealed class ShopifyAdaptersTests
         {
             Identifications = { [(IdentificationType.Cc, "1020304050")] = incomplete.Id }
         };
-        var directory = new ShopifyCustomerDirectory(customers, new FakeCustomerProvisioning(), new PassThroughPhones());
+        var directory = new ShopifyCustomerDirectory(customers, new FakeCustomerMergeStore(), new FakeCustomerProvisioning(), new PassThroughPhones());
         var expected = new ShopifyCustomerRef(incomplete.Id.Value, false, false);
 
         Assert.Equal(expected, await directory.FindByDocumentAsync(TenantId, "cc", " 1020304050 ", Ct));
@@ -473,13 +473,61 @@ public sealed class ShopifyAdaptersTests
             CustomerId.New(), TenantId, "Laura", "+573001234567", null, "CO", Now, new PassThroughPhones());
         var customers = new FakeCustomerRepository(customer);
         var phones = new MappedPhones { [("300 123 4567", "CO")] = "+573001234567" };
-        var directory = new ShopifyCustomerDirectory(customers, new FakeCustomerProvisioning(), phones);
+        var directory = new ShopifyCustomerDirectory(customers, new FakeCustomerMergeStore(), new FakeCustomerProvisioning(), phones);
 
         Assert.Equal(customer.Id.Value, (await directory.FindByPhoneAsync(TenantId, " 300 123 4567 ", null, Ct))?.Id);
         Assert.Equal(customer.Id.Value, (await directory.FindByPhoneAsync(TenantId, "300 123 4567", "co", Ct))?.Id);
         var calls = customers.Calls;
         Assert.Null(await directory.FindByPhoneAsync(TenantId, "no es un teléfono", "CO", Ct));
         Assert.Equal(calls, customers.Calls);
+    }
+
+    // Spec 2026-10-24 §3.3: un pedido de Shopify que reusa el qep_customer_id de un fusionado cae en el que quedó.
+    [Fact]
+    public async Task FindByIdOfAMergedReturnsTheSurvivor()
+    {
+        var (survivor, merged) = MergedPair();
+        var directory = new ShopifyCustomerDirectory(
+            new FakeCustomerRepository(survivor, merged), new FakeCustomerMergeStore(), new FakeCustomerProvisioning(), new PassThroughPhones());
+
+        Assert.Equal(new ShopifyCustomerRef(survivor.Id.Value, false, true), await directory.FindByIdAsync(TenantId, merged.Id.Value, Ct));
+    }
+
+    // Desvío F9: la búsqueda por documento ya no ve al fusionado (F8), así que sin dueño vivo se pregunta a la fusión.
+    [Fact]
+    public async Task FindByDocumentOnlyAMergedHasReturnsTheSurvivor()
+    {
+        var (survivor, merged) = MergedPair();
+        var mergeStore = new FakeCustomerMergeStore { Survivors = { [(IdentificationType.Cc, "1020304050")] = survivor.Id.Value } };
+        var directory = new ShopifyCustomerDirectory(
+            new FakeCustomerRepository(survivor, merged), mergeStore, new FakeCustomerProvisioning(), new PassThroughPhones());
+
+        Assert.Equal(new ShopifyCustomerRef(survivor.Id.Value, false, true), await directory.FindByDocumentAsync(TenantId, "CC", "1020304050", Ct));
+        Assert.Null(await directory.FindByDocumentAsync(TenantId, "CC", "9999999999", Ct));
+    }
+
+    // El fusionado conserva su teléfono y su correo; el adaptador devuelve al que quedó (id y estado del que quedó).
+    [Fact]
+    public async Task FindByPhoneAndEmailOfAMergedReturnTheSurvivor()
+    {
+        var (survivor, merged) = MergedPair();
+        var directory = new ShopifyCustomerDirectory(
+            new FakeCustomerRepository(survivor, merged), new FakeCustomerMergeStore(), new FakeCustomerProvisioning(), new PassThroughPhones());
+        var expected = new ShopifyCustomerRef(survivor.Id.Value, false, true);
+
+        Assert.Equal(expected, await directory.FindByPhoneAsync(TenantId, "+573005556677", "CO", Ct));
+        Assert.Equal(expected, await directory.FindByEmailAsync(TenantId, "laura.vieja@verde.co", Ct));
+    }
+
+    // Dos incompletos activos con teléfono y correo distintos; el segundo queda fusionado en el primero con el plan del dominio.
+    private static (Customer Survivor, Customer Merged) MergedPair()
+    {
+        var survivor = Customer.CreateIncompleteFromExternalSale(
+            CustomerId.New(), TenantId, "Laura", "+573001234567", "laura@verde.co", "CO", Now, new PassThroughPhones());
+        var merged = Customer.CreateIncompleteFromExternalSale(
+            CustomerId.New(), TenantId, "Laura P.", "+573005556677", "laura.vieja@verde.co", "CO", Now, new PassThroughPhones());
+        CustomerMergePlan.Create(survivor, [merged]).MarkMerged(Now);
+        return (survivor, merged);
     }
 
     [Fact]
@@ -489,7 +537,7 @@ public sealed class ShopifyAdaptersTests
         {
             OnComplete = () => throw new ValidationException([new ValidationFailure("Email", "Requerido.")])
         };
-        var directory = new ShopifyCustomerDirectory(new FakeCustomerRepository(), provisioning, new PassThroughPhones());
+        var directory = new ShopifyCustomerDirectory(new FakeCustomerRepository(), new FakeCustomerMergeStore(), provisioning, new PassThroughPhones());
 
         var error = await Assert.ThrowsAsync<ShopifyCustomerNotCompletableException>(
             () => directory.CreateCompleteAsync(TenantId, CompleteCustomer(), Ct));
@@ -507,7 +555,7 @@ public sealed class ShopifyAdaptersTests
     public async Task CustomerDirectoryCreatesCompleteAndIncomplete()
     {
         var provisioning = new FakeCustomerProvisioning();
-        var directory = new ShopifyCustomerDirectory(new FakeCustomerRepository(), provisioning, new PassThroughPhones());
+        var directory = new ShopifyCustomerDirectory(new FakeCustomerRepository(), new FakeCustomerMergeStore(), provisioning, new PassThroughPhones());
         var data = CompleteCustomer();
 
         var complete = await directory.CreateCompleteAsync(TenantId, data, Ct);

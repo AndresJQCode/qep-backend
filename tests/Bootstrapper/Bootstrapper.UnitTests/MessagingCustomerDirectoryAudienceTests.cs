@@ -111,7 +111,8 @@ public sealed class MessagingCustomerDirectoryAudienceTests
     }
 
     private static MessagingCustomerDirectory AdapterOver(FakeWhatsApp whatsApp, FakeTagLookup? tags = null, FakePhones? phones = null) =>
-        new(phones ?? new FakePhones(), whatsApp, new FakeInstagram(), tags ?? new FakeTagLookup(), NullLogger<MessagingCustomerDirectory>.Instance);
+        new(phones ?? new FakePhones(), whatsApp, new FakeInstagram(), tags ?? new FakeTagLookup(), new FakeCustomerMergeStore(),
+            NullLogger<MessagingCustomerDirectory>.Instance);
 
     [Fact]
     public async Task FindTagsMapsToTheMessagingRecordAndSkipsWhatDoesNotExist()

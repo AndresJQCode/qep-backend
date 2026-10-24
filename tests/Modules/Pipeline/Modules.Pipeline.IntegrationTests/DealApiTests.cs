@@ -102,6 +102,30 @@ public sealed class DealApiTests
         Assert.Equal(["currency", "title"], keys, StringComparer.OrdinalIgnoreCase);
     }
 
+    // Spec 2026-10-24 §3.3 (ruling final #1): nada nuevo se le asigna a un fusionado. Una pestaña vieja que todavía muestra al
+    // fusionado crea el negocio a nombre del que quedó, no del fusionado (que ya no sale en ninguna lista).
+    [Fact]
+    public async Task CreatingADealForAMergedCustomerCreatesItForTheSurvivor()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (merged, _) = await SeedCustomerAsync(factory, setup.Tenant.TenantId, "Laura G");
+        await MarkMergedAsync(connectionString, merged, setup.CustomerId);
+
+        var response = await setup.Client.PostAsJsonAsync(
+            DealsUrl(setup.Tenant.TenantId), new CreateDealRequest(merged, "Dotación sede norte", null, null, null, null), Ct);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var deal = (await response.Content.ReadFromJsonAsync<DealDetailDto>(Ct))!;
+        Assert.Equal((setup.CustomerId, setup.CustomerName), (deal.CustomerId, deal.CustomerName));
+        Assert.Equal(0L, await CountAsync(connectionString,
+            "SELECT count(*) FROM pipeline.deals WHERE tenant_id = @tenant AND customer_id = @merged",
+            ("tenant", setup.Tenant.TenantId), ("merged", merged)));
+    }
+
     // Review Focus 4: un negocio de otro tenant bajo la ruta propia es 404 (no confirma que existe); la ruta ajena es 403.
     [Fact]
     public async Task AForeignDealIs404AndAnotherTenantsRouteIs403()

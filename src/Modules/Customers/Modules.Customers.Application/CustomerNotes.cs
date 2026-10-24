@@ -119,8 +119,10 @@ public sealed class CreateCustomerNoteHandler(
         CustomersAuthorization.EnsureAuthorized(executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var customerId = new CustomerId(command.CustomerId);
-        _ = await customers.FindAsync(command.TenantId, customerId, cancellationToken)
+        var customer = await customers.FindAsync(command.TenantId, customerId, cancellationToken)
             ?? throw CustomerNotFound.For(command.CustomerId);
+        // La nota es otro agregado: no pasa por Customer, así que el rechazo del fusionado se pide acá.
+        customer.EnsureNotMerged();
 
         var now = clock.UtcNow;
         var note = CustomerNote.Create(
@@ -150,8 +152,9 @@ public sealed class UpdateCustomerNoteHandler(
         CustomersAuthorization.EnsureAuthorized(executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var customerId = new CustomerId(command.CustomerId);
-        _ = await customers.FindAsync(command.TenantId, customerId, cancellationToken)
+        var customer = await customers.FindAsync(command.TenantId, customerId, cancellationToken)
             ?? throw CustomerNotFound.For(command.CustomerId);
+        customer.EnsureNotMerged();
         var note = await notes.FindAsync(command.TenantId, customerId, new CustomerNoteId(command.NoteId), cancellationToken)
             ?? throw NoteNotFound.For(command.NoteId);
 
@@ -200,8 +203,9 @@ public sealed class DeleteCustomerNoteHandler(
         }
 
         var customerId = new CustomerId(command.CustomerId);
-        _ = await customers.FindAsync(command.TenantId, customerId, cancellationToken)
+        var customer = await customers.FindAsync(command.TenantId, customerId, cancellationToken)
             ?? throw CustomerNotFound.For(command.CustomerId);
+        customer.EnsureNotMerged();
         var note = await notes.FindAsync(command.TenantId, customerId, new CustomerNoteId(command.NoteId), cancellationToken)
             ?? throw NoteNotFound.For(command.NoteId);
 

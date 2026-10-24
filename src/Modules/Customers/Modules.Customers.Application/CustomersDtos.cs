@@ -75,7 +75,17 @@ public sealed record CustomerDto(
     /// <summary>Spec 2026-10-11 decisión 10. Viaja siempre; con <c>optedOut = false</c> sus otros campos son null.</summary>
     MarketingConsentDto MarketingConsent,
     /// <summary>Spec 2026-10-14 decisión 10: el <c>@usuario</c> de Instagram de un cliente que escribió por ese canal; null si no.</summary>
-    string? InstagramUsername = null);
+    string? InstagramUsername = null,
+    /// <summary>Spec 2026-10-24 §3.3: con un valor, la ficha es de un cliente fusionado. Sólo <c>GetCustomerHandler</c> lo llena;
+    /// los demás handlers devuelven <c>null</c> porque un fusionado no se escribe.</summary>
+    CustomerMergedIntoDto? MergedInto = null);
+
+/// <summary>
+/// A dónde fue un cliente fusionado. Es un objeto y no un id suelto (BFF): la ficha del fusionado muestra «Fusionado con
+/// <c>name</c>» y navega a <c>id</c> en un solo paso; con sólo el id, la pantalla tendría que adivinar el destino con un
+/// segundo <c>GET</c> o con un 404.
+/// </summary>
+public sealed record CustomerMergedIntoDto(Guid Id, string Name);
 
 public sealed record CustomerResponse(
     Guid Id,
@@ -101,7 +111,10 @@ public sealed record CustomerResponse(
     /// <summary>Spec 2026-10-10 §5.2: con <c>false</c>, CUC, documento, correo, dirección, país, ciudad y clasificación pueden venir en <c>null</c>.</summary>
     bool IsComplete,
     IReadOnlyCollection<TagDto> Tags,
-    MarketingConsentDto MarketingConsent);
+    MarketingConsentDto MarketingConsent,
+    /// <summary>Viaja siempre, <c>null</c> incluido (sin <c>JsonIgnore</c>): la pantalla distingue «no está fusionado» de «el campo
+    /// no existe». <c>CustomerMergeResponse</c> lo copia; una prueba de paridad amarra que los dos records tengan los mismos campos.</summary>
+    CustomerMergedIntoDto? MergedInto = null);
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>address</c> no
@@ -130,7 +143,10 @@ public sealed record CustomerListItemResponse(
     ClientClassificationDto? Classification,
     bool IsActive,
     /// <summary>Spec 2026-10-10 §5.2: con <c>false</c>, CUC, documento, correo, dirección, país, ciudad y clasificación pueden venir en <c>null</c>.</summary>
-    bool IsComplete);
+    bool IsComplete,
+    /// <summary>Spec 2026-10-24 (B4): «Fusionar con…» propone como el que queda al cliente más viejo, y la pantalla lo elige con
+    /// esta fecha sin pedir la ficha de cada candidato.</summary>
+    DateTimeOffset CreatedAt);
 
 /// <summary>
 /// El sobre del listado, con el total que la paginacion necesita.
@@ -240,9 +256,18 @@ public sealed record CustomerImportRowData(
 /// porque no son culpa de una sola columna.
 ///
 /// <c>RowData</c> viaja siempre — ver <see cref="CustomerImportRowData"/>.
+///
+/// <c>MergedIntoCuc</c> sólo lo llena <c>customers.import.row.customer_merged</c> (spec 2026-10-24
+/// D-F6): el CUC del cliente que quedó, en un campo propio para que el frontend arme el texto con
+/// su diccionario sin leer el mensaje. Las demás filas lo traen en <c>null</c>.
 /// </summary>
 public sealed record ImportRowError(
-    int RowNumber, string Code, string Message, string? Field, CustomerImportRowData? RowData = null);
+    int RowNumber,
+    string Code,
+    string Message,
+    string? Field,
+    CustomerImportRowData? RowData = null,
+    string? MergedIntoCuc = null);
 
 /// <summary>
 /// El resultado de una importacion. A diferencia del acuse original (`CLI-01` dejaba el
@@ -388,3 +413,79 @@ public sealed record CustomerAnomaliesResponse(
     int Total,
     int Page,
     int PageSize);
+
+/// <summary>
+/// Una de las partes de la fusión, tal como la confirmación la dibuja: quién es, con qué documento y si se puede
+/// fusionar. BFF: <c>Version</c> es la de <c>Customer</c> —un entero— y es el <c>If-Match</c> que el POST de la fusión
+/// manda (B1), así el cliente no tiene que pedir la ficha aparte para conseguirla. <c>IdentificationType</c>,
+/// <c>IdentificationNumber</c> y <c>Cuc</c> son <c>null</c> en una ficha incompleta; <c>IsComplete</c> e <c>IsActive</c>
+/// dejan marcar en la pantalla qué fila no podría quedar.
+/// </summary>
+public sealed record CustomerMergePartyDto(
+    Guid Id,
+    string Name,
+    string? IdentificationType,
+    string? IdentificationNumber,
+    string? Cuc,
+    bool IsComplete,
+    bool IsActive,
+    long Version);
+
+/// <summary>Una clase de lo que la fusión mueve al que queda, con cuántas hay. <c>Kind</c> viaja con el nombre del enum.</summary>
+public sealed record CustomerMergeMoveDto(string Kind, int Count);
+
+/// <summary>
+/// La vista previa de una fusión (§3.4). BFF: <c>Moves</c> viaja con las ocho clases siempre, en el orden del enum y también
+/// en cero, para que la confirmación dibuje en gris la que está en cero sin conocer el enum; <c>Tags</c> son las que el que
+/// queda gana de verdad (sin repetir y dentro del tope), no las que traen los fusionados. <c>FilledFields</c> son nombres
+/// de <c>CustomerMergeField</c> (B2): lo que la ficha del que queda recibe. <c>DocumentsDiffer</c> avisa que algún
+/// fusionado tiene un número distinto del que queda al normalizar ambos; si a uno de los dos le falta el número, no cuenta.
+/// </summary>
+public sealed record CustomerMergePreviewResponse(
+    CustomerMergePartyDto Survivor,
+    IReadOnlyList<CustomerMergePartyDto> Merged,
+    bool DocumentsDiffer,
+    IReadOnlyList<CustomerMergeMoveDto> Moves,
+    IReadOnlyList<string> FilledFields);
+
+/// <summary>D-F5: una etiqueta que no cupo en el que queda. Sólo lo que el aviso nombra: el color y el conteo no hacen falta
+/// para decir cuáles no cupieron.</summary>
+public sealed record CustomerMergeDroppedTagDto(Guid Id, string Name);
+
+/// <summary>El cuerpo de <c>POST /customers/{survivorId}/merge</c>. Opcional en el binding para que una lista ausente sea un
+/// 422 con <c>errors.MergedCustomerIds</c> del validador y no un 400 del deserializador.</summary>
+public sealed record MergeCustomersRequest(IReadOnlyList<Guid>? MergedCustomerIds);
+
+/// <summary>
+/// La respuesta de la fusión (B3). BFF: los mismos campos que <see cref="CustomerResponse"/>, en el mismo objeto, para que
+/// la pantalla repinte la ficha del que quedó con el mismo código que dibuja un <c>GET</c>, más <c>DroppedTags</c>, que viaja
+/// siempre (<c>[]</c> si todo cupo) para que el aviso no tenga que distinguir «vacío» de «ausente». Sin versión: al terminar,
+/// el frontend navega a la ficha del que quedó, y una fusión nueva pide otra vista previa, que es de donde sale el
+/// <c>If-Match</c>.
+/// </summary>
+public sealed record CustomerMergeResponse(
+    Guid Id,
+    string? Cuc,
+    string Name,
+    string? BusinessName,
+    string? IdentificationType,
+    string? IdentificationNumber,
+    string? Phone,
+    string? Email,
+    string? Address,
+    string? Country,
+    CustomerCityDto? City,
+    CustomerDepartmentDto? Department,
+    string? CityName,
+    ClientClassificationDto? Classification,
+    IReadOnlyCollection<CustomerAddressDto> Addresses,
+    bool WithRetention,
+    bool VatSurplus,
+    bool IsActive,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    bool IsComplete,
+    IReadOnlyCollection<TagDto> Tags,
+    MarketingConsentDto MarketingConsent,
+    CustomerMergedIntoDto? MergedInto,
+    IReadOnlyList<CustomerMergeDroppedTagDto> DroppedTags);

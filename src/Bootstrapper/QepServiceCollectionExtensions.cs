@@ -327,6 +327,12 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetCustomerQuery, CustomerDto>,
             GetCustomerHandler>();
         services.AddScoped<
+            IQueryHandler<GetCustomerMergePreviewQuery, CustomerMergePreviewResponse>,
+            GetCustomerMergePreviewHandler>();
+        services.AddScoped<
+            ICommandHandler<MergeCustomersCommand, CustomerMergeResult>,
+            MergeCustomersHandler>();
+        services.AddScoped<
             IQueryHandler<FindCustomerIdentificationMatchesQuery, CustomerIdentificationMatchesResponse>,
             FindCustomerIdentificationMatchesHandler>();
         services.AddScoped<
@@ -921,6 +927,10 @@ public static class QepServiceCollectionExtensions
         // Catalog no referencia. Scoped como el CatalogDbContext sobre el que corre, para que la
         // consulta comparta la transacción del PUT.
         services.AddScoped<IVariantUsageChecker, CatalogVariantUsageChecker>();
+        // Fusión de clientes (spec 2026-10-24 §4): mover las referencias de Quotations, Pos, Pipeline, Messaging y
+        // Shopify, que Customers no referencia. Scoped como el CustomersDbContext sobre el que corre, para que los UPDATE
+        // compartan la transacción de la fusión.
+        services.AddScoped<ICustomerMergeReferences, CustomerMergeReferences>();
 
         services.AddScoped<IProductExportStorage, ProductExportStorage>();
 
@@ -1166,6 +1176,8 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.CustomerRead,
                 CustomersPermissions.CustomerManage,
                 CustomersPermissions.CustomerImport,
+                // Spec 2026-10-24 D-F1: fusionar duplicados es trabajo de quien atiende al cliente y del admin.
+                CustomersPermissions.CustomerMerge,
                 CustomersPermissions.ClassificationRead,
                 CustomersPermissions.ClassificationManage,
                 // Spec 2026-10-11 §4.3: renombrar o borrar etiquetas y borrar notas ajenas. Sólo admin: el
@@ -1266,6 +1278,8 @@ public static class QepServiceCollectionExtensions
                 // misma autoridad, y el gate CLI-00 pide mapearlo por separado.
                 CustomersPermissions.CustomerRead,
                 CustomersPermissions.CustomerManage,
+                // Spec 2026-10-24 D-F1: el asesor es quien ve los duplicados en la bandeja y en el listado.
+                CustomersPermissions.CustomerMerge,
                 // Mismo criterio que CustomerRead/CustomerManage y no el de CustomerImport:
                 // gestionar clasificaciones es trabajo diario de un asesor, no una operacion
                 // privilegiada.
@@ -1480,6 +1494,13 @@ public static class QepServiceCollectionExtensions
             // Alto y no medio: una carga masiva escribe cientos de registros de datos personales
             // de una sola vez, y el gate CLI-00 todavia tiene abierta la politica de retencion de
             // PII. Separado de manage justamente para poder darlo a menos gente.
+            "high",
+            RequiredModules: [ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.CustomerMerge,
+            "Fusionar clientes",
+            "Permite fusionar clientes duplicados en uno. No se puede deshacer.",
+            "Customers",
             "high",
             RequiredModules: [ModuleKeys.Customers]));
         services.AddSingleton(new PermissionDefinition(
@@ -1994,6 +2015,10 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 CustomersPermissions.CustomerImport,
                 policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerImport))
+            // La otra mitad del permiso de fusión. Sin esta política RequireAuthorization no resuelve y el síntoma es 500.
+            .AddPolicy(
+                CustomersPermissions.CustomerMerge,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerMerge))
             // La otra mitad del permiso de clasificaciones. Sin esta politica RequireAuthorization
             // no resuelve y el sintoma es 500, no 403 — mismo gotcha que TaxRateRead/TaxRateManage.
             .AddPolicy(

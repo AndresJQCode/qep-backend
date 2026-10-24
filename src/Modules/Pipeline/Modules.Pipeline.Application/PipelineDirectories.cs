@@ -36,6 +36,12 @@ public interface IPipelineCustomerDirectory
 {
     Task<IReadOnlyDictionary<Guid, PipelineCustomerRef>> FindAsync(
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-10-24 §4 «lo que llega tarde»: el cliente que quedó si este se fusionó; el mismo id si no (o si no es del
+    /// tenant). Un salto basta: la fusión reescribe la cadena (C → B → A queda C → A), así que nadie apunta a un fusionado.
+    /// </summary>
+    Task<Guid> ResolveSurvivorAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
 }
 
 /// <summary>Mismo criterio que <c>IMessagingMemberNames</c>: nombre visible de la membresía o su correo, sólo para mostrar. Sólo las

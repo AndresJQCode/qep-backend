@@ -312,6 +312,59 @@ public sealed class CustomerAudienceDirectoryIntegrationTests
         Assert.False(Assert.Single(await AudienceAsync(factory, Tenant, [], [clean])).MarketingOptOut);
     }
 
+    // Spec 2026-10-24 desvío F5: el 131050 de Meta (o el botón) sobre un fusionado es de la persona, así que marca al que
+    // quedó, con el origen y la fecha; el fusionado no se escribe.
+    [Fact]
+    public async Task TheMetaOptOutOfAMergedLandsOnTheSurvivor()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        var connection = database.GetConnectionString();
+        var survivor = await InsertWithPhoneAsync(connection, Tenant, "Quien Queda", "+573001112233", false);
+        var merged = await InsertWithPhoneAsync(connection, Tenant, "El Fusionado", "+573004445566", false);
+        var bystander = await InsertWithPhoneAsync(connection, Tenant, "Otro", "+573007778899", false);
+        await MarkMergedAsync(connection, merged, survivor);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ICustomerWhatsAppDirectory>()
+                .MarkMarketingOptOutAsync(Tenant, merged, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal("False", (await ColumnAsync(connection, $"SELECT marketing_opt_out FROM customers.customers WHERE id = '{merged}'"))[0]);
+        Assert.Equal(
+            "true|meta|1",
+            (await ColumnAsync(connection, $"SELECT marketing_opt_out || '|' || marketing_opt_out_source || '|' || version FROM customers.customers WHERE id = '{survivor}'"))[0]);
+        Assert.Equal("False", (await ColumnAsync(connection, $"SELECT marketing_opt_out FROM customers.customers WHERE id = '{bystander}'"))[0]);
+    }
+
+    // FC-03 sólo reescribe las audiencias Draft/Scheduled. Una campaña que pasó a Sending antes de la fusión y todavía no
+    // congeló conserva el id del fusionado: el congelado lo redirige al que quedó (una sola vez, aunque también esté).
+    [Fact]
+    public async Task AnAudienceThatStillListsAMergedReachesTheSurvivorOnce()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        var connection = database.GetConnectionString();
+        var survivor = await InsertWithPhoneAsync(connection, Tenant, "Quien Queda", "+573001112233", false);
+        var merged = await InsertWithPhoneAsync(connection, Tenant, "El Fusionado", "+573004445566", false);
+        await MarkMergedAsync(connection, merged, survivor);
+
+        var onlyMerged = await AudienceAsync(factory, Tenant, [], [merged]);
+        var both = await AudienceAsync(factory, Tenant, [], [merged, survivor]);
+        var foreign = await AudienceAsync(factory, OtherTenant, [], [merged]);
+
+        Assert.Equal(survivor, Assert.Single(onlyMerged).CustomerId);
+        Assert.Equal(survivor, Assert.Single(both).CustomerId);
+        Assert.Empty(foreign);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var count = await scope.ServiceProvider.GetRequiredService<ICustomerWhatsAppDirectory>()
+            .CountAudienceAsync(Tenant, [], [merged], TestContext.Current.CancellationToken);
+        Assert.Equal(1, count.Total);
+    }
+
     [Fact]
     public async Task MarkingTheOptOutStillMarksOnlyThatCustomer()
     {

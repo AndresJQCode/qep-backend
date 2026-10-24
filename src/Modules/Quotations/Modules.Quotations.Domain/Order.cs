@@ -839,14 +839,22 @@ public sealed class Order
     }
 
     /// <summary>Compara lo consignado contra el neto a cobrar del propio pedido (spec 2026-10-15 §4.1):
-    /// ya no recibe el monto, lo tiene.</summary>
+    /// ya no recibe el monto, lo tiene.
+    ///
+    /// El neto se compara redondeado a lo que la moneda muestra: pesos enteros en COP, centavos en
+    /// las demás (hotfix 2026-10-19). La retención se redondea a centavos y le deja al neto una
+    /// fracción de peso que la pantalla no muestra —un neto de 116.529,37 se ve como $116.529—, así
+    /// que quien cargaba lo que veía quedaba en pago parcial por 37 centavos. Mismo redondeo que
+    /// <c>roundToCurrencyPrecision</c> del frontend.</summary>
     public void RecalculatePaymentStatus(DateTimeOffset occurredAt)
     {
         EnsurePending("The payment status can only be recalculated on a pending order.");
         var proofsTotal = _paymentProofs.Sum(proof => proof.Amount);
+        var displayedNetTotal = Math.Round(
+            NetTotal, Currency == "COP" ? 0 : 2, MidpointRounding.AwayFromZero);
         PaymentStatus = proofsTotal <= 0
             ? OrderPaymentStatus.PaymentPending
-            : proofsTotal >= NetTotal
+            : proofsTotal >= displayedNetTotal
                 ? OrderPaymentStatus.FullPaymentReceived
                 : OrderPaymentStatus.PartialPaymentReceived;
         UpdatedAt = occurredAt;

@@ -267,9 +267,10 @@ internal sealed class CustomerReportSource(
         CancellationToken cancellationToken)
     {
         // Spec 2026-10-10 §6.4: un incompleto no tiene clasificación ni ciudad; contarlo distorsionaría los cortes por esos campos.
+        // Spec 2026-10-24 §3.3: un fusionado ya es otra ficha; contarlo dos veces infla el padrón.
         var query = customers.Customers
             .AsNoTracking()
-            .Where(customer => customer.TenantId == criteria.TenantId && customer.Completeness == CustomerCompleteness.Complete);
+            .Where(customer => customer.TenantId == criteria.TenantId && customer.Completeness == CustomerCompleteness.Complete && customer.MergedIntoId == null);
 
         // El rango corta por fecha de alta, la unica fecha que tiene un cliente.
         if (criteria.Period.Start is { } start)

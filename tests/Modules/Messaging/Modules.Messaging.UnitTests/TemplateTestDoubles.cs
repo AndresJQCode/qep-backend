@@ -48,6 +48,9 @@ internal sealed class FakeCustomerDirectory : IMessagingCustomerDirectory
     public Task<MessagingCustomerContact?> FindContactAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
         Task.FromResult(Contacts.GetValueOrDefault(customerId));
 
+    /// <summary>Ningún cliente de estas pruebas está fusionado: cada uno es el que quedó.</summary>
+    public Task<Guid> ResolveSurvivorAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) => Task.FromResult(customerId);
+
     public Task MarkMarketingOptOutAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)
     {
         OptedOut.Add(customerId);

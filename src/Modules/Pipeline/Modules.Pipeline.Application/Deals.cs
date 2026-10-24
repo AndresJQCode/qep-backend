@@ -203,7 +203,9 @@ public sealed class CreateDealHandler(
         await PipelineAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, PipelinePermissions.DealManage, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
-        var customerId = command.CustomerId!.Value;
+        // Spec 2026-10-24 §3.3: nada nuevo se le asigna a un fusionado. Una pestaña vieja que todavía lo muestra crea el negocio a
+        // nombre del que quedó, igual que un evento tardío de cotización (QuotationEventApplier).
+        var customerId = await customers.ResolveSurvivorAsync(command.TenantId, command.CustomerId!.Value, cancellationToken);
         if (!(await customers.FindAsync(command.TenantId, [customerId], cancellationToken)).ContainsKey(customerId))
         {
             throw new PipelineDomainException(PipelineErrorCodes.DealCustomerNotFound, "The customer was not found in this tenant.");

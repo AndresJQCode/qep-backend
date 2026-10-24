@@ -113,7 +113,8 @@ public interface ICustomerRepository
     /// cotizaciones por NIT (<c>Modules.Quotations</c>, via <c>IQuotationCustomerLookup</c>) para
     /// resolver texto libre a ids antes de filtrar <c>Quotation.ClientId</c>, que no guarda el
     /// NIT. Mismo criterio "batch, no una fila a la vez" que
-    /// <see cref="FindExistingIdentificationsAsync"/>.
+    /// <see cref="FindExistingIdentificationsAsync"/>. Un fusionado que coincide trae también al que
+    /// quedó, que tiene ahora sus cotizaciones (spec 2026-10-24 §3.3, desvío F7).
     /// </summary>
     Task<IReadOnlySet<Guid>> SearchIdsByIdentificationNumberAsync(
         Guid tenantId,
@@ -125,7 +126,8 @@ public interface ICustomerRepository
     /// distinguir mayusculas), en una sola consulta sin paginar — gemela de
     /// <see cref="SearchIdsByIdentificationNumberAsync"/>, la usa el filtro del listado de pedidos
     /// (<c>Modules.Quotations</c>, via <c>IQuotationCustomerLookup</c>): ni el pedido ni la
-    /// cotizacion guardan el CUC.
+    /// cotizacion guardan el CUC. El CUC de un fusionado trae también al que quedó (spec
+    /// 2026-10-24 §3.3).
     /// </summary>
     Task<IReadOnlySet<Guid>> SearchIdsByCucAsync(
         Guid tenantId,
@@ -164,7 +166,8 @@ public interface ICustomerRepository
     Task<Customer?> FindByInstagramUserIdAsync(Guid tenantId, string instagramUserId, CancellationToken cancellationToken);
 
     /// <summary>§8.2 con la regla de D-M7: el más viejo con ese <c>phone_e164</c>, luego el id menor. Sin tracking,
-    /// por lo mismo.</summary>
+    /// por lo mismo. Los no fusionados van primero (spec 2026-10-24 §3.3): un fusionado sólo vuelve si es el único con el
+    /// número, y quien llama lo resuelve por <see cref="Customer.MergedIntoId"/>.</summary>
     Task<Customer?> FindOldestByPhoneE164Async(Guid tenantId, string phoneE164, CancellationToken cancellationToken);
 
     /// <summary>
@@ -187,7 +190,8 @@ public interface ICustomerRepository
     /// <summary>
     /// Spec de Shopify 2026-10-15 §6.2.1 paso 2 (H8): el cliente del tenant con ese correo, sin distinguir mayúsculas
     /// (<c>lower(email) = lower(@email)</c>, sobre <c>IX_customers_tenant_email</c>). El correo no es único: si hay
-    /// varios, el más viejo y luego el id menor, la misma regla que el teléfono (D-M7).
+    /// varios, el más viejo y luego el id menor, la misma regla que el teléfono (D-M7), con los fusionados al final (spec
+    /// 2026-10-24 §3.3): quien llama resuelve uno por <see cref="Customer.MergedIntoId"/>.
     /// </summary>
     Task<CustomerId?> FindIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken);
 

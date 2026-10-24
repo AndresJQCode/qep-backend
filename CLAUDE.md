@@ -457,6 +457,19 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   mano: no siguen solas a la migración) y las dos `TheCatalogUsageQueryFindsTheBackfilledVariant`
   (`VariantLinesMigrationTests`, `SaleLinesVariantMigrationTests`), que resuelven el checker real del contenedor y lo
   corren contra el esquema de las migraciones.
+- **`CustomerMergeReferences` escribe en cinco esquemas por nombre.** La fusión de clientes conoce por nombre las tablas de
+  quotations, pos, pipeline, messaging y shopify: es SQL crudo en Bootstrapper sobre `quotations.quotations`/`orders.client_id`,
+  `pos.sales.customer_id`, `pipeline.deals`/`deal_quotations`/`deal_orders`/`triage_decisions.customer_id`,
+  `messaging.conversations.customer_id`, `messaging.campaigns.audience_customer_ids` y `shopify.orders.qep_customer_id`, sobre la
+  conexión del `CustomersDbContext` para quedar dentro de su transacción. Renombrar una de esas columnas compila y la fusión
+  responde 500 (`42703`); como todo es una transacción, no fusiona nada. Lo amarran `CustomerMergeReferencesTests` (réplicas
+  hechas a mano: no siguen solas a una migración) y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
+  Una tabla nueva que guarde un id de cliente vivo entra en `MoveAsync` y en esas dos pruebas, o la fusión la deja apuntando a un
+  cliente inactivo. Y `merged_into_id` apunta siempre a un no fusionado: quien lea un fusionado sigue un solo salto.
+- **El `Version++` del fusionado es lo que impide fusionar al mismo cliente en dos que quedan.** `ApplyMergedInto` pasa por
+  `Touch` y sube la versión del fusionado, así que dos fusiones simultáneas del mismo cliente hacia distintos que quedan
+  chocan por concurrencia optimista, y `merged_into_id` lo saca de toda fusión posterior (`customers.merge.already_merged`).
+  No quites el `Touch` ni marques fusionados con un `ExecuteUpdate` que se salte el agregado.
 - **`OrdersReportSource` lee `quotations.orders` y `pos.sales` por nombre** (spec 2026-10-23). Es SQL crudo en
   Bootstrapper, un `UNION ALL` de las dos tablas (`ReportRowsSql`), porque son de `DbContext` distintos y EF no los une.
   Renombrar una columna de cualquiera de las dos compila y deja `/reports/orders` y `/summary` respondiendo 500: lo amarran

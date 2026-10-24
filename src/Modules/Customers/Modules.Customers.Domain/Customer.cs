@@ -4,8 +4,9 @@ namespace Modules.Customers.Domain;
 /// Un cliente del tenant: la contraparte a la que se le cotiza y se le vende. Guarda solo los
 /// datos maestros vivos; una cotizacion congela su propia copia de a quien se le emitio.
 ///
-/// La identificacion (tipo + numero) es **unica por tenant**; esa unicidad la arbitra
-/// <c>IX_customers_tenant_identification</c> y la traduce <c>CustomersUnitOfWork</c>. El CUC lo
+/// La identificacion (tipo + numero) es **unica por tenant entre los clientes no fusionados**: un fusionado completo
+/// conserva su documento y otro cliente puede tenerlo (spec 2026-10-24 §3.1). Esa unicidad la arbitra
+/// <c>IX_customers_tenant_identification</c>, parcial (<c>merged_into_id IS NULL</c>), y la traduce <c>CustomersUnitOfWork</c>. El CUC lo
 /// emite el backend al crear; su prefijo se reescribe cuando cambia la clasificacion del cliente
 /// (ver <see cref="Cuc"/> y <see cref="Update"/>), pero el departamento y el consecutivo no.
 /// </summary>
@@ -289,6 +290,13 @@ public sealed class Customer
     /// </summary>
     public long Version { get; private set; }
 
+    /// <summary>Spec 2026-10-24 D-F2: el cliente en el que se fusionó este. Siempre apunta a uno que no está fusionado.</summary>
+    public CustomerId? MergedIntoId { get; private set; }
+
+    public DateTimeOffset? MergedAt { get; private set; }
+
+    public bool IsMerged => MergedIntoId is not null;
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     public DateTimeOffset UpdatedAt { get; private set; }
@@ -418,6 +426,7 @@ public sealed class Customer
         ArgumentNullException.ThrowIfNull(identification);
         ArgumentNullException.ThrowIfNull(contact);
         ArgumentNullException.ThrowIfNull(commercial);
+        EnsureNotMerged();
         EnsureActive();
         if (IsComplete)
         {
@@ -564,6 +573,7 @@ public sealed class Customer
     public CustomerAddress AddAddress(
         CustomerAddressDetails details, bool isPrincipal, DateTimeOffset occurredAt)
     {
+        EnsureNotMerged();
         EnsureActive();
         // Spec 2026-10-10 §5.2: no hay edición parcial de un incompleto. La libreta nace al completarlo
         // (Complete), con la dirección del PUT.
@@ -589,6 +599,7 @@ public sealed class Customer
         bool isPrincipal,
         DateTimeOffset occurredAt)
     {
+        EnsureNotMerged();
         EnsureActive();
 
         var address = FindAddress(addressId);
@@ -606,6 +617,7 @@ public sealed class Customer
 
     public void MakeAddressPrincipal(CustomerAddressId addressId, DateTimeOffset occurredAt)
     {
+        EnsureNotMerged();
         EnsureActive();
 
         ApplyPrincipal(FindAddress(addressId), true, occurredAt);
@@ -619,6 +631,7 @@ public sealed class Customer
     /// </summary>
     public void RemoveAddress(CustomerAddressId addressId, DateTimeOffset occurredAt)
     {
+        EnsureNotMerged();
         EnsureActive();
 
         var address = FindAddress(addressId);
@@ -683,6 +696,7 @@ public sealed class Customer
         DateTimeOffset occurredAt,
         IPhoneNumberNormalizer? phoneNormalizer = null)
     {
+        EnsureNotMerged();
         EnsureComplete();
         EnsureActive();
 
@@ -774,6 +788,7 @@ public sealed class Customer
 
     public void Deactivate(DateTimeOffset occurredAt)
     {
+        EnsureNotMerged();
         if (!IsActive)
         {
             throw new CustomersDomainException(
@@ -795,13 +810,14 @@ public sealed class Customer
     /// que corregir en producto despues de entregarlo, y que `EMP-08` ya nacio cubriendo. No
     /// estrena permiso: reactivar es administrar.
     ///
-    /// No revalida la unicidad de la identificacion: <c>IX_customers_tenant_identification</c> es
-    /// unico **sin filtro parcial**, asi que inactivar nunca libero el documento y reactivar no
-    /// puede colisionar con nadie. Si alguien le agrega un filtro parcial al indice, esta
-    /// suposicion deja de valer.
+    /// No revalida la unicidad de la identificacion: inactivar no libera el documento, asi que
+    /// reactivar no puede colisionar con nadie. Un cliente fusionado si libera el suyo (el indice
+    /// pasa a ser parcial, spec 2026-10-24), pero no se reactiva: <see cref="EnsureNotMerged"/>
+    /// lo rechaza antes de llegar aca.
     /// </summary>
     public void Activate(DateTimeOffset occurredAt)
     {
+        EnsureNotMerged();
         if (IsActive)
         {
             throw new CustomersDomainException(
@@ -824,6 +840,7 @@ public sealed class Customer
     /// </summary>
     public bool OptOutOfMarketing(MarketingConsentSource source, DateTimeOffset occurredAt)
     {
+        EnsureNotMerged();
         if (MarketingOptOut)
         {
             return false;
@@ -838,6 +855,7 @@ public sealed class Customer
     /// <summary>La vuelta de <see cref="OptOutOfMarketing"/>: borra el rastro. <c>false</c> si ya aceptaba marketing.</summary>
     public bool OptInToMarketing()
     {
+        EnsureNotMerged();
         if (!MarketingOptOut)
         {
             return false;
@@ -848,6 +866,73 @@ public sealed class Customer
         MarketingOptOutSource = null;
         return true;
     }
+
+    /// <summary>Spec 2026-10-24 §3.1: va primero en toda escritura, antes de <see cref="EnsureActive"/>, para que el
+    /// código diga «fusionado» y no «inactivo».</summary>
+    public void EnsureNotMerged()
+    {
+        if (IsMerged)
+        {
+            throw new CustomersDomainException("customers.customer.merged", "A merged customer cannot be edited.");
+        }
+    }
+
+    // Las usa sólo CustomerMergePlan (mismo ensamblado): la fusión escribe campos que ninguna operación pública toca.
+    internal void ApplyMergedInto(
+        CustomerId survivorId, DateTimeOffset now, bool releaseWhatsAppUserId, bool releaseInstagram, bool releaseIdentification)
+    {
+        MergedIntoId = survivorId;
+        MergedAt = now;
+        IsActive = false;
+        if (releaseWhatsAppUserId)
+        {
+            WhatsAppUserId = null;
+        }
+
+        if (releaseInstagram)
+        {
+            InstagramUserId = null;
+            InstagramUsername = null;
+        }
+
+        if (releaseIdentification)
+        {
+            IdentificationType = null;
+            IdentificationNumber = null;
+        }
+
+        Touch(now);
+    }
+
+    internal void FillEmail(string value) => Email = value;
+
+    internal void FillBusinessName(string value) => BusinessName = value;
+
+    internal void FillPhone(string value, string? e164)
+    {
+        Phone = value;
+        PhoneE164 = e164;
+    }
+
+    internal void FillWhatsAppUserId(string value) => WhatsAppUserId = value;
+
+    internal void FillInstagram(string userId, string? username)
+    {
+        InstagramUserId = userId;
+        InstagramUsername = username;
+    }
+
+    internal void FillIdentification(IdentificationType type, string number)
+    {
+        IdentificationType = type;
+        IdentificationNumber = number;
+    }
+
+    internal void FillCountry(string value) => Country = value;
+
+    internal void FillAddress(string value) => Address = value;
+
+    internal void TouchForMerge(DateTimeOffset now) => Touch(now);
 
     private void EnsureActive()
     {

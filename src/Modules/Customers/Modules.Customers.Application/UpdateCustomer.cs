@@ -57,6 +57,9 @@ public sealed class UpdateCustomerHandler(
             cancellationToken)
             ?? throw CustomerNotFound.For(command.CustomerId);
 
+        // Antes de pedir el CUC: Customer.Complete también rechaza, pero para entonces el consecutivo ya se quemó.
+        customer.EnsureNotMerged();
+
         // Se resuelven aca, no solo por la FK de base: la respuesta del PUT lleva la ciudad, el
         // departamento y la clasificacion resueltos, igual que el detalle. Ademas, si la
         // clasificacion cambia, su prefijo es lo que Customer.Update usa para reescribir el CUC —

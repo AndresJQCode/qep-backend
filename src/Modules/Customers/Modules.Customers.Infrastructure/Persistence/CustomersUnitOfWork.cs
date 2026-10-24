@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Npgsql;
@@ -43,6 +44,12 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
         try
         {
             return await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        // Un deadlock o una falla de serialización (CustomersWriteRaces): 412, no 500 ni 409. La estrategia de Npgsql lo
+        // envuelve en un InvalidOperationException, así que no lo atrapa ninguna rama de DbUpdateException de abajo.
+        catch (Exception exception) when (CustomersWriteRaces.IsRace(exception))
+        {
+            throw CustomersWriteRaces.ToConflict(exception);
         }
         // Va antes que las ramas de DbUpdateException porque DbUpdateConcurrencyException hereda de
         // ella: al reves, el filtro de indice unico la dejaria pasar sin traducir y saldria como
@@ -168,6 +175,19 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
                 "customers.customer.city_not_found",
                 "The city was not found.");
         }
+    }
+
+    // Copia de CatalogUnitOfWork.BeginTransactionAsync. Los SaveChanges que corran dentro siguen pasando por la traducción de
+    // arriba: una violación de índice único de la fusión sale con su código y el Dispose sin Commit deshace todo.
+    public async Task<ICustomersTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        new CustomersTransaction(await dbContext.Database.BeginTransactionAsync(cancellationToken));
+
+    private sealed class CustomersTransaction(IDbContextTransaction transaction) : ICustomersTransaction
+    {
+        public Task CommitAsync(CancellationToken cancellationToken) =>
+            CustomersWriteRaces.RunAsync(() => transaction.CommitAsync(cancellationToken));
+
+        public ValueTask DisposeAsync() => transaction.DisposeAsync();
     }
 
     private static bool IsUniqueViolationOf(DbUpdateException exception, string indexName) =>

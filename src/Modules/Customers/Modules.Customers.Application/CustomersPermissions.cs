@@ -27,6 +27,10 @@ public static class CustomersPermissions
 
     // Borrar notas ajenas. El autor borra las suyas con CustomerManage.
     public const string NoteModerate = "customers.note.moderate";
+
+    // Spec 2026-10-24 D-F1. Fusionar varios clientes en uno no se puede deshacer, así que es un permiso aparte de
+    // CustomerManage: un rol custom puede tener uno y no el otro.
+    public const string CustomerMerge = "customers.customer.merge";
 }
 
 /// <summary>
