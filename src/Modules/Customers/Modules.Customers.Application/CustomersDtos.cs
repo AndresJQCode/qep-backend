@@ -329,3 +329,21 @@ public sealed record CustomerIdentificationOwnerDto(
     string? Cuc,
     bool IsComplete,
     bool IsActive);
+
+/// <summary>
+/// Una fila del aviso «este documento ya existe». BFF (§3.2): <c>Match</c> lo calcula el servidor para que la pantalla elija
+/// el color por un campo y no comparando tipos ni formatos de número; el resto tiene la forma del dueño de un 422 de documento
+/// repetido, que es lo que el formulario ya sabe dibujar.
+/// </summary>
+public sealed record CustomerIdentificationMatchDto(
+    Guid Id,
+    string Name,
+    string IdentificationType,
+    string IdentificationNumber,
+    string? Cuc,
+    bool IsComplete,
+    bool IsActive,
+    string Match);
+
+/// <summary>Siempre <c>items</c>, vacía sin coincidencias; sin total: es un aviso, no un listado.</summary>
+public sealed record CustomerIdentificationMatchesResponse(IReadOnlyList<CustomerIdentificationMatchDto> Items);

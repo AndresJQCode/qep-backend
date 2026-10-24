@@ -299,6 +299,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetCustomerQuery, CustomerDto>,
             GetCustomerHandler>();
         services.AddScoped<
+            IQueryHandler<FindCustomerIdentificationMatchesQuery, CustomerIdentificationMatchesResponse>,
+            FindCustomerIdentificationMatchesHandler>();
+        services.AddScoped<
             ICommandHandler<CreateCustomerCommand, CustomerDto>,
             CreateCustomerHandler>();
         services.AddScoped<

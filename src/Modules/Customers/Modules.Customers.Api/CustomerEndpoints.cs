@@ -35,6 +35,13 @@ public static class CustomerEndpoints
             .Produces<CustomersResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        // Antes de guardar: ¿quién más tiene este número? No lleva {customerId:guid}, así que no choca con la ruta de abajo.
+        group.MapGet("/identification-matches", FindIdentificationMatchesAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerRead)
+            .Produces<CustomerIdentificationMatchesResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapGet("/{customerId:guid}", GetCustomerAsync)
             .RequireAuthorization(CustomersPermissions.CustomerRead)
             .Produces<CustomerResponse>()
@@ -186,6 +193,17 @@ public static class CustomerEndpoints
             result.Page,
             result.PageSize));
     }
+
+    private static async Task<IResult> FindIdentificationMatchesAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        string? number = null,
+        string? type = null,
+        Guid? excludeCustomerId = null) =>
+        Results.Ok(await dispatcher.QueryAsync(
+            new FindCustomerIdentificationMatchesQuery(tenantId, number, type, excludeCustomerId),
+            cancellationToken));
 
     private static async Task<IResult> GetCustomerAsync(
         Guid tenantId,
