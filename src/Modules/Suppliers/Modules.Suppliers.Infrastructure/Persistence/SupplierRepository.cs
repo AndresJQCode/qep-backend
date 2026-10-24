@@ -107,8 +107,13 @@ internal sealed class SupplierRepository(SuppliersDbContext dbContext) : ISuppli
             .AsNoTracking()
             .Where(supplier => supplier.TenantId == tenantId && supplier.Category != null)
             .Select(supplier => supplier.Category!)
-            .Distinct()
-            .OrderBy(category => category)
+            // El filtro de categoría ignora mayúsculas: sin agrupar por minúsculas, «Ferretería» y
+            // «ferretería» saldrían como dos opciones que filtran exactamente lo mismo.
+#pragma warning disable CA1304, CA1311 // se traduce a lower() en la base, como el ILike del filtro
+            .GroupBy(category => category.ToLower())
+#pragma warning restore CA1304, CA1311
+            .OrderBy(group => group.Key)
+            .Select(group => group.Min()!)
             .Take(take)
             .ToListAsync(cancellationToken);
 

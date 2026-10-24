@@ -54,7 +54,7 @@ public static class TenantModuleKeys
     /// <see cref="Orders"/> y entra en <see cref="DefaultForNewTenants"/>; sin backfill de tenants existentes.</summary>
     public static readonly TenantModuleKey Shopify = TenantModuleKey.Define("shopify");
 
-    /// <summary>Spec 2026-10-21, D-C11: el constructor de chatbots. Último de la lista, depende sólo de
+    /// <summary>Spec 2026-10-21, D-C11: el constructor de chatbots. Depende sólo de
     /// <see cref="Messaging"/> y queda fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Automations = TenantModuleKey.Define("automations");
 

@@ -176,6 +176,28 @@ public sealed class SupplierListApiTests
         Assert.Equal(["Ferretería", "Papelería"], categories.Items);
     }
 
+    // El filtro por categoría ignora mayúsculas; el listado de categorías no puede mostrar
+    // «Ferretería» y «ferretería» como dos opciones que filtran lo mismo.
+    [Fact]
+    public async Task CategoriesCollapsesCasingVariantsIntoOneItem()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        await CreateSupplierAsync(client, new() { ["identificationNumber"] = "1", ["category"] = "Ferretería" });
+        await CreateSupplierAsync(client, new() { ["identificationNumber"] = "2", ["category"] = "ferretería" });
+        await CreateSupplierAsync(client, new() { ["identificationNumber"] = "3", ["category"] = "Papelería" });
+
+        var categories = await client.GetFromJsonAsync<SupplierCategoriesResponse>(
+            $"{SuppliersUrl()}/categories", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(categories);
+        Assert.Equal(2, categories.Items.Count);
+        Assert.Single(categories.Items, item => string.Equals(item, "Ferretería", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("Papelería", categories.Items);
+    }
+
     private static Task<SupplierResponse> CreateNamedAsync(HttpClient client, string name, string document) =>
         CreateSupplierAsync(client, new() { ["name"] = name, ["identificationNumber"] = document });
 

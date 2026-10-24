@@ -221,17 +221,45 @@ public sealed class SupplierTests
         Assert.Equal(code, CodeOf(() => Create(data)));
     }
 
-    [Fact]
-    public void UpdateThatFailsLeavesTheAggregateUntouched()
+    // El campo inválido va al final del orden de normalización y todo lo anterior es válido y
+    // distinto: una implementación que asigna campo por campo mientras valida pasaría una prueba
+    // que falle en el nombre, pero aquí deja el nombre nuevo ya escrito.
+    [Theory]
+    [InlineData("contacts", "suppliers.supplier.contacts_too_many")]
+    [InlineData("paymentTerm", "suppliers.supplier.payment_term_invalid")]
+    public void UpdateThatFailsLateLeavesTheAggregateUntouched(string lateFailure, string expectedCode)
     {
-        var supplier = Create();
+        var originalContacts = new[] { SupplierContact.Create("Ana", null, null, null) };
+        var supplier = Create(Data(bankAccounts: [Account()], contacts: originalContacts));
+        var name = supplier.Name;
+        var contact = supplier.Contact;
+        var bankAccounts = supplier.BankAccounts.ToList();
+        var contacts = supplier.Contacts.ToList();
+        var paymentTermDays = supplier.PaymentTermDays;
+        var category = supplier.Category;
 
-        var code = CodeOf(() => supplier.Update(Data(name: " "), Phones, Later));
+        var tooManyContacts = Enumerable.Range(1, 11)
+            .Select(i => SupplierContact.Create($"Contacto {i}", null, null, null))
+            .ToList();
+        var changed = Data(
+            name: "Nombre Nuevo",
+            country: "US",
+            cityName: "Miami",
+            email: "nuevo@otro.co",
+            paymentTermDays: lateFailure == "paymentTerm" ? 366 : 90,
+            bankAccounts: [Account(bank: "Davivienda", number: "CTA-9")],
+            contacts: lateFailure == "contacts" ? tooManyContacts : [SupplierContact.Create("Luis", null, null, null)]);
 
-        Assert.Equal("suppliers.supplier.name_required", code);
-        Assert.Equal("Ferretería Central", supplier.Name);
-        Assert.Equal(Now, supplier.UpdatedAt);
+        Assert.Equal(expectedCode, CodeOf(() => supplier.Update(changed, Phones, Later)));
+
+        Assert.Equal(name, supplier.Name);
+        Assert.Equal(contact, supplier.Contact);
+        Assert.Equal(bankAccounts, supplier.BankAccounts);
+        Assert.Equal(contacts, supplier.Contacts);
+        Assert.Equal(paymentTermDays, supplier.PaymentTermDays);
+        Assert.Equal(category, supplier.Category);
         Assert.Equal(1, supplier.Version);
+        Assert.Equal(Now, supplier.UpdatedAt);
     }
 
     [Fact]

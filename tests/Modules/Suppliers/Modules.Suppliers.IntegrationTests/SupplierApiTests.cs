@@ -83,7 +83,8 @@ public sealed class SupplierApiTests
             await manager.PostAsJsonAsync(SuppliersUrl(), body, ct),
             await manager.PutAsJsonAsync($"{SuppliersUrl()}/{id}", body, ct),
             await manager.PostAsync($"{SuppliersUrl()}/{id}/deactivate", content: null, ct),
-            await manager.PostAsync($"{SuppliersUrl()}/{id}/activate", content: null, ct)
+            await manager.PostAsync($"{SuppliersUrl()}/{id}/activate", content: null, ct),
+            await manager.PostAsync($"{SuppliersUrl()}/export", content: null, ct)
         ];
 
         // El 403 sale de la política (el stub enmascara el permiso con el módulo apagado), antes del
@@ -91,7 +92,10 @@ public sealed class SupplierApiTests
         // la causa la dan las demás pruebas: el mismo cliente con el módulo prendido recibe 2xx.
         foreach (var response in responses)
         {
-            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (response)
+            {
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            }
         }
 
         using var plain = CreateClient(factory, SubjectId, SuppliersApiHarness.TenantId);

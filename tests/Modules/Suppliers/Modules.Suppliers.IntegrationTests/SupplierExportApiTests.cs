@@ -109,6 +109,25 @@ public sealed class SupplierExportApiTests
     }
 
     [Fact]
+    public async Task ExportWithAnUnknownStatusIs422AndPublishesNothing()
+    {
+        var (database, storage, factory) = await OpenWithStorageAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        await CreateNamedAsync(client, "Alfa", "1");
+
+        using var response = await client.PostAsync(
+            ExportUrl("?status=paused"), content: null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("suppliers.supplier.status_filter_invalid", await BodyAsync(response));
+        Assert.Null(storage.Content);
+        Assert.DoesNotContain(
+            "suppliers.export-ready.v1", await OutboxEventNamesAsync(database.GetConnectionString()));
+    }
+
+    [Fact]
     public async Task ExportByAReaderIsAllowedAndWithoutReadIs403()
     {
         var (database, storage, factory) = await OpenWithStorageAsync();
