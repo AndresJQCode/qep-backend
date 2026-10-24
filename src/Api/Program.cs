@@ -42,6 +42,7 @@ using Modules.Shopify.Api;
 using Modules.Shopify.Infrastructure;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
+using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Api;
 using Modules.Tenancy.Infrastructure;
 using Scalar.AspNetCore;
@@ -232,6 +233,9 @@ await app.Services.InitializeGeographyDatabaseAsync(
 await app.Services.InitializeCustomersDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.Services.InitializeCompaniesDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+// Después de Geography: suppliers.suppliers lleva una FK real a geography.cities.
+await app.Services.InitializeSuppliersDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 // Despues de Catalog y Customers: quotations referencia sus datos (producto, cliente) por id
 // suelto, sin FK real -- no hay dependencia de orden estricta, pero se inicializa al final del

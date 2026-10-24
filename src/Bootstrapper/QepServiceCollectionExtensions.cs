@@ -53,6 +53,7 @@ using Modules.Shopify.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
 using Modules.Suppliers.Application;
+using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
@@ -822,6 +823,7 @@ public static class QepServiceCollectionExtensions
         services.AddStorageInfrastructure(configuration);
         services.AddCatalogInfrastructure(configuration);
         services.AddCompaniesInfrastructure(configuration);
+        services.AddSuppliersInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
         services.AddQuotationsInfrastructure(configuration);
@@ -1003,6 +1005,10 @@ public static class QepServiceCollectionExtensions
         // otro, y el composition root cablea el puerto que declara `companies` contra los
         // repositorios que ya registró AddGeographyInfrastructure.
         services.AddScoped<ICompanyGeographyLookup, CompanyGeographyLookup>();
+
+        // Mismo patrón para `suppliers`: el puerto es suyo y el composition root lo cablea contra
+        // los repositorios de Geography.
+        services.AddScoped<ISupplierGeographyLookup, SupplierGeographyLookup>();
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
