@@ -30,14 +30,31 @@ public interface IPipelineBoardQueries
 
     Task<IReadOnlyList<BoardCardRow>> ListCardsAsync(
         Guid tenantId, Guid? ownerMemberId, DateTimeOffset closedSince, int perStage, CancellationToken cancellationToken);
+
+    /// <summary>Todos los negocios abiertos (sin tope), con sólo lo que el estancado necesita. El estancado depende del último
+    /// mensaje del cliente, que vive en Messaging, así que no se puede contar en SQL: se trae la fila mínima y lo decide
+    /// <see cref="DealCardMapper"/>, la misma regla que pinta la tarjeta.</summary>
+    Task<IReadOnlyList<OpenDealActivityRow>> ListOpenActivityAsync(Guid tenantId, Guid? ownerMemberId, CancellationToken cancellationToken);
 }
+
+public sealed record OpenDealActivityRow(Guid StageId, Guid CustomerId, DateTimeOffset LastChangedAt);
 
 /// <summary>
 /// BFF (§6): TODAS las columnas, incluso en cero. Una columna que desaparece obliga a la pantalla a conocer las etapas para
 /// dibujar la que falta (precedente: <c>ReportStatusSliceDto</c>). Las sumas van por moneda (D24): una cotización puede ir en USD
 /// y sumar pesos con dólares no significa nada.
 /// </summary>
-public sealed record PipelineBoardDto(IReadOnlyList<BoardColumnDto> Columns, string Owner);
+public sealed record PipelineBoardDto(IReadOnlyList<BoardColumnDto> Columns, string Owner, BoardSummaryDto Summary);
+
+/// <summary>
+/// BFF: la franja de indicadores sobre las columnas. La pantalla no suma columnas: el servidor entrega los números ya cerrados.
+/// Sólo etapas abiertas (Won y Lost no son embudo vivo) y con el mismo filtro de dueño que las columnas. <see cref="OpenCount"/> es la
+/// suma de los <c>Count</c> de las columnas abiertas (la columna entera, no las 200 tarjetas). <see cref="OpenTotals"/> va por moneda
+/// (D24) y su <c>Weighted</c> suma los ponderados ya redondeados de cada columna, para que la franja cuadre al centavo con lo que la
+/// pantalla muestra. <see cref="StalledCount"/> son TODOS los negocios abiertos estancados, también los que el tope de tarjetas deja
+/// fuera: con sólo las tarjetas, una columna de 340 diría menos de lo que hay.
+/// </summary>
+public sealed record BoardSummaryDto(int OpenCount, int StalledCount, IReadOnlyList<CurrencyTotalDto> OpenTotals);
 
 /// <summary>D33: <see cref="Deals"/> trae como máximo 200; <see cref="Count"/> y <see cref="Totals"/> son de TODA la columna, para
 /// que la pantalla diga «200 de 340» sin otra llamada. Won y Lost sólo cuentan lo cerrado en los últimos 30 días.</summary>
@@ -88,10 +105,13 @@ public sealed class GetBoardHandler(
         var closedSince = now - BoardLimits.ClosedWindow;
         var aggregates = await board.AggregateAsync(query.TenantId, ownerId, closedSince, cancellationToken);
         var cards = await board.ListCardsAsync(query.TenantId, ownerId, closedSince, BoardLimits.CardsPerColumn, cancellationToken);
+        var openDeals = await board.ListOpenActivityAsync(query.TenantId, ownerId, cancellationToken);
 
         var customerIds = cards.Select(card => card.CustomerId).Distinct().ToArray();
         var customerRefs = await customers.FindAsync(query.TenantId, customerIds, cancellationToken);
-        var activity = await conversations.FindActivityAsync(query.TenantId, customerIds, cancellationToken);
+        // Una sola lectura de actividad para las tarjetas y para el estancado de la franja, que incluye clientes sin tarjeta.
+        var activity = await conversations.FindActivityAsync(
+            query.TenantId, customerIds.Concat(openDeals.Select(deal => deal.CustomerId)).Distinct().ToArray(), cancellationToken);
         var names = await members.FindAsync(query.TenantId, cards.Select(card => card.OwnerMemberId).Distinct().ToArray(), cancellationToken);
 
         var columns = pipeline.OrderedStages.Select(stage =>
@@ -121,6 +141,20 @@ public sealed class GetBoardHandler(
                 stageAggregates.Sum(row => row.Count), totals, stageCards);
         }).ToArray();
 
-        return new PipelineBoardDto(columns, owner);
+        var openColumns = columns.Where(column => column.Kind == nameof(StageKind.Open)).ToArray();
+        var stalledCount = openDeals.Count(deal => DealCardMapper.IsStalled(
+            pipeline, deal.StageId, deal.LastChangedAt, activity.GetValueOrDefault(deal.CustomerId)?.LastMessageAt, now));
+        return new PipelineBoardDto(columns, owner, new BoardSummaryDto(openColumns.Sum(column => column.Count), stalledCount, OpenTotals(openColumns)));
     }
+
+    /// <summary>Por moneda (D24) y en el orden de los totales de columna. Se suma lo que la pantalla ya ve en cada columna, ponderado
+    /// redondeado incluido, en vez de recalcular desde los negocios: así la franja y las columnas nunca difieren en un centavo. Una
+    /// moneda aparece sólo si alguna columna abierta la totaliza (D34).</summary>
+    private static CurrencyTotalDto[] OpenTotals(IEnumerable<BoardColumnDto> openColumns) =>
+        [.. openColumns
+            .SelectMany(column => column.Totals)
+            .GroupBy(total => total.Currency, StringComparer.Ordinal)
+            .OrderBy(group => Currencies.OrderOf(group.Key))
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Select(group => new CurrencyTotalDto(group.Key, group.Sum(total => total.Amount), group.Sum(total => total.Weighted)))];
 }

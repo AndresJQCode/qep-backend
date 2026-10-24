@@ -62,6 +62,22 @@ internal sealed class PipelineBoardQueries(PipelineDbContext dbContext) : IPipel
             row.StageEnteredAt, row.LastChangedAt, row.PrimaryQuotationNumber, row.Version))];
     }
 
+    // Abierto = closed_at nulo (Win y Lose lo fijan, Reopen lo limpia). Tres columnas por negocio y sin JOIN: la parte del
+    // estancado que depende de Messaging la resuelve el handler.
+    public async Task<IReadOnlyList<OpenDealActivityRow>> ListOpenActivityAsync(
+        Guid tenantId, Guid? ownerMemberId, CancellationToken cancellationToken)
+    {
+        var deals = dbContext.Deals.AsNoTracking().Where(deal => deal.TenantId == tenantId && deal.ClosedAt == null);
+        if (ownerMemberId is { } owner)
+        {
+            deals = deals.Where(deal => deal.OwnerMemberId == owner);
+        }
+
+        return await deals
+            .Select(deal => new OpenDealActivityRow(deal.StageId, deal.CustomerId, deal.LastChangedAt))
+            .ToListAsync(cancellationToken);
+    }
+
     // Clase con setters y no un record: EF no ve a través del constructor de un record en SqlQuery (QuotationsReportSource).
     private sealed class CardRow
     {
