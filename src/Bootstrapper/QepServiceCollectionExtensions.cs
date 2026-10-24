@@ -891,6 +891,10 @@ public static class QepServiceCollectionExtensions
         // Catalog no referencia. Scoped como el CatalogDbContext sobre el que corre, para que la
         // consulta comparta la transacción del PUT.
         services.AddScoped<IVariantUsageChecker, CatalogVariantUsageChecker>();
+        // Fusión de clientes (spec 2026-10-24 §4): mover las referencias de Quotations, Pos, Pipeline, Messaging y
+        // Shopify, que Customers no referencia. Scoped como el CustomersDbContext sobre el que corre, para que los UPDATE
+        // compartan la transacción de la fusión.
+        services.AddScoped<ICustomerMergeReferences, CustomerMergeReferences>();
 
         services.AddScoped<IProductExportStorage, ProductExportStorage>();
 
