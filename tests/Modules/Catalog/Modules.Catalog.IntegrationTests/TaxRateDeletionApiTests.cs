@@ -2,7 +2,11 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
+using Modules.Catalog.Domain;
+using Modules.Catalog.Infrastructure.Persistence;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -217,6 +221,37 @@ public sealed class TaxRateDeletionApiTests
             "catalog.product.tax_rate_not_found",
             body,
             StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// La carrera de verdad, un nivel más adentro que la de arriba. Por HTTP el producto
+    /// insertado por SQL ya está comprometido cuando el handler pregunta «¿la usa alguien?», así
+    /// que la consulta lo ve y la FK nunca salta. Acá la tasa se carga y se marca borrada
+    /// **antes** de que el producto exista, y el guardado choca con la FK `RESTRICT`. Postgres
+    /// responde 23001 (`restrict_violation`), no 23503: si la unidad de trabajo sólo mira 23503,
+    /// la violación sale cruda como 500.
+    /// </summary>
+    [Fact]
+    public async Task ARestrictViolationOnDeleteSaysInUse()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+        var taxRateId = await CreateTaxRateAsync(client, TenantId, "IVA en carrera", 19);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+        var taxRate = await dbContext.TaxRates.SingleAsync(
+            rate => rate.Id == new TaxRateId(taxRateId),
+            TestContext.Current.CancellationToken);
+        await InsertProductWithTaxRateAsync(database, taxRateId);
+        dbContext.TaxRates.Remove(taxRate);
+
+        var error = await Assert.ThrowsAsync<CatalogDomainException>(() =>
+            scope.ServiceProvider.GetRequiredService<ICatalogUnitOfWork>()
+                .SaveChangesAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal("catalog.tax_rate.in_use", error.Code);
     }
 
     private static Task<HttpResponseMessage> DeleteTaxRateAsync(

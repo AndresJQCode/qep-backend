@@ -122,6 +122,43 @@ public sealed class SettingsApiTests
         Assert.Equal(6, (await client.GetFromJsonAsync<PipelineStagesDto>(StagesUrl(tenant.TenantId), Ct))!.Stages.Count);
     }
 
+    // La carrera: el negocio entra a la etapa entre la consulta de «¿tiene negocios?» y el commit. Por HTTP la consulta lo
+    // ve, así que acá la etapa se quita del agregado ya cargado, con un conjunto vacío, y el negocio se guarda después.
+    // La FK FK_deals_stages_stage_id es RESTRICT: el borrado da 23001 (restrict_violation), no 23503, y la unidad de
+    // trabajo tiene que traducirlo igual a pipeline.stage.has_deals, no dejarlo salir como 500.
+    [Fact]
+    public async Task ARestrictViolationOnRemovingAStageSaysItHasDeals()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenant, client) = await TenantAsync(factory, connectionString, AllPermissions);
+        using var _ = client;
+        Assert.NotNull(await client.GetFromJsonAsync<PipelineStagesDto>(StagesUrl(tenant.TenantId), Ct));
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var pipeline = await scope.ServiceProvider.GetRequiredService<IPipelineProvisioner>().EnsureAsync(tenant.TenantId, Ct);
+        using (var other = factory.Services.CreateScope())
+        {
+            var fresh = await other.ServiceProvider.GetRequiredService<IPipelineProvisioner>().EnsureAsync(tenant.TenantId, Ct);
+            other.ServiceProvider.GetRequiredService<IDealRepository>().Add(Deal.Create(
+                tenant.TenantId, fresh, Guid.CreateVersion7(), Guid.CreateVersion7(), "Dotación", null, "COP", null,
+                DealSource.Manual, null, DealActor.ForSystem, DateTimeOffset.UtcNow));
+            await other.ServiceProvider.GetRequiredService<IPipelineUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        var layout = pipeline.OrderedStages
+            .Skip(1)
+            .Select(stage => new StageInput(stage.Id, stage.Name, stage.Kind, stage.Probability, stage.StallDays, stage.IsQuotationStage))
+            .ToList();
+        pipeline.ReplaceStages(layout, new HashSet<Guid>(), DateTimeOffset.UtcNow);
+
+        var error = await Assert.ThrowsAsync<PipelineDomainException>(() =>
+            scope.ServiceProvider.GetRequiredService<IPipelineUnitOfWork>().SaveChangesAsync(Ct));
+
+        Assert.Equal(PipelineErrorCodes.StageHasDeals, error.Code);
+    }
+
     // Quitar una etapa vacía sí se puede: la etapa desaparece del GET y la versión sube.
     [Fact]
     public async Task RemovingAnEmptyStageDeletesItAndBumpsTheVersion()
