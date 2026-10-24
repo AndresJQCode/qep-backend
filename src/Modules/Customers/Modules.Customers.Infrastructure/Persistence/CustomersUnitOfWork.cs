@@ -147,7 +147,7 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
         //
         // Esta rama va primero porque es la mas especifica de las dos.
         catch (DbUpdateException exception)
-            when (IsForeignKeyViolationOf(exception, ClassificationForeignKey) &&
+            when (IsForeignKeyOrRestrictViolationOf(exception, ClassificationForeignKey) &&
                   IsDeletingAClassification(exception))
         {
             throw new CustomersDomainException(
@@ -178,6 +178,16 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
     private static bool IsForeignKeyViolationOf(DbUpdateException exception, string constraintName) =>
         exception.InnerException is PostgresException postgres &&
         postgres.SqlState == PostgresErrorCodes.ForeignKeyViolation &&
+        string.Equals(postgres.ConstraintName, constraintName, StringComparison.Ordinal);
+
+    // Para el lado del borrado: la FK de la clasificación es ON DELETE RESTRICT, y borrar la fila padre que alguien usa da
+    // 23001 (restrict_violation), no 23503. Insertar o actualizar la hija sigue dando 23503, por eso las demás ramas usan
+    // IsForeignKeyViolationOf. El nombre de la restricción sigue siendo lo que decide.
+    private static bool IsForeignKeyOrRestrictViolationOf(DbUpdateException exception, string constraintName) =>
+        exception.InnerException is PostgresException
+        {
+            SqlState: PostgresErrorCodes.ForeignKeyViolation or PostgresErrorCodes.RestrictViolation,
+        } postgres &&
         string.Equals(postgres.ConstraintName, constraintName, StringComparison.Ordinal);
 
     // El estado sigue siendo Deleted cuando SaveChanges falla: EF solo lo pasa a Detached despues
