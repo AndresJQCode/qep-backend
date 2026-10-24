@@ -103,3 +103,13 @@ public sealed record SupplierWriteRequest(
     string? Notes,
     IReadOnlyList<SupplierBankAccountPayload> BankAccounts,
     IReadOnlyList<SupplierContactPayload> Contacts);
+
+/// <summary>
+/// La respuesta de <c>POST .../suppliers/export</c>. Confirma que el archivo se generó y se subió,
+/// y hasta cuándo sirve el enlace; el enlace en sí sale por correo, no por aquí (el frontend no
+/// debe tomar el atajo de descargarlo desde la respuesta).
+/// </summary>
+public sealed record ExportSuppliersResponse(
+    string FileName,
+    int SupplierCount,
+    DateTimeOffset ExpiresAt);

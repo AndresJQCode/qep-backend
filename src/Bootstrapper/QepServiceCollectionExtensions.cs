@@ -247,7 +247,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeleteCompanyCommand, CompanyDeletedResult>,
             DeleteCompanyHandler>();
-        // Suppliers, spec 2026-10-23. Los siete a mano, como los demás: un handler olvidado compila y
+        // Suppliers, spec 2026-10-23. Los ocho a mano, como los demás: un handler olvidado compila y
         // responde 500 en runtime.
         services.AddScoped<
             IQueryHandler<ListSuppliersQuery, SupplierPage>,
@@ -270,6 +270,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeactivateSupplierCommand, SupplierResponse>,
             DeactivateSupplierHandler>();
+        services.AddScoped<
+            ICommandHandler<ExportSuppliersCommand, ExportSuppliersResult>,
+            ExportSuppliersHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -986,6 +989,9 @@ public static class QepServiceCollectionExtensions
         // Y el mismo patrón entre `customers` y `storage`, para dejar el Excel exportado en el
         // bucket y firmar su enlace de descarga.
         services.AddScoped<ICustomerExportStorage, CustomerExportStorage>();
+
+        // Y entre `suppliers` y `storage`, con el mismo adaptador para su exportación.
+        services.AddScoped<ISupplierExportStorage, SupplierExportStorage>();
 
         // Y entre `quotations` y `storage`, para el Excel de las exportaciones asíncronas.
         services.AddScoped<IExportFileStorage, ExportFileStorage>();

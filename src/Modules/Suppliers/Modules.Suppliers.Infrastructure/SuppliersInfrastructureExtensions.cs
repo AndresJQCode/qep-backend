@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Suppliers.Application;
 using Modules.Suppliers.Domain;
+using Modules.Suppliers.Infrastructure.Excel;
 using Modules.Suppliers.Infrastructure.Persistence;
 using Modules.Suppliers.Infrastructure.Phones;
 
@@ -29,6 +30,8 @@ public static class SuppliersInfrastructureExtensions
         services.AddScoped<ISuppliersUnitOfWork, SuppliersUnitOfWork>();
         services.AddScoped<ISuppliersAuditPublisher, SuppliersAuditPublisher>();
         services.AddSingleton<ISupplierPhoneNormalizer, LibPhoneNumberSupplierNormalizer>();
+        services.AddSingleton<ISupplierExportBuilder, ClosedXmlSupplierExportBuilder>();
+        services.AddScoped<ISupplierExportEventPublisher, SupplierExportEventPublisher>();
 
         return services;
     }

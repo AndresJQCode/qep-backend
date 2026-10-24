@@ -64,6 +64,15 @@ public static class SupplierEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // 202 y no 200 con el archivo: se sube al almacenamiento durante el request y el enlace llega
+        // por correo, así que lo que se acepta aquí es la solicitud, no la descarga. Mismo permiso que
+        // la lista: exportar es leer lo que la grilla ya muestra.
+        group.MapPost("/export", ExportSuppliersAsync)
+            .RequireAuthorization(SuppliersPermissions.Read)
+            .Produces<ExportSuppliersResponse>(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -85,6 +94,23 @@ public static class SupplierEndpoints
 
         return Results.Ok(new SuppliersResponse(
             result.Items, result.Total, result.Page, result.PageSize));
+    }
+
+    // Los filtros son los de la lista y viajan por query, no en el cuerpo: es un POST porque tiene
+    // efecto (sube un archivo, encola un correo), no porque lleve datos.
+    private static async Task<IResult> ExportSuppliersAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        string? search = null,
+        string? status = null,
+        string? category = null)
+    {
+        var result = await dispatcher.SendAsync(
+            new ExportSuppliersCommand(tenantId, search, status, category), cancellationToken);
+
+        return Results.Accepted(value: new ExportSuppliersResponse(
+            result.FileName, result.SupplierCount, result.ExpiresAt));
     }
 
     private static async Task<IResult> ListSupplierCategoriesAsync(
