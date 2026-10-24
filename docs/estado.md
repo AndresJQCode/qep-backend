@@ -69,7 +69,7 @@ copia del frontend para los códigos nuevos.
 | 2026-10-11 contactos, plantillas y campañas | Construido (`CampaignEndpoints`, ficha de contacto) | |
 | 2026-10-11 notas de voz del asesor | Construido (`OggOpusSniffer`, `ConcentusOpusTranscoder`) | |
 | 2026-10-12 respuestas rápidas | Construido (`QuickReplyEndpoints`) | |
-| 2026-10-13 embudo de ventas | Construido (módulo Pipeline) | |
+| 2026-10-13 embudo de ventas | Construido en los dos repos; backend (módulo Pipeline) y frontend (merge `bdbb5963`) | La UI no usa todavía `DealDetailDto.orders`/`unlinkedCustomerOrders` ni `POST /deals/{id}/orders/{orderId}/link` |
 | 2026-10-14 gestor de plantillas de WhatsApp | Construido (`fb1734ea`) | Pendientes en [su plan](superpowers/plans/2026-10-15-gestor-de-plantillas-pendientes.md) |
 | 2026-10-14 mensajería Instagram | Construido en el backend | Sin verificar contra Meta real: V-4 y V-8 |
 | 2026-10-14 mensajería: marcar no leída | Construido (`de85c573`) | |
@@ -188,6 +188,11 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-23 — Mergeado a `develop` del frontend el frontend del embudo de ventas (`feature/embudo-de-ventas`, merge
+  `--no-ff` `bdbb5963`, con push), con `origin/develop` `c9995f56` integrado antes en la rama. Prueba manual del developer
+  en navegador ok (arrastre, Ganado/Perdido, 390 px, abrir desde la franja y la pestaña Negocios, otro dueño, Descartar).
+  Suite: 7 fallas, todas de Catalog y ya presentes en `develop`. Contrato del backend que la UI no usa todavía: los pedidos
+  del negocio y `POST /deals/{id}/orders/{orderId}/link`.
 - 2026-10-24 — Mergeados a `develop` dos pedidos del developer al probar el bot de Clasic: (1) frontend `07c20301`,
   «Publicar» sólo se habilita con cambios desde la última publicación (nunca publicado, guardado pendiente o posterior a
   `published.at`; sin cambios dice «Publicado vN» deshabilitado), porque en dev quedaron dos versiones idénticas publicadas
