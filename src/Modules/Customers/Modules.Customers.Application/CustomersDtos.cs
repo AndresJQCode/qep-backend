@@ -388,3 +388,37 @@ public sealed record CustomerAnomaliesResponse(
     int Total,
     int Page,
     int PageSize);
+
+/// <summary>
+/// Una de las partes de la fusión, tal como la confirmación la dibuja: quién es, con qué documento y si se puede
+/// fusionar. BFF: <c>Version</c> es la de <c>Customer</c> —un entero— y es el <c>If-Match</c> que el POST de la fusión
+/// manda (B1), así el cliente no tiene que pedir la ficha aparte para conseguirla. <c>IdentificationType</c>,
+/// <c>IdentificationNumber</c> y <c>Cuc</c> son <c>null</c> en una ficha incompleta; <c>IsComplete</c> e <c>IsActive</c>
+/// dejan marcar en la pantalla qué fila no podría quedar.
+/// </summary>
+public sealed record CustomerMergePartyDto(
+    Guid Id,
+    string Name,
+    string? IdentificationType,
+    string? IdentificationNumber,
+    string? Cuc,
+    bool IsComplete,
+    bool IsActive,
+    long Version);
+
+/// <summary>Una clase de lo que la fusión mueve al que queda, con cuántas hay. <c>Kind</c> viaja con el nombre del enum.</summary>
+public sealed record CustomerMergeMoveDto(string Kind, int Count);
+
+/// <summary>
+/// La vista previa de una fusión (§3.4). BFF: <c>Moves</c> viaja con las ocho clases siempre, en el orden del enum y también
+/// en cero, para que la confirmación dibuje en gris la que está en cero sin conocer el enum; <c>Tags</c> son las que el que
+/// queda gana de verdad (sin repetir y dentro del tope), no las que traen los fusionados. <c>FilledFields</c> son nombres
+/// de <c>CustomerMergeField</c> (B2): lo que la ficha del que queda recibe. <c>DocumentsDiffer</c> avisa que algún
+/// fusionado tiene un número distinto del que queda al normalizar ambos; si a uno de los dos le falta el número, no cuenta.
+/// </summary>
+public sealed record CustomerMergePreviewResponse(
+    CustomerMergePartyDto Survivor,
+    IReadOnlyList<CustomerMergePartyDto> Merged,
+    bool DocumentsDiffer,
+    IReadOnlyList<CustomerMergeMoveDto> Moves,
+    IReadOnlyList<string> FilledFields);

@@ -55,6 +55,14 @@ public static class CustomerEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // Spec 2026-10-24 §3.4: qué pasaría si se fusionaran estos clientes en el de la ruta. No escribe nada.
+        group.MapGet("/{customerId:guid}/merge-preview", GetCustomerMergePreviewAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerMerge)
+            .Produces<CustomerMergePreviewResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPost("/", CreateCustomerAsync)
             .RequireAuthorization(CustomersPermissions.CustomerManage)
             .Accepts<CreateCustomerRequest>("application/json")
@@ -235,6 +243,15 @@ public static class CustomerEndpoints
 
         return Results.Ok(ToResponse(customer));
     }
+
+    private static async Task<IResult> GetCustomerMergePreviewAsync(
+        Guid tenantId,
+        Guid customerId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        Guid[]? mergedCustomerIds = null) =>
+        Results.Ok(await dispatcher.QueryAsync(
+            new GetCustomerMergePreviewQuery(tenantId, customerId, mergedCustomerIds), cancellationToken));
 
     private static async Task<IResult> CreateCustomerAsync(
         Guid tenantId,

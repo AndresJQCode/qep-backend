@@ -7,6 +7,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Modules.Authorization.Application;
 using Modules.Automations.Application;
+using Modules.Customers.Application;
 using Modules.Integrations.Application;
 using Modules.Messaging.Application;
 using Modules.Pipeline.Application;
@@ -172,16 +173,17 @@ public sealed class CompositionRootTests
     /// entitlements, las 7 de POS, las tres <c>operator.*</c> y las dos <c>integrations.*</c> de los
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
-    /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec.</summary>
+    /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec y <c>customers.customer.merge</c> del spec 2026-10-24.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheSixtyOneConstants()
+    public void PermissionDiscoveryFindsTheSixtyTwoConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
         // + el de plantillas (spec 2026-10-14 D-T5) + el de motivos de resolución (spec 2026-10-15 D-R8)
         // + el de horarios de atención (spec 2026-10-21 D-H8) + los dos de chatbots (spec 2026-10-21 D-C10)
-        // + el del cliente de la venta de POS (spec 2026-10-14, decisión 4).
-        Assert.Equal(61, PermissionConstants().Length);
+        // + el del cliente de la venta de POS (spec 2026-10-14, decisión 4)
+        // + el de fusionar clientes (spec 2026-10-24 D-F1).
+        Assert.Equal(62, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-11 §6.4 y decisión 16: de núcleo (el módulo lo revisa cada handler) y de fábrica sólo en <c>admin</c>:
@@ -232,6 +234,24 @@ public sealed class CompositionRootTests
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.ResolutionReasonManage);
         Assert.Equal("Messaging", definition.Category);
         Assert.Empty(definition.RequiredModules!);
+    }
+
+    /// <summary>Spec 2026-10-24 D-F1: aparte de <c>customer.manage</c> para que un rol custom pueda no llevarlo; de fábrica en
+    /// <c>admin</c> y <c>advisor</c>, no en <c>billing</c> ni <c>cashier</c>.</summary>
+    [Fact]
+    public void AdminAndAdvisorCarryTheCustomerMergePermission()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+
+        Assert.Equal("customers.customer.merge", CustomersPermissions.CustomerMerge);
+        Assert.Contains(CustomersPermissions.CustomerMerge, catalog.PermissionsFor("admin"));
+        Assert.Contains(CustomersPermissions.CustomerMerge, catalog.PermissionsFor("advisor"));
+        Assert.DoesNotContain(CustomersPermissions.CustomerMerge, catalog.PermissionsFor("billing"));
+        Assert.DoesNotContain(CustomersPermissions.CustomerMerge, catalog.PermissionsFor("cashier"));
+        var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == CustomersPermissions.CustomerMerge);
+        Assert.Equal("Customers", definition.Category);
+        Assert.Equal([ModuleKeys.Customers], definition.RequiredModules);
     }
 
     /// <summary>Spec 2026-10-21 D-H8: de núcleo y de fábrica sólo en <c>admin</c>: el horario decide cuándo atiende el asistente en nombre
