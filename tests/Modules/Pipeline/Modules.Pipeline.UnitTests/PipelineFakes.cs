@@ -14,7 +14,7 @@ internal sealed class ApplierBed
     public ApplierBed()
     {
         Provisioner = new FakeProvisioner(SalesPipeline.CreateDefault(TenantId, Now));
-        Applier = new QuotationEventApplier(Modules, Provisioner, Deals, Quotations, Orders, Audit);
+        Applier = new QuotationEventApplier(Modules, Provisioner, Deals, Quotations, Orders, Audit, Customers);
     }
 
     public Guid TenantId { get; } = Guid.CreateVersion7();
@@ -34,6 +34,8 @@ internal sealed class ApplierBed
     public InMemoryDealOrders Orders { get; } = new();
 
     public RecordingPipelineAudit Audit { get; } = new();
+
+    public FakePipelineCustomers Customers { get; } = new();
 
     public QuotationEventApplier Applier { get; }
 
@@ -63,6 +65,20 @@ internal sealed class FakeTenantModules : ITenantModules
         TenantModuleKey[] keys = PipelineEnabled ? [TenantModuleKeys.Customers, TenantModuleKeys.Pipeline] : [TenantModuleKeys.Customers];
         return Task.FromResult<TenantModuleSet?>(TenantModuleSet.FromStored(keys));
     }
+}
+
+/// <summary>Spec 2026-10-24 §4 «lo que llega tarde»: <see cref="Survivors"/> dice a quién se fusionó cada cliente; el que no está
+/// es él mismo. El applier no usa nada más del puerto.</summary>
+internal sealed class FakePipelineCustomers : IPipelineCustomerDirectory
+{
+    public Dictionary<Guid, Guid> Survivors { get; } = [];
+
+    public Task<IReadOnlyDictionary<Guid, PipelineCustomerRef>> FindAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<Guid> ResolveSurvivorAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        Task.FromResult(Survivors.GetValueOrDefault(customerId, customerId));
 }
 
 internal sealed class FakeProvisioner(SalesPipeline pipeline) : IPipelineProvisioner

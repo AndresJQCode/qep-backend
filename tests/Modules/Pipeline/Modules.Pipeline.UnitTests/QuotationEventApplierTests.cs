@@ -434,4 +434,61 @@ public sealed class QuotationEventApplierTests
         Assert.NotEqual(bed.Pipeline.WonStage.Id, deal.StageId);
         Assert.NotNull(Assert.Single(bed.Orders.Items).CancelledAt);
     }
+
+    // Spec 2026-10-24 §4 «lo que llega tarde»: un sent que estaba en vuelo con el cliente fusionado no le abre un negocio a él.
+    [Fact]
+    public async Task ASentOfAMergedCustomerOpensTheDealOnTheSurvivor()
+    {
+        var bed = new ApplierBed();
+        var survivor = Guid.CreateVersion7();
+        var merged = Guid.CreateVersion7();
+        bed.Customers.Survivors[merged] = survivor;
+
+        await bed.Applier.ApplySentAsync(bed.Fact(merged, Guid.CreateVersion7()), Later, Ct);
+
+        var deal = Assert.Single(bed.Deals.Items);
+        Assert.Equal(survivor, deal.CustomerId);
+        Assert.Equal((survivor, (Guid?)deal.Id), (Assert.Single(bed.Quotations.Items).CustomerId, bed.Quotations.Items[0].DealId));
+    }
+
+    // La comparación del paso 2 (D27): la fusión ya movió negocio y foto al que quedó; un reintento con el id viejo no es «otro
+    // cliente» y no desenlaza nada.
+    [Fact]
+    public async Task ALateSentWithTheMergedClientDoesNotUnlinkTheMovedDeal()
+    {
+        var bed = new ApplierBed();
+        var survivor = Guid.CreateVersion7();
+        var merged = Guid.CreateVersion7();
+        var quotationId = Guid.CreateVersion7();
+        await bed.Applier.ApplySentAsync(bed.Fact(survivor, quotationId, 1_000m), Later, Ct);
+        var deal = Assert.Single(bed.Deals.Items);
+        bed.Audit.Entries.Clear();
+        bed.Customers.Survivors[merged] = survivor;
+
+        await bed.Applier.ApplySentAsync(bed.Fact(merged, quotationId, 1_200m), Later.AddHours(1), Ct);
+
+        Assert.Single(bed.Deals.Items);
+        var snapshot = Assert.Single(bed.Quotations.Items);
+        Assert.Equal(((Guid?)deal.Id, survivor), (snapshot.DealId, snapshot.CustomerId));
+        Assert.Equal(((Guid?)quotationId, (decimal?)1_200m), (deal.PrimaryQuotationId, deal.Amount));
+        Assert.DoesNotContain(bed.Audit.Entries, entry => entry.Action == PipelineAuditActions.QuotationUnlinked);
+    }
+
+    // F16: el order.created sin cotización también trae ClientId; el del fusionado gana el negocio abierto del que quedó.
+    [Fact]
+    public async Task AnOrderCreatedOfAMergedCustomerWinsTheSurvivorsDeal()
+    {
+        var bed = new ApplierBed();
+        var survivor = Guid.CreateVersion7();
+        var merged = Guid.CreateVersion7();
+        var deal = bed.OpenDeal(survivor);
+        bed.Customers.Survivors[merged] = survivor;
+
+        await bed.Applier.ApplyOrderCreatedAsync(bed.OrderFact(merged, Guid.CreateVersion7(), 700m), Later, Ct);
+
+        Assert.Same(deal, Assert.Single(bed.Deals.Items));
+        Assert.Equal(bed.Pipeline.WonStage.Id, deal.StageId);
+        var order = Assert.Single(bed.Orders.Items);
+        Assert.Equal((survivor, (Guid?)deal.Id), (order.CustomerId, order.DealId));
+    }
 }
