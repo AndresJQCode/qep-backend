@@ -72,15 +72,27 @@ public sealed class SupplierApiTests
         using var __ = factory;
         using var manager = CreateManager(factory);
 
-        var list = await manager.GetAsync(SuppliersUrl(), TestContext.Current.CancellationToken);
-        var get = await manager.GetAsync(
-            $"{SuppliersUrl()}/{Guid.NewGuid()}", TestContext.Current.CancellationToken);
-        var post = await manager.PostAsJsonAsync(
-            SuppliersUrl(), ValidBody(Guid.NewGuid()), TestContext.Current.CancellationToken);
+        var id = Guid.NewGuid();
+        var body = ValidBody(Guid.NewGuid());
+        var ct = TestContext.Current.CancellationToken;
+        HttpResponseMessage[] responses =
+        [
+            await manager.GetAsync(SuppliersUrl(), ct),
+            await manager.GetAsync($"{SuppliersUrl()}/categories", ct),
+            await manager.GetAsync($"{SuppliersUrl()}/{id}", ct),
+            await manager.PostAsJsonAsync(SuppliersUrl(), body, ct),
+            await manager.PutAsJsonAsync($"{SuppliersUrl()}/{id}", body, ct),
+            await manager.PostAsync($"{SuppliersUrl()}/{id}/deactivate", content: null, ct),
+            await manager.PostAsync($"{SuppliersUrl()}/{id}/activate", content: null, ct)
+        ];
 
-        Assert.Equal(HttpStatusCode.Forbidden, list.StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, get.StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, post.StatusCode);
+        // El 403 sale de la política (el stub enmascara el permiso con el módulo apagado), antes del
+        // handler, así que el cuerpo viene vacío y no lleva authorization.denied. La atribución a
+        // la causa la dan las demás pruebas: el mismo cliente con el módulo prendido recibe 2xx.
+        foreach (var response in responses)
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
 
         using var plain = CreateClient(factory, SubjectId, SuppliersApiHarness.TenantId);
         var modules = await plain.GetFromJsonAsync<ModulesDto>(

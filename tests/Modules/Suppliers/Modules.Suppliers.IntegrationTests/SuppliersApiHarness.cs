@@ -254,6 +254,9 @@ internal static class SuppliersApiHarness
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
+            // Fijado: los user-secrets del developer pueden traer Seed:Enabled=true y sembrar datos
+            // en el tenant de pruebas. El harness no depende del entorno del shell.
+            builder.UseSetting("Seed:Enabled", "false");
 
             if (configureServices is not null)
             {
