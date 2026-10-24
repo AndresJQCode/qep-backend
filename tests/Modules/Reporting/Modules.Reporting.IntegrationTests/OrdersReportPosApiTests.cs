@@ -316,10 +316,12 @@ public sealed class OrdersReportPosApiTests
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var world = await ArrangeAsync(factory, database);
+        // Totales distintos: el ranking va por total, así que el de menor total (el primero) es el
+        // único que se pliega, y la aserción de «Otros» prueba cuál fue y no sólo cuánto suma.
         var orders = new List<Modules.Quotations.Application.OrderResponse>();
         for (var index = 0; index < 6; index++)
         {
-            orders.Add(await world.CreateQuotationOrderAsync(factory));
+            orders.Add(await world.CreateQuotationOrderAsync(factory, 100_000m + (index * 10_000m)));
         }
 
         await SellToFinalConsumerAsync(world, 10_000m);
@@ -334,6 +336,10 @@ public sealed class OrdersReportPosApiTests
         Assert.Equal(1, others.EntityCount);
         Assert.Equal(1, others.Count);
         Assert.Equal([new MoneyAmount("COP", orders[0].Total)], others.Totals);
+        Assert.Equal(
+            orders.Skip(1).Select(order => (Guid?)order.ClientId).Reverse(),
+            summary.ByClient.Take(5).Select(entry => entry.Id));
+        Assert.All(orders.Skip(1), order => Assert.NotEqual(orders[0].Total, order.Total));
         Assert.Equal((2, 30_000m), (summary.WithoutClient.Count, summary.WithoutClient.Totals.Single().Amount));
         Assert.Equal(
             summary.Totals.Single().Amount,
@@ -423,6 +429,106 @@ public sealed class OrdersReportPosApiTests
         Assert.Equal(0, summary.WithoutClient.Count);
     }
 
+    /// <summary>
+    /// Un cliente incompleto (el alta rápida del POS, sin CUC) llega con CUC nulo, no vacío, en el
+    /// listado y en el ranking: el spec 2026-10-23 §1 pide <c>null</c> cuando no hay CUC, y un texto
+    /// vacío obliga a la pantalla a tratar dos formas de «no hay».
+    /// </summary>
+    [Fact]
+    public async Task AnIncompleteCustomerHasANullCucNotAnEmptyOne()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await ArrangeAsync(factory, database);
+        var created = await world.Client.PostAsJsonAsync(
+            $"/api/v1/tenants/{world.TenantId}/pos/customers",
+            new { name = "Laura Gómez", identificationType = "CC", identificationNumber = "1020304050", phone = (string?)null },
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        using var body = System.Text.Json.JsonDocument.Parse(
+            await created.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var customerId = body.RootElement.GetProperty("id").GetGuid();
+        var sale = await CreatePosSaleAsync(
+            world.Client, world.TenantId, world.SessionId, world.PosProductId, PosPrice, customerId);
+
+        var page = await world.Client.GetFromJsonAsync<ReportPageDto<OrdersReportItem>>(
+            $"{ReportsUrl(world.TenantId)}/orders", TestContext.Current.CancellationToken);
+        var summary = await GetSummaryAsync(world);
+
+        var row = Assert.Single(page!.Items, item => item.OrderId == sale.Id);
+        Assert.Equal(customerId, row.ClientId);
+        Assert.Equal("Laura Gómez", row.ClientName);
+        Assert.Null(row.ClientCuc);
+        var ranked = Assert.Single(summary.ByClient);
+        Assert.Equal(customerId, ranked.Id);
+        Assert.Null(ranked.Secondary);
+    }
+
+    /// <summary>
+    /// Review Focus 2 en el resumen: sin <c>reporting.all_advisors.read</c>, las ventas POS de otro
+    /// cajero no entran en los totales, <c>bySource</c>, <c>withoutClient</c> ni el ranking por
+    /// asesor, aunque se pida el <c>advisorId</c> del otro.
+    /// </summary>
+    [Fact]
+    public async Task AnAdvisorWithoutAllAdvisorsSummarizesOnlyTheirOwnPosSales()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await ArrangeAsync(factory, database);
+        var advisor = await InviteActiveAdvisorAsync(
+            factory,
+            database,
+            world.Tenant,
+            [.. OwnAdvisorPermissions, .. PosPermissions.Where(permission => permission != "pos.register.read")]);
+        using var advisorClient = advisor.Client;
+        var advisorSession = await OpenPosSessionAsync(advisorClient, world.TenantId);
+        await CreatePosSaleAsync(advisorClient, world.TenantId, advisorSession, world.PosProductId, PosPrice);
+        var customer = await CreateActiveCustomerAsync(world.Client, world.TenantId);
+        await CreatePosSaleAsync(
+            world.Client, world.TenantId, world.SessionId, world.PosProductId, PosPrice, customer.Id);
+        await CreatePosSaleAsync(world.Client, world.TenantId, world.SessionId, world.PosProductId, PosPrice);
+
+        var summary = await advisorClient.GetFromJsonAsync<OrdersReportSummary>(
+            $"{ReportsUrl(world.TenantId)}/orders/summary?advisorId={world.OwnerMembershipId}",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(1, summary.OrderCount);
+        Assert.Equal([new MoneyAmount("COP", PosPrice)], summary.Totals);
+        Assert.Equal([0, 0, 0, 1], summary.BySource.Select(slice => slice.Count));
+        Assert.Equal([new MoneyAmount("COP", PosPrice)], summary.BySource[3].Totals);
+        Assert.Equal((1, PosPrice), (summary.WithoutClient.Count, summary.WithoutClient.Totals.Single().Amount));
+        var ranked = Assert.Single(summary.ByAdvisor);
+        Assert.Equal(advisor.MembershipId, ranked.Id);
+        Assert.Equal(1, ranked.Count);
+        Assert.Empty(summary.ByClient);
+    }
+
+    /// <summary>
+    /// Un filtro que deja el resumen sin filas sigue trayendo <c>bySource</c> completo, en cero, y
+    /// <c>withoutClient</c> en cero: <c>paymentStatus=PaymentPending</c> excluye las ventas (siempre
+    /// pagadas) y el pedido pagado, y <c>source=Manual</c> no tiene ninguno.
+    /// </summary>
+    [Theory]
+    [InlineData("paymentStatus=PaymentPending")]
+    [InlineData("source=Manual")]
+    public async Task AFilterWithNoRowsKeepsTheFixedCollectionsComplete(string query)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await ArrangeAsync(factory, database);
+        await world.CreateQuotationOrderAsync(factory);
+        await SellToFinalConsumerAsync(world, PosPrice);
+
+        var summary = await GetSummaryAsync(world, query);
+
+        Assert.Equal(0, summary.OrderCount);
+        Assert.Empty(summary.Totals);
+        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos"], summary.BySource.Select(slice => slice.Source));
+        Assert.All(summary.BySource, slice => Assert.Equal((0, 0), (slice.Count, slice.Totals.Count)));
+        Assert.Equal((0, 0), (summary.WithoutClient.Count, summary.WithoutClient.Totals.Count));
+    }
+
     private static async Task<OrdersReportSummary> GetSummaryAsync(PosWorld world, string query = "")
     {
         var summary = await world.Client.GetFromJsonAsync<OrdersReportSummary>(
@@ -473,10 +579,11 @@ public sealed class OrdersReportPosApiTests
         public string OwnerEmail => Tenant.OwnerEmail;
 
         /// <summary>Un pedido convertido desde una cotización enviada, de un cliente nuevo.</summary>
-        public async Task<Modules.Quotations.Application.OrderResponse> CreateQuotationOrderAsync(QepApiFactory factory)
+        public async Task<Modules.Quotations.Application.OrderResponse> CreateQuotationOrderAsync(
+            QepApiFactory factory, decimal baseCop = 100_000m)
         {
             var customer = await CreateActiveCustomerAsync(Client, TenantId);
-            var productId = await CreateProductAsync(Client, TenantId);
+            var productId = await CreateProductAsync(Client, TenantId, baseCop);
             var quotation = await CreateSentQuotationAsync(Client, factory, TenantId, customer.Id, productId);
             return await ConvertToOrderAsync(Client, factory, TenantId, quotation);
         }
