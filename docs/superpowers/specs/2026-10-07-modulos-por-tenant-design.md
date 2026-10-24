@@ -68,14 +68,14 @@ Storage según su dueño (ver más abajo).
 
 ### Alternativas descartadas
 
-| Alternativa | Por qué no |
-| --- | --- |
-| Filtro `RequireModule("orders")` por grupo de rutas (lo del handoff) | Ningún grupo tiene autorización a nivel de grupo hoy: cada endpoint declara su permiso (`Program.cs:122-141`, `OrdersExportLayoutEndpoints.cs:21-37`). Habría que tocar los nueve `Map*Endpoints` de negocio (`Program.cs:131-140`) y además los handlers, porque la revalidación vive ahí. El enmascarado es un solo punto de paso y da la UI gratis. **Costo aceptado:** el 403 es el genérico de permiso, sin un `code` propio — la SPA distingue «no está en el plan» leyendo el endpoint de módulos, no el error. |
-| Chequear el módulo en los workers en segundo plano | Ningún worker arranca negocio por su cuenta: los jobs se autorizaron al encolarse (`ExportJobWorker`, `QuotationsInfrastructureExtensions.cs:46`) y `QuotationExpirationWorker` (`:69`) es mantenimiento de estado. Apagar un módulo no borra datos ni corta lo que ya está en vuelo. |
-| `IMemoryCache` de módulos por tenant | Los permisos ya se resuelven contra la base en cada request (`ITenantRoleCatalog.cs:25-28`). Sumar una lectura de a lo sumo siete filas por PK no justifica invalidación de caché; el cache es asunto del adaptador del control plane. |
-| Columna `enabled` en la fila en vez de borrarla | Dos formas de decir «apagado» (fila ausente y fila en falso). La presencia de la fila **es** el entitlement. |
-| Mapa permiso→módulo como singletons aparte (`PermissionModuleRequirement`) | Se puede olvidar uno y sólo lo atrapa una prueba. Como parámetro posicional obligatorio de `PermissionDefinition`, el compilador obliga a declararlo en el mismo lugar donde nace el permiso. |
-| Volver de núcleo a módulo los permisos `storage.file.*` | Los usan el logo del tenant (núcleo) y los comprobantes (pedidos) a la vez: el permiso no sabe de quién es el archivo. Lo sabe `FileOwnerType`, y ahí va el chequeo. |
+| Alternativa                                                                | Por qué no                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Filtro `RequireModule("orders")` por grupo de rutas (lo del handoff)       | Ningún grupo tiene autorización a nivel de grupo hoy: cada endpoint declara su permiso (`Program.cs:122-141`, `OrdersExportLayoutEndpoints.cs:21-37`). Habría que tocar los nueve `Map*Endpoints` de negocio (`Program.cs:131-140`) y además los handlers, porque la revalidación vive ahí. El enmascarado es un solo punto de paso y da la UI gratis. **Costo aceptado:** el 403 es el genérico de permiso, sin un `code` propio — la SPA distingue «no está en el plan» leyendo el endpoint de módulos, no el error. |
+| Chequear el módulo en los workers en segundo plano                         | Ningún worker arranca negocio por su cuenta: los jobs se autorizaron al encolarse (`ExportJobWorker`, `QuotationsInfrastructureExtensions.cs:46`) y `QuotationExpirationWorker` (`:69`) es mantenimiento de estado. Apagar un módulo no borra datos ni corta lo que ya está en vuelo.                                                                                                                                                                                                                                  |
+| `IMemoryCache` de módulos por tenant                                       | Los permisos ya se resuelven contra la base en cada request (`ITenantRoleCatalog.cs:25-28`). Sumar una lectura de a lo sumo siete filas por PK no justifica invalidación de caché; el cache es asunto del adaptador del control plane.                                                                                                                                                                                                                                                                                 |
+| Columna `enabled` en la fila en vez de borrarla                            | Dos formas de decir «apagado» (fila ausente y fila en falso). La presencia de la fila **es** el entitlement.                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Mapa permiso→módulo como singletons aparte (`PermissionModuleRequirement`) | Se puede olvidar uno y sólo lo atrapa una prueba. Como parámetro posicional obligatorio de `PermissionDefinition`, el compilador obliga a declararlo en el mismo lugar donde nace el permiso.                                                                                                                                                                                                                                                                                                                          |
+| Volver de núcleo a módulo los permisos `storage.file.*`                    | Los usan el logo del tenant (núcleo) y los comprobantes (pedidos) a la vez: el permiso no sabe de quién es el archivo. Lo sabe `FileOwnerType`, y ahí va el chequeo.                                                                                                                                                                                                                                                                                                                                                   |
 
 ## Catálogo de módulos
 
@@ -83,15 +83,15 @@ Lista cerrada en código: `TenantModuleKeys` (Tenancy.Domain), en este orden, qu
 respuesta del endpoint y el del `CHECK`. **El orden es topológico**: cada clave aparece después de
 todas sus dependencias, y el algoritmo de abajo depende de eso.
 
-| Clave | Depende de | Qué protege (rutas) |
-| --- | --- | --- |
-| `catalog` | — | `/tenants/{id}/catalog` (`ProductEndpoints.cs:14`, `TaxRateEndpoints.cs:17`); archivos `Product` |
-| `customers` | — | `/tenants/{id}/customers` y clasificaciones (`CustomerEndpoints.cs:30`, `ClientClassificationEndpoints.cs:18`) |
-| `companies` | — | `/tenants/{id}/companies` (`CompanyEndpoints.cs:17`) |
-| `quotations` | `catalog`, `customers`, `companies` | `/tenants/{id}/quotations` (`QuotationEndpoints.cs:13-15`) |
-| `orders` | `quotations` | `/tenants/{id}/orders`, `/quotations/{qid}/order` (`OrderEndpoints.cs:24-26,148-150`), `/orders-export-layout`; archivos `PaymentProof` |
-| `reporting` | — | `/tenants/{id}/reports` (`ReportingEndpoints.cs:16-67`); cada reporte exige además su fuente (mapa abajo) |
-| `pos` | `catalog`, `companies` | Lo define el spec de POS |
+| Clave        | Depende de                          | Qué protege (rutas)                                                                                                                     |
+| ------------ | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `catalog`    | —                                   | `/tenants/{id}/catalog` (`ProductEndpoints.cs:14`, `TaxRateEndpoints.cs:17`); archivos `Product`                                        |
+| `customers`  | —                                   | `/tenants/{id}/customers` y clasificaciones (`CustomerEndpoints.cs:30`, `ClientClassificationEndpoints.cs:18`)                          |
+| `companies`  | —                                   | `/tenants/{id}/companies` (`CompanyEndpoints.cs:17`)                                                                                    |
+| `quotations` | `catalog`, `customers`, `companies` | `/tenants/{id}/quotations` (`QuotationEndpoints.cs:13-15`)                                                                              |
+| `orders`     | `quotations`                        | `/tenants/{id}/orders`, `/quotations/{qid}/order` (`OrderEndpoints.cs:24-26,148-150`), `/orders-export-layout`; archivos `PaymentProof` |
+| `reporting`  | —                                   | `/tenants/{id}/reports` (`ReportingEndpoints.cs:16-67`); cada reporte exige además su fuente (mapa abajo)                               |
+| `pos`        | `catalog`, `companies`              | Lo define el spec de POS                                                                                                                |
 
 **Núcleo, nunca se apaga:** identidad y sesión (`/auth/*`), Tenancy (settings, membresías,
 invitaciones), Authorization (roles, catálogo, `/authorization/me`), Storage (`/files`, salvo los
@@ -135,43 +135,43 @@ Las 35 constantes que existen hoy (`grep "public const string" src/**/*Permissio
 registradas como `PermissionDefinition` en `QepServiceCollectionExtensions.cs:711-935` y todas
 concedidas a `admin` (`:582-636`):
 
-| Permiso | Constante | Exige |
-| --- | --- | --- |
-| `tenancy.settings.read` | `TenancyPermissions.SettingsRead` | `[]` |
-| `tenancy.settings.update` | `TenancyPermissions.SettingsUpdate` | `[]` |
-| `advisorship.invite` | `TenancyPermissions.AdvisorshipInvite` | `[]` |
-| `advisorship.read` | `TenancyPermissions.AdvisorshipRead` | `[]` |
-| `advisorship.manage` | `TenancyPermissions.AdvisorshipManage` | `[]` |
-| `advisorship.roles.manage` | `TenancyPermissions.AdvisorshipRolesManage` | `[]` |
-| `storage.file.upload` | `StoragePermissions.FileUpload` | `[]` |
-| `storage.file.read` | `StoragePermissions.FileRead` | `[]` (y el dueño del archivo, ver «Archivos de Storage») |
-| `storage.file.delete` | `StoragePermissions.FileDelete` | `[]` |
-| `storage.file.publish` | `StoragePermissions.FilePublish` | `[]` |
-| `platform.request_log.read` | `PlatformPermissions.RequestLogRead` | `[]` |
-| `platform.request_log.purge` | `PlatformPermissions.RequestLogPurge` | `[]` |
-| `catalog.product.read` | `CatalogPermissions.ProductRead` | `catalog` |
-| `catalog.product.manage` | `CatalogPermissions.ProductManage` | `catalog` |
-| `catalog.tax_rate.read` | `CatalogPermissions.TaxRateRead` | `catalog` |
-| `catalog.tax_rate.manage` | `CatalogPermissions.TaxRateManage` | `catalog` |
-| `companies.company.read` | `CompaniesPermissions.CompanyRead` | `companies` |
-| `companies.company.manage` | `CompaniesPermissions.CompanyManage` | `companies` |
-| `customers.customer.read` | `CustomersPermissions.CustomerRead` | `customers` |
-| `customers.customer.manage` | `CustomersPermissions.CustomerManage` | `customers` |
-| `customers.customer.import` | `CustomersPermissions.CustomerImport` | `customers` |
-| `customers.classification.read` | `CustomersPermissions.ClassificationRead` | `customers` |
-| `customers.classification.manage` | `CustomersPermissions.ClassificationManage` | `customers` |
-| `quotations.quotation.read` | `QuotationsPermissions.QuotationRead` | `quotations` |
-| `quotations.quotation.manage` | `QuotationsPermissions.QuotationManage` | `quotations` |
-| `quotations.order.read` | `OrdersPermissions.OrderRead` | `orders` |
-| `quotations.order.manage` | `OrdersPermissions.OrderManage` | `orders` |
-| `quotations.order.approve` | `OrdersPermissions.OrderApprove` | `orders` |
-| `quotations.order.cancel` | `OrdersPermissions.OrderCancel` | `orders` |
-| `quotations.order.invoice` | `OrdersPermissions.OrderInvoice` | `orders` |
-| `reporting.orders.read` | `ReportingPermissions.OrdersRead` | `reporting`, `orders` |
-| `reporting.quotation.read` | `ReportingPermissions.QuotationRead` | `reporting`, `quotations` |
-| `reporting.price_change.read` | `ReportingPermissions.PriceChangeRead` | `reporting`, `catalog` |
-| `reporting.customer.read` | `ReportingPermissions.CustomerRead` | `reporting`, `customers` |
-| `reporting.all_advisors.read` | `ReportingPermissions.AllAdvisorsRead` | `reporting` |
+| Permiso                           | Constante                                   | Exige                                                    |
+| --------------------------------- | ------------------------------------------- | -------------------------------------------------------- |
+| `tenancy.settings.read`           | `TenancyPermissions.SettingsRead`           | `[]`                                                     |
+| `tenancy.settings.update`         | `TenancyPermissions.SettingsUpdate`         | `[]`                                                     |
+| `advisorship.invite`              | `TenancyPermissions.AdvisorshipInvite`      | `[]`                                                     |
+| `advisorship.read`                | `TenancyPermissions.AdvisorshipRead`        | `[]`                                                     |
+| `advisorship.manage`              | `TenancyPermissions.AdvisorshipManage`      | `[]`                                                     |
+| `advisorship.roles.manage`        | `TenancyPermissions.AdvisorshipRolesManage` | `[]`                                                     |
+| `storage.file.upload`             | `StoragePermissions.FileUpload`             | `[]`                                                     |
+| `storage.file.read`               | `StoragePermissions.FileRead`               | `[]` (y el dueño del archivo, ver «Archivos de Storage») |
+| `storage.file.delete`             | `StoragePermissions.FileDelete`             | `[]`                                                     |
+| `storage.file.publish`            | `StoragePermissions.FilePublish`            | `[]`                                                     |
+| `platform.request_log.read`       | `PlatformPermissions.RequestLogRead`        | `[]`                                                     |
+| `platform.request_log.purge`      | `PlatformPermissions.RequestLogPurge`       | `[]`                                                     |
+| `catalog.product.read`            | `CatalogPermissions.ProductRead`            | `catalog`                                                |
+| `catalog.product.manage`          | `CatalogPermissions.ProductManage`          | `catalog`                                                |
+| `catalog.tax_rate.read`           | `CatalogPermissions.TaxRateRead`            | `catalog`                                                |
+| `catalog.tax_rate.manage`         | `CatalogPermissions.TaxRateManage`          | `catalog`                                                |
+| `companies.company.read`          | `CompaniesPermissions.CompanyRead`          | `companies`                                              |
+| `companies.company.manage`        | `CompaniesPermissions.CompanyManage`        | `companies`                                              |
+| `customers.customer.read`         | `CustomersPermissions.CustomerRead`         | `customers`                                              |
+| `customers.customer.manage`       | `CustomersPermissions.CustomerManage`       | `customers`                                              |
+| `customers.customer.import`       | `CustomersPermissions.CustomerImport`       | `customers`                                              |
+| `customers.classification.read`   | `CustomersPermissions.ClassificationRead`   | `customers`                                              |
+| `customers.classification.manage` | `CustomersPermissions.ClassificationManage` | `customers`                                              |
+| `quotations.quotation.read`       | `QuotationsPermissions.QuotationRead`       | `quotations`                                             |
+| `quotations.quotation.manage`     | `QuotationsPermissions.QuotationManage`     | `quotations`                                             |
+| `quotations.order.read`           | `OrdersPermissions.OrderRead`               | `orders`                                                 |
+| `quotations.order.manage`         | `OrdersPermissions.OrderManage`             | `orders`                                                 |
+| `quotations.order.approve`        | `OrdersPermissions.OrderApprove`            | `orders`                                                 |
+| `quotations.order.cancel`         | `OrdersPermissions.OrderCancel`             | `orders`                                                 |
+| `quotations.order.invoice`        | `OrdersPermissions.OrderInvoice`            | `orders`                                                 |
+| `reporting.orders.read`           | `ReportingPermissions.OrdersRead`           | `reporting`, `orders`                                    |
+| `reporting.quotation.read`        | `ReportingPermissions.QuotationRead`        | `reporting`, `quotations`                                |
+| `reporting.price_change.read`     | `ReportingPermissions.PriceChangeRead`      | `reporting`, `catalog`                                   |
+| `reporting.customer.read`         | `ReportingPermissions.CustomerRead`         | `reporting`, `customers`                                 |
+| `reporting.all_advisors.read`     | `ReportingPermissions.AllAdvisorsRead`      | `reporting`                                              |
 
 `reporting.all_advisors.read` exige sólo `reporting`: no abre ningún reporte por sí solo
 (`QepServiceCollectionExtensions.cs:913-921`), amplía los de pedidos y cotizaciones, que ya están
@@ -348,9 +348,9 @@ tocan.
 
 `EntitlementsOptions` (`SectionName = "Entitlements"`) tiene una sola propiedad:
 
-| Propiedad | Tipo | Default | Qué hace |
-| --- | --- | --- | --- |
-| `GrantDefaultModulesOnSignup` | `bool` | `true` | `true` ⇒ el signup agrega `TenantModuleKeys.DefaultForNewTenants` (los seis sin `pos`); `false` ⇒ no agrega ninguna fila (sólo núcleo). |
+| Propiedad                     | Tipo   | Default | Qué hace                                                                                                                                |
+| ----------------------------- | ------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `GrantDefaultModulesOnSignup` | `bool` | `true`  | `true` ⇒ el signup agrega `TenantModuleKeys.DefaultForNewTenants` (los seis sin `pos`); `false` ⇒ no agrega ninguna fila (sólo núcleo). |
 
 No hay lista configurable de módulos para el signup (YAGNI): hoy nadie necesita otro paquete que
 «los seis» o «ninguno», y el paquete por tenant es asunto del control plane. Si algún día hace
@@ -407,11 +407,11 @@ Apply(permissions, modules: TenantModuleSet):
 
 Un permiso que no está registrado no está en el índice y se enmascara.
 
-| Camino | Cambio |
-| --- | --- |
-| Real (cookie) | `AuthorizationService` (`AuthorizationService.cs:5-46`) recibe `ITenantModules` y `ModuleEntitlementMask`. Después de `PermissionsForAsync` (`:44`): `modules = await FindAsync(tenantId) ?? TenantModuleSet.Empty` y devuelve `Apply(...)`. `AuthorizeAsync` (`:10-25`) hereda el enmascarado. `null` no debería ocurrir (hay membresía activa, luego hay tenant); si ocurre, fail closed: sólo núcleo. |
-| Stub de desarrollo | `DevelopmentAuthenticationHandler` (`DevelopmentAuthenticationHandler.cs:18-79`) arma los claims de `X-Permissions` o los cinco de tenancy por defecto, y `ExternalClaimsTransformation` no lo toca (`ExternalClaimsTransformation.cs:31-36`). Pasa a ser `async`, recibe `ITenantModules` y `ModuleEntitlementMask` (los handlers se resuelven por request, así que admiten scoped) y aplica `Apply` **si `FindAsync` no es `null`**. Con `null` deja los permisos como vienen. |
-| `/authorization/me` | Sin cambio de código: lee los claims ya enmascarados (`AuthorizationCatalogEndpoints.cs:70-75`). |
+| Camino              | Cambio                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Real (cookie)       | `AuthorizationService` (`AuthorizationService.cs:5-46`) recibe `ITenantModules` y `ModuleEntitlementMask`. Después de `PermissionsForAsync` (`:44`): `modules = await FindAsync(tenantId) ?? TenantModuleSet.Empty` y devuelve `Apply(...)`. `AuthorizeAsync` (`:10-25`) hereda el enmascarado. `null` no debería ocurrir (hay membresía activa, luego hay tenant); si ocurre, fail closed: sólo núcleo.                                                                         |
+| Stub de desarrollo  | `DevelopmentAuthenticationHandler` (`DevelopmentAuthenticationHandler.cs:18-79`) arma los claims de `X-Permissions` o los cinco de tenancy por defecto, y `ExternalClaimsTransformation` no lo toca (`ExternalClaimsTransformation.cs:31-36`). Pasa a ser `async`, recibe `ITenantModules` y `ModuleEntitlementMask` (los handlers se resuelven por request, así que admiten scoped) y aplica `Apply` **si `FindAsync` no es `null`**. Con `null` deja los permisos como vienen. |
+| `/authorization/me` | Sin cambio de código: lee los claims ya enmascarados (`AuthorizationCatalogEndpoints.cs:70-75`).                                                                                                                                                                                                                                                                                                                                                                                 |
 
 **Cuándo el stub enmascara.** El criterio es si el tenant tiene fila en `tenancy.tenants`, no
 cómo se creó:
@@ -463,15 +463,50 @@ Ejemplo con todo contratado salvo `customers` y `pos`:
 
 ```json
 {
-  "tenantId": "01900000-0000-7000-8000-000000000003",
+  "tenantId": "01900000-0000-7000-8000-000000000001",
   "modules": [
-    { "key": "catalog",    "enabled": true,  "contracted": true,  "missingDependencies": [] },
-    { "key": "customers",  "enabled": false, "contracted": false, "missingDependencies": [] },
-    { "key": "companies",  "enabled": true,  "contracted": true,  "missingDependencies": [] },
-    { "key": "quotations", "enabled": false, "contracted": true,  "missingDependencies": ["customers"] },
-    { "key": "orders",     "enabled": false, "contracted": true,  "missingDependencies": ["customers"] },
-    { "key": "reporting",  "enabled": true,  "contracted": true,  "missingDependencies": [] },
-    { "key": "pos",        "enabled": false, "contracted": false, "missingDependencies": [] }
+    {
+      "key": "catalog",
+      "enabled": true,
+      "contracted": true,
+      "missingDependencies": []
+    },
+    {
+      "key": "customers",
+      "enabled": false,
+      "contracted": false,
+      "missingDependencies": []
+    },
+    {
+      "key": "companies",
+      "enabled": true,
+      "contracted": true,
+      "missingDependencies": []
+    },
+    {
+      "key": "quotations",
+      "enabled": false,
+      "contracted": true,
+      "missingDependencies": ["customers"]
+    },
+    {
+      "key": "orders",
+      "enabled": false,
+      "contracted": true,
+      "missingDependencies": ["customers"]
+    },
+    {
+      "key": "reporting",
+      "enabled": true,
+      "contracted": true,
+      "missingDependencies": []
+    },
+    {
+      "key": "pos",
+      "enabled": false,
+      "contracted": false,
+      "missingDependencies": []
+    }
   ]
 }
 ```
@@ -531,14 +566,14 @@ son `FileResource`, así que no tienen tipo de dueño ni pasan por `/files`.
 Mapa `FileOwnerModules` (Storage.Application), uno por miembro de `FileOwnerType`
 (`FileResourceEnums.cs:19-38`):
 
-| Miembro | Quién lo produce hoy | Módulo |
-| --- | --- | --- |
-| `User = 1` | Ninguna pantalla actual lo manda. Los comprobantes subidos antes de v2 siguieron siendo `User` (D13, `FileResourceEnums.cs:29-31`) | núcleo |
-| `Entity = 2` | Nadie: ni la SPA ni el backend lo crean | núcleo |
-| `System = 3` | Nadie: ni la SPA ni el backend lo crean | núcleo |
-| `Product = 4` | Imágenes de producto (`product-image.api.ts:102`) | `catalog` |
-| `PaymentProof = 5` | Comprobantes de pago (`quote-file-upload.ts:74`), que se adjuntan a un pedido (`AddOrderPaymentProofs`, conversión a pedido) | `orders` |
-| `Tenant = 6` | Logo del tenant (`tenant-logo-upload.ts:67`, `TenantLogoStorage.cs:78`) | núcleo |
+| Miembro            | Quién lo produce hoy                                                                                                               | Módulo    |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `User = 1`         | Ninguna pantalla actual lo manda. Los comprobantes subidos antes de v2 siguieron siendo `User` (D13, `FileResourceEnums.cs:29-31`) | núcleo    |
+| `Entity = 2`       | Nadie: ni la SPA ni el backend lo crean                                                                                            | núcleo    |
+| `System = 3`       | Nadie: ni la SPA ni el backend lo crean                                                                                            | núcleo    |
+| `Product = 4`      | Imágenes de producto (`product-image.api.ts:102`)                                                                                  | `catalog` |
+| `PaymentProof = 5` | Comprobantes de pago (`quote-file-upload.ts:74`), que se adjuntan a un pedido (`AddOrderPaymentProofs`, conversión a pedido)       | `orders`  |
+| `Tenant = 6`       | Logo del tenant (`tenant-logo-upload.ts:67`, `TenantLogoStorage.cs:78`)                                                            | núcleo    |
 
 `IReadOnlyDictionary<FileOwnerType, TenantModuleKey?>`; una prueba exige que sus claves sean
 exactamente `Enum.GetValues<FileOwnerType>()`, así que un miembro nuevo sin mapear no compila
@@ -559,15 +594,15 @@ verde. Storage.Application ya referencia Tenancy.Application
   cualquier otra regla o efecto** (bucket, auditoría, `SaveChangesAsync`). Barrido de
   `repository.GetAsync` en Storage.Application, los siete:
 
-  | Handler | Endpoint | Carga y 404 | El guard va antes de |
-  | --- | --- | --- | --- |
-  | `IssueDownloadUrlHandler` | `POST /{id}/download-url` | `IssueDownloadUrl.cs:32-38` | `EnsureDownloadable` (`:41`); cubre también la copia pública de un comprobante movido (`:44-46`) |
-  | `CompleteUploadHandler` | `POST /{id}/complete` | `LoadAsync` (`CompleteUpload.cs:30`, definido en `:185-200`) | `objectStorage.StatAsync` (`:32`) |
-  | `CancelUploadHandler` | `DELETE /{id}/upload` | `CancelUpload.cs:28-33` | `objectStorage.DeleteAsync` (`:37`) |
-  | `UpdateFileMetadataHandler` | `PATCH /{id}/metadata` | `UpdateFileMetadata.cs:27-32` | `UpdateMetadata` |
-  | `PublishFileHandler` | `PUT /{id}/publication` | `LoadAsync` (`SetFilePublication.cs:36`, definido en `:50-59`) | `PaymentProofGuard.EnsureNotPaymentProof`; el chequeo de bucket público sin configurar (`:29-34`) sigue primero, porque no carga nada |
-  | `UnpublishFileHandler` | `DELETE /{id}/publication` | `PublishFileHandler.LoadAsync` (`SetFilePublication.cs:78-79`) | `PaymentProofGuard.EnsureNotReferencedAsync` |
-  | `SoftDeleteFileHandler` | `DELETE /{id}` | `SoftDeleteFile.cs:27-32` | `PaymentProofGuard.EnsureNotReferencedAsync` |
+  | Handler                     | Endpoint                   | Carga y 404                                                    | El guard va antes de                                                                                                                  |
+  | --------------------------- | -------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+  | `IssueDownloadUrlHandler`   | `POST /{id}/download-url`  | `IssueDownloadUrl.cs:32-38`                                    | `EnsureDownloadable` (`:41`); cubre también la copia pública de un comprobante movido (`:44-46`)                                      |
+  | `CompleteUploadHandler`     | `POST /{id}/complete`      | `LoadAsync` (`CompleteUpload.cs:30`, definido en `:185-200`)   | `objectStorage.StatAsync` (`:32`)                                                                                                     |
+  | `CancelUploadHandler`       | `DELETE /{id}/upload`      | `CancelUpload.cs:28-33`                                        | `objectStorage.DeleteAsync` (`:37`)                                                                                                   |
+  | `UpdateFileMetadataHandler` | `PATCH /{id}/metadata`     | `UpdateFileMetadata.cs:27-32`                                  | `UpdateMetadata`                                                                                                                      |
+  | `PublishFileHandler`        | `PUT /{id}/publication`    | `LoadAsync` (`SetFilePublication.cs:36`, definido en `:50-59`) | `PaymentProofGuard.EnsureNotPaymentProof`; el chequeo de bucket público sin configurar (`:29-34`) sigue primero, porque no carga nada |
+  | `UnpublishFileHandler`      | `DELETE /{id}/publication` | `PublishFileHandler.LoadAsync` (`SetFilePublication.cs:78-79`) | `PaymentProofGuard.EnsureNotReferencedAsync`                                                                                          |
+  | `SoftDeleteFileHandler`     | `DELETE /{id}`             | `SoftDeleteFile.cs:27-32`                                      | `PaymentProofGuard.EnsureNotReferencedAsync`                                                                                          |
 
 - **No llevan el guard**, y por qué:
   - `CreateUploadSessionHandler` no carga nada por id. Crear la sesión de un `PaymentProof` con
@@ -587,24 +622,24 @@ tenga la URL, y los comprobantes viejos guardados como `User` siguen siendo núc
 
 ## Contratos — frontend (`qep-frontend`, rama `main` al escribir esto)
 
-| Archivo | Cambio |
-| --- | --- |
-| `src/features/auth/services/tenancy.api.ts` | `TenantModules`, `TenantModuleItem`, `tenantModulesQueryKey(tenantId)` = `['tenancy','modules',tenantId]`, `fetchTenantModules` con `X-Tenant-Id` explícito, igual que `fetchEffectivePermissions` (`:53-63`). **Valida la forma** de la respuesta: `modules` tiene que ser un arreglo y cada ítem traer `key` (string), `enabled` y `contracted` (booleanos) y `missingDependencies` (arreglo); los ítems con una clave que la SPA no conoce se descartan. Si no cumple, lanza `TenantModulesPayloadError`. |
-| `src/features/auth/types/tenant-modules.ts` (nuevo) | `TenantModuleKey` (unión de las siete) y `MODULE_LABELS`: Catálogo, Clientes, Empresas, Cotizaciones, Pedidos, Reportes, Punto de venta. |
-| `src/features/auth/hooks/use-tenant-modules.ts` (nuevo) | `useTenantModules()` → `{ isEnabled(key), item(key), status }`, mismo `staleTime: 5 * 60 * 1000` que `usePermissions` (`use-permission.ts:37-46`) y su mismo `retry`, salvo que **no reintenta** un `TenantModulesPayloadError`: una respuesta malformada no se arregla reintentando, y el reintento esperaría el segundo de `retryDelay` por defecto de TanStack, que es también el tope por defecto de `findBy`. Una respuesta malformada da `status: 'error'`. `isEnabled(key)`: con `'ready'`, el `enabled` del ítem (`false` si no vino); con `'error'` o `'denied'`, `true` (mismo fail open que `ModuleGate`, criterio 2); con `'loading'`, `false`. |
-| `src/test/tenant-modules.ts` (nuevo) | `ALL_TENANT_MODULES_ON`, la respuesta de `/modules` con los siete prendidos, y `tenantModulesResponse(overrides)` para apagar algunos. Mismo papel que `test/permissions.ts` (`ALL_SIDEBAR_PERMISSIONS`). Lo usan las pruebas nuevas; las existentes no lo necesitan (ver «Pruebas → Frontend»). |
-| `src/features/quotes/hooks/use-quote-order.ts` | `GET .../quotations/{id}/order` es de `orders`, y lo llaman el detalle (`quotes/$quoteId/index.tsx:44`), el editor (`quotes/$quoteId/editar.tsx:116`) y la conversión (`quotes/$quoteId/order.tsx:57-58`), que viven bajo `quotations`. `enabled` (`:37`) suma `isEnabled('orders') && can(ORDER_READ_PERMISSION)` (`features/quotes/types/order.ts:52`). Con eso resuelto y cerrado devuelve `order: null` e `isLoading: false` —«sin pedido», como el 404 (`:33`)—, no `undefined`, que el contrato del hook reserva para «cargando» (`:13-15`); mientras módulos o permisos cargan, `isLoading: true`. Hoy, con `orders` apagado, la consulta da 403 y queda en `isError`. |
-| `src/routes/_authenticated/quotes/$quoteId/order.tsx` | Queda bajo el layout de `quotes` (`['quotations']`), que no alcanza: convierte y lee el pedido. Se parte como `orders-export-columns`: el `component` de la ruta es `<ModuleGate modules={['orders']}>` y adentro el container con los hooks actuales (`useQuote`, `useConvertQuoteToOrder`, `useOrderDetail`, `useQuoteOrder`, `:40-58`). El botón «Convertir en pedido» del detalle (`quote-detail-page.tsx:198-208`) sigue llevando ahí, y con `orders` apagado esa ruta explica por qué. |
-| `src/features/customers/components/customer-history-sections.tsx` | Hoy llama `useQuoteList` y `useOrderList` siempre (`:30-49`), desde la ficha del cliente (`customer-detail-page.tsx:135`), que es de `customers`, sin dependencias. Se parte en `QuotesHistoryCard` y `OrdersHistoryCard`, cada una dueña de su consulta; `CustomerHistorySections` lee `useTenantModules()` y monta cada tarjeta sólo con su módulo habilitado (`quotations`, `orders`). Sin ninguno, no dibuja nada. |
-| `src/components/module-gate.tsx` (nuevo) | `<ModuleGate modules={['reporting','orders']}>`. Va en `components/` porque lo usan cinco features (SDD-ADR-07). |
-| `src/routes/_authenticated/{catalog,customers,companies,quotes,orders}.tsx` (nuevos) | Rutas layout que renderizan `<ModuleGate modules={[...]}><Outlet /></ModuleGate>`. Mismo patrón que `quotes/$quoteId.tsx`, que ya es layout de sus hijos. En `quotes.tsx` el gate queda por fuera de los `QuotesReadGate` de las hojas. |
-| `src/routes/_authenticated/reports/{orders,quotations,price-changes,customers}.tsx` | Envuelven la página en `ModuleGate` con `['reporting', <fuente>]`. `reports/log.tsx` no: es núcleo. |
-| `src/routes/_authenticated/settings/orders-export-columns.tsx` | Se parte en dos: el `component` de la ruta es `<ModuleGate modules={['orders']}>` y adentro el container actual, que es el que llama a `useOrdersExportLayout` y `usePermissions` (`:21-24`). |
-| `src/routes/_authenticated/settings/index.tsx` y `src/features/tenant-settings/pages/tenant-settings-page.tsx` | El container lee `useTenantModules()` y le pasa a la página `showOrdersExport`; la página oculta la sección «Excel de pedidos» con su enlace «Columnas del Excel de pedidos» (`tenant-settings-page.tsx:130-150`) cuando es `false`. Mientras los módulos cargan o fallan, se muestra (criterio 2 de `ModuleGate`). |
-| `src/features/tenant-settings/services/orders-export-layout.api.ts` | Traduce `tenancy.module_not_enabled` al mensaje del plan. |
-| `src/features/auth/services/landing.ts` | Ver «Landing». |
-| `src/components/app-shell/sidebar-nav-items.ts` | Sólo exportar `SidebarRoute` (`:20`). El filtrado ya lo hace el enmascarado. |
-| `src/features/roles/roles-page.tsx` | Con el catálogo cargado, `RoleDetail` (`:232-263`) omite los permisos que no están en el catálogo, y el contador de la lista de roles (`:183-184`, hoy `role.permissions.length`) cuenta sólo los que sí están. Sin catálogo cargado, los dos siguen como hoy. |
+| Archivo                                                                                                        | Cambio                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/features/auth/services/tenancy.api.ts`                                                                    | `TenantModules`, `TenantModuleItem`, `tenantModulesQueryKey(tenantId)` = `['tenancy','modules',tenantId]`, `fetchTenantModules` con `X-Tenant-Id` explícito, igual que `fetchEffectivePermissions` (`:53-63`). **Valida la forma** de la respuesta: `modules` tiene que ser un arreglo y cada ítem traer `key` (string), `enabled` y `contracted` (booleanos) y `missingDependencies` (arreglo); los ítems con una clave que la SPA no conoce se descartan. Si no cumple, lanza `TenantModulesPayloadError`.                                                                                                                                                                  |
+| `src/features/auth/types/tenant-modules.ts` (nuevo)                                                            | `TenantModuleKey` (unión de las siete) y `MODULE_LABELS`: Catálogo, Clientes, Empresas, Cotizaciones, Pedidos, Reportes, Punto de venta.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `src/features/auth/hooks/use-tenant-modules.ts` (nuevo)                                                        | `useTenantModules()` → `{ isEnabled(key), item(key), status }`, mismo `staleTime: 5 * 60 * 1000` que `usePermissions` (`use-permission.ts:37-46`) y su mismo `retry`, salvo que **no reintenta** un `TenantModulesPayloadError`: una respuesta malformada no se arregla reintentando, y el reintento esperaría el segundo de `retryDelay` por defecto de TanStack, que es también el tope por defecto de `findBy`. Una respuesta malformada da `status: 'error'`. `isEnabled(key)`: con `'ready'`, el `enabled` del ítem (`false` si no vino); con `'error'` o `'denied'`, `true` (mismo fail open que `ModuleGate`, criterio 2); con `'loading'`, `false`.                   |
+| `src/test/tenant-modules.ts` (nuevo)                                                                           | `ALL_TENANT_MODULES_ON`, la respuesta de `/modules` con los siete prendidos, y `tenantModulesResponse(overrides)` para apagar algunos. Mismo papel que `test/permissions.ts` (`ALL_SIDEBAR_PERMISSIONS`). Lo usan las pruebas nuevas; las existentes no lo necesitan (ver «Pruebas → Frontend»).                                                                                                                                                                                                                                                                                                                                                                              |
+| `src/features/quotes/hooks/use-quote-order.ts`                                                                 | `GET .../quotations/{id}/order` es de `orders`, y lo llaman el detalle (`quotes/$quoteId/index.tsx:44`), el editor (`quotes/$quoteId/editar.tsx:116`) y la conversión (`quotes/$quoteId/order.tsx:57-58`), que viven bajo `quotations`. `enabled` (`:37`) suma `isEnabled('orders') && can(ORDER_READ_PERMISSION)` (`features/quotes/types/order.ts:52`). Con eso resuelto y cerrado devuelve `order: null` e `isLoading: false` —«sin pedido», como el 404 (`:33`)—, no `undefined`, que el contrato del hook reserva para «cargando» (`:13-15`); mientras módulos o permisos cargan, `isLoading: true`. Hoy, con `orders` apagado, la consulta da 403 y queda en `isError`. |
+| `src/routes/_authenticated/quotes/$quoteId/order.tsx`                                                          | Queda bajo el layout de `quotes` (`['quotations']`), que no alcanza: convierte y lee el pedido. Se parte como `orders-export-columns`: el `component` de la ruta es `<ModuleGate modules={['orders']}>` y adentro el container con los hooks actuales (`useQuote`, `useConvertQuoteToOrder`, `useOrderDetail`, `useQuoteOrder`, `:40-58`). El botón «Convertir en pedido» del detalle (`quote-detail-page.tsx:198-208`) sigue llevando ahí, y con `orders` apagado esa ruta explica por qué.                                                                                                                                                                                  |
+| `src/features/customers/components/customer-history-sections.tsx`                                              | Hoy llama `useQuoteList` y `useOrderList` siempre (`:30-49`), desde la ficha del cliente (`customer-detail-page.tsx:135`), que es de `customers`, sin dependencias. Se parte en `QuotesHistoryCard` y `OrdersHistoryCard`, cada una dueña de su consulta; `CustomerHistorySections` lee `useTenantModules()` y monta cada tarjeta sólo con su módulo habilitado (`quotations`, `orders`). Sin ninguno, no dibuja nada.                                                                                                                                                                                                                                                        |
+| `src/components/module-gate.tsx` (nuevo)                                                                       | `<ModuleGate modules={['reporting','orders']}>`. Va en `components/` porque lo usan cinco features (SDD-ADR-07).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `src/routes/_authenticated/{catalog,customers,companies,quotes,orders}.tsx` (nuevos)                           | Rutas layout que renderizan `<ModuleGate modules={[...]}><Outlet /></ModuleGate>`. Mismo patrón que `quotes/$quoteId.tsx`, que ya es layout de sus hijos. En `quotes.tsx` el gate queda por fuera de los `QuotesReadGate` de las hojas.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `src/routes/_authenticated/reports/{orders,quotations,price-changes,customers}.tsx`                            | Envuelven la página en `ModuleGate` con `['reporting', <fuente>]`. `reports/log.tsx` no: es núcleo.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `src/routes/_authenticated/settings/orders-export-columns.tsx`                                                 | Se parte en dos: el `component` de la ruta es `<ModuleGate modules={['orders']}>` y adentro el container actual, que es el que llama a `useOrdersExportLayout` y `usePermissions` (`:21-24`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `src/routes/_authenticated/settings/index.tsx` y `src/features/tenant-settings/pages/tenant-settings-page.tsx` | El container lee `useTenantModules()` y le pasa a la página `showOrdersExport`; la página oculta la sección «Excel de pedidos» con su enlace «Columnas del Excel de pedidos» (`tenant-settings-page.tsx:130-150`) cuando es `false`. Mientras los módulos cargan o fallan, se muestra (criterio 2 de `ModuleGate`).                                                                                                                                                                                                                                                                                                                                                           |
+| `src/features/tenant-settings/services/orders-export-layout.api.ts`                                            | Traduce `tenancy.module_not_enabled` al mensaje del plan.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `src/features/auth/services/landing.ts`                                                                        | Ver «Landing».                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `src/components/app-shell/sidebar-nav-items.ts`                                                                | Sólo exportar `SidebarRoute` (`:20`). El filtrado ya lo hace el enmascarado.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `src/features/roles/roles-page.tsx`                                                                            | Con el catálogo cargado, `RoleDetail` (`:232-263`) omite los permisos que no están en el catálogo, y el contador de la lista de roles (`:183-184`, hoy `role.permissions.length`) cuenta sólo los que sí están. Sin catálogo cargado, los dos siguen como hoy.                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 **Por qué el gate va a nivel de ruta.** En cotizaciones las consultas viven en la ruta y no en la
 página (`quotes-read-gate.tsx:13-15`), y en 14 rutas de las carpetas de módulo, más
@@ -621,18 +656,18 @@ apagado con la pantalla prendida, y son las tres filas de arriba (`use-quote-ord
 `quotes/$quoteId/order.tsx`, `customer-history-sections.tsx`). El resto queda cubierto por las
 dependencias o es núcleo:
 
-| Consumidor | Consulta de | Por qué no hace falta gate |
-| --- | --- | --- |
-| `features/quotes/hooks/use-quote-products.ts`, `use-product-name-lookup.ts` (`useProductList`) | `catalog` | `quotations` efectivo implica `catalog`. |
-| `features/quotes/hooks/use-quote-customer.ts`, `use-quote-customers.ts`, `components/quote-customer-edit-modal.tsx`; `quotes/$quoteId/editar.tsx:21` (`useCustomerAddresses`) | `customers` | `quotations` implica `customers`. |
-| `features/quotes/hooks/use-quote-billing-companies.ts` | `companies` | `quotations` implica `companies`. |
-| `orders/$orderId/index.tsx` y `editar.tsx`, `features/orders/*` (hooks y servicios de `features/quotes`, `useQuoteProducts`) | `quotations`, `catalog` | `orders` implica `quotations` y, por él, `catalog`. |
-| `features/reports/components/report-customer-combobox.tsx` (`useCustomerList`), en `orders-report-filters.tsx:173` y `quotations-report-filters.tsx:158` | `customers` | Esos reportes exigen `orders` o `quotations`, que implican `customers`. |
-| `features/reports/components/report-product-combobox.tsx` (`useProductList`), en `price-change-report-filters.tsx:148` | `catalog` | El reporte exige `catalog`. |
-| `features/reports/components/customers-report-filters.tsx:56` (`useClassificationList`) | `customers` | El reporte exige `customers`. |
-| `useCitiesForDepartments` (`features/customers/hooks/`), desde rutas de cotizaciones y pedidos | Geography | Llama `fetchCities` de `components/geography.api` (`use-cities-for-departments.ts:3,23`): núcleo. |
-| `useCustomerSync` (`routes/_authenticated.tsx:8`) | — | No consulta: escribe la caché con `setQueryData` e invalida listados de clientes (`use-customer-sync.ts:38-44`), que sólo vuelven a pedirse si una pantalla de clientes está montada. |
-| `useDownloadPaymentProof` (`quotes/$quoteId/index.tsx:57`) | Storage, archivos `PaymentProof` | Es una mutación que sólo dispara el clic en un comprobante del pedido, y sin `orders` no hay pedido que mostrar. |
+| Consumidor                                                                                                                                                                    | Consulta de                      | Por qué no hace falta gate                                                                                                                                                            |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `features/quotes/hooks/use-quote-products.ts`, `use-product-name-lookup.ts` (`useProductList`)                                                                                | `catalog`                        | `quotations` efectivo implica `catalog`.                                                                                                                                              |
+| `features/quotes/hooks/use-quote-customer.ts`, `use-quote-customers.ts`, `components/quote-customer-edit-modal.tsx`; `quotes/$quoteId/editar.tsx:21` (`useCustomerAddresses`) | `customers`                      | `quotations` implica `customers`.                                                                                                                                                     |
+| `features/quotes/hooks/use-quote-billing-companies.ts`                                                                                                                        | `companies`                      | `quotations` implica `companies`.                                                                                                                                                     |
+| `orders/$orderId/index.tsx` y `editar.tsx`, `features/orders/*` (hooks y servicios de `features/quotes`, `useQuoteProducts`)                                                  | `quotations`, `catalog`          | `orders` implica `quotations` y, por él, `catalog`.                                                                                                                                   |
+| `features/reports/components/report-customer-combobox.tsx` (`useCustomerList`), en `orders-report-filters.tsx:173` y `quotations-report-filters.tsx:158`                      | `customers`                      | Esos reportes exigen `orders` o `quotations`, que implican `customers`.                                                                                                               |
+| `features/reports/components/report-product-combobox.tsx` (`useProductList`), en `price-change-report-filters.tsx:148`                                                        | `catalog`                        | El reporte exige `catalog`.                                                                                                                                                           |
+| `features/reports/components/customers-report-filters.tsx:56` (`useClassificationList`)                                                                                       | `customers`                      | El reporte exige `customers`.                                                                                                                                                         |
+| `useCitiesForDepartments` (`features/customers/hooks/`), desde rutas de cotizaciones y pedidos                                                                                | Geography                        | Llama `fetchCities` de `components/geography.api` (`use-cities-for-departments.ts:3,23`): núcleo.                                                                                     |
+| `useCustomerSync` (`routes/_authenticated.tsx:8`)                                                                                                                             | —                                | No consulta: escribe la caché con `setQueryData` e invalida listados de clientes (`use-customer-sync.ts:38-44`), que sólo vuelven a pedirse si una pantalla de clientes está montada. |
+| `useDownloadPaymentProof` (`quotes/$quoteId/index.tsx:57`)                                                                                                                    | Storage, archivos `PaymentProof` | Es una mutación que sólo dispara el clic en un comprobante del pedido, y sin `orders` no hay pedido que mostrar.                                                                      |
 
 Ninguna feature de núcleo (`tenant-settings`, `memberships`, `account`, `roles`, `invitations`)
 ni `components/` importa hooks o servicios de una feature de módulo.
@@ -658,6 +693,7 @@ fuentes (`['reporting', 'customers']` en `reports/customers.tsx`). En este orden
 
    Así, en `reports/customers` con `reporting` contratado y `customers` no, la pantalla nombra
    Clientes en vez de decir que Reportes no está en el plan.
+
 5. Si no, los hijos (y ahí el gate de permiso dice lo suyo).
 
 **Landing.** `landingFor(can)` (`landing.ts:23-26`) sigue prefiriendo `/quotes` y después
@@ -669,22 +705,22 @@ pedidos aterriza en `/customers`, `/companies` o `/catalog`, en ese orden, que e
 
 ## Errores y casos borde
 
-| Caso | Qué pasa |
-| --- | --- |
-| Tenant con cero módulos | Válido: así nace uno con `GrantDefaultModulesOnSignup = false`. Admin ve Miembros, Roles, Configuración (sin «Excel de pedidos») y Reportes→log (núcleo). Asesor: sin ítems de menú; aterriza en `/quotes` y ve el mensaje del plan. |
-| Dependencia faltante | El dependiente cuenta como apagado (fail closed) y el endpoint de módulos nombra la causa raíz en `missingDependencies`, aunque esté varios niveles abajo. |
-| Módulo apagado a mitad de sesión | Backend: el request siguiente ya es 403 (permisos y módulos se leen en cada request, sin caché). SPA: hasta **5 minutos** sigue mostrando menú y pantallas viejas (`staleTime` de permisos y de módulos; `refetchOnWindowFocus: false`, `query-client.ts:49`), y cada acción falla con su mensaje de 403 actual. Recargar lo corrige al instante. Aceptado. |
-| 403 de política | No pasa por `ApiExceptionHandler` (`Program.cs:84-87`): sin `code`. La SPA no lo usa para distinguir; usa el endpoint de módulos. |
-| Rol custom con permisos de un módulo apagado | Los conserva y deja de concederlos mientras el módulo esté apagado. La SPA no los muestra ni los cuenta. |
-| Job de exportación en vuelo | Termina y manda su correo: los workers no miran módulos. |
-| Datos | Apagar nunca borra. Volver a prender devuelve todo como estaba. |
-| Comprobante o imagen de producto con su módulo apagado | No aparece en `GET /files`, y los siete comandos por id (`download-url`, `complete`, cancelar subida, `metadata`, poner y quitar publicación, borrado) dan 403 `tenancy.module_not_enabled`. Una URL pública que ya se compartió sigue abriendo. |
-| Tenant creado por un pod viejo durante el rolling update | Queda sin filas: sólo núcleo hasta que se repare con el SQL de «Operación». |
-| Clave desconocida en la tabla | Imposible por el `CHECK`. Si alguien quitara el `CHECK` y escribiera una, `TenantModuleKey.Parse` lanza al materializar la fila y el request da 500: ruidoso a propósito, porque ignorarla escondería una base corrupta. |
-| Stub con tenant inexistente | Sin enmascarado, sin filtro de archivos y `/modules` con todo prendido (ver arriba). |
-| `/modules` por cookie real con `FindAsync` en `null` | Los siete apagados, igual que los permisos (sólo núcleo). No debería ocurrir: hay membresía activa, luego hay tenant. |
-| Respuesta de `/modules` malformada en la SPA | `status: 'error'` sin reintento; los gates dejan pasar y el backend sigue enmascarando. |
-| Stub con tenant insertado a mano sin módulos | Enmascara: sólo núcleo. La prueba que lo haga tiene que sembrar sus módulos. |
+| Caso                                                     | Qué pasa                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tenant con cero módulos                                  | Válido: así nace uno con `GrantDefaultModulesOnSignup = false`. Admin ve Miembros, Roles, Configuración (sin «Excel de pedidos») y Reportes→log (núcleo). Asesor: sin ítems de menú; aterriza en `/quotes` y ve el mensaje del plan.                                                                                                                        |
+| Dependencia faltante                                     | El dependiente cuenta como apagado (fail closed) y el endpoint de módulos nombra la causa raíz en `missingDependencies`, aunque esté varios niveles abajo.                                                                                                                                                                                                  |
+| Módulo apagado a mitad de sesión                         | Backend: el request siguiente ya es 403 (permisos y módulos se leen en cada request, sin caché). SPA: hasta **5 minutos** sigue mostrando menú y pantallas viejas (`staleTime` de permisos y de módulos; `refetchOnWindowFocus: false`, `query-client.ts:49`), y cada acción falla con su mensaje de 403 actual. Recargar lo corrige al instante. Aceptado. |
+| 403 de política                                          | No pasa por `ApiExceptionHandler` (`Program.cs:84-87`): sin `code`. La SPA no lo usa para distinguir; usa el endpoint de módulos.                                                                                                                                                                                                                           |
+| Rol custom con permisos de un módulo apagado             | Los conserva y deja de concederlos mientras el módulo esté apagado. La SPA no los muestra ni los cuenta.                                                                                                                                                                                                                                                    |
+| Job de exportación en vuelo                              | Termina y manda su correo: los workers no miran módulos.                                                                                                                                                                                                                                                                                                    |
+| Datos                                                    | Apagar nunca borra. Volver a prender devuelve todo como estaba.                                                                                                                                                                                                                                                                                             |
+| Comprobante o imagen de producto con su módulo apagado   | No aparece en `GET /files`, y los siete comandos por id (`download-url`, `complete`, cancelar subida, `metadata`, poner y quitar publicación, borrado) dan 403 `tenancy.module_not_enabled`. Una URL pública que ya se compartió sigue abriendo.                                                                                                            |
+| Tenant creado por un pod viejo durante el rolling update | Queda sin filas: sólo núcleo hasta que se repare con el SQL de «Operación».                                                                                                                                                                                                                                                                                 |
+| Clave desconocida en la tabla                            | Imposible por el `CHECK`. Si alguien quitara el `CHECK` y escribiera una, `TenantModuleKey.Parse` lanza al materializar la fila y el request da 500: ruidoso a propósito, porque ignorarla escondería una base corrupta.                                                                                                                                    |
+| Stub con tenant inexistente                              | Sin enmascarado, sin filtro de archivos y `/modules` con todo prendido (ver arriba).                                                                                                                                                                                                                                                                        |
+| `/modules` por cookie real con `FindAsync` en `null`     | Los siete apagados, igual que los permisos (sólo núcleo). No debería ocurrir: hay membresía activa, luego hay tenant.                                                                                                                                                                                                                                       |
+| Respuesta de `/modules` malformada en la SPA             | `status: 'error'` sin reintento; los gates dejan pasar y el backend sigue enmascarando.                                                                                                                                                                                                                                                                     |
+| Stub con tenant insertado a mano sin módulos             | Enmascara: sólo núcleo. La prueba que lo haga tiene que sembrar sus módulos.                                                                                                                                                                                                                                                                                |
 
 ## Operación: prender y apagar un módulo
 
@@ -734,7 +770,7 @@ suma Tenancy.Infrastructure para `TenantModuleDefaults`, igual que
   aparecen antes en la lista; `DependenciesOf` sólo nombra claves de `All`.
 - `TenantModuleSet.FromStored`: sin `customers`, `quotations` y `orders` quedan apagados;
   `MissingDependencies("quotations") == ["customers"]` y `MissingDependencies("orders") ==
-  ["customers"]` (causa raíz, no `["quotations"]`); sin `catalog` ni `customers`, `orders`
+["customers"]` (causa raíz, no `["quotations"]`); sin `catalog` ni `customers`, `orders`
   reporta `["catalog","customers"]` en el orden de `All`; una clave no contratada o efectiva
   reporta `[]`; `Empty` no tiene nada.
 - `TenantModuleKey.Parse`: devuelve la misma instancia de `TenantModuleKeys` para cada `Value` de
@@ -750,6 +786,7 @@ suma Tenancy.Infrastructure para `TenantModuleDefaults`, igual que
   `false`, `[]`; sin la sección `Entitlements`, el default `true`.
 
 **Unitarias, Authorization (`Modules.Authorization.UnitTests`)**
+
 - `ModuleEntitlementMask.Apply`: núcleo pasa con `Empty`; `catalog.*` cae sin `catalog`;
   `reporting.orders.read` exige los dos; un permiso con `RequiredModules = null` cae siempre; un
   permiso no registrado cae; un permiso registrado que no concede ningún rol de sistema se
@@ -759,6 +796,7 @@ suma Tenancy.Infrastructure para `TenantModuleDefaults`, igual que
 - `RoleCatalog`: el fallback de metadata produce `RequiredModules = null`.
 
 **Unitarias, Storage (`Modules.Storage.UnitTests`)**
+
 - `FileOwnerModules`: sus claves son exactamente `Enum.GetValues<FileOwnerType>()`; `Product` →
   `catalog`, `PaymentProof` → `orders`, el resto núcleo.
 - `FileOwnerModuleGuard`: `Product` sin `catalog` y `PaymentProof` sin `orders` → 403
@@ -781,8 +819,9 @@ suma Tenancy.Infrastructure para `TenantModuleDefaults`, igual que
 dan 403 `tenancy.module_not_enabled` sin `orders`, antes de leer el repositorio y del validador.
 
 **Arquitectura (`tests/ArchitectureTests`)**
+
 - `CompositionRootTests` — completitud del mapa: por reflexión, toda constante `public const
-  string` de toda clase `*Permissions` de los ensamblados Application tiene una
+string` de toda clase `*Permissions` de los ensamblados Application tiene una
   `PermissionDefinition` registrada con `RequiredModules` no nulo; todo permiso de
   `IRoleCatalog.ListPermissions()` tiene `RequiredModules` no nulo (ninguno salió del fallback).
   Ancla: la reflexión encuentra las 35.
@@ -791,6 +830,7 @@ dan 403 `tenancy.module_not_enabled` sin `orders`, antes de leer el repositorio 
 - `TenancyLayerTests`: Tenancy.Application sigue sin referenciar EF Core.
 
 **Integración**
+
 - Tenancy (`TenantModulesApiTests`, nueva):
   - signup deja las seis filas `signup` y no `pos`, en el mismo `SaveChangesAsync` que el tenant:
     es la prueba de que EF ordena el `INSERT` de `tenants` antes que el de `tenant_modules`;
@@ -840,17 +880,17 @@ actuales no cambien de significado: en los handlers de Storage y de la configura
 uno que devuelve `null` (tenant simulado: ni filtra ni bloquea); en `AuthorizationService`, uno
 con los siete módulos, porque ahí `null` es fail closed y dejaría sólo núcleo:
 
-| Clase que cambia | Archivo de prueba | Dónde se construye |
-| --- | --- | --- |
-| `AuthorizationService` | `tests/Modules/Authorization/Modules.Authorization.UnitTests/AuthorizationServiceTests.cs` | `:47`, `:59`, `:73`, `:90` |
-| `IssueDownloadUrlHandler` | `tests/Modules/Storage/Modules.Storage.UnitTests/IssueDownloadUrlHandlerTests.cs` | `HandlerFor` (`:72`) |
-| `PublishFileHandler` | `tests/Modules/Storage/Modules.Storage.UnitTests/PaymentProofFileManagementTests.cs` | `:130`, `:154` |
-| `SoftDeleteFileHandler` | `PaymentProofFileManagementTests.cs` | `DeleteHandler` (`:227`) |
-| `UnpublishFileHandler` | `PaymentProofFileManagementTests.cs` | `UnpublishHandler` (`:241`) |
-| `ListFilesHandler` | `tests/Modules/Storage/Modules.Storage.UnitTests/PaymentProofPublicUrlTests.cs` | `:39` |
-| `GetOrdersExportLayoutHandler` | `tests/Modules/Quotations/Modules.Quotations.UnitTests/GetOrdersExportLayoutHandlerTests.cs` | `NewHandler` (`:195`) |
-| `UpdateOrdersExportLayoutHandler` | `tests/Modules/Quotations/Modules.Quotations.UnitTests/UpdateOrdersExportLayoutHandlerTests.cs` | `NewHandler` (`:309`) |
-| `PermissionDefinition` (no es constructor de handler, pero es posicional) | `tests/Modules/Authorization/Modules.Authorization.UnitTests/RoleCommandsTests.cs` | `:24`, `:26`, `:28` |
+| Clase que cambia                                                          | Archivo de prueba                                                                               | Dónde se construye          |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------- |
+| `AuthorizationService`                                                    | `tests/Modules/Authorization/Modules.Authorization.UnitTests/AuthorizationServiceTests.cs`      | `:47`, `:59`, `:73`, `:90`  |
+| `IssueDownloadUrlHandler`                                                 | `tests/Modules/Storage/Modules.Storage.UnitTests/IssueDownloadUrlHandlerTests.cs`               | `HandlerFor` (`:72`)        |
+| `PublishFileHandler`                                                      | `tests/Modules/Storage/Modules.Storage.UnitTests/PaymentProofFileManagementTests.cs`            | `:130`, `:154`              |
+| `SoftDeleteFileHandler`                                                   | `PaymentProofFileManagementTests.cs`                                                            | `DeleteHandler` (`:227`)    |
+| `UnpublishFileHandler`                                                    | `PaymentProofFileManagementTests.cs`                                                            | `UnpublishHandler` (`:241`) |
+| `ListFilesHandler`                                                        | `tests/Modules/Storage/Modules.Storage.UnitTests/PaymentProofPublicUrlTests.cs`                 | `:39`                       |
+| `GetOrdersExportLayoutHandler`                                            | `tests/Modules/Quotations/Modules.Quotations.UnitTests/GetOrdersExportLayoutHandlerTests.cs`    | `NewHandler` (`:195`)       |
+| `UpdateOrdersExportLayoutHandler`                                         | `tests/Modules/Quotations/Modules.Quotations.UnitTests/UpdateOrdersExportLayoutHandlerTests.cs` | `NewHandler` (`:309`)       |
+| `PermissionDefinition` (no es constructor de handler, pero es posicional) | `tests/Modules/Authorization/Modules.Authorization.UnitTests/RoleCommandsTests.cs`              | `:24`, `:26`, `:28`         |
 
 Sin prueba unitaria hoy, así que nada que ajustar y su caso nuevo va en un archivo nuevo:
 `CompleteUploadHandler`, `CancelUploadHandler`, `UpdateFileMetadataHandler` y
@@ -861,17 +901,17 @@ es `internal` de Bootstrapper y no tiene prueba unitaria: lo cubren las integrac
 `INSERT INTO tenancy` en `tests/` (las de `Modules.Tenancy.UnitTests` usan `Tenant.Create` en
 memoria y no tocan la base):
 
-| Archivo | Línea | Permisos que usa | Cambio |
-| --- | --- | --- | --- |
-| `tests/Modules/Customers/Modules.Customers.IntegrationTests/CustomersApiHarness.cs` (`SeedTenantAsync`, usado por `CustomerExportApiTests.cs:34,88`) | `:49-71` | `customers.*` | **Inserta sólo las claves que faltan** de las siete, con `source = 'seed'`: `INSERT ... ON CONFLICT (tenant_id, module_key) DO NOTHING` por SQL, o el equivalente por EF (leer las claves que ya tiene el tenant y agregar con `TenantModule.Create(..., "seed", ...)` las que no). Corre también cuando el tenant ya existía —hoy el método devuelve antes (`:56-59`)—, así que se puede llamar dos veces sobre la misma base sin `23505`. Sin esto, 403. |
-| `tests/Modules/Catalog/Modules.Catalog.IntegrationTests/ProductExportApiTests.cs` (`SeedTenantAsync`, llamado en `:49,125`) | `:188-202` | `catalog.*` | **Agrega las siete filas**, igual. Sin esto, 403. |
-| `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/TenantSettingsApiTests.cs` | `:185` | sólo núcleo | Ninguno. |
-| `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/TenantLogoApiTests.cs` | `:402` | núcleo; archivos `Tenant` (`:427`) | Ninguno: `Tenant` es núcleo. |
-| `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/TenantClockTests.cs` | `:64` | sólo núcleo | Ninguno. |
-| `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/MembershipApiTests.cs` | `:1313` | sólo núcleo | Ninguno. |
-| `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/InvitationApiTests.cs` | `:294` | sólo núcleo | Ninguno. |
-| `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/AuthSessionApiTests.cs` | `:166`, `:175`, `:394` | sólo núcleo | Ninguno. |
-| `tests/Modules/Notifications/Modules.Notifications.IntegrationTests/InvitationNotificationTests.cs` | `:56` | sólo núcleo | Ninguno. |
+| Archivo                                                                                                                                              | Línea                  | Permisos que usa                   | Cambio                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/Modules/Customers/Modules.Customers.IntegrationTests/CustomersApiHarness.cs` (`SeedTenantAsync`, usado por `CustomerExportApiTests.cs:34,88`) | `:49-71`               | `customers.*`                      | **Inserta sólo las claves que faltan** de las siete, con `source = 'seed'`: `INSERT ... ON CONFLICT (tenant_id, module_key) DO NOTHING` por SQL, o el equivalente por EF (leer las claves que ya tiene el tenant y agregar con `TenantModule.Create(..., "seed", ...)` las que no). Corre también cuando el tenant ya existía —hoy el método devuelve antes (`:56-59`)—, así que se puede llamar dos veces sobre la misma base sin `23505`. Sin esto, 403. |
+| `tests/Modules/Catalog/Modules.Catalog.IntegrationTests/ProductExportApiTests.cs` (`SeedTenantAsync`, llamado en `:49,125`)                          | `:188-202`             | `catalog.*`                        | **Agrega las siete filas**, igual. Sin esto, 403.                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/TenantSettingsApiTests.cs`                                                                   | `:185`                 | sólo núcleo                        | Ninguno.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/TenantLogoApiTests.cs`                                                                       | `:402`                 | núcleo; archivos `Tenant` (`:427`) | Ninguno: `Tenant` es núcleo.                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/TenantClockTests.cs`                                                                         | `:64`                  | sólo núcleo                        | Ninguno.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/MembershipApiTests.cs`                                                                       | `:1313`                | sólo núcleo                        | Ninguno.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/InvitationApiTests.cs`                                                                       | `:294`                 | sólo núcleo                        | Ninguno.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests/AuthSessionApiTests.cs`                                                                      | `:166`, `:175`, `:394` | sólo núcleo                        | Ninguno.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `tests/Modules/Notifications/Modules.Notifications.IntegrationTests/InvitationNotificationTests.cs`                                                  | `:56`                  | sólo núcleo                        | Ninguno.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 **Por qué las siete y no sólo `customers`.** El `TenantId` que siembra `CustomersApiHarness`
 (`...0001`, `CustomersApiHarness.cs:23`) es el mismo tenant de desarrollo que usan **todas** las
@@ -888,6 +928,7 @@ pruebas que usan el tenant de la semilla (`CatalogSeedTests`, `CompaniesSeedTest
 `QuotationsSeedTests`, `ExportLoadSeedTests`) lo reciben con los siete por `TenancySeeder`.
 
 **Frontend (Vitest + Testing Library, `bun run test --run`)**
+
 - `tenancy.api.test.ts`: `fetchTenantModules` con `{}`, con `modules` que no es arreglo y con un
   ítem sin `enabled` lanza `TenantModulesPayloadError`; descarta un ítem con clave desconocida.
 - `use-tenant-modules.test.tsx`: clave por tenant; estados `loading/ready/denied/error`; una
@@ -917,19 +958,19 @@ reciben `{}`. No se tocan: `fetchTenantModules` lo rechaza por forma, el hook qu
 sin reintento y `ModuleGate` renderiza los hijos (criterio 2). Ninguno de esos stubs rechaza una
 URL desconocida, y ninguno atiende hoy `/modules`. Son 17:
 
-| Archivo | Qué monta |
-| --- | --- |
-| `routes/_authenticated/catalog/products/$productId.test.tsx`, `catalog/products/new.test.tsx`, `catalog/tax-rates/new.test.tsx` | layout `catalog` |
-| `routes/_authenticated/companies/$companyId.test.tsx`, `companies/new.test.tsx` | layout `companies` |
-| `routes/_authenticated/customers/new.test.tsx` | layout `customers` |
-| `routes/_authenticated/orders/$orderId/index.test.tsx`, `orders/$orderId/editar.test.tsx` | layout `orders` |
-| `routes/_authenticated/quotes/$quoteId/index.test.tsx`, `quotes/$quoteId/editar.test.tsx` | layout `quotes` y `useQuoteOrder` |
-| `routes/_authenticated/quotes/$quoteId/order.test.tsx` | layout `quotes` y el gate de `orders` |
-| `routes/_authenticated/reports/reports-routes.test.tsx` | reportes envueltos |
-| `routes/_authenticated/settings/index.test.tsx`, `settings/orders-export-columns.test.tsx` | sección «Excel de pedidos» y su gate |
-| `components/app-shell/app-shell.test.tsx` | `/customers` y `/companies` (`:195,285,349,406`) |
-| `features/account/components/applied-theme.test.tsx` | `/quotes` (`:89`) |
-| `routes/index.test.tsx` | `/`, que aterriza en `/quotes` o `/orders` (`:62,72,107`) |
+| Archivo                                                                                                                         | Qué monta                                                 |
+| ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `routes/_authenticated/catalog/products/$productId.test.tsx`, `catalog/products/new.test.tsx`, `catalog/tax-rates/new.test.tsx` | layout `catalog`                                          |
+| `routes/_authenticated/companies/$companyId.test.tsx`, `companies/new.test.tsx`                                                 | layout `companies`                                        |
+| `routes/_authenticated/customers/new.test.tsx`                                                                                  | layout `customers`                                        |
+| `routes/_authenticated/orders/$orderId/index.test.tsx`, `orders/$orderId/editar.test.tsx`                                       | layout `orders`                                           |
+| `routes/_authenticated/quotes/$quoteId/index.test.tsx`, `quotes/$quoteId/editar.test.tsx`                                       | layout `quotes` y `useQuoteOrder`                         |
+| `routes/_authenticated/quotes/$quoteId/order.test.tsx`                                                                          | layout `quotes` y el gate de `orders`                     |
+| `routes/_authenticated/reports/reports-routes.test.tsx`                                                                         | reportes envueltos                                        |
+| `routes/_authenticated/settings/index.test.tsx`, `settings/orders-export-columns.test.tsx`                                      | sección «Excel de pedidos» y su gate                      |
+| `components/app-shell/app-shell.test.tsx`                                                                                       | `/customers` y `/companies` (`:195,285,349,406`)          |
+| `features/account/components/applied-theme.test.tsx`                                                                            | `/quotes` (`:89`)                                         |
+| `routes/index.test.tsx`                                                                                                         | `/`, que aterriza en `/quotes` o `/orders` (`:62,72,107`) |
 
 Las demás pruebas con `renderRoute` montan `/profile`, `/login`, `/register`, invitaciones o la
 raíz sin aterrizar en un módulo, y no pasan por ningún gate.
@@ -942,6 +983,7 @@ caso de carga (`:79`), y con los módulos cargando no se monta ninguna tarjeta. 
 mockea `useTenantModules` y `usePermissions`, y la segunda `useTenantModules`, con `vi.mock`,
 como ya mockean `use-quotes-tenant` (`use-quote-order.test.tsx:10-12`) y `use-active-tenant`
 (`customer-history-sections.test.tsx:19`).
+
 - `settings/index.test.tsx`: sin `orders` no se ve «Columnas del Excel de pedidos»; con `orders`,
   o con módulos cargando o en error, sí.
 - `landing.test.ts`: sin cotizaciones ni pedidos → primer ítem del sidebar (`/customers` antes que
@@ -1009,8 +1051,7 @@ Todas para revisar. Las primeras once vienen del brief del orquestador; las marc
     clave desconocida.
 30. `TenantModule.TenantId` es el value object `TenantId`, con relación EF a `Tenant` sin
     navegación, para que EF ordene los `INSERT`.
-31. Un filtro explícito por un tipo de dueño de un módulo apagado devuelve una página vacía, no un
-    403.
+31. Un filtro explícito por un tipo de dueño de un módulo apagado devuelve una página vacía, no un 403.
 32. `ModuleGate` vive a nivel de ruta (layouts por carpeta de módulo) para que las consultas de
     las rutas hijas no se disparen.
 33. (revisión 2) Se quita `Entitlements:DefaultModules` (YAGNI): queda sólo el interruptor
