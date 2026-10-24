@@ -14,6 +14,11 @@ namespace Modules.Reporting.Application;
 /// que mostrar a esta persona". Nulo cuando la fila de usuario no está.
 ///
 /// <c>ClientName</c> sí es un nombre real: sale de <c>Customer.Name</c>.
+///
+/// Desde el spec 2026-10-23 una fila también puede ser una **venta POS** (<c>Source = "Pos"</c>):
+/// <c>OrderNumber</c> es el <c>POS-…</c> de la venta, <c>ConvertedAt</c> su creación,
+/// <c>AdvisorId</c> el cajero, <c>Status</c> <c>Completed</c> o <c>Voided</c>,
+/// <c>PaymentStatus</c> siempre <c>FullPaymentReceived</c> y el envío en cero.
 /// </summary>
 public sealed record OrdersReportItemDto(
     Guid OrderId,
@@ -24,7 +29,10 @@ public sealed record OrdersReportItemDto(
     DateTimeOffset ConvertedAt,
     Guid AdvisorId,
     string? AdvisorName,
-    Guid ClientId,
+    /// <summary>Nulo sólo en una venta POS a consumidor final, que no tiene ficha de cliente: inventar un id
+    /// sería peor (spec 2026-10-23 §1). Ahí <c>ClientName</c> es el nombre que guardó la venta
+    /// («Consumidor final») y <c>ClientCuc</c> es nulo.</summary>
+    Guid? ClientId,
     string? ClientName,
     string? ClientCuc,
     string Status,

@@ -120,7 +120,7 @@ public sealed class OrdersReportHandlerTests
         await handler.HandleAsync(
             new ListOrdersReportQuery(
                 new OrdersReportFilter(
-                    Tenant, new DateOnly(2026, 12, 1), new DateOnly(2026, 12, 31), null, null, null),
+                    Tenant, new DateOnly(2026, 12, 1), new DateOnly(2026, 12, 31), null, null, null, null),
                 1,
                 50),
             TestContext.Current.CancellationToken);
@@ -132,5 +132,5 @@ public sealed class OrdersReportHandlerTests
     }
 
     private static OrdersReportFilter Filter(string? paymentStatus = null) =>
-        new(Tenant, From: null, To: null, AdvisorId: null, ClientId: null, paymentStatus);
+        new(Tenant, From: null, To: null, AdvisorId: null, ClientId: null, paymentStatus, Source: null);
 }

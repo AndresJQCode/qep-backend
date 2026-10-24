@@ -14,6 +14,12 @@ namespace Modules.Reporting.Application;
 /// caminos compartan <see cref="OrdersReportFilter"/> es lo que hace imposible que el panel y la
 /// tabla hablen de conjuntos distintos.
 ///
+/// <para>**Desde el spec 2026-10-23 cuenta pedidos y ventas POS.** <c>OrderCount</c>, los importes,
+/// <c>Monthly</c>, <c>ByAdvisor</c> (el cajero entra como asesor) y <c>Previous</c> suman las dos
+/// fuentes, sin lo anulado: ni el pedido <c>Cancelled</c> ni la venta <c>Voided</c> cuentan. El
+/// nombre <c>OrderCount</c> se mantiene porque es el contrato con el frontend; léase «ventas del
+/// periodo». <c>BySource</c> dice cuánto aporta cada origen, y <c>WithoutClient</c> explica lo que
+/// <c>ByClient</c> no cubre.</para>
 /// <para>Subtotals, TaxAmounts and Totals carry one amount per currency with orders in the
 /// window (spec, Reports). The counts stay single numbers: an order is one order in any
 /// currency.</para>
@@ -32,13 +38,42 @@ public sealed record OrdersReportSummaryDto(
     IReadOnlyList<ReportMonthlyPointDto> Monthly,
     IReadOnlyList<ReportRankEntryDto> ByAdvisor,
     IReadOnlyList<ReportRankEntryDto> ByClient,
+    IReadOnlyList<ReportSourceSliceDto> BySource,
+    ReportWithoutClientDto WithoutClient,
     ReportComparisonDto? Previous);
+
+/// <summary>
+/// Un origen del reporte de pedidos (<c>Quotation</c>, <c>Manual</c>, <c>Shopify</c> o <c>Pos</c>)
+/// con su conteo y su total por moneda, sin lo anulado.
+///
+/// **Vienen las cuatro siempre, en ese orden fijo, incluso en cero** —también con el filtro
+/// <c>source</c> puesto, donde las otras tres vienen en cero—: un origen que desaparece obliga a
+/// la pantalla a conocer el enum del backend para dibujar el que falta (mismo criterio que
+/// <see cref="ReportStatusSliceDto"/>). El nombre viaja como el del enum; la etiqueta la pone el
+/// frontend.
+/// </summary>
+public sealed record ReportSourceSliceDto(string Source, int Count, IReadOnlyList<ReportMoneyDto> Totals);
+
+/// <summary>
+/// Las ventas POS a **consumidor final**, que no tienen ficha de cliente, con su conteo y total
+/// por moneda. Viene siempre, en cero si no hay.
+///
+/// Existe porque no caben en el ranking por cliente. Como una entrada más, «Consumidor final» lo
+/// encabezaría en todo tenant con mostrador y taparía a los clientes reales; dentro de «Otros», el
+/// ranking no cerraría con menos de cinco clientes, porque <c>ReportRankFolding</c> no arma el
+/// pliegue en ese caso. Por eso <c>ByClient</c> + <c>WithoutClient</c> = total: el resto se explica
+/// con un campo y no con una omisión.
+/// </summary>
+public sealed record ReportWithoutClientDto(int Count, IReadOnlyList<ReportMoneyDto> Totals);
 
 /// <summary>
 /// Un mes de la serie, con su año: sin el año, doce puntos de un rango de dos años se pisan de a
 /// pares y la serie miente.
 ///
-/// **Sólo vienen los meses con pedidos.** Rellenar los vacíos con cero es una decisión de
+/// <c>Count</c> y <c>Totals</c> son de pedidos y ventas POS del mes del tenant, sin lo anulado
+/// (spec 2026-10-23 §3): la venta de las 23:00 del último día en Bogotá es de ese mes.
+///
+/// **Sólo vienen los meses con pedidos o ventas.** Rellenar los vacíos con cero es una decisión de
 /// presentación —depende del rango que el eje dibuje— y se toma en el frontend, no acá.
 /// </summary>
 public sealed record ReportMonthlyPointDto(int Year, int Month, int Count, IReadOnlyList<ReportMoneyDto> Totals);
@@ -90,7 +125,9 @@ public sealed record OrdersReportAggregate(
     IReadOnlyList<ReportMoneyDto> Totals,
     IReadOnlyList<ReportMonthlyPointDto> Monthly,
     IReadOnlyList<ReportRankEntryDto> ByAdvisor,
-    IReadOnlyList<ReportRankEntryDto> ByClient);
+    IReadOnlyList<ReportRankEntryDto> ByClient,
+    IReadOnlyList<ReportSourceSliceDto> BySource,
+    ReportWithoutClientDto WithoutClient);
 
 /// <summary>Los topes del resumen, que los fija el handler y nunca el llamador.</summary>
 public static class ReportSummaryRules

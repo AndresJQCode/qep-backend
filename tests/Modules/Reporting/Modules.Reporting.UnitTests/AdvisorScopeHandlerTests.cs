@@ -246,7 +246,7 @@ public sealed class AdvisorScopeHandlerTests
         Guid? advisorId,
         DateOnly? from = null,
         DateOnly? to = null) =>
-        new(Tenant, from, to, advisorId, ClientId: null, PaymentStatus: null);
+        new(Tenant, from, to, advisorId, ClientId: null, PaymentStatus: null, Source: null);
 
     private static QuotationsReportFilter QuotationsFilter(
         Guid? advisorId,
