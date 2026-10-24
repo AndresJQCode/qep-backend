@@ -264,8 +264,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   reservada: antes de desplegar se comprueba que ningún tenant tenga un rol custom con esa clave
   (spec 2026-10-07, «Despliegue»).
 - **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
-  Los diecisiete módulos construidos son Audit, Authorization, Catalog, Companies, Customers, Geography,
-  Identity, Integrations, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage y Tenancy — cada
+  Los dieciocho módulos construidos son Audit, Authorization, Catalog, Companies, Customers, Geography,
+  Identity, Integrations, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Suppliers y Tenancy — cada
   uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/`. `Platform` también existe, pero sin
   `PlatformLayerTests` (H26). Messaging no referencia
   Integrations, Customers ni Storage: lo que necesita entra por `IMessagingConnectionDirectory`,
