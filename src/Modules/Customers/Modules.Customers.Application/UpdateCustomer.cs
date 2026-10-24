@@ -129,7 +129,7 @@ public sealed class UpdateCustomerHandler(
                 customer.Id.ToString(),
                 "success",
                 now);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
+            await SaveAsync(customer, command.TenantId, cancellationToken);
 
             return await customer.ToDtoAsync(
                 geographyLookup, classificationRepository, tagRepository, cancellationToken);
@@ -172,9 +172,23 @@ public sealed class UpdateCustomerHandler(
             customer.Id.ToString(),
             "success",
             now);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await SaveAsync(customer, command.TenantId, cancellationToken);
 
         return await customer.ToDtoAsync(
             geographyLookup, classificationRepository, tagRepository, cancellationToken);
+    }
+
+    // Completar y editar guardan por separado y los dos pueden chocar con el indice de la identificacion: en ambos el
+    // dueño se relee despues del indice (spec clientes duplicados §3.1) y el 422 lo lleva en `existing`.
+    private async Task SaveAsync(Customer customer, Guid tenantId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (CustomersDomainException e) when (e.Code == CustomerIdentificationTaken.Code)
+        {
+            throw await CustomerIdentificationTaken.ResolveAsync(repository, tenantId, customer, e, cancellationToken);
+        }
     }
 }

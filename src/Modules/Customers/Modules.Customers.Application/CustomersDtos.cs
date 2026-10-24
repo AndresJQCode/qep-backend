@@ -314,3 +314,18 @@ public sealed record ClientClassificationsResponse(
 public sealed record CreateClientClassificationRequest(string Name, string Prefix);
 
 public sealed record UpdateClientClassificationRequest(string Name, string Prefix);
+
+/// <summary>
+/// El dueño de un documento repetido, en el <c>existing</c> del 422 <c>customers.customer.identification_taken</c>. Tiene la
+/// forma de <c>PosCustomerOptionResponse</c> más <c>Cuc</c>: la pantalla ofrece ir al cliente que ya tiene el documento y,
+/// si <c>IsActive</c> es false, explica por qué no se puede usar. <c>Cuc</c> es <c>null</c> en un cliente incompleto (sin
+/// CUC aún) y <c>IsComplete</c> dice si falta completarlo; sin esos dos campos la pantalla tendría que pedir la ficha.
+/// </summary>
+public sealed record CustomerIdentificationOwnerDto(
+    Guid Id,
+    string Name,
+    string IdentificationType,
+    string IdentificationNumber,
+    string? Cuc,
+    bool IsComplete,
+    bool IsActive);
