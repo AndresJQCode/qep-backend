@@ -35,6 +35,10 @@
     <ProjectReference Include="..\..\..\src\Modules\Companies\Modules.Companies.Application\Modules.Companies.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Companies\Modules.Companies.Domain\Modules.Companies.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Companies\Modules.Companies.Infrastructure\Modules.Companies.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Suppliers\Modules.Suppliers.Api\Modules.Suppliers.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Suppliers\Modules.Suppliers.Application\Modules.Suppliers.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Suppliers\Modules.Suppliers.Domain\Modules.Suppliers.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Suppliers\Modules.Suppliers.Infrastructure\Modules.Suppliers.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Pos\Modules.Pos.Api\Modules.Pos.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Pos\Modules.Pos.Application\Modules.Pos.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Pos\Modules.Pos.Domain\Modules.Pos.Domain.csproj" />

@@ -143,6 +143,12 @@
   <Folder Name="/tests/Modules/Authorization/">
     <Project Path="tests/Modules/Authorization/Modules.Authorization.UnitTests/Modules.Authorization.UnitTests.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Suppliers/">
+    <Project Path="src/Modules/Suppliers/Modules.Suppliers.Api/Modules.Suppliers.Api.csproj" />
+    <Project Path="src/Modules/Suppliers/Modules.Suppliers.Application/Modules.Suppliers.Application.csproj" />
+    <Project Path="src/Modules/Suppliers/Modules.Suppliers.Domain/Modules.Suppliers.Domain.csproj" />
+    <Project Path="src/Modules/Suppliers/Modules.Suppliers.Infrastructure/Modules.Suppliers.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/tests/Modules/Catalog/">
     <Project Path="tests/Modules/Catalog/Modules.Catalog.UnitTests/Modules.Catalog.UnitTests.csproj" />
     <Project Path="tests/Modules/Catalog/Modules.Catalog.IntegrationTests/Modules.Catalog.IntegrationTests.csproj" />
@@ -150,6 +156,9 @@
   <Folder Name="/tests/Modules/Companies/">
     <Project Path="tests/Modules/Companies/Modules.Companies.UnitTests/Modules.Companies.UnitTests.csproj" />
     <Project Path="tests/Modules/Companies/Modules.Companies.IntegrationTests/Modules.Companies.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Suppliers/">
+    <Project Path="tests/Modules/Suppliers/Modules.Suppliers.UnitTests/Modules.Suppliers.UnitTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/Customers/">
     <Project Path="tests/Modules/Customers/Modules.Customers.UnitTests/Modules.Customers.UnitTests.csproj" />
