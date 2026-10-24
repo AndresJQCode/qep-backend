@@ -88,7 +88,8 @@ internal sealed class FakeOrdersReportSource : IOrdersReportSource
     public int? LastPageSize { get; private set; }
 
     /// <summary>Lo que devuelve el primer <c>SummarizeAsync</c>: el periodo pedido.</summary>
-    public OrdersReportAggregate Aggregate { get; set; } = new(0, [], [], [], [], [], [], [], []);
+    public OrdersReportAggregate Aggregate { get; set; } =
+        new(0, [], [], [], [], [], [], [], [], [], new ReportWithoutClientDto(0, []));
 
     /// <summary>
     /// Lo que devuelve el segundo: la ventana anterior. Nulo significa que la prueba no espera

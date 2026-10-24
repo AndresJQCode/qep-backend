@@ -90,8 +90,23 @@ internal sealed class OrdersReportSource(
         var orderCount = byCurrency.Sum(row => row.Count);
         if (orderCount == 0)
         {
-            return new OrdersReportAggregate(0, [], [], [], [], [], [], [], []);
+            return new OrdersReportAggregate(
+                0, [], [], [], [], [], [], [], [], CompleteBySource([]), new ReportWithoutClientDto(0, []));
         }
+
+        var sourceRows = await orders
+            .GroupBy(row => new { row.Source, row.Currency })
+            .Select(group => new
+            {
+                group.Key.Source,
+                group.Key.Currency,
+                Count = group.Count(),
+                Total = group.Sum(row => row.Total),
+            })
+            .ToListAsync(cancellationToken);
+        var bySource = CompleteBySource(sourceRows
+            .Select(row => (row.Source.ToString(), row.Currency, row.Count, row.Total))
+            .ToArray());
 
         var subtotals = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.Subtotal)));
         var taxAmounts = ReportMoney.From(byCurrency.Select(row => (row.Currency, row.TaxAmount)));
@@ -251,7 +266,17 @@ internal sealed class OrdersReportSource(
         }
 
         return new OrdersReportAggregate(
-            orderCount, subtotals, taxAmounts, freightSubtotals, freightTaxAmounts, totals, monthly, byAdvisor, byClient);
+            orderCount,
+            subtotals,
+            taxAmounts,
+            freightSubtotals,
+            freightTaxAmounts,
+            totals,
+            monthly,
+            byAdvisor,
+            byClient,
+            bySource,
+            new ReportWithoutClientDto(0, []));
     }
 
     /// <summary>
@@ -279,6 +304,19 @@ internal sealed class OrdersReportSource(
         {
             var mapped = MapPaymentStatus(paymentStatus);
             orders = orders.Where(order => order.PaymentStatus == mapped);
+        }
+
+        if (criteria.Source is { } source)
+        {
+            if (MapSource(source) is { } mapped)
+            {
+                orders = orders.Where(order => order.Source == mapped);
+            }
+            else
+            {
+                // Pos no es un pedido: no hay ninguno de ese origen en quotations.orders.
+                orders = orders.Where(_ => false);
+            }
         }
 
         if (criteria.AdvisorId is { } advisorId)
@@ -391,6 +429,31 @@ internal sealed class OrdersReportSource(
         OrderPaymentStatusFilter.PaymentPending => OrderPaymentStatus.PaymentPending,
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown payment status.")
     };
+
+    // Mismo criterio que MapPaymentStatus. Pos no tiene equivalente en OrderSource: es una venta.
+    private static OrderSource? MapSource(OrderSourceFilter value) => value switch
+    {
+        OrderSourceFilter.Quotation => OrderSource.Quotation,
+        OrderSourceFilter.Manual => OrderSource.Manual,
+        OrderSourceFilter.Shopify => OrderSource.Shopify,
+        OrderSourceFilter.Pos => null,
+        _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown order source.")
+    };
+
+    // Las cuatro entradas siempre, en el orden del enum, con cero donde no hubo nada.
+    private static ReportSourceSliceDto[] CompleteBySource(
+        IReadOnlyList<(string Source, string Currency, int Count, decimal Total)> rows) =>
+        Enum.GetValues<OrderSourceFilter>()
+            .Select(source =>
+            {
+                var name = source.ToString();
+                var matching = rows.Where(row => row.Source == name).ToArray();
+                return new ReportSourceSliceDto(
+                    name,
+                    matching.Sum(row => row.Count),
+                    ReportMoney.From(matching.Select(row => (row.Currency, row.Total))));
+            })
+            .ToArray();
 
     /// <summary>La fila cruda del pedido, con los tipos del dominio de <c>quotations</c>: los
     /// <c>.Value</c> de los identificadores se desenvuelven ya en memoria, porque EF no traduce

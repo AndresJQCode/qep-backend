@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Modules.Quotations.Application;
 using static Modules.Reporting.IntegrationTests.ReportingApiHarness;
 
@@ -398,5 +399,102 @@ public sealed class OrdersReportSummaryApiTests
         Assert.Equal(12605.04m, row.FreightSubtotal);
         Assert.Equal(2394.96m, row.FreightTaxAmount);
         Assert.Equal(row.Total, row.Subtotal + row.TaxAmount + row.FreightSubtotal + row.FreightTaxAmount);
+    }
+
+    /// <summary>
+    /// Spec 2026-10-23 §2: <c>bySource</c> trae siempre los cuatro orígenes, en orden fijo e
+    /// incluso en cero, y <c>withoutClient</c> viene aunque no haya ventas a consumidor final.
+    /// </summary>
+    [Fact]
+    public async Task BySourceAlwaysCarriesTheFourSourcesInOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
+        var manual = await CreateManualOrderAsync(client, tenant.TenantId);
+
+        var summary = await client.GetFromJsonAsync<OrdersReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos"], summary.BySource.Select(slice => slice.Source));
+        Assert.Equal([1, 1, 0, 0], summary.BySource.Select(slice => slice.Count));
+        Assert.Equal([new MoneyAmount("COP", quotation.Total)], summary.BySource[0].Totals);
+        Assert.Equal([new MoneyAmount("COP", manual.Total)], summary.BySource[1].Totals);
+        Assert.Empty(summary.BySource[2].Totals);
+        Assert.Empty(summary.BySource[3].Totals);
+        Assert.Equal(0, summary.WithoutClient.Count);
+        Assert.Empty(summary.WithoutClient.Totals);
+    }
+
+    /// <summary>Un tenant sin pedidos también trae los cuatro orígenes en cero: la salida temprana
+    /// del cero no puede saltarse la regla de colecciones fijas.</summary>
+    [Fact]
+    public async Task BySourceComesCompleteEvenWithoutOrders()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+
+        var summary = await client.GetFromJsonAsync<OrdersReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos"], summary.BySource.Select(slice => slice.Source));
+        Assert.All(summary.BySource, slice => Assert.Equal(0, slice.Count));
+        Assert.NotNull(summary.WithoutClient);
+        Assert.Equal(0, summary.WithoutClient.Count);
+    }
+
+    [Fact]
+    public async Task SourceFilterNarrowsTheWholeSummary()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
+        var manual = await CreateManualOrderAsync(client, tenant.TenantId);
+
+        var summary = await client.GetFromJsonAsync<OrdersReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary?source=Manual", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(1, summary.OrderCount);
+        Assert.Equal([new MoneyAmount("COP", manual.Total)], summary.Totals);
+        Assert.Equal(0, summary.BySource[0].Count);
+        Assert.Equal(1, summary.BySource[1].Count);
+    }
+
+    /// <summary>El contrato viaja en PascalCase: <c>pos</c> no es <c>Pos</c>. 422 con el campo en
+    /// el mapa <c>errors</c>, para que el frontend marque el control.</summary>
+    [Fact]
+    public async Task UnknownSourceIs422WithTheField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+
+        var response = await client.GetAsync(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary?source=pos",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("validation.failed", body.RootElement.GetProperty("code").GetString());
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Source", out _));
     }
 }
