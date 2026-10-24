@@ -29,16 +29,22 @@ public sealed record CreateChatbotCommand(
     Guid TenantId, string Name, string Description, string Trigger, IReadOnlyList<string> Keywords, IReadOnlyList<Guid> ConnectionIds,
     ChatbotSource Source) : ICommand<ChatbotEditorDto>;
 
+/// <summary><paramref name="TakeOverConnectionIds"/>: conexiones que se le quitan a otro chatbot publicado; sólo rige si este ya está publicado,
+/// en un <c>Draft</c> se ignora (spec 2026-10-23 D-X1, D-X4).</summary>
 public sealed record UpdateChatbotCommand(
     Guid TenantId, Guid ChatbotId, long Version, string Name, string Description, string Trigger, IReadOnlyList<string> Keywords,
-    string RestartKeyword, int MaxAttempts, IReadOnlyList<Guid> ConnectionIds) : ICommand<ChatbotEditorDto>;
+    string RestartKeyword, int MaxAttempts, IReadOnlyList<Guid> ConnectionIds, IReadOnlyList<Guid> TakeOverConnectionIds)
+    : ICommand<ChatbotEditorDto>;
 
 public sealed record SaveChatbotDraftCommand(Guid TenantId, Guid ChatbotId, long Version, JsonElement Flow, JsonElement Layout)
     : ICommand<DraftSavedDto>;
 
 public sealed record ValidateChatbotQuery(Guid TenantId, Guid ChatbotId) : IQuery<IReadOnlyList<FlowIssueDto>>;
 
-public sealed record PublishChatbotCommand(Guid TenantId, Guid ChatbotId, long Version) : ICommand<ChatbotEditorDto>;
+/// <summary><paramref name="TakeOverConnectionIds"/>: conexiones que el chatbot le quita a otro publicado al activarse (spec 2026-10-23
+/// D-X1). Sin cuerpo en el endpoint llega vacía; el handler la normaliza con <c>Distinct()</c> en vez de un validador.</summary>
+public sealed record PublishChatbotCommand(Guid TenantId, Guid ChatbotId, long Version, IReadOnlyList<Guid> TakeOverConnectionIds)
+    : ICommand<ChatbotEditorDto>;
 
 public sealed record PauseChatbotCommand(Guid TenantId, Guid ChatbotId, long Version) : ICommand<ChatbotEditorDto>;
 
@@ -183,6 +189,10 @@ public sealed class UpdateChatbotValidator : AbstractValidator<UpdateChatbotComm
         RuleFor(command => command.RestartKeyword).NotEmpty().MaximumLength(Chatbot.RestartKeywordMaxLength);
         RuleFor(command => command.MaxAttempts).InclusiveBetween(Chatbot.MinAttempts, Chatbot.MaxAttemptsLimit);
         ChatbotRules.ConnectionIds(RuleFor(command => command.ConnectionIds));
+        // Mismo tope que ConnectionIds (spec 2026-10-23 D-X1): no se puede quitar más de lo que un chatbot puede tener.
+        RuleFor(command => command.TakeOverConnectionIds).NotNull()
+            .Must(ids => ids.Count <= ChatbotLimits.MaxConnections)
+            .WithMessage($"At most {ChatbotLimits.MaxConnections} connections can be taken over.");
     }
 }
 
@@ -292,13 +302,58 @@ internal static class ChatbotConnectionCheck
         }
     }
 
+    /// <summary>Spec 2026-10-23 D-X1..D-X3: a cada conexión del chatbot que esté en la lista y que atienda otro chatbot, se la quita a ese
+    /// chatbot en esta misma unidad de trabajo, con un <c>connection_released</c> por conexión (D-X6). Lo que no está ocupado por otro, o no
+    /// está en las conexiones del chatbot, se ignora. El índice sigue decidiendo al guardar (D-X2).</summary>
+    public static async Task TakeOverAsync(
+        IChatbotRepository chatbots, IAutomationsAuditRecorder audit, Guid actorId, Chatbot chatbot,
+        IReadOnlyList<Guid> takeOverConnectionIds, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        // El conjunto es la normalización con Distinct() que promete el comando: un id repetido no libera ni audita dos veces.
+        var requested = takeOverConnectionIds.ToHashSet();
+        var wanted = chatbot.Connections.Select(connection => connection.ConnectionId).Where(requested.Contains).ToHashSet();
+        if (wanted.Count == 0)
+        {
+            return;
+        }
+
+        // Una sola lectura para todas las conexiones; agrupar por chatbot carga cada agregado una vez aunque pierda varias. Las filas del
+        // propio chatbot (ya publicado) quedan fuera: tomar lo que uno ya atiende no cambia nada (D-X3).
+        var holders = (await chatbots.ListServingConnectionsAsync(chatbot.TenantId, cancellationToken))
+            .Where(serving => serving.ChatbotId != chatbot.Id && wanted.Contains(serving.ConnectionId))
+            .GroupBy(serving => serving.ChatbotId);
+        foreach (var served in holders)
+        {
+            // Borrado entre la lectura y ahora: su fila ya no ocupa, y si otro la tomó mientras tanto el índice da el 409 al guardar.
+            var holder = await chatbots.FindAsync(chatbot.TenantId, served.Key, cancellationToken);
+            if (holder is null)
+            {
+                continue;
+            }
+
+            foreach (var serving in served)
+            {
+                // La version del holder es token de concurrencia: si alguien lo edita entre la lectura y el guardado, quien toma recibe 412
+                // concurrency.conflict y no 409 (spec 2026-10-23 D-X11 lo acepta; reintentar funciona).
+                holder.ReleaseConnection(serving.ConnectionId, now);
+                audit.Record(
+                    chatbot.TenantId, actorId, false, AutomationsAuditActions.ChatbotConnectionReleased, AutomationsAuditActions.ResourceChatbot,
+                    holder.Id, now);
+            }
+        }
+    }
+
     /// <summary>
     /// D-C4: el 409 <c>connection_taken</c> lo decide el índice parcial (<c>IX_chatbot_connections_active</c>) al guardar, no un chequeo
     /// previo: dos publicaciones simultáneas lo pasarían las dos. Sólo cuando choca se busca quién la ocupa, para que el mensaje lo
     /// nombre («con el nombre del que la ocupa»); la publicación que ganó ya está confirmada, así que la proyección la ve.
+    /// Con una lista parcial (spec 2026-10-23 D-X1) el 409 viene de una conexión que el usuario no autorizó tomar, así que se nombra al
+    /// que ocupa una conexión fuera de <paramref name="takeOverConnectionIds"/>; sólo si no hay, a cualquiera de las propias (una carrera
+    /// sobre una conexión de la lista), para no perder el nombre.
     /// </summary>
     public static async Task SaveNamingTheHolderAsync(
-        IAutomationsUnitOfWork unitOfWork, IChatbotRepository chatbots, Chatbot chatbot, CancellationToken cancellationToken)
+        IAutomationsUnitOfWork unitOfWork, IChatbotRepository chatbots, Chatbot chatbot, IReadOnlySet<Guid> takeOverConnectionIds,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -307,8 +362,10 @@ internal static class ChatbotConnectionCheck
         catch (ResourceConflictException exception) when (exception.Code == AutomationsErrorCodes.ChatbotConnectionTaken)
         {
             var own = chatbot.Connections.Select(connection => connection.ConnectionId).ToHashSet();
-            var holder = (await chatbots.ListServingConnectionsAsync(chatbot.TenantId, cancellationToken))
-                .FirstOrDefault(serving => serving.ChatbotId != chatbot.Id && own.Contains(serving.ConnectionId));
+            var holders = (await chatbots.ListServingConnectionsAsync(chatbot.TenantId, cancellationToken))
+                .Where(serving => serving.ChatbotId != chatbot.Id && own.Contains(serving.ConnectionId))
+                .ToList();
+            var holder = holders.FirstOrDefault(serving => !takeOverConnectionIds.Contains(serving.ConnectionId)) ?? holders.FirstOrDefault();
             if (holder is null)
             {
                 throw;
@@ -423,7 +480,9 @@ public sealed class CreateChatbotHandler(
 }
 
 /// <summary>Nombre, descripción, disparador, palabras, reinicio, intentos y conexiones, todo junto (§4.4). En un chatbot publicado las
-/// conexiones nuevas nacen ocupadas, y si otro activo ya tiene una el índice responde 409 <c>connection_taken</c>.</summary>
+/// conexiones nuevas nacen ocupadas, y si otro activo ya tiene una el índice responde 409 <c>connection_taken</c>, salvo que esté en
+/// <c>TakeOverConnectionIds</c>: ésa se le quita al otro (spec 2026-10-23 D-X1); lo que no está ocupado o no está en las conexiones
+/// del chatbot se ignora, y en un <c>Draft</c> la lista se ignora entera (D-X4: no ocupa, el traspaso se confirma al publicar).</summary>
 public sealed class UpdateChatbotHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
@@ -451,8 +510,16 @@ public sealed class UpdateChatbotHandler(
         chatbot.Rename(command.Name, command.Description, now);
         chatbot.UpdateSettings(Enum.Parse<ChatbotTrigger>(command.Trigger), command.Keywords, command.RestartKeyword, command.MaxAttempts, now);
         chatbot.SetConnections(command.ConnectionIds, now);
+        // D-X4: un borrador no ocupa (D-C13), así que no hay nada que quitarle a nadie; el traspaso se confirma al publicar.
+        if (chatbot.Status != ChatbotStatus.Draft)
+        {
+            await ChatbotConnectionCheck.TakeOverAsync(
+                chatbots, audit, executionContext.SubjectId, chatbot, command.TakeOverConnectionIds, now, cancellationToken);
+        }
+
         audit.Record(command.TenantId, executionContext.SubjectId, false, AutomationsAuditActions.ChatbotUpdated, AutomationsAuditActions.ResourceChatbot, chatbot.Id, now);
-        await ChatbotConnectionCheck.SaveNamingTheHolderAsync(unitOfWork, chatbots, chatbot, cancellationToken);
+        await ChatbotConnectionCheck.SaveNamingTheHolderAsync(
+            unitOfWork, chatbots, chatbot, command.TakeOverConnectionIds.ToHashSet(), cancellationToken);
 
         return await builder.BuildAsync(chatbot, tenantConnections, cancellationToken);
     }
@@ -532,7 +599,7 @@ public sealed class ValidateChatbotHandler(
 /// D-C3: valida el borrador guardado con el contexto real (el mismo camino que <c>/validate</c>); un error responde 422
 /// <c>automations.chatbot.invalid</c> con los errores bajo <c>errors.flow</c> como «código: mensaje». Los avisos no bloquean ni viajan
 /// ahí: el editor ya los tiene en <c>issues</c>. D-C13: publicar ocupa las conexiones del chatbot y el 409 <c>connection_taken</c> lo da
-/// el índice al guardar.
+/// el índice al guardar; las de <c>TakeOverConnectionIds</c> se le quitan antes a quien las tenga (spec 2026-10-23 D-X1).
 /// </summary>
 public sealed class PublishChatbotHandler(
     IExecutionContext executionContext,
@@ -569,8 +636,11 @@ public sealed class PublishChatbotHandler(
         var now = clock.UtcNow;
         // El agregado vuelve a exigir cero errores: es la regla, y esto sólo adelanta el 422 con la lista.
         chatbot.Publish([.. issues.Select(ToDomain)], by, now);
+        await ChatbotConnectionCheck.TakeOverAsync(
+            chatbots, audit, executionContext.SubjectId, chatbot, command.TakeOverConnectionIds, now, cancellationToken);
         audit.Record(command.TenantId, executionContext.SubjectId, false, AutomationsAuditActions.ChatbotPublished, AutomationsAuditActions.ResourceChatbot, chatbot.Id, now);
-        await ChatbotConnectionCheck.SaveNamingTheHolderAsync(unitOfWork, chatbots, chatbot, cancellationToken);
+        await ChatbotConnectionCheck.SaveNamingTheHolderAsync(
+            unitOfWork, chatbots, chatbot, command.TakeOverConnectionIds.ToHashSet(), cancellationToken);
 
         return await builder.BuildAsync(chatbot, tenantConnections, cancellationToken);
     }

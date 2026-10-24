@@ -366,6 +366,8 @@ public static class AutomationsAuditActions
     public const string ChatbotUpdated = "automations.chatbot.updated";
     public const string ChatbotDraftSaved = "automations.chatbot.draft_saved";
     public const string ChatbotPublished = "automations.chatbot.published";
+    /// <summary>Una conexión pasó de un chatbot publicado a otro (spec 2026-10-23 D-X6).</summary>
+    public const string ChatbotConnectionReleased = "automations.chatbot.connection_released";
     public const string ChatbotPaused = "automations.chatbot.paused";
     public const string ChatbotResumed = "automations.chatbot.resumed";
     public const string ChatbotDeleted = "automations.chatbot.deleted";
