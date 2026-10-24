@@ -102,15 +102,13 @@ más `cuc`, que el POS no trae; el parser del frontend se generaliza para los do
   `IHasProblemExtensions`, como `PosCustomerIdentificationTakenException` (`PosCustomers.cs`). El
   record del `existing` es nuevo en `CustomersDtos.cs`; `cuc` es lo único que agrega sobre el del POS
   (puede ser `null` en un incompleto).
-- **Pre-chequeo** en `CreateCustomer` y `UpdateCustomer` con `FindExistingIdentificationsAsync`
-  antes de guardar, excluyendo al propio cliente en la edición. Incluye inactivos e incompletos
-  (los incompletos del POS tienen documento; CLAUDE.md lo advierte).
-- **Carrera:** si el pre-chequeo pasa y el índice igual salta, `CustomersUnitOfWork` sigue lanzando
-  el `CustomersDomainException` de hoy. El handler lo atrapa, relee al dueño con
-  `FindExistingIdentificationsAsync` y lanza el nuevo con `existing` (mismo patrón que
-  `CustomerProvisioning.cs:166-177`). Si el dueño no se puede releer, sale el 422 de hoy sin
-  `existing`: el frontend lo tiene que tolerar.
-- La edición sólo hace el chequeo si el tipo o el número cambiaron; si no, no consulta.
+- **Sin pre-chequeo.** `CreateCustomer.cs` lo descarta a propósito («el único árbitro real son los
+  índices»), y el código manda. El índice sigue decidiendo: `CustomersUnitOfWork` lanza el
+  `CustomersDomainException` de hoy, y `CreateCustomer` y `UpdateCustomer` lo atrapan alrededor de
+  sus `SaveChangesAsync`, releen al dueño con `FindExistingIdentificationsAsync` (incluye inactivos
+  e incompletos: los del POS tienen documento) y lanzan el nuevo con `existing`, el mismo patrón
+  que `CustomerProvisioning.cs:166-177`. Si el dueño no se puede releer (lo borraron en el medio),
+  sale el 422 de hoy sin `existing`: el frontend lo tiene que tolerar.
 
 ### 3.2 R2: consulta de coincidencias de documento
 
@@ -214,9 +212,13 @@ GET /api/v1/tenants/{tenantId}/customers/anomalies?kind={kind}&page={p}&pageSize
 
 - Son los clientes del tenant con el mismo `phone_e164` que el `wa_id` de la conversación, **sin**
   el `customer_id` de la conversación, ordenados por `created_at, id`, con tope de 10.
-- Sólo en `GET /messaging/conversations/{conversationId}` (el encabezado). El listado de la bandeja
-  la manda vacía: calcularla por página no la necesita ninguna fila (D-D6). Que el mismo DTO lleve
-  una lista vacía en el listado se anota en el DTO, para que nadie la «arregle».
+- En **toda respuesta de una sola conversación**: el detalle `GET /messaging/conversations/{conversationId}`,
+  el `PUT …/customer` de §4.2 y las transiciones que devuelven el resumen (tomar, transferir,
+  liberar, resolver, reabrir, pausar y devolver el asistente). El frontend escribe esas respuestas
+  en la caché del detalle (`patchConversationCaches`); si vinieran vacías, la línea del encabezado
+  se apagaría hasta el siguiente GET. El listado de la bandeja la manda vacía: calcularla por página
+  no la necesita ninguna fila (D-D6). Que el mismo DTO lleve una lista vacía en el listado se anota
+  en el DTO, para que nadie la «arregle».
 - Instagram y conversaciones sin `wa_id`: siempre vacía.
 - Puerto nuevo: `IMessagingCustomerDirectory.ListByPhoneAsync(tenantId, waId)` →
   `ICustomerPhoneDirectory.ListByPhoneAsync(tenantId, e164)`; es la consulta de `MatchAsync` sin el
@@ -286,7 +288,9 @@ que el spec 2026-10-10 ya aceptó para la ingesta, y se arregla con §4.2.
 cliente cuenta como `MarketingOptOut` si él **o cualquier otro cliente del tenant con el mismo
 `phone_e164`** tiene la bandera. Se calcula al leer, en `CustomerAudienceRepository` (que es donde
 lo leen `FindContactAsync`, `ListAudienceBatchAsync` y `CountAudienceAsync`), así que vale igual
-para la campaña, el conteo previo y el envío uno a uno de una plantilla `MARKETING`. Marcar el
+para el congelado de la campaña, el conteo previo y la revisión que el worker repite por destinatario
+antes de enviar. El envío uno a uno que hace una persona (`SendTemplateMessage`, `StartConversation`)
+no revisa el opt-out hoy (se apoya en el 131050 de Meta) y este spec no lo cambia. Marcar el
 opt-out (`MarkMarketingOptOut*`) sigue marcando sólo la ficha de la conversación: la bandera
 guardada es de la ficha y su rastro (`meta` o `button`) también; lo que cambia es cómo se lee. Una
 ficha sin `phone_e164` sólo mira su propia bandera.
@@ -395,9 +399,13 @@ acotadas a los módulos tocados, sin correr la suite completa.
 
 ## 7. Despliegue
 
-- Una migración en Customers (índice de §3.2). Sin migración en Messaging: `CustomerChanged` es un
-  valor nuevo del enum que se guarda en `details` de `messages`; si la columna o un `CHECK` limita
-  los tipos, el builder agrega la migración.
+- Una migración en Customers (índice de §3.2) y una en Messaging: `customer_created_at` en
+  `campaign_recipients`, que es lo que permite desempatar por «el más viejo» (§4.4) sin que Messaging
+  lea el esquema de Customers. `CustomerChanged` es un valor nuevo del enum que se guarda en
+  `details` de `messages`; si un `CHECK` limita los tipos, va en la misma migración.
+- Dos destinatarios con el mismo `wa_id` y distinto BSUID (número reciclado) también cuentan como el
+  mismo contacto: es consecuencia de que el opt-out y el chat sean del número (§2). El BSUID es único
+  por cliente, así que el agrupamiento es por `wa_id`.
 - Backend y frontend juntos: un frontend viejo ignora `existing`, `sharedPhoneCustomers` y
   `duplicate_contact` sin romperse (son campos y códigos nuevos), pero un evento `CustomerChanged`
   sin dibujar sale como evento desconocido en el hilo.
