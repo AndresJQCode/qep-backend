@@ -18,7 +18,7 @@ internal sealed record OrdersReportItem(
     DateTimeOffset ConvertedAt,
     Guid AdvisorId,
     string? AdvisorName,
-    Guid ClientId,
+    Guid? ClientId,
     string? ClientName,
     string? ClientCuc,
     string Status,
@@ -97,7 +97,13 @@ internal sealed record OrdersReportSummary(
     IReadOnlyList<ReportMonthlyPoint> Monthly,
     IReadOnlyList<ReportRankEntry> ByAdvisor,
     IReadOnlyList<ReportRankEntry> ByClient,
+    IReadOnlyList<ReportSourceSlice> BySource,
+    ReportWithoutClient WithoutClient,
     ReportComparison? Previous);
+
+internal sealed record ReportSourceSlice(string Source, int Count, IReadOnlyList<MoneyAmount> Totals);
+
+internal sealed record ReportWithoutClient(int Count, IReadOnlyList<MoneyAmount> Totals);
 
 /// <summary>One amount in one currency: every money figure of the orders and quotations reports is
 /// a list of these. Not named <c>ReportMoney</c>: that is the Application helper class.</summary>

@@ -136,7 +136,10 @@ public sealed class ReplyMarksReadApiTests
 
         var response = await SendAsync(f.Client, HttpMethod.Post, $"{MessagesUrl(f.Tenant.TenantId, f.ConversationId)}/template", new
         {
-            clientId = Guid.CreateVersion7(), name = "seguimiento", language = "es", parameters = new Dictionary<string, string> { ["first_name"] = "Ana" },
+            clientId = Guid.CreateVersion7(),
+            name = "seguimiento",
+            language = "es",
+            parameters = new Dictionary<string, string> { ["first_name"] = "Ana" },
         });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -205,7 +208,9 @@ public sealed class ReplyMarksReadApiTests
         using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
         object Body() => new
         {
-            clientId = Guid.CreateVersion7(), connectionId, customerId,
+            clientId = Guid.CreateVersion7(),
+            connectionId,
+            customerId,
             template = new { name = "seguimiento", language = "es", parameters = new Dictionary<string, string> { ["first_name"] = "Ana" } },
         };
         Assert.Equal(HttpStatusCode.Created, (await SendAsync(client, HttpMethod.Post, ConversationsUrl(tenant.TenantId), Body())).StatusCode);

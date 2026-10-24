@@ -78,12 +78,13 @@ public static class ReportingEndpoints
         Guid? advisorId = null,
         Guid? clientId = null,
         string? paymentStatus = null,
+        string? source = null,
         int page = 1,
         int pageSize = ReportPaging.DefaultPageSize)
     {
         var result = await dispatcher.QueryAsync(
             new ListOrdersReportQuery(
-                new OrdersReportFilter(tenantId, from, to, advisorId, clientId, paymentStatus),
+                new OrdersReportFilter(tenantId, from, to, advisorId, clientId, paymentStatus, source),
                 page,
                 pageSize),
             cancellationToken);
@@ -103,11 +104,12 @@ public static class ReportingEndpoints
         DateOnly? to = null,
         Guid? advisorId = null,
         Guid? clientId = null,
-        string? paymentStatus = null)
+        string? paymentStatus = null,
+        string? source = null)
     {
         var summary = await dispatcher.QueryAsync(
             new GetOrdersReportSummaryQuery(
-                new OrdersReportFilter(tenantId, from, to, advisorId, clientId, paymentStatus)),
+                new OrdersReportFilter(tenantId, from, to, advisorId, clientId, paymentStatus, source)),
             cancellationToken);
 
         return Results.Ok(summary);

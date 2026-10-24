@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Catalog.Application;
 using Modules.Companies.Application;
 using Modules.Customers.Application;
+using Modules.Pos.Application;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Reporting.Application;
@@ -731,6 +732,115 @@ internal static class ReportingApiHarness
             TestContext.Current.CancellationToken);
         Assert.NotNull(detail);
         return detail.Order;
+    }
+
+    /// <summary>
+    /// Lo que hace falta para vender en el POS y anular (spec 2026-10-23 §1): las ventas POS entran
+    /// al reporte de pedidos, así que se siembran por la API del POS y no por SQL. Sin
+    /// <c>pos.register.read</c> el cajero sólo ve sus ventas en el POS; con él, una prueba que lo
+    /// quite mide el alcance del reporte y no el del POS.
+    /// </summary>
+    public static readonly string[] PosPermissions =
+    [
+        Modules.Pos.Application.PosPermissions.SaleRead,
+        Modules.Pos.Application.PosPermissions.SaleCreate,
+        Modules.Pos.Application.PosPermissions.SaleCustomer,
+        Modules.Pos.Application.PosPermissions.SaleVoid,
+        Modules.Pos.Application.PosPermissions.RegisterOperate,
+        Modules.Pos.Application.PosPermissions.RegisterRead,
+        CompaniesPermissions.CompanyRead,
+        CompaniesPermissions.CompanyManage,
+        CatalogPermissions.ProductRead,
+        CatalogPermissions.ProductManage,
+    ];
+
+    /// <summary>Copia de <c>PosApiHarness.EnablePosAsync</c>: ni el signup ni ninguna configuración
+    /// prenden <c>pos</c>, y sin la fila todo <c>/pos/*</c> da 403 aunque el header pida los
+    /// permisos (CLAUDE.md, «Pos necesita la capacidad pos»).</summary>
+    public static async Task EnablePosAsync(PostgreSqlContainer database, Guid tenantId)
+    {
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source)
+            VALUES (@tenantId, 'pos', now(), 'manual')
+            ON CONFLICT (tenant_id, module_key) DO UPDATE SET status = 'active', status_changed_at = now()
+            """,
+            connection);
+        command.Parameters.AddWithValue("tenantId", tenantId);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// Abre una caja con base de 100 000 para quien llama. La empresa emisora se crea acá y viaja
+    /// explícita: las pruebas de Reporting crean una empresa por cotización, y con más de una la
+    /// apertura sin <c>companyId</c> responde <c>pos.session.company_required</c>.
+    /// </summary>
+    public static async Task<Guid> OpenPosSessionAsync(HttpClient client, Guid tenantId)
+    {
+        var company = await CreateCompanyWithBankAccountAsync(client, tenantId, "COP");
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/pos/sessions",
+            new { companyId = company.CompanyId, openingFloat = 100_000m },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        return body.RootElement.GetProperty("id").GetGuid();
+    }
+
+    /// <summary>
+    /// Una venta POS de una línea: cantidad 1, sin descuento, sin IVA y pagada en efectivo justo.
+    /// <paramref name="variantId"/> de un producto sin opciones es el id del producto (CLAUDE.md,
+    /// «La variante por defecto lleva el id del producto»). Sin <paramref name="customerId"/> es
+    /// una venta a consumidor final.
+    /// </summary>
+    public static async Task<PosSaleResponse> CreatePosSaleAsync(
+        HttpClient client,
+        Guid tenantId,
+        Guid sessionId,
+        Guid variantId,
+        decimal unitPrice,
+        Guid? customerId = null)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/pos/sales",
+            new
+            {
+                id = Guid.CreateVersion7(),
+                cashSessionId = sessionId,
+                lines = new[]
+                {
+                    new
+                    {
+                        variantId,
+                        quantity = 1m,
+                        discountPercentage = 0m,
+                        expectedUnitPrice = unitPrice,
+                        expectedTaxPercentage = 0,
+                    },
+                },
+                payments = new[] { new { method = "Cash", tendered = unitPrice } },
+                customerId,
+            },
+            TestContext.Current.CancellationToken);
+        Assert.True(
+            response.IsSuccessStatusCode,
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var sale = await response.Content.ReadFromJsonAsync<PosSaleResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(sale);
+        return sale;
+    }
+
+    public static async Task VoidPosSaleAsync(HttpClient client, Guid tenantId, Guid saleId)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/pos/sales/{saleId}/void",
+            new { reason = "El cliente se arrepintió" },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
     }
 
     private static async Task<Guid> CreateAvailablePdfFileAsync(

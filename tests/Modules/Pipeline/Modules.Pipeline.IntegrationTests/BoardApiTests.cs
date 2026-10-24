@@ -57,6 +57,111 @@ public sealed class BoardApiTests
             Assert.Empty(column.Deals);
         });
         Assert.Equal((50, true), (Column(board, "Cotizado").Probability, Column(board, "Cotizado").IsQuotationStage));
+        Assert.Equal((0, 0), (board.Summary.OpenCount, board.Summary.StalledCount));
+        Assert.Empty(board.Summary.OpenTotals);
+    }
+
+    // BFF: la franja de indicadores no suma columnas en el navegador. Sólo etapas abiertas, por moneda (D24); el ponderado es la
+    // suma de los ponderados ya redondeados de cada columna (0,11 + 0,02 = 0,13, y no el 0,12 de redondear una sola vez), para
+    // que la franja cuadre con lo que la pantalla muestra. Ganado y Perdido no entran.
+    [Fact]
+    public async Task TheSummaryAddsTheOpenColumnsByCurrencyAndLeavesWonAndLostOut()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        await CreateAsync(setup, 1.05m);
+        await CreateAsync(setup, 500m, "USD");
+        await CreateAsync(setup, null);
+        var negotiating = await CreateAsync(setup, 0.02m);
+        var won = await CreateAsync(setup, 1_000m);
+        var lost = await CreateAsync(setup, 2_000m);
+        var stages = await BoardAsync(setup);
+        await ExecuteAsync(connectionString, "UPDATE pipeline.deals SET stage_id = @s WHERE id = @id",
+            ("s", Column(stages, "Negociación").StageId), ("id", negotiating.Id));
+        (await setup.Client.PostAsJsonAsync($"{PipelineUrl(setup.Tenant.TenantId)}/deals/{won.Id}/win", new DealVersionRequest(won.Version), Ct)).EnsureSuccessStatusCode();
+        await ExecuteAsync(connectionString, "UPDATE pipeline.deals SET stage_id = @s, closed_at = @at WHERE id = @id",
+            ("s", Column(stages, "Perdido").StageId), ("at", DateTimeOffset.UtcNow), ("id", lost.Id));
+
+        var board = await BoardAsync(setup);
+
+        Assert.Equal((1, 1), (Column(board, "Ganado").Count, Column(board, "Perdido").Count));
+        Assert.Equal(4, board.Summary.OpenCount);
+        Assert.Equal(0, board.Summary.StalledCount);
+        Assert.Equal(
+            [new CurrencyTotalDto("COP", 1.07m, 0.13m), new CurrencyTotalDto("USD", 500m, 50m)],
+            board.Summary.OpenTotals);
+        var openColumns = board.Columns.Where(column => column.Kind == "Open").ToArray();
+        Assert.Equal(openColumns.Sum(column => column.Count), board.Summary.OpenCount);
+        Assert.Equal(
+            openColumns.SelectMany(column => column.Totals).Where(total => total.Currency == "COP").Sum(total => total.Weighted),
+            board.Summary.OpenTotals.Single(total => total.Currency == "COP").Weighted);
+    }
+
+    // D23: la franja sigue el mismo filtro de dueño que las columnas, también para el estancado.
+    [Fact]
+    public async Task TheSummaryFollowsTheOwnerFilter()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (member, _) = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Laura Gómez");
+        await CreateAsync(setup, 100m);
+        var theirs = await CreateAsync(setup, 200m, owner: member);
+        var fourDaysAgo = DateTimeOffset.UtcNow.AddDays(-4).AddHours(-1);
+        await ExecuteAsync(connectionString,
+            "UPDATE pipeline.deals SET stage_entered_at = @at, last_changed_at = @at WHERE id = @id",
+            ("at", fourDaysAgo), ("id", theirs.Id));
+
+        var mine = (await BoardAsync(setup, "me")).Summary;
+        var all = (await BoardAsync(setup, "all")).Summary;
+
+        Assert.Equal((1, 0), (mine.OpenCount, mine.StalledCount));
+        Assert.Equal([new CurrencyTotalDto("COP", 100m, 10m)], mine.OpenTotals);
+        Assert.Equal((2, 1), (all.OpenCount, all.StalledCount));
+        Assert.Equal([new CurrencyTotalDto("COP", 300m, 30m)], all.OpenTotals);
+    }
+
+    // D22 y D33: el estancado de la franja es de TODOS los negocios abiertos, no de las 200 tarjetas por columna. Los cinco que
+    // entraron a la etapa más tarde quedan fuera del tope; tres están quietos y dos son de un cliente que acaba de escribir, así que
+    // la actividad se busca también para clientes que no tienen tarjeta.
+    [Fact]
+    public async Task TheStalledCountCoversDealsBeyondTheCardCap()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (writer, _) = await SeedCustomerAsync(factory, setup.Tenant.TenantId, "Marta");
+        var stages = (await setup.Client.GetFromJsonAsync<PipelineStagesDto>($"{PipelineUrl(setup.Tenant.TenantId)}/settings/stages", Ct))!;
+        // Los instantes salen del reloj de la prueba, no de now() de Postgres (ver AStalledDealIsFlaggedUntilTheCustomerWrites).
+        var now = DateTimeOffset.UtcNow;
+        var fourDaysAgo = now.AddDays(-4).AddHours(-1);
+        // n = 1..5 entraron a la etapa más tarde (posiciones 201..205) y llevan cuatro días quietos: 1..3 de Laura, 4..5 de Marta.
+        await ExecuteAsync(connectionString,
+            """
+            INSERT INTO pipeline.deals (id, tenant_id, pipeline_id, customer_id, owner_member_id, title, amount, currency, stage_id,
+                stage_entered_at, source, last_changed_at, created_at, updated_at, version, history_count)
+            SELECT gen_random_uuid(), @t, @p, CASE WHEN n IN (4, 5) THEN @w ELSE @c END, @o, 'Carga ' || n, 10, 'COP', @s,
+                @now - make_interval(mins => n), 'Manual', CASE WHEN n <= 5 THEN @old ELSE @now END, @now, @now, 1, 0
+            FROM generate_series(1, 205) AS n
+            """,
+            ("t", setup.Tenant.TenantId), ("p", stages.PipelineId), ("c", setup.CustomerId), ("w", writer), ("o", setup.OwnerMemberId),
+            ("s", stages.Stages[0].Id), ("now", now), ("old", fourDaysAgo));
+        await SeedConversationAsync(factory, connectionString, setup.Tenant.TenantId, writer, now, now);
+
+        var board = await BoardAsync(setup);
+        var column = Column(board, "Nuevo");
+
+        Assert.Equal((205, 200), (column.Count, column.Deals.Count));
+        Assert.DoesNotContain(column.Deals, card => card.IsStalled);
+        Assert.Equal((205, 3), (board.Summary.OpenCount, board.Summary.StalledCount));
+        Assert.Equal([new CurrencyTotalDto("COP", 2_050m, 205m)], board.Summary.OpenTotals);
     }
 
     // Review Focus 5 (D24, D34): COP y USD salen como dos totales, en el orden del catálogo; el ponderado usa la probabilidad

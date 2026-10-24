@@ -25,14 +25,24 @@ internal static class DealCardMapper
         ArgumentNullException.ThrowIfNull(memberNames);
         // Defensivo: la FK con RESTRICT no deja borrar la etapa de un negocio. Si faltara, sin nombre y nunca estancado.
         var stage = pipeline.FindStage(stageId);
-        var lastActivity = StallRules.LastActivity(lastChangedAt, lastMessageAt);
         return new DealCardFacts(
             stage?.Name ?? string.Empty,
             stage?.Kind ?? StageKind.Open,
             MemberName(memberNames, ownerMemberId),
             StallRules.DaysIn(stageEnteredAt, now),
-            stage is not null && StallRules.IsStalled(stage.Kind, stage.StallDays, lastActivity, now));
+            IsStalled(stage, lastChangedAt, lastMessageAt, now));
     }
+
+    /// <summary>El estancado de <see cref="Describe"/> sin el resto de la tarjeta: la franja del tablero lo cuenta sobre todos los
+    /// negocios abiertos, también los que no traen tarjeta, y tiene que decir exactamente lo mismo que cada tarjeta.</summary>
+    public static bool IsStalled(SalesPipeline pipeline, Guid stageId, DateTimeOffset lastChangedAt, DateTimeOffset? lastMessageAt, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(pipeline);
+        return IsStalled(pipeline.FindStage(stageId), lastChangedAt, lastMessageAt, now);
+    }
+
+    private static bool IsStalled(PipelineStage? stage, DateTimeOffset lastChangedAt, DateTimeOffset? lastMessageAt, DateTimeOffset now) =>
+        stage is not null && StallRules.IsStalled(stage.Kind, stage.StallDays, StallRules.LastActivity(lastChangedAt, lastMessageAt), now);
 
     /// <summary>Una membresía que ya no está en el tenant no aparece en el diccionario: la pantalla nunca recibe <c>null</c>.</summary>
     public static string MemberName(IReadOnlyDictionary<Guid, string> memberNames, Guid memberId)

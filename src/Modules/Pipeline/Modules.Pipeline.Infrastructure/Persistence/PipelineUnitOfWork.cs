@@ -41,9 +41,13 @@ internal sealed class PipelineUnitOfWork(PipelineDbContext dbContext) : IPipelin
             throw new RequestConcurrencyException(
                 "concurrency.conflict", "The deal changed while the operation was being committed.", exception);
         }
+        // La FK es ON DELETE RESTRICT: borrar la etapa que alguien usa da 23001 (restrict_violation), no 23503. Se aceptan los
+        // dos para que la carrera no salga como 500; el nombre de la restricción sigue siendo lo que decide.
         catch (DbUpdateException exception)
-            when (exception.InnerException is PostgresException postgres &&
-                  postgres.SqlState == PostgresErrorCodes.ForeignKeyViolation &&
+            when (exception.InnerException is PostgresException
+                  {
+                      SqlState: PostgresErrorCodes.ForeignKeyViolation or PostgresErrorCodes.RestrictViolation,
+                  } postgres &&
                   string.Equals(postgres.ConstraintName, PipelineDbContext.DealStageForeignKey, StringComparison.Ordinal))
         {
             throw new PipelineDomainException(

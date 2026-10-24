@@ -1,6 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
+using Modules.Customers.Domain;
+using Modules.Customers.Infrastructure.Persistence;
 using Modules.Tenancy.Application;
 using Npgsql;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
@@ -434,6 +438,35 @@ public sealed class ClientClassificationApiTests
         var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.Contains("customers.classification.in_use", body, StringComparison.Ordinal);
         Assert.NotEmpty(await ListAsync(client, TenantId));
+    }
+
+    // La carrera: el cliente empieza a usar la clasificación entre el AnyWithClassificationAsync del handler y el commit.
+    // Por HTTP la consulta lo ve, así que acá la clasificación se carga y se marca borrada en una unidad de trabajo
+    // directa, y el cliente se crea en medio. La FK FK_customers_client_classifications_classification_id es RESTRICT: el
+    // borrado da 23001 (restrict_violation), no 23503, y tiene que salir como customers.classification.in_use, no como 500.
+    [Fact]
+    public async Task ARestrictViolationOnDeleteSaysInUse()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var created = await ReadClassificationAsync(
+            await CreateClassificationAsync(client, TenantId, "Mayorista", "MAY"));
+        var city = await EnsureCityAsync(client);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CustomersDbContext>();
+        var classification = await dbContext.ClientClassifications.SingleAsync(
+            value => value.Id == new ClientClassificationId(created.Id),
+            TestContext.Current.CancellationToken);
+        await CreateCustomerAsync(client, city.CityId, created.Id);
+        dbContext.ClientClassifications.Remove(classification);
+
+        var error = await Assert.ThrowsAsync<CustomersDomainException>(() =>
+            scope.ServiceProvider.GetRequiredService<ICustomersUnitOfWork>()
+                .SaveChangesAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal("customers.classification.in_use", error.Code);
     }
 
     // FindAsync filtra por tenant, asi que una clasificacion ajena sale como 404 y nunca llega

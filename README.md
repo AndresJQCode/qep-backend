@@ -1219,6 +1219,30 @@ nacen sin datos propios. Antes de volver al código nuevo, esos pedidos se compl
 pasos 4 y 5 de `AddOrderOwnData` acotado a `client_id IS NULL` y se restauran los `NOT NULL` (spec
 2026-10-15 §10).
 
+### Reporte de pedidos: pedidos y ventas POS
+
+`GET /api/v1/tenants/{tenantId}/reports/orders` y `GET …/reports/orders/summary` leen **la unión** de
+`quotations.orders` y `pos.sales` (spec 2026-10-23): una venta POS es una fila más, con `source = "Pos"`.
+`OrdersReportSource` (Bootstrapper) la arma con SQL crudo y un `UNION ALL`, porque las dos tablas son de
+`DbContext` distintos; todo se filtra, pagina y agrega en la base.
+
+- **Filtro `source`**, en el listado y en el resumen: `Quotation`, `Manual`, `Shopify` o `Pos`. Sin él vienen
+  los cuatro. Un valor desconocido (también `pos` en minúscula) es `422 validation.failed` con `errors.Source`.
+- **`bySource`** en el resumen: una entrada por origen, siempre las cuatro y en ese orden, con conteo y total por
+  moneda, en cero si no hay (con `source` puesto, las otras tres vienen en cero).
+- **`withoutClient`** en el resumen: las ventas POS a consumidor final, que no tienen ficha de cliente. No entran
+  a `byClient` ni a su fila «Otros», así que `byClient` + `withoutClient` = `totals`. En el listado esas filas
+  traen `clientId = null`, `clientName = "Consumidor final"` y `clientCuc = null`.
+- **Lo anulado no suma**: un pedido `Cancelled` y una venta `Voided` no cuentan en ningún agregado ni en el período
+  anterior, pero se ven en el listado con su estado. El estado de una venta es `Completed` o `Voided`, y su
+  estado de pago siempre `FullPaymentReceived`: por eso `paymentStatus` con cualquier otro valor
+  (`PartialPaymentReceived` o `PaymentPending`) la excluye.
+- **El cajero entra como asesor**: `cashier_id` es una membresía, igual que el `advisor_id` del pedido. El filtro
+  `advisorId`, el ranking por asesor y el alcance de quien no tiene `reporting.all_advisors.read` valen para los
+  dos. No cambia ningún permiso.
+- Una venta POS no tiene envío (`freightSubtotal` y `freightTaxAmount` en 0) ni cotización (`quotationId` nulo), y
+  su fecha (`convertedAt`) es la de creación.
+
 ### Enviar el pedido por WhatsApp
 
 `POST /api/v1/tenants/{tenantId}/orders/{orderId}/send` le manda al cliente el PDF del pedido por

@@ -14,6 +14,23 @@ public enum OrderPaymentStatusFilter
 }
 
 /// <summary>
+/// El origen por el que se puede filtrar el reporte de pedidos: los tres valores de
+/// <c>OrderSource</c> en Quotations más <see cref="Pos"/>, que no es un pedido sino una venta de
+/// mostrador de <c>pos.sales</c> (spec 2026-10-23 §2). Ver <see cref="OrderPaymentStatusFilter"/>
+/// sobre por qué se redeclara.
+///
+/// **El orden de los valores es contrato**: es el orden fijo en que viaja <c>bySource</c> en el
+/// resumen. Agregar un origen es agregarlo al final.
+/// </summary>
+public enum OrderSourceFilter
+{
+    Quotation,
+    Manual,
+    Shopify,
+    Pos
+}
+
+/// <summary>
 /// Los cinco estados de <c>QuotationStatus</c>. Ver <see cref="OrderPaymentStatusFilter"/> sobre
 /// por qué se redeclaran.
 ///
@@ -55,6 +72,9 @@ public static class ReportFilterParser
     public static bool TryParsePaymentStatus(string? value, out OrderPaymentStatusFilter parsed) =>
         TryParse(value, out parsed);
 
+    public static bool TryParseSource(string? value, out OrderSourceFilter parsed) =>
+        TryParse(value, out parsed);
+
     public static bool TryParseQuotationStatus(string? value, out QuotationStatusFilter parsed) =>
         TryParse(value, out parsed);
 
@@ -66,6 +86,10 @@ public static class ReportFilterParser
     /// atrapa antes con el nombre del campo, y esto es la red de abajo.</summary>
     public static OrderPaymentStatusFilter? ParsePaymentStatus(string? value) =>
         Parse<OrderPaymentStatusFilter>(value, "paymentStatus");
+
+    /// <summary>Ver <see cref="ParsePaymentStatus"/>.</summary>
+    public static OrderSourceFilter? ParseSource(string? value) =>
+        Parse<OrderSourceFilter>(value, "source");
 
     /// <summary>Ver <see cref="ParsePaymentStatus"/>.</summary>
     public static QuotationStatusFilter? ParseQuotationStatus(string? value) =>

@@ -793,6 +793,27 @@ public sealed class OrderTests
         Assert.Equal(2, order.Version);
     }
 
+    // Hotfix 2026-10-19: la retención (2,5 % redondeado a centavos) deja el neto con fracción de
+    // peso. La pantalla lo muestra en pesos enteros y la persona carga eso; comparar contra los
+    // centavos lo dejaba en pago parcial. Un peso de menos sigue siendo parcial.
+    [Theory]
+    [InlineData(116_529, OrderPaymentStatus.FullPaymentReceived)]
+    [InlineData(116_528, OrderPaymentStatus.PartialPaymentReceived)]
+    public void RecalculatePaymentStatusComparesAgainstTheNetAsTheCurrencyDisplaysIt(
+        decimal proofAmount, OrderPaymentStatus expected)
+    {
+        var order = NewOrder(
+            OrderPaymentStatus.PaymentPending,
+            proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), proofAmount)],
+            lines: [Line(quantity: 1m, unitPrice: 119_030m)],
+            header: Header(withRetention: true));
+        Assert.Equal(116_529.37m, order.NetTotal);
+
+        order.RecalculatePaymentStatus(Now.AddDays(1));
+
+        Assert.Equal(expected, order.PaymentStatus);
+    }
+
     [Fact]
     public void RecalculatePaymentStatusIsPendingWithoutAnyProof()
     {
