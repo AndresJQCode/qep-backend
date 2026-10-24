@@ -6,8 +6,8 @@ namespace Modules.Messaging.Infrastructure.Persistence;
 
 /// <summary>
 /// Spec 2026-10-11 decisión 9 y §5.2: abre (o encuentra) la conversación de un cliente en una conexión, en SQL como la ingesta
-/// (<c>InboundIngestion.ResolveConversationAsync</c>) y respetando sus mismos índices únicos. Busca por <c>customer_id</c>, si no por
-/// el BSUID y si no por el teléfono de una fila vieja sin BSUID; si no existe inserta con <c>ON CONFLICT DO NOTHING</c> y, si perdió
+/// (<c>InboundIngestion.ResolveConversationAsync</c>) y respetando sus mismos índices únicos. Busca por BSUID, por el teléfono de una conversación
+/// con BSUID, por <c>customer_id</c> y, al final, por el teléfono de una fila vieja sin BSUID (orden en <c>FindAsync</c>); si no existe inserta con <c>ON CONFLICT DO NOTHING</c> y, si perdió
 /// una carrera, vuelve a buscar. Una conversación creada sólo con teléfono (<c>user_id NULL</c>) la adopta la ingesta cuando llega el
 /// BSUID (paso 1a del spec 2026-10-10 §8.1): no hay duplicado.
 /// </summary>
@@ -78,21 +78,15 @@ internal sealed class ConversationOpener(MessagingDbContext dbContext, IMessagin
         return new OpenedConversation(id, true);
     }
 
-    /// <summary>Por <c>customer_id</c> (la más reciente), por BSUID y, para una fila vieja sin BSUID, por teléfono.</summary>
+    /// <summary>
+    /// Orden (spec 2026-10-24 §4.3): (1) por BSUID del cliente; (2) la conversación con BSUID de la conexión que tiene ese <c>wa_id</c>, la
+    /// de actividad más reciente: es la que recibe las respuestas, y va antes que (3) porque una huérfana de <c>customer_id</c> del defecto
+    /// anterior no puede ganarle; (3) por <c>customer_id</c>, la más reciente; (4) la fila vieja sin BSUID con ese teléfono. El
+    /// <c>customer_id</c> de la encontrada no cambia (cambiarlo es <c>PUT …/customer</c>) y las huérfanas existentes no se tocan.
+    /// </summary>
     private async Task<Guid?> FindAsync(
         Guid tenantId, Guid connectionId, Guid customerId, string? userId, string? waId, CancellationToken cancellationToken)
     {
-        var byCustomer = await dbContext.Database.SqlQuery<Guid>(
-            $"""
-            SELECT id AS "Value" FROM messaging.conversations
-            WHERE tenant_id = {tenantId} AND connection_id = {connectionId} AND customer_id = {customerId}
-            ORDER BY last_activity_at DESC, id DESC LIMIT 1
-            """).ToListAsync(cancellationToken);
-        if (byCustomer.Count == 1)
-        {
-            return byCustomer[0];
-        }
-
         if (userId is not null)
         {
             var byUser = await dbContext.Database.SqlQuery<Guid>(
@@ -102,6 +96,32 @@ internal sealed class ConversationOpener(MessagingDbContext dbContext, IMessagin
             {
                 return byUser[0];
             }
+        }
+
+        if (waId is not null)
+        {
+            // La conversación con BSUID de ese número es la que recibe las respuestas: gana a una huérfana de `customer_id` (CD-10).
+            var byPhone = await dbContext.Database.SqlQuery<Guid>(
+                $"""
+                SELECT id AS "Value" FROM messaging.conversations
+                WHERE tenant_id = {tenantId} AND connection_id = {connectionId} AND user_id IS NOT NULL AND wa_id = {waId}
+                ORDER BY last_activity_at DESC, id DESC LIMIT 1
+                """).ToListAsync(cancellationToken);
+            if (byPhone.Count == 1)
+            {
+                return byPhone[0];
+            }
+        }
+
+        var byCustomer = await dbContext.Database.SqlQuery<Guid>(
+            $"""
+            SELECT id AS "Value" FROM messaging.conversations
+            WHERE tenant_id = {tenantId} AND connection_id = {connectionId} AND customer_id = {customerId}
+            ORDER BY last_activity_at DESC, id DESC LIMIT 1
+            """).ToListAsync(cancellationToken);
+        if (byCustomer.Count == 1)
+        {
+            return byCustomer[0];
         }
 
         if (waId is not null)
