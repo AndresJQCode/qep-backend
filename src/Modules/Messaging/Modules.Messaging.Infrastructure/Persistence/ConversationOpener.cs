@@ -9,7 +9,8 @@ namespace Modules.Messaging.Infrastructure.Persistence;
 /// (<c>InboundIngestion.ResolveConversationAsync</c>) y respetando sus mismos índices únicos. Busca por BSUID, por el teléfono de una conversación
 /// con BSUID, por <c>customer_id</c> y, al final, por el teléfono de una fila vieja sin BSUID (orden en <c>FindAsync</c>); si no existe inserta con <c>ON CONFLICT DO NOTHING</c> y, si perdió
 /// una carrera, vuelve a buscar. Una conversación creada sólo con teléfono (<c>user_id NULL</c>) la adopta la ingesta cuando llega el
-/// BSUID (paso 1a del spec 2026-10-10 §8.1): no hay duplicado.
+/// BSUID (paso 1a del spec 2026-10-10 §8.1): no hay duplicado. El envío de la cotización abre por teléfono, sin cliente en la búsqueda
+/// (<see cref="OpenByPhoneAsync"/>, spec 2026-10-21 D16b).
 /// </summary>
 internal sealed class ConversationOpener(MessagingDbContext dbContext, IMessagingAuditRecorder audit) : IConversationOpener
 {
@@ -76,6 +77,69 @@ internal sealed class ConversationOpener(MessagingDbContext dbContext, IMessagin
 
         await transaction.CommitAsync(cancellationToken);
         return new OpenedConversation(id, true);
+    }
+
+    /// <summary>
+    /// Spec 2026-10-21 D16b: la del teléfono, sin <c>customer_id</c> en la búsqueda. Pasarlo encontraría la conversación del cliente,
+    /// que con destinatario de facturación es otro número. Sin transacción: un solo <c>INSERT</c>, sin evento ni auditoría (nace sin
+    /// asignar).
+    /// </summary>
+    public async Task<OpenedConversation> OpenByPhoneAsync(
+        Guid tenantId, Guid connectionId, string waId, Guid? customerId, string profileName, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(waId) || waId.Length > Conversation.WaIdMaxLength || !waId.All(char.IsAsciiDigit))
+        {
+            throw new ArgumentException("A wa_id is 1 to 20 digits.", nameof(waId));
+        }
+
+        if (await FindByPhoneAsync(tenantId, connectionId, waId, cancellationToken) is { } existing)
+        {
+            return new OpenedConversation(existing, false);
+        }
+
+        var at = now.ToUniversalTime();
+        var id = Guid.CreateVersion7();
+        var name = string.IsNullOrWhiteSpace(profileName) ? null
+            : profileName.Length <= Conversation.ProfileNameMaxLength ? profileName : profileName[..Conversation.ProfileNameMaxLength];
+        // Sin BSUID, el blanco del ON CONFLICT es el índice del teléfono de una fila vieja (IX_conversations_connection_wa_legacy).
+        var inserted = await dbContext.Database.SqlQuery<Guid>(
+            $"""
+            INSERT INTO messaging.conversations (id, tenant_id, connection_id, user_id, wa_id, profile_name, customer_id, status, unread_count,
+                                                 last_activity_at, created_at, updated_at, version)
+            VALUES ({id}, {tenantId}, {connectionId}, NULL, {waId}, {name}, {customerId}, 'Open', 0, {at}, {at}, {at}, 1)
+            ON CONFLICT (connection_id, wa_id) WHERE user_id IS NULL DO NOTHING
+            RETURNING id AS "Value"
+            """).ToListAsync(cancellationToken);
+        if (inserted.Count == 1)
+        {
+            return new OpenedConversation(id, true);
+        }
+
+        // Otro envío la creó entre el SELECT y el INSERT; el SELECT va en una sentencia aparte, así ve lo commiteado.
+        var raced = await FindByPhoneAsync(tenantId, connectionId, waId, cancellationToken)
+            ?? throw new InvalidOperationException("The conversation that blocked the insert could not be found.");
+        return new OpenedConversation(raced, false);
+    }
+
+    /// <summary>Los pasos (2) y (4) de <see cref="FindAsync"/>: la conversación con BSUID de ese número y, si no, la fila vieja.</summary>
+    private async Task<Guid?> FindByPhoneAsync(Guid tenantId, Guid connectionId, string waId, CancellationToken cancellationToken)
+    {
+        var byPhone = await dbContext.Database.SqlQuery<Guid>(
+            $"""
+            SELECT id AS "Value" FROM messaging.conversations
+            WHERE tenant_id = {tenantId} AND connection_id = {connectionId} AND user_id IS NOT NULL AND wa_id = {waId}
+            ORDER BY last_activity_at DESC, id DESC LIMIT 1
+            """).ToListAsync(cancellationToken);
+        if (byPhone.Count == 1)
+        {
+            return byPhone[0];
+        }
+
+        var legacy = await dbContext.Database.SqlQuery<Guid>(
+            $"""SELECT id AS "Value" FROM messaging.conversations WHERE tenant_id = {tenantId} AND connection_id = {connectionId} AND user_id IS NULL AND wa_id = {waId}""")
+            .ToListAsync(cancellationToken);
+        return legacy.Count == 1 ? legacy[0] : null;
     }
 
     /// <summary>

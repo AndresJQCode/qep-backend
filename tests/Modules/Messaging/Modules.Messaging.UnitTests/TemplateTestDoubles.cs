@@ -158,6 +158,12 @@ internal sealed class FakeConversationOpener(MessagingTestBed bed) : IConversati
         bed.Conversations.Rows.Add(row);
         return Task.FromResult(new OpenedConversation(row.Id, true));
     }
+
+    /// <summary>Ninguna prueba unitaria la usa: el envío de la cotización se prueba por integración, contra el SQL real.</summary>
+    public Task<OpenedConversation> OpenByPhoneAsync(
+        Guid tenantId, Guid connectionId, string waId, Guid? customerId, string profileName, DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 /// <summary>Spec 2026-10-14 §4.3: el espejo en memoria. Filtra por tenant y conexión como el real; el orden es ordinal.</summary>

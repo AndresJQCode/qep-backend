@@ -76,4 +76,16 @@ public interface IConversationOpener
     Task<OpenedConversation> OpenAsync(
         Guid tenantId, Guid connectionId, MessagingCustomerContact contact, Guid? assignedMemberId, Guid? actorUserId, DateTimeOffset now,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-10-21 D16b: la conversación del <b>teléfono</b> <paramref name="waId"/> (sólo dígitos, con indicativo) en esa conexión,
+    /// sin mirar <c>customer_id</c>: primero la que tiene BSUID con ese <c>wa_id</c> (la de actividad más reciente, la que recibe las
+    /// respuestas) y si no la fila vieja sin BSUID. Si no existe la inserta <c>Open</c>, sin asignar, con <c>user_id NULL</c> y
+    /// <paramref name="customerId"/> (<c>null</c> con destinatario de facturación). La encontrada no cambia: ni estado, ni asignación, ni
+    /// cliente (D16a). <c>Created</c> sólo si esta llamada la insertó; una carrera cae en el <c>SELECT</c> posterior al
+    /// <c>ON CONFLICT DO NOTHING</c>.
+    /// </summary>
+    Task<OpenedConversation> OpenByPhoneAsync(
+        Guid tenantId, Guid connectionId, string waId, Guid? customerId, string profileName, DateTimeOffset now,
+        CancellationToken cancellationToken);
 }
