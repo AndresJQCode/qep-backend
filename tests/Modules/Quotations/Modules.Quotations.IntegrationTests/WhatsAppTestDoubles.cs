@@ -24,6 +24,19 @@ public sealed class RecordingWhatsAppSender : IWhatsAppSender
 {
     private readonly Lock gate = new();
     private readonly List<(WhatsAppChannel Channel, string DocumentNumber)> sent = [];
+    private string? lastNumberFormat;
+
+    /// <summary>El formato numérico del tenant con el que se armó el último mensaje (spec 2026-10-23 D-R3).</summary>
+    public string? LastNumberFormat
+    {
+        get
+        {
+            lock (gate)
+            {
+                return lastNumberFormat;
+            }
+        }
+    }
 
     public IReadOnlyList<(WhatsAppChannel Channel, string DocumentNumber)> Sent
     {
@@ -38,17 +51,18 @@ public sealed class RecordingWhatsAppSender : IWhatsAppSender
 
     public Task SendQuotationAsync(
         WhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken) =>
-        Record(channel, message.OrderNumber);
+        Record(channel, message.OrderNumber, message.NumberFormat);
 
     public Task SendOrderAsync(
         WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken) =>
-        Record(channel, message.OrderNumber);
+        Record(channel, message.OrderNumber, message.NumberFormat);
 
-    private Task Record(WhatsAppChannel channel, string documentNumber)
+    private Task Record(WhatsAppChannel channel, string documentNumber, string? numberFormat)
     {
         lock (gate)
         {
             sent.Add((channel, documentNumber));
+            lastNumberFormat = numberFormat;
         }
 
         return Task.CompletedTask;
