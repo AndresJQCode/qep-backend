@@ -84,7 +84,12 @@ public sealed record QuotationPdfDocument(
     /// <summary>Qué documento es. Un solo layout para cotización y pedido (owner): la plantilla sólo
     /// cambia el nombre del documento y omite la vigencia, que un pedido no tiene. Default
     /// <see cref="QuotationPdfKind.Quotation"/> para que el PDF de la cotización no cambie.</summary>
-    QuotationPdfKind Kind = QuotationPdfKind.Quotation);
+    QuotationPdfKind Kind = QuotationPdfKind.Quotation,
+    /// <summary>El separador de miles del formato numérico del tenant. El símbolo y los decimales de la
+    /// moneda siguen saliendo de <c>Currencies</c> (spec 2026-10-23, D-R4): esto sólo decide los separadores.</summary>
+    string ThousandsSeparator = ".",
+    /// <summary>El separador decimal del formato numérico del tenant; ver <see cref="ThousandsSeparator"/>.</summary>
+    string DecimalSeparator = ",");
 
 /// <summary>
 /// Viaja como texto (<c>"Quotation"</c> / <c>"Order"</c>) en <c>data.kind</c>: la plantilla compara
