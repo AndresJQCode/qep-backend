@@ -137,7 +137,7 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
 - Produces: `RegionalNumberFormat.Resolve(string? numberFormat) : string` (`CommaDecimal` o `DotDecimal`; otro valor o `null` → `CommaDecimal`, comparando tras `Trim()`); `Separators(string? numberFormat) : (string Thousands, string Decimal)`; `ToNumberFormatInfo(string? numberFormat) : NumberFormatInfo` (clon de sólo lectura de `InvariantCulture.NumberFormat` con `NumberGroupSeparator`, `NumberDecimalSeparator`, `NumberGroupSizes = [3]`).
 - Produces: `RegionalDateFormat.Pattern(string? dateFormat) : string` (el valor si `TenantDateFormats.IsKnown`, si no `DayMonthYear`) y `RegionalDateFormat.WithTime(string? dateFormat) : string` (`Pattern(...) + " HH:mm"`, para los Excel de la Tarea 8).
 
-- [ ] **Step 1: RED.** `RegionalNumberFormatTests`:
+- [x] **Step 1: RED.** `RegionalNumberFormatTests`:
   - `[Theory] SeparatorsFollowTheTenantFormat` — `("1.234,56", ".", ",")`, `("1,234.56", ",", ".")`, `(null, ".", ",")`, `("x", ".", ",")`, `(" 1,234.56 ", ",", ".")`.
   - `ResolveFallsBackToCommaDecimal` — `Resolve(null)` y `Resolve("x")` son `TenantNumberFormats.CommaDecimal`; `Resolve("1,234.56")` es `DotDecimal`.
   - `ToNumberFormatInfoFormatsWithTheTenantSeparators` — `2450.5m.ToString("N2", ToNumberFormatInfo("1,234.56")) == "2,450.50"`, `2450000m.ToString("N0", ToNumberFormatInfo(null)) == "2.450.000"`, y `IsReadOnly`.
@@ -147,11 +147,11 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
   dotnet test tests/Modules/Tenancy/Modules.Tenancy.UnitTests --filter "FullyQualifiedName~RegionalNumberFormatTests|FullyQualifiedName~RegionalDateFormatTests"
   ```
   Esperado: no compila (`CS0103`: `RegionalNumberFormat`/`RegionalDateFormat` no existen).
-- [ ] **Step 2: GREEN.** Crear los tres tipos; `Tenant.AllowedDateFormats` se arma con las constantes de
+- [x] **Step 2: GREEN.** Crear los tres tipos; `Tenant.AllowedDateFormats` se arma con las constantes de
   `TenantDateFormats` (mismo `HashSet`, mismo mensaje de error). `RegionalNumberFormat` reutiliza las constantes de
   `TenantNumberFormats`, no repite literales.
-- [ ] **Step 3:** Correr el filtro anterior más `FullyQualifiedName~TenantTests`. Todo verde.
-- [ ] **Step 4: Commit** `feat(tenancy): formato regional resuelto con el respaldo colombiano (spec 2026-10-23 D-R5)`.
+- [x] **Step 3:** Correr el filtro anterior más `FullyQualifiedName~TenantTests`. Todo verde.
+- [x] **Step 4: Commit** `feat(tenancy): formato regional resuelto con el respaldo colombiano (spec 2026-10-23 D-R5)`.
 
 ### Task 2: El PDF lleva los separadores del tenant (payload, mapper y plantilla)
 
@@ -166,7 +166,7 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
 - Produces: `QuotationPdfDocument(..., QuotationPdfKind Kind = Quotation, string ThousandsSeparator = ".", string DecimalSeparator = ",")` → `data.thousandsSeparator`, `data.decimalSeparator`.
 - Produces: `QuotationPdfDocumentMapper.From(QuotationResponse quotation, TenantCalendar calendar, QuotationPdfLogo? logo, string? numberFormat = null)` y `FromOrder(OrderDetailResponse order, TenantCalendar calendar, QuotationPdfLogo? logo, string? numberFormat = null)`.
 
-- [ ] **Step 1: RED.**
+- [x] **Step 1: RED.**
   - `QuotationPdfDocumentMapperTests`: `[Theory] MapsTheSeparatorsOfTheTenantNumberFormat` con `("1.234,56", ".", ",")`, `("1,234.56", ",", ".")`, `(null, ".", ",")`, `("x", ".", ",")`, llamando `From(<respuesta del archivo>, <calendario del archivo>, logo: null, numberFormat)` y afirmando `(document.ThousandsSeparator, document.DecimalSeparator)`. Mismo theory en `OrderPdfDocumentMapperTests` con `FromOrder`. `TheIssueDateIsTheTenantsLocalDate` y `ValidUntil` no cambian (D-R1).
   - `QuotationTemplateTests`:
     - `ThePayloadCarriesTheSeparators` — `CapturedRequestAsync(Complete() with { ThousandsSeparator = ",", DecimalSeparator = "." })` → `data.thousandsSeparator == ","`, `data.decimalSeparator == "."`; con `Minimal()` sin tocar → `"."` y `","`.
@@ -177,16 +177,16 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
   dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~QuotationTemplateTests|FullyQualifiedName~QuotationPdfDocumentMapperTests|FullyQualifiedName~OrderPdfDocumentMapperTests"
   ```
   Esperado: no compila (`CS0117`: `QuotationPdfDocument` no tiene `ThousandsSeparator`).
-- [ ] **Step 2: GREEN (C#).** Los dos campos con default al final del record, con un `<summary>` que diga que el
+- [x] **Step 2: GREEN (C#).** Los dos campos con default al final del record, con un `<summary>` que diga que el
   símbolo y los decimales siguen de `Currencies` (D-R4) y esto sólo decide los separadores. El mapper llena ambos con
   `RegionalNumberFormat.Separators(numberFormat)`; `IssuedOn` y `ValidUntil` no cambian.
-- [ ] **Step 3: GREEN (plantilla).** En `quotation.typ`: `miles()` une con `data.thousandsSeparator` (`:82`);
+- [x] **Step 3: GREEN (plantilla).** En `quotation.typ`: `miles()` une con `data.thousandsSeparator` (`:82`);
   `importe()` (`:94`) y `cantidad()` (`:109`, `:111`, `:113`) usan `data.decimalSeparator` (el `",0"` de `:111` pasa a
   `data.decimalSeparator + "0"`); se borra `porcentaje()` (`:117-119`), que no tiene llamadas. `fecha()` y `meses` no se
   tocan. El comentario de `miles()` dice de dónde salen los separadores.
-- [ ] **Step 4:** Correr el filtro anterior. Verde, incluida `EveryFieldTheTemplateReadsExistsInThePayload` sin cambios
+- [x] **Step 4:** Correr el filtro anterior. Verde, incluida `EveryFieldTheTemplateReadsExistsInThePayload` sin cambios
   y las de compilación (`typst` está instalado en esta máquina: no deben salir como `Skipped`).
-- [ ] **Step 5: Commit** `feat(quotations): el PDF imprime los separadores del tenant (spec 2026-10-23 D-R1, D-R4)`.
+- [x] **Step 5: Commit** `feat(quotations): el PDF imprime los separadores del tenant (spec 2026-10-23 D-R1, D-R4)`.
 
 ### Task 3: El caché recuerda el formato y los providers lo leen del tenant (D-R3)
 
@@ -205,7 +205,7 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
 - Produces: `QuotationPdfProvider(IQuotationRepository, IQuotationResponseComposer, IQuotationPdfRenderer, IQuotationPdfStorage, ITenantClock, IQuotationLogoLookup, ITenantDirectory tenantDirectory)` y `OrderPdfProvider(IQuotationPdfRenderer, IQuotationPdfStorage, ITenantClock, IQuotationLogoLookup, ITenantDirectory tenantDirectory)`.
 - Produces (pruebas): `StubTenantDirectory : ITenantDirectory` con `TenantRegionalSettings? Regional { get; set; }` (default `("America/Bogota", "dd/MM/yyyy", "COP", TenantNumberFormats.CommaDecimal)`), `static StubTenantDirectory WithNumberFormat(string numberFormat)`; los demás miembros devuelven `null`.
 
-- [ ] **Step 1: RED (dominio).** `QuotationPdfTests`: las llamadas existentes pasan `TenantNumberFormats.CommaDecimal` en
+- [x] **Step 1: RED (dominio).** `QuotationPdfTests`: las llamadas existentes pasan `TenantNumberFormats.CommaDecimal` en
   la posición nueva, y se agregan:
   - `APdfPrintedWithAnotherNumberFormatIsStale` — generado con `CommaDecimal`, `IsStaleFor(7, null, DotDecimal)` es `true`.
   - `APdfPrintedWithTheSameNumberFormatIsNotStale`.
@@ -213,11 +213,11 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
   - `RegeneratingRecordsTheNewNumberFormat` — tras `Regenerate(..., DotDecimal, ...)`, `NumberFormat == DotDecimal` y no está vencido para `DotDecimal`.
 
   Esperado: no compila (`CS1501`: `IsStaleFor` no tiene sobrecarga de 3 argumentos).
-- [ ] **Step 2: GREEN (dominio).** `NumberFormat` (`string?`, privado set) con su `<summary>`; `IsStaleFor` suma
+- [x] **Step 2: GREEN (dominio).** `NumberFormat` (`string?`, privado set) con su `<summary>`; `IsStaleFor` suma
   `|| (NumberFormat ?? LegacyNumberFormat) != numberFormat`, con `private const string LegacyNumberFormat = "1.234,56"` y
   un comentario que la ata a `TenantNumberFormats.CommaDecimal` (el dominio de Quotations no referencia Tenancy) y a la
   prueba del paso 1.
-- [ ] **Step 3: RED (migración).** `QuotationPdfNumberFormatMigrationTests.ALegacyRowKeepsItsCacheForACommaDecimalTenant`,
+- [x] **Step 3: RED (migración).** `QuotationPdfNumberFormatMigrationTests.ALegacyRowKeepsItsCacheForACommaDecimalTenant`,
   con el patrón de `FreightMigrationTests` (`NewContext`, `IMigrator`, `MigrationId`): migrar Quotations hasta la
   migración **inmediatamente anterior** a `_AddQuotationPdfNumberFormat` (la anterior en `GetMigrations()`, no un nombre
   fijo); sembrar con `session_replication_role = replica` una fila de `quotations.quotation_pdfs` (`quotation_id`,
@@ -231,14 +231,14 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
   dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --filter "FullyQualifiedName~QuotationPdfNumberFormatMigrationTests"
   ```
   Esperado: falla con `InvalidOperationException: Sequence contains no matching element` (la migración no existe).
-- [ ] **Step 4: GREEN (persistencia).** En `ConfigureQuotationPdf`, tras `logo_file_id` (`:401`):
+- [x] **Step 4: GREEN (persistencia).** En `ConfigureQuotationPdf`, tras `logo_file_id` (`:401`):
   `pdf.Property(value => value.NumberFormat).HasColumnName("number_format").HasMaxLength(16);`. Sin `Api.exe` corriendo:
 
   ```powershell
   dotnet ef migrations add AddQuotationPdfNumberFormat --project src/Modules/Quotations/Modules.Quotations.Infrastructure --context QuotationsDbContext -o Persistence/Migrations
   ```
   Revisar que el `Up` sea sólo `AddColumn<string>("number_format", "quotations", "quotation_pdfs", "character varying(16)", maxLength: 16, nullable: true)`, sin backfill, y su `Down` el `DropColumn`.
-- [ ] **Step 5: RED (providers).** `ExportQuotationPdfHandlerTests` — `NewHandler(StubTenantDirectory? tenantDirectory = null)` (no cambia la tupla):
+- [x] **Step 5: RED (providers).** `ExportQuotationPdfHandlerTests` — `NewHandler(StubTenantDirectory? tenantDirectory = null)` (no cambia la tupla):
   - `ChangingTheTenantNumberFormatRegenerates` — tras el primer export, `directory.Regional = directory.Regional! with { NumberFormat = TenantNumberFormats.DotDecimal }`; segundo export → `renderer.Calls == 2`, `renderer.Last!.ThousandsSeparator == ","`, `repository.Pdf!.NumberFormat == DotDecimal`.
   - `ExportingTwiceWithTheSameNumberFormatDoesNotRegenerate` — con `WithNumberFormat(DotDecimal)`, dos exports → `renderer.Calls == 1`.
   - `WithoutRegionalSettingsTheDocumentUsesColombianSeparators` — `Regional = null` → `(".", ",")` en `renderer.Last` y `repository.Pdf!.NumberFormat == CommaDecimal`.
@@ -248,13 +248,13 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
   dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~QuotationPdfTests|FullyQualifiedName~ExportQuotationPdfHandlerTests|FullyQualifiedName~SendOrderHandlerTests|FullyQualifiedName~SendQuotationHandlerTests"
   ```
   Esperado: no compila (`CS1729`: los providers no tienen constructor de 7 y 5 argumentos).
-- [ ] **Step 6: GREEN (providers).** `QuotationPdfProvider`: leer
+- [x] **Step 6: GREEN (providers).** `QuotationPdfProvider`: leer
   `tenantDirectory.GetRegionalSettingsAsync(new TenantId(quotation.TenantId), ...)` junto al logo (`:37`, comentario
   «una lectura de Tenancy más por export»), `var numberFormat = RegionalNumberFormat.Resolve(regional?.NumberFormat)`;
   pasarlo a `IsStaleFor` (`:41`), al mapper (`:62`), a `Generate` (`:69-70`) y a `Regenerate` (`:75`). `OrderPdfProvider`:
   la misma lectura y `FromOrder(detail, calendar, pdfLogo, regional?.NumberFormat)` (`:45`).
-- [ ] **Step 7:** Correr los dos filtros (unitario e integración de este paso). Verde.
-- [ ] **Step 8: Commit** `feat(quotations): el PDF guardado se regenera si cambia el formato numérico del tenant (spec 2026-10-23 D-R3)`.
+- [x] **Step 7:** Correr los dos filtros (unitario e integración de este paso). Verde.
+- [x] **Step 8: Commit** `feat(quotations): el PDF guardado se regenera si cambia el formato numérico del tenant (spec 2026-10-23 D-R3)`.
 
 ### Task 4: WhatsApp de Zenvia con los separadores del tenant
 
@@ -269,7 +269,7 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
 - Produces: `WhatsAppQuotationMessage(..., string DocumentUrl, string? NumberFormat = null)` y `WhatsAppOrderMessage(..., string DocumentUrl, string? NumberFormat = null)` — crudo, como el resto del contrato.
 - Produces: `SendQuotationHandler(..., IWhatsAppChannelDirectory whatsAppChannels, ITenantDirectory tenantDirectory, IMembershipDirectory membershipDirectory, ...)` y `SendOrderHandler(..., IWhatsAppChannelDirectory whatsAppChannels, ITenantDirectory tenantDirectory, IMembershipDirectory membershipDirectory, ...)`.
 
-- [ ] **Step 1: RED.** `ZenviaWhatsAppSenderTests` (`:56`, `:67`, `:80`, `:217` siguen igual, sin formato):
+- [x] **Step 1: RED.** `ZenviaWhatsAppSenderTests` (`:56`, `:67`, `:80`, `:217` siguen igual, sin formato):
   - `SendFormatsTheTotalWithTheTenantSeparators` — `Message with { Total = 2450.5m, Currency = "EUR", NumberFormat = TenantNumberFormats.DotDecimal }` → `"€ 2,450.50"`; `Message with { NumberFormat = DotDecimal }` → `"$ 2,450,000"`.
   - `SendOrderFormatsTheTotalWithTheTenantSeparators` — `OrderMessage with { NumberFormat = DotDecimal }` → `"$ 2,450,000"`.
   - `TheValidityStaysLongWithAnyNumberFormat` — con `DotDecimal`, `valid_until == "30 de septiembre de 2026"` (D-R1).
@@ -283,14 +283,14 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
   dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~ZenviaWhatsAppSenderTests|FullyQualifiedName~SendQuotationHandlerTests|FullyQualifiedName~SendOrderHandlerTests"
   ```
   Esperado: no compila (`CS0117`: `WhatsAppQuotationMessage` no tiene `NumberFormat`).
-- [ ] **Step 2: GREEN.** El campo nuevo al final de los dos records; el párrafo del `<summary>` (`:27-29`) agrega que
+- [x] **Step 2: GREEN.** El campo nuevo al final de los dos records; el párrafo del `<summary>` (`:27-29`) agrega que
   el formato numérico del tenant también viaja crudo. Los handlers leen
   `GetRegionalSettingsAsync(new TenantId(command.TenantId), ...)` justo antes de `stage = QuotationSendStage.WhatsApp` y
   pasan `NumberFormat: regional?.NumberFormat`. En el sender: `FormatTotal(decimal total, string currency, string? numberFormat)`
   con `RegionalNumberFormat.ToNumberFormatInfo(numberFormat)`; `Colombia` (`:30`) queda **sólo** para `valid_until`, y su
   comentario (`:28-29`) y el de `:84-85` lo dicen.
-- [ ] **Step 3:** Correr el filtro anterior. Verde.
-- [ ] **Step 4: Commit** `feat(quotations): el total del WhatsApp usa los separadores del tenant (spec 2026-10-23 D-R1, D-R4)`.
+- [x] **Step 3:** Correr el filtro anterior. Verde.
+- [x] **Step 4: Commit** `feat(quotations): el total del WhatsApp usa los separadores del tenant (spec 2026-10-23 D-R1, D-R4)`.
 
 ### Task 5: Correos de exportación con fecha y conteos del tenant (D-R2)
 
@@ -309,7 +309,7 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
 - Produces: `Render(..., DateTimeOffset expiresAt, EmailRegionalFormat format)` en las cuatro plantillas (reemplaza `TimeZoneInfo timeZone`).
 - Produces: `internal static class EmailRegionalFormats { static EmailRegionalFormat For(TimeZoneInfo timeZone, TenantRegionalSettings? settings) }` (sin fila → `Colombian(timeZone)`) y en `OutboxDeliveryWorker`: `protected static async Task<EmailRegionalFormat> ResolveEmailFormatAsync(DeliveryContext context, Guid tenantId, CancellationToken stoppingToken)` (calendario por `TenantClock`, que sigue fallando con un tenant desconocido; formato por `TenantDirectory.GetRegionalSettingsAsync`).
 
-- [ ] **Step 1: RED (unitarias).**
+- [x] **Step 1: RED (unitarias).**
   - `EmailRegionalFormatTests`: `ColombianIsDayFirstWithDotGrouping` — `Colombian(Bogota).Expiry(2027-01-01T04:00Z) == "31/12/2026 23:00"`, `Count(1234) == "1.234"`; `ColombianMatchesTheTenancyFallback` — `DateFormat == RegionalDateFormat.Pattern(null)` y los dos separadores iguales a `RegionalNumberFormat.ToNumberFormatInfo(null)` (amarra la copia: Application no ve Tenancy); `TheSlashStaysASlashUnderAnotherProcessCulture` — con `CultureInfo.CurrentCulture = de-DE` (restaurada en `finally`), `MM/dd/yyyy` → `"12/31/2026 23:00"`.
   - `EmailRegionalFormatsTests`: `UsesTheTenantDateAndNumberFormat` (`MM/dd/yyyy`, `1,234.56`), `WithoutARegionalRowIsColombian` (`null`), `AnUnknownDateFormatFallsBackToDayFirst` (`"dd.MM.yy"`), `AnUnknownNumberFormatFallsBackToColombian` (`"x"`), `KeepsTheCalendarTimeZone`.
   - En las cuatro clases de plantillas: un campo `Colombian = EmailRegionalFormat.Colombian(Bogota)` reemplaza a `Bogota` en las llamadas existentes, que siguen afirmando `31/12/2026 23:00`, `13/09/2026 10:30` y `42 pedidos`. Nuevas en cada una: `RenderUsesTheTenantDateAndNumberFormat` — con `new EmailRegionalFormat(Bogota, "MM/dd/yyyy", RegionalNumberFormat.ToNumberFormatInfo("1,234.56"))` y conteo `1234`, los dos cuerpos traen `12/31/2026 23:00` (en cotizaciones, `09/13/2026 10:30`) y `1,234 clientes` / `productos` / `pedidos` / `proveedores`; `RenderUsesTheIsoDateFormat` → `2026-12-31 23:00`. En `QuotationsExportEmailTemplateTests`, además, `ReadyGroupsTheRowCountForAColombianTenant` → `1.234 pedidos` (desvío 5). El singular («1 cliente») no cambia.
@@ -318,14 +318,14 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
   dotnet test tests/Modules/Notifications/Modules.Notifications.UnitTests --filter "FullyQualifiedName~EmailRegionalFormat|FullyQualifiedName~ExportEmailTemplateTests"
   ```
   Esperado: no compila (`CS0246`: `EmailRegionalFormat` no existe).
-- [ ] **Step 2: GREEN.** Record y fábrica; las cuatro plantillas usan `format.Expiry(expiresAt)` y `format.Count(n)`
+- [x] **Step 2: GREEN.** Record y fábrica; las cuatro plantillas usan `format.Expiry(expiresAt)` y `format.Count(n)`
   (el comentario del vencimiento cita además D-R2 y por qué `InvariantCulture`); los cuatro workers cambian
   `TenantClock.GetAsync` + `calendar.TimeZone` por `var format = await ResolveEmailFormatAsync(context, export.TenantId, stoppingToken)`
   en el mismo lugar (fuera del envío: una falla deja el reclamo vivo, como hoy). `InvitationEmailTemplate` y
   `QuotationsExportFailedEmailTemplate` no cambian.
-- [ ] **Step 3:** Correr el filtro anterior más `FullyQualifiedName~NotificationsLayerTests` en
+- [x] **Step 3:** Correr el filtro anterior más `FullyQualifiedName~NotificationsLayerTests` en
   `tests/ArchitectureTests/ArchitectureTests`. Verde.
-- [ ] **Step 4: RED (integración).** `NotificationsDeliveryHarness.SetTenantNumberFormatAsync(string connectionString, Guid tenantId, string numberFormat)`
+- [x] **Step 4: RED (integración).** `NotificationsDeliveryHarness.SetTenantNumberFormatAsync(string connectionString, Guid tenantId, string numberFormat)`
   (`UPDATE tenancy.tenants SET number_format = @format WHERE id = @id`, Npgsql como `InsertOutboxAsync`).
   `PayloadFor` gana `int count = 3, DateTimeOffset? expiresAt = null` (los existentes no cambian). Nueva
   `[Theory] EachExportEmailUsesTheTenantRegionalFormat` sobre `customers.export-ready.v1`, `catalog.product-export-ready.v1`,
@@ -340,7 +340,7 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
   ```
   Escríbela y córrela **antes** del Step 2 (junto con el RED del Step 1): esperado `Assert.Contains() Failure`, con
   `15/01/2030 10:30` y `1234 ` en el cuerpo. Después del Step 2, verde la clase entera.
-- [ ] **Step 5: Commit** `feat(notifications): los correos de exportación usan la fecha y los números del tenant (spec 2026-10-23 D-R2)`.
+- [x] **Step 5: Commit** `feat(notifications): los correos de exportación usan la fecha y los números del tenant (spec 2026-10-23 D-R2)`.
 
 ### Task 6: Quotations de punta a punta con el tenant en `1,234.56`
 
@@ -353,7 +353,7 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
 - Consumes: todo lo anterior, por DI real (`ITenantDirectory` ya está registrado por Tenancy).
 - Produces (pruebas): `QuotationsApiHarness.SetTenantRegionalFormatAsync(QepApiFactory factory, Guid tenantId, string? dateFormat = null, string? numberFormat = null)` (SQL sobre `tenancy.tenants` —`date_format`, `number_format`; sólo las que vienen— con el `QuotationsDbContext` del scope, como `DocumentNumberingFormatLookupTests.SetDocumentNumberFormatAsync`; la Tarea 8 lo reutiliza); `RecordingWhatsAppSender.LastNumberFormat : string?` (lo guardan los dos `Send…Async`; `Sent` no cambia de forma).
 
-- [ ] **Step 1: RED.**
+- [x] **Step 1: RED.**
   - `QuotationPdfExportApiTests.TheDocumentUsesTheTenantSeparatorsAndRegeneratesWhenTheyChange` — exportar: `PdfRenderer.LastDocument` trae `(".", ",")`; `SetTenantRegionalFormatAsync(..., numberFormat: "1,234.56")`; exportar: `GeneratedAt` distinto del primero y `(",", ".")`; exportar otra vez: `GeneratedAt` igual al segundo (no regenera).
   - `OrderSendApiTests.TheOrderDocumentAndMessageUseTheTenantSeparators` — formato en `1,234.56` antes de enviar: `LastDocument` trae `(",", ".")` y `factory.WhatsAppSender.LastNumberFormat == "1,234.56"`.
 
@@ -364,8 +364,8 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
   Esperado: no compila (`CS0103`/`CS1061`: faltan `SetTenantRegionalFormatAsync` y `LastNumberFormat`). Con el código de
   las tareas 2-4 ya hecho, el comportamiento pasa en cuanto existen los helpers: es una prueba de punta a punta, y el
   reporte lo dice en vez de fabricar un RED de comportamiento.
-- [ ] **Step 2: GREEN.** Los dos helpers. Correr el filtro: verde, incluidas las existentes de las dos clases.
-- [ ] **Step 3: Commit** `test(quotations): PDF y WhatsApp con el formato del tenant de punta a punta (spec 2026-10-23 D-R3)`.
+- [x] **Step 2: GREEN.** Los dos helpers. Correr el filtro: verde, incluidas las existentes de las dos clases.
+- [x] **Step 3: Commit** `test(quotations): PDF y WhatsApp con el formato del tenant de punta a punta (spec 2026-10-23 D-R3)`.
 
 ### Task 7: Historial de cambios con el formato del tenant (D-R6)
 
@@ -384,7 +384,7 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
 - Produces: `ItemAdded(string productName, decimal quantity, HistoryFormat format)`, `ItemQuantityChanged(string productName, decimal from, decimal to, HistoryFormat format)`, `GlobalScaleFloorChanged(int? floor, HistoryFormat format)`, `HeaderChanged(QuotationHeaderSnapshot before, QuotationHeaderSnapshot after, HistoryFormat format)`, `internal AppendFreight(List<string> changes, ShippingDetails before, ShippingDetails after, HistoryFormat format)`; en `OrderChangeSummary` los mismos más `ShippingChanged(ShippingDetails before, ShippingDetails after, HistoryFormat format)`.
 - Produces: `QuotationEditsOutcome(QuotationHeaderSnapshot HeaderBefore, QuotationHeaderSnapshot HeaderAfter, IReadOnlyList<QuotationItemEdit> ItemEdits)`; `QuotationItemEditHistory.RecordAsync(..., IReadOnlyList<QuotationItemEdit> edits, HistoryFormat format, MemberId updatedBy, ...)`.
 
-- [ ] **Step 1: RED.**
+- [x] **Step 1: RED.**
   - `HistoryFormatTests`: `NumbersKeepUpToTwoDecimalsWithGrouping` — con `For(null)`: `1500m` → `"1.500"`, `1.5m` → `"1,5"`, `1234.5m` → `"1.234,5"`, `0.5m` → `"0,5"`, `3.00m` → `"3"`, `2.456m` → `"2,46"`; con `DotDecimal`: `"1,500"`, `"1.5"`, `"1,234.5"`. `DatesFollowTheTenantFormat` — `2026-12-31` sale `"31/12/2026"` (`null` y `"x"`), `"12/31/2026"` y `"2026-12-31"`.
   - `QuotationChangeSummaryTests`: un campo `Colombian = HistoryFormat.Colombian` en las 15 llamadas a `HeaderChanged`; cambian `:145` → `"escala desde 1.000 unidades"`, `:228` → `"valor del envío (15.000)"`, `:234` → `"(18.000)"`. Nuevas: `TheValidityIsPrintedWithTheTenantDateFormat` (`MM/dd/yyyy` → `"Editó vigencia (12/31/2026)."`) y `QuantitiesUseTheTenantSeparators` (`ItemAdded("Tornillo", 1500m, dot)` → `"Agregó Tornillo x1,500."`; `ItemQuantityChanged("Tornillo", 1.5m, 2m, Colombian)` → `"Cambió la cantidad de Tornillo: 1,5 → 2."`).
   - `OrderChangeSummaryTests`: cuatro llamadas a `ShippingChanged` con `Colombian`; `:17` y `:23` pasan a `15.000` y `18.000`.
@@ -396,7 +396,7 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
   dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~HistoryFormatTests|FullyQualifiedName~ChangeSummaryTests|FullyQualifiedName~QuotationRetailTests|FullyQualifiedName~CreateQuotationHandlerTests|FullyQualifiedName~PreviewNewQuotationHandlerTests|FullyQualifiedName~RecognizeOrderCarrierHandlerTests"
   ```
   Esperado: no compila (`CS0246`: `HistoryFormat` no existe).
-- [ ] **Step 2: GREEN.** `HistoryFormat` y las firmas de arriba; `Date` y `Number` privados se borran (el comentario de
+- [x] **Step 2: GREEN.** `HistoryFormat` y las firmas de arriba; `Date` y `Number` privados se borran (el comentario de
   «sin ceros a la derecha» se muda a `HistoryFormat.Number`, con D-R6). `QuotationEditsApplication.ApplyAsync` devuelve
   `HeaderBefore`/`HeaderAfter` (la foto «después» en el mismo punto que hoy arma el resumen, `:101`), y
   `SaveQuotationHandler` llama `HeaderChanged(outcome.HeaderBefore, outcome.HeaderAfter, format)` donde hoy lee
@@ -404,9 +404,9 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
   `var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken)` **una vez**, antes de
   escribir la primera fila, y lo pasa a cada resumen. `PreviewQuotation`, `QuotationDraftBuilder` y `PreviewOrderEdits`
   no cambian.
-- [ ] **Step 3:** Correr el filtro anterior y, en integración, `OrderShippingApiTests`, `GlobalScaleDiscountApiTests`,
+- [x] **Step 3:** Correr el filtro anterior y, en integración, `OrderShippingApiTests`, `GlobalScaleDiscountApiTests`,
   `QuotationShippingApiTests` y `RetailQuotationApiTests` (las que leen `Details`). Verde.
-- [ ] **Step 4: Commit** `feat(quotations): el historial nuevo usa la fecha y los números del tenant (spec 2026-10-23 D-R6)`.
+- [x] **Step 4: Commit** `feat(quotations): el historial nuevo usa la fecha y los números del tenant (spec 2026-10-23 D-R6)`.
 
 ### Task 8: Fechas de texto del Excel con el formato del tenant; la hoja del ERP queda fija (D-R7, D-R8)
 
@@ -423,7 +423,7 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
 - Produces: `ICustomerExportBuilder.Build(IReadOnlyList<CustomerDto> customers, TenantCalendar calendar, string dateTimePattern, CancellationToken cancellationToken)`; `ExportCustomersHandler(..., ITenantDirectory tenantDirectory, IExecutionContext executionContext, ITenantClock tenantClock)`; `QuotationsExportProcessor(..., ITenantClock tenantClock, ITenantDirectory tenantDirectory)`.
 - Produces (pruebas): `CustomersApiHarness.SetTenantDateFormatAsync(QepApiFactory factory, string dateFormat, string tenantId = TenantId)` (`UPDATE tenancy.tenants SET date_format = …` con el `TenancyDbContext` del scope, como `SeedTenantAsync`).
 
-- [ ] **Step 1: RED.**
+- [x] **Step 1: RED.**
   - `QuotationsExportProcessorTests`: `NewProcessor` acepta `StubTenantDirectory? tenantDirectory = null` y, por defecto, uno en `yyyy-MM-dd` (así `:39` sigue afirmando `2026-09-12 10:30`). Nuevas: `CreatedAtUsesTheTenantDateFormat` (`dd/MM/yyyy` → `"12/09/2026 10:30"`) y `WithoutRegionalSettingsCreatedAtIsDayFirst` (`Regional = null` → `"12/09/2026 10:30"`). El total no cambia: en la misma prueba, la última celda sigue siendo `ExportCell.OfNumber(...)` (`Text` nulo, `Number` con el valor), con cualquier formato (D-R7).
   - `CustomerExportApiTests.ExportWritesDatesInTheTenantsDateFormat` — patrón de `ExportWritesDatesAndTheFileNameInTheTenantsLocalTime` (`:82-107`) con `SetTenantDateFormatAsync(factory, "MM/dd/yyyy")` después de `SeedTenantAsync`: celdas `(2, 15)` y `(2, 16)` → `"12/31/2026 23:00"`; el nombre sigue `clientes-20261231-230000.xlsx`.
   - `OrderExportApiTests.TheErpSheetIgnoresTheTenantRegionalFormat` — como `TheSeededLayoutProducesTheErpImportSheet` (`:637`), pero con `SetTenantRegionalFormatAsync(factory, tenantId, "MM/dd/yyyy", "1,234.56")` antes de exportar: `row[4]`, `row[9]` y `row[26]` cumplen `^\d{4}-\d{2}-\d{2}$`; `row[36]` es `10000` con `CultureInfo.InvariantCulture` y `sheet.NumericCells[1][36]` es `true`.
@@ -438,12 +438,12 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
   `Assert.Equal() Failure` (`2026-12-31 23:00`). La del ERP es de fijación y **pasa** desde el primer intento: para ver
   que muerde, cambia a mano `"yyyy-MM-dd"` por `"dd/MM/yyyy"` en `OrdersExportProcessor.cs:227`, córrela (roja), revierte
   y pega las dos salidas en el reporte.
-- [ ] **Step 2: GREEN.** `ExportCustomersHandler` lee `GetRegionalSettingsAsync` junto al calendario (`:76`) y pasa
+- [x] **Step 2: GREEN.** `ExportCustomersHandler` lee `GetRegionalSettingsAsync` junto al calendario (`:76`) y pasa
   `RegionalDateFormat.WithTime(settings?.DateFormat)`; el builder usa ese patrón en `InvariantCulture` en `:122-123`, y el
   comentario de `:119-121` suma D-R7. `QuotationsExportProcessor` lee una vez por job junto a `:51` y `ToCells` recibe el
   patrón. `OrdersExportProcessor` no se toca: un comentario en `:227` cita D-R8 para que nadie lo «arregle».
-- [ ] **Step 3:** Correr los tres filtros. Todo en verde.
-- [ ] **Step 4: Commit** `feat(exports): las fechas de texto del Excel usan el formato del tenant; la hoja del ERP queda fija (spec 2026-10-23 D-R7, D-R8)`.
+- [x] **Step 3:** Correr los tres filtros. Todo en verde.
+- [x] **Step 4: Commit** `feat(exports): las fechas de texto del Excel usan el formato del tenant; la hoja del ERP queda fija (spec 2026-10-23 D-R7, D-R8)`.
 
 ### Task 9: Gotcha, corrida combinada y cierre del plan
 
@@ -451,7 +451,7 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
 - Modify: `CLAUDE.md` (sección «Gotchas verificados», dos entradas)
 - Modify: `docs/superpowers/plans/2026-10-25-formato-regional-pdf-y-correos.md` (checkboxes y desvíos encontrados al ejecutar)
 
-- [ ] **Step 1: Gotcha.** Dos entradas, tuteando, con esto y nada más. Primera: el respaldo colombiano de D-R5 vive en **tres
+- [x] **Step 1: Gotcha.** Dos entradas, tuteando, con esto y nada más. Primera: el respaldo colombiano de D-R5 vive en **tres
   copias** que se cambian juntas porque los módulos no se ven — `RegionalNumberFormat`/`RegionalDateFormat`
   (`Modules.Tenancy.Application`), `EmailRegionalFormat.Colombian` (`Modules.Notifications.Application`, que no ve
   Tenancy) y `QuotationPdf.LegacyNumberFormat` (dominio de Quotations, el formato con el que se supone generada una fila
@@ -462,7 +462,7 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
   ERP); «unificarlo» con el Excel de cotizaciones compila, pasa sus pruebas unitarias y rompe la importación en
   silencio. La amarra `OrderExportApiTests.TheErpSheetIgnoresTheTenantRegionalFormat`. Y que el historial es texto
   congelado: un tenant que cambia de formato ve las filas viejas con el anterior, y eso no es un bug. El README no cambia.
-- [ ] **Step 2: Corrida combinada** (una sola vez; sin `Api.exe`):
+- [x] **Step 2: Corrida combinada** (una sola vez; sin `Api.exe`):
 
   ```powershell
   dotnet build
@@ -479,11 +479,20 @@ Las demás referencias del spec coinciden con el código actual (mapper `:26-64`
   ```
   La última es humo: su harness envía cotizaciones por el handler real, que ahora pide `ITenantDirectory`. Esperado:
   todo verde salvo fallas previas conocidas, comparadas **por nombre** contra `develop` (`git stash` si hace falta).
-- [ ] **Step 3:** Marcar los checkboxes de este plan y anotar al final cualquier desvío encontrado al ejecutar.
-- [ ] **Step 4: Commit** `docs(formato-regional): gotchas del respaldo colombiano y de la hoja del ERP (spec 2026-10-23 D-R5, D-R8)`.
+- [x] **Step 3:** Marcar los checkboxes de este plan y anotar al final cualquier desvío encontrado al ejecutar.
+- [x] **Step 4: Commit** `docs(formato-regional): gotchas del respaldo colombiano y de la hoja del ERP (spec 2026-10-23 D-R5, D-R8)`.
 
 ## Pendiente fuera de este plan
 
 - **DP-1 — WhatsApp por Meta:** sin sender (desvío 3). Cuando exista el plan 3 del envío por canal, decidir si aplica
   `RegionalNumberFormat` y el símbolo de `Currencies`, y si el ejemplo `"2.450.000 COP"` de
   `QuotationTemplateProvisioning` se alinea.
+
+## Desvíos encontrados al ejecutar
+
+- **Tarea 6:** el RED fue sólo de compilación (faltaban los helpers), como el plan lo anticipaba.
+- **Tarea 7:** `RecognizeOrderCarrierHandlerTests.TheShippingHistoryUsesTheTenantSeparators` no se escribió: es inalcanzable, porque el
+  handler sólo cambia el transportista y `ShippingDetails.Validated` nunca cambia `FreightAmount`. El handler lee `HistoryFormat` a
+  propósito: si algún día edita el flete, un formato colombiano fijo imprimiría mal en silencio.
+- **Tarea 8:** `Modules.Customers.Application` estrena un `using Modules.Tenancy.Domain;` (para `TenantId`); `CustomersLayerTests` lo
+  permite por el prefijo `Modules.Tenancy`; ArchitectureTests 132/132.
