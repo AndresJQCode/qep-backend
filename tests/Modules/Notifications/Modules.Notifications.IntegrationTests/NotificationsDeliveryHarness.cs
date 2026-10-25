@@ -156,6 +156,19 @@ internal static class NotificationsDeliveryHarness
         return id;
     }
 
+    /// <summary>Cambia el formato numérico del tenant, que register-tenant no deja elegir.</summary>
+    public static async Task SetTenantNumberFormatAsync(string connectionString, Guid tenantId, string numberFormat)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "UPDATE tenancy.tenants SET number_format = @format WHERE id = @id",
+            connection);
+        command.Parameters.AddWithValue("format", numberFormat);
+        command.Parameters.AddWithValue("id", tenantId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+    }
+
     public static async Task<IReadOnlyList<NotificationRow>> NotificationsForAsync(
         string connectionString, Guid recipientId, string templateRef)
     {

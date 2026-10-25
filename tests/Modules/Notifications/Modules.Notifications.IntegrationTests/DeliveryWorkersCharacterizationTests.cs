@@ -43,6 +43,35 @@ public sealed class DeliveryWorkersCharacterizationTests
         Assert.Single(channel.Sent, message => message.ToAddress == email);
     }
 
+    // D-R2: la fecha y el conteo del correo salen del formato del tenant. register-tenant lo deja en
+    // yyyy-MM-dd y America/Bogota; el formato numérico se cambia aparte, a punto decimal.
+    [Theory]
+    [InlineData("customers.export-ready.v1", CustomerExportEmailTemplate.TemplateRef)]
+    [InlineData("catalog.product-export-ready.v1", ProductExportEmailTemplate.TemplateRef)]
+    [InlineData("quotations.export-ready.v1", QuotationsExportReadyEmailTemplate.TemplateRef)]
+    [InlineData("suppliers.export-ready.v1", SupplierExportEmailTemplate.TemplateRef)]
+    public async Task EachExportEmailUsesTheTenantRegionalFormat(string eventName, string templateRef)
+    {
+        await using var database = await StartDatabaseAsync();
+        var channel = new RecordingEmailChannel();
+        using var factory = new NotificationsApiFactory(
+            database.GetConnectionString(), channel, runDeliveryWorkers: true);
+        var (tenantId, ownerUserId, email) = await RegisterOwnerAsync(factory);
+        await SetTenantNumberFormatAsync(database.GetConnectionString(), tenantId, "1,234.56");
+
+        await InsertOutboxAsync(
+            database.GetConnectionString(),
+            eventName,
+            PayloadFor(eventName, tenantId, ownerUserId, count: 1234, expiresAt: new DateTimeOffset(2030, 1, 15, 15, 30, 0, TimeSpan.Zero)));
+
+        var row = await WaitForNotificationAsync(
+            database.GetConnectionString(), ownerUserId, templateRef);
+        Assert.Equal(new NotificationRow("Sent", email, null), row);
+        var message = Assert.Single(channel.Sent, sent => sent.ToAddress == email);
+        Assert.Contains("2030-01-15 10:30", message.TextBody, StringComparison.Ordinal);
+        Assert.Contains("1,234 ", message.TextBody, StringComparison.Ordinal);
+    }
+
     // Un evento encolado antes del token de invitación no tiene link que armar.
     [Fact]
     public async Task AnInvitationWithoutTokenIsFailedWithoutSending()
@@ -89,7 +118,8 @@ public sealed class DeliveryWorkersCharacterizationTests
     }
 
     // Los payloads tal como los escriben los productores: Tenancy anida el tenantId en "value".
-    private static string PayloadFor(string eventName, Guid tenantId, Guid subjectId) => eventName switch
+    private static string PayloadFor(
+        string eventName, Guid tenantId, Guid subjectId, int count = 3, DateTimeOffset? expiresAt = null) => eventName switch
     {
         "tenancy.membership-invited.v1" => JsonSerializer.Serialize(
             new { userId = subjectId, tenantId = new { value = tenantId }, token = "invitation-token" }),
@@ -99,8 +129,8 @@ public sealed class DeliveryWorkersCharacterizationTests
             subjectId,
             downloadUrl = "https://r2.test/exports/clientes.xlsx?X-Amz-Signature=abc",
             fileName = "clientes.xlsx",
-            customerCount = 3,
-            expiresAt = DateTimeOffset.UtcNow.AddHours(24),
+            customerCount = count,
+            expiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddHours(24),
         }),
         "catalog.product-export-ready.v1" => JsonSerializer.Serialize(new
         {
@@ -108,8 +138,8 @@ public sealed class DeliveryWorkersCharacterizationTests
             subjectId,
             downloadUrl = "https://r2.test/exports/productos.xlsx?X-Amz-Signature=abc",
             fileName = "productos.xlsx",
-            productCount = 3,
-            expiresAt = DateTimeOffset.UtcNow.AddHours(24),
+            productCount = count,
+            expiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddHours(24),
         }),
         "quotations.export-ready.v1" => JsonSerializer.Serialize(new
         {
@@ -118,8 +148,8 @@ public sealed class DeliveryWorkersCharacterizationTests
             kind = "Quotations",
             downloadUrl = "https://r2.test/exports/cotizaciones.xlsx?X-Amz-Signature=abc",
             fileName = "cotizaciones-2026-09-13-1530.xlsx",
-            rowCount = 3,
-            expiresAt = DateTimeOffset.UtcNow.AddHours(24),
+            rowCount = count,
+            expiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddHours(24),
         }),
         "quotations.export-failed.v1" => JsonSerializer.Serialize(new { tenantId, subjectId, kind = "Orders" }),
         "suppliers.export-ready.v1" => JsonSerializer.Serialize(new
@@ -128,8 +158,8 @@ public sealed class DeliveryWorkersCharacterizationTests
             subjectId,
             downloadUrl = "https://r2.test/exports/proveedores.xlsx?X-Amz-Signature=abc",
             fileName = "proveedores.xlsx",
-            supplierCount = 3,
-            expiresAt = DateTimeOffset.UtcNow.AddHours(24),
+            supplierCount = count,
+            expiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddHours(24),
         }),
         _ => throw new ArgumentOutOfRangeException(nameof(eventName), eventName, "No payload for this event."),
     };

@@ -35,14 +35,14 @@ internal sealed class SupplierExportDeliveryWorker(
         // El vencimiento se muestra en la hora del tenant del export (spec 2026-09-17, punto 8b). Un
         // tenant que no resuelve falla acá, fuera del envío: el reclamo queda vivo y se reintenta, en
         // vez de mandar una hora en UTC.
-        var calendar = await context.TenantClock.GetAsync(export.TenantId, stoppingToken);
+        var format = await ResolveEmailFormatAsync(context, export.TenantId, stoppingToken);
         string recipient = email;
         await SendAsync(
             context,
             notification,
             () => SupplierExportEmailTemplate.Render(
                 recipient, export.DownloadUrl, export.FileName, export.SupplierCount, export.ExpiresAt,
-                calendar.TimeZone),
+                format),
             stoppingToken);
         return notification;
     }
