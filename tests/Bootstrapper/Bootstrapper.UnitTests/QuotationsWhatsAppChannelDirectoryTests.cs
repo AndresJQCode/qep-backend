@@ -1,6 +1,7 @@
 using Bootstrapper;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
+using Modules.Quotations.Application;
 
 namespace Bootstrapper.UnitTests;
 
@@ -24,7 +25,8 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
         var id = Guid.CreateVersion7();
         var connections = new StubConnections().With(id, Fields("573001234567", TemplateId), token: "tok-1");
 
-        var channel = Assert.Single(await new QuotationsWhatsAppChannelDirectory(connections).ListAvailableAsync(TenantId, Ct));
+        var channel = Assert.IsType<ZenviaWhatsAppChannel>(
+            Assert.Single(await new QuotationsWhatsAppChannelDirectory(connections).ListAvailableAsync(TenantId, Ct)));
 
         Assert.Equal((id, "tok-1", "573001234567", TemplateId), (channel.ConnectionId, channel.ApiToken, channel.FromNumber, channel.QuotationTemplateId));
         Assert.Null(channel.OrderTemplateId);
@@ -39,7 +41,8 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
         fields[ZenviaFieldKeys.OrderTemplateId] = stored;
         var connections = new StubConnections().With(Guid.CreateVersion7(), fields);
 
-        var channel = Assert.Single(await new QuotationsWhatsAppChannelDirectory(connections).ListAvailableAsync(TenantId, Ct));
+        var channel = Assert.IsType<ZenviaWhatsAppChannel>(
+            Assert.Single(await new QuotationsWhatsAppChannelDirectory(connections).ListAvailableAsync(TenantId, Ct)));
 
         Assert.Equal(expected, channel.OrderTemplateId);
     }

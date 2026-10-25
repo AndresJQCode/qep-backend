@@ -417,6 +417,48 @@ public sealed class SendQuotationHandlerTests
         Assert.Equal(QuotationStatus.Draft, harness.Repository.Quotation.Status);
     }
 
+    // Spec 2026-10-21 D17: Meta lee el PDF privado desde Mensajería, así que no hay copia pública que publicar.
+    [Fact]
+    public async Task AMetaChannelSkipsThePublicCopyAndCarriesTheStorageKey()
+    {
+        var harness = NewHandler(channels: [WhatsAppChannels.Meta()]);
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Null(harness.Storage.PublishedKey);
+        Assert.IsType<MetaWhatsAppChannel>(harness.Sender.Channel);
+        Assert.NotNull(harness.Sender.Sent);
+        Assert.Null(harness.Sender.Sent.DocumentUrl);
+        Assert.Equal(harness.Repository.Pdf!.StorageKey, harness.Sender.Sent.DocumentStorageKey);
+        Assert.Equal(AdvisorId.Value, harness.Sender.Sent.SentByMemberId);
+        Assert.Equal(ClientId, harness.Sender.Sent.CustomerId);
+    }
+
+    [Fact]
+    public async Task AZenviaChannelStillPublishesTheCopy()
+    {
+        var harness = NewHandler(channels: [WhatsAppChannels.Any()]);
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(harness.Repository.Pdf!.StorageKey, harness.Storage.PublishedKey);
+        Assert.Equal(RecordingPdfStorage.PublicUrl, harness.Sender.Sent!.DocumentUrl);
+        Assert.Equal(harness.Repository.Pdf.StorageKey, harness.Sender.Sent.DocumentStorageKey);
+    }
+
+    // Los datos de facturación no son un cliente: el mensaje no se asocia a ninguna ficha.
+    [Fact]
+    public async Task ABillingRecipientCarriesNoCustomerId()
+    {
+        var harness = NewHandler(billing: BillingParty, channels: [WhatsAppChannels.Meta()]);
+
+        await harness.Handler.HandleAsync(NewCommand("Billing"), TestContext.Current.CancellationToken);
+
+        Assert.NotNull(harness.Sender.Sent);
+        Assert.Null(harness.Sender.Sent.CustomerId);
+        Assert.Equal(AdvisorId.Value, harness.Sender.Sent.SentByMemberId);
+    }
+
     private static SendQuotationCommand NewCommand(string? recipient = null) =>
         new(TenantId, CurrentQuotationId, recipient);
 

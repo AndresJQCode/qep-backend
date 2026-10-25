@@ -9,12 +9,15 @@ namespace Modules.Quotations.Application;
 /// </summary>
 internal static class WhatsAppChannelSelection
 {
+    // La cotización sale por cualquiera de los dos proveedores: hasta la elección explícita (Task 5) cuenta todo.
     public static WhatsAppChannel ForQuotation(IReadOnlyList<WhatsAppChannel> channels) =>
         Single(channels, "quotation");
 
-    public static WhatsAppChannel ForOrder(IReadOnlyList<WhatsAppChannel> channels)
+    public static ZenviaWhatsAppChannel ForOrder(IReadOnlyList<WhatsAppChannel> channels)
     {
-        var channel = Single(channels, "order");
+        // Los pedidos salen sólo por Zenvia (spec 2026-10-21 D12): una conexión de Meta no cuenta, ni para
+        // `no_channel` ni para `channel_required`.
+        var channel = Single([.. channels.OfType<ZenviaWhatsAppChannel>()], "order");
 
         // Antes que el teléfono y que el PDF: sin plantilla no sale ningún pedido, y saberlo no cuesta nada.
         if (string.IsNullOrWhiteSpace(channel.OrderTemplateId))
@@ -27,7 +30,8 @@ internal static class WhatsAppChannelSelection
         return channel;
     }
 
-    private static WhatsAppChannel Single(IReadOnlyList<WhatsAppChannel> channels, string prefix) =>
+    private static T Single<T>(IReadOnlyList<T> channels, string prefix)
+        where T : WhatsAppChannel =>
         channels.Count switch
         {
             0 => throw new QuotationsDomainException(

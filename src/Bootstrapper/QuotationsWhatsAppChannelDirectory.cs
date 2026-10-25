@@ -26,8 +26,8 @@ internal sealed class QuotationsWhatsAppChannelDirectory(IIntegrationConnections
                 continue;
             }
 
-            channels.Add(new WhatsAppChannel(
-                resolved.Id, token, fromNumber, templateId, Value(resolved.Fields, ZenviaFieldKeys.OrderTemplateId)));
+            channels.Add(new ZenviaWhatsAppChannel(
+                resolved.Id, resolved.Name, token, fromNumber, templateId, Value(resolved.Fields, ZenviaFieldKeys.OrderTemplateId)));
         }
 
         return channels;

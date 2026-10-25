@@ -32,9 +32,47 @@ internal static class WhatsAppChannels
 {
     public const string OrderTemplateId = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 
-    public static WhatsAppChannel Any(Guid? connectionId = null, string? orderTemplateId = OrderTemplateId) =>
-        new(connectionId ?? Guid.CreateVersion7(), "token-de-prueba", "570000000000",
+    public static ZenviaWhatsAppChannel Any(Guid? connectionId = null, string? orderTemplateId = OrderTemplateId) =>
+        new(connectionId ?? Guid.CreateVersion7(), "Zenvia de prueba", "token-de-prueba", "570000000000",
             "d0e79149-ed61-4784-9883-d86807f46ce5", orderTemplateId);
+
+    public static MetaWhatsAppChannel Meta(Guid? connectionId = null) =>
+        new(connectionId ?? Guid.CreateVersion7(), "Meta de prueba", "573001112233", "cotizacion_qep", "es_CO");
+}
+
+/// <summary>Lo que el router le entregó a Zenvia.</summary>
+internal sealed class RecordingZenviaSender : IZenviaWhatsAppSender
+{
+    public List<(ZenviaWhatsAppChannel Channel, WhatsAppQuotationMessage Message)> Quotations { get; } = [];
+
+    public List<(ZenviaWhatsAppChannel Channel, WhatsAppOrderMessage Message)> Orders { get; } = [];
+
+    public Task SendQuotationAsync(
+        ZenviaWhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken)
+    {
+        Quotations.Add((channel, message));
+        return Task.CompletedTask;
+    }
+
+    public Task SendOrderAsync(
+        ZenviaWhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken)
+    {
+        Orders.Add((channel, message));
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>Lo que el router le entregó a Meta: el canal, el teléfono ya normalizado y el mensaje.</summary>
+internal sealed class RecordingMetaSender : IMetaWhatsAppSender
+{
+    public List<(MetaWhatsAppChannel Channel, string WaId, WhatsAppQuotationMessage Message)> Quotations { get; } = [];
+
+    public Task SendQuotationAsync(
+        MetaWhatsAppChannel channel, string waId, WhatsAppQuotationMessage message, CancellationToken cancellationToken)
+    {
+        Quotations.Add((channel, waId, message));
+        return Task.CompletedTask;
+    }
 }
 
 internal sealed class RecordingQuotationSendFailureLog : IQuotationSendFailureLog

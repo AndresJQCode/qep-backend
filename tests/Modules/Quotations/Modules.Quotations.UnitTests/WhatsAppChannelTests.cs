@@ -11,7 +11,7 @@ public sealed class WhatsAppChannelTests
     {
         var id = Guid.CreateVersion7();
 
-        var text = new WhatsAppChannel(id, "tok-SENTINEL", "573001234567", "tpl", null).ToString();
+        var text = new ZenviaWhatsAppChannel(id, "Zenvia", "tok-SENTINEL", "573001234567", "tpl", null).ToString();
 
         Assert.DoesNotContain("tok-SENTINEL", text, StringComparison.Ordinal);
         Assert.Contains(id.ToString(), text, StringComparison.Ordinal);
