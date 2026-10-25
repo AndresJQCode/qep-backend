@@ -1,6 +1,7 @@
 using BuildingBlocks.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -40,6 +41,7 @@ public sealed class SendOrderHandler(
     IQuotationCustomerLookup customerLookup,
     IWhatsAppSender whatsAppSender,
     IWhatsAppChannelDirectory whatsAppChannels,
+    ITenantDirectory tenantDirectory,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock)
@@ -108,6 +110,9 @@ public sealed class SendOrderHandler(
 
             // El WhatsApp sale antes de guardar, con el mismo criterio que la cotización: la entrada del
             // historial dice que el documento llegó, así que no se escribe si Zenvia falla.
+            var regional = await tenantDirectory.GetRegionalSettingsAsync(
+                new TenantId(command.TenantId), cancellationToken);
+
             stage = QuotationSendStage.WhatsApp;
             await whatsAppSender.SendOrderAsync(
                 channel,
@@ -117,7 +122,8 @@ public sealed class SendOrderHandler(
                     OrderNumber: order.OrderNumber,
                     Total: order.Total,
                     Currency: order.Currency,
-                    DocumentUrl: documentUrl),
+                    DocumentUrl: documentUrl,
+                    NumberFormat: regional?.NumberFormat),
                 cancellationToken);
 
             stage = QuotationSendStage.Persistence;

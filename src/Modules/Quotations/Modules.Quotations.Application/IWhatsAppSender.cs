@@ -26,7 +26,8 @@ public interface IWhatsAppSender
 ///
 /// <see cref="Total"/> y <see cref="ValidUntil"/> viajan crudos, sin formatear: cómo se le
 /// muestran a la persona depende del locale de la plantilla, que es configuración del canal —
-/// así que el formato es del adaptador, no de este contrato.
+/// así que el formato es del adaptador, no de este contrato. Lo mismo vale para el formato numérico
+/// del tenant (<see cref="NumberFormat"/>): viaja crudo y el adaptador lo traduce a separadores.
 /// </summary>
 public sealed record WhatsAppQuotationMessage(
     string? ToPhone,
@@ -36,7 +37,9 @@ public sealed record WhatsAppQuotationMessage(
     /// <summary>ISO code; the sender prints its catalogue symbol and decimals.</summary>
     string Currency,
     DateOnly ValidUntil,
-    string DocumentUrl);
+    string DocumentUrl,
+    /// <summary>La clave cruda del formato numérico del tenant; <c>null</c> si no tiene ajustes (el sender cae a colombiano).</summary>
+    string? NumberFormat = null);
 
 /// <summary>
 /// Los campos de la plantilla del pedido: los de <see cref="WhatsAppQuotationMessage"/> menos la
@@ -50,4 +53,6 @@ public sealed record WhatsAppOrderMessage(
     decimal Total,
     /// <summary>ISO code; the sender prints its catalogue symbol and decimals.</summary>
     string Currency,
-    string DocumentUrl);
+    string DocumentUrl,
+    /// <summary>La clave cruda del formato numérico del tenant; <c>null</c> si no tiene ajustes (el sender cae a colombiano).</summary>
+    string? NumberFormat = null);

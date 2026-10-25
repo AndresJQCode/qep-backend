@@ -1,5 +1,6 @@
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.UnitTests;
 
@@ -45,6 +46,29 @@ public sealed class SendQuotationHandlerTests
 
         Assert.NotNull(harness.Repository.Pdf);
         Assert.Equal(harness.Repository.Pdf.StorageKey, harness.Storage.PublishedKey);
+    }
+
+    // El mensaje y el documento salen del mismo ajuste regional (spec 2026-10-23, D-R4).
+    [Fact]
+    public async Task TheMessageAndTheDocumentUseTheSameNumberFormat()
+    {
+        var harness = NewHandler(
+            tenantDirectory: StubTenantDirectory.WithNumberFormat(TenantNumberFormats.DotDecimal));
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(TenantNumberFormats.DotDecimal, harness.Sender.Sent!.NumberFormat);
+        Assert.Equal(",", harness.Renderer.Last!.ThousandsSeparator);
+    }
+
+    [Fact]
+    public async Task WithoutRegionalSettingsTheMessageHasNoNumberFormat()
+    {
+        var harness = NewHandler(tenantDirectory: new StubTenantDirectory { Regional = null });
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Null(harness.Sender.Sent!.NumberFormat);
     }
 
     [Fact]
@@ -426,8 +450,10 @@ public sealed class SendQuotationHandlerTests
         bool alreadySent = false,
         Exception? whatsAppFailure = null,
         QuotationPartyDetails? billing = null,
-        WhatsAppChannel[]? channels = null)
+        WhatsAppChannel[]? channels = null,
+        StubTenantDirectory? tenantDirectory = null)
     {
+        var tenant = tenantDirectory ?? new StubTenantDirectory();
         var quotation = Quotation.Create(
             QuotationId.New(),
             TenantId,
@@ -482,7 +508,7 @@ public sealed class SendQuotationHandlerTests
                 storage,
                 new FixedTenantClock(Now),
                 new StubQuotationLogoLookup(),
-                new StubTenantDirectory()),
+                tenant),
             storage,
             new StubQuotationCustomerLookup(customer),
             new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>
@@ -493,6 +519,7 @@ public sealed class SendQuotationHandlerTests
                 ? sender
                 : new FailingWhatsAppSender(whatsAppFailure),
             new StubWhatsAppChannelDirectory(channels ?? [WhatsAppChannels.Any()]),
+            tenant,
             new StubMembershipDirectory(AdvisorId.Value),
             failureLog,
             new StubExecutionContext(SubjectId, TenantId),

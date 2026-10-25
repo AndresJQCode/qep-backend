@@ -25,14 +25,14 @@ internal sealed partial class ZenviaWhatsAppSender(
     ILogger<ZenviaWhatsAppSender> logger)
     : IWhatsAppSender
 {
-    // El formato con el que el cliente ve el monto y la vigencia lo fija el locale de la
-    // plantilla (`es` en Zenvia), no el contrato de Application — por eso se arma acá.
+    // Sólo la vigencia: el locale de la plantilla (`es` en Zenvia) fija su texto largo, y no depende del
+    // formato numérico del tenant (D-R1). El monto usa los separadores del tenant.
     private static readonly CultureInfo Colombia = CultureInfo.GetCultureInfo("es-CO");
 
-    private static string FormatTotal(decimal total, string currency)
+    private static string FormatTotal(decimal total, string currency, string? numberFormat)
     {
         var info = Currencies.Get(currency);
-        return $"{info.Symbol} {total.ToString($"N{info.Decimals}", Colombia)}";
+        return $"{info.Symbol} {total.ToString($"N{info.Decimals}", RegionalNumberFormat.ToNumberFormatInfo(numberFormat))}";
     }
 
     private const string UnknownMessageId = "(unknown)";
@@ -81,9 +81,10 @@ internal sealed partial class ZenviaWhatsAppSender(
                     {
                         fullname = message.FullName,
                         order_number = message.OrderNumber,
-                        // The quotation currency's symbol and decimals (catalogue), Colombian grouping: "€ 2.450,50",
-                        // "$ 2.450.000". The template variable is the same, so the approved template stays valid.
-                        total = FormatTotal(message.Total, message.Currency),
+                        // The quotation currency's symbol and decimals (catalogue), the tenant's separators
+                        // (Colombian when it has none): "€ 2.450,50" or "€ 2,450.50". The template variable is the
+                        // same, so the approved template stays valid.
+                        total = FormatTotal(message.Total, message.Currency, message.NumberFormat),
                         valid_until = message.ValidUntil.ToString(
                             "d 'de' MMMM 'de' yyyy", Colombia),
                         // La clave se llama `documentUrl` porque así la nombra Zenvia para los
@@ -146,7 +147,7 @@ internal sealed partial class ZenviaWhatsAppSender(
                     {
                         fullname = message.FullName,
                         order_number = message.OrderNumber,
-                        total = FormatTotal(message.Total, message.Currency),
+                        total = FormatTotal(message.Total, message.Currency, message.NumberFormat),
                         documentUrl = message.DocumentUrl,
                     },
                 },

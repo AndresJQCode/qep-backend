@@ -325,6 +325,16 @@ public sealed class SendOrderHandlerTests
         Assert.Equal(".", harness.Renderer.Last.DecimalSeparator);
     }
 
+    [Fact]
+    public async Task TheOrderMessageCarriesTheTenantNumberFormat()
+    {
+        var harness = NewHarness(tenantDirectory: StubTenantDirectory.WithNumberFormat(TenantNumberFormats.DotDecimal));
+
+        await harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken);
+
+        Assert.Equal(TenantNumberFormats.DotDecimal, harness.Sender.SentOrder!.NumberFormat);
+    }
+
     private sealed record Harness(
         SendOrderHandler Handler,
         Order Order,
@@ -345,6 +355,7 @@ public sealed class SendOrderHandlerTests
         IMembershipDirectory? membership = null,
         StubTenantDirectory? tenantDirectory = null)
     {
+        var tenant = tenantDirectory ?? new StubTenantDirectory();
         var order = OrderBuilders.Pending(
             TenantId, AdvisorId, Now.AddDays(-1), clientId: ClientId,
             parties: billing is null
@@ -384,11 +395,12 @@ public sealed class SendOrderHandlerTests
                 new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>())),
             new OrderPdfProvider(
                 renderer, storage, new FixedTenantClock(Now), new StubQuotationLogoLookup(),
-                tenantDirectory ?? new StubTenantDirectory()),
+                tenant),
             storage,
             customers,
             whatsAppFailure is null ? sender : new FailingWhatsAppSender(whatsAppFailure),
             new StubWhatsAppChannelDirectory(channels ?? [WhatsAppChannels.Any()]),
+            tenant,
             membership ?? new StubMembershipDirectory(AdvisorId.Value),
             executionContext ?? new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now));
