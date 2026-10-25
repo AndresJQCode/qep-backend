@@ -399,6 +399,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .IsRequired();
         pdf.Property(value => value.QuotationVersion).HasColumnName("quotation_version");
         pdf.Property(value => value.LogoFileId).HasColumnName("logo_file_id");
+        pdf.Property(value => value.NumberFormat).HasColumnName("number_format").HasMaxLength(16);
         pdf.Property(value => value.GeneratedAt).HasColumnName("generated_at");
 
         // El tenant no es parte de la clave --la cotizacion ya es unica-- pero toda consulta de

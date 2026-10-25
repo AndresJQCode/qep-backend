@@ -1,5 +1,6 @@
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -23,7 +24,8 @@ public sealed class QuotationPdfProvider(
     IQuotationPdfRenderer renderer,
     IQuotationPdfStorage storage,
     ITenantClock tenantClock,
-    IQuotationLogoLookup logoLookup)
+    IQuotationLogoLookup logoLookup,
+    ITenantDirectory tenantDirectory)
     : IQuotationPdfProvider
 {
     public async Task<QuotationPdf> EnsureCurrentAsync(
@@ -35,10 +37,15 @@ public sealed class QuotationPdfProvider(
         // Una lectura de Tenancy y otra de Storage por export, sin bajar bytes todavía (spec
         // 2026-09-19, decisión 9): sólo hace falta el FileId para decidir si el PDF sigue vigente.
         var logo = await logoLookup.FindAsync(quotation.TenantId, cancellationToken);
+        // El formato numérico sale del tenant en cada export: es una lectura de Tenancy más (spec 2026-10-23,
+        // D-R3), y lo que se imprimió queda registrado para vencer el PDF si el tenant lo cambia.
+        var regional = await tenantDirectory.GetRegionalSettingsAsync(
+            new TenantId(quotation.TenantId), cancellationToken);
+        var numberFormat = RegionalNumberFormat.Resolve(regional?.NumberFormat);
 
         // Generar cuesta una llamada de red a `qcode-pdf` mas una subida a R2, y la mayoria de
         // los pedidos son de cotizaciones que nadie toco desde el anterior.
-        if (pdf is not null && !pdf.IsStaleFor(quotation.Version, logo?.FileId))
+        if (pdf is not null && !pdf.IsStaleFor(quotation.Version, logo?.FileId, numberFormat))
         {
             return pdf;
         }
@@ -59,7 +66,7 @@ public sealed class QuotationPdfProvider(
         // sin LogoFileId, el próximo export lo ve vencido y vuelve a intentar con el logo.
         var printedLogoFileId = pdfLogo is null ? null : logo?.FileId;
         var content = await renderer.RenderAsync(
-            QuotationPdfDocumentMapper.From(response, calendar, pdfLogo), cancellationToken);
+            QuotationPdfDocumentMapper.From(response, calendar, pdfLogo, numberFormat), cancellationToken);
         var storageKey = await storage.SaveAsync(
             quotation.TenantId, quotation.Id, content, cancellationToken);
 
@@ -67,12 +74,12 @@ public sealed class QuotationPdfProvider(
         if (pdf is null)
         {
             pdf = QuotationPdf.Generate(
-                quotation.Id, quotation.TenantId, storageKey, quotation.Version, printedLogoFileId, now);
+                quotation.Id, quotation.TenantId, storageKey, quotation.Version, printedLogoFileId, numberFormat, now);
             repository.AddPdf(pdf);
         }
         else
         {
-            pdf.Regenerate(storageKey, quotation.Version, printedLogoFileId, now);
+            pdf.Regenerate(storageKey, quotation.Version, printedLogoFileId, numberFormat, now);
         }
 
         return pdf;

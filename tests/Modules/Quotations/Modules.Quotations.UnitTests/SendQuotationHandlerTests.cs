@@ -481,7 +481,8 @@ public sealed class SendQuotationHandlerTests
                 renderer,
                 storage,
                 new FixedTenantClock(Now),
-                new StubQuotationLogoLookup()),
+                new StubQuotationLogoLookup(),
+                new StubTenantDirectory()),
             storage,
             new StubQuotationCustomerLookup(customer),
             new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>

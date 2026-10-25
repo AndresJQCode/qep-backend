@@ -1,4 +1,5 @@
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.UnitTests;
 
@@ -20,17 +21,17 @@ public sealed class QuotationPdfTests
     [Fact]
     public void APdfGeneratedForTheCurrentVersionIsStillGood()
     {
-        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, null, Now);
+        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, null, TenantNumberFormats.CommaDecimal, Now);
 
-        Assert.False(pdf.IsStaleFor(7, null));
+        Assert.False(pdf.IsStaleFor(7, null, TenantNumberFormats.CommaDecimal));
     }
 
     [Fact]
     public void APdfBecomesStaleWhenTheQuotationChanges()
     {
-        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, null, Now);
+        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, null, TenantNumberFormats.CommaDecimal, Now);
 
-        Assert.True(pdf.IsStaleFor(8, null));
+        Assert.True(pdf.IsStaleFor(8, null, TenantNumberFormats.CommaDecimal));
     }
 
     // No se compara con `!=` sino con `<`: si el PDF quedara adelante de la cotización -- una
@@ -39,23 +40,23 @@ public sealed class QuotationPdfTests
     [Fact]
     public void APdfAheadOfTheQuotationIsNotConsideredStale()
     {
-        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 9, null, Now);
+        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 9, null, TenantNumberFormats.CommaDecimal, Now);
 
-        Assert.False(pdf.IsStaleFor(8, null));
+        Assert.False(pdf.IsStaleFor(8, null, TenantNumberFormats.CommaDecimal));
     }
 
     [Fact]
     public void RegeneratingPointsAtTheNewObjectAndVersion()
     {
-        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, null, Now);
+        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, null, TenantNumberFormats.CommaDecimal, Now);
         var later = Now.AddHours(3);
 
-        pdf.Regenerate("quotations/tenants/x/b.pdf", 9, null, later);
+        pdf.Regenerate("quotations/tenants/x/b.pdf", 9, null, TenantNumberFormats.CommaDecimal, later);
 
         Assert.Equal("quotations/tenants/x/b.pdf", pdf.StorageKey);
         Assert.Equal(9, pdf.QuotationVersion);
         Assert.Equal(later, pdf.GeneratedAt);
-        Assert.False(pdf.IsStaleFor(9, null));
+        Assert.False(pdf.IsStaleFor(9, null, TenantNumberFormats.CommaDecimal));
     }
 
     // Decisión 10 del spec 2026-09-19: el logo invalida la caché igual que la versión, comparado
@@ -63,33 +64,77 @@ public sealed class QuotationPdfTests
     [Fact]
     public void APdfWithAnotherLogoIsStale()
     {
-        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, LogoFileId, Now);
+        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, LogoFileId, TenantNumberFormats.CommaDecimal, Now);
 
-        Assert.True(pdf.IsStaleFor(7, OtherLogoFileId));
+        Assert.True(pdf.IsStaleFor(7, OtherLogoFileId, TenantNumberFormats.CommaDecimal));
     }
 
     [Fact]
     public void APdfWithTheSameLogoIsNotStale()
     {
-        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, LogoFileId, Now);
+        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, LogoFileId, TenantNumberFormats.CommaDecimal, Now);
 
-        Assert.False(pdf.IsStaleFor(7, LogoFileId));
+        Assert.False(pdf.IsStaleFor(7, LogoFileId, TenantNumberFormats.CommaDecimal));
     }
 
     [Fact]
     public void APdfWithoutLogoIsStaleOnceTheTenantHasOne()
     {
-        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, null, Now);
+        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, null, TenantNumberFormats.CommaDecimal, Now);
 
-        Assert.True(pdf.IsStaleFor(7, LogoFileId));
+        Assert.True(pdf.IsStaleFor(7, LogoFileId, TenantNumberFormats.CommaDecimal));
     }
 
     // "Y la vuelta" (spec, § Pruebas): un tenant que tenía logo y lo quita también invalida.
     [Fact]
     public void APdfWithALogoIsStaleOnceTheTenantRemovesIt()
     {
-        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, LogoFileId, Now);
+        var pdf = QuotationPdf.Generate(Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, LogoFileId, TenantNumberFormats.CommaDecimal, Now);
 
-        Assert.True(pdf.IsStaleFor(7, null));
+        Assert.True(pdf.IsStaleFor(7, null, TenantNumberFormats.CommaDecimal));
+    }
+
+    // El formato numérico es parte de lo que se imprimió: cambiarlo en el tenant tiene que vencer el
+    // PDF guardado, o el documento seguiría saliendo con los separadores anteriores.
+    [Fact]
+    public void APdfPrintedWithAnotherNumberFormatIsStale()
+    {
+        var pdf = QuotationPdf.Generate(
+            Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, null, TenantNumberFormats.CommaDecimal, Now);
+
+        Assert.True(pdf.IsStaleFor(7, null, TenantNumberFormats.DotDecimal));
+    }
+
+    [Fact]
+    public void APdfPrintedWithTheSameNumberFormatIsNotStale()
+    {
+        var pdf = QuotationPdf.Generate(
+            Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, null, TenantNumberFormats.DotDecimal, Now);
+
+        Assert.False(pdf.IsStaleFor(7, null, TenantNumberFormats.DotDecimal));
+    }
+
+    // Las filas anteriores a la columna quedan en NULL: se imprimieron con el formato colombiano, que
+    // era el único. La prueba usa la constante de Tenancy a propósito: es lo que ata el literal del dominio.
+    [Fact]
+    public void ALegacyPdfWithoutFormatCountsAsCommaDecimal()
+    {
+        var pdf = QuotationPdf.Generate(
+            Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, null, numberFormat: null, Now);
+
+        Assert.False(pdf.IsStaleFor(7, null, TenantNumberFormats.CommaDecimal));
+        Assert.True(pdf.IsStaleFor(7, null, TenantNumberFormats.DotDecimal));
+    }
+
+    [Fact]
+    public void RegeneratingRecordsTheNewNumberFormat()
+    {
+        var pdf = QuotationPdf.Generate(
+            Quotation, Tenant, "quotations/tenants/x/a.pdf", 7, null, TenantNumberFormats.CommaDecimal, Now);
+
+        pdf.Regenerate("quotations/tenants/x/b.pdf", 7, null, TenantNumberFormats.DotDecimal, Now.AddHours(1));
+
+        Assert.Equal(TenantNumberFormats.DotDecimal, pdf.NumberFormat);
+        Assert.False(pdf.IsStaleFor(7, null, TenantNumberFormats.DotDecimal));
     }
 }

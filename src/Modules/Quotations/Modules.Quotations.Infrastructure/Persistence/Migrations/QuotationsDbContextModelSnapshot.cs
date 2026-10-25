@@ -1136,6 +1136,11 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("logo_file_id");
 
+                    b.Property<string>("NumberFormat")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("number_format");
+
                     b.Property<long>("QuotationVersion")
                         .HasColumnType("bigint")
                         .HasColumnName("quotation_version");
