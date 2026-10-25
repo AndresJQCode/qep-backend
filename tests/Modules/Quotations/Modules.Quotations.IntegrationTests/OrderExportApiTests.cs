@@ -726,6 +726,32 @@ public sealed class OrderExportApiTests
         Assert.False(sheet.NumericCells[1][30]);
     }
 
+    // D-R8 (spec 2026-10-23): la hoja del ERP es un contrato con el importador, no un documento para
+    // una persona. Con el tenant en MM/dd/yyyy y 1,234.56 las fechas siguen en ISO y el total sigue
+    // siendo número en cultura invariante.
+    [Fact]
+    public async Task TheErpSheetIgnoresTheTenantRegionalFormat()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var order = await CreateOrderAsync(client, factory, tenantId);
+        await AddProofAsync(client, factory, tenantId, order.Id);
+        await AddProofAsync(client, factory, tenantId, order.Id);
+        await factory.Services.SeedOrdersExportLayoutAsync(tenantId, TestContext.Current.CancellationToken);
+        await SetTenantRegionalFormatAsync(factory, tenantId, "MM/dd/yyyy", "1,234.56");
+
+        var sheet = await ExportOrdersSheetAsync(client, factory, tenantId);
+
+        var row = sheet.Rows[1];
+        Assert.Matches(@"^\d{4}-\d{2}-\d{2}$", row[4]);
+        Assert.Matches(@"^\d{4}-\d{2}-\d{2}$", row[9]);
+        Assert.Matches(@"^\d{4}-\d{2}-\d{2}$", row[26]);
+        Assert.Equal(10_000m, decimal.Parse(row[36], CultureInfo.InvariantCulture));
+        Assert.True(sheet.NumericCells[1][36]);
+    }
+
     // Ajuste 2026-10-03, de punta a punta: con el layout de la semilla, un pedido con un solo
     // comprobante deja vacía "Forma de pago 2", igual que "V. Consignacion 2". Antes las dos
     // formas de pago leían "bank_account", que es del pedido, y la 2 salía llena.

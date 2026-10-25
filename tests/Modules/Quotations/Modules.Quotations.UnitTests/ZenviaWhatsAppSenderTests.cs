@@ -6,6 +6,7 @@ using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure;
 using Modules.Quotations.Infrastructure.Whatsapp;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.UnitTests;
 
@@ -74,6 +75,66 @@ public sealed class ZenviaWhatsAppSenderTests
         // Sin centavos: en es-CO el separador decimal es la coma, y un precio de cotización
         // redondo con ",00" al final sólo agrega ruido en un mensaje de WhatsApp.
         Assert.Equal("$ 2.450.000", total);
+    }
+
+    [Fact]
+    public async Task SendFormatsTheTotalWithTheTenantSeparators()
+    {
+        var (sender, capture, _) = NewSender();
+
+        await sender.SendQuotationAsync(
+            Channel(),
+            Message with { Total = 2450.5m, Currency = "EUR", NumberFormat = TenantNumberFormats.DotDecimal },
+            TestContext.Current.CancellationToken);
+        Assert.Equal("€ 2,450.50", capture.Fields().GetProperty("total").GetString());
+
+        await sender.SendQuotationAsync(
+            Channel(),
+            Message with { NumberFormat = TenantNumberFormats.DotDecimal },
+            TestContext.Current.CancellationToken);
+        Assert.Equal("$ 2,450,000", capture.Fields().GetProperty("total").GetString());
+    }
+
+    [Fact]
+    public async Task SendOrderFormatsTheTotalWithTheTenantSeparators()
+    {
+        var (sender, capture, _) = NewSender();
+
+        await sender.SendOrderAsync(
+            Channel(),
+            OrderMessage with { NumberFormat = TenantNumberFormats.DotDecimal },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("$ 2,450,000", capture.Fields().GetProperty("total").GetString());
+    }
+
+    // D-R1: la vigencia sigue en español largo sea cual sea el formato numérico del tenant.
+    [Fact]
+    public async Task TheValidityStaysLongWithAnyNumberFormat()
+    {
+        var (sender, capture, _) = NewSender();
+
+        await sender.SendQuotationAsync(
+            Channel(),
+            Message with { NumberFormat = TenantNumberFormats.DotDecimal },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            "30 de septiembre de 2026",
+            capture.Fields().GetProperty("valid_until").GetString());
+    }
+
+    [Fact]
+    public async Task AnUnknownNumberFormatFallsBackToColombian()
+    {
+        var (sender, capture, _) = NewSender();
+
+        await sender.SendQuotationAsync(
+            Channel(),
+            Message with { Total = 2450.5m, Currency = "EUR", NumberFormat = "x" },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("€ 2.450,50", capture.Fields().GetProperty("total").GetString());
     }
 
     [Fact]

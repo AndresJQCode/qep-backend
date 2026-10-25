@@ -67,6 +67,27 @@ public sealed class OrderSendApiTests
         Assert.Contains("quotation.order.sent", actions);
     }
 
+    // Spec 2026-10-23 D-R3: el documento y el mensaje de WhatsApp salen con el formato numérico del tenant.
+    [Fact]
+    public async Task TheOrderDocumentAndMessageUseTheTenantSeparators()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var order = await CreateOrderAsync(client, factory, tenantId);
+        await SetTenantRegionalFormatAsync(factory, tenantId, numberFormat: "1,234.56");
+
+        var response = await client.PostAsJsonAsync(
+            SendUrl(tenantId, order.Id), new SendOrderRequest("Customer"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var document = factory.PdfRenderer.LastDocument;
+        Assert.NotNull(document);
+        Assert.Equal((",", "."), (document.ThousandsSeparator, document.DecimalSeparator));
+        Assert.Equal("1,234.56", factory.WhatsAppSender.LastNumberFormat);
+    }
+
     // La lección de `SendWorksWithoutABody` en la cotización: un cuerpo inferido como requerido mata el
     // envío con 500. Sin cuerpo va al cliente.
     [Fact]

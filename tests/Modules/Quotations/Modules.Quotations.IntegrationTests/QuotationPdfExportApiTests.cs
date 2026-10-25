@@ -51,6 +51,45 @@ public sealed class QuotationPdfExportApiTests
         Assert.NotEqual(first!.GeneratedAt, second!.GeneratedAt);
     }
 
+    // Spec 2026-10-23 D-R3: el documento lleva los separadores del formato numérico del tenant, y cambiar el formato
+    // invalida el PDF cacheado (la clave de caché incluye `NumberFormat`).
+    [Fact]
+    public async Task TheDocumentUsesTheTenantSeparatorsAndRegeneratesWhenTheyChange()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var quotation = await CreateQuotationAsync(client, tenantId, customerId);
+
+        var first = await ExportAsync(client, tenantId, quotation.Id);
+        var firstDocument = factory.PdfRenderer.LastDocument;
+        Assert.NotNull(firstDocument);
+        Assert.Equal((".", ","), (firstDocument.ThousandsSeparator, firstDocument.DecimalSeparator));
+
+        await SetTenantRegionalFormatAsync(factory, tenantId, numberFormat: "1,234.56");
+
+        var second = await ExportAsync(client, tenantId, quotation.Id);
+        var secondDocument = factory.PdfRenderer.LastDocument;
+        Assert.NotNull(secondDocument);
+        Assert.NotEqual(first.GeneratedAt, second.GeneratedAt);
+        Assert.Equal((",", "."), (secondDocument.ThousandsSeparator, secondDocument.DecimalSeparator));
+
+        var third = await ExportAsync(client, tenantId, quotation.Id);
+        Assert.Equal(second.GeneratedAt, third.GeneratedAt);
+    }
+
+    private static async Task<ExportDto> ExportAsync(HttpClient client, Guid tenantId, Guid quotationId)
+    {
+        var response = await client.PostAsync(
+            $"{QuotationsUrl(tenantId)}/{quotationId}/pdf", content: null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var export = await response.Content.ReadFromJsonAsync<ExportDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(export);
+        return export;
+    }
+
     // Spec 2026-10-08: the document carries the catalogue symbol and decimals of the quotation
     // currency (the billing account's), so the template stops hardcoding "$ " and COP decimals.
     [Fact]

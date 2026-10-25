@@ -7,9 +7,9 @@ public sealed class Tenant
 {
     private static readonly HashSet<string> AllowedDateFormats =
     [
-        "yyyy-MM-dd",
-        "dd/MM/yyyy",
-        "MM/dd/yyyy"
+        TenantDateFormats.IsoDate,
+        TenantDateFormats.DayMonthYear,
+        TenantDateFormats.MonthDayYear
     ];
 
     private readonly List<IDomainEvent> _domainEvents = [];

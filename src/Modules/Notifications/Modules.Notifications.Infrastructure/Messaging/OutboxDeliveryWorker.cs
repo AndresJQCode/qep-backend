@@ -8,6 +8,7 @@ using Modules.Notifications.Application;
 using Modules.Notifications.Domain;
 using Modules.Notifications.Infrastructure.Persistence;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Notifications.Infrastructure.Messaging;
 
@@ -186,6 +187,22 @@ internal abstract partial class OutboxDeliveryWorker(
         }
 
         return (notification, email);
+    }
+
+    /// <summary>
+    /// El formato con el que se escriben el vencimiento y los conteos del correo: el calendario sale
+    /// de <see cref="ITenantClock"/>, que sigue fallando con un tenant que no resuelve (el reclamo
+    /// queda vivo y se reintenta, en vez de mandar una hora en UTC), y el patrón de la fecha y los
+    /// separadores, de la configuración regional del tenant (spec 2026-10-23, D-R2). Sin esa fila,
+    /// el formato colombiano.
+    /// </summary>
+    protected static async Task<EmailRegionalFormat> ResolveEmailFormatAsync(
+        DeliveryContext context, Guid tenantId, CancellationToken stoppingToken)
+    {
+        var calendar = await context.TenantClock.GetAsync(tenantId, stoppingToken);
+        var settings = await context.TenantDirectory.GetRegionalSettingsAsync(
+            new TenantId(tenantId), stoppingToken);
+        return EmailRegionalFormats.For(calendar.TimeZone, settings);
     }
 
     private async Task ProcessAsync(

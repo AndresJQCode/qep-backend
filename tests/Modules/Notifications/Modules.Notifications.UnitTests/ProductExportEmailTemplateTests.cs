@@ -1,4 +1,5 @@
 using Modules.Notifications.Application;
+using Modules.Tenancy.Application;
 
 namespace Modules.Notifications.UnitTests;
 
@@ -7,6 +8,8 @@ namespace Modules.Notifications.UnitTests;
 public sealed class ProductExportEmailTemplateTests
 {
     private static readonly TimeZoneInfo Bogota = TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");
+
+    private static readonly EmailRegionalFormat Colombian = EmailRegionalFormat.Colombian(Bogota);
 
     [Fact]
     public void RenderShowsTheExpiryInTheTenantsLocalTimeWithoutAZoneLabel()
@@ -17,7 +20,7 @@ public sealed class ProductExportEmailTemplateTests
             "productos-2026-12-31-2300.xlsx",
             productCount: 3,
             new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero),
-            Bogota);
+            Colombian);
 
         foreach (var body in new[] { message.HtmlBody, message.TextBody })
         {
@@ -26,5 +29,30 @@ public sealed class ProductExportEmailTemplateTests
             Assert.Contains("31/12/2026 23:00", body, StringComparison.Ordinal);
             Assert.DoesNotContain("UTC", body, StringComparison.Ordinal);
         }
+    }
+
+    // D-R2: el vencimiento y el conteo salen con el formato del tenant, no con el colombiano fijo.
+    [Fact]
+    public void RenderUsesTheTenantDateAndNumberFormat()
+    {
+        var format = new EmailRegionalFormat(Bogota, "MM/dd/yyyy", RegionalNumberFormat.ToNumberFormatInfo("1,234.56"));
+        var message = ProductExportEmailTemplate.Render(
+            "compras@verde.co", "https://r2.example/x", "productos.xlsx", 1234, new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero), format);
+
+        foreach (var body in new[] { message.HtmlBody, message.TextBody })
+        {
+            Assert.Contains("12/31/2026 23:00", body, StringComparison.Ordinal);
+            Assert.Contains("1,234 productos", body, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void RenderUsesTheIsoDateFormat()
+    {
+        var format = new EmailRegionalFormat(Bogota, "yyyy-MM-dd", RegionalNumberFormat.ToNumberFormatInfo(null));
+        var message = ProductExportEmailTemplate.Render(
+            "compras@verde.co", "https://r2.example/x", "productos.xlsx", 1234, new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero), format);
+
+        Assert.Contains("2026-12-31 23:00", message.TextBody, StringComparison.Ordinal);
     }
 }

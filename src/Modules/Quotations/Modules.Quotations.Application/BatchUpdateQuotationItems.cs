@@ -51,6 +51,7 @@ public sealed class BatchUpdateQuotationItemsHandler(
     IQuotationProductLookup productLookup,
     IQuotationCustomerLookup customerLookup,
     IMembershipDirectory membershipDirectory,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<BatchUpdateQuotationItemsCommand> validator)
@@ -80,6 +81,7 @@ public sealed class BatchUpdateQuotationItemsHandler(
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
+        var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
         var now = clock.UtcNow;
 
         // Los nombres de los productos que se sacan, para el resumen del historial de cada
@@ -154,7 +156,7 @@ public sealed class BatchUpdateQuotationItemsHandler(
                 quotation.Id,
                 QuotationHistoryEventType.Edited,
                 updatedBy,
-                QuotationChangeSummary.ItemAdded(pricing.Name, addition.Quantity),
+                QuotationChangeSummary.ItemAdded(pricing.Name, addition.Quantity, format),
                 now));
             auditPublisher.Publish(
                 command.TenantId,

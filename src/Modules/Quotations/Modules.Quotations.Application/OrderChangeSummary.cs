@@ -14,11 +14,11 @@ public static class OrderChangeSummary
     public static string CreatedFromExternal(OrderSource source, string reference) =>
         Trim($"Creado desde {source} ({reference}).");
 
-    public static string ItemAdded(string productName, decimal quantity) =>
-        QuotationChangeSummary.ItemAdded(productName, quantity);
+    public static string ItemAdded(string productName, decimal quantity, HistoryFormat format) =>
+        QuotationChangeSummary.ItemAdded(productName, quantity, format);
 
-    public static string ItemQuantityChanged(string productName, decimal from, decimal to) =>
-        QuotationChangeSummary.ItemQuantityChanged(productName, from, to);
+    public static string ItemQuantityChanged(string productName, decimal from, decimal to, HistoryFormat format) =>
+        QuotationChangeSummary.ItemQuantityChanged(productName, from, to, format);
 
     public static string ItemRemoved(string productName) => QuotationChangeSummary.ItemRemoved(productName);
 
@@ -26,18 +26,19 @@ public static class OrderChangeSummary
         ? "Marcó el pedido como detal: ninguna línea recibe descuento."
         : "Quitó el detal: las líneas vuelven a su descuento por escala.";
 
-    public static string GlobalScaleFloorChanged(int? floor) => QuotationChangeSummary.GlobalScaleFloorChanged(floor);
+    public static string GlobalScaleFloorChanged(int? floor, HistoryFormat format) =>
+        QuotationChangeSummary.GlobalScaleFloorChanged(floor, format);
 
     public static string NotesChanged() => "Editó las notas.";
 
     /// <summary>El cambio de envío de un pedido pendiente (spec 2026-10-17 §5.4), con los textos de la
     /// cotización. <c>null</c> si nada de lo que se cuenta cambió.</summary>
-    public static string? ShippingChanged(ShippingDetails before, ShippingDetails after)
+    public static string? ShippingChanged(ShippingDetails before, ShippingDetails after, HistoryFormat format)
     {
         ArgumentNullException.ThrowIfNull(before);
         ArgumentNullException.ThrowIfNull(after);
         var changes = new List<string>(4);
-        QuotationChangeSummary.AppendFreight(changes, before, after);
+        QuotationChangeSummary.AppendFreight(changes, before, after, format);
         return changes.Count == 0 ? null : Trim($"Editó {string.Join(", ", changes)}.");
     }
 

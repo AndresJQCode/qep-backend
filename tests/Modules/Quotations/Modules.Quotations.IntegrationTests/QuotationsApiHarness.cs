@@ -794,6 +794,25 @@ internal static class QuotationsApiHarness
         UpdateExportJobAsync(factory, jobId, setters =>
             setters.SetProperty(job => job.LockedUntil, DateTimeOffset.UtcNow.AddSeconds(-1)));
 
+    /// <summary>
+    /// Cambia el formato regional del tenant por SQL, como lo haría una pantalla de configuración sin pasar por
+    /// ella: sólo se escriben las columnas que vienen (<c>null</c> deja la actual).
+    /// </summary>
+    public static async Task SetTenantRegionalFormatAsync(
+        QepApiFactory factory, Guid tenantId, string? dateFormat = null, string? numberFormat = null)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE tenancy.tenants
+            SET date_format = COALESCE({dateFormat}, date_format),
+                number_format = COALESCE({numberFormat}, number_format)
+            WHERE id = {tenantId}
+            """,
+            TestContext.Current.CancellationToken);
+    }
+
     public static async Task<IReadOnlyList<QuotationsOutboxMessage>> OutboxMessagesAsync(
         WebApplicationFactory<Program> factory, string eventName)
     {

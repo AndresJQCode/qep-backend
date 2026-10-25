@@ -1,8 +1,10 @@
 # Formato regional del tenant en PDF, correos y WhatsApp
 
-Fecha: 2026-10-23. Estado: aprobado en conversación por el owner (2026-10-23), sin empezar — pendiente. Sólo
-`qep-backend`: el frontend ya aplica el formato del tenant (`RegionalFormatBoundary`, `src/lib/regional-format.ts`). Sin
-plan escrito. Verificado contra `develop` en `baf9aba2`.
+Fecha: 2026-10-23. Estado: aprobado en conversación por el owner (2026-10-23), sin empezar — pendiente. Ampliado el
+2026-10-25 con el historial de cambios y las fechas de texto del Excel (D-R6..D-R8, owner). Sólo `qep-backend`: el
+frontend ya aplica el formato del tenant (`RegionalFormatBoundary`, `src/lib/regional-format.ts`). Plan:
+[`2026-10-25-formato-regional-pdf-y-correos.md`](../plans/2026-10-25-formato-regional-pdf-y-correos.md). Verificado contra
+`develop` en `baf9aba2`; la ampliación, contra `68c1ca7f`.
 
 ## Por qué
 
@@ -18,8 +20,18 @@ El tenant ya guarda su formato regional —`DateFormat`, `NumberFormat`, `TimeZo
 - **El WhatsApp** (Zenvia) arma el total con `CultureInfo("es-CO")` (`ZenviaWhatsAppSender.cs:30-36`), sin mirar el
   tenant.
 
-**Objetivo:** que esos tres canales usen el formato regional del tenant, con el comportamiento colombiano de hoy como
-respaldo cuando falta.
+- **El historial de cambios** de cotización y pedido congela en `quotation_history.details` / `order_history.details`
+  la vigencia como `yyyy-MM-dd` (`QuotationChangeSummary.cs:299-300`), las cantidades y el valor del envío con
+  `"0.##"` invariante, sin agrupar (`:304-307`), y la escala del descuento global interpolada (`:90`, `:157`).
+- **Los Excel** de clientes y de cotizaciones escriben sus fechas de texto con `yyyy-MM-dd HH:mm` fijo
+  (`ClosedXmlCustomerExportBuilder.cs:122-123`, `QuotationsExportProcessor.cs:112`).
+
+**Objetivo:** que esos cinco lugares usen el formato regional del tenant, con el comportamiento colombiano de hoy como
+respaldo cuando falta. El Excel de pedidos que importa el ERP **no** cambia (D-R8).
+
+**Dos lugares donde un cambio de formato tiene consecuencias fuera de la pantalla:** el historial (el texto se congela al
+escribirse y no se reescribe nunca: un tenant que cambia de formato ve las filas viejas con el anterior) y la hoja del
+ERP (la lee un sistema, no una persona: por eso queda fija).
 
 ## Decisiones
 
@@ -30,6 +42,9 @@ respaldo cuando falta.
 | D-R3 | Un **PDF guardado** se regenera en el siguiente pedido cuando el `NumberFormat` del tenant es distinto del que usó al generarse: se persiste el formato con el que se generó cada PDF (columna nueva, migración chica) y entra en `IsStaleFor`, igual que hoy el id del logo. Una fila vieja con `null` cuenta como generada con `"1.234,56"` (lo que la plantilla hace hoy), para que no se regeneren todas de golpe. | owner |
 | D-R4 | El **símbolo y los decimales** de la moneda siguen saliendo de `Currencies.Get` (`Currencies.cs:46`; spec multi-moneda D8: el símbolo es fijo por moneda). El formato del tenant sólo decide los separadores. | owner (ratifica D8) |
 | D-R5 | **Sin datos regionales** (el tenant no tiene fila, o un valor que no se reconoce) rige el comportamiento colombiano de hoy: `dd/MM/yyyy` y `1.234,56`. | owner |
+| D-R6 | El **historial de cambios** de cotización y de pedido (`QuotationChangeSummary`, `OrderChangeSummary`) imprime las fechas con el `DateFormat` del tenant, sólo fecha (la vigencia es `DateOnly`), y todo número con los separadores del tenant: cantidades, valor del envío y escala del descuento global, con el patrón `"#,##0.##"` (hasta dos decimales, sin ceros a la derecha, **con** agrupación: `1500` → `1.500` y `1.5` → `1,5` en `1.234,56`). Sólo filas **nuevas**: las existentes son texto guardado y no se reescriben (sin migración ni backfill). Rige D-R5. | owner, 2026-10-25 |
+| D-R7 | En los **Excel**, las celdas de fecha **de texto** usan el `DateFormat` del tenant más `" HH:mm"`, en su zona horaria (misma regla que D-R2): `Creado`/`Actualizado` de clientes y `CreatedAt` de cotizaciones. Las celdas **numéricas no se tocan**: son celdas tipadas con formato numérico de Excel, y Excel las muestra con la configuración regional de quien abre el archivo. Los nombres de archivo no cambian. | owner, 2026-10-25 |
+| D-R8 | El **Excel de pedidos** (`OrdersExportProcessor`, el layout homologado que importa el ERP) queda exactamente como hoy: `Fecha Pedido` en `yyyy-MM-dd` (`:227`), las fechas de pago (`:435-436`) y cada celda. Lo lee un ERP, y un cambio de formato le puede romper la importación en silencio. Una prueba lo fija con un tenant en `MM/dd/yyyy` y `1,234.56`. | owner, 2026-10-25 |
 
 ## Qué se construye
 
@@ -41,6 +56,11 @@ respaldo cuando falta.
   `(",", ".")` para `"1,234.56"`, y los colombianos (D-R5) para `null` o cualquier otro valor.
 - `ToNumberFormatInfo(string? numberFormat)` → un `NumberFormatInfo` de sólo lectura sobre `InvariantCulture` con
   `NumberGroupSeparator`, `NumberDecimalSeparator` y `NumberGroupSizes = [3]` de esos separadores.
+
+Junto a él, `RegionalDateFormat` (ampliación 2026-10-25, la usan el historial y los Excel): `Pattern(string? dateFormat)`
+devuelve el formato si es uno de los permitidos y `dd/MM/yyyy` si no (D-R5), y `WithTime(string?)` le suma `" HH:mm"`.
+Los formatos permitidos salen del `HashSet` privado de `Tenant` (`Tenant.cs:8-13`) a `TenantDateFormats`, público en
+`Modules.Tenancy.Domain`, gemelo de `TenantNumberFormats`.
 
 Los dos valores aceptados son los de `TenantNumberFormats` (`TenantNumberFormats.cs:9-10`, en `Modules.Tenancy.Domain`),
 que este helper reutiliza en vez de repetir los literales.
@@ -127,6 +147,9 @@ por `EmailRegionalFormat format`, y:
 
 `InvitationEmailTemplate` y `QuotationsExportFailedEmailTemplate` no imprimen fechas ni números: no cambian.
 
+**Cuarto correo (verificado 2026-10-25):** `SupplierExportEmailTemplate` y `SupplierExportDeliveryWorker` llegaron después
+de este spec, con el mismo vencimiento `dd/MM/yyyy HH:mm` y el mismo conteo. Reciben el mismo tratamiento.
+
 ### 4. WhatsApp (Zenvia)
 
 - `WhatsAppQuotationMessage` y `WhatsAppOrderMessage` (`IWhatsAppSender.cs:31-39`, `:46-53`) suman
@@ -140,9 +163,64 @@ por `EmailRegionalFormat format`, y:
 - `valid_until` (`:87-88`) **sigue** con `"d 'de' MMMM 'de' yyyy"` y `es-CO` (D-R1): el campo `Colombia` (`:30`) queda,
   sólo para los nombres de los meses.
 
+### 5. Historial de cambios (D-R6)
+
+**Qué imprime un número o una fecha hoy** (todo en `QuotationChangeSummary`; `OrderChangeSummary` delega en él):
+
+| Texto | Método | Hoy |
+| --- | --- | --- |
+| «Agregó X x3.» | `ItemAdded` (`:36-37`) | `Number` → `"0.##"` invariante |
+| «Cambió la cantidad de X: 3 → 5.» | `ItemQuantityChanged` (`:39-41`) | ídem |
+| «valor del envío (15000)» | `AppendFreight` (`:255`) | ídem |
+| «vigencia (2026-12-31)» | `HeaderChanged` (`:128`) | `Date` → `yyyy-MM-dd` (`:299-300`) |
+| «escala desde 1000 unidades» | `GlobalScaleFloorChanged` (`:89-91`), `HeaderChanged` (`:157`) | `int` interpolado |
+
+`PaymentProofsChanged` (`OrderChangeSummary.cs:57-76`) también imprime números —cuántos comprobantes se agregaron,
+corrigieron o retiraron en un guardado— y **no cambia**: son conteos de un solo guardado, muy por debajo de 1.000, y
+con `"N0"` el texto sería idéntico. Llevarle el formato a `RemoveOrderPaymentProofHandler`, que siempre escribe `1`,
+sería una lectura de Tenancy para nada.
+
+**Contrato.** Record nuevo en `Modules.Quotations.Application`:
+
+```csharp
+public sealed record HistoryFormat(string DateFormat, NumberFormatInfo Numbers)
+```
+
+con `For(TenantRegionalSettings? settings)` (usa `RegionalDateFormat.Pattern` y `RegionalNumberFormat.ToNumberFormatInfo`:
+D-R5 sale solo), `Colombian`, `Date(DateOnly)` y `Number(decimal)` (`"#,##0.##"`). Los métodos de los resúmenes que
+imprimen un número o una fecha (`ItemAdded`, `ItemQuantityChanged`, `HeaderChanged`, `GlobalScaleFloorChanged`,
+`AppendFreight` y sus pares de `OrderChangeSummary`) reciben un `HistoryFormat` **obligatorio**: así el compilador
+encuentra cada llamador y ninguno queda con el formato colombiano por olvido.
+
+**Quién lo lee.** Una lectura de `ITenantDirectory.GetRegionalSettingsAsync` por handler que escribe historial con
+número o fecha —ocho—: `AddQuotationItemHandler`, `UpdateQuotationItemHandler`, `BatchUpdateQuotationItemsHandler`,
+`SaveQuotationHandler`, `CreateQuotationHandler` (sus líneas pasan por `QuotationItemEditHistory.RecordAsync`),
+`AddOrderItemsHandler`, `SaveOrderEditsHandler` y `RecognizeOrderCarrierHandler`. `QuotationEditsApplication.ApplyAsync`
+lo comparten el guardado y dos cálculos previos (`PreviewQuotation`, `QuotationDraftBuilder`) que no escriben historial:
+en vez de pasarle el formato, `QuotationEditsOutcome` devuelve las dos fotos del encabezado y el resumen lo arma
+`SaveQuotationHandler`. Los previews no ganan ninguna lectura.
+
+### 6. Excel con fechas de texto (D-R7 y D-R8)
+
+- **Clientes:** `ICustomerExportBuilder.Build` (`ICustomerExportBuilder.cs:15-18`) recibe además el patrón ya resuelto
+  (`RegionalDateFormat.WithTime(settings?.DateFormat)`), que `ExportCustomersHandler` (`ExportCustomers.cs:76-79`) lee con
+  `ITenantDirectory`. `Modules.Customers.Application` ya referencia `Modules.Tenancy.Application`
+  (`Modules.Customers.Application.csproj:10`, y `CustomersLayerTests.cs:66-74` lo permite), así que la regla de capas
+  no cambia. `Creado` y `Actualizado` (`ClosedXmlCustomerExportBuilder.cs:122-123`) usan ese patrón en
+  `InvariantCulture`; el comentario de `:119-121` (texto y no fecha de Excel) sigue valiendo.
+- **Cotizaciones:** `QuotationsExportProcessor` (`:12-18`) inyecta `ITenantDirectory`, lee una vez por job junto al
+  calendario (`:51`) y `ToCells` (`:106-112`) usa el patrón.
+- **Proveedores y productos:** no tienen fechas de texto en celdas (sólo el nombre del archivo,
+  `ClosedXmlSupplierExportBuilder.cs:81`, `ExportProducts.cs:232`): nada que cambiar.
+- **Celdas numéricas:** no se tocan en ningún export. Son celdas tipadas con formato de Excel (`#,##0`, `#,##0.00`), y
+  Excel las localiza para quien abre el archivo; escribirlas como texto con los separadores del tenant rompería sumas y
+  filtros.
+- **Pedidos (D-R8):** `OrdersExportProcessor` no se toca.
+
 ## Restricciones
 
-- Sin rediseño: ningún texto, layout ni plantilla de Zenvia cambia más allá de separadores y fechas de correo.
+- Sin rediseño: ningún texto, layout ni plantilla de Zenvia cambia más allá de separadores, fechas de correo, fechas y
+  números del historial nuevo y fechas de texto del Excel.
 - La plantilla de Zenvia aprobada no cambia: la variable `total` es la misma, sólo su contenido.
 - Ningún default silencioso nuevo distinto de D-R5. `ITenantClock` sigue sin default a UTC (`ITenantClock.cs:8-10`).
 - La regla de capas no se toca: ni `Modules.Notifications.Application` gana referencias, ni Quotations ve otro módulo que
@@ -151,8 +229,11 @@ por `EmailRegionalFormat format`, y:
 ## Fuera de alcance
 
 - i18n: nombres de meses u otros textos en otro idioma.
-- Las exportaciones a Excel y el texto del historial de cambios: usan `yyyy-MM-dd` legible por máquina a propósito
-  (nombre del archivo, `ExportJobSupport.cs:37`; historial, `QuotationChangeSummary.cs:300`).
+- El Excel de pedidos que importa el ERP (D-R8) y los nombres de archivo de todos los exports (`ExportJobSupport.cs:37`,
+  `ClosedXmlCustomerExportBuilder.cs:76`, `ClosedXmlSupplierExportBuilder.cs:81`, `ExportProducts.cs:232`): legibles por
+  máquina a propósito.
+- Reescribir filas de historial ya guardadas (D-R6).
+- Las celdas numéricas de los Excel (D-R7).
 - Impuestos por moneda, `PosLimits` por moneda y la columna de moneda en la exportación de pedidos al ERP.
 - Las variables de texto del constructor de chatbots (`RunVariables.FormatText`, `RunVariables.cs:70-77`): imprimen en
   invariante valores que llegan de una API externa, no importes que el backend conozca con su moneda.
@@ -196,6 +277,18 @@ colombianos para `null` y para `"x"`; `ToNumberFormatInfo("1,234.56")` formatea 
   `StubPdfRenderer.LastDocument` (`QuotationsApiHarness.cs:892-901`) trae `(",", ".")`; en la cotización, cambiar el
   formato y volver a exportar llama otra vez al renderer.
 
+**Historial (D-R6), Quotations.UnitTests:** `HistoryFormatTests` (nuevo): `1500` → `1.500` y `1.5` → `1,5` en
+`1.234,56`; `1,500` y `1.5` en `1,234.56`; `3` → `3`; la vigencia `2026-12-31` sale `31/12/2026`, `12/31/2026` o
+`2026-12-31` según el formato, y sin fila, `31/12/2026`. En `QuotationChangeSummaryTests` y `OrderChangeSummaryTests`,
+las afirmaciones de hoy pasan a `HistoryFormat.Colombian` y cambian donde había un número de cuatro cifras o más:
+`valor del envío (15.000)`, `(18.000)`, `escala desde 1.000 unidades`. En los handlers, una prueba que fija que el
+texto nuevo sale con el formato del tenant (`CreateQuotationHandlerTests`, `RecognizeOrderCarrierHandlerTests`).
+
+**Excel (D-R7, D-R8):** `QuotationsExportProcessorTests`: `CreatedAt` con `dd/MM/yyyy` sale `12/09/2026 10:30`, y con
+`yyyy-MM-dd` sigue `2026-09-12 10:30`. `CustomerExportApiTests`: con el tenant en `MM/dd/yyyy`, `Creado` y
+`Actualizado` salen `12/31/2026 23:00`. `OrderExportApiTests`: con el tenant en `MM/dd/yyyy` y `1,234.56`, la hoja del
+ERP trae `Fecha Pedido` en `yyyy-MM-dd` y los valores numéricos como número, igual que hoy.
+
 ## Archivos
 
 | Archivo | Líneas | Qué |
@@ -228,6 +321,17 @@ colombianos para `null` y para `"x"`; `ToNumberFormatInfo("1,234.56")` formatea 
 | `src/Modules/Notifications/Modules.Notifications.Infrastructure/Messaging/ProductExportDeliveryWorker.cs` | 36-43 | Llama a la plantilla |
 | `src/Modules/Notifications/Modules.Notifications.Infrastructure/Messaging/QuotationsExportReadyDeliveryWorker.cs` | 36-43 | Llama a la plantilla |
 | `src/Modules/Messaging/Modules.Messaging.Application/QuotationTemplateProvisioning.cs` | 38-43 | Ejemplos de la plantilla de Meta (DP-1) |
+| `src/Modules/Notifications/Modules.Notifications.Application/SupplierExportEmailTemplate.cs` | 24, 30-32 | Cuarto correo (2026-10-25) |
+| `src/Modules/Quotations/Modules.Quotations.Application/QuotationChangeSummary.cs` | 36-41, 89-91, 128, 157, 255, 299-307 | Números y fechas del historial (D-R6) |
+| `src/Modules/Quotations/Modules.Quotations.Application/OrderChangeSummary.cs` | 17-42, 57-76 | Delegados del pedido; comprobantes sin cambio |
+| `src/Modules/Quotations/Modules.Quotations.Application/QuotationEditsApplication.cs` | 9-12, 101-102 | `QuotationEditsOutcome` y el resumen del encabezado |
+| `src/Modules/Quotations/Modules.Quotations.Application/QuotationItemEditHistory.cs` | 15-48 | Historial de líneas compartido |
+| `src/Modules/Quotations/Modules.Quotations.Application/QuotationsExportProcessor.cs` | 12-18, 51, 106-112 | `CreatedAt` de texto (D-R7) |
+| `src/Modules/Quotations/Modules.Quotations.Application/OrdersExportProcessor.cs` | 227, 435-436 | Hoja del ERP, sin cambio (D-R8) |
+| `src/Modules/Customers/Modules.Customers.Application/ICustomerExportBuilder.cs` | 15-18 | Contrato del builder |
+| `src/Modules/Customers/Modules.Customers.Application/ExportCustomers.cs` | 31-41, 76-79 | Lee el calendario y arma el archivo |
+| `src/Modules/Customers/Modules.Customers.Infrastructure/Excel/ClosedXmlCustomerExportBuilder.cs` | 44-47, 119-123 | `Creado`, `Actualizado` |
+| `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/OrderExportApiTests.cs` | 637 | `TheSeededLayoutProducesTheErpImportSheet` |
 | `tests/ArchitectureTests/ArchitectureTests/QuotationsLayerTests.cs` | 68-77 | Quotations sólo ve `Modules.Tenancy*` |
 | `tests/ArchitectureTests/ArchitectureTests/NotificationsLayerTests.cs` | 21-27 | Application no ve Infrastructure |
 | `tests/Modules/Notifications/Modules.Notifications.UnitTests/CustomerExportEmailTemplateTests.cs` | 22, 77-83 | `31/12/2026 23:00` |

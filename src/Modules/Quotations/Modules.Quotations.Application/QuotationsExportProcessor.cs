@@ -1,6 +1,7 @@
 using System.Globalization;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -15,7 +16,8 @@ public sealed class QuotationsExportProcessor(
     IQuotationAdvisorLookup advisorLookup,
     IExportWorkbookWriter writer,
     IExportFileStorage storage,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    ITenantDirectory tenantDirectory)
     : IExportJobProcessor
 {
     public const string SheetName = "Cotizaciones";
@@ -25,7 +27,7 @@ public sealed class QuotationsExportProcessor(
     /// <summary>Las de la tabla del listado, en su orden (D8), con la moneda aparte del total
     /// —la tabla la pinta junto al importe y en una planilla tiene que poder filtrarse—. Sin
     /// tildes, como Reporting. Anchos fijos: medir el contenido obligaría a recorrerlo dos veces;
-    /// Fecha cabe entera en formato ISO.</summary>
+    /// Fecha cabe entera con cualquiera de los tres formatos del tenant más " HH:mm" (16 caracteres).</summary>
     public static readonly IReadOnlyList<ExportColumn> Columns =
     [
         new("Numero", 16),
@@ -51,6 +53,10 @@ public sealed class QuotationsExportProcessor(
         var calendar = await tenantClock.GetAsync(job.TenantId, cancellationToken);
         var created = TenantDayRange.Of(calendar, filters.CreatedFrom, filters.CreatedTo);
         var generatedAt = calendar.UtcNow;
+        // Una lectura por job: la fecha de texto sigue el formato del tenant (spec 2026-10-23, D-R7).
+        var settings = await tenantDirectory.GetRegionalSettingsAsync(
+            new TenantId(job.TenantId), cancellationToken);
+        var dateTimePattern = RegionalDateFormat.WithTime(settings?.DateFormat);
 
         using var workbook = writer.Create(SheetName, Columns);
         var rowCount = await ExportBatchLoop.WriteAllAsync<Quotation, QuotationExportCursor>(
@@ -71,7 +77,7 @@ public sealed class QuotationsExportProcessor(
             {
                 var rows = await QuotationListing.ToListItemsAsync(
                     customerLookup, advisorLookup, job.TenantId, batch, ct);
-                return rows.Select(row => ToCells(row, calendar));
+                return rows.Select(row => ToCells(row, calendar, dateTimePattern));
             },
             quotation => new QuotationExportCursor(quotation.CreatedAt, quotation.QuotationNumber),
             cancellationToken);
@@ -103,13 +109,14 @@ public sealed class QuotationsExportProcessor(
         }
     }
 
-    private static ExportCell[] ToCells(QuotationListItemDto row, TenantCalendar calendar) =>
+    private static ExportCell[] ToCells(QuotationListItemDto row, TenantCalendar calendar, string dateTimePattern) =>
     [
         ExportCell.OfText(row.QuotationNumber),
         // Texto y no celda de fecha: una fecha se muestra según la configuración regional de quien
         // abre el archivo, y ahí 03/04 deja de ser una fecha sola. En la hora del tenant, al minuto y
-        // sin offset (spec 2026-09-17, punto 8a): quien lee la planilla no convierte husos.
-        ExportCell.OfText(calendar.ToLocal(row.CreatedAt).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)),
+        // sin offset (spec 2026-09-17, punto 8a): quien lee la planilla no convierte husos. Con el
+        // formato de fecha del tenant (spec 2026-10-23, D-R7); el total sigue siendo número.
+        ExportCell.OfText(calendar.ToLocal(row.CreatedAt).ToString(dateTimePattern, CultureInfo.InvariantCulture)),
         ExportCell.OfText(row.ClientName),
         ExportCell.OfText(row.AdvisorName),
         // La etiqueta de la tabla (spec 2026-09-13, A7). El DTO trae el nombre del enum, que es

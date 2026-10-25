@@ -42,6 +42,20 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal((currency, symbol, decimals), (document.Currency, document.Symbol, document.Decimals));
     }
 
+    // Spec 2026-10-23 D-R1: los separadores salen del formato numérico del tenant; sin formato o con
+    // uno desconocido, los colombianos.
+    [Theory]
+    [InlineData("1.234,56", ".", ",")]
+    [InlineData("1,234.56", ",", ".")]
+    [InlineData(null, ".", ",")]
+    [InlineData("x", ".", ",")]
+    public void MapsTheSeparatorsOfTheTenantNumberFormat(string? numberFormat, string thousands, string decimals)
+    {
+        var document = QuotationPdfDocumentMapper.From(Response(), Calendar, logo: null, numberFormat);
+
+        Assert.Equal((thousands, decimals), (document.ThousandsSeparator, document.DecimalSeparator));
+    }
+
     // Spec 2026-09-17, punto 7: creada el 31 de diciembre a las 23:00 en Bogotá —1 de enero en UTC—,
     // el documento dice que se emitió el 31 de diciembre de 2026. La fecha viaja sin hora.
     [Fact]

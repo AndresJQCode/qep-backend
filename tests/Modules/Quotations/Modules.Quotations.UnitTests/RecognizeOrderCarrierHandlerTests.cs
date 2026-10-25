@@ -191,6 +191,7 @@ public sealed class RecognizeOrderCarrierHandlerTests
             unitOfWork ?? new NoOpQuotationsUnitOfWork(),
             audit,
             new StubMembershipDirectory(Advisor.Value),
+            new StubTenantDirectory(),
             executionContext,
             new FixedClock(Now),
             new RecognizeOrderCarrierValidator());

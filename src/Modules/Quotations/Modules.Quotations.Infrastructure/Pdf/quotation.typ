@@ -68,7 +68,8 @@
   str(int(partes.at(2))) + " de " + meses.at(int(partes.at(1)) - 1) + " de " + partes.at(0)
 }
 
-// El separador de miles se arma a mano: Typst no tiene formato por locale.
+// El separador de miles se arma a mano: Typst no tiene formato por locale. Los separadores
+// (miles y decimal) llegan en `data` desde el formato numérico del tenant (spec 2026-10-23).
 #let miles(valor) = {
   let entero = int(valor)
   let signo = if entero < 0 { "-" } else { "" }
@@ -79,7 +80,7 @@
     texto = texto.slice(0, texto.len() - 3)
   }
   partes.insert(0, texto)
-  signo + partes.join(".")
+  signo + partes.join(data.thousandsSeparator)
 }
 
 // Los decimales los manda el mapper desde el catálogo de monedas (spec 2026-10-08): 0 en pesos,
@@ -91,7 +92,7 @@
     let centavos = int(calc.round(valor * 100))
     let resto = calc.abs(calc.rem(centavos, 100))
     let decimales = if resto < 10 { "0" + str(resto) } else { str(resto) }
-    miles(calc.quo(centavos, 100)) + "," + decimales
+    miles(calc.quo(centavos, 100)) + data.decimalSeparator + decimales
   }
 }
 
@@ -106,16 +107,12 @@
   if resto == 0 {
     entero
   } else if calc.rem(resto, 10) == 0 {
-    entero + "," + str(calc.quo(resto, 10))
+    entero + data.decimalSeparator + str(calc.quo(resto, 10))
   } else if resto < 10 {
-    entero + ",0" + str(resto)
+    entero + data.decimalSeparator + "0" + str(resto)
   } else {
-    entero + "," + str(resto)
+    entero + data.decimalSeparator + str(resto)
   }
-}
-
-#let porcentaje(valor) = {
-  if valor == int(valor) { str(int(valor)) } else { str(valor).replace(".", ",") }
 }
 
 // ---------------------------------------------------------------------------- piezas

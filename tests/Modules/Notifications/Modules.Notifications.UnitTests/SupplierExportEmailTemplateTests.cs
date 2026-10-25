@@ -1,4 +1,5 @@
 using Modules.Notifications.Application;
+using Modules.Tenancy.Application;
 
 namespace Modules.Notifications.UnitTests;
 
@@ -8,6 +9,8 @@ public sealed class SupplierExportEmailTemplateTests
         new(2026, 9, 1, 14, 30, 0, TimeSpan.Zero);
 
     private static readonly TimeZoneInfo Bogota = TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");
+
+    private static readonly EmailRegionalFormat Colombian = EmailRegionalFormat.Colombian(Bogota);
 
     // Una URL prefirmada real: media docena de parametros separados por `&`, que es justo lo que
     // rompe si el cuerpo HTML no los escapa.
@@ -26,7 +29,7 @@ public sealed class SupplierExportEmailTemplateTests
             SignedUrl,
             "proveedores-20260901-113000.xlsx",
             supplierCount: 42,
-            ExpiresAt, Bogota);
+            ExpiresAt, Colombian);
 
         Assert.Equal("compras@verde.co", message.ToAddress);
         Assert.NotEmpty(message.Subject);
@@ -54,7 +57,7 @@ public sealed class SupplierExportEmailTemplateTests
     public void RenderEscapesTheLinkInsideTheHtmlHref()
     {
         var message = SupplierExportEmailTemplate.Render(
-            "compras@verde.co", SignedUrl, "proveedores.xlsx", 1, ExpiresAt, Bogota);
+            "compras@verde.co", SignedUrl, "proveedores.xlsx", 1, ExpiresAt, Colombian);
 
         Assert.Contains("&amp;X-Amz-Signature=", message.HtmlBody, StringComparison.Ordinal);
         Assert.DoesNotContain("&X-Amz-Signature=", message.HtmlBody, StringComparison.Ordinal);
@@ -65,7 +68,7 @@ public sealed class SupplierExportEmailTemplateTests
     public void RenderUsesTheSingularForOneSupplier()
     {
         var message = SupplierExportEmailTemplate.Render(
-            "compras@verde.co", "https://r2.example/x", "proveedores.xlsx", 1, ExpiresAt, Bogota);
+            "compras@verde.co", "https://r2.example/x", "proveedores.xlsx", 1, ExpiresAt, Colombian);
 
         Assert.Contains("(1 proveedor)", message.TextBody, StringComparison.Ordinal);
         Assert.DoesNotContain("1 proveedores", message.TextBody, StringComparison.Ordinal);
@@ -78,8 +81,33 @@ public sealed class SupplierExportEmailTemplateTests
     {
         var message = SupplierExportEmailTemplate.Render(
             "compras@verde.co", "https://r2.example/x", "proveedores.xlsx", 1,
-            new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero), Bogota);
+            new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero), Colombian);
 
         Assert.Contains("31/12/2026 23:00", message.TextBody, StringComparison.Ordinal);
+    }
+
+    // D-R2: el vencimiento y el conteo salen con el formato del tenant, no con el colombiano fijo.
+    [Fact]
+    public void RenderUsesTheTenantDateAndNumberFormat()
+    {
+        var format = new EmailRegionalFormat(Bogota, "MM/dd/yyyy", RegionalNumberFormat.ToNumberFormatInfo("1,234.56"));
+        var message = SupplierExportEmailTemplate.Render(
+            "compras@verde.co", "https://r2.example/x", "proveedores.xlsx", 1234, new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero), format);
+
+        foreach (var body in new[] { message.HtmlBody, message.TextBody })
+        {
+            Assert.Contains("12/31/2026 23:00", body, StringComparison.Ordinal);
+            Assert.Contains("1,234 proveedores", body, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void RenderUsesTheIsoDateFormat()
+    {
+        var format = new EmailRegionalFormat(Bogota, "yyyy-MM-dd", RegionalNumberFormat.ToNumberFormatInfo(null));
+        var message = SupplierExportEmailTemplate.Render(
+            "compras@verde.co", "https://r2.example/x", "proveedores.xlsx", 1234, new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero), format);
+
+        Assert.Contains("2026-12-31 23:00", message.TextBody, StringComparison.Ordinal);
     }
 }

@@ -51,6 +51,7 @@ public sealed class CreateQuotationHandler(
     IQuotationNumberGenerator numberGenerator,
     IDocumentNumberingFormatLookup numberingFormats,
     IMembershipDirectory membershipDirectory,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     ITenantClock tenantClock,
     IValidator<CreateQuotationCommand> validator)
@@ -96,6 +97,7 @@ public sealed class CreateQuotationHandler(
         // El armado no lo exige para que el cálculo previo no falle mientras la persona escribe. Crear sí,
         // como el guardado: el validador ya lo frena antes con el campo en `errors`; esto es el respaldo.
         quotation.EnsureBillingIdentified();
+        var historyFormat = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
 
         repository.Add(quotation);
         repository.AddHistoryEntry(QuotationHistoryEntry.Create(
@@ -115,7 +117,7 @@ public sealed class CreateQuotationHandler(
         // Lo mismo que dejaban crear y después guardar en el editor, sin la fila del encabezado (§7.4).
         await QuotationItemEditHistory.RecordAsync(
             repository, auditPublisher, productLookup, executionContext.SubjectId, command.TenantId, quotation,
-            draft.ItemEdits, advisorId, now, cancellationToken);
+            draft.ItemEdits, historyFormat, advisorId, now, cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);

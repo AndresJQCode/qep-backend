@@ -556,6 +556,17 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   una API que espera un número lleva `{x.item.id}` sin comillas: `"{x.id}"` compila, pasa las pruebas con el fake y Clasic
   responde 500 (`invoiceItems[0].id` como string; verificado el 2026-10-23 en la revisión final del plan 4). En una query de
   URL sí va `{x.id}`, porque es texto.
+- **El respaldo colombiano del formato regional vive en tres copias que se cambian juntas** (spec 2026-10-23, D-R5), porque los
+  módulos no se ven entre sí: `RegionalNumberFormat`/`RegionalDateFormat` (`Modules.Tenancy.Application`),
+  `EmailRegionalFormat.Colombian` (`Modules.Notifications.Application`, que no ve Tenancy) y `QuotationPdf.LegacyNumberFormat`
+  (dominio de Quotations: el formato con el que se supone generada una fila de `quotation_pdfs` con `number_format` nulo). Cambiar
+  `TenantNumberFormats.CommaDecimal` sin la del dominio compila y regenera en silencio todos los PDF guardados de los tenants
+  colombianos en el siguiente export. Las amarran `EmailRegionalFormatTests.ColombianMatchesTheTenancyFallback` y
+  `QuotationPdfTests.ALegacyPdfWithoutFormatCountsAsCommaDecimal`. Y el historial de cambios es texto congelado: un tenant que
+  cambia de formato ve las filas viejas con el anterior, y eso no es un bug.
+- **`OrdersExportProcessor` no lee el formato del tenant, a propósito** (D-R8): la hoja del pedido la importa el ERP.
+  «Unificarlo» con el Excel de cotizaciones compila, pasa sus pruebas unitarias y rompe la importación en silencio. La amarra
+  `OrderExportApiTests.TheErpSheetIgnoresTheTenantRegionalFormat`.
 
 ## Verificación
 

@@ -224,6 +224,8 @@ public sealed class OrdersExportProcessor(
         var ciudadCoordinadora = CoordinadoraCityFor(shipping, customer, context.CoordinadoraCityNames);
         var cliente = BilledNameFor(order, billingParty, customer);
         var documentoIdentidad = BilledIdentificationFor(order, billingParty, customer);
+        // D-R8 (spec 2026-10-23): ISO fijo a propósito. Esta hoja es el contrato con el importador del
+        // ERP, no un documento para una persona: no sigue el formato de fecha del tenant. No lo «arregles».
         var fechaPedido = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         // Spec 2026-10-15 §6.4 (y el hotfix del mismo día): las observaciones son las del pedido, que

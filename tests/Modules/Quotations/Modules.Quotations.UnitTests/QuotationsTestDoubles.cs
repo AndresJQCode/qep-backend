@@ -1248,3 +1248,39 @@ internal sealed class DefaultNumberingFormats : IDocumentNumberingFormatLookup
         Guid tenantId, DocumentNumberType documentType, CancellationToken cancellationToken) =>
         Task.FromResult(DocumentNumberFormat.DefaultFor(documentType));
 }
+
+/// <summary>
+/// El formato regional del tenant, mutable entre dos llamados de la misma prueba: así se simula que el
+/// tenant cambió de formato entre dos exportaciones (spec 2026-10-23, D-R3). Por defecto, el colombiano.
+/// <see cref="Regional"/> en null simula un tenant sin fila. Los demás miembros no se ejercen acá.
+/// </summary>
+internal sealed class StubTenantDirectory : ITenantDirectory
+{
+    public TenantRegionalSettings? Regional { get; set; } =
+        new("America/Bogota", "dd/MM/yyyy", "COP", TenantNumberFormats.CommaDecimal);
+
+    public static StubTenantDirectory WithNumberFormat(string numberFormat) =>
+        new() { Regional = new("America/Bogota", "dd/MM/yyyy", "COP", numberFormat) };
+
+    public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(
+        TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(Regional);
+
+    public Task<string?> GetSlugAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(null);
+
+    public Task<string?> GetDisplayNameAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(null);
+
+    public Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(null);
+
+    public Task<string?> GetDefaultCurrencyAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(null);
+
+    public Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<Guid?>(null);
+
+    public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<TenantStatus?>(null);
+}

@@ -43,6 +43,7 @@ public sealed class SaveOrderEditsHandler(
     IOrderPaymentProofEventPublisher paymentProofEvents,
     ShippingResolver shippingResolver,
     IMembershipDirectory membershipDirectory,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<SaveOrderEditsCommand> validator)
@@ -101,6 +102,7 @@ public sealed class SaveOrderEditsHandler(
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
+        var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
         var now = clock.UtcNow;
         var removedProofIds = command.Proofs.RemoveIds.Select(id => new OrderPaymentProofId(id)).ToArray();
         var replacedProofIds = command.Proofs.Update
@@ -174,7 +176,7 @@ public sealed class SaveOrderEditsHandler(
             {
                 order.SetShipping(shipping!, updatedBy, now);
                 // Contra lo que quedó en el agregado (ya validado), no contra lo que trajo el resolver.
-                shippingSummary = OrderChangeSummary.ShippingChanged(shippingBefore, order.ShippingDetails);
+                shippingSummary = OrderChangeSummary.ShippingChanged(shippingBefore, order.ShippingDetails, format);
             }
 
             var proofsChanged = removedProofIds.Length > 0 || corrections.Count > 0 || attachedInputs.Length > 0;
@@ -186,7 +188,7 @@ public sealed class SaveOrderEditsHandler(
                     orderRepository, quotationRepository, command.TenantId, order, cancellationToken);
             }
 
-            await RecordItemEditsAsync(command.TenantId, order, itemEdits, updatedBy, now, cancellationToken);
+            await RecordItemEditsAsync(command.TenantId, order, itemEdits, format, updatedBy, now, cancellationToken);
             if (itemEdits.Any(edit => edit.Kind == OrderItemEditKind.Added))
             {
                 order.CaptureProductSnapshots(
@@ -207,7 +209,7 @@ public sealed class SaveOrderEditsHandler(
             {
                 orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
                     OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PricingChanged, updatedBy,
-                    OrderChangeSummary.GlobalScaleFloorChanged(command.GlobalScaleFloor), now));
+                    OrderChangeSummary.GlobalScaleFloorChanged(command.GlobalScaleFloor, format), now));
                 auditPublisher.Publish(
                     command.TenantId, executionContext.SubjectId, "quotation.order.global_scale_changed",
                     order.Id.ToString(), "success", now);
@@ -295,6 +297,7 @@ public sealed class SaveOrderEditsHandler(
         Guid tenantId,
         Order order,
         IReadOnlyList<OrderItemEdit> edits,
+        HistoryFormat format,
         MemberId updatedBy,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -315,13 +318,13 @@ public sealed class SaveOrderEditsHandler(
             string action;
             if (edit.Kind == OrderItemEditKind.Added)
             {
-                summary = OrderChangeSummary.ItemAdded(edit.ProductName!, edit.Quantity!.Value);
+                summary = OrderChangeSummary.ItemAdded(edit.ProductName!, edit.Quantity!.Value, format);
                 action = "quotation.order.item_added";
             }
             else if (edit.Kind == OrderItemEditKind.QuantityChanged)
             {
                 summary = OrderChangeSummary.ItemQuantityChanged(
-                    edit.ProductName!, edit.PreviousQuantity!.Value, edit.Quantity!.Value);
+                    edit.ProductName!, edit.PreviousQuantity!.Value, edit.Quantity!.Value, format);
                 action = "quotation.order.item_updated";
             }
             else

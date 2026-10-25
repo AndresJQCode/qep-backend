@@ -51,6 +51,7 @@ public sealed class SaveQuotationHandler(
     IQuotationProductLookup productLookup,
     ShippingResolver shippingResolver,
     IMembershipDirectory membershipDirectory,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<SaveQuotationCommand> validator)
@@ -92,16 +93,17 @@ public sealed class SaveQuotationHandler(
         // validador ya lo frena antes con el campo en `errors`; esto es el respaldo del dominio.
         quotation.EnsureBillingIdentified();
 
+        var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
         // Guardar sin cambiar el encabezado no deja fila: una lista de "editó" vacíos esconde las
         // ediciones que sí importan.
-        if (outcome.HeaderSummary is not null)
+        if (QuotationChangeSummary.HeaderChanged(outcome.HeaderBefore, outcome.HeaderAfter, format) is { } headerSummary)
         {
             repository.AddHistoryEntry(QuotationHistoryEntry.Create(
                 QuotationHistoryEntryId.New(),
                 quotation.Id,
                 QuotationHistoryEventType.Edited,
                 updatedBy,
-                outcome.HeaderSummary,
+                headerSummary,
                 now));
         }
 
@@ -115,7 +117,7 @@ public sealed class SaveQuotationHandler(
 
         await QuotationItemEditHistory.RecordAsync(
             repository, auditPublisher, productLookup, executionContext.SubjectId, command.TenantId, quotation,
-            outcome.ItemEdits, updatedBy, now, cancellationToken);
+            outcome.ItemEdits, format, updatedBy, now, cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
 

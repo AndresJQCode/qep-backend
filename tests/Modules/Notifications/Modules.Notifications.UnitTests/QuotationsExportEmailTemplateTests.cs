@@ -1,4 +1,5 @@
 using Modules.Notifications.Application;
+using Modules.Tenancy.Application;
 
 namespace Modules.Notifications.UnitTests;
 
@@ -13,6 +14,8 @@ public sealed class QuotationsExportEmailTemplateTests
 
     private static readonly TimeZoneInfo Bogota = TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");
 
+    private static readonly EmailRegionalFormat Colombian = EmailRegionalFormat.Colombian(Bogota);
+
     private const string SignedUrl =
         "https://r2.example/exports/tenants/a/jobs/b.xlsx?X-Amz-Algorithm=AWS4-HMAC-SHA256" +
         "&X-Amz-Date=20260912T153000Z&X-Amz-Expires=86400&X-Amz-Signature=deadbeef";
@@ -21,7 +24,7 @@ public sealed class QuotationsExportEmailTemplateTests
     public void ReadyNamesTheKindAndPutsTheLinkAndTheExpiryInBothBodies()
     {
         var message = QuotationsExportReadyEmailTemplate.Render(
-            "ana@qcode.co", "Orders", SignedUrl, "pedidos-2026-09-12-1530.xlsx", 42, ExpiresAt, Bogota);
+            "ana@qcode.co", "Orders", SignedUrl, "pedidos-2026-09-12-1530.xlsx", 42, ExpiresAt, Colombian);
 
         Assert.Equal("ana@qcode.co", message.ToAddress);
         Assert.Equal("Tu exportación de pedidos está lista", message.Subject);
@@ -53,7 +56,7 @@ public sealed class QuotationsExportEmailTemplateTests
     public void ReadyEscapesTheLinkInsideTheHtmlHref()
     {
         var message = QuotationsExportReadyEmailTemplate.Render(
-            "ana@qcode.co", "Quotations", SignedUrl, "cotizaciones.xlsx", 3, ExpiresAt, Bogota);
+            "ana@qcode.co", "Quotations", SignedUrl, "cotizaciones.xlsx", 3, ExpiresAt, Colombian);
 
         Assert.Contains("&amp;X-Amz-Signature=", message.HtmlBody, StringComparison.Ordinal);
         Assert.DoesNotContain("&X-Amz-Signature=", message.HtmlBody, StringComparison.Ordinal);
@@ -63,7 +66,7 @@ public sealed class QuotationsExportEmailTemplateTests
     public void ReadyUsesTheSingularForOneRow()
     {
         var message = QuotationsExportReadyEmailTemplate.Render(
-            "ana@qcode.co", "Quotations", "https://r2.example/x", "cotizaciones.xlsx", 1, ExpiresAt, Bogota);
+            "ana@qcode.co", "Quotations", "https://r2.example/x", "cotizaciones.xlsx", 1, ExpiresAt, Colombian);
 
         Assert.Equal("Tu exportación de cotizaciones está lista", message.Subject);
         Assert.Contains("(1 cotización)", message.TextBody, StringComparison.Ordinal);
@@ -92,5 +95,40 @@ public sealed class QuotationsExportEmailTemplateTests
         var message = QuotationsExportFailedEmailTemplate.Render("ana@qcode.co", "Invoices");
 
         Assert.Equal("No pudimos generar tu exportación de registros", message.Subject);
+    }
+
+    // D-R2: el vencimiento y el conteo salen con el formato del tenant, no con el colombiano fijo.
+    [Fact]
+    public void RenderUsesTheTenantDateAndNumberFormat()
+    {
+        var format = new EmailRegionalFormat(Bogota, "MM/dd/yyyy", RegionalNumberFormat.ToNumberFormatInfo("1,234.56"));
+        var message = QuotationsExportReadyEmailTemplate.Render(
+            "ana@qcode.co", "Orders", "https://r2.example/x", "pedidos.xlsx", 1234, ExpiresAt, format);
+
+        foreach (var body in new[] { message.HtmlBody, message.TextBody })
+        {
+            Assert.Contains("09/13/2026 10:30", body, StringComparison.Ordinal);
+            Assert.Contains("1,234 pedidos", body, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void RenderUsesTheIsoDateFormat()
+    {
+        var format = new EmailRegionalFormat(Bogota, "yyyy-MM-dd", RegionalNumberFormat.ToNumberFormatInfo(null));
+        var message = QuotationsExportReadyEmailTemplate.Render(
+            "ana@qcode.co", "Orders", "https://r2.example/x", "pedidos.xlsx", 1234, ExpiresAt, format);
+
+        Assert.Contains("2026-09-13 10:30", message.TextBody, StringComparison.Ordinal);
+    }
+
+    // Un tenant colombiano ve el conteo agrupado con punto, no pegado.
+    [Fact]
+    public void ReadyGroupsTheRowCountForAColombianTenant()
+    {
+        var message = QuotationsExportReadyEmailTemplate.Render(
+            "ana@qcode.co", "Orders", "https://r2.example/x", "pedidos.xlsx", 1234, ExpiresAt, Colombian);
+
+        Assert.Contains("1.234 pedidos", message.TextBody, StringComparison.Ordinal);
     }
 }

@@ -1,6 +1,7 @@
 using BuildingBlocks.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -36,6 +37,7 @@ public sealed class SendQuotationHandler(
     IQuotationProductLookup productLookup,
     IWhatsAppSender whatsAppSender,
     IWhatsAppChannelDirectory whatsAppChannels,
+    ITenantDirectory tenantDirectory,
     IMembershipDirectory membershipDirectory,
     IQuotationSendFailureLog sendFailureLog,
     IExecutionContext executionContext,
@@ -118,6 +120,11 @@ public sealed class SendQuotationHandler(
             // --y el respaldo de nombre-- sigue saliendo de ahi.
             var (toPhone, fullName) = ResolveRecipient(command.Recipient, quotation, customer!);
 
+            // El mismo ajuste regional con el que se armó el PDF: mensaje y documento no pueden
+            // mostrar el monto con separadores distintos (spec 2026-10-23, D-R4).
+            var regional = await tenantDirectory.GetRegionalSettingsAsync(
+                new TenantId(command.TenantId), cancellationToken);
+
             stage = QuotationSendStage.WhatsApp;
             await whatsAppSender.SendQuotationAsync(
                 channel,
@@ -128,7 +135,8 @@ public sealed class SendQuotationHandler(
                     Total: quotation.Total,
                     Currency: quotation.Currency,
                     ValidUntil: quotation.ValidUntil!.Value,
-                    DocumentUrl: documentUrl),
+                    DocumentUrl: documentUrl,
+                    NumberFormat: regional?.NumberFormat),
                 cancellationToken);
 
             stage = QuotationSendStage.Persistence;

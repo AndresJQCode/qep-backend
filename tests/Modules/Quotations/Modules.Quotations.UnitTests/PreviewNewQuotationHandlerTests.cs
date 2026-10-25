@@ -178,6 +178,7 @@ public sealed class PreviewNewQuotationHandlerTests
             new SequentialQuotationNumberGenerator(),
             new DefaultNumberingFormats(),
             new StubMembershipDirectory(MembershipId),
+            new StubTenantDirectory(),
             new StubExecutionContext(SubjectId, TenantId),
             new FixedTenantClock(Now),
             new CreateQuotationValidator());
