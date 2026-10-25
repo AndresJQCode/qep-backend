@@ -27,6 +27,7 @@ public sealed class UpdateQuotationItemHandler(
     IQuotationSettingsStore settingsStore,
     IQuotationCustomerLookup customerLookup,
     IMembershipDirectory membershipDirectory,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<UpdateQuotationItemCommand> validator)
@@ -75,6 +76,7 @@ public sealed class UpdateQuotationItemHandler(
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
+        var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
 
         var now = clock.UtcNow;
         quotation.UpdateItemQuantity(
@@ -91,7 +93,7 @@ public sealed class UpdateQuotationItemHandler(
             QuotationHistoryEventType.Edited,
             updatedBy,
             QuotationChangeSummary.ItemQuantityChanged(
-                pricing.Name, previousQuantity, command.Quantity),
+                pricing.Name, previousQuantity, command.Quantity, format),
             now));
         auditPublisher.Publish(
             command.TenantId,

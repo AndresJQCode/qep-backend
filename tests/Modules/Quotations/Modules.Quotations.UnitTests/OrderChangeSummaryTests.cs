@@ -7,6 +7,8 @@ namespace Modules.Quotations.UnitTests;
 /// la cotización.</summary>
 public sealed class OrderChangeSummaryTests
 {
+    private static readonly HistoryFormat Colombian = HistoryFormat.Colombian;
+
     [Fact]
     public void DescribesTheShippingChange()
     {
@@ -14,14 +16,14 @@ public sealed class OrderChangeSummaryTests
             Guid.CreateVersion7(), "Coordinadora", FreightChargeMode.Charged, 15000m, 19, CashOnDelivery: true);
 
         Assert.Equal(
-            "Editó transportadora (Coordinadora), cobro del envío (cobrado), valor del envío (15000), contraentrega.",
-            OrderChangeSummary.ShippingChanged(ShippingDetails.None, with));
+            "Editó transportadora (Coordinadora), cobro del envío (cobrado), valor del envío (15.000), contraentrega.",
+            OrderChangeSummary.ShippingChanged(ShippingDetails.None, with, Colombian));
         Assert.Equal(
             "Editó quitó la transportadora, quitó el cobro del envío, quitó la contraentrega.",
-            OrderChangeSummary.ShippingChanged(with, ShippingDetails.None));
+            OrderChangeSummary.ShippingChanged(with, ShippingDetails.None, Colombian));
         Assert.Equal(
-            "Editó valor del envío (18000).",
-            OrderChangeSummary.ShippingChanged(with, with with { FreightAmount = 18000m }));
+            "Editó valor del envío (18.000).",
+            OrderChangeSummary.ShippingChanged(with, with with { FreightAmount = 18000m }, Colombian));
     }
 
     // El historial dice a quién se le mandó: quien factura no siempre es quien recibe.
@@ -33,5 +35,5 @@ public sealed class OrderChangeSummaryTests
 
     [Fact]
     public void AnUnchangedShippingHasNoSummary() =>
-        Assert.Null(OrderChangeSummary.ShippingChanged(ShippingDetails.None, ShippingDetails.None));
+        Assert.Null(OrderChangeSummary.ShippingChanged(ShippingDetails.None, ShippingDetails.None, Colombian));
 }

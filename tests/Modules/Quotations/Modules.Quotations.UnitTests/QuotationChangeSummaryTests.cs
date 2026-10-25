@@ -10,6 +10,8 @@ namespace Modules.Quotations.UnitTests;
 /// </summary>
 public sealed class QuotationChangeSummaryTests
 {
+    private static readonly HistoryFormat Colombian = HistoryFormat.Colombian;
+
     private static QuotationHeaderSnapshot Snapshot(
         string? shipping,
         bool isStorePickup,
@@ -34,7 +36,8 @@ public sealed class QuotationChangeSummaryTests
     {
         var summary = QuotationChangeSummary.HeaderChanged(
             Snapshot("Bodega|||Zona Franca||", isStorePickup: false),
-            Snapshot(null, isStorePickup: true));
+            Snapshot(null, isStorePickup: true),
+            Colombian);
 
         Assert.NotNull(summary);
         Assert.Contains("recoger en tienda", summary, StringComparison.Ordinal);
@@ -48,7 +51,8 @@ public sealed class QuotationChangeSummaryTests
     {
         var summary = QuotationChangeSummary.HeaderChanged(
             Snapshot(null, isStorePickup: true),
-            Snapshot(null, isStorePickup: false));
+            Snapshot(null, isStorePickup: false),
+            Colombian);
 
         Assert.NotNull(summary);
         Assert.Contains("envío", summary, StringComparison.Ordinal);
@@ -59,7 +63,8 @@ public sealed class QuotationChangeSummaryTests
     {
         var summary = QuotationChangeSummary.HeaderChanged(
             Snapshot(null, isStorePickup: true),
-            Snapshot(null, isStorePickup: true));
+            Snapshot(null, isStorePickup: true),
+            Colombian);
 
         Assert.Null(summary);
     }
@@ -72,7 +77,8 @@ public sealed class QuotationChangeSummaryTests
     {
         var summary = QuotationChangeSummary.HeaderChanged(
             Snapshot(null, isStorePickup: false, billing: "Sede administrativa|||Carrera 7||"),
-            Snapshot(null, isStorePickup: false, billsToFinalConsumer: true));
+            Snapshot(null, isStorePickup: false, billsToFinalConsumer: true),
+            Colombian);
 
         Assert.Equal("Editó facturación (consumidor final).", summary);
     }
@@ -84,7 +90,8 @@ public sealed class QuotationChangeSummaryTests
     {
         var summary = QuotationChangeSummary.HeaderChanged(
             Snapshot(null, isStorePickup: false, billsToFinalConsumer: true),
-            Snapshot(null, isStorePickup: false));
+            Snapshot(null, isStorePickup: false),
+            Colombian);
 
         Assert.Equal("Editó facturación (vuelve a los datos del cliente).", summary);
     }
@@ -94,7 +101,8 @@ public sealed class QuotationChangeSummaryTests
     {
         var summary = QuotationChangeSummary.HeaderChanged(
             Snapshot(null, isStorePickup: false, billsToFinalConsumer: true),
-            Snapshot(null, isStorePickup: false, billing: "Sede administrativa|||Carrera 7||"));
+            Snapshot(null, isStorePickup: false, billing: "Sede administrativa|||Carrera 7||"),
+            Colombian);
 
         Assert.Equal("Editó facturación (ahora con datos propios).", summary);
     }
@@ -139,10 +147,10 @@ public sealed class QuotationChangeSummaryTests
         var before = Snapshot(null, isStorePickup: false);
         var after = before with { GlobalScaleFloor = 1000 };
 
-        var summary = QuotationChangeSummary.HeaderChanged(before, after);
+        var summary = QuotationChangeSummary.HeaderChanged(before, after, Colombian);
 
         Assert.NotNull(summary);
-        Assert.Contains("descuento global (escala desde 1000 unidades)", summary);
+        Assert.Contains("descuento global (escala desde 1.000 unidades)", summary);
     }
 
     [Fact]
@@ -151,7 +159,7 @@ public sealed class QuotationChangeSummaryTests
         var before = Snapshot(null, isStorePickup: false) with { GlobalScaleFloor = 1000 };
         var after = before with { GlobalScaleFloor = null };
 
-        var summary = QuotationChangeSummary.HeaderChanged(before, after);
+        var summary = QuotationChangeSummary.HeaderChanged(before, after, Colombian);
 
         Assert.NotNull(summary);
         Assert.Contains("quitó el descuento global", summary);
@@ -165,7 +173,7 @@ public sealed class QuotationChangeSummaryTests
         var before = Snapshot(null, isStorePickup: false);
         var after = before with { IsRetail = true };
 
-        var summary = QuotationChangeSummary.HeaderChanged(before, after);
+        var summary = QuotationChangeSummary.HeaderChanged(before, after, Colombian);
 
         Assert.Equal("Editó detal (ninguna línea recibe descuento).", summary);
     }
@@ -176,7 +184,7 @@ public sealed class QuotationChangeSummaryTests
         var before = Snapshot(null, isStorePickup: false) with { IsRetail = true };
         var after = before with { IsRetail = false };
 
-        var summary = QuotationChangeSummary.HeaderChanged(before, after);
+        var summary = QuotationChangeSummary.HeaderChanged(before, after, Colombian);
 
         Assert.Equal("Editó quitó el detal.", summary);
     }
@@ -189,7 +197,7 @@ public sealed class QuotationChangeSummaryTests
         var before = Snapshot(null, isStorePickup: false) with { GlobalScaleFloor = 20 };
         var after = before with { IsRetail = true, GlobalScaleFloor = null };
 
-        var summary = QuotationChangeSummary.HeaderChanged(before, after);
+        var summary = QuotationChangeSummary.HeaderChanged(before, after, Colombian);
 
         Assert.Equal(
             "Editó detal (ninguna línea recibe descuento), quitó el descuento global.", summary);
@@ -225,14 +233,14 @@ public sealed class QuotationChangeSummaryTests
         };
 
         Assert.Equal(
-            "Editó transportadora (Coordinadora), cobro del envío (cobrado), valor del envío (15000), contraentrega.",
-            QuotationChangeSummary.HeaderChanged(without, with));
+            "Editó transportadora (Coordinadora), cobro del envío (cobrado), valor del envío (15.000), contraentrega.",
+            QuotationChangeSummary.HeaderChanged(without, with, Colombian));
         Assert.Equal(
             "Editó quitó la transportadora, quitó el cobro del envío, quitó la contraentrega.",
-            QuotationChangeSummary.HeaderChanged(with, without));
+            QuotationChangeSummary.HeaderChanged(with, without, Colombian));
         Assert.Equal(
-            "Editó valor del envío (18000).",
-            QuotationChangeSummary.HeaderChanged(with, with with { FreightAmount = 18000m }));
+            "Editó valor del envío (18.000).",
+            QuotationChangeSummary.HeaderChanged(with, with with { FreightAmount = 18000m }, Colombian));
     }
 
     // Pasar a recoger en tienda limpia el envío: la fila lo dice una vez, no campo por campo.
@@ -246,8 +254,34 @@ public sealed class QuotationChangeSummaryTests
             FreightChargeMode = FreightChargeMode.Free,
         };
 
-        var summary = QuotationChangeSummary.HeaderChanged(before, Snapshot(null, isStorePickup: true));
+        var summary = QuotationChangeSummary.HeaderChanged(before, Snapshot(null, isStorePickup: true), Colombian);
 
         Assert.Equal("Editó envío (recoger en tienda).", summary);
+    }
+
+    // Spec 2026-10-23 D-R6: la vigencia sale con el formato de fecha del tenant, no en ISO.
+    [Fact]
+    public void TheValidityIsPrintedWithTheTenantDateFormat()
+    {
+        var before = Snapshot(null, isStorePickup: false);
+        var after = before with { ValidUntil = new DateOnly(2026, 12, 31) };
+        var monthFirst = HistoryFormat.For(
+            new("America/Bogota", "MM/dd/yyyy", "COP", Modules.Tenancy.Domain.TenantNumberFormats.CommaDecimal));
+
+        Assert.Equal(
+            "Editó vigencia (12/31/2026).",
+            QuotationChangeSummary.HeaderChanged(before, after, monthFirst));
+    }
+
+    [Fact]
+    public void QuantitiesUseTheTenantSeparators()
+    {
+        var dot = HistoryFormat.For(
+            new("America/Bogota", "dd/MM/yyyy", "COP", Modules.Tenancy.Domain.TenantNumberFormats.DotDecimal));
+
+        Assert.Equal("Agregó Tornillo x1,500.", QuotationChangeSummary.ItemAdded("Tornillo", 1500m, dot));
+        Assert.Equal(
+            "Cambió la cantidad de Tornillo: 1,5 → 2.",
+            QuotationChangeSummary.ItemQuantityChanged("Tornillo", 1.5m, 2m, Colombian));
     }
 }

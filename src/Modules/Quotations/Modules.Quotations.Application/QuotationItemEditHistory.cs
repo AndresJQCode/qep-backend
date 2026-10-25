@@ -21,6 +21,7 @@ internal static class QuotationItemEditHistory
         Guid tenantId,
         Quotation quotation,
         IReadOnlyList<QuotationItemEdit> edits,
+        HistoryFormat format,
         MemberId updatedBy,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -39,13 +40,13 @@ internal static class QuotationItemEditHistory
             string action;
             if (edit.Kind == QuotationItemEditKind.Added)
             {
-                summary = QuotationChangeSummary.ItemAdded(edit.ProductName!, edit.Quantity!.Value);
+                summary = QuotationChangeSummary.ItemAdded(edit.ProductName!, edit.Quantity!.Value, format);
                 action = "quotation.quotation.item_added";
             }
             else if (edit.Kind == QuotationItemEditKind.QuantityChanged)
             {
                 summary = QuotationChangeSummary.ItemQuantityChanged(
-                    edit.ProductName!, edit.PreviousQuantity!.Value, edit.Quantity!.Value);
+                    edit.ProductName!, edit.PreviousQuantity!.Value, edit.Quantity!.Value, format);
                 action = "quotation.quotation.item_updated";
             }
             else

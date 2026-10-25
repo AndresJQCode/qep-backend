@@ -239,7 +239,7 @@ public sealed class OrderShippingApiTests
         var entry = Assert.Single(detail.History, entry => entry.EventType == "PartiesChanged");
         Assert.Contains("transportadora (Coordinadora)", entry.Details, StringComparison.Ordinal);
         Assert.Contains("cobro del envío (cobrado)", entry.Details, StringComparison.Ordinal);
-        Assert.Contains("valor del envío (15000)", entry.Details, StringComparison.Ordinal);
+        Assert.Contains("valor del envío (15.000)", entry.Details, StringComparison.Ordinal);
         Assert.Single(await ShippingAuditsAsync(factory));
 
         // Sin `shipping`, como un frontend viejo: el envío queda como estaba y no se escribe historial.

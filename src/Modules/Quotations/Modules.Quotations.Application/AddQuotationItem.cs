@@ -25,6 +25,7 @@ public sealed class AddQuotationItemHandler(
     IQuotationSettingsStore settingsStore,
     IQuotationCustomerLookup customerLookup,
     IMembershipDirectory membershipDirectory,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<AddQuotationItemCommand> validator)
@@ -64,6 +65,7 @@ public sealed class AddQuotationItemHandler(
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
+        var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
 
         var now = clock.UtcNow;
         quotation.AddItem(
@@ -82,7 +84,7 @@ public sealed class AddQuotationItemHandler(
             quotation.Id,
             QuotationHistoryEventType.Edited,
             updatedBy,
-            QuotationChangeSummary.ItemAdded(pricing.Name, command.Quantity),
+            QuotationChangeSummary.ItemAdded(pricing.Name, command.Quantity, format),
             now));
         auditPublisher.Publish(
             command.TenantId,

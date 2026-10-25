@@ -4,11 +4,12 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 /// <summary>Lo que quedó cambiado, para que el guardado sepa qué historial y qué auditoría
-/// escribir. <paramref name="HeaderSummary"/> es null cuando el encabezado llegó igual a como
-/// estaba — mismo criterio que <c>SaveQuotationHandler</c>: apretar Guardar sin cambiar nada no
-/// es un evento del historial.</summary>
+/// escribir. Las dos fotos del encabezado viajan en vez del resumen ya armado: el texto lleva el
+/// formato del tenant (spec 2026-10-23 D-R6), y sólo el guardado lo lee —el cálculo previo, que
+/// comparte este paso, no escribe historial y no gana una lectura de Tenancy.</summary>
 internal sealed record QuotationEditsOutcome(
-    string? HeaderSummary,
+    QuotationHeaderSnapshot HeaderBefore,
+    QuotationHeaderSnapshot HeaderAfter,
     IReadOnlyList<QuotationItemEdit> ItemEdits);
 
 /// <summary>
@@ -98,8 +99,7 @@ internal static class QuotationEditsApplication
             quotation.SetShipping(shipping, updatedBy, now);
         }
 
-        var headerSummary = QuotationChangeSummary.HeaderChanged(
-            before, QuotationHeaderSnapshot.Of(quotation));
+        var after = QuotationHeaderSnapshot.Of(quotation);
 
         var itemEdits = await QuotationItemEdits.ApplyAsync(
             quotation, edits.Items, pricingLookup, tenantId, updatedBy, now, edits.IsRetail, cancellationToken);
@@ -110,6 +110,6 @@ internal static class QuotationEditsApplication
         await QuotationPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, tenantId, quotation, now, cancellationToken);
 
-        return new QuotationEditsOutcome(headerSummary, itemEdits);
+        return new QuotationEditsOutcome(before, after, itemEdits);
     }
 }

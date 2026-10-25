@@ -215,6 +215,7 @@ public sealed class QuotationRetailTests
         SaveHeader(quotation, isRetail: true, globalScaleFloor: null);
 
         Assert.Null(Modules.Quotations.Application.QuotationChangeSummary.HeaderChanged(
-            before, Modules.Quotations.Application.QuotationHeaderSnapshot.Of(quotation)));
+            before, Modules.Quotations.Application.QuotationHeaderSnapshot.Of(quotation),
+            Modules.Quotations.Application.HistoryFormat.Colombian));
     }
 }

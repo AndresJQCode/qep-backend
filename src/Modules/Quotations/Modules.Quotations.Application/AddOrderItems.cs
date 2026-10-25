@@ -39,6 +39,7 @@ public sealed class AddOrderItemsHandler(
     IQuotationSettingsStore settingsStore,
     IQuotationProductLookup productLookup,
     IMembershipDirectory membershipDirectory,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<AddOrderItemsCommand> validator)
@@ -64,6 +65,7 @@ public sealed class AddOrderItemsHandler(
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
+        var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
         var now = clock.UtcNow;
         foreach (var addition in command.ToAdd)
         {
@@ -78,7 +80,7 @@ public sealed class AddOrderItemsHandler(
                 pricing.Pricing.TaxPercentage, updatedBy, now);
             orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
                 OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.ItemsChanged,
-                updatedBy, OrderChangeSummary.ItemAdded(pricing.Name, addition.Quantity), now));
+                updatedBy, OrderChangeSummary.ItemAdded(pricing.Name, addition.Quantity, format), now));
             auditPublisher.Publish(
                 command.TenantId, executionContext.SubjectId, "quotation.order.item_added",
                 order.Id.ToString(), "success", now);
