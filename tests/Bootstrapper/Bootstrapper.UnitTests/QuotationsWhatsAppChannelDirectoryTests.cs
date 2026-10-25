@@ -1,6 +1,7 @@
 using Bootstrapper;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
+using Modules.Messaging.Application;
 using Modules.Quotations.Application;
 
 namespace Bootstrapper.UnitTests;
@@ -26,7 +27,7 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
         var connections = new StubConnections().With(id, Fields("573001234567", TemplateId), token: "tok-1");
 
         var channel = Assert.IsType<ZenviaWhatsAppChannel>(
-            Assert.Single(await new QuotationsWhatsAppChannelDirectory(connections).ListAvailableAsync(TenantId, Ct)));
+            Assert.Single(await NewDirectory(connections).ListAvailableAsync(TenantId, Ct)));
 
         Assert.Equal((id, "tok-1", "573001234567", TemplateId), (channel.ConnectionId, channel.ApiToken, channel.FromNumber, channel.QuotationTemplateId));
         Assert.Null(channel.OrderTemplateId);
@@ -42,7 +43,7 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
         var connections = new StubConnections().With(Guid.CreateVersion7(), fields);
 
         var channel = Assert.IsType<ZenviaWhatsAppChannel>(
-            Assert.Single(await new QuotationsWhatsAppChannelDirectory(connections).ListAvailableAsync(TenantId, Ct)));
+            Assert.Single(await NewDirectory(connections).ListAvailableAsync(TenantId, Ct)));
 
         Assert.Equal(expected, channel.OrderTemplateId);
     }
@@ -55,7 +56,7 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
     {
         var connections = new StubConnections().With(Guid.CreateVersion7(), Fields("573001234567", templateId));
 
-        Assert.Empty(await new QuotationsWhatsAppChannelDirectory(connections).ListAvailableAsync(TenantId, Ct));
+        Assert.Empty(await NewDirectory(connections).ListAvailableAsync(TenantId, Ct));
     }
 
     // Review Focus 2: pausada, con Zenvia deshabilitado o con un secreto que no descifra, Integrations no la resuelve.
@@ -64,7 +65,7 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
     {
         var connections = new StubConnections().With(Guid.CreateVersion7(), Fields("573001234567", TemplateId), resolves: false);
 
-        Assert.Empty(await new QuotationsWhatsAppChannelDirectory(connections).ListAvailableAsync(TenantId, Ct));
+        Assert.Empty(await NewDirectory(connections).ListAvailableAsync(TenantId, Ct));
     }
 
     [Fact]
@@ -76,20 +77,82 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
             .With(first, Fields("573001234567", TemplateId))
             .With(second, Fields("573009999999", TemplateId));
 
-        var channels = await new QuotationsWhatsAppChannelDirectory(connections).ListAvailableAsync(TenantId, Ct);
+        var channels = await NewDirectory(connections).ListAvailableAsync(TenantId, Ct);
 
         Assert.Equal([first, second], channels.Select(channel => channel.ConnectionId));
     }
 
     [Fact]
-    public async Task AsksIntegrationsForZenviaOnly()
+    public async Task AsksIntegrationsForBothProviders()
     {
         var connections = new StubConnections();
 
-        await new QuotationsWhatsAppChannelDirectory(connections).ListAvailableAsync(TenantId, Ct);
+        await NewDirectory(connections).ListAvailableAsync(TenantId, Ct);
 
-        Assert.Equal([(TenantId, "zenvia")], connections.Listed);
+        Assert.Equal([(TenantId, "whatsapp-cloud"), (TenantId, "zenvia")], connections.Listed);
     }
+
+    [Fact]
+    public async Task ZenviaChannelCarriesTheConnectionName()
+    {
+        var connections = new StubConnections().With(Guid.CreateVersion7(), Fields("573001234567", TemplateId), name: "Línea de ventas");
+
+        var channel = Assert.Single(await NewDirectory(connections).ListAvailableAsync(TenantId, Ct));
+
+        Assert.Equal("Línea de ventas", channel.Name);
+    }
+
+    [Fact]
+    public async Task MapsAMetaConnectionWithAnApprovedQuotationTemplate()
+    {
+        var id = Guid.CreateVersion7();
+        var connections = new StubConnections().WithMeta(id, "Cuenta de Meta", "+57 300 123 4567");
+        var readiness = new StubReadiness().Approve(id, new ApprovedQuotationTemplate("qep_cotizacion_v2", "es"));
+
+        var channel = Assert.IsType<MetaWhatsAppChannel>(
+            Assert.Single(await NewDirectory(connections, readiness).ListAvailableAsync(TenantId, Ct)));
+
+        Assert.Equal(
+            (id, "Cuenta de Meta", "+57 300 123 4567", "qep_cotizacion_v2", "es"),
+            (channel.ConnectionId, channel.Name, channel.Phone, channel.TemplateName, channel.TemplateLanguage));
+    }
+
+    [Fact]
+    public async Task SkipsAMetaConnectionWithoutAnApprovedTemplate()
+    {
+        var connections = new StubConnections().WithMeta(Guid.CreateVersion7(), "Cuenta de Meta", "+57 300 123 4567");
+
+        Assert.Empty(await NewDirectory(connections, new StubReadiness()).ListAvailableAsync(TenantId, Ct));
+    }
+
+    [Fact]
+    public async Task SkipsAMetaConnectionThatDoesNotResolve()
+    {
+        var id = Guid.CreateVersion7();
+        var connections = new StubConnections().WithMeta(id, "Cuenta de Meta", "+57 300 123 4567", resolves: false);
+        var readiness = new StubReadiness().Approve(id, new ApprovedQuotationTemplate("qep_cotizacion", "es"));
+
+        Assert.Empty(await NewDirectory(connections, readiness).ListAvailableAsync(TenantId, Ct));
+    }
+
+    [Fact]
+    public async Task ListsMetaFirstThenZenvia()
+    {
+        var meta = Guid.CreateVersion7();
+        var zenvia = Guid.CreateVersion7();
+        var connections = new StubConnections()
+            .With(zenvia, Fields("573001234567", TemplateId))
+            .WithMeta(meta, "Cuenta de Meta", null);
+        var readiness = new StubReadiness().Approve(meta, new ApprovedQuotationTemplate("qep_cotizacion", "es"));
+
+        var channels = await NewDirectory(connections, readiness).ListAvailableAsync(TenantId, Ct);
+
+        Assert.Equal([meta, zenvia], channels.Select(channel => channel.ConnectionId));
+        Assert.Null(channels[0].Phone);
+    }
+
+    private static QuotationsWhatsAppChannelDirectory NewDirectory(StubConnections connections, StubReadiness? readiness = null) =>
+        new(connections, readiness ?? new StubReadiness());
 
     private static Dictionary<string, string> Fields(string fromNumber, string? templateId)
     {
@@ -102,6 +165,20 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
         return fields;
     }
 
+    private sealed class StubReadiness : IQuotationTemplateReadiness
+    {
+        private readonly Dictionary<Guid, ApprovedQuotationTemplate> approved = [];
+
+        public StubReadiness Approve(Guid connectionId, ApprovedQuotationTemplate template)
+        {
+            approved[connectionId] = template;
+            return this;
+        }
+
+        public Task<ApprovedQuotationTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            Task.FromResult(tenantId == TenantId ? approved.GetValueOrDefault(connectionId) : null);
+    }
+
     private sealed class StubConnections : IIntegrationConnections
     {
         private readonly List<ConnectionSummary> active = [];
@@ -109,14 +186,32 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
 
         public List<(Guid TenantId, string ProviderKey)> Listed { get; } = [];
 
-        public StubConnections With(Guid id, Dictionary<string, string> fields, string token = "tok", bool resolves = true)
+        public StubConnections With(Guid id, Dictionary<string, string> fields, string token = "tok", bool resolves = true, string name = "Conexión")
         {
             active.Add(new ConnectionSummary(id, "zenvia", $"Conexión {active.Count + 1}"));
             if (resolves)
             {
                 resolved[id] = new ResolvedConnection(
-                    id, "zenvia", "Conexión", fields,
+                    id, "zenvia", name, fields,
                     new Dictionary<string, string>(StringComparer.Ordinal) { [ZenviaFieldKeys.ApiToken] = token });
+            }
+
+            return this;
+        }
+
+        public StubConnections WithMeta(Guid id, string name, string? displayPhoneNumber, bool resolves = true)
+        {
+            active.Add(new ConnectionSummary(id, "whatsapp-cloud", $"Conexión {active.Count + 1}"));
+            if (resolves)
+            {
+                var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+                if (displayPhoneNumber is not null)
+                {
+                    fields[WhatsAppCloudFieldKeys.DisplayPhoneNumber] = displayPhoneNumber;
+                }
+
+                resolved[id] = new ResolvedConnection(
+                    id, "whatsapp-cloud", name, fields, new Dictionary<string, string>(StringComparer.Ordinal));
             }
 
             return this;
@@ -130,7 +225,7 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
         public Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken)
         {
             Listed.Add((tenantId, providerKey));
-            return Task.FromResult<IReadOnlyList<ConnectionSummary>>(active);
+            return Task.FromResult<IReadOnlyList<ConnectionSummary>>(active.Where(summary => summary.ProviderKey == providerKey).ToList());
         }
 
         public Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>

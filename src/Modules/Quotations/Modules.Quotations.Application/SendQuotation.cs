@@ -147,7 +147,8 @@ public sealed class SendQuotationHandler(
                     DocumentStorageKey: pdf.StorageKey,
                     SentByMemberId: sentBy.Value.Value,
                     // Los datos de facturación no son un cliente: el mensaje no se asocia a ninguna ficha.
-                    CustomerId: recipient == QuotationRecipient.Customer ? quotation.ClientId : null),
+                    CustomerId: recipient == QuotationRecipient.Customer ? quotation.ClientId : null,
+                    TenantId: command.TenantId),
                 cancellationToken);
 
             stage = QuotationSendStage.Persistence;

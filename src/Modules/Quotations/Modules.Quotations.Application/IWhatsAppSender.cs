@@ -44,7 +44,9 @@ public sealed record WhatsAppQuotationMessage(
     /// <summary>Quién envía: el mensaje queda en el hilo de Mensajería a su nombre.</summary>
     Guid? SentByMemberId = null,
     /// <summary>El cliente destinatario; <c>null</c> si el mensaje va a los datos de facturación, que no son un cliente.</summary>
-    Guid? CustomerId = null);
+    Guid? CustomerId = null,
+    /// <summary>El tenant de la cotización: el envío por Meta pasa por Mensajería, que aísla por tenant, y el puerto no recibe más contexto.</summary>
+    Guid? TenantId = null);
 
 /// <summary>
 /// Los campos de la plantilla del pedido: los de <see cref="WhatsAppQuotationMessage"/> menos la

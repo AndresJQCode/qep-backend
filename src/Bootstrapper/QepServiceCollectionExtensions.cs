@@ -1048,6 +1048,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationGeographyLookup, QuotationGeographyLookup>();
         // Plan 2026-10-21: la cotización y el pedido salen por la conexión de Zenvia del tenant, que vive en Integrations.
         services.AddScoped<IWhatsAppChannelDirectory, QuotationsWhatsAppChannelDirectory>();
+        // Spec 2026-10-21 D16/D17: la cotización por la conexión de Meta cruza a Mensajería; scoped por su DbContext.
+        services.AddScoped<IMetaWhatsAppSender, QuotationsMetaWhatsAppSender>();
         // Arma la respuesta de una cotizacion con todo lo que su pantalla muestra, para que el
         // navegador no tenga que pedir cliente, miembros y catalogo por separado.
         services.AddScoped<IQuotationResponseComposer, QuotationResponseComposer>();
