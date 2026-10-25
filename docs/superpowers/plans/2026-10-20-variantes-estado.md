@@ -9,9 +9,9 @@ Archivo vivo: se actualiza al cerrar cada tarea o decisión. Las tareas detallad
 | --- | --- | --- |
 | Diseño | Aprobado por el owner (2026-10-20), en `develop` local, sin push | `ea383771` |
 | Plan backend | Escrito, en `develop` local, sin push; **ejecución: subagentes, en sesión nueva** | `e0d7756f` |
-| Implementación backend | Hecha y mergeada a `develop` local con ff-only (2026-10-21), sin push. **Pruebas escritas y sin ejecutar desde la T4** (instrucción del owner) | `feature/variantes-producto`, desde `95dbdd0c` |
-| Revisión independiente | Hecha (2026-10-21), sin Críticos; arreglos en `fix/variantes-revision-fable`, mergeados a `develop` local con ff-only, sin push. Pruebas de integración nuevas **sin ejecutar** | prompt en [`2026-10-20-variantes-revision-fable.md`](2026-10-20-variantes-revision-fable.md) |
-| Plan y trabajo de frontend | No iniciado; el contrato está en el [traspaso](2026-10-20-variantes-handoff.md) (sale en la misma ventana que el backend) | — |
+| Implementación backend | Hecha y mergeada a `develop` con ff-only (2026-10-21). Pruebas **ejecutadas y en verde** el 2026-10-25 (ver Registro) | `feature/variantes-producto`, desde `95dbdd0c` |
+| Revisión independiente | Hecha (2026-10-21), sin Críticos; arreglos en `fix/variantes-revision-fable`, mergeados a `develop` con ff-only. Sus pruebas de integración pasan desde el 2026-10-25 | prompt en [`2026-10-20-variantes-revision-fable.md`](2026-10-20-variantes-revision-fable.md) |
+| Plan y trabajo de frontend | Construido (VAR-01..13, cierre `22cde669`, en `origin/develop` del frontend); el contrato está en el [traspaso](2026-10-20-variantes-handoff.md) (sale en la misma ventana que el backend) | — |
 
 ## Tareas del plan (backend)
 
@@ -55,9 +55,8 @@ Estados: Pendiente · En curso · Hecha (con SHA del commit) · Bloqueada (con m
   el escáner prefiere un `Code` activo a un código de barras inactivo, y el listado muestra el `code` de la única
   activa de un producto sin opciones. El desempeño de `ShopifyProductLookup` y de la cuadrícula del POS (traen
   agregados completos) queda como requisito del proyecto 2, productos desde Shopify.
-- **Correr las pruebas.** Desde la T4 se escribieron y no se ejecutaron (sólo `build` y `format`). Hay que correrlas por
-  módulo antes de llevar nada a `main`: Catalog, Quotations, Pos, Reporting, Shopify, Identity, `Bootstrapper.UnitTests`
-  y `ArchitectureTests`. Las 18 consultas LINQ de riesgo se verificaron con `ToQueryString` y traducen.
+- **Correr las pruebas.** Hecho el 2026-10-25: los 14 proyectos en verde (ver Registro). Las 18 consultas LINQ de riesgo
+  se habían verificado antes con `ToQueryString` y traducen.
 - **Despliegue destructivo.** `AddProductVariants` borra columnas de `catalog.products`: backup, ventana de corte y orden
   de vuelta atrás en el [traspaso §13](2026-10-20-variantes-handoff.md). Backend y frontend salen juntos.
 - **Decisiones que el owner debe confirmar** (detalle en el traspaso §11): columna «Variante» con nombre o vacía en la
@@ -74,3 +73,6 @@ Estados: Pendiente · En curso · Hecha (con SHA del commit) · Bloqueada (con m
 - 2026-10-20 — El owner elige ejecutar por subagentes en una sesión nueva.
 - 2026-10-21 — Implementación por subagentes: tareas 1–15 y la 14b agregada (selector, spec §6); T9–T12 en un commit
   (`34944393`); revisión final con dos arreglos importantes (integrar `develop`, despliegue). Mergeada a `develop` local.
+- 2026-10-25 — Pruebas corridas sobre `develop` `3472f01d`, con `Seed__Enabled=false`: build 0/0 y 3.647/3.647 en verde.
+  Catalog 213 + 187, Quotations 1290 + 496, Pos 226 + 61, Reporting 116 + 101, Shopify 361 + 81, Identity 22 + 36
+  (unitarias + integración), `Bootstrapper.UnitTests` 325, `ArchitectureTests` 132. Sin cambios de código.
