@@ -87,6 +87,19 @@ internal static class CustomersApiHarness
         }
     }
 
+    // Cambia el formato de fecha del tenant sembrado (D-R7, spec 2026-10-23). Va después de
+    // SeedTenantAsync: antes no hay fila que actualizar.
+    public static async Task SetTenantDateFormatAsync(
+        QepApiFactory factory, string dateFormat, string tenantId = TenantId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var id = Guid.Parse(tenantId);
+        await tenancy.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE tenancy.tenants SET date_format = {dateFormat} WHERE id = {id}",
+            TestContext.Current.CancellationToken);
+    }
+
     // El stub de desarrollo concede solo los defaults de tenancy cuando X-Permissions no esta
     // (DevelopmentAuthenticationHandler.ResolvePermissions), asi que un permiso de customers hay
     // que pedirlo explicitamente. Pasarlo por prueba mantiene cada 403 atribuible: sin esto, una
