@@ -281,6 +281,44 @@ public sealed class QuotationTemplateOutboundTests
         Assert.Empty(f.Bucket.Objects);
     }
 
+    /// <summary>La regla del adjunto del asesor: un 190 al subir el PDF dice que la credencial ya no sirve, no que falló la subida.</summary>
+    [Fact]
+    public async Task ARejectedTokenOnTheUploadFlagsTheConnectionAndReturnsConnectionUnavailable()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        f.Factory.MetaHandler.Respond("/111/media$", HttpStatusCode.Unauthorized, FakeMetaGraphHandler.GraphError(190));
+
+        var result = await SendAsync(f, Send(f));
+
+        Assert.Equal(new QuotationTemplateSendResult.ConnectionUnavailable("credentials_rejected"), result);
+        Assert.Equal("NeedsAttention", await ScalarAsync<string>(f.ConnectionString, "SELECT status FROM integrations.connections"));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages"));
+        Assert.DoesNotContain(MetaCalls(f), call => call.Uri!.AbsolutePath == "/v24.0/111/messages");
+    }
+
+    [Fact]
+    public async Task ARejectedTokenOnSendReturnsConnectionUnavailableAndLeavesNoRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        f.Factory.MetaHandler.Respond("/111/media$", HttpStatusCode.OK, """{"id":"media.out"}""");
+        f.Factory.MetaHandler.Respond("/111/messages$", HttpStatusCode.Unauthorized, FakeMetaGraphHandler.GraphError(190));
+
+        var result = await SendAsync(f, Send(f));
+
+        Assert.Equal(new QuotationTemplateSendResult.ConnectionUnavailable("credentials_rejected"), result);
+        Assert.Equal("NeedsAttention", await ScalarAsync<string>(f.ConnectionString, "SELECT status FROM integrations.connections"));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages"));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_media"));
+        // El rollback por credencial borra de R2 lo que esa fila nueva había escrito.
+        Assert.DoesNotContain(f.Bucket.Objects.Keys, key => key.StartsWith($"messaging/{f.Tenant.TenantId}/", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task AnInvalidValueIsRejectedBeforeAnyCall()
     {

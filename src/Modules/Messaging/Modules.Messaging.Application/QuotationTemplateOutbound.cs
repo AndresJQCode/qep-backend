@@ -46,6 +46,10 @@ public interface IQuotationTemplateOutbound
 /// reclamo con el medio y la tabla de respuestas (<see cref="OutboundSettlement"/>). El PDF queda en el R2 de Mensajería con la clave del
 /// mensaje (D16c), no como la URL pública de Quotations, que el lifecycle del bucket borra.
 /// </para>
+/// <para>
+/// Una falla tardía (la escritura en R2, o Meta rechazando la credencial al enviar) puede dejar una conversación nueva vacía, como
+/// en <see cref="StartConversationHandler"/>: la conversación se abre antes del reclamo.
+/// </para>
 /// </summary>
 public sealed class QuotationTemplateOutbound(
     IConversationQueries conversations,
@@ -91,6 +95,14 @@ public sealed class QuotationTemplateOutbound(
 
         if (upload is not { Succeeded: true, Value: { Length: > 0 } mediaId })
         {
+            // La misma regla que la subida del adjunto del asesor (FromUploadFailure → OutboundSettlement): un 4xx con 190/133010
+            // dice que la credencial o el número ya no sirven, y la conexión pasa a NeedsAttention. Cualquier otra falla es de la subida.
+            if (upload.Failure is { HttpStatus: >= 400 and < 500, Code: MetaErrorCodes.TokenExpired or MetaErrorCodes.NumberUnregistered } rejected)
+            {
+                await ReportRejectedAsync(send.TenantId, send.ConnectionId, MetaErrorCodes.RejectedReason(rejected.Code!.Value));
+                return new QuotationTemplateSendResult.ConnectionUnavailable(BotOutbound.CredentialsRejected);
+            }
+
             return new QuotationTemplateSendResult.Failed(MessagingErrorCodes.MediaUploadFailed);
         }
 
@@ -166,6 +178,20 @@ public sealed class QuotationTemplateOutbound(
         && TemplateParameterRules.IsValid(send.OrderNumber)
         && TemplateParameterRules.IsValid(send.Total)
         && TemplateParameterRules.IsValid(send.ValidUntil);
+
+    // Best effort: la respuesta ya es connection_unavailable, y el próximo envío vuelve a recibir 190/133010 y reintenta el reporte.
+    // Application no tiene logger; no vale cambiar la respuesta por eso.
+    private async Task ReportRejectedAsync(Guid tenantId, Guid connectionId, string failureCode)
+    {
+        try
+        {
+            await connections.ReportRejectedAsync(tenantId, connectionId, failureCode, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // Ver comentario.
+        }
+    }
 
     // Best effort, como en el adjunto del asesor: si borrar falla queda un objeto que ninguna fila sirve, y no vale cambiar la respuesta.
     private async Task DiscardAsync(string key)
