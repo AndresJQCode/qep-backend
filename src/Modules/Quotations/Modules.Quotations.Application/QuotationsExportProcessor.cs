@@ -27,7 +27,7 @@ public sealed class QuotationsExportProcessor(
     /// <summary>Las de la tabla del listado, en su orden (D8), con la moneda aparte del total
     /// —la tabla la pinta junto al importe y en una planilla tiene que poder filtrarse—. Sin
     /// tildes, como Reporting. Anchos fijos: medir el contenido obligaría a recorrerlo dos veces;
-    /// Fecha cabe entera en formato ISO.</summary>
+    /// Fecha cabe entera con cualquiera de los tres formatos del tenant más " HH:mm" (16 caracteres).</summary>
     public static readonly IReadOnlyList<ExportColumn> Columns =
     [
         new("Numero", 16),

@@ -101,6 +101,9 @@ public sealed class RecognizeOrderCarrierHandler(
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
+        // Lee el formato del tenant aunque hoy este handler sólo cambie la transportadora:
+        // ShippingChanged lo pide, y un formato colombiano fijo imprimiría mal, en silencio, el día
+        // que este handler toque el valor del flete.
         var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
         var now = clock.UtcNow;
 

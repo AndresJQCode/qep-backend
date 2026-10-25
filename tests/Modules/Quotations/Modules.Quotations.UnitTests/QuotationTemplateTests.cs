@@ -255,6 +255,33 @@ public sealed partial class QuotationTemplateTests
     public async Task TheTemplateCompilesWithADotDecimalMinimalDocument() =>
         await AssertCompilesAsync(Minimal() with { ThousandsSeparator = ",", DecimalSeparator = "." });
 
+    // Typst evalúa las ramas de cantidad() de forma perezosa: con cantidades enteras nunca entra
+    // a las que usan el separador decimal, y un error ahí sólo aparecería en producción como un 422.
+    // 12.5 y 1234.5 ejercen la rama de décimas, 0.05 la de centésimas sueltas y 3.75 la general.
+    [Fact]
+    public async Task TheTemplateCompilesFractionalQuantitiesWithADotDecimalDocument() =>
+        await AssertCompilesAsync(WithFractionalQuantities(Complete()) with
+        {
+            ThousandsSeparator = ",",
+            DecimalSeparator = ".",
+        });
+
+    [Fact]
+    public async Task TheTemplateCompilesFractionalQuantitiesWithTheColombianDefaults() =>
+        await AssertCompilesAsync(WithFractionalQuantities(Complete()));
+
+    private static QuotationPdfDocument WithFractionalQuantities(QuotationPdfDocument document) =>
+        document with
+        {
+            Items =
+            [
+                new QuotationPdfLine("Cable por metro", 12.5m, 35900m, 0m, 35900m, 448750m),
+                new QuotationPdfLine("Tornillo suelto", 0.05m, 114700m, 0m, 114700m, 5735m),
+                new QuotationPdfLine("Resina a granel", 1234.5m, 1000m, 0m, 1000m, 1234500m),
+                new QuotationPdfLine("Lámina", 3.75m, 2000m, 0m, 2000m, 7500m),
+            ],
+        };
+
     private static int Count(string text, string value)
     {
         var count = 0;
