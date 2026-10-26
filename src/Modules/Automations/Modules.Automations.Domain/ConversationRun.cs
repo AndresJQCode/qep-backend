@@ -57,6 +57,10 @@ public sealed class ConversationRun
     /// toma por una respuesta nueva.</summary>
     public Guid? LastInboundMessageId { get; private set; }
 
+    /// <summary>Spec 2026-10-26 D-6: <c>{nodeId, shownText, promptMessageId}</c> de la pregunta de Política de datos que espera respuesta, o
+    /// <c>null</c>. Guarda el texto que se envió, no la plantilla: una variable puede cambiar entre la pregunta y la respuesta.</summary>
+    public string? ConsentPromptJson { get; private set; }
+
     public bool IsLive => Status is RunStatus.Running or RunStatus.Waiting;
 
     /// <summary>Ruling P2-R5: el <paramref name="id"/> lo deriva el procesador del messageId del inbox, así un Start deshecho y
@@ -90,6 +94,7 @@ public sealed class ConversationRun
         Attempts = state.Attempts;
         VariablesJson = state.Variables.ToJson();
         TraceJson = JsonSerializer.Serialize(state.Trace.Select(entry => new TraceRow(entry.At, entry.NodeId, entry.Kind, entry.Outcome)), TraceOptions);
+        ConsentPromptJson = state.ConsentPrompt is null ? null : JsonSerializer.Serialize(state.ConsentPrompt, TraceOptions);
         UpdatedAt = now;
         EndedAt = IsLive ? null : now;
     }
@@ -146,7 +151,8 @@ public sealed class ConversationRun
         var rows = JsonSerializer.Deserialize<List<TraceRow>>(TraceJson, TraceOptions) ?? [];
         return new RunState(
             Status, CurrentNodeId, StepNumber, Attempts, RunVariables.Parse(VariablesJson),
-            rows.Select(row => new TraceEntry(row.At, row.NodeId, row.Kind, row.Outcome)).ToList());
+            rows.Select(row => new TraceEntry(row.At, row.NodeId, row.Kind, row.Outcome)).ToList(),
+            ConsentPromptJson is null ? null : JsonSerializer.Deserialize<ConsentPrompt>(ConsentPromptJson, TraceOptions));
     }
 
     private sealed record TraceRow(DateTimeOffset At, string NodeId, string Kind, string Outcome);

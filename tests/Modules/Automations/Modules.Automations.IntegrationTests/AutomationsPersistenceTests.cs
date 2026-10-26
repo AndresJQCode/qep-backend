@@ -124,6 +124,30 @@ public sealed class AutomationsPersistenceTests
     }
 
     [Fact]
+    public async Task TheConsentPromptSurvivesTheDatabase()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var conversationId = Guid.CreateVersion7();
+        var prompt = new Modules.Automations.Domain.Engine.ConsentPrompt("c", "Texto enviado", Guid.CreateVersion7());
+        var state = Modules.Automations.Domain.Engine.RunState.Initial(Modules.Automations.Domain.Engine.RunVariables.Empty()) with { ConsentPrompt = prompt };
+        var run = ConversationRun.Start(
+            Guid.CreateVersion7(), tenantId, conversationId, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), state, Now);
+        using (var seed = factory.Services.CreateScope())
+        {
+            await seed.ServiceProvider.GetRequiredService<IConversationRunRepository>().AddAsync(run, Ct);
+            await seed.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var reader = factory.Services.CreateScope();
+        var read = await reader.ServiceProvider.GetRequiredService<IConversationRunRepository>().FindLatestAsync(tenantId, conversationId, Ct);
+
+        Assert.NotNull(read);
+        Assert.Equal(prompt, read.ToState().ConsentPrompt);
+    }
+
+    [Fact]
     public async Task TodayCountsRunsStartedTodayOnly()
     {
         await using var database = await StartDatabaseAsync();

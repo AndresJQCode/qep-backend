@@ -40,6 +40,28 @@ public sealed class SimulationRunnerTests
         """);
 
     [Fact]
+    public void ASimulationKeepsTheConsentPrompt()
+    {
+        var prompt = new ConsentPrompt("c", "Texto", Guid.CreateVersion7());
+        var simulation = Simulation.Start(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), false, Initial() with { ConsentPrompt = prompt }, DateTimeOffset.UtcNow);
+
+        Assert.Equal(prompt, simulation.ToState().ConsentPrompt);
+
+        var without = Simulation.Start(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), false, Initial(), DateTimeOffset.UtcNow);
+        Assert.Null(without.ToState().ConsentPrompt);
+    }
+
+    [Fact]
+    public void AnOldStateJsonWithoutTheKeyHasNoConsentPrompt()
+    {
+        var simulation = Simulation.Start(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), false, Initial(), DateTimeOffset.UtcNow);
+        var field = typeof(Simulation).GetProperty(nameof(Simulation.StateJson))!;
+        field.SetValue(simulation, """{"status":"Running","currentNodeId":null,"stepNumber":0,"attempts":0,"variables":{},"trace":[]}""");
+
+        Assert.Null(simulation.ToState().ConsentPrompt);
+    }
+
+    [Fact]
     public async Task StartTranscribesTheBotMessagesAndStopsAtTheWait()
     {
         var http = new RecordingHttpBlocks(null);
