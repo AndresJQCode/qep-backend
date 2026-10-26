@@ -619,6 +619,23 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
         return Task.FromResult(true);
     }
 
+    /// <summary>Spec 2026-10-26 §2: lo que responde Block Users; por defecto, aplicado.</summary>
+    public MessagingGraphResult<BlockUsersResult> NextBlock { get; set; } = new(new BlockUsersResult(true, null), null);
+
+    public List<(string Direction, string WaId)> BlockCalls { get; } = [];
+
+    public Task<MessagingGraphResult<BlockUsersResult>> BlockUserAsync(MessagingSender sender, string waId, CancellationToken cancellationToken)
+    {
+        BlockCalls.Add(("block", waId));
+        return Task.FromResult(NextBlock);
+    }
+
+    public Task<MessagingGraphResult<BlockUsersResult>> UnblockUserAsync(MessagingSender sender, string waId, CancellationToken cancellationToken)
+    {
+        BlockCalls.Add(("unblock", waId));
+        return Task.FromResult(NextBlock);
+    }
+
     /// <summary>§8.6: lo que responde <c>GET /{media-id}</c>; sin configurar, la prueba no debía llegar acá.</summary>
     public MessagingGraphResult<MediaInfo>? MediaInfo { get; set; }
 
