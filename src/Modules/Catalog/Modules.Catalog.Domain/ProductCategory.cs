@@ -1,9 +1,10 @@
 namespace Modules.Catalog.Domain;
 
 /// <summary>
-/// A node of a tenant's product category tree (spec 2026-10-26 §3.1). Categories are created on
-/// the fly from the product form and are never edited or deactivated, so the aggregate has no
-/// Update/Deactivate: there is no administration screen (spec §2).
+/// A node of a tenant's product category tree (spec 2026-10-26 §3.1). Born from the product form
+/// or the Categorías screen, which can also rename, move and delete it (spec
+/// 2026-10-26-categorias-pos-acceso-rapido). There is no Deactivate: a category with products or
+/// children cannot be deleted, and the person moves them first.
 /// </summary>
 public sealed class ProductCategory
 {
@@ -48,6 +49,13 @@ public sealed class ProductCategory
 
     public DateTimeOffset UpdatedAt { get; private set; }
 
+    /// <summary>
+    /// Place among the register's quick-access chips, 1..N contiguous per tenant; null when not
+    /// pinned. Contiguity is kept by <see cref="ProductCategoryQuickAccess"/>, which sees the whole
+    /// tenant list: a single category cannot.
+    /// </summary>
+    public int? PosQuickAccessPosition { get; private set; }
+
     public static ProductCategory Create(
         ProductCategoryId id,
         Guid tenantId,
@@ -55,6 +63,31 @@ public sealed class ProductCategory
         ProductCategoryId? parentId,
         DateTimeOffset occurredAt) =>
         new(id, tenantId, NormalizeName(name), parentId, occurredAt);
+
+    /// <summary>
+    /// Rename and/or move. Tree rules (parent in the tenant, no cycle, depth) need the whole list,
+    /// so the caller runs <see cref="ProductCategoryTree.EnsureCanMove"/> first.
+    /// </summary>
+    public void Update(string name, ProductCategoryId? parentId, DateTimeOffset occurredAt)
+    {
+        Name = NormalizeName(name);
+        ParentId = parentId;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    // Neither Version nor UpdatedAt move (spec D-5): the position is not the category's content,
+    // and bumping the version would make an open rename or delete fail with 412 for nothing.
+    internal void SetPosQuickAccessPosition(int? position)
+    {
+        // Only ProductCategoryQuickAccess calls this, numbering from 1: a 0 here is a bug, not input.
+        if (position is < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(position), position, "Positions start at 1.");
+        }
+
+        PosQuickAccessPosition = position;
+    }
 
     // Trimming is part of the invariant: " Bebidas" and "Bebidas" read as the same category.
     private static string NormalizeName(string name)

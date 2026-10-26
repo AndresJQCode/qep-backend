@@ -371,11 +371,16 @@ public sealed record CategoryDto(
     int ProductCount,
     long Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    int? PosQuickAccessPosition);
 
 /// <param name="ProductCount">
 /// Los productos asignados **directamente** a la categoria, activos e inactivos; los de las
 /// descendientes no suman. El POS trae otro conteo.
+/// </param>
+/// <param name="Version">El <c>If-Match</c> de editar y borrar. Cambiar el acceso rápido no la sube.</param>
+/// <param name="PosQuickAccessPosition">
+/// Lugar entre los chips de acceso rápido de la caja (1..N, contiguos por tenant); null si no está fijada.
 /// </param>
 public sealed record CategoryResponse(
     Guid Id,
@@ -384,8 +389,19 @@ public sealed record CategoryResponse(
     int ProductCount,
     long Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    int? PosQuickAccessPosition);
 
 public sealed record CategoriesResponse(IReadOnlyList<CategoryResponse> Items);
 
 public sealed record CreateCategoryRequest(string Name, Guid? ParentId);
+
+/// <summary>Renombra y/o mueve: los dos campos viajan siempre. <c>ParentId</c> null la deja como raíz.</summary>
+public sealed record UpdateCategoryRequest(string Name, Guid? ParentId);
+
+/// <summary>
+/// Reemplaza la lista entera del acceso rápido: el orden es la posición (índice 0 → posición 1).
+/// Lista vacía = nada fijado. Anulable sólo para que un cuerpo sin el campo salga como 422 del
+/// validador y no como un 500 al recorrerlo.
+/// </summary>
+public sealed record ReplacePosQuickAccessRequest(IReadOnlyList<Guid>? CategoryIds);

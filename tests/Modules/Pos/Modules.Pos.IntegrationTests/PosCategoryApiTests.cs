@@ -115,6 +115,31 @@ public sealed class PosCategoryApiTests
         Assert.DoesNotContain(list!.Items, item => item.Id == foreign);
     }
 
+    // Spec 2026-10-26-categorias-pos-acceso-rapido: the tenant pins through Catalog and the cashier reads
+    // the position through /pos/categories, which keeps its order by name.
+    [Fact]
+    public async Task TheCashierSeesTheQuickAccessPositionsTheCatalogPinned()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeAsync(factory, database);
+        var tenant = arranged.World.Tenant;
+        var cashier = await InviteCashierAsync(factory, database, tenant, CashierPermissions);
+
+        var pinned = await tenant.Seeder.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenant.TenantId}/catalog/categories/pos-quick-access",
+            new { categoryIds = new[] { arranged.Gaseosas } },
+            TestContext.Current.CancellationToken);
+        var list = await cashier.Client.GetFromJsonAsync<PosCategoriesResponse>(
+            $"{arranged.World.Url}/categories", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, pinned.StatusCode);
+        Assert.NotNull(list);
+        Assert.Equal(
+            [("Bebidas", (int?)null), ("Gaseosas", 1)],
+            list.Items.Select(item => (item.Name, item.QuickAccessPosition)));
+    }
+
     private sealed record CategoryWorld(PosWorld World, Guid Bebidas, Guid Gaseosas, Guid Cola, Guid Agua, Guid Vieja);
 
     private static async Task<CategoryWorld> ArrangeAsync(QepApiFactory factory, PostgreSqlContainer database)

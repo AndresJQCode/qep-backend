@@ -8,7 +8,7 @@ namespace Bootstrapper;
 /// Catalog → Pos, las categorías de la caja (spec 2026-10-26 §3.4). El repositorio cuenta los productos
 /// activos **directos** de cada categoría; acá se acumulan hacia arriba —una categoría suma los suyos y los
 /// de todas sus descendientes—, que es lo que encuentra el filtro de la cuadrícula. El árbol del tenant es
-/// pequeño (sin pantalla de administración, a lo sumo 10 niveles), así que se acumula en memoria sobre la
+/// pequeño (a lo sumo 10 niveles), así que se acumula en memoria sobre la
 /// lista que ya trajo la consulta. El total es una consulta aparte: la suma de las raíces perdería los
 /// productos sin categoría.
 /// </summary>
@@ -32,7 +32,8 @@ internal sealed class PosCategoryLookup(IProductCategoryRepository categories, I
                 row.Category.Id.Value,
                 row.Category.Name,
                 row.Category.ParentId?.Value,
-                RollUp(row.Category.Id, direct, children, rolledUp, []))).ToList(),
+                RollUp(row.Category.Id, direct, children, rolledUp, []),
+                row.Category.PosQuickAccessPosition)).ToList(),
             total);
     }
 

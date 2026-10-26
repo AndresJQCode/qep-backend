@@ -19,8 +19,8 @@ public sealed class PosCategoriesHandlerTests
     public async Task ListMapsTheLookupOneToOne()
     {
         var bed = new PosTestBed();
-        var bebidas = new PosCategoryRef(Guid.CreateVersion7(), "Bebidas", null, 7);
-        var gaseosas = new PosCategoryRef(Guid.CreateVersion7(), "Gaseosas", bebidas.Id, 4);
+        var bebidas = new PosCategoryRef(Guid.CreateVersion7(), "Bebidas", null, 7, null);
+        var gaseosas = new PosCategoryRef(Guid.CreateVersion7(), "Gaseosas", bebidas.Id, 4, 1);
         bed.Categories.Categories.Add((TenantId, bebidas));
         bed.Categories.Categories.Add((TenantId, gaseosas));
         bed.Categories.Totals[TenantId] = 9;
@@ -30,8 +30,8 @@ public sealed class PosCategoriesHandlerTests
 
         Assert.Equal(
             [
-                new PosCategoryResponse(bebidas.Id, "Bebidas", null, 7),
-                new PosCategoryResponse(gaseosas.Id, "Gaseosas", bebidas.Id, 4),
+                new PosCategoryResponse(bebidas.Id, "Bebidas", null, 7, null),
+                new PosCategoryResponse(gaseosas.Id, "Gaseosas", bebidas.Id, 4, 1),
             ],
             response.Items);
         Assert.Equal(9, response.Total);

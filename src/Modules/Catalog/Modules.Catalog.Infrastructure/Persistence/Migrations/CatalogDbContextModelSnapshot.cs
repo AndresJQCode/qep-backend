@@ -228,6 +228,10 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("parent_id");
 
+                    b.Property<int?>("PosQuickAccessPosition")
+                        .HasColumnType("integer")
+                        .HasColumnName("pos_quick_access_position");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");

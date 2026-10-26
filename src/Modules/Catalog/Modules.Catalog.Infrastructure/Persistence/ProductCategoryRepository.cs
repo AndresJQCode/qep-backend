@@ -63,5 +63,25 @@ internal sealed class ProductCategoryRepository(CatalogDbContext dbContext) : IP
                 category => category.TenantId == tenantId && category.Id == categoryId,
                 cancellationToken);
 
+    public async Task<IReadOnlyList<ProductCategory>> ListForUpdateAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken) =>
+        await dbContext.ProductCategories
+            .Where(category => category.TenantId == tenantId)
+            .OrderBy(category => category.Name)
+            .ToListAsync(cancellationToken);
+
+    public Task<int> CountProductsAsync(
+        Guid tenantId,
+        ProductCategoryId categoryId,
+        CancellationToken cancellationToken) =>
+        dbContext.Products
+            .AsNoTracking()
+            .CountAsync(
+                product => product.TenantId == tenantId && product.CategoryId == categoryId,
+                cancellationToken);
+
     public void Add(ProductCategory category) => dbContext.ProductCategories.Add(category);
+
+    public void Remove(ProductCategory category) => dbContext.ProductCategories.Remove(category);
 }

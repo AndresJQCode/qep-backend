@@ -29,11 +29,29 @@ public interface IProductCategoryRepository
         ProductCategoryId categoryId,
         CancellationToken cancellationToken);
 
-    // Sin rastreo: nadie muta una categoría.
+    // Sin rastreo: lo usan las lecturas y el resolver del producto. Quien muta pide la lista rastreada.
     Task<ProductCategory?> FindAsync(
         Guid tenantId,
         ProductCategoryId categoryId,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// La lista plana del tenant **rastreada**, para editar, borrar o reordenar el acceso rápido: las
+    /// reglas de árbol y de posiciones necesitan todas las categorías, y los cambios de las que
+    /// toquen se guardan con <see cref="ICatalogUnitOfWork"/>.
+    /// </summary>
+    Task<IReadOnlyList<ProductCategory>> ListForUpdateAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken);
+
+    /// <summary>Productos asignados directamente a la categoría, activos e inactivos.</summary>
+    Task<int> CountProductsAsync(
+        Guid tenantId,
+        ProductCategoryId categoryId,
+        CancellationToken cancellationToken);
+
     void Add(ProductCategory category);
+
+    // Borrado real: no hay desactivación. La FK RESTRICT de productos y de hijas es la última red.
+    void Remove(ProductCategory category);
 }
