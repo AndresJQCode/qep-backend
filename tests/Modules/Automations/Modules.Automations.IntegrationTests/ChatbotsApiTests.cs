@@ -62,6 +62,10 @@ public sealed class ChatbotsApiTests
     private static async Task<ChatbotEditorDto> GetAsync(Setup setup, Guid chatbotId) =>
         (await setup.Client.GetFromJsonAsync<ChatbotEditorDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{chatbotId}", Ct))!;
 
+    /// <summary>El Anexo A como queda guardado: normalizado (spec 2026-10-25 D-3, D-4: sin <c>outputs.other</c> ni miembro de reserva
+    /// huérfanos) y serializado en la forma del modelo.</summary>
+    private static string StoredAnnexAFlow() => FlowJson.Serialize(FlowNormalizer.Normalize(FlowJson.Parse(AnnexA.Json)));
+
     private static bool SameJson(JsonElement actual, string expected) =>
         JsonNode.DeepEquals(JsonNode.Parse(actual.GetRawText()), JsonNode.Parse(expected));
 
@@ -317,7 +321,7 @@ public sealed class ChatbotsApiTests
         Assert.All(saved.Issues, issue => Assert.Equal("Warning", issue.Severity));
         var reloaded = await GetAsync(setup, editor.Chatbot.Id);
         // D-C2: el servidor guarda el flujo en su forma (la del modelo) y el editor dibuja lo que vuelve.
-        Assert.True(SameJson(reloaded.Draft.Flow, FlowJson.Serialize(FlowJson.Parse(AnnexA.Json))));
+        Assert.True(SameJson(reloaded.Draft.Flow, StoredAnnexAFlow()));
         Assert.True(SameJson(reloaded.Draft.Layout, layout));
         Assert.Equal(saved.Version, reloaded.Chatbot.Version);
         Assert.Equal(saved.UpdatedAt, reloaded.Draft.UpdatedAt);
@@ -1194,7 +1198,7 @@ public sealed class ChatbotsApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var export = (await response.Content.ReadFromJsonAsync<ChatbotExportDto>(Ct))!;
         Assert.Equal((1, "Servicio técnico", "NewConversation", "reiniciar", 3), (export.Schema, export.Name, export.Trigger, export.RestartKeyword, export.MaxAttempts));
-        Assert.True(SameJson(export.Flow, FlowJson.Serialize(FlowJson.Parse(AnnexA.Json))));
+        Assert.True(SameJson(export.Flow, StoredAnnexAFlow()));
         Assert.Equal([AnnexA.CustomersApi, AnnexA.ServiceOrdersApi], export.ExternalApis.Select(api => api.Id).Order());
         Assert.All(export.ExternalApis, api => Assert.Equal("Active", api.Status));
     }
@@ -1218,7 +1222,7 @@ public sealed class ChatbotsApiTests
         Assert.Equal(("Copia", "Draft"), (imported.Chatbot.Name, imported.Chatbot.Status));
         Assert.Empty(imported.Chatbot.Connections);
         var reloaded = await GetAsync(setup, imported.Chatbot.Id);
-        Assert.True(SameJson(reloaded.Draft.Flow, FlowJson.Serialize(FlowJson.Parse(AnnexA.Json))));
+        Assert.True(SameJson(reloaded.Draft.Flow, StoredAnnexAFlow()));
         Assert.Equal(1L, await CountAsync(connectionString,
             "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.imported'", ("id", imported.Chatbot.Id.ToString())));
 

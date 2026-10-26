@@ -308,10 +308,10 @@ public sealed class TemplatesApiTests
             "SELECT count(*) FROM automations.chatbots WHERE tenant_id = @tenantId", ("tenantId", other.Tenant.TenantId)));
     }
 
-    /// <summary>El Anexo A como lo guarda el modelo, con los <c>connectionId</c> de sus bloques HTTP en <c>null</c>.</summary>
+    /// <summary>El Anexo A como lo guarda el modelo (normalizado, spec 2026-10-25 D-3, D-4), con los <c>connectionId</c> de sus bloques HTTP en <c>null</c>.</summary>
     private static string AnnexAWithoutConnections()
     {
-        var node = JsonNode.Parse(FlowJson.Serialize(FlowJson.Parse(AnnexA.Json)))!;
+        var node = JsonNode.Parse(FlowJson.Serialize(FlowNormalizer.Normalize(FlowJson.Parse(AnnexA.Json))))!;
         foreach (var block in node["nodes"]!.AsArray())
         {
             if ((string?)block!["kind"] == "http")
