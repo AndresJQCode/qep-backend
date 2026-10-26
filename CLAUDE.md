@@ -595,7 +595,9 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   amarran `ARealCityNameWinsOverASynonymWithTheSameText` y `CityOperatorApiTests`.
 - **`CityCorrectionInsights` lee `quotations`, `customers`, `shopify`, `tenancy` e `identity` por nombre.** Es SQL crudo en
   Bootstrapper que alimenta los impactos y los contadores de la consola de ciudades. Renombrar una columna de cualquiera de esas
-  tablas compila y deja `impact`, `GET synonyms` y el recorrido respondiendo 500 (`42703`). Lo amarra `CityCorrectionInsightsTests`
+  tablas compila y deja respondiendo 500 (`42703`) a los dos `impact`, a `GET synonyms` y `GET unresolved/{id}`, y a `resolve`,
+  `PUT synonyms/{id}` y `retry` **después** de confirmar su escritura (la respuesta lee los contadores): el cambio queda hecho
+  aunque el cliente vea el 500. El recorrido (`POST backfill`) no lee este adaptador. Lo amarra `CityCorrectionInsightsTests`
   (en el proyecto de Shopify, que es el que sabe armar pedidos, clientes y huellas reales): una tabla o columna nueva que lea el
   adaptador entra ahí.
 - **El payload de `geography.city_synonym.*` es contrato con Shopify y vive literal en dos pruebas.** `GeographyEventPublisher`

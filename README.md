@@ -555,7 +555,10 @@ municipios que cambiaron. Después corre `Modules.Geography.UnitTests` antes de 
 Cuando una importación trae un texto de ciudad que no casa con ningún municipio del departamento (`CALLI` en vez de `CALI`),
 el pedido entra igual y el texto queda en una bandeja que el operador resuelve (spec `2026-10-26`). Confirmarlo como sinónimo
 de una ciudad real hace que **los pedidos siguientes casen solos** y que los ya importados se corrijan. Hoy sólo Shopify
-reporta a la bandeja. Módulo `geography` (sinónimos y bandeja) y `shopify` (el trabajo que corrige).
+reporta a la bandeja; es el estado de hoy, no una regla: van a reportar más proveedores. Uno nuevo necesita su propio reporter
+hacia el puerto de Geography (`IUnresolvedCityReporter`, con su `source`) y su propio consumidor de los eventos
+`geography.city_synonym.*` con su worker que corrige, porque los de hoy viven en el módulo de Shopify. Las tablas de Geography ya
+llevan `source`. Módulo `geography` (sinónimos y bandeja) y `shopify` (el trabajo que corrige).
 
 **Orden de coincidencia.** Primero el nombre de la ciudad, luego el nombre oficial del DANE y, sólo si ninguno casa, el
 sinónimo vivo del departamento (`CityRepository.MatchByNameAsync`). Un texto que ya es el nombre de una ciudad real no se
@@ -605,7 +608,16 @@ con los contadores frescos.
 **Recorrido de la historia.** `POST backfill` revisa los pedidos de Shopify ya importados que siguen `Pending`, sin parte de
 envío y con la dirección cruda en las notas, y reporta a la bandeja los que hoy no casan. Responde
 `{ scanned, reported, alreadyReported, nowMatching, skipped }`. Es idempotente: un texto ya reportado cuenta como
-`alreadyReported`.
+`alreadyReported`, y correrlo otra vez es seguro.
+
+Si el texto de un pedido ya casa por un **sinónimo vivo** (no por el nombre real de la ciudad), cuenta como `nowMatching` y además
+siembra el trabajo `Resolve` de ese pedido, sin operador ni mensaje de origen: el evento de la confirmación no traía ese pedido y
+nadie más lo iba a corregir. La siembra usa la misma regla del evento y del importador (`ResolveJobs`) y no repite un trabajo del
+mismo (sinónimo, pedido), aunque el anterior siga pendiente. Si casa por el nombre real no se siembra nada: el pedido no necesita
+un sinónimo.
+
+El recorrido es **síncrono** y revisa cada fila `Imported` del espejo de todos los tenants: con un espejo grande puede toparse con
+el 524 de Cloudflare. Córrelo una vez, justo después de desplegar.
 
 ### Riesgos conocidos
 
@@ -622,14 +634,15 @@ Decisiones aceptadas al cerrar el trabajo; ninguna se arregla sola.
   `Skipped` con `order_not_pending` aunque la ciudad ya esté escrita. Es no atomicidad inherente a que sean módulos distintos.
 - **`ShopifyClaimedOutboxConsumer` y `ShopifyInbox` son copia literal de las de Pipeline.** Un arreglo a la lógica de reclamo
   va en los dos sitios.
-- **Impacto sin tope.** `POST synonyms/{id}/impact` y la vista previa y el evento de `resolve` leen todas las huellas y
-  ocurrencias del sinónimo, porque el contrato exige la lista completa de `ordersNotPending`. Es un límite conocido al volumen
-  de hoy.
+- **Impacto sin tope.** `POST synonyms/{id}/impact` lee todas las huellas del sinónimo, y la vista previa de `resolve` y su
+  evento leen todas las ocurrencias de la fila, porque el contrato exige la lista completa de `ordersNotPending`. Es un límite
+  conocido al volumen de hoy.
 - **El recorrido no completa clientes.** `POST backfill` nunca siembra un cliente: la importación reutiliza clientes
   incompletos que ya existían (por ejemplo, uno nacido en WhatsApp, con versión 1), y un sinónimo no debe completarlos. El
   tenant los completa a mano.
-- **Auditoría del recorrido.** Se escribe sólo si todo el recorrido termina bien. Y en un reintento los trabajos se commitean
-  antes que su auditoría.
+- **Auditoría del recorrido y del reintento.** La del recorrido se escribe sólo si todo el recorrido termina bien. Y en
+  `POST synonyms/{id}/retry` los trabajos `Failed` vuelven a `Pending` en una sentencia que se confirma sola, antes de guardar la
+  auditoría: si ésta falla, los trabajos ya se reintentan sin su rastro.
 
 ## Numeración de documentos por tenant
 
