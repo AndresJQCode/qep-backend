@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using FluentValidation;
 using Modules.Customers.Domain;
 using Modules.Tenancy.Application;
 
@@ -246,5 +247,113 @@ public sealed class GetCustomerDataConsentHandler(
 
         var rows = await consents.ListAsync(query.TenantId, id, cancellationToken);
         return await DataConsentMapping.ToDtoAsync(customer, rows, names, context, cancellationToken);
+    }
+}
+
+// Spec 2026-10-26 D-5 (medium), D-8 y D-9: la revocación que registra un miembro desde la bandeja o la ficha.
+
+/// <summary>Una conversación de Mensajería, como la necesita la revocación «por esta conversación». <c>Channel</c> es el nombre
+/// del canal (<c>WhatsApp</c>, <c>Instagram</c>); <c>ChannelUserId</c> es el BSUID o el IGSID, nulo si la conversación no lo
+/// tiene. El adaptador vive en Bootstrapper: Customers no referencia Mensajería.</summary>
+public sealed record CustomerConversationRef(Guid ConversationId, Guid? CustomerId, string Channel, string? ChannelUserId, string? WaId);
+
+public interface ICustomerConversations
+{
+    /// <summary><c>null</c> si la conversación no existe o es de otro tenant.</summary>
+    Task<CustomerConversationRef?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+}
+
+public sealed record RevokeDataConsentRequest(string? Medium, Guid? ConversationId, string? Note);
+
+public sealed record RevokeDataConsentCommand(Guid TenantId, Guid CustomerId, string? Medium, Guid? ConversationId, string? Note)
+    : ICommand<CustomerDataConsentDto>;
+
+// El 422 viaja con el mapa `errors` por campo (Medium, ConversationId, Note), que es lo único que el formulario sabe leer.
+public sealed class RevokeDataConsentValidator : AbstractValidator<RevokeDataConsentCommand>
+{
+    public RevokeDataConsentValidator()
+    {
+        RuleFor(command => command.Medium)
+            .Cascade(CascadeMode.Stop)
+            .NotEmpty()
+            .Must(medium => medium is nameof(DataConsentMedium.ThisConversation) or nameof(DataConsentMedium.Other));
+        When(command => command.Medium == nameof(DataConsentMedium.ThisConversation), () =>
+            RuleFor(command => command.ConversationId).Cascade(CascadeMode.Stop).NotNull().NotEqual(Guid.Empty));
+        When(command => command.Medium == nameof(DataConsentMedium.Other), () =>
+            RuleFor(command => command.ConversationId).Null());
+        RuleFor(command => command.Note).NotEmpty().MaximumLength(CustomerDataConsent.NoteMaxLength);
+    }
+}
+
+public sealed class RevokeDataConsentHandler(
+    ICustomerRepository customers,
+    ICustomerDataConsentRepository consents,
+    ICustomerConversations conversations,
+    ICustomerAuthorNames names,
+    ICustomersUnitOfWork unitOfWork,
+    ICustomersAuditPublisher auditPublisher,
+    IExecutionContext executionContext,
+    IClock clock,
+    IValidator<RevokeDataConsentCommand> validator) : ICommandHandler<RevokeDataConsentCommand, CustomerDataConsentDto>
+{
+    public async Task<CustomerDataConsentDto> HandleAsync(RevokeDataConsentCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        // Autorizar antes de validar: quien tiene el permiso en otro tenant no se lleva el mapa de errores.
+        CustomersAuthorization.EnsureAuthorized(executionContext, command.TenantId, CustomersPermissions.DataConsentRevoke);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var id = new CustomerId(command.CustomerId);
+        var customer = await customers.FindAsync(command.TenantId, id, cancellationToken)
+            ?? throw CustomerNotFound.For(command.CustomerId);
+        // La fila es otro agregado: no pasa por Customer, así que el rechazo del fusionado se pide acá. Inactivo sí se revoca (D-5).
+        customer.EnsureNotMerged();
+        var medium = Enum.Parse<DataConsentMedium>(command.Medium!);
+        var identity = medium == DataConsentMedium.ThisConversation
+            ? await IdentityOfAsync(command.TenantId, command.CustomerId, command.ConversationId!.Value, cancellationToken)
+            : null;
+
+        // Cada throw sin CommitAsync deshace la transacción al liberarla. Un deadlock con una fusión sale como
+        // RequestConcurrencyException con la transacción abortada, que tampoco se vuelve a usar.
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        var locked = await consents.LockCustomerAsync(command.TenantId, command.CustomerId, cancellationToken)
+            ?? throw CustomerNotFound.For(command.CustomerId);
+        if (locked != command.CustomerId)
+        {
+            // Una fusión confirmó entre la lectura y el lock: el lock ya apunta al que quedó. El mismo código que EnsureNotMerged.
+            throw new CustomersDomainException("customers.customer.merged", "A merged customer cannot be edited.");
+        }
+
+        if ((await consents.FindLatestAsync(command.TenantId, id, cancellationToken))?.Event != DataConsentEvent.Accepted)
+        {
+            throw new ResourceConflictException(
+                "customers.data_consent.not_accepted", "Only a current acceptance of the data policy can be revoked.");
+        }
+
+        var now = clock.UtcNow;
+        consents.Add(CustomerDataConsent.Revocation(
+            command.TenantId, id, now, executionContext.SubjectId, medium, identity, command.Note!));
+        auditPublisher.Publish(
+            command.TenantId, executionContext.SubjectId, CustomerAuditActions.DataConsentRevoked, command.CustomerId.ToString(), "success", now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        var rows = await consents.ListAsync(command.TenantId, id, cancellationToken);
+        return await DataConsentMapping.ToDtoAsync(customer, rows, names, executionContext, cancellationToken);
+    }
+
+    // «Por esta conversación» guarda la identidad que respondió (el «mismo medio» de la ley). Una conversación de otro cliente o
+    // sin identidad de canal no prueba nada, así que no se acepta.
+    private async Task<DataConsentIdentity> IdentityOfAsync(
+        Guid tenantId, Guid customerId, Guid conversationId, CancellationToken cancellationToken)
+    {
+        var conversation = await conversations.FindAsync(tenantId, conversationId, cancellationToken);
+        return conversation is not null
+            && conversation.CustomerId == customerId
+            && !string.IsNullOrWhiteSpace(conversation.ChannelUserId)
+            && Enum.TryParse<DataConsentChannel>(conversation.Channel, out var channel)
+            && Enum.IsDefined(channel)
+            ? new DataConsentIdentity(conversation.ConversationId, channel, conversation.ChannelUserId, conversation.WaId)
+            : throw new CustomersDomainException(
+                "customers.data_consent.conversation_invalid", "The conversation does not exist, is not this customer's or has no channel identity.");
     }
 }

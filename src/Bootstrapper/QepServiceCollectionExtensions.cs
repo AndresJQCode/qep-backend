@@ -333,6 +333,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetCustomerDataConsentQuery, CustomerDataConsentDto>,
             GetCustomerDataConsentHandler>();
+        // Spec 2026-10-26 D-5 (medium) y D-9: la revocación de un miembro. El validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<
+            ICommandHandler<RevokeDataConsentCommand, CustomerDataConsentDto>,
+            RevokeDataConsentHandler>();
         services.AddScoped<
             ICommandHandler<MergeCustomersCommand, CustomerMergeResult>,
             MergeCustomersHandler>();
@@ -996,6 +1000,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IMessagingTenantNames, MessagingTenantNames>();
         // Spec 2026-10-11 §4.2: el autor de una nota de cliente (usuario, no membresía) con su nombre visible.
         services.AddScoped<ICustomerAuthorNames, CustomersAuthorNames>();
+        // Spec 2026-10-26 D-5 (medium): la conversación por la que se revoca la autorización de datos, por Mensajería.
+        services.AddScoped<ICustomerConversations, CustomersConversations>();
         // Spec 2026-10-10 §6.1.3: quién puede responder, por Tenancy, Identity y Authorization.
         services.AddScoped<IMessagingAssignees, MessagingAssignees>();
         // Messaging (spec 2026-10-09 §6.4 y §8.6): la copia de los medios entrantes, en el bucket privado de Storage.
