@@ -44,7 +44,7 @@ public sealed class CustomerProvisioningTests
 
         Assert.Equal(["classification", "city", "cuc"], bed.Calls);
         var customer = Assert.Single(bed.Customers.Added);
-        Assert.Equal(new ProvisionedCustomer(customer.Id.Value, true, true, true), result);
+        Assert.Equal(new ProvisionedCustomer(customer.Id.Value, true, true, true, 1), result);
         Assert.Equal("CLI08000007", customer.Cuc);
         Assert.Equal(Tenant, customer.TenantId);
         Assert.False(customer.WithRetention);
@@ -79,7 +79,7 @@ public sealed class CustomerProvisioningTests
 
         var result = await bed.Provisioning.CreateCompleteAsync(Tenant, Buyer(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(new ProvisionedCustomer(existing.Id.Value, true, true, false), result);
+        Assert.Equal(new ProvisionedCustomer(existing.Id.Value, true, true, false, existing.Version), result);
     }
 
     [Fact]
@@ -113,7 +113,7 @@ public sealed class CustomerProvisioningTests
             Tenant, "  ", "310 935 2187", "laura@verde.co", "CO", TestContext.Current.CancellationToken);
 
         var customer = Assert.Single(bed.Customers.Added);
-        Assert.Equal(new ProvisionedCustomer(customer.Id.Value, false, true, true), result);
+        Assert.Equal(new ProvisionedCustomer(customer.Id.Value, false, true, true, 1), result);
         Assert.Equal(CustomerProvisioning.ExternalSaleFallbackName, customer.Name);
         Assert.Equal("Cliente de Shopify", CustomerProvisioning.ExternalSaleFallbackName);
         Assert.Equal("+573109352187", customer.PhoneE164);
@@ -143,7 +143,7 @@ public sealed class CustomerProvisioningTests
 
         var customer = Assert.Single(bed.Customers.Added);
         Assert.False(customer.IsComplete);
-        Assert.Equal(new ProvisionedCustomer(customer.Id.Value, false, true, true), result);
+        Assert.Equal(new ProvisionedCustomer(customer.Id.Value, false, true, true, 1), result);
         Assert.Empty(bed.Audit.ByIntegration);
         Assert.Equal(
             (Tenant, cashierId, "customers.customer.created", customer.Id.ToString(), "success", (string?)null),
@@ -207,5 +207,373 @@ public sealed class CustomerProvisioningTests
         // Las dos van por PublishByIntegration, que no lleva source: sale «customers» como siempre.
         Assert.Empty(bed.Audit.Human);
         Assert.Equal(2, bed.Audit.ByIntegration.Count);
+    }
+
+    // ---- SC-05: completar y corregir la ciudad de un cliente de venta externa -------------------------------------
+
+    private static Customer NewIncomplete() =>
+        Customer.CreateIncompleteFromExternalSale(
+            CustomerId.New(), Tenant, "Laura Pérez", "310 935 2187", "laura@verde.co", "CO", Now, new PlusNormalizer());
+
+    private static Customer NewComplete(Guid? cityId = null) =>
+        Customer.Create(
+            CustomerId.New(), Tenant, "CLI08000001", "Laura", null,
+            new CustomerAddressDetails { Name = "Laura", Address = "Calle 1", CityId = cityId ?? CityId },
+            new CustomerIdentification { Type = IdentificationType.Cc, Number = "1020304050" },
+            new CustomerContactInfo { Phone = "3000000000", Email = "otra@verde.co", Address = "Calle 1", Country = "CO", CityId = cityId ?? CityId },
+            new CustomerCommercialInfo { ClassificationId = Classification.Id },
+            Now);
+
+    private static void AssertUntouched(Customer customer, long version, DateTimeOffset updatedAt, Bed bed)
+    {
+        Assert.Equal(version, customer.Version);
+        Assert.Equal(updatedAt, customer.UpdatedAt);
+        Assert.Empty(bed.Audit.ByIntegration);
+        Assert.Empty(bed.Audit.Human);
+    }
+
+    [Fact]
+    public async Task CreateCompleteReportsVersionOne()
+    {
+        var bed = NewBed();
+
+        var result = await bed.Provisioning.CreateCompleteAsync(Tenant, Buyer(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, result.Version);
+        Assert.Equal(Assert.Single(bed.Customers.Added).Version, result.Version);
+    }
+
+    [Fact]
+    public async Task CompleteExternalSaleIssuesTheCucWithTheDepartmentOfTheCity()
+    {
+        var customer = NewIncomplete();
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, customer.Id.Value, 1, Buyer() with { CityId = ValleCityId }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, 2, null), outcome);
+        Assert.Equal(["classification", "city", "cuc"], bed.Calls);
+        // prefijo de la clasificación + departamento de Cali (76) + consecutivo
+        Assert.Equal("CLI76000007", customer.Cuc);
+        Assert.True(customer.IsComplete);
+        Assert.Equal(ValleCityId, customer.CityId);
+        Assert.Equal(ValleCityId, Assert.Single(customer.Addresses).CityId);
+        Assert.True(Assert.Single(customer.Addresses).IsPrincipal);
+        Assert.Equal(2, customer.Version);
+        Assert.Empty(bed.Customers.Added);
+        Assert.Equal(
+            (Tenant, CustomerAuditActions.Completed, customer.Id.ToString(), "success"),
+            Assert.Single(bed.Audit.ByIntegration));
+        Assert.Empty(bed.Audit.Human);
+    }
+
+    [Fact]
+    public async Task CompleteExternalSaleTwiceIsAlreadyApplied()
+    {
+        var customer = NewIncomplete();
+        var bed = NewBed(customer);
+        var data = Buyer();
+
+        var first = await bed.Provisioning.CompleteExternalSaleAsync(Tenant, customer.Id.Value, 1, data, TestContext.Current.CancellationToken);
+        var calls = bed.Calls.Count;
+        var second = await bed.Provisioning.CompleteExternalSaleAsync(Tenant, customer.Id.Value, 1, data, TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExternalCustomerCityOutcomeKind.Applied, first.Kind);
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null), second);
+        // El segundo intento no gasta otro número del consecutivo ni audita otra vez.
+        Assert.Equal(calls, bed.Calls.Count);
+        Assert.Single(bed.Audit.ByIntegration);
+        Assert.Equal(2, customer.Version);
+    }
+
+    [Fact]
+    public async Task CompleteExternalSaleOfAnUnknownCustomerIsNotFound()
+    {
+        var bed = NewBed();
+
+        var outcome = await bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, Guid.NewGuid(), 1, Buyer(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotFound, null, null), outcome);
+        Assert.Empty(bed.Calls);
+    }
+
+    [Fact]
+    public async Task CompleteExternalSaleOnAnEditedCustomerIsNotEligible()
+    {
+        var customer = NewIncomplete();
+        customer.Deactivate(Now.AddMinutes(1));
+        customer.Activate(Now.AddMinutes(2));
+        var updatedAt = customer.UpdatedAt;
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, customer.Id.Value, 1, Buyer(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotEligible, null, ExternalCustomerCityReasons.Edited), outcome);
+        Assert.Equal("edited", outcome.Reason);
+        Assert.False(customer.IsComplete);
+        Assert.Null(customer.Cuc);
+        Assert.Empty(bed.Calls);
+        AssertUntouched(customer, 3, updatedAt, bed);
+    }
+
+    [Fact]
+    public async Task CompleteExternalSaleOfAnInactiveCustomerIsNotEligible()
+    {
+        var customer = NewIncomplete();
+        customer.Deactivate(Now.AddMinutes(1));
+        var updatedAt = customer.UpdatedAt;
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, customer.Id.Value, 2, Buyer(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotEligible, null, ExternalCustomerCityReasons.Inactive), outcome);
+        Assert.Equal("inactive", outcome.Reason);
+        Assert.Empty(bed.Calls);
+        AssertUntouched(customer, 2, updatedAt, bed);
+    }
+
+    [Fact]
+    public async Task CompleteExternalSaleOfAMergedCustomerIsNotEligible()
+    {
+        var customer = NewIncomplete();
+        CustomerMergePlan.Create(NewComplete(), [customer]).MarkMerged(Now.AddMinutes(1));
+        var version = customer.Version;
+        var updatedAt = customer.UpdatedAt;
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, customer.Id.Value, version, Buyer(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotEligible, null, ExternalCustomerCityReasons.Merged), outcome);
+        Assert.Equal("merged", outcome.Reason);
+        Assert.Empty(bed.Calls);
+        AssertUntouched(customer, version, updatedAt, bed);
+    }
+
+    [Fact]
+    public async Task CompleteExternalSaleOfACompleteCustomerWithAnotherCityIsNotEligible()
+    {
+        var customer = NewComplete();
+        var updatedAt = customer.UpdatedAt;
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, customer.Id.Value, 1, Buyer() with { CityId = ValleCityId }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotEligible, null, ExternalCustomerCityReasons.Complete), outcome);
+        Assert.Equal("complete", outcome.Reason);
+        Assert.Equal(CityId, customer.CityId);
+        Assert.Empty(bed.Calls);
+        AssertUntouched(customer, 1, updatedAt, bed);
+    }
+
+    [Fact]
+    public async Task CompleteExternalSaleWithoutPhoneIsNotCompletable()
+    {
+        // El brief decía «sin correo», pero el correo es opcional en CustomerWriteRules: lo obligatorio es el teléfono.
+        var customer = NewIncomplete();
+        var updatedAt = customer.UpdatedAt;
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, customer.Id.Value, 1, Buyer() with { Phone = null }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotCompletable, null, "validation.failed"), outcome);
+        // Sin CUC quemado: la validación corre antes de pedir el consecutivo.
+        Assert.Empty(bed.Calls);
+        Assert.False(customer.IsComplete);
+        Assert.Null(customer.Cuc);
+        AssertUntouched(customer, 1, updatedAt, bed);
+    }
+
+    [Fact]
+    public async Task CompleteExternalSaleWithAnUnknownClassificationIsNotCompletable()
+    {
+        var customer = NewIncomplete();
+        var updatedAt = customer.UpdatedAt;
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, customer.Id.Value, 1, Buyer() with { ClassificationId = Guid.NewGuid() }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotCompletable, null, CustomersErrorCodes.ClassificationNotFound),
+            outcome);
+        Assert.Equal("customers.customer.classification_not_found", outcome.Reason);
+        Assert.DoesNotContain("cuc", bed.Calls);
+        AssertUntouched(customer, 1, updatedAt, bed);
+    }
+
+    [Fact]
+    public async Task CompleteExternalSaleWithAnUnknownCityIsNotCompletable()
+    {
+        var customer = NewIncomplete();
+        var updatedAt = customer.UpdatedAt;
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, customer.Id.Value, 1, Buyer() with { CityId = Guid.NewGuid() }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotCompletable, null, CustomersErrorCodes.CityNotFound),
+            outcome);
+        Assert.Equal("customers.customer.city_not_found", outcome.Reason);
+        Assert.DoesNotContain("cuc", bed.Calls);
+        AssertUntouched(customer, 1, updatedAt, bed);
+    }
+
+    [Fact]
+    public async Task CompleteExternalSaleWithATakenDocumentIsNotCompletable()
+    {
+        var customer = NewIncomplete();
+        var bed = NewBed(customer, new CustomersDomainException(CustomersErrorCodes.IdentificationTaken, "taken"));
+
+        var outcome = await bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, customer.Id.Value, 1, Buyer(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotCompletable, null, CustomersErrorCodes.IdentificationTaken),
+            outcome);
+        Assert.Equal("customers.customer.identification_taken", outcome.Reason);
+    }
+
+    [Fact]
+    public async Task CompleteExternalSaleLetsOtherDomainFailuresThrough()
+    {
+        var customer = NewIncomplete();
+        var bed = NewBed(customer, new CustomersDomainException("customers.customer.cuc_taken", "taken"));
+
+        var failure = await Assert.ThrowsAsync<CustomersDomainException>(() => bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, customer.Id.Value, 1, Buyer(), TestContext.Current.CancellationToken));
+
+        Assert.Equal("customers.customer.cuc_taken", failure.Code);
+    }
+
+    [Fact]
+    public async Task CorrectCityMovesTheCustomerAndReportsTheNewVersion()
+    {
+        var customer = NewComplete();
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CorrectCityAsync(
+            Tenant, customer.Id.Value, 1, CityId, ValleCityId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, 2, null), outcome);
+        Assert.Equal(ValleCityId, customer.CityId);
+        Assert.Equal(ValleCityId, Assert.Single(customer.Addresses).CityId);
+        Assert.Equal("CLI08000001", customer.Cuc);
+        // P12: la auditoría de la corrección la escribe Shopify, una sola vez.
+        Assert.Empty(bed.Audit.ByIntegration);
+        Assert.Empty(bed.Audit.Human);
+    }
+
+    [Fact]
+    public async Task CorrectCityTwiceIsAlreadyApplied()
+    {
+        var customer = NewComplete();
+        var bed = NewBed(customer);
+
+        await bed.Provisioning.CorrectCityAsync(Tenant, customer.Id.Value, 1, CityId, ValleCityId, TestContext.Current.CancellationToken);
+        var updatedAt = customer.UpdatedAt;
+        var second = await bed.Provisioning.CorrectCityAsync(
+            Tenant, customer.Id.Value, 1, CityId, ValleCityId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null), second);
+        AssertUntouched(customer, 2, updatedAt, bed);
+    }
+
+    [Fact]
+    public async Task CorrectCityOfAnUnknownCustomerIsNotFound()
+    {
+        var bed = NewBed();
+
+        var outcome = await bed.Provisioning.CorrectCityAsync(
+            Tenant, Guid.NewGuid(), 1, CityId, ValleCityId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotFound, null, null), outcome);
+    }
+
+    [Fact]
+    public async Task CorrectCityOfAnEditedCustomerIsNotEligible()
+    {
+        var customer = NewComplete();
+        customer.Deactivate(Now.AddMinutes(1));
+        customer.Activate(Now.AddMinutes(2));
+        var updatedAt = customer.UpdatedAt;
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CorrectCityAsync(
+            Tenant, customer.Id.Value, 1, CityId, ValleCityId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotEligible, null, ExternalCustomerCityReasons.Edited), outcome);
+        Assert.Equal(CityId, customer.CityId);
+        AssertUntouched(customer, 3, updatedAt, bed);
+    }
+
+    [Fact]
+    public async Task CorrectCityOfAnInactiveCustomerIsNotEligible()
+    {
+        var customer = NewComplete();
+        customer.Deactivate(Now.AddMinutes(1));
+        var updatedAt = customer.UpdatedAt;
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CorrectCityAsync(
+            Tenant, customer.Id.Value, 2, CityId, ValleCityId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotEligible, null, ExternalCustomerCityReasons.Inactive), outcome);
+        Assert.Equal(CityId, customer.CityId);
+        AssertUntouched(customer, 2, updatedAt, bed);
+    }
+
+    [Fact]
+    public async Task CorrectCityOfAMergedCustomerIsNotEligible()
+    {
+        var customer = NewComplete();
+        CustomerMergePlan.Create(NewComplete(), [customer]).MarkMerged(Now.AddMinutes(1));
+        var version = customer.Version;
+        var updatedAt = customer.UpdatedAt;
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CorrectCityAsync(
+            Tenant, customer.Id.Value, version, CityId, ValleCityId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotEligible, null, ExternalCustomerCityReasons.Merged), outcome);
+        Assert.Equal(CityId, customer.CityId);
+        AssertUntouched(customer, version, updatedAt, bed);
+    }
+
+    [Fact]
+    public async Task CorrectCityOfAnIncompleteCustomerIsNotEligible()
+    {
+        var customer = NewIncomplete();
+        var updatedAt = customer.UpdatedAt;
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CorrectCityAsync(
+            Tenant, customer.Id.Value, 1, CityId, ValleCityId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotEligible, null, ExternalCustomerCityReasons.Incomplete), outcome);
+        Assert.Null(customer.CityId);
+        AssertUntouched(customer, 1, updatedAt, bed);
+    }
+
+    [Fact]
+    public async Task CorrectCityOfACustomerThatMovedToAnotherCityIsNotEligible()
+    {
+        var customer = NewComplete(ValleCityId);
+        var updatedAt = customer.UpdatedAt;
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CorrectCityAsync(
+            Tenant, customer.Id.Value, 1, CityId, Guid.NewGuid(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotEligible, null, ExternalCustomerCityReasons.CityChanged), outcome);
+        Assert.Equal(ValleCityId, customer.CityId);
+        AssertUntouched(customer, 1, updatedAt, bed);
     }
 }

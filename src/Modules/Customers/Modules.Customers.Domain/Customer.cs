@@ -459,6 +459,36 @@ public sealed class Customer
         Touch(occurredAt);
     }
 
+    /// <summary>
+    /// Spec de ciudades 2026-10-26 §4.6 (D-C4b): la ciudad que Shopify le puso al cliente se corrige cuando el operador
+    /// aprueba un sinónimo. Sólo cambia si sigue siendo <paramref name="previousCityId"/>; si una persona ya la movió,
+    /// lanza <c>customers.customer.city_changed</c> y no toca nada. Mueve <see cref="CityId"/> y la ciudad de la
+    /// dirección principal, ésta sólo si también sigue en <paramref name="previousCityId"/>. El CUC no cambia: el
+    /// departamento de la ciudad nueva es el mismo (el sinónimo sólo existe dentro de un departamento).
+    /// </summary>
+    public void CorrectCity(Guid previousCityId, Guid cityId, DateTimeOffset occurredAt)
+    {
+        EnsureNotMerged();
+        EnsureActive();
+        if (!IsComplete)
+        {
+            throw new InvalidOperationException($"Customer '{Id}' is incomplete and has no city to correct.");
+        }
+
+        if (CityId != previousCityId)
+        {
+            throw new CustomersDomainException(CustomersErrorCodes.CityChanged, "The customer city is no longer the one being corrected.");
+        }
+
+        CityId = cityId;
+        if (PrincipalAddress is { } principal && principal.CityId == previousCityId)
+        {
+            principal.MoveToCity(cityId, occurredAt);
+        }
+
+        Touch(occurredAt);
+    }
+
     /// <summary>La regla del BSUID (recortado, 1 a <see cref="WhatsAppUserIdMaxLength"/> caracteres). Pública porque
     /// <c>CustomerWhatsAppDirectory</c> lo escribe con un <c>UPDATE</c> condicional, sin pasar por el agregado.</summary>
     /// <summary>
@@ -873,7 +903,7 @@ public sealed class Customer
     {
         if (IsMerged)
         {
-            throw new CustomersDomainException("customers.customer.merged", "A merged customer cannot be edited.");
+            throw new CustomersDomainException(CustomersErrorCodes.Merged, "A merged customer cannot be edited.");
         }
     }
 
@@ -939,7 +969,7 @@ public sealed class Customer
         if (!IsActive)
         {
             throw new CustomersDomainException(
-                "customers.customer.inactive",
+                CustomersErrorCodes.Inactive,
                 "An inactive customer cannot be edited.");
         }
     }

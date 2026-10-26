@@ -312,6 +312,14 @@ internal sealed class FakeCustomerProvisioning : ICustomerProvisioning
     public Task<ProvisionedCustomer> CreateFromRegisterAsync(
         Guid tenantId, Guid actorId, RegisterCustomerData data, string? source, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public Task<ExternalCustomerCityOutcome> CompleteExternalSaleAsync(
+        Guid tenantId, Guid customerId, long expectedVersion, CompleteCustomerData data, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<ExternalCustomerCityOutcome> CorrectCityAsync(
+        Guid tenantId, Guid customerId, long expectedVersion, Guid previousCityId, Guid cityId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 /// <summary>Una tienda Shopify enlazada en el estado que pide la prueba, con su ruta y el módulo prendido o no. El
