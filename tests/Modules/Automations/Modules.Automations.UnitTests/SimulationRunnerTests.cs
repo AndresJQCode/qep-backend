@@ -185,6 +185,64 @@ public sealed class SimulationRunnerTests
         Assert.Equal("Terminó: el flujo da vueltas sin esperar al cliente", line.Text);
     }
 
+    /// <summary>Spec 2026-10-26 D-11: el simulador siempre pregunta (nunca da por vigente un consentimiento) y nunca registra nada.</summary>
+    private static FlowDefinition ConsentFlow() => FlowJson.Parse("""
+        { "schema": 1, "start": { "firstNodeId": "consent" }, "variables": [],
+          "nodes": [
+            { "id": "consent", "kind": "dataConsent", "title": "Política de datos", "text": "Lee https://e.co/d",
+              "outputs": { "accepted": "yes", "rejected": "no" } },
+            { "id": "yes", "kind": "message", "title": "Gracias", "text": "Gracias", "outputs": { "next": null } },
+            { "id": "no", "kind": "message", "title": "Entendido", "text": "Entendido", "outputs": { "next": null } }
+          ] }
+        """);
+
+    private static async Task<(RunState State, IReadOnlyList<TranscriptEntry> Transcript)> AskConsentAsync()
+    {
+        var (state, transcript) = await Runner(new RecordingHttpBlocks(null)).RunAsync(ConsentFlow(), Settings, Initial(), new EngineInput.Start(), Context(), Ct);
+        return (state, transcript);
+    }
+
+    [Fact]
+    public async Task TheConsentBlockAlwaysAsksInTheSimulator()
+    {
+        var (state, transcript) = await AskConsentAsync();
+
+        var line = Assert.Single(transcript);
+        Assert.Equal("bot", line.From);
+        Assert.Equal<(string, string)>([("accepted", "Acepto"), ("rejected", "No acepto")], line.Buttons!.Select(button => (button.Id, button.Title)));
+        Assert.Equal(RunStatus.Waiting, state.Status);
+    }
+
+    [Theory]
+    [InlineData("accepted", "Acepto", "Registraría que el cliente aceptó la política de datos.", "Gracias")]
+    [InlineData("rejected", "No acepto", "Registraría que el cliente no aceptó la política de datos.", "Entendido")]
+    public async Task TappingAcceptWritesTheSystemLine(string replyId, string title, string systemText, string followUp)
+    {
+        var (asked, _) = await AskConsentAsync();
+
+        var (_, transcript) = await Runner(new RecordingHttpBlocks(null)).RunAsync(
+            ConsentFlow(), Settings, asked, new EngineInput.CustomerMessage("Interactive", title, replyId, null), Context(), Ct);
+
+        Assert.Equal(["system", "bot"], transcript.Take(2).Select(entry => entry.From));
+        Assert.Equal(systemText, transcript[0].Text);
+        Assert.Equal(followUp, transcript[1].Text);
+    }
+
+    [Fact]
+    public async Task ExhaustingTheConsentSaysItRecordsNothing()
+    {
+        var (state, _) = await AskConsentAsync();
+        IReadOnlyList<TranscriptEntry> transcript = [];
+        for (var i = 0; i < 3; i++)
+        {
+            (state, transcript) = await Runner(new RecordingHttpBlocks(null)).RunAsync(
+                ConsentFlow(), Settings, state, new EngineInput.CustomerMessage("Text", "hola", null, null), Context(), Ct);
+        }
+
+        Assert.Contains(transcript, entry => entry is { From: "system", Text: "Seguiría por «No acepto» sin registrar nada: se agotaron los intentos." });
+        Assert.Contains(transcript, entry => entry is { From: "bot", Text: "Entendido" });
+    }
+
     private static SimulationRunner Runner(IHttpBlockExecutor http) => new(http, new ClosedHours(), new FixedClock());
 
     private sealed class RecordingHttpBlocks(HttpCallResult? result) : IHttpBlockExecutor

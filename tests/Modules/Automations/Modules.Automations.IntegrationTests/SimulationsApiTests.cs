@@ -43,6 +43,16 @@ public sealed class SimulationsApiTests
           ] }
         """;
 
+    private const string ConsentFlow = """
+        { "schema": 1, "start": { "firstNodeId": "n1" }, "variables": [],
+          "nodes": [
+            { "id": "n1", "kind": "dataConsent", "title": "Política de datos", "text": "Lee https://e.co/d",
+              "outputs": { "accepted": "n2", "rejected": "n3" } },
+            { "id": "n2", "kind": "message", "title": "Gracias", "text": "Gracias", "outputs": { "next": null } },
+            { "id": "n3", "kind": "message", "title": "Entendido", "text": "Entendido", "outputs": { "next": null } }
+          ] }
+        """;
+
     private static string LiveHttpFlow(Guid connectionId) => $$"""
         { "schema": 1, "start": { "firstNodeId": "n1" }, "variables": [],
           "nodes": [
@@ -221,6 +231,23 @@ public sealed class SimulationsApiTests
 
         Assert.Equal(["Estamos cerrados.", "Resolvería la conversación"], simulation.Transcript.Select(entry => entry.Text));
         Assert.Equal("Ventas", simulation.Variables.GetProperty("conexion").GetString());
+    }
+
+    /// <summary>Spec 2026-10-26 D-11: el simulador pregunta siempre y no escribe en <c>customers.data_consents</c>.</summary>
+    [Fact(Skip = "Requires customers.data_consents (Task 6)")]
+    public async Task SimulatingTheConsentBlockNeverWritesRows()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var setup = await SetupAsync(database);
+        var chatbotId = await CreateDraftAsync(setup, ConsentFlow);
+
+        var started = await StartOkAsync(setup, chatbotId);
+        var accepted = await SendOkAsync(setup, started.Id, new SimulationMessageRequest(null, "accepted", null));
+
+        Assert.Equal(
+            [new TranscriptButton("accepted", "Acepto"), new TranscriptButton("rejected", "No acepto")], Assert.Single(started.Transcript).Buttons!);
+        Assert.Contains(accepted.Transcript, entry => entry is { From: "system", Text: "Registraría que el cliente aceptó la política de datos." });
+        Assert.Equal(0L, await CountAsync(setup.ConnectionString, "SELECT count(*) FROM customers.data_consents"));
     }
 
     [Fact]
