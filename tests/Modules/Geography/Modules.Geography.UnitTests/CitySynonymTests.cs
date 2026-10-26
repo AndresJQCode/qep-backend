@@ -28,6 +28,14 @@ public sealed class CitySynonymTests
         Assert.False(synonym.IsDeleted);
     }
 
+    [Fact]
+    public void CreateGivenAnAlreadyNormalizedTextKeepsItAsIs()
+    {
+        var synonym = CitySynonym.Create(CitySynonymId.New(), DepartmentId.New(), "SANTIAGO DE CALI", CityId.New(), Guid.NewGuid(), Now);
+
+        Assert.Equal("SANTIAGO DE CALI", synonym.NormalizedText);
+    }
+
     [Theory]
     [InlineData("   ")]
     [InlineData("")]

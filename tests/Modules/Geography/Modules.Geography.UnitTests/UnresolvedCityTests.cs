@@ -37,13 +37,17 @@ public sealed class UnresolvedCityTests
         Assert.Equal(UnresolvedCityStatus.Resolved, city.Status);
         Assert.Equal(synonymId, city.SynonymId);
         Assert.Equal(2, city.Version);
+        Assert.Equal(t1, city.UpdatedAt);
 
         var other = NewPending();
+        Assert.Equal(Seen, other.UpdatedAt);
         other.Discard(t2);
         Assert.Equal(UnresolvedCityStatus.Discarded, other.Status);
         Assert.Equal(2, other.Version);
+        Assert.Equal(t2, other.UpdatedAt);
 
         other.Restore(t3);
+        Assert.Equal(t3, other.UpdatedAt);
         Assert.Equal(UnresolvedCityStatus.Pending, other.Status);
         Assert.Equal(3, other.Version);
     }
@@ -69,6 +73,27 @@ public sealed class UnresolvedCityTests
         var ex = Assert.Throws<GeographyDomainException>(() => city.Restore(Seen));
 
         Assert.Equal("geography.unresolved.not_discarded", ex.Code);
+    }
+
+    [Fact]
+    public void ANormalizedTextCutAtASpaceDoesNotEndInOne()
+    {
+        var text = new string('a', 119) + " b";
+
+        var city = UnresolvedCity.Create(UnresolvedCityId.New(), DepartmentId.New(), text, "x", null, Seen);
+
+        Assert.Equal(new string('A', 119), city.NormalizedText);
+    }
+
+    [Fact]
+    public void ANormalizedTextNeverSplitsASurrogatePair()
+    {
+        var text = new string('a', 119) + "\U0001F3D9";
+
+        var city = UnresolvedCity.Create(UnresolvedCityId.New(), DepartmentId.New(), text, "x", null, Seen);
+
+        Assert.Equal(new string('A', 119), city.NormalizedText);
+        Assert.False(char.IsHighSurrogate(city.NormalizedText[^1]));
     }
 
     [Fact]

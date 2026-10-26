@@ -47,6 +47,8 @@ public sealed class UnresolvedCity
 
     public DateTimeOffset LastSeenAt { get; private set; }
 
+    public DateTimeOffset UpdatedAt { get; private set; }
+
     public long Version { get; private set; }
 
     /// <summary>Recorta el texto y la dirección sin lanzar: el pedido ya entró y esto es sólo una huella.</summary>
@@ -70,6 +72,7 @@ public sealed class UnresolvedCity
             Status = UnresolvedCityStatus.Pending,
             FirstSeenAt = seenAt,
             LastSeenAt = seenAt,
+            UpdatedAt = seenAt,
             Version = 1,
         };
     }
@@ -79,25 +82,41 @@ public sealed class UnresolvedCity
         EnsureStatus(UnresolvedCityStatus.Pending, "geography.unresolved.not_pending", "The city is not pending.");
         Status = UnresolvedCityStatus.Resolved;
         SynonymId = synonymId;
-        Version++;
+        Touch(now);
     }
 
     public void Discard(DateTimeOffset now)
     {
         EnsureStatus(UnresolvedCityStatus.Pending, "geography.unresolved.not_pending", "The city is not pending.");
         Status = UnresolvedCityStatus.Discarded;
-        Version++;
+        Touch(now);
     }
 
     public void Restore(DateTimeOffset now)
     {
         EnsureStatus(UnresolvedCityStatus.Discarded, "geography.unresolved.not_discarded", "The city is not discarded.");
         Status = UnresolvedCityStatus.Pending;
+        Touch(now);
+    }
+
+    private void Touch(DateTimeOffset now)
+    {
+        UpdatedAt = now;
         Version++;
     }
 
-    private static string Truncate(string value, int max) =>
-        value.Length <= max ? value : value[..max];
+    // Recorta sin partir un par sustituto y sin dejar un espacio al final: NormalizedText es la llave única
+    // por departamento, y "A " y "A" no pueden ser dos llaves.
+    private static string Truncate(string value, int max)
+    {
+        if (value.Length <= max)
+        {
+            return value;
+        }
+
+        var length = char.IsHighSurrogate(value[max - 1]) ? max - 1 : max;
+        return value[..length].TrimEnd();
+    }
 
     private void EnsureStatus(UnresolvedCityStatus expected, string code, string message)
     {
