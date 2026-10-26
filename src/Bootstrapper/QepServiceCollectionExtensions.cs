@@ -774,6 +774,9 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-10-21: pausar y devolver el asistente. Sin registro, 500.
         services.AddScoped<ICommandHandler<PauseAutomationCommand, ConversationSummary>, PauseAutomationHandler>();
         services.AddScoped<ICommandHandler<ResumeAutomationCommand, ConversationSummary>, ResumeAutomationHandler>();
+        // Spec 2026-10-26 §3.2: bloquear y desbloquear el contacto en Meta. Sin registro, 500.
+        services.AddScoped<ICommandHandler<BlockContactCommand, ConversationSummary>, BlockContactHandler>();
+        services.AddScoped<ICommandHandler<UnblockContactCommand, ConversationSummary>, UnblockContactHandler>();
         // Messaging (spec 2026-10-09 §8.6): servir el medio ya copiado con la sesión de QEP.
         services.AddScoped<IQueryHandler<GetMediaQuery, MediaStreamDto?>, GetMediaHandler>();
         // Messaging (spec 2026-10-10 §5.1, D-A1): el selector de transferir.

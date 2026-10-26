@@ -38,8 +38,10 @@ internal sealed class ApiExceptionHandler(
         var (status, title, code) = MapException(exception);
         // El 503 de Integrations (sin llave de cifrado fuera de producción) es una condición de
         // configuración que el mensaje ya explica, no una excepción sin manejar: va como las 4xx.
+        // El 502 tampoco: es la respuesta de un servicio externo (Meta), ya registrada con su código.
         if (status >= StatusCodes.Status500InternalServerError
-            && status != StatusCodes.Status503ServiceUnavailable)
+            && status != StatusCodes.Status503ServiceUnavailable
+            && status != StatusCodes.Status502BadGateway)
         {
             LogUnhandledException(logger, exception);
         }
@@ -163,6 +165,8 @@ internal sealed class ApiExceptionHandler(
                 (StatusCodes.Status428PreconditionRequired, "Precondition required", value.Code),
             ServiceUnavailableException value =>
                 (StatusCodes.Status503ServiceUnavailable, "Service unavailable", value.Code),
+            UpstreamServiceException value =>
+                (StatusCodes.Status502BadGateway, "Bad gateway", value.Code),
             ValidationException =>
                 (StatusCodes.Status422UnprocessableEntity, "Validation failed", "validation.failed"),
             DomainException value =>
