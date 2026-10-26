@@ -70,7 +70,9 @@ public sealed record ChatbotExportDto(
     JsonElement Flow,
     JsonElement Layout,
     IReadOnlyList<ExternalApiRefDto> ExternalApis,
-    DateTimeOffset ExportedAt)
+    DateTimeOffset ExportedAt,
+    string? ExhaustedAction = null,
+    Guid? ExhaustedMemberId = null)
 {
     public const int CurrentSchema = 1;
 }

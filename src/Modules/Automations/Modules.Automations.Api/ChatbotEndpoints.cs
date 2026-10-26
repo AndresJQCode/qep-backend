@@ -143,7 +143,8 @@ internal static class ChatbotEndpoints
         Results.Ok(await dispatcher.SendAsync(
             new UpdateChatbotCommand(
                 tenantId, chatbotId, AutomationsEndpoints.RequireVersion(httpContext), request.Name, request.Description, request.Trigger,
-                request.Keywords, request.RestartKeyword, request.MaxAttempts, request.ConnectionIds, request.TakeOverConnectionIds ?? []),
+                request.Keywords, request.RestartKeyword, request.MaxAttempts, request.ConnectionIds, request.TakeOverConnectionIds ?? [],
+                request.ExhaustedAction, request.ExhaustedMemberId),
             cancellationToken));
 
     /// <summary>
@@ -292,7 +293,8 @@ public sealed record CreateChatbotRequest(
 /// <summary><c>TakeOverConnectionIds</c>: conexiones que se le quitan a otro chatbot publicado; en un borrador se ignora (spec 2026-10-23 D-X1, D-X4).</summary>
 public sealed record UpdateChatbotRequest(
     string Name, string Description, string Trigger, IReadOnlyList<string> Keywords, string RestartKeyword, int MaxAttempts,
-    IReadOnlyList<Guid> ConnectionIds, IReadOnlyList<Guid>? TakeOverConnectionIds = null);
+    IReadOnlyList<Guid> ConnectionIds, IReadOnlyList<Guid>? TakeOverConnectionIds = null, string? ExhaustedAction = null,
+    Guid? ExhaustedMemberId = null);
 
 /// <summary>Cuerpo opcional de <c>publish</c>: conexiones que se le quitan a otro chatbot publicado (spec 2026-10-23 D-X1).</summary>
 public sealed record PublishChatbotRequest(IReadOnlyList<Guid>? TakeOverConnectionIds);

@@ -647,6 +647,249 @@ public sealed class ChatbotsApiTests
         Assert.Contains(errors, item => item.StartsWith($"{FlowIssueCodes.ExhaustedMemberInvalid}: ", StringComparison.Ordinal));
     }
 
+    private static Task<HttpResponseMessage> SaveRuleAsync(Setup setup, ChatbotEditorDto editor, string? action, Guid? memberId) =>
+        PutAsync(
+            setup,
+            $"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}",
+            new UpdateChatbotRequest("Servicio técnico", "", "NewConversation", [], "reiniciar", 3, [setup.WhatsAppId], null, action, memberId),
+            editor.Chatbot.Version);
+
+    // Spec 2026-10-25 D-2: los ajustes guardan la regla; con Restart el miembro se descarta.
+    [Fact]
+    public async Task SettingsSaveTheAttemptsExhaustedRule()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var advisor = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Asesora Ana");
+        var editor = await CreateAsync(setup);
+
+        var handoff = await ReadEditorAsync(await SaveRuleAsync(setup, editor, "Handoff", advisor.MembershipId));
+        var reloaded = await GetAsync(setup, editor.Chatbot.Id);
+        var restart = await ReadEditorAsync(await SaveRuleAsync(setup, handoff, "Restart", advisor.MembershipId));
+
+        Assert.Equal(("Handoff", (Guid?)advisor.MembershipId), (handoff.ExhaustedAction, handoff.ExhaustedMemberId));
+        Assert.Equal(("Handoff", (Guid?)advisor.MembershipId), (reloaded.ExhaustedAction, reloaded.ExhaustedMemberId));
+        Assert.Equal(("Restart", (Guid?)null), (restart.ExhaustedAction, restart.ExhaustedMemberId));
+    }
+
+    // Spec 2026-10-25 D-4: sin las claves el PUT guarda Restart (también pisa una regla anterior).
+    [Fact]
+    public async Task AnOmittedRuleSavesRestart()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var advisor = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Asesora Ana");
+        var editor = await CreateAsync(setup);
+        var handoff = await ReadEditorAsync(await SaveRuleAsync(setup, editor, "Handoff", advisor.MembershipId));
+
+        var response = await PutAsync(
+            setup, $"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}",
+            new
+            {
+                name = "Servicio técnico", description = "", trigger = "NewConversation", keywords = Array.Empty<string>(),
+                restartKeyword = "reiniciar", maxAttempts = 3, connectionIds = new[] { setup.WhatsAppId },
+            },
+            handoff.Chatbot.Version);
+
+        var saved = await ReadEditorAsync(response);
+        Assert.Equal(("Restart", (Guid?)null), (saved.ExhaustedAction, saved.ExhaustedMemberId));
+    }
+
+    [Fact]
+    public async Task AnUnknownActionIsAValidationError()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+
+        var response = await SaveRuleAsync(setup, editor, "Later", null);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var (code, keys) = await ProblemAsync(response);
+        Assert.Equal("validation.failed", code);
+        Assert.Equal(["exhaustedAction"], keys, StringComparer.OrdinalIgnoreCase);
+    }
+
+    // Spec 2026-10-25 D-5: guardar con un miembro que no puede responder se rechaza, sin tocar el chatbot.
+    [Fact]
+    public async Task AMemberWhoCannotReplyIsRefusedOnSave()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+
+        var response = await SaveRuleAsync(setup, editor, "Handoff", Guid.CreateVersion7());
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("automations.chatbot.member_cannot_reply", (await ProblemAsync(response)).Code);
+        var reloaded = await GetAsync(setup, editor.Chatbot.Id);
+        Assert.Equal(editor.Chatbot.Version, reloaded.Chatbot.Version);
+        Assert.Equal(("Restart", (Guid?)null), (reloaded.ExhaustedAction, reloaded.ExhaustedMemberId));
+    }
+
+    private static string HandoffFlow(Guid memberId) => $$"""
+        {
+          "schema": 1,
+          "start": { "firstNodeId": "n1" },
+          "nodes": [ { "id": "n1", "kind": "handoff", "title": "Asesor", "text": "Un asesor te escribe.", "memberId": "{{memberId}}" } ]
+        }
+        """;
+
+    private static Guid? HandoffMember(JsonElement flow) =>
+        flow.GetProperty("nodes")[0].TryGetProperty("memberId", out var member) && member.ValueKind == JsonValueKind.String ? member.GetGuid() : null;
+
+    private static async Task<ChatbotEditorDto> ReadCreatedAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<ChatbotEditorDto>(Ct))!;
+    }
+
+    // Spec 2026-10-25 D-8: duplicar lleva la regla y los miembros de los bloques, por los dos caminos.
+    [Fact]
+    public async Task DuplicateKeepsTheRuleAndTheMembers()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var advisor = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Asesora Ana");
+        var editor = await CreateAsync(setup);
+        var withFlow = await SaveDraftAsync(setup, editor, HandoffFlow(advisor.MembershipId));
+        Assert.Equal(HttpStatusCode.OK, withFlow.StatusCode);
+        var original = await ReadEditorAsync(await SaveRuleAsync(
+            setup, await GetAsync(setup, editor.Chatbot.Id), "Handoff", advisor.MembershipId));
+
+        var duplicated = await setup.Client.PostAsync($"{ChatbotsUrl(setup.Tenant.TenantId)}/{original.Chatbot.Id}/duplicate", null, Ct);
+        var created = await setup.Client.PostAsJsonAsync(
+            ChatbotsUrl(setup.Tenant.TenantId),
+            new CreateChatbotRequest("Otra copia", "", "NewConversation", [], [], new ChatbotSourceRequest("duplicate", null, original.Chatbot.Id, null)),
+            Ct);
+
+        foreach (var copy in new[] { await ReadCreatedAsync(duplicated), await ReadCreatedAsync(created) })
+        {
+            Assert.Equal(("Handoff", (Guid?)advisor.MembershipId), (copy.ExhaustedAction, copy.ExhaustedMemberId));
+            Assert.Equal(advisor.MembershipId, HandoffMember(copy.Draft.Flow));
+        }
+    }
+
+    [Fact]
+    public async Task ExportCarriesTheRule()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var advisor = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Asesora Ana");
+        var editor = await ReadEditorAsync(await SaveRuleAsync(setup, await CreateAsync(setup), "Handoff", advisor.MembershipId));
+
+        var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/export", Ct))!;
+
+        Assert.Equal(("Handoff", (Guid?)advisor.MembershipId), (export.ExhaustedAction, export.ExhaustedMemberId));
+    }
+
+    // Spec 2026-10-25 D-8 y Review Focus 4: importar conserva la acción, suelta los miembros que no pueden responder aquí y normaliza.
+    [Fact]
+    public async Task ImportDropsMembersWhoCannotReplyHereAndKeepsTheAction()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+        var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/export", Ct))!;
+        var stranger = Guid.CreateVersion7();
+        var flow = $$"""
+            {
+              "schema": 1,
+              "start": { "firstNodeId": "b1" },
+              "variables": [],
+              "nodes": [
+                { "id": "b1", "kind": "buttons", "title": "Menú", "text": "¿Qué necesitas?", "buttons": [ { "id": "a", "label": "A" } ],
+                  "saveTo": null, "fallback": "handoff", "fallbackMemberId": "{{stranger}}", "outputs": { "a": "h1" } },
+                { "id": "b2", "kind": "buttons", "title": "Otro", "text": "¿Y ahora?", "buttons": [ { "id": "a", "label": "A" } ],
+                  "saveTo": null, "fallback": "repeat", "outputs": { "a": "h1", "other": "h1" } },
+                { "id": "h1", "kind": "handoff", "title": "Asesor", "text": null, "memberId": "{{stranger}}", "outputs": {} }
+              ]
+            }
+            """;
+        var file = export with
+        {
+            Flow = JsonDocument.Parse(flow).RootElement, ExhaustedAction = "Handoff", ExhaustedMemberId = stranger,
+        };
+
+        var response = await setup.Client.PostAsJsonAsync(
+            $"{ChatbotsUrl(setup.Tenant.TenantId)}/import", new ImportChatbotRequest("Importado", file, null), Ct);
+
+        var imported = await ReadCreatedAsync(response);
+        Assert.Equal(("Handoff", (Guid?)null), (imported.ExhaustedAction, imported.ExhaustedMemberId));
+        var nodes = imported.Draft.Flow.GetProperty("nodes").EnumerateArray().ToDictionary(node => node.GetProperty("id").GetString()!);
+        Assert.False(nodes["b1"].TryGetProperty("fallbackMemberId", out var fallback) && fallback.ValueKind == JsonValueKind.String);
+        Assert.False(nodes["h1"].TryGetProperty("memberId", out var member) && member.ValueKind == JsonValueKind.String);
+        Assert.False(nodes["b2"].GetProperty("outputs").TryGetProperty("other", out var otherOutput) && otherOutput.ValueKind == JsonValueKind.String);
+    }
+
+    // Un miembro que sí puede responder aquí se conserva al importar.
+    [Fact]
+    public async Task ImportKeepsAMemberWhoCanReplyHere()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var advisor = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Asesora Ana");
+        var editor = await CreateAsync(setup);
+        var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/export", Ct))!;
+        var file = export with
+        {
+            Flow = JsonDocument.Parse(HandoffFlow(advisor.MembershipId)).RootElement, ExhaustedAction = "Handoff", ExhaustedMemberId = advisor.MembershipId,
+        };
+
+        var response = await setup.Client.PostAsJsonAsync(
+            $"{ChatbotsUrl(setup.Tenant.TenantId)}/import", new ImportChatbotRequest("Importado", file, null), Ct);
+
+        var imported = await ReadCreatedAsync(response);
+        Assert.Equal(("Handoff", (Guid?)advisor.MembershipId), (imported.ExhaustedAction, imported.ExhaustedMemberId));
+        Assert.Equal(advisor.MembershipId, HandoffMember(imported.Draft.Flow));
+    }
+
+    [Fact]
+    public async Task AnOldExportWithoutTheRuleImportsAsRestart()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+        var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/export", Ct))!;
+        var old = JsonNode.Parse(JsonSerializer.Serialize(new ImportChatbotRequest("Viejo", export, null), JsonSerializerOptions.Web))!;
+        var file = old["export"]!.AsObject();
+        file.Remove("exhaustedAction");
+        file.Remove("exhaustedMemberId");
+
+        var response = await setup.Client.PostAsync(
+            $"{ChatbotsUrl(setup.Tenant.TenantId)}/import", new StringContent(old.ToJsonString(), System.Text.Encoding.UTF8, "application/json"), Ct);
+
+        var imported = await ReadCreatedAsync(response);
+        Assert.Equal(("Restart", (Guid?)null), (imported.ExhaustedAction, imported.ExhaustedMemberId));
+    }
+
     // Ruling P2-R8: el disparador por palabra clave sin palabras es un problema de los ajustes; los ajustes se guardan, publicar no.
     [Fact]
     public async Task PublishAKeywordChatbotWithoutKeywordsIs422()
