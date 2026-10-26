@@ -435,6 +435,30 @@ public sealed class AutomationsPersistenceTests
         Assert.Equal((AttemptsExhaustedAction.Handoff, (Guid?)memberId), (serving.ExhaustedAction, serving.ExhaustedMemberId));
     }
 
+    /// <summary>Spec 2026-10-26 D-10: el registro de la respuesta lleva el nombre actual del chatbot y el número de la versión de la
+    /// corrida, no el de la publicada; otro tenant no la ve.</summary>
+    [Fact]
+    public async Task TheVersionLabelIsTheChatbotNameAndTheVersionNumber()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var chatbot = NewChatbot(tenantId, "Bienvenida");
+        var first = chatbot.Publish([], Guid.CreateVersion7(), Now);
+        chatbot.Publish([], Guid.CreateVersion7(), Now.AddMinutes(5));
+        using (var seed = factory.Services.CreateScope())
+        {
+            await seed.ServiceProvider.GetRequiredService<IChatbotRepository>().AddAsync(chatbot, Ct);
+            await seed.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IChatbotRepository>();
+
+        Assert.Equal(new ChatbotVersionLabel("Bienvenida", 1), await repository.FindVersionLabelAsync(tenantId, first.Id, Ct));
+        Assert.Null(await repository.FindVersionLabelAsync(Guid.CreateVersion7(), first.Id, Ct));
+    }
+
     /// <summary>Spec 2026-10-25 D-2: una fila anterior a las columnas (insertada sin ellas) se lee como «reiniciar», sin miembro.</summary>
     [Fact]
     public async Task AnExistingRowReadsRestart()

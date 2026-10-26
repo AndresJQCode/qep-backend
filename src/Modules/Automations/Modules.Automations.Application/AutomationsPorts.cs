@@ -26,6 +26,10 @@ public interface IChatbotRepository
     /// conexión o esté en pausa (D-C1, D-C5); <c>null</c> si el chatbot ya no existe.</summary>
     Task<EngineSettings?> FindEngineSettingsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-26 D-10: el nombre actual del chatbot y el número de una de sus versiones, para el registro de la respuesta a
+    /// Política de datos; <c>null</c> si la versión ya no existe en el tenant (el chatbot se borró).</summary>
+    Task<ChatbotVersionLabel?> FindVersionLabelAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken);
+
     /// <summary>Lo que la lista pinta, proyectado y sin seguimiento: sin los jsonb del borrador ni de las versiones. Ordenados por
     /// nombre (y por id para desempatar); <paramref name="search"/> filtra por nombre sin mayúsculas, con los comodines como literales.</summary>
     Task<IReadOnlyList<ChatbotSummaryRow>> ListSummariesAsync(Guid tenantId, string? search, CancellationToken cancellationToken);
@@ -41,6 +45,9 @@ public interface IChatbotRepository
     /// <summary>Misma regla que el índice único: <c>lower(name)</c> dentro del tenant.</summary>
     Task<bool> NameExistsAsync(Guid tenantId, string name, Guid? exceptId, CancellationToken cancellationToken);
 }
+
+/// <summary>Spec 2026-10-26 D-10: con qué chatbot y qué versión se hizo la pregunta de Política de datos.</summary>
+public sealed record ChatbotVersionLabel(string ChatbotName, int Number);
 
 /// <summary>Una fila de la lista de chatbots (§4.4). <see cref="PublishedNumber"/> y <see cref="PublishedAt"/> son los de la versión
 /// publicada, <c>null</c> mientras es borrador.</summary>
@@ -129,6 +136,41 @@ public sealed record AutomationMemberRef(Guid Id, string Name);
 public interface IAutomationMembers
 {
     Task<IReadOnlyList<AutomationMemberRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-10-26 D-2 y D-7: qué sabe Customers de la autorización de datos del cliente de una conversación.
+/// <see cref="Unavailable"/>: no hay cliente al que registrarle una respuesta (la conversación no tiene cliente ni identidad).</summary>
+public enum DataConsentCheck
+{
+    NotAccepted,
+    Accepted,
+    Unavailable,
+}
+
+/// <summary>Spec 2026-10-26 D-5 y D-10: una respuesta al bloque Política de datos. <see cref="ShownText"/> es el texto que se le mostró
+/// al cliente; <see cref="PromptMessageId"/>, el mensaje de la pregunta (<c>null</c> si no se supo); <see cref="ReplyMessageId"/>, el
+/// entrante que la respondió; la versión es la de la corrida.</summary>
+public sealed record DataConsentRecord(
+    Guid TenantId,
+    Guid ConversationId,
+    DataConsentDecision Decision,
+    string ShownText,
+    Guid? PromptMessageId,
+    Guid ReplyMessageId,
+    Guid ChatbotId,
+    string ChatbotName,
+    Guid ChatbotVersionId,
+    int ChatbotVersionNumber,
+    string NodeId);
+
+/// <summary>La autorización de datos del cliente (adaptador en Bootstrapper sobre Customers): Automations no referencia Customers.</summary>
+public interface IAutomationDataConsents
+{
+    Task<DataConsentCheck> CheckAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+
+    /// <summary><c>false</c> = no se pudo registrar: la conversación no tiene cliente o identidad, o el entrante de la respuesta no
+    /// existe. Un fallo transitorio (un conflicto de concurrencia) lanza, como cualquier puerto.</summary>
+    Task<bool> RecordAsync(DataConsentRecord record, CancellationToken cancellationToken);
 }
 
 /// <summary>Una conexión «API externa» del tenant (D-H4); <see cref="Status"/> es el nombre del estado de Integrations.</summary>
@@ -406,6 +448,13 @@ public static class AutomationsAuditActions
     public const string RunResolved = "automations.run.resolved";
     public const string RunCompleted = "automations.run.completed";
     public const string RunFailed = "automations.run.failed";
+
+    /// <summary>Spec 2026-10-26 D-4: Política de datos agotó los intentos y siguió por «No acepto» sin registrar nada.</summary>
+    public const string DataConsentUnanswered = "automations.run.data_consent_unanswered";
+
+    /// <summary>Spec 2026-10-26 D-7: Política de datos no tenía un cliente al que registrarle la respuesta y siguió por «No acepto» sin
+    /// preguntar.</summary>
+    public const string DataConsentUnavailable = "automations.run.data_consent_unavailable";
 
     /// <summary>No está en la lista de §4.6: el barrido de D-M13 termina corridas sin una persona y la auditoría es la única huella.</summary>
     public const string RunAbandoned = "automations.run.abandoned";

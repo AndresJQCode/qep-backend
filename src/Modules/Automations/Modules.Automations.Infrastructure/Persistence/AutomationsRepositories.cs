@@ -40,6 +40,18 @@ internal sealed class ChatbotRepository(AutomationsDbContext dbContext) : IChatb
             .Select(chatbot => new EngineSettings(chatbot.RestartKeyword, chatbot.MaxAttempts, chatbot.ExhaustedAction, chatbot.ExhaustedMemberId))
             .SingleOrDefaultAsync(cancellationToken);
 
+    // Spec 2026-10-26 D-10: el nombre es el actual del chatbot; el número, el de la versión de la corrida (no el de la publicada).
+    public Task<ChatbotVersionLabel?> FindVersionLabelAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken) =>
+        dbContext.ChatbotVersions.AsNoTracking()
+            .Where(version => version.TenantId == tenantId && version.Id == versionId)
+            .Join(
+                dbContext.Chatbots.Where(chatbot => chatbot.TenantId == tenantId),
+                version => version.ChatbotId,
+                chatbot => chatbot.Id,
+                (version, chatbot) => new { chatbot.Name, version.Number })
+            .Select(row => new ChatbotVersionLabel(row.Name, row.Number))
+            .SingleOrDefaultAsync(cancellationToken);
+
     // Proyección: la lista no necesita el borrador ni el flujo de cada versión publicada (jsonb de hasta 512 KB cada uno).
     public async Task<IReadOnlyList<ChatbotSummaryRow>> ListSummariesAsync(Guid tenantId, string? search, CancellationToken cancellationToken)
     {
