@@ -57,6 +57,10 @@ public enum ExternalShippingOutcomeKind
     AlreadyApplied,
     NotFound,
     NotPending,
+
+    /// <summary>El pedido no es de una plataforma (<c>order.order.source_invalid</c>): no toma su parte de envío de ella.
+    /// Reintentar no lo arregla.</summary>
+    NotExternal,
     StorePickup,
     ShippingPresent,
     ShippingChanged,
@@ -67,14 +71,6 @@ public enum ExternalShippingOutcomeKind
 /// borrador. <see cref="Status"/> viaja con <see cref="ExternalShippingOutcomeKind.NotPending"/>, para que el consumidor
 /// distinga un pedido aprobado de uno cancelado. Con <see cref="ExternalShippingOutcomeKind.NotFound"/> viajan nulos.</summary>
 public sealed record ExternalShippingOutcome(ExternalShippingOutcomeKind Kind, ExternalShippingParty? Party, OrderStatus? Status);
-
-/// <summary>Los códigos propios del camino externo que cruzan capas.</summary>
-public static class ExternalOrderErrors
-{
-    /// <summary>Lo lanza <c>QuotationsUnitOfWork</c> al chocar con <c>IX_orders_tenant_external_key</c>. No llega a
-    /// HTTP: <see cref="ExternalOrderService"/> lo resuelve devolviendo el pedido que ya existe.</summary>
-    public const string ExternalKeyTaken = "order.order.external_key_taken";
-}
 
 /// <summary>
 /// Spec 2026-10-15 §5.4 y spec de Shopify §6.2: el único camino para crear un pedido sin sesión HTTP.
@@ -261,7 +257,7 @@ public sealed class ExternalOrderService(
     }
 
     // Sin auditoría ni historial acá (desvío S9): la entrada la escribe el consumidor, que sabe el sinónimo y el operador.
-    // Un código del dominio que no es del camino conocido (p. ej. source_invalid) se propaga: es un error de quien llama.
+    // Un código del dominio que no es de los rechazos conocidos se propaga.
     private async Task<ExternalShippingOutcome> ChangeShippingAsync(
         Guid tenantId, Guid orderId, Func<Order, DateTimeOffset, bool> change, CancellationToken cancellationToken)
     {
@@ -293,11 +289,12 @@ public sealed class ExternalOrderService(
 
     private static ExternalShippingOutcomeKind? RefusalKind(string code) => code switch
     {
-        "order.order.not_pending" => ExternalShippingOutcomeKind.NotPending,
-        "order.order.store_pickup" => ExternalShippingOutcomeKind.StorePickup,
-        "order.order.shipping_party_present" => ExternalShippingOutcomeKind.ShippingPresent,
-        "order.order.shipping_party_changed" => ExternalShippingOutcomeKind.ShippingChanged,
-        "order.shipping.party_incomplete" => ExternalShippingOutcomeKind.PartyIncomplete,
+        ExternalOrderErrors.NotPending => ExternalShippingOutcomeKind.NotPending,
+        ExternalOrderErrors.SourceInvalid => ExternalShippingOutcomeKind.NotExternal,
+        ExternalOrderErrors.StorePickup => ExternalShippingOutcomeKind.StorePickup,
+        ExternalOrderErrors.ShippingPartyPresent => ExternalShippingOutcomeKind.ShippingPresent,
+        ExternalOrderErrors.ShippingPartyChanged => ExternalShippingOutcomeKind.ShippingChanged,
+        ExternalOrderErrors.ShippingPartyIncomplete => ExternalShippingOutcomeKind.PartyIncomplete,
         _ => null,
     };
 

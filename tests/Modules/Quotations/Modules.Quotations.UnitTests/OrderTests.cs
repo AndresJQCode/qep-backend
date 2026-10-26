@@ -1352,6 +1352,22 @@ public sealed class OrderTests
         Assert.Equal(1, order.Version);
     }
 
+    // Spec 2026-10-26 §4.6: el trabajo que recorrige puede caer después de que Quotations guardó y antes de que Shopify
+    // actualizara su huella. Al reintentar manda la huella vieja y encuentra la parte ya en la ciudad nueva: es el mismo cambio,
+    // no una edición de otra persona.
+    [Fact]
+    public void CorrectExternalShippingCityRetriedAfterItWasAppliedIsANoOp()
+    {
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty()));
+        order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, Now.AddHours(1));
+
+        var changed = order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, Now.AddHours(2));
+
+        Assert.False(changed);
+        Assert.Equal(2, order.Version);
+        Assert.Equal(ShippingParty(CityB), order.Shipping!.ToDetails());
+    }
+
     // Spec 2026-10-05 (facturar un pedido), decisiones 1 y 3: se factura un aprobado, queda quién
     // y cuándo, y la aprobación no se toca.
     [Fact]

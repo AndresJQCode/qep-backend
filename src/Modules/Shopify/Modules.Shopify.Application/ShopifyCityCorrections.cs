@@ -1,4 +1,6 @@
+using System.Text.Json;
 using BuildingBlocks.Application;
+using Modules.Audit.Domain;
 using Modules.Shopify.Domain;
 
 namespace Modules.Shopify.Application;
@@ -138,4 +140,253 @@ public sealed class ShopifyCitySynonymEventApplier(
                 tenantId, synonymId, ShopifyCityCorrectionTarget.Customer, customer, mirrorOrderId, operatorSubjectId, sourceMessageId, now);
         }
     }
+}
+
+/// <summary>
+/// Spec 2026-10-26 §4.4, §4.6 y D-C6: corrige el pedido o el cliente de un trabajo de <c>shopify.city_correction_jobs</c>. Lo llama
+/// el worker después de reclamarlo, en un scope propio por trabajo.
+/// <list type="number">
+/// <item>Lee el sinónimo al correr: uno borrado (o que ya no existe) termina <c>synonym_deleted</c> sin escribir nada (O6), y la
+/// ciudad que se escribe es la <b>actual</b> del sinónimo, no la del evento que sembró el trabajo.</item>
+/// <item>Lo que ya hizo otro trabajo no se repite: un <c>Resolve</c> cuyo pedido o cliente ya tiene la huella de este sinónimo (el
+/// importador siembra sin mensaje, así que un pedido reimportado puede sembrar otro) y un <c>Recorrect</c> cuya huella ya está en
+/// la ciudad del sinónimo terminan <c>Skipped</c> sin llamar a Quotations ni a Customers.</item>
+/// <item>Escribe por <see cref="IShopifyCityCorrectionWriter"/>, que confirma en su propio scope. Con éxito, también con
+/// <c>AlreadyApplied</c> (un intento anterior escribió y cayó antes de guardar acá), deja la huella, la auditoría y el trabajo
+/// <c>Applied</c> en un solo guardado. Cualquier rechazo termina <c>Skipped</c> con su motivo, sin huella ni auditoría.</item>
+/// <item>Después de guardar relee el sinónimo: si el operador le cambió la ciudad mientras esto corría, el evento <c>corrected</c>
+/// pudo listar las huellas antes de que existiera ésta, así que el <c>Recorrect</c> se siembra acá.</item>
+/// </list>
+/// Lo que lanza (concurrencia, base, red, un payload ilegible) sale tal cual: el trabajo no se guarda y el worker lo reintenta.
+/// </summary>
+public sealed class ShopifyCityCorrectionProcessor(
+    IShopifyCitySynonymLookup synonyms,
+    IShopifyCityCorrectionWriter writer,
+    IShopifyOrderMirrorRepository mirrors,
+    IShopifyStoreRepository stores,
+    IShopifyCityCorrectionRepository corrections,
+    IShopifyCityCorrectionJobRepository jobs,
+    IShopifyAuditRecorder audit,
+    IShopifyUnitOfWork unitOfWork,
+    IClock clock)
+{
+    /// <summary>Desvío S7: la versión con que nace el incompleto de una venta externa. Si ya no es ésa, alguien lo editó después
+    /// de la importación y no se completa.</summary>
+    public const int IncompleteCustomerVersion = 1;
+
+    // El detalle de la auditoría en camelCase, como los DTO de la API.
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    public async Task ProcessAsync(ShopifyCityCorrectionJob job, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        var synonym = await synonyms.FindAsync(job.SynonymId, cancellationToken);
+        if (synonym is not { IsDeleted: false })
+        {
+            await SkipAsync(job, ShopifyCityCorrectionSkipReasons.SynonymDeleted, cancellationToken);
+            return;
+        }
+
+        var existing = await ExistingCorrectionAsync(job, cancellationToken);
+        if (existing is not null && (job.Kind == ShopifyCityCorrectionJobKind.Resolve || existing.CityId == synonym.CityId))
+        {
+            await SkipAsync(job, AlreadyDoneReason(job.Target), cancellationToken);
+            return;
+        }
+
+        var (result, preconditionFailed) = await WriteAsync(job, synonym, existing, cancellationToken);
+        if (result is not { Kind: ShopifyCityWriteKind.Applied or ShopifyCityWriteKind.AlreadyApplied })
+        {
+            await SkipAsync(job, preconditionFailed ?? SkipReasonFor(result!.Kind, job.Target), cancellationToken);
+            return;
+        }
+
+        var now = clock.UtcNow;
+        var previousCityId = existing?.CityId;
+        var correction = RecordCorrection(job, synonym, existing, result, now);
+        audit.Record(
+            job.TenantId,
+            Guid.Empty,
+            AuditActorType.System,
+            AuditAction(job),
+            job.Target == ShopifyCityCorrectionTarget.Order ? ShopifyAuditActions.OrderResourceType : ShopifyAuditActions.CustomerResourceType,
+            job.TargetId.ToString(),
+            JsonSerializer.Serialize(
+                new
+                {
+                    synonymId = job.SynonymId,
+                    operatorSubjectId = job.OperatorSubjectId,
+                    cityId = correction.CityId,
+                    previousCityId,
+                    origin = correction.Origin.ToString(),
+                    jobId = job.Id,
+                },
+                Json),
+            now);
+        job.MarkApplied(now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        await SeedRecorrectionIfMovedAsync(correction, cancellationToken);
+    }
+
+    // Un Resolve busca si ya hay huella de este sinónimo en su destino; un Recorrect lee la suya. La huella no se borra nunca (ni
+    // con el sinónimo, §4.7): un Recorrect sin ella, o con la de otro destino, es un error de programación y no un motivo de Skipped.
+    private async Task<ShopifyCityCorrection?> ExistingCorrectionAsync(ShopifyCityCorrectionJob job, CancellationToken cancellationToken)
+    {
+        if (job.Kind == ShopifyCityCorrectionJobKind.Resolve)
+        {
+            return await corrections.FindAsync(job.TenantId, job.SynonymId, job.Target, job.TargetId, cancellationToken);
+        }
+
+        var correction = job.CorrectionId is { } correctionId ? await corrections.FindByIdAsync(correctionId, cancellationToken) : null;
+        return correction is not null
+            && correction.TenantId == job.TenantId
+            && correction.Target == job.Target
+            && correction.TargetId == job.TargetId
+            ? correction
+            : throw new InvalidOperationException($"The city correction job {job.Id} has no correction of its own target to recorrect.");
+    }
+
+    // La escritura del trabajo, o el motivo por el que ni se intentó (lo que el espejo no trae).
+    private async Task<(ShopifyCityWriteResult? Result, string? PreconditionFailed)> WriteAsync(
+        ShopifyCityCorrectionJob job, ShopifyCitySynonymRef synonym, ShopifyCityCorrection? existing, CancellationToken cancellationToken)
+    {
+        if (job.Kind == ShopifyCityCorrectionJobKind.Recorrect)
+        {
+            var recorrected = job.Target == ShopifyCityCorrectionTarget.Order
+                ? await writer.CorrectShippingCityAsync(
+                    job.TenantId, job.TargetId, existing!.Party!, synonym.DepartmentId, synonym.CityId, cancellationToken)
+                : await writer.CorrectCustomerCityAsync(
+                    job.TenantId, job.TargetId, existing!.CustomerVersion!.Value, existing.CityId, synonym.CityId, cancellationToken);
+            return (recorrected, null);
+        }
+
+        // Un Resolve relee del espejo lo que mandó Shopify: la dirección del pedido o los datos del comprador.
+        var mirror = job.MirrorOrderId is { } mirrorId ? await mirrors.FindByIdAsync(job.TenantId, mirrorId, cancellationToken) : null;
+        if (mirror is null)
+        {
+            return (null, ShopifyCityCorrectionSkipReasons.MirrorMissing);
+        }
+
+        var snapshot = ShopifyOrderIngestion.ReadPayload(mirror.Payload);
+        if (job.Target == ShopifyCityCorrectionTarget.Order)
+        {
+            if (ShopifyOrderImporter.ShippingPartyFields(snapshot) is not { } fields)
+            {
+                return (null, ShopifyCityCorrectionSkipReasons.PartyIncomplete);
+            }
+
+            var party = new ShopifyPartyDraft(fields.Name, fields.Phone, fields.Email, fields.Address, synonym.DepartmentId, synonym.CityId);
+            return (await writer.AttachShippingAsync(
+                job.TenantId, job.TargetId, party, ShopifyOrderImporter.RawAddressLabel, cancellationToken), null);
+        }
+
+        // D-C5: con la configuración actual de la tienda; si ya no tiene clasificación por defecto, el cliente sigue incompleto.
+        var store = await stores.FindAsync(job.TenantId, mirror.ConnectionId, cancellationToken);
+        if (store is null || ShopifyCustomerResolver.CompleteDataWithCity(store, snapshot, synonym.CityId) is not { } data)
+        {
+            return (null, ShopifyCityCorrectionSkipReasons.CustomerNotCompletable);
+        }
+
+        return (await writer.CompleteCustomerAsync(
+            job.TenantId, job.TargetId, IncompleteCustomerVersion, data, cancellationToken), null);
+    }
+
+    // La huella sale de lo que devolvió el escritor (la parte como la guardó Quotations, la versión que dejó Customers), nunca de
+    // lo que se le mandó. Un Recorrect actualiza la suya y conserva el origen: lo que casó al importarse sigue siendo de la
+    // importación.
+    private ShopifyCityCorrection RecordCorrection(
+        ShopifyCityCorrectionJob job,
+        ShopifyCitySynonymRef synonym,
+        ShopifyCityCorrection? existing,
+        ShopifyCityWriteResult result,
+        DateTimeOffset now)
+    {
+        var isOrder = job.Target == ShopifyCityCorrectionTarget.Order;
+        if (existing is not null)
+        {
+            if (isOrder)
+            {
+                existing.Recorrected(result.Party ?? throw MissingFingerprint(job), now);
+            }
+            else
+            {
+                existing.Recorrected(synonym.CityId, result.CustomerVersion ?? throw MissingFingerprint(job), now);
+            }
+
+            return existing;
+        }
+
+        var correction = isOrder
+            ? ShopifyCityCorrection.ForOrder(
+                job.TenantId,
+                job.SynonymId,
+                ShopifyCityCorrectionOrigin.Correction,
+                job.TargetId,
+                job.MirrorOrderId!.Value,
+                result.Party ?? throw MissingFingerprint(job),
+                now)
+            : ShopifyCityCorrection.ForCustomer(
+                job.TenantId,
+                job.SynonymId,
+                ShopifyCityCorrectionOrigin.Correction,
+                job.TargetId,
+                job.MirrorOrderId,
+                synonym.DepartmentId,
+                synonym.CityId,
+                result.CustomerVersion ?? throw MissingFingerprint(job),
+                now);
+        corrections.Add(correction);
+        return correction;
+    }
+
+    private async Task SeedRecorrectionIfMovedAsync(ShopifyCityCorrection correction, CancellationToken cancellationToken)
+    {
+        var current = await synonyms.FindAsync(correction.SynonymId, cancellationToken);
+        if (current is { IsDeleted: false } && current.CityId != correction.CityId)
+        {
+            // Sin operador ni mensaje: acá no se sabe quién corrigió, sólo que la ciudad ya no es ésta.
+            jobs.Add(ShopifyCityCorrectionJob.Recorrect(correction, Guid.Empty, sourceMessageId: null, clock.UtcNow));
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+    }
+
+    private async Task SkipAsync(ShopifyCityCorrectionJob job, string reason, CancellationToken cancellationToken)
+    {
+        job.MarkSkipped(reason, clock.UtcNow);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
+    // Lo que otro trabajo ya escribió: la parte de envío del pedido ya está puesta; el cliente ya no es el incompleto de la
+    // importación.
+    private static string AlreadyDoneReason(ShopifyCityCorrectionTarget target) =>
+        target == ShopifyCityCorrectionTarget.Order
+            ? ShopifyCityCorrectionSkipReasons.ShippingPresent
+            : ShopifyCityCorrectionSkipReasons.CustomerNotEligible;
+
+    private static string SkipReasonFor(ShopifyCityWriteKind kind, ShopifyCityCorrectionTarget target) => kind switch
+    {
+        ShopifyCityWriteKind.NotFound => target == ShopifyCityCorrectionTarget.Order
+            ? ShopifyCityCorrectionSkipReasons.OrderNotFound
+            : ShopifyCityCorrectionSkipReasons.CustomerNotFound,
+        ShopifyCityWriteKind.NotPending => ShopifyCityCorrectionSkipReasons.OrderNotPending,
+        ShopifyCityWriteKind.StorePickup => ShopifyCityCorrectionSkipReasons.StorePickup,
+        ShopifyCityWriteKind.ShippingPresent => ShopifyCityCorrectionSkipReasons.ShippingPresent,
+        ShopifyCityWriteKind.ShippingChanged => ShopifyCityCorrectionSkipReasons.ShippingChanged,
+        ShopifyCityWriteKind.PartyIncomplete => ShopifyCityCorrectionSkipReasons.PartyIncomplete,
+        ShopifyCityWriteKind.NotEligible => ShopifyCityCorrectionSkipReasons.CustomerNotEligible,
+        ShopifyCityWriteKind.NotCompletable => ShopifyCityCorrectionSkipReasons.CustomerNotCompletable,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Not a refusal."),
+    };
+
+    private static string AuditAction(ShopifyCityCorrectionJob job) => (job.Kind, job.Target) switch
+    {
+        (ShopifyCityCorrectionJobKind.Resolve, ShopifyCityCorrectionTarget.Order) => ShopifyAuditActions.OrderCityResolved,
+        (ShopifyCityCorrectionJobKind.Resolve, _) => ShopifyAuditActions.CustomerCityResolved,
+        (_, ShopifyCityCorrectionTarget.Order) => ShopifyAuditActions.OrderCityCorrected,
+        _ => ShopifyAuditActions.CustomerCityCorrected,
+    };
+
+    private static InvalidOperationException MissingFingerprint(ShopifyCityCorrectionJob job) =>
+        new($"The city correction writer succeeded on job {job.Id} without the fingerprint of its {job.Target}.");
 }

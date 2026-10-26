@@ -87,15 +87,19 @@ public static class ShopifyInfrastructureExtensions
 
     /// <summary>
     /// Spec 2026-10-26 D-C6: el consumidor de los eventos de sinónimos de Geography (<c>shopify.city-synonym-events</c>), que
-    /// siembra los trabajos de corrección, y su worker. Sin esto, confirmar un sinónimo publica el evento y ningún pedido se corrige
-    /// nunca, sin error en ningún lado (lo amarra <c>CompositionRootTests</c>). Las pruebas quitan el worker y corren el procesador
-    /// a mano.
+    /// siembra los trabajos de corrección, y el worker que los corrige. Sin esto, confirmar un sinónimo publica el evento y ningún
+    /// pedido se corrige nunca, sin error en ningún lado (lo amarra <c>CompositionRootTests</c>). El procesador del worker depende
+    /// de <see cref="IShopifyCitySynonymLookup"/> e <see cref="IShopifyCityCorrectionWriter"/>, que registra Bootstrapper. Las
+    /// pruebas quitan los dos workers y corren el consumidor (<c>ProcessBatchAsync</c>) y el que corrige (<c>DrainAsync</c>) a mano.
     /// </summary>
     public static IServiceCollection AddShopifyCityCorrections(this IServiceCollection services)
     {
         services.AddScoped<ShopifyCitySynonymEventApplier>();
         services.AddSingleton<CitySynonymEventsProcessor>();
         services.AddHostedService<CitySynonymEventsWorker>();
+        services.AddScoped<IShopifyCityCorrectionJobQueue, ShopifyCityCorrectionJobQueue>();
+        services.AddScoped<ShopifyCityCorrectionProcessor>();
+        services.AddHostedService<ShopifyCityCorrectionWorker>();
         return services;
     }
 

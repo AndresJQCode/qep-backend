@@ -319,13 +319,40 @@ internal sealed class FakeCustomerProvisioning : ICustomerProvisioning
         Guid tenantId, Guid actorId, RegisterCustomerData data, string? source, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    /// <summary>Lo que responden completar y corregir la ciudad; sin él, <c>Applied</c> en la versión siguiente.</summary>
+    public Func<ExternalCustomerCityOutcome>? OnExternalCity { get; init; }
+
+    public List<(Guid TenantId, Guid CustomerId, long ExpectedVersion, CompleteCustomerData Data)> ExternalCompletes { get; } = [];
+
+    public List<(Guid TenantId, Guid CustomerId, long ExpectedVersion, Guid PreviousCityId, Guid CityId)> CityCorrections { get; } = [];
+
     public Task<ExternalCustomerCityOutcome> CompleteExternalSaleAsync(
-        Guid tenantId, Guid customerId, long expectedVersion, CompleteCustomerData data, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Guid tenantId, Guid customerId, long expectedVersion, CompleteCustomerData data, CancellationToken cancellationToken)
+    {
+        ExternalCompletes.Add((tenantId, customerId, expectedVersion, data));
+        return Task.FromResult(
+            OnExternalCity?.Invoke() ?? new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, expectedVersion + 1, null));
+    }
 
     public Task<ExternalCustomerCityOutcome> CorrectCityAsync(
-        Guid tenantId, Guid customerId, long expectedVersion, Guid previousCityId, Guid cityId, CancellationToken cancellationToken) =>
+        Guid tenantId, Guid customerId, long expectedVersion, Guid previousCityId, Guid cityId, CancellationToken cancellationToken)
+    {
+        CityCorrections.Add((tenantId, customerId, expectedVersion, previousCityId, cityId));
+        return Task.FromResult(
+            OnExternalCity?.Invoke() ?? new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, expectedVersion + 1, null));
+    }
+}
+
+/// <summary>Los sinónimos de Geography por id, borrados incluidos, como <c>CitySynonymRepository.FindAsync</c>.</summary>
+internal sealed class FakeCitySynonymRepository(params CitySynonym[] synonyms) : ICitySynonymRepository
+{
+    public Task<CitySynonym?> FindAsync(CitySynonymId id, CancellationToken cancellationToken) =>
+        Task.FromResult(synonyms.FirstOrDefault(synonym => synonym.Id == id));
+
+    public Task<CitySynonym?> FindActiveAsync(DepartmentId departmentId, string normalizedText, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public void Add(CitySynonym synonym) => throw new NotSupportedException();
 }
 
 /// <summary>Una tienda Shopify enlazada en el estado que pide la prueba, con su ruta y el módulo prendido o no. El

@@ -806,7 +806,124 @@ public sealed class ShopifyAdaptersTests
         Assert.Null(await accounts.FindAsync(Guid.CreateVersion7(), company.Id.Value, "Bancolombia", "CTA-1", Ct));
     }
 
+    // ---- Corrección de ciudades por sinónimo (spec 2026-10-26 §4.4 y §4.6) ----
+
+    // Cada resultado de Quotations llega con su nombre, y la huella sólo con un éxito, como la guardó Quotations. Un pedido que no
+    // es de una plataforma (order.order.source_invalid) es, para Shopify, un pedido que no encuentra: reintentar no lo arregla.
+    [Fact]
+    public async Task CityCorrectionWriterMapsTheOrderOutcomes()
+    {
+        var (departmentId, cityId, newCityId, orderId) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+        var persisted = new ExternalShippingParty("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", departmentId, cityId);
+        var fingerprint = new ShopifyShippingFingerprint("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", departmentId, cityId);
+        var cases = new (ExternalShippingOutcome Outcome, ShopifyCityWriteResult Expected)[]
+        {
+            (new(ExternalShippingOutcomeKind.Applied, persisted, null), new(ShopifyCityWriteKind.Applied, fingerprint, null, null)),
+            (new(ExternalShippingOutcomeKind.AlreadyApplied, persisted, null), new(ShopifyCityWriteKind.AlreadyApplied, fingerprint, null, null)),
+            (new(ExternalShippingOutcomeKind.NotFound, null, null), new(ShopifyCityWriteKind.NotFound, null, null, null)),
+            (new(ExternalShippingOutcomeKind.NotExternal, null, null), new(ShopifyCityWriteKind.NotFound, null, null, "order.order.source_invalid")),
+            (new(ExternalShippingOutcomeKind.NotPending, persisted, OrderStatus.Approved), new(ShopifyCityWriteKind.NotPending, null, null, "Approved")),
+            (new(ExternalShippingOutcomeKind.StorePickup, null, null), new(ShopifyCityWriteKind.StorePickup, null, null, null)),
+            (new(ExternalShippingOutcomeKind.ShippingPresent, persisted, null), new(ShopifyCityWriteKind.ShippingPresent, null, null, null)),
+            (new(ExternalShippingOutcomeKind.ShippingChanged, persisted, null), new(ShopifyCityWriteKind.ShippingChanged, null, null, null)),
+            (new(ExternalShippingOutcomeKind.PartyIncomplete, null, null), new(ShopifyCityWriteKind.PartyIncomplete, null, null, null)),
+        };
+
+        foreach (var (outcome, expected) in cases)
+        {
+            var attach = new FakeExternalOrderWriter { OnAttach = _ => outcome };
+            Assert.Equal(
+                expected,
+                await CityCorrectionWriter(orders: attach).AttachShippingAsync(
+                    TenantId, orderId, new ShopifyPartyDraft("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", departmentId, cityId),
+                    "Dirección de envío de Shopify: ", Ct));
+            var correct = new FakeExternalOrderWriter { OnCorrect = _ => outcome };
+            Assert.Equal(
+                expected,
+                await CityCorrectionWriter(orders: correct).CorrectShippingCityAsync(TenantId, orderId, fingerprint, departmentId, newCityId, Ct));
+        }
+
+        // Lo que se le manda a Quotations, tal cual.
+        var writer = new FakeExternalOrderWriter();
+        var adapter = CityCorrectionWriter(orders: writer);
+        await adapter.AttachShippingAsync(
+            TenantId, orderId, new ShopifyPartyDraft("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", departmentId, cityId),
+            "Dirección de envío de Shopify: ", Ct);
+        var corrected = await adapter.CorrectShippingCityAsync(TenantId, orderId, fingerprint, departmentId, newCityId, Ct);
+        Assert.Equal((TenantId, orderId, persisted, "Dirección de envío de Shopify: "), Assert.Single(writer.Attached));
+        Assert.Equal((TenantId, orderId, persisted, departmentId, newCityId), Assert.Single(writer.Corrected));
+        Assert.Equal(fingerprint with { CityId = newCityId }, corrected.Party);
+    }
+
+    // Customers devuelve la versión en que quedó el cliente (la huella, desvío S7) o el motivo por el que no lo tocó.
+    [Fact]
+    public async Task CityCorrectionWriterMapsTheCustomerOutcomes()
+    {
+        var (customerId, previousCityId, cityId) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+        var cases = new (ExternalCustomerCityOutcome Outcome, ShopifyCityWriteResult Expected)[]
+        {
+            (new(ExternalCustomerCityOutcomeKind.Applied, 2, null), new(ShopifyCityWriteKind.Applied, null, 2, null)),
+            (new(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null), new(ShopifyCityWriteKind.AlreadyApplied, null, 2, null)),
+            (new(ExternalCustomerCityOutcomeKind.NotFound, null, null), new(ShopifyCityWriteKind.NotFound, null, null, null)),
+            (new(ExternalCustomerCityOutcomeKind.NotEligible, null, ExternalCustomerCityReasons.Edited), new(ShopifyCityWriteKind.NotEligible, null, null, "edited")),
+            (new(ExternalCustomerCityOutcomeKind.NotCompletable, null, "validation.failed"), new(ShopifyCityWriteKind.NotCompletable, null, null, "validation.failed")),
+        };
+
+        foreach (var (outcome, expected) in cases)
+        {
+            var provisioning = new FakeCustomerProvisioning { OnExternalCity = () => outcome };
+            var adapter = CityCorrectionWriter(provisioning: provisioning);
+            Assert.Equal(expected, await adapter.CompleteCustomerAsync(TenantId, customerId, 1, CompleteCustomer(), Ct));
+            Assert.Equal(expected, await adapter.CorrectCustomerCityAsync(TenantId, customerId, 2, previousCityId, cityId, Ct));
+        }
+
+        var sent = new FakeCustomerProvisioning();
+        var writer = CityCorrectionWriter(provisioning: sent);
+        var data = CompleteCustomer();
+        await writer.CompleteCustomerAsync(TenantId, customerId, 1, data, Ct);
+        await writer.CorrectCustomerCityAsync(TenantId, customerId, 2, previousCityId, cityId, Ct);
+        Assert.Equal(
+            (TenantId, customerId, 1L, new CompleteCustomerData(
+                data.Name, data.IdentificationType, data.IdentificationNumber, data.Phone, data.Email, data.Address, data.Country,
+                data.CityId, data.CityName, data.ClassificationId)),
+            Assert.Single(sent.ExternalCompletes));
+        Assert.Equal((TenantId, customerId, 2L, previousCityId, cityId), Assert.Single(sent.CityCorrections));
+    }
+
+    // El trabajo tiene que saber que el sinónimo se borró (synonym_deleted), así que el adaptador no los filtra; uno que no
+    // existe es null. Cada lectura va en su scope: la segunda de un mismo trabajo ve la base, no la primera.
+    [Fact]
+    public async Task CitySynonymLookupSeesDeletedSynonyms()
+    {
+        var (valle, cali) = (new DepartmentId(Guid.CreateVersion7()), new CityId(Guid.CreateVersion7()));
+        var live = CitySynonym.Create(CitySynonymId.New(), valle, "Calli", cali, Guid.CreateVersion7(), Now);
+        var deleted = CitySynonym.Create(CitySynonymId.New(), valle, "Kali", cali, Guid.CreateVersion7(), Now);
+        deleted.Delete(Guid.CreateVersion7(), Now);
+        var scopes = 0;
+        var services = new ServiceCollection();
+        services.AddScoped<ICitySynonymRepository>(_ =>
+        {
+            scopes++;
+            return new FakeCitySynonymRepository(live, deleted);
+        });
+        var lookup = new ShopifyCitySynonymLookup(services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>());
+
+        Assert.Equal(new ShopifyCitySynonymRef(live.Id.Value, valle.Value, cali.Value, false), await lookup.FindAsync(live.Id.Value, Ct));
+        Assert.Equal(new ShopifyCitySynonymRef(deleted.Id.Value, valle.Value, cali.Value, true), await lookup.FindAsync(deleted.Id.Value, Ct));
+        Assert.Null(await lookup.FindAsync(Guid.CreateVersion7(), Ct));
+        Assert.Equal(3, scopes);
+    }
+
     // ---- Armado ----
+
+    private static ShopifyCityCorrectionWriter CityCorrectionWriter(
+        FakeExternalOrderWriter? orders = null, FakeCustomerProvisioning? provisioning = null)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IExternalOrderWriter>(orders ?? new FakeExternalOrderWriter());
+        services.AddSingleton<ICustomerProvisioning>(provisioning ?? new FakeCustomerProvisioning());
+        return new ShopifyCityCorrectionWriter(services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>());
+    }
 
     private static ShopifyShippingLookup ShippingLookup(
         FakeCarrierRepository carriers,

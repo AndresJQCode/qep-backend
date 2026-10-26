@@ -87,6 +87,28 @@ public interface IShopifyCityCorrectionJobRepository
     void Add(ShopifyCityCorrectionJob job);
 }
 
+/// <summary>
+/// Spec 2026-10-26 D-C6: la cola del worker que corrige, por SQL. Como <see cref="IShopifyReconcileLeases"/>, cada método es una
+/// sentencia que se confirma en el acto, <b>fuera</b> del tracker: el reclamo no puede esperar al guardado del trabajo (otra réplica
+/// lo tomaría a la vez), y el <c>Failed</c> se escribe justo cuando el procesador lanzó y su unidad de trabajo no se guarda.
+/// </summary>
+// CA1711: el analizador asume que «Queue» implica heredar de System.Collections.Queue; acá es el sustantivo del plan, como
+// IExportJobQueue de Quotations: falso positivo.
+#pragma warning disable CA1711
+public interface IShopifyCityCorrectionJobQueue
+#pragma warning restore CA1711
+{
+    /// <summary>Los <c>Pending</c> sin lease o con el lease vencido, los más viejos primero, hasta <paramref name="limit"/>.</summary>
+    Task<IReadOnlyList<Guid>> ListPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken);
+
+    /// <summary>Toma el trabajo (un solo ganador entre réplicas), suma un intento y le pone el lease de ese intento. Devuelve el
+    /// número de intento, o <c>null</c> si ya no está <c>Pending</c> o alguien tiene el lease.</summary>
+    Task<int?> TryClaimAsync(Guid id, DateTimeOffset now, CancellationToken cancellationToken);
+
+    /// <summary>Lo cierra <c>Failed</c> con <paramref name="lastError"/>, si sigue <c>Pending</c>.</summary>
+    Task MarkFailedAsync(Guid id, DateTimeOffset now, string lastError, CancellationToken cancellationToken);
+}
+
 /// <summary>El filtro de la bandeja (§7). <see cref="States"/> vacío es cualquier estado («con avisos» sin
 /// <c>state</c>, BFF: así la lista cierra con <c>summary.withWarnings</c>); el handler pone <c>Waiting</c> cuando no hay <c>state</c> ni <c>withWarnings</c>. <see cref="WithWarnings"/>
 /// deja sólo las filas con avisos <b>sin revisar</b>.</summary>

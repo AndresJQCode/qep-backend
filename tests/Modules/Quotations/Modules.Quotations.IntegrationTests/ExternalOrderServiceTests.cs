@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
@@ -497,6 +498,151 @@ public sealed class ExternalOrderServiceTests
         Assert.Equal(("3009998877", (Guid?)CityA, (string?)null), await ReadShippingAsync(database, order.OrderId));
         Assert.Equal(ExternalShippingOutcomeKind.Applied, untouched.Kind);
         Assert.Equal(("3001112233", (Guid?)CityB, (string?)null), await ReadShippingAsync(database, second.OrderId));
+    }
+
+    // Cada rechazo del pedido vuelve como su resultado, no como excepción: el trabajo de Shopify lo cierra con su motivo en vez de
+    // reintentarlo hasta Failed. Y en ninguno se toca el pedido.
+    [Fact]
+    public async Task AttachShippingOnAStorePickupOrderIsStorePickup()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#3011", notes: $"{RawAddressPrefix} Cra 5"));
+        await ExecuteOnOrderAsync(database, "UPDATE quotations.orders SET is_store_pickup = true WHERE id = @id", order.OrderId);
+
+        var outcome = await AttachAsync(factory, setup, order.OrderId, Party());
+
+        Assert.Equal((ExternalShippingOutcomeKind.StorePickup, (ExternalShippingParty?)null), (outcome.Kind, outcome.Party));
+        Assert.Equal((null, null, $"{RawAddressPrefix} Cra 5"), await ReadShippingAsync(database, order.OrderId));
+    }
+
+    [Fact]
+    public async Task AttachShippingOverAnotherPartyIsShippingPresent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#3012", parties: PartiesRequest(Party(CityB))));
+
+        var outcome = await AttachAsync(factory, setup, order.OrderId, Party());
+
+        Assert.Equal((ExternalShippingOutcomeKind.ShippingPresent, Party(CityB)), (outcome.Kind, outcome.Party));
+        Assert.Equal(("3001112233", (Guid?)CityB, (string?)null), await ReadShippingAsync(database, order.OrderId));
+    }
+
+    [Fact]
+    public async Task AttachShippingWithAnIncompletePartyIsPartyIncomplete()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#3013", notes: $"{RawAddressPrefix} Cra 5"));
+
+        var outcome = await AttachAsync(factory, setup, order.OrderId, Party() with { Email = null });
+
+        Assert.Equal(ExternalShippingOutcomeKind.PartyIncomplete, outcome.Kind);
+        Assert.Equal((null, null, $"{RawAddressPrefix} Cra 5"), await ReadShippingAsync(database, order.OrderId));
+    }
+
+    // order.order.source_invalid: un pedido que no es de una plataforma no toma su parte de ella. Antes se propagaba como
+    // excepción y el trabajo se reintentaba cinco veces para terminar Failed por algo que reintentar no arregla.
+    [Fact]
+    public async Task AttachShippingOnANonExternalOrderIsNotExternal()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#3014", notes: $"{RawAddressPrefix} Cra 5"));
+        await ExecuteOnOrderAsync(database, "UPDATE quotations.orders SET source = 'Manual' WHERE id = @id", order.OrderId);
+
+        var outcome = await AttachAsync(factory, setup, order.OrderId, Party());
+
+        Assert.Equal(ExternalShippingOutcomeKind.NotExternal, outcome.Kind);
+        Assert.Equal((null, null, $"{RawAddressPrefix} Cra 5"), await ReadShippingAsync(database, order.OrderId));
+    }
+
+    // Dos trabajos ponen la parte a la vez y los dos leen el pedido sin ella. El que pierde choca con IX_order_parties_order_role
+    // (acá la otra parte entra por SQL sin subir la versión del pedido, para que choque sólo el índice): sale concurrency.conflict y
+    // el trabajo reintenta, en vez de un 500 con el nombre del índice adentro.
+    [Fact]
+    public async Task AttachShippingLosingTheRaceForTheShippingPartyIsAConcurrencyConflict()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#3015"));
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var racing = RacingOrderRepository.Wrap(
+            scope.ServiceProvider.GetRequiredService<IOrderRepository>(),
+            () => ExecuteOnOrderAsync(
+                database,
+                """
+                INSERT INTO quotations.order_parties (id, order_id, role, name, phone, email, address, department_id, city_id)
+                VALUES (gen_random_uuid(), @id, 'Shipping', 'Otra persona', '3005556677', 'otra@correo.co', 'Cll 1', NULL, NULL)
+                """,
+                order.OrderId));
+        var service = ActivatorUtilities.CreateInstance<ExternalOrderService>(scope.ServiceProvider, racing);
+
+        var error = await Assert.ThrowsAsync<RequestConcurrencyException>(() => service.AttachShippingAsync(
+            setup.TenantId, order.OrderId, Party(), RawAddressPrefix, TestContext.Current.CancellationToken));
+
+        Assert.Equal("concurrency.conflict", error.Code);
+        Assert.Equal(("3005556677", (Guid?)null, (string?)null), await ReadShippingAsync(database, order.OrderId));
+    }
+
+    private static async Task<ExternalShippingOutcome> AttachAsync(
+        QepApiFactory factory, ExternalSetup setup, Guid orderId, ExternalShippingParty party)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
+        return await writer.AttachShippingAsync(setup.TenantId, orderId, party, RawAddressPrefix, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task ExecuteOnOrderAsync(PostgreSqlContainer database, string sql, Guid orderId)
+    {
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("id", orderId);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Delega todo en el repositorio real; después de leer el pedido por id corre <c>afterFind</c>: otra escritura que
+    /// llega entre la lectura y el guardado, sin depender del reloj.</summary>
+    public class RacingOrderRepository : System.Reflection.DispatchProxy
+    {
+        private IOrderRepository inner = null!;
+        private Func<Task> afterFind = null!;
+
+        public static IOrderRepository Wrap(IOrderRepository inner, Func<Task> afterFind)
+        {
+            var proxy = Create<IOrderRepository, RacingOrderRepository>();
+            var racing = (RacingOrderRepository)(object)proxy;
+            racing.inner = inner;
+            racing.afterFind = afterFind;
+            return proxy;
+        }
+
+        protected override object? Invoke(System.Reflection.MethodInfo? targetMethod, object?[]? args)
+        {
+            ArgumentNullException.ThrowIfNull(targetMethod);
+            var result = targetMethod.Invoke(inner, args);
+            return targetMethod.Name == nameof(IOrderRepository.FindByIdAsync) ? ThenAsync((Task<Order?>)result!) : result;
+        }
+
+        private async Task<Order?> ThenAsync(Task<Order?> find)
+        {
+            var order = await find;
+            await afterFind();
+            return order;
+        }
     }
 
     [Fact]

@@ -160,7 +160,7 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
 
     // Spec 2026-10-26 D-C4: la parte de envío como la guardó Quotations. Una guardada está completa (OrderParty.IsComplete), así
     // que departamento y ciudad vienen siempre; si no, es un error de programación y no una huella a medias.
-    private static ShopifyShippingFingerprint? Fingerprint(ExternalShippingParty? party) =>
+    internal static ShopifyShippingFingerprint? Fingerprint(ExternalShippingParty? party) =>
         party is null
             ? null
             : new ShopifyShippingFingerprint(

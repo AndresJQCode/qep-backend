@@ -395,7 +395,7 @@ public sealed class Order
         if (source is OrderSource.Quotation or OrderSource.Manual)
         {
             throw new QuotationsDomainException(
-                "order.order.source_invalid",
+                ExternalOrderErrors.SourceInvalid,
                 "An external order needs an external source.");
         }
 
@@ -475,7 +475,7 @@ public sealed class Order
         if (Shipping is { } shipping && !shipping.IsComplete)
         {
             throw new QuotationsDomainException(
-                "order.shipping.party_incomplete",
+                ExternalOrderErrors.ShippingPartyIncomplete,
                 "The shipping party must have all its fields filled.");
         }
 
@@ -982,13 +982,13 @@ public sealed class Order
         if (!IsExternal)
         {
             throw new QuotationsDomainException(
-                "order.order.source_invalid", "Only an external order takes its shipping party from the platform.");
+                ExternalOrderErrors.SourceInvalid, "Only an external order takes its shipping party from the platform.");
         }
 
         if (IsStorePickup)
         {
             throw new QuotationsDomainException(
-                "order.order.store_pickup", "An order picked up at the store has no shipping party.");
+                ExternalOrderErrors.StorePickup, "An order picked up at the store has no shipping party.");
         }
 
         var candidate = OrderParty.Create(Id, QuotationPartyRole.Shipping, shipping);
@@ -997,13 +997,13 @@ public sealed class Order
             return current.ToDetails() == candidate.ToDetails()
                 ? false
                 : throw new QuotationsDomainException(
-                    "order.order.shipping_party_present", "The order already has another shipping party.");
+                    ExternalOrderErrors.ShippingPartyPresent, "The order already has another shipping party.");
         }
 
         if (!candidate.IsComplete)
         {
             throw new QuotationsDomainException(
-                "order.shipping.party_incomplete", "The shipping party must have all its fields filled.");
+                ExternalOrderErrors.ShippingPartyIncomplete, "The shipping party must have all its fields filled.");
         }
 
         _parties.Add(candidate);
@@ -1018,22 +1018,23 @@ public sealed class Order
     /// <summary>
     /// Spec 2026-10-26 §4.6: cambia sólo el departamento y la ciudad de la parte de envío, y sólo si sigue siendo
     /// la que se guardó (<paramref name="expected"/>): si alguien la tocó, lanza <c>order.order.shipping_party_changed</c>.
-    /// <c>true</c> si cambió; <c>false</c> si ya estaba en esa ciudad.
+    /// <c>true</c> si cambió; <c>false</c> si ya estaba en esa ciudad, también si la parte es <paramref name="expected"/> ya
+    /// llevada a ella (un reintento: el consumidor cayó antes de actualizar su huella).
     /// </summary>
     public bool CorrectExternalShippingCity(
         QuotationPartyDetails expected, Guid departmentId, Guid cityId, DateTimeOffset occurredAt)
     {
         ArgumentNullException.ThrowIfNull(expected);
         EnsurePending("The shipping city can only be corrected while the order is pending.");
+        if (Shipping is { } corrected && corrected.ToDetails() == expected with { DepartmentId = departmentId, CityId = cityId })
+        {
+            return false;
+        }
+
         if (Shipping is not { } party || party.ToDetails() != expected)
         {
             throw new QuotationsDomainException(
-                "order.order.shipping_party_changed", "The shipping party is no longer the one the platform sent.");
-        }
-
-        if (party.DepartmentId == departmentId && party.CityId == cityId)
-        {
-            return false;
+                ExternalOrderErrors.ShippingPartyChanged, "The shipping party is no longer the one the platform sent.");
         }
 
         party.Apply(party.ToDetails() with { DepartmentId = departmentId, CityId = cityId });
@@ -1069,7 +1070,7 @@ public sealed class Order
     {
         if (Status != OrderStatus.Pending)
         {
-            throw new QuotationsDomainException("order.order.not_pending", message);
+            throw new QuotationsDomainException(ExternalOrderErrors.NotPending, message);
         }
     }
 

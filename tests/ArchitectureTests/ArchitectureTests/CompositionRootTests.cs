@@ -527,6 +527,12 @@ public sealed class CompositionRootTests
             provider.GetServices<IHostedService>(),
             service => service.GetType().FullName == "Modules.Shopify.Infrastructure.Workers.CitySynonymEventsWorker");
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ShopifyCitySynonymEventApplier>());
+        // Y sin el worker que corrige, los trabajos sembrados quedan Pending para siempre: el procesador necesita los dos puertos
+        // que registra Bootstrapper (el sinónimo de Geography y el escritor sobre Quotations y Customers).
+        Assert.Contains(
+            provider.GetServices<IHostedService>(),
+            service => service.GetType().FullName == "Modules.Shopify.Infrastructure.Workers.ShopifyCityCorrectionWorker");
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ShopifyCityCorrectionProcessor>());
     }
 
     /// <summary>

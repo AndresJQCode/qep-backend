@@ -58,7 +58,8 @@ public sealed class ShopifyCityCorrectionJob
     /// <summary>La huella que recorrige un <see cref="ShopifyCityCorrectionJobKind.Recorrect"/>; <c>null</c> en un <c>Resolve</c>.</summary>
     public Guid? CorrectionId { get; private set; }
 
-    /// <summary>Quién confirmó o corrigió el sinónimo, para la auditoría; <see cref="Guid.Empty"/> si lo sembró el importador.</summary>
+    /// <summary>Quién confirmó o corrigió el sinónimo, para la auditoría; <see cref="Guid.Empty"/> si lo sembró el importador o el
+    /// worker que vio cambiar la ciudad del sinónimo mientras corregía (no sabe quién la cambió).</summary>
     public Guid OperatorSubjectId { get; private set; }
 
     /// <summary>El mensaje del outbox que lo sembró; con él, el índice único (mensaje, destino, id) impide sembrarlo dos veces.</summary>

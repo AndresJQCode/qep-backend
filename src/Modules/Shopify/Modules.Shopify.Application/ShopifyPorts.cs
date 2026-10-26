@@ -486,3 +486,66 @@ public interface IShopifyStoreReferences
 
     Task<string?> ClassificationNameAsync(Guid tenantId, Guid classificationId, CancellationToken cancellationToken);
 }
+
+/// <summary>Un sinónimo de Geography como lo necesita el trabajo de corrección: su ciudad <b>actual</b> y si está borrado (spec
+/// 2026-10-26 D-C6).</summary>
+public sealed record ShopifyCitySynonymRef(Guid SynonymId, Guid DepartmentId, Guid CityId, bool IsDeleted);
+
+/// <summary>Spec 2026-10-26: el trabajo lee el sinónimo al correr, no al sembrarse. Adaptador en Bootstrapper sobre
+/// <c>ICitySynonymRepository</c>, con un scope propio por llamada: el repositorio rastrea, y la segunda lectura de un mismo trabajo
+/// (después de guardar, por si el operador corrigió el sinónimo en el medio) tiene que ver la base, no la primera lectura.</summary>
+public interface IShopifyCitySynonymLookup
+{
+    /// <summary>Borrados incluidos (<see cref="ShopifyCitySynonymRef.IsDeleted"/>); <c>null</c> si no existe.</summary>
+    Task<ShopifyCitySynonymRef?> FindAsync(Guid synonymId, CancellationToken cancellationToken);
+}
+
+/// <summary>Qué pasó con una escritura del trabajo de corrección. <see cref="Applied"/> y <see cref="AlreadyApplied"/> son éxito
+/// (la segunda es un reintento: Quotations o Customers ya lo tenían); el resto son las razones por las que el pedido o el cliente ya
+/// no admiten el cambio, y terminan el trabajo <c>Skipped</c>.</summary>
+public enum ShopifyCityWriteKind
+{
+    Applied,
+    AlreadyApplied,
+    NotFound,
+    NotPending,
+    StorePickup,
+    ShippingPresent,
+    ShippingChanged,
+    PartyIncomplete,
+    NotEligible,
+    NotCompletable,
+}
+
+/// <summary><see cref="Party"/> es la parte de envío como quedó guardada, con un éxito de pedido: es la huella. <see cref="CustomerVersion"/>
+/// es la versión del cliente después del cambio, con un éxito de cliente (desvío S7). <see cref="Detail"/> es el motivo de
+/// Quotations o Customers (el estado del pedido, <c>edited</c>, <c>validation.failed</c>…), para el log.</summary>
+public sealed record ShopifyCityWriteResult(
+    ShopifyCityWriteKind Kind, ShopifyShippingFingerprint? Party, long? CustomerVersion, string? Detail);
+
+/// <summary>
+/// Spec 2026-10-26 §4.4 y §4.6: lo que el trabajo de corrección escribe en Quotations y en Customers. Adaptador en Bootstrapper sobre
+/// <c>IExternalOrderWriter</c> e <c>ICustomerProvisioning</c>, <b>un scope propio por llamada</b> (como <c>ShopifyOrderWriter</c>): cada
+/// llamada confirma lo suyo y no se suma a la unidad de trabajo de Shopify. Las razones por las que no se puede vuelven en el
+/// resultado; la concurrencia (<c>concurrency.conflict</c>) y los errores transitorios se propagan y el trabajo reintenta.
+/// </summary>
+public interface IShopifyCityCorrectionWriter
+{
+    /// <summary>Pone la parte de envío que el pedido no tenía y quita de las notas las líneas que empiezan por
+    /// <paramref name="notesLinePrefix"/>.</summary>
+    Task<ShopifyCityWriteResult> AttachShippingAsync(
+        Guid tenantId, Guid orderId, ShopifyPartyDraft party, string notesLinePrefix, CancellationToken cancellationToken);
+
+    /// <summary>Lleva la parte de envío a la ciudad nueva sólo si sigue siendo <paramref name="expected"/>.</summary>
+    Task<ShopifyCityWriteResult> CorrectShippingCityAsync(
+        Guid tenantId, Guid orderId, ShopifyShippingFingerprint expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken);
+
+    /// <summary>Completa al cliente que la importación creó incompleto, sólo si sigue en <paramref name="expectedVersion"/>.</summary>
+    Task<ShopifyCityWriteResult> CompleteCustomerAsync(
+        Guid tenantId, Guid customerId, long expectedVersion, ShopifyCompleteCustomer data, CancellationToken cancellationToken);
+
+    /// <summary>Lleva al cliente de <paramref name="previousCityId"/> a <paramref name="cityId"/> sólo si sigue en
+    /// <paramref name="expectedVersion"/>.</summary>
+    Task<ShopifyCityWriteResult> CorrectCustomerCityAsync(
+        Guid tenantId, Guid customerId, long expectedVersion, Guid previousCityId, Guid cityId, CancellationToken cancellationToken);
+}

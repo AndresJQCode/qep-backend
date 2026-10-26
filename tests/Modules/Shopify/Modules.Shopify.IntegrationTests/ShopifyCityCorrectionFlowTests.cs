@@ -1,7 +1,12 @@
+using System.Net;
+using System.Text;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Shopify.Application;
 using Modules.Shopify.Domain;
 using Modules.Shopify.Infrastructure.Messaging;
+using Modules.Shopify.Infrastructure.Workers;
 using static Modules.Shopify.IntegrationTests.ShopifyApiHarness;
 
 namespace Modules.Shopify.IntegrationTests;
@@ -104,5 +109,210 @@ public sealed class ShopifyCityCorrectionFlowTests
             connectionString,
             "SELECT count(*) FROM shopify.inbox_messages WHERE message_id = @id AND processed_at IS NOT NULL",
             ("id", messageId)));
+    }
+
+    // Spec 2026-10-26 §4.4 de punta a punta, sin dobles en el camino: un pedido «CALLI» entra por el webhook sin parte de envío (la
+    // dirección cruda en las notas), el operador confirma CALLI → Cali (la fila por SQL y el trabajo sembrado) y el worker que
+    // corrige pone la parte en Cali, quita la línea cruda de las notas y deja la huella y la auditoría en el tenant del pedido.
+    [Fact]
+    public async Task TheWorkerCorrectsARealPendingOrder()
+    {
+        await using var shop = await CalliShop.StartAsync();
+        var job = await shop.SeedResolveAsync();
+
+        await shop.DrainCorrectionsAsync();
+
+        Assert.Equal("Applied|none|1", await shop.JobAsync(job));
+        Assert.Equal(
+            $"{shop.CaliId}|false",
+            await ScalarAsync<string>(
+                shop.ConnectionString,
+                """
+                SELECT p.city_id || '|' || (o.notes LIKE '%Dirección de envío de Shopify: %')
+                FROM quotations.orders o JOIN quotations.order_parties p ON p.order_id = o.id AND p.role = 'Shipping'
+                WHERE o.id = @order AND o.tenant_id = @tenant
+                """,
+                ("order", shop.OrderId),
+                ("tenant", shop.World.TenantId)));
+        Assert.Equal(
+            $"Correction|{shop.CaliId}|{shop.MirrorId}",
+            await ScalarAsync<string>(
+                shop.ConnectionString,
+                """
+                SELECT origin || '|' || city_id || '|' || mirror_order_id FROM shopify.city_corrections
+                WHERE tenant_id = @tenant AND synonym_id = @synonym AND target = 'Order' AND target_id = @order
+                """,
+                ("tenant", shop.World.TenantId),
+                ("synonym", shop.SynonymId),
+                ("order", shop.OrderId)));
+        Assert.Equal(
+            $"System|order|{shop.SynonymId}|{shop.OperatorId}|{job}",
+            await ScalarAsync<string>(
+                shop.ConnectionString,
+                """
+                SELECT actor_type || '|' || resource_type || '|' || (changed_fields ->> 'synonymId') || '|'
+                       || (changed_fields ->> 'operatorSubjectId') || '|' || (changed_fields ->> 'jobId')
+                FROM audit.entries WHERE tenant_id = @tenant AND action = 'shopify.order.city_resolved' AND resource_id = @order
+                """,
+                ("tenant", shop.World.TenantId),
+                ("order", shop.OrderId.ToString())));
+    }
+
+    // D-C6: lo que lanza deja el reclamo vivo y vuelve al vencer el lease (acá vencido por SQL entre pasadas). Al quinto intento
+    // el trabajo termina Failed con el tipo y el mensaje del error, y una pasada más no lo vuelve a tomar.
+    [Fact]
+    public async Task AJobThatKeepsFailingEndsFailedWithItsError()
+    {
+        await using var shop = await CalliShop.StartAsync(services =>
+        {
+            services.RemoveAll<IShopifyCityCorrectionWriter>();
+            services.AddSingleton<IShopifyCityCorrectionWriter, QuotationsDownWriter>();
+        });
+        var job = await shop.SeedResolveAsync();
+
+        for (var attempt = 1; attempt <= 5; attempt++)
+        {
+            await shop.DrainCorrectionsAsync();
+            Assert.Equal(
+                attempt < 5 ? $"Pending|none|{attempt}" : "Failed|InvalidOperationException: Quotations is down.|5",
+                await shop.JobAsync(job));
+            await ExecuteAsync(
+                shop.ConnectionString,
+                "UPDATE shopify.city_correction_jobs SET lease_until = now() - interval '1 second' WHERE id = @id",
+                ("id", job));
+        }
+
+        await shop.DrainCorrectionsAsync();
+
+        Assert.Equal("Failed|InvalidOperationException: Quotations is down.|5", await shop.JobAsync(job));
+        Assert.Equal(0L, await ScalarAsync<long>(
+            shop.ConnectionString, "SELECT count(*) FROM quotations.order_parties WHERE order_id = @order", ("order", shop.OrderId)));
+    }
+
+    /// <summary>Un escritor que siempre falla, como Quotations caído.</summary>
+    private sealed class QuotationsDownWriter : IShopifyCityCorrectionWriter
+    {
+        public Task<ShopifyCityWriteResult> AttachShippingAsync(
+            Guid tenantId, Guid orderId, ShopifyPartyDraft party, string notesLinePrefix, CancellationToken cancellationToken) =>
+            throw Down();
+
+        public Task<ShopifyCityWriteResult> CorrectShippingCityAsync(
+            Guid tenantId, Guid orderId, ShopifyShippingFingerprint expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken) =>
+            throw Down();
+
+        public Task<ShopifyCityWriteResult> CompleteCustomerAsync(
+            Guid tenantId, Guid customerId, long expectedVersion, ShopifyCompleteCustomer data, CancellationToken cancellationToken) =>
+            throw Down();
+
+        public Task<ShopifyCityWriteResult> CorrectCustomerCityAsync(
+            Guid tenantId, Guid customerId, long expectedVersion, Guid previousCityId, Guid cityId, CancellationToken cancellationToken) =>
+            throw Down();
+
+        private static InvalidOperationException Down() => new("Quotations is down.");
+    }
+
+    /// <summary>Una tienda lista con un pedido «CALLI» del Valle ya importado por el webhook (sin parte de envío) y el sinónimo
+    /// CALLI → Cali escrito por SQL, como lo deja confirmarlo en la consola del operador.</summary>
+    private sealed class CalliShop : IAsyncDisposable
+    {
+        private readonly TestDatabase database;
+
+        private CalliShop(TestDatabase database, QepApiFactory factory, ShopifyWorld world)
+        {
+            this.database = database;
+            Factory = factory;
+            World = world;
+        }
+
+        public QepApiFactory Factory { get; }
+
+        public ShopifyWorld World { get; }
+
+        public string ConnectionString => database.GetConnectionString();
+
+        public Guid SynonymId { get; } = Guid.CreateVersion7();
+
+        public Guid OperatorId { get; } = Guid.CreateVersion7();
+
+        public Guid CaliId { get; private set; }
+
+        public Guid MirrorId { get; private set; }
+
+        public Guid OrderId { get; private set; }
+
+        public static async Task<CalliShop> StartAsync(Action<IServiceCollection>? configure = null)
+        {
+            var database = await StartDatabaseAsync();
+            var factory = new QepApiFactory(database.GetConnectionString()) { ConfigureTestServices = configure };
+            var world = await ShopifyWorld.ArrangeAsync(factory, database.GetConnectionString());
+            await world.ConfigureStoreAsync(factory);
+            var shop = new CalliShop(database, factory, world);
+            await shop.ImportCalliAsync();
+            return shop;
+        }
+
+        public async Task<Guid> SeedResolveAsync()
+        {
+            await using var scope = Factory.Services.CreateAsyncScope();
+            var job = ShopifyCityCorrectionJob.Resolve(
+                World.TenantId, SynonymId, ShopifyCityCorrectionTarget.Order, OrderId, MirrorId, OperatorId, Guid.CreateVersion7(),
+                DateTimeOffset.UtcNow);
+            scope.ServiceProvider.GetRequiredService<IShopifyCityCorrectionJobRepository>().Add(job);
+            await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+            return job.Id;
+        }
+
+        public Task DrainCorrectionsAsync() =>
+            ActivatorUtilities.CreateInstance<ShopifyCityCorrectionWorker>(Factory.Services).DrainAsync(Ct);
+
+        /// <summary><c>status|last_error|attempts</c> del trabajo.</summary>
+        public Task<string> JobAsync(Guid id) =>
+            ScalarAsync<string>(
+                ConnectionString,
+                "SELECT status || '|' || coalesce(last_error, 'none') || '|' || attempts FROM shopify.city_correction_jobs WHERE id = @id",
+                ("id", id));
+
+        public async ValueTask DisposeAsync()
+        {
+            World.Tenant.Seeder.Dispose();
+            await Factory.DisposeAsync();
+            await database.DisposeAsync();
+        }
+
+        private async Task ImportCalliAsync()
+        {
+            var order = (JsonObject)JsonNode.Parse(OrderFixture("taxes-included"))!;
+            var address = order["shipping_address"]!.AsObject();
+            address["city"] = "CALLI";
+            address["province"] = "Valle del Cauca";
+            address["province_code"] = "VAC";
+            using var webhooks = Factory.CreateClient();
+            var response = await PostWebhookAsync(webhooks, "orders/create", "wh-calli", Encoding.UTF8.GetBytes(order.ToJsonString()));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            await ActivatorUtilities.CreateInstance<ShopifyWebhookDeliveryWorker>(Factory.Services).DrainAsync(Ct);
+
+            var imported = (await ScalarAsync<string>(
+                ConnectionString,
+                "SELECT id || '|' || qep_order_id || '|' || import_state FROM shopify.orders WHERE shopify_order_id = 5550000000001"))
+                .Split('|');
+            Assert.Equal("Imported", imported[2]);
+            (MirrorId, OrderId) = (Guid.Parse(imported[0]), Guid.Parse(imported[1]));
+
+            var cali = (await ScalarAsync<string>(
+                ConnectionString, "SELECT id || '|' || department_id FROM geography.cities WHERE divipola_code = '76001'"))
+                .Split('|');
+            CaliId = Guid.Parse(cali[0]);
+            await ExecuteAsync(
+                ConnectionString,
+                """
+                INSERT INTO geography.city_synonyms
+                    (id, department_id, normalized_text, display_text, city_id, created_by, created_at, updated_by, updated_at, version)
+                VALUES (@id, @department, 'CALLI', 'Calli', @city, @operator, now(), @operator, now(), 1)
+                """,
+                ("id", SynonymId),
+                ("department", Guid.Parse(cali[1])),
+                ("city", CaliId),
+                ("operator", OperatorId));
+        }
     }
 }

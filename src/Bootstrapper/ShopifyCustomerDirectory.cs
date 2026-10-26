@@ -82,12 +82,7 @@ internal sealed class ShopifyCustomerDirectory(
         ArgumentNullException.ThrowIfNull(data);
         try
         {
-            var created = await provisioning.CreateCompleteAsync(
-                tenantId,
-                new CompleteCustomerData(
-                    data.Name, data.IdentificationType, data.IdentificationNumber, data.Phone, data.Email, data.Address,
-                    data.Country, data.CityId, data.CityName, data.ClassificationId),
-                cancellationToken);
+            var created = await provisioning.CreateCompleteAsync(tenantId, ToData(data), cancellationToken);
             return ToRef(created);
         }
         catch (ValidationException error)
@@ -106,6 +101,13 @@ internal sealed class ShopifyCustomerDirectory(
         var created = await provisioning.CreateIncompleteAsync(tenantId, name, phone, email, country, cancellationToken);
         return ToRef(created);
     }
+
+    /// <summary>Los datos del alta completa con los tipos de Customers; también los usa <see cref="ShopifyCityCorrectionWriter"/> para
+    /// completar al cliente que la importación creó incompleto.</summary>
+    internal static CompleteCustomerData ToData(ShopifyCompleteCustomer data) =>
+        new(
+            data.Name, data.IdentificationType, data.IdentificationNumber, data.Phone, data.Email, data.Address, data.Country,
+            data.CityId, data.CityName, data.ClassificationId);
 
     // Spec 2026-10-26 (desvío S7): si el alta lo creó y con qué versión nació, que es la huella del cliente.
     private static ShopifyCustomerRef ToRef(ProvisionedCustomer created) =>
