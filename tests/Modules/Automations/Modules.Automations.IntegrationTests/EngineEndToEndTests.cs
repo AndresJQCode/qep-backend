@@ -1,11 +1,14 @@
 using System.Globalization;
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Modules.Automations.Api;
+using Modules.Automations.Application;
 using Modules.Messaging.Application;
 using Npgsql;
 using static Modules.Automations.IntegrationTests.AutomationsApiHarness;
@@ -214,6 +217,81 @@ public sealed partial class EngineEndToEndTests
         // D-M5: suena a todo el tenant como un entrante sin asignar.
         Assert.Contains($"inbound {conversationId} {lastInbound} -", f.Notifier.Snapshot());
         Assert.Equal(1L, await AuditAsync(f, "automations.run.handed_off"));
+    }
+
+    /// <summary>Guarda en los ajustes del chatbot publicado la regla de intentos agotados (spec 2026-10-25 D-2), conservando el resto.</summary>
+    private static async Task SaveExhaustedRuleAsync(Fixture f, string action, Guid? memberId)
+    {
+        using var admin = CreateClient(f.Host, f.Tenant.OwnerUserId, f.Tenant.TenantId, ManagePermissions);
+        var url = $"{AutomationsUrl(f.Tenant.TenantId)}/chatbots/{f.ChatbotId}";
+        var editor = (await admin.GetFromJsonAsync<ChatbotEditorDto>(url, Ct))!;
+        using var request = new HttpRequestMessage(HttpMethod.Put, url)
+        {
+            Content = JsonContent.Create(new UpdateChatbotRequest(
+                editor.Chatbot.Name, editor.Chatbot.Description, editor.Chatbot.Trigger, editor.Keywords, editor.RestartKeyword, editor.MaxAttempts,
+                [f.ConnectionId], null, action, memberId)),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{editor.Chatbot.Version}\"");
+        Assert.Equal(HttpStatusCode.OK, (await admin.SendAsync(request, Ct)).StatusCode);
+    }
+
+    /// <summary>Lleva la corrida a la pregunta de dígitos (n3) y manda tres «abc», que la agotan (D-M7).</summary>
+    private static async Task ExhaustTheQuestionAsync(Fixture f)
+    {
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        await TapAsync(f, "w2", "tech", "Servicio técnico");
+        await DrainAutomationsAsync(f.Host);
+        foreach (var wamid in new[] { "w3", "w4", "w5" })
+        {
+            await InboundAsync(f, wamid, "abc");
+            await DrainAutomationsAsync(f.Host);
+        }
+    }
+
+    /// <summary>Spec 2026-10-25 D-1, D-2 y D-8: agotar los intentos con la regla «Asignar a un miembro» pasa la conversación al asesor sin
+    /// escribirle al cliente (el traspaso por agotamiento no manda texto) y el hilo dice quién la tiene.</summary>
+    [Fact]
+    public async Task AnExhaustedQuestionAssignsTheConversationToTheChosenMember()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        var advisor = await SeedMemberAsync(f.ConnectionString, f.Tenant.TenantId, "Asesora Ana");
+        await SaveExhaustedRuleAsync(f, "Handoff", advisor.MembershipId);
+
+        await ExhaustTheQuestionAsync(f);
+
+        Assert.Equal("HandedOff", await RunAsync(f, "status"));
+        Assert.Equal($"Open|Paused|{advisor.MembershipId}", await ConversationAsync(f, "status || '|' || automation_status || '|' || assigned_member_id::text"));
+        // Bienvenida, botones y la pregunta tres veces: el traspaso por agotamiento no escribe.
+        var sends = f.Meta.Sends();
+        Assert.Equal(5, sends.Count);
+        Assert.Equal(new[] { sends[2], sends[2], sends[2] }, sends[2..]);
+
+        var conversationId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations");
+        using var reader = CreateClient(f.Host, f.Tenant.OwnerUserId, f.Tenant.TenantId, MessagingManage);
+        var page = await reader.GetStringAsync($"/api/v1/tenants/{f.Tenant.TenantId}/messaging/conversations/{conversationId}/messages", Ct);
+        var paused = JsonNode.Parse(page)!["items"]!.AsArray()
+            .Select(item => item!["event"])
+            .Single(@event => @event?["type"]?.GetValue<string>() == "AutomationPaused")!["handoff"]!;
+        Assert.Equal("AttemptsExhausted", paused["kind"]!.GetValue<string>());
+        Assert.Equal(advisor.MembershipId, paused["assignedTo"]!["memberId"]!.GetValue<Guid>());
+        Assert.Equal("Asesora Ana", paused["assignedTo"]!["displayName"]!.GetValue<string>());
+    }
+
+    /// <summary>Spec 2026-10-25 D-4: sin tocar los ajustes la regla es «Volver al inicio»: la corrida arranca de nuevo y el asistente
+    /// sigue activo en la conversación.</summary>
+    [Fact]
+    public async Task AnExhaustedQuestionRestartsByDefault()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+
+        await ExhaustTheQuestionAsync(f);
+
+        Assert.Equal("Waiting|n2", await RunAsync(f, "status || '|' || current_node_id"));
+        Assert.Equal("Open|Active|", await ConversationAsync(f, "status || '|' || automation_status || '|' || coalesce(assigned_member_id::text, '')"));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE details->>'type' = 'AutomationPaused'"));
     }
 
     /// <summary>§5.2 paso 5 y D-M14: un envío que Meta rechaza termina la corrida Failed con el código de Mensajería (P2-R21) y la
