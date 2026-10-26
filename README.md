@@ -2237,8 +2237,26 @@ el mismo despliegue.
 **Despliegue del envío por canal (spec 2026-10-21 §7.4).** Backend antes que frontend. Es una migración nueva
 de Quotations (`tenant_whatsapp_channels`), **sin backfill** (plan, Decisión 15). Un tenant con Meta aprobado
 más Zenvia pasa a `channel_required` hasta que alguien elija, desde el envío o con el `PUT` (un administrador
-puede elegir antes del despliegue del frontend). Al publicar a `main`, el owner configura a mano el canal del
-único tenant con Zenvia.
+puede elegir antes del despliegue del frontend).
+
+**Paso manual, justo después de desplegar el backend y antes de que alguien envíe:**
+
+- [ ] Para cada tenant con Zenvia **y** una conexión de Meta con la plantilla de cotización `APPROVED`, elige el
+  canal con el `PUT`. Sin esto, todo envío de ese tenant responde `quotation.whatsapp.channel_required` y el
+  frontend actual no sabe contestarlo: «Enviar» queda roto hasta que se elija.
+- [ ] Antes, mira si Origen Botánico tiene esa conexión de Meta: `GET .../quotations/whatsapp-channels` lista
+  los canales disponibles, y si `needsChoice` es `false` no hay nada que hacer. Con un solo canal disponible
+  tampoco hace falta el `PUT`.
+
+```powershell
+'{ "connectionId": "<id-de-la-conexion>" }' | Set-Content -Encoding ascii canal.json
+curl.exe -s -X PUT "https://qep-api.qcode.co/api/v1/tenants/<tenantId>/quotations/whatsapp-channel" `
+  -H "Content-Type: application/json" -H "Cookie: <cookie-de-sesion-de-un-administrador>" -H "X-Qep-Client: web" `
+  -d "@canal.json"
+```
+
+El `PUT` exige `tenancy.settings.update` y responde el mismo documento que el `GET`. Un `connectionId`
+que no esté disponible da `422 quotation.whatsapp.channel_unavailable`.
 
 #### Crear una plantilla nueva
 

@@ -528,7 +528,7 @@ Fallas del envío, también 422, con la cotización en borrador y `SendFailed` e
 
 ## Desvíos encontrados al ejecutar
 
-- **Task 2:** un token rechazado (190/133010) en la subida del PDF a Meta ahora reporta la conexión y devuelve ConnectionUnavailable (ruling del controlador; refleja SendMediaMessageHandler).
-- **Task 4:** WhatsAppQuotationMessage ganó Guid? TenantId = null: el adaptador de Meta no tenía de dónde sacar el tenant.
-- **Task 6:** DP-F1 (decisión del owner, 2026-10-25): GET /quotations/whatsapp-channels se lee con quotations.quotation.manage o 	enancy.settings.update (política QuotationsPolicies.WhatsAppChannelsRead, QuotationsAuthorization.EnsureAuthorizedAny).
+- **Task 2:** un token rechazado (190/133010) en la subida del PDF a Meta ahora reporta la conexión y devuelve `ConnectionUnavailable` (ruling del controlador; refleja `SendMediaMessageHandler`).
+- **Task 4:** `WhatsAppQuotationMessage` ganó `Guid? TenantId = null`: el adaptador de Meta no tenía de dónde sacar el tenant.
+- **Task 6:** DP-F1 (decisión del owner, 2026-10-25): `GET /quotations/whatsapp-channels` se lee con `quotations.quotation.manage` o `tenancy.settings.update` (política `QuotationsPolicies.WhatsAppChannelsRead`, `QuotationsAuthorization.EnsureAuthorizedAny`).
 - **Decisión 15:** sin semilla (owner): el canal del único tenant con Zenvia lo configura el owner a mano al publicar a main.
