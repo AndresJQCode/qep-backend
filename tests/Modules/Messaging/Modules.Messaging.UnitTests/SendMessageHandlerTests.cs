@@ -389,6 +389,8 @@ public sealed class SendMessageHandlerTests
     [InlineData("window-closed", MessagingErrorCodes.WindowClosed)]
     [InlineData("never-wrote", MessagingErrorCodes.WindowClosed)]
     [InlineData("connection-paused", MessagingErrorCodes.ConnectionUnavailable)]
+    [InlineData("blocked", MessagingErrorCodes.ContactBlocked)]
+    [InlineData("blocked-and-resolved", MessagingErrorCodes.ContactBlocked)]
     public async Task TheChecksBeforeMetaHaveTheirCodes(string scenario, string expected)
     {
         var bed = new MessagingTestBed();
@@ -397,6 +399,8 @@ public sealed class SendMessageHandlerTests
             "resolved" => bed.OpenConversation(lastInboundHoursAgo: 1, resolved: true),
             "window-closed" => bed.OpenConversation(lastInboundHoursAgo: 25),
             "never-wrote" => bed.OpenConversation(lastInboundHoursAgo: null),
+            "blocked" => bed.OpenConversation(lastInboundHoursAgo: 1, blocked: true),
+            "blocked-and-resolved" => bed.OpenConversation(lastInboundHoursAgo: 1, resolved: true, blocked: true),
             _ => bed.OpenConversation(lastInboundHoursAgo: 1),
         };
         if (scenario == "connection-paused")

@@ -20,7 +20,11 @@ public sealed record SendResult(SendOutcome Outcome, string? Wamid, int? Code, s
 /// <summary>Copia chica de <c>GraphFailure</c> de Integrations: Messaging no lo referencia. Spec 2026-10-14 §4.8: <c>UserTitle</c> y
 /// <c>UserMessage</c> son <c>error_user_title</c> y <c>error_user_msg</c> de Graph, lo único que distingue «nombre ya existe» del
 /// resto de los 400 ahora que <c>error_subcode</c> no se devuelve. Sólo las operaciones de plantillas los llenan.</summary>
-public sealed record MessagingGraphFailure(int HttpStatus, int? Code, string Reason, string? UserTitle = null, string? UserMessage = null);
+public sealed record MessagingGraphFailure(int HttpStatus, int? Code, string Reason, string? UserTitle = null, string? UserMessage = null, int? Subcode = null, string? FbTraceId = null);
+
+/// <summary>Spec 2026-10-26 §2: lo que <c>block_users</c> contestó con 2xx. <c>Applied</c> = el número vino en <c>added_users</c> (bloquear) o
+/// <c>removed_users</c> (desbloquear); <c>FailedCode</c>/<c>FailedSubcode</c> = el primer error de <c>failed_users</c>. Son para el log: nunca llevan el número.</summary>
+public sealed record BlockUsersResult(bool Applied, int? FailedCode, int? FailedSubcode = null, string? FbTraceId = null);
 
 /// <summary>Spec 2026-10-14 §4.4: lo que <c>POST /{waba}/message_templates</c> devuelve. La categoría puede diferir de la pedida.</summary>
 public sealed record CreatedTemplate(string Id, string Status, string Category);
@@ -111,6 +115,12 @@ public interface IWhatsAppCloudClient
 
     /// <summary>§8.4: best effort, 5 s. <c>true</c> si Meta respondió 2xx.</summary>
     Task<bool> MarkReadAsync(MessagingSender sender, string wamid, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-26 §2: <c>POST /{phone_number_id}/block_users</c>. <paramref name="waId"/> va sólo con dígitos; el cliente le pone el «+».</summary>
+    Task<MessagingGraphResult<BlockUsersResult>> BlockUserAsync(MessagingSender sender, string waId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-26 §2: <c>DELETE /{phone_number_id}/block_users</c>, mismo cuerpo que bloquear.</summary>
+    Task<MessagingGraphResult<BlockUsersResult>> UnblockUserAsync(MessagingSender sender, string waId, CancellationToken cancellationToken);
 
     /// <summary>§8.6, paso 2: GET /{mediaId} → url (vence a los 5 min), mime_type, sha256, file_size.</summary>
     Task<MessagingGraphResult<MediaInfo>> GetMediaAsync(MessagingSender sender, string mediaId, CancellationToken cancellationToken);

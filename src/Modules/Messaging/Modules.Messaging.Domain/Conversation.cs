@@ -112,6 +112,17 @@ public sealed partial class Conversation
     /// </summary>
     public DateTimeOffset? AutomationResumedAt { get; private set; }
 
+    /// <summary>Spec 2026-10-26 §3.1: cuándo un asesor bloqueó al contacto en WhatsApp. No toca estado, asignación ni asistente.</summary>
+    public DateTimeOffset? BlockedAt { get; private set; }
+
+    public Guid? BlockedByMemberId { get; private set; }
+
+    /// <summary>El <c>wa_id</c> que se bloqueó. Se guarda aparte porque el cambio de número reescribe <see cref="WaId"/> por SQL: el
+    /// desbloqueo debe apuntar al número que Meta tiene bloqueado, no al nuevo.</summary>
+    public string? BlockedWaId { get; private set; }
+
+    public bool IsBlocked => BlockedAt is not null;
+
     public int UnreadCount { get; private set; }
 
     public DateTimeOffset? LastInboundAt { get; private set; }
@@ -481,6 +492,56 @@ public sealed partial class Conversation
         AutomationPausedAt = now;
         AutomationPausedByMemberId = actorMemberId;
         AutomationPauseReason = reason;
+    }
+
+    /// <summary>Spec 2026-10-26 §3.3: la regla de «se puede bloquear» se pregunta antes de llamar a Meta. No toca estado ni versión.
+    /// Bloquear exige la ventana de 24 horas abierta: la API de bloqueo sólo acepta números que escribieron en ese lapso.</summary>
+    public void EnsureCanBlock(DateTimeOffset now)
+    {
+        if (Channel == ConversationChannel.Instagram || WaId is null)
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.BlockUnsupportedChannel, "Only a WhatsApp conversation with a phone number can block its contact.");
+        }
+
+        if (!IsWindowOpen(now))
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.BlockWindowClosed, "The customer window is closed.");
+        }
+    }
+
+    /// <summary>Se llama cuando Meta ya aceptó el bloqueo, así que no revisa la ventana (<see cref="EnsureCanBlock"/> va antes).
+    /// <paramref name="blockedWaId"/> es el número que se le mandó a Meta, no el <see cref="WaId"/> de ahora: un reintento por conflicto
+    /// relee la conversación, y si el número cambió en el medio, desbloquear apuntaría a uno que Meta nunca bloqueó.
+    /// <c>null</c> si ya estaba bloqueada.</summary>
+    public ConversationEvent? Block(Guid memberId, string blockedWaId, DateTimeOffset now)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(blockedWaId);
+        if (IsBlocked)
+        {
+            return null;
+        }
+
+        BlockedWaId = blockedWaId;
+        BlockedAt = now;
+        BlockedByMemberId = memberId;
+        Touch(now);
+        return new ConversationEvent(ConversationEventType.ContactBlocked, Actor: memberId);
+    }
+
+    /// <summary><c>null</c> si no estaba bloqueada. El actor viaja al evento del hilo, como en <see cref="PauseAutomation"/>.</summary>
+    public ConversationEvent? Unblock(Guid memberId, DateTimeOffset now)
+    {
+        if (!IsBlocked)
+        {
+            return null;
+        }
+
+        BlockedAt = null;
+        BlockedByMemberId = null;
+        BlockedWaId = null;
+        Touch(now);
+        return new ConversationEvent(ConversationEventType.ContactUnblocked, Actor: memberId);
     }
 
     private void ClearAutomation()

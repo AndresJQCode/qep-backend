@@ -222,6 +222,24 @@ public sealed class BotOutboundTests
         Assert.Equal(1, SendCalls(f));
     }
 
+    // Spec 2026-10-26 §3.4: un contacto bloqueado no recibe nada del bot; la guarda va antes del reclamo, así que no deja fila.
+    [Fact]
+    public async Task ABlockedConversationIsNotSentAndLeavesNoRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var owner = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM tenancy.memberships LIMIT 1");
+        await ExecuteAsync(f.ConnectionString,
+            $"UPDATE messaging.conversations SET blocked_at = now(), blocked_by_member_id = '{owner}', blocked_wa_id = '573001234567', version = version + 1");
+        var rowsBefore = await ScalarAsync<long>(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2");
+
+        Assert.IsType<BotSendResult.Blocked>(await SendAsync(f, "Hola"));
+
+        Assert.Equal(0, SendCalls(f));
+        Assert.Equal(rowsBefore, await ScalarAsync<long>(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+    }
+
     [Theory]
     [InlineData("UPDATE messaging.conversations SET automation_status = 'Paused', automation_paused_at = now(), automation_pause_reason = 'Manual'")]
     [InlineData("UPDATE messaging.conversations SET status = 'Resolved', automation_status = 'None', automation_started_at = NULL, automation_chatbot_id = NULL")]

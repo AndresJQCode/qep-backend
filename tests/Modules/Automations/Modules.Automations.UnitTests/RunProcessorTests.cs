@@ -278,6 +278,22 @@ public sealed class RunProcessorTests
         Assert.Equal((RunStatus.Failed, "messaging.connection_unavailable"), (run.Status, run.FailureCode));
     }
 
+    /// <summary>Spec 2026-10-26 §3.4: el contacto quedó bloqueado entre el reclamo y el envío. No es un fallo ni un traspaso (nadie tiene que
+    /// atenderlo): la corrida termina <c>Interrupted</c> en silencio y la conversación no cambia de estado.</summary>
+    [Fact]
+    public async Task ABlockedSendInterruptsTheRunWithoutHandingOff()
+    {
+        var bed = new Bed(null);
+        bed.Messenger.Reply = _ => new BotSendOutcome.Blocked();
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        var run = Assert.Single(bed.Runs.Added);
+        Assert.Equal((RunStatus.Interrupted, (string?)null), (run.Status, run.FailureCode));
+        Assert.Equal((0, 0), (bed.Conversations.HandedOff, bed.Conversations.Ended));
+        Assert.DoesNotContain(AutomationsAuditActions.RunFailed, bed.Audit.Actions);
+    }
+
     /// <summary>D-T2: un traspaso por falla no le escribe al cliente. Sólo el intento que falló; nada después del traspaso.</summary>
     [Fact]
     public async Task AFailureHandsOffWithoutSendingAnything()

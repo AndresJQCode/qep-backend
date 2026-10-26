@@ -275,6 +275,9 @@ public abstract record BotSendOutcome
 
     public sealed record WindowClosed : BotSendOutcome;
 
+    /// <summary>Spec 2026-10-26 §3.4: el contacto está bloqueado. La corrida termina <c>Interrupted</c> en silencio.</summary>
+    public sealed record Blocked : BotSendOutcome;
+
     public sealed record Rejected(string Code, string? ConnectionReason = null, string? ConnectionName = null) : BotSendOutcome;
 }
 

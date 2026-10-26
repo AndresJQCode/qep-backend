@@ -70,6 +70,44 @@ public sealed class ConversationAssignmentSteps(
 
         return await summaries.BuildOneAsync(tenantId, (await queries.FindAsync(tenantId, conversation.Id, cancellationToken))!, cancellationToken);
     }
+
+    /// <summary>Cuántas veces se aplica el cambio antes de dejar subir el 412 (<see cref="CommitWithRetryAsync"/>).</summary>
+    public const int ConflictAttempts = 3;
+
+    /// <summary>Spec 2026-10-26 §3.2: guarda un cambio que un servicio externo ya aceptó (Meta bloqueó el número), así que un conflicto
+    /// de versión no se le devuelve al cliente como «recarga»: se descarta lo pendiente, se relee la conversación y se vuelve a
+    /// aplicar. Si <paramref name="apply"/> devuelve <c>null</c>, otro request ya dejó ese estado y no hay evento. Agotados los intentos
+    /// sube el 412; lo de afuera nunca se deshace.</summary>
+    public async Task<ConversationSummary> CommitWithRetryAsync(
+        Guid tenantId, Conversation conversation, Func<Conversation, ConversationEvent?> apply, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(apply);
+        for (var attempt = 1; ; attempt++)
+        {
+            var change = apply(conversation);
+            try
+            {
+                return await CommitAsync(tenantId, conversation, change is null ? [] : [change], now, cancellationToken);
+            }
+            catch (RequestConcurrencyException) when (attempt < ConflictAttempts)
+            {
+                // Sin descartar, la conversación vieja seguiría en el tracker (FindAsync la devolvería tal cual) y el evento y la
+                // auditoría del intento fallido se guardarían junto con los del siguiente.
+                unitOfWork.DiscardPendingChanges();
+                conversation = await repository.FindAsync(tenantId, conversation.Id, cancellationToken)
+                    ?? throw MessagingNotFound.Conversation(conversation.Id);
+            }
+        }
+    }
+
+    /// <summary>Spec 2026-10-26 §3.3, dos asesores a la vez: relee la conversación sin el tracker (la entidad cargada al empezar es
+    /// la de antes del otro request) y devuelve su resumen sólo si ya quedó bloqueada (<paramref name="blocked"/>) o desbloqueada.
+    /// <c>null</c> si no: el rechazo de Meta es de verdad.</summary>
+    public async Task<ConversationSummary?> SummaryIfBlockedAsync(Guid tenantId, Guid conversationId, bool blocked, CancellationToken cancellationToken)
+    {
+        var row = await queries.FindAsync(tenantId, conversationId, cancellationToken);
+        return row is not null && row.BlockedAt is not null == blocked ? await summaries.BuildOneAsync(tenantId, row, cancellationToken) : null;
+    }
 }
 
 public sealed class TakeConversationHandler(ConversationAssignmentSteps steps) : ICommandHandler<TakeConversationCommand, ConversationSummary>

@@ -271,6 +271,7 @@ public sealed class AutomationAdaptersTests
             (new BotSendResult.Sent(messageId, AlreadySent: true), new BotSendOutcome.Sent(messageId)),
             (new BotSendResult.NotAutomated(), new BotSendOutcome.NotAutomated()),
             (new BotSendResult.WindowClosed(), new BotSendOutcome.WindowClosed()),
+            (new BotSendResult.Blocked(), new BotSendOutcome.Blocked()),
             (new BotSendResult.ConnectionUnavailable(), new BotSendOutcome.Rejected(MessagingErrorCodes.ConnectionUnavailable)),
             // Spec 2026-10-24 §3.3: el motivo y el nombre de la conexión de WhatsApp pasan al motor.
             (new BotSendResult.ConnectionUnavailable("secret_unreadable", "Servicio Clasic"),

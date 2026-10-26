@@ -386,6 +386,93 @@ internal sealed partial class WhatsAppCloudClient(
         return response?.IsSuccessStatusCode == true;
     }
 
+    public Task<MessagingGraphResult<BlockUsersResult>> BlockUserAsync(MessagingSender sender, string waId, CancellationToken cancellationToken) =>
+        BlockUsersAsync("block", HttpMethod.Post, sender, waId, cancellationToken);
+
+    public Task<MessagingGraphResult<BlockUsersResult>> UnblockUserAsync(MessagingSender sender, string waId, CancellationToken cancellationToken) =>
+        BlockUsersAsync("unblock", HttpMethod.Delete, sender, waId, cancellationToken);
+
+    private async Task<MessagingGraphResult<BlockUsersResult>> BlockUsersAsync(
+        string operation, HttpMethod method, MessagingSender sender, string waId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sender);
+        // wa_id se guarda sólo con dígitos; Block Users lo pide en E.164. El encoder relajado deja el «+» tal cual (el por defecto lo escapa a +). El número no llega al log: LogAnswered no recibe el cuerpo.
+        using var request = new HttpRequestMessage(method, $"{Version}/{sender.PhoneNumberId}/block_users")
+        {
+            Content = JsonContent.Create(
+                new { messaging_product = "whatsapp", block_users = new[] { new { user = $"+{waId}" } } },
+                options: new System.Text.Json.JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }),
+        };
+        var answer = await SendAsync(operation, request, sender.AccessToken, null, cancellationToken);
+        using var response = answer.Response;
+        if (response is null)
+        {
+            return new MessagingGraphResult<BlockUsersResult>(null, Unreachable(answer));
+        }
+
+        var status = (int)response.StatusCode;
+        if (!response.IsSuccessStatusCode)
+        {
+            // Un rechazo puede traer el código y el subcódigo sólo en failed_users, no en error; los dos van al log.
+            var failure = FailureOf(status, answer);
+            if (failure.Code is not null)
+            {
+                return new MessagingGraphResult<BlockUsersResult>(null, failure);
+            }
+
+            var failed = ReadBlockUsers(answer.Body);
+            return new MessagingGraphResult<BlockUsersResult>(null, failure with { Code = failed?.FailedCode, Subcode = failure.Subcode ?? failed?.FailedSubcode });
+        }
+
+        var read = ReadBlockUsers(answer.Body);
+        if (read is null)
+        {
+            return new MessagingGraphResult<BlockUsersResult>(null, new MessagingGraphFailure(status, null, "unreadable"));
+        }
+
+        var trace = response.Headers.TryGetValues("x-fb-trace-id", out var values) ? values.FirstOrDefault() : null;
+        return new MessagingGraphResult<BlockUsersResult>(read with { FbTraceId = trace }, null);
+    }
+
+    /// <summary><c>block_users.added_users</c> o <c>removed_users</c> con algún elemento = aplicado; si no, el primer error de
+    /// <c>failed_users</c>. <c>null</c> = el cuerpo no es un objeto JSON.</summary>
+    private static BlockUsersResult? ReadBlockUsers(string body)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            if (!document.RootElement.TryGetProperty("block_users", out var block) || block.ValueKind != JsonValueKind.Object)
+            {
+                return new BlockUsersResult(false, null);
+            }
+
+            var applied = NonEmpty(block, "added_users") || NonEmpty(block, "removed_users");
+            int? code = null;
+            int? subcode = null;
+            if (block.TryGetProperty("failed_users", out var failed) && failed.ValueKind == JsonValueKind.Array && failed.GetArrayLength() > 0
+                && failed[0].ValueKind == JsonValueKind.Object && failed[0].TryGetProperty("errors", out var errors)
+                && errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0 && errors[0].ValueKind == JsonValueKind.Object)
+            {
+                code = errors[0].TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.Number && c.TryGetInt32(out var ci) ? ci : null;
+                subcode = errors[0].TryGetProperty("error_subcode", out var s) && s.ValueKind == JsonValueKind.Number && s.TryGetInt32(out var si) ? si : null;
+            }
+
+            return new BlockUsersResult(applied, code, subcode);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool NonEmpty(JsonElement element, string property) =>
+        element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Array && value.GetArrayLength() > 0;
+
     public async Task<MessagingGraphResult<MediaInfo>> GetMediaAsync(MessagingSender sender, string mediaId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(sender);
@@ -626,7 +713,7 @@ internal sealed partial class WhatsAppCloudClient(
     private static MessagingGraphFailure Unreachable(GraphAnswer answer) => new(0, null, answer.UnreachableReason ?? "unreachable");
 
     private static MessagingGraphFailure FailureOf(int status, GraphAnswer answer) =>
-        new(status, answer.Error?.Code, $"http_{status}", answer.Error?.UserTitle, answer.Error?.UserMessage);
+        new(status, answer.Error?.Code, $"http_{status}", answer.Error?.UserTitle, answer.Error?.UserMessage, answer.Error?.Subcode, answer.Error?.FbTraceId);
 
     private static bool Mentions(GraphError? error, string text) =>
         error is not null

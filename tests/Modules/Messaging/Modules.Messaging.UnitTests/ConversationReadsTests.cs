@@ -36,6 +36,68 @@ public sealed class ConversationReadsTests
         Assert.Null(summary.LastMessage);
     }
 
+    // Spec 2026-10-26 §3.5: quién y cuándo bloqueó viaja en el resumen; la fila de la bandeja pinta el candado sin otra llamada.
+    private static ConversationRow BlockedRow(DateTimeOffset? at, Guid? by) => new(
+        Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), UserId: null, WaId: "573001234567", Username: null, "Laura",
+        CustomerId: null, AssignedMemberId: null, ConversationStatus.Open, 0,
+        null, null, null, null, null, null, null,
+        DateTimeOffset.UnixEpoch, 1, BlockedAt: at, BlockedByMemberId: by);
+
+    private static ConversationSummary SummaryOf(ConversationRow row, IReadOnlyDictionary<Guid, string> memberNames) =>
+        ConversationSummaryBuilder.ToSummary(
+            row, new Dictionary<Guid, string>(), new Dictionary<Guid, CustomerRefDto>(), new Dictionary<string, CustomerRefDto>(), memberNames, null);
+
+    [Fact]
+    public void ABlockedRowCarriesWhenAndWhoBlocked()
+    {
+        var at = DateTimeOffset.UnixEpoch.AddDays(3);
+        var member = Guid.CreateVersion7();
+
+        var summary = SummaryOf(BlockedRow(at, member), new Dictionary<Guid, string> { [member] = "Beatriz" });
+
+        Assert.Equal(new ConversationBlockDto(at, "Beatriz"), summary.Blocked);
+    }
+
+    [Fact]
+    public void ABlockerWhoLeftShowsAsDeletedMember()
+    {
+        var summary = SummaryOf(BlockedRow(DateTimeOffset.UnixEpoch, Guid.CreateVersion7()), new Dictionary<Guid, string>());
+
+        Assert.Equal("Miembro eliminado", summary.Blocked?.BlockedByName);
+    }
+
+    [Fact]
+    public void AnUnblockedRowCarriesNull() =>
+        Assert.Null(SummaryOf(BlockedRow(null, null), new Dictionary<Guid, string>()).Blocked);
+
+    [Fact]
+    public async Task BuildAsyncResolvesTheBlockerInTheSameNamesQuery()
+    {
+        var member = Guid.CreateVersion7();
+        var names = new RecordingMemberNames(member);
+        var builder = new ConversationSummaryBuilder(
+            new FakeConnectionDirectory(), new FakeCustomerDirectory(), names, new FakeResolutionReasonNames(),
+            new CallerMembership(new FakeMembershipDirectory(), new FakeExecutionContext(Tenant, Guid.CreateVersion7())), new FakeChatbotNames());
+
+        var summaries = await builder.BuildAsync(Tenant, [BlockedRow(DateTimeOffset.UnixEpoch, member)], TestContext.Current.CancellationToken);
+
+        Assert.Equal([[member]], names.Calls);
+        Assert.Equal("Beatriz", summaries[0].Blocked?.BlockedByName);
+    }
+
+    private sealed class RecordingMemberNames(Guid memberId) : IMessagingMemberNames
+    {
+        public List<Guid[]> Calls { get; } = [];
+
+        public Task<IReadOnlyDictionary<Guid, string>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken)
+        {
+            Calls.Add([.. memberIds]);
+            return Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string> { [memberId] = "Beatriz" });
+        }
+
+        public Task<string?> FindDisplayNameAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+    }
+
     private static readonly Guid Tenant = Guid.CreateVersion7();
 
     private static ConversationSummaryBuilder BuilderFor(FakeCustomerDirectory customers)

@@ -47,6 +47,10 @@ public static class MessagingAuditActions
     public const string AutomationResumed = "messaging.conversation.automation_resumed";
     public const string CustomerChanged = "messaging.conversation.customer_changed";
 
+    /// <summary>Spec 2026-10-26 §3.2: bloquear y desbloquear el contacto, sólo cuando Meta lo aceptó y el estado cambió.</summary>
+    public const string ContactBlocked = "messaging.conversation.contact_blocked";
+    public const string ContactUnblocked = "messaging.conversation.contact_unblocked";
+
     /// <summary>Spec 2026-10-11 decisión 9: una conversación abierta desde la plataforma, asignada a quien la inició.</summary>
     public const string Started = "messaging.conversation.started";
 
@@ -61,6 +65,8 @@ public static class MessagingAuditActions
         ConversationEventType.AutomationPaused => AutomationPaused,
         ConversationEventType.AutomationResumed => AutomationResumed,
         ConversationEventType.CustomerChanged => CustomerChanged,
+        ConversationEventType.ContactBlocked => ContactBlocked,
+        ConversationEventType.ContactUnblocked => ContactUnblocked,
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, "That event type has no assignment audit action."),
     };
 

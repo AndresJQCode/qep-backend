@@ -219,6 +219,26 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        // Spec 2026-10-26 §3.2: bloquear y desbloquear el contacto en Meta. Sin If-Match: repetir responde el estado actual sin Meta.
+        // El 412 no es por If-Match: sube si el guardado choca con otro request en todos los reintentos (CommitWithRetryAsync).
+        group.MapPost("/conversations/{conversationId:guid}/block", BlockContactAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Produces<ConversationSummary>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status502BadGateway);
+
+        group.MapPost("/conversations/{conversationId:guid}/unblock", UnblockContactAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Produces<ConversationSummary>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status502BadGateway);
+
         group.MapGet("/messages/search", SearchMessagesAsync)
             .RequireAuthorization(MessagingPermissions.ConversationRead)
             .Produces<SearchPageDto>()
@@ -493,6 +513,12 @@ public static class MessagingEndpoints
 
     private static async Task<IResult> ResumeAutomationAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new ResumeAutomationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> BlockContactAsync(Guid tenantId, Guid conversationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new BlockContactCommand(tenantId, conversationId), cancellationToken));
+
+    private static async Task<IResult> UnblockContactAsync(Guid tenantId, Guid conversationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new UnblockContactCommand(tenantId, conversationId), cancellationToken));
 
     // Copia de IntegrationsEndpoints: mismo contrato que /pos y /orders-export-layout; sin If-Match 428,
     // vieja 412 (en el handler).

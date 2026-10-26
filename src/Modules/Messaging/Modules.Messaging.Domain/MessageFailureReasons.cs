@@ -14,7 +14,7 @@ public static class MessageFailureReasons
 
     private static readonly Dictionary<int, string> Texts = new()
     {
-        [131047] = "Pasaron más de 24 horas desde el último mensaje de la persona: WhatsApp sólo acepta plantillas aprobadas.",
+        [MetaErrorCodes.CustomerWindowClosed] = "Pasaron más de 24 horas desde el último mensaje de la persona: WhatsApp sólo acepta plantillas aprobadas.",
         [131026] = "WhatsApp no pudo entregar el mensaje: puede que el número no use WhatsApp o tenga una versión desactualizada.",
         [131051] = "WhatsApp no admite este tipo de mensaje.",
         [131049] = "WhatsApp no entregó el mensaje para cuidar la experiencia de la persona. Espera al menos 24 horas antes de volver a intentarlo.",

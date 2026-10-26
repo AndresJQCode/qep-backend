@@ -372,6 +372,77 @@ public sealed class MessagingPersistenceTests
         Assert.False(await repository.ExistsAsync(Guid.CreateVersion7(), conversationId, Ct));
     }
 
+    // Spec 2026-10-26 §3.1: el bloqueo son tres columnas que viajan juntas; la lectura expone cuándo y quién.
+    [Fact]
+    public async Task ABlockRoundTripsAndTheRowCarriesIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var conversationId = await SeedConversationAsync(factory, tenantId, Guid.CreateVersion7(), "573001234567");
+        var memberId = Guid.CreateVersion7();
+        var now = new DateTimeOffset(2026, 10, 26, 15, 0, 0, TimeSpan.Zero);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var conversation = await scope.ServiceProvider.GetRequiredService<IConversationRepository>().FindAsync(tenantId, conversationId, Ct);
+            Assert.NotNull(conversation);
+            conversation.Block(memberId, "573001234567", now);
+            await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var reading = factory.Services.CreateScope();
+        var row = await reading.ServiceProvider.GetRequiredService<IConversationQueries>().FindAsync(tenantId, conversationId, Ct);
+        Assert.NotNull(row);
+        Assert.Equal(now, row.BlockedAt);
+        Assert.Equal(memberId, row.BlockedByMemberId);
+        Assert.Equal("573001234567", await ScalarAsync<string>(connectionString,
+            "SELECT blocked_wa_id FROM messaging.conversations WHERE id = @id", ("id", conversationId)));
+    }
+
+    [Fact]
+    public async Task AHalfWrittenBlockIsRejectedByTheCheck()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var conversationId = await SeedConversationAsync(factory, Guid.CreateVersion7(), Guid.CreateVersion7(), "573001234567");
+
+        var error = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connectionString,
+            "UPDATE messaging.conversations SET blocked_at = now() WHERE id = @id", ("id", conversationId)));
+
+        Assert.Equal("23514", error.SqlState);
+        Assert.Equal("CK_conversations_block", error.ConstraintName);
+    }
+
+    // Spec 2026-10-26 §3.2: si Meta falla después de mutar el agregado, el handler descarta lo que el tracker acumuló.
+    [Fact]
+    public async Task DiscardPendingChangesDropsWhatTheHandlerTracked()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var conversationId = await SeedConversationAsync(factory, tenantId, connectionId, "573001234567");
+        var now = DateTimeOffset.UtcNow;
+
+        using var scope = factory.Services.CreateScope();
+        var conversation = await scope.ServiceProvider.GetRequiredService<IConversationRepository>().FindAsync(tenantId, conversationId, Ct);
+        Assert.NotNull(conversation);
+        var blocked = conversation.Block(Guid.CreateVersion7(), "573001234567", now);
+        Assert.NotNull(blocked);
+        scope.ServiceProvider.GetRequiredService<IConversationEvents>().Record(tenantId, connectionId, conversationId, blocked, now);
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>();
+
+        unitOfWork.DiscardPendingChanges();
+
+        Assert.Equal(0, await unitOfWork.SaveChangesAsync(Ct));
+        Assert.Equal(0L, await ScalarAsync<long>(connectionString,
+            "SELECT count(*) FROM messaging.conversations WHERE id = @id AND blocked_at IS NOT NULL", ("id", conversationId)));
+    }
+
     private static Task<int> InsertMessageAsync(
         string connectionString, Guid conversationId, Guid tenantId, Guid connectionId, int direction, int kind, int status, string? wamid = "wamid.x")
         => ExecuteAsync(
