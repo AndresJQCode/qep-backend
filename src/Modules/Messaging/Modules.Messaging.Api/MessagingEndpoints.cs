@@ -220,11 +220,13 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
         // Spec 2026-10-26 §3.2: bloquear y desbloquear el contacto en Meta. Sin If-Match: repetir responde el estado actual sin Meta.
+        // El 412 no es por If-Match: sube si el guardado choca con otro request en todos los reintentos (CommitWithRetryAsync).
         group.MapPost("/conversations/{conversationId:guid}/block", BlockContactAsync)
             .RequireAuthorization(MessagingPermissions.ConversationManage)
             .Produces<ConversationSummary>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status502BadGateway);
 
@@ -233,6 +235,7 @@ public static class MessagingEndpoints
             .Produces<ConversationSummary>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status502BadGateway);
 
