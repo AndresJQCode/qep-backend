@@ -413,9 +413,15 @@ internal sealed partial class WhatsAppCloudClient(
         var status = (int)response.StatusCode;
         if (!response.IsSuccessStatusCode)
         {
-            // Un rechazo puede traer el código sólo en failed_users, no en error.
+            // Un rechazo puede traer el código y el subcódigo sólo en failed_users, no en error; los dos van al log.
             var failure = FailureOf(status, answer);
-            return new MessagingGraphResult<BlockUsersResult>(null, failure.Code is null ? failure with { Code = ReadBlockUsers(answer.Body)?.FailedCode } : failure);
+            if (failure.Code is not null)
+            {
+                return new MessagingGraphResult<BlockUsersResult>(null, failure);
+            }
+
+            var failed = ReadBlockUsers(answer.Body);
+            return new MessagingGraphResult<BlockUsersResult>(null, failure with { Code = failed?.FailedCode, Subcode = failure.Subcode ?? failed?.FailedSubcode });
         }
 
         var read = ReadBlockUsers(answer.Body);

@@ -171,6 +171,22 @@ public sealed class WhatsAppCloudClientBlockUsersTests
         Assert.Equal("trace-body", result.Failure.FbTraceId);
     }
 
+    // Un rechazo no-2xx sin objeto error: el código y el subcódigo viven sólo en failed_users, y los dos llegan al log.
+    [Fact]
+    public async Task ARejectionWithTheCodeOnlyInFailedUsersKeepsCodeAndSubcode()
+    {
+        using var handler = new RecordingHandler(
+            HttpStatusCode.BadRequest,
+            """{"block_users":{"failed_users":[{"input":"+573001234567","errors":[{"code":139100,"error_subcode":2593}]}]}}""");
+
+        var result = await ClientOver(handler).BlockUserAsync(Sender, WaId, TestContext.Current.CancellationToken);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(400, result.Failure!.HttpStatus);
+        Assert.Equal(139100, result.Failure.Code);
+        Assert.Equal(2593, result.Failure.Subcode);
+    }
+
     [Fact]
     public async Task AnUnreachableGraphIsStatusZero()
     {
