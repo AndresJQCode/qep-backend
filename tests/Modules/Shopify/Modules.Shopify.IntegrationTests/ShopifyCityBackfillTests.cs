@@ -48,11 +48,13 @@ public sealed class ShopifyCityBackfillTests
             await ScalarAsync<string>(
                 shop.ConnectionString,
                 "SELECT normalized_text || '|' || status || '|' || (SELECT count(*) FROM geography.unresolved_city_occurrences) FROM geography.unresolved_cities"));
+        // Sin cliente (ruling P15/S4): el recorrido no sabe si el cliente incompleto lo creó esa importación, aunque CalliShop
+        // tenga uno incompleto en versión 1.
         Assert.Equal(
-            $"{shop.World.TenantId}|{shop.OrderId}|{shop.CustomerId}|true|true",
+            $"{shop.World.TenantId}|{shop.OrderId}|none|true|false",
             await ScalarAsync<string>(
                 shop.ConnectionString,
-                "SELECT tenant_id || '|' || order_id || '|' || customer_id || '|' || party_city_only || '|' || customer_city_only FROM geography.unresolved_city_occurrences WHERE source = 'shopify' AND source_ref = @mirror",
+                "SELECT tenant_id || '|' || order_id || '|' || coalesce(customer_id::text, 'none') || '|' || party_city_only || '|' || customer_city_only FROM geography.unresolved_city_occurrences WHERE source = 'shopify' AND source_ref = @mirror",
                 ("mirror", shop.MirrorId)));
         // La muestra es la dirección, sin el nombre ni el teléfono del comprador (Task 6).
         var sample = await ScalarAsync<string>(shop.ConnectionString, "SELECT sample_address FROM geography.unresolved_cities");

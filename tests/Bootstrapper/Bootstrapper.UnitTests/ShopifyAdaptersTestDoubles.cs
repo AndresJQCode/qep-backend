@@ -374,6 +374,8 @@ internal sealed class FakeCitySynonymRepository(params CitySynonym[] synonyms) :
 
     public void Add(CitySynonym synonym) => throw new NotSupportedException();
 
+    public Task RefreshAsync(CitySynonym synonym, CancellationToken cancellationToken) => throw new NotSupportedException();
+
     public Task<(IReadOnlyList<CitySynonym> Items, int Total)> ListAsync(
         DepartmentId? departmentId, string? normalizedSearch, int page, int pageSize, CancellationToken cancellationToken) =>
         throw new NotSupportedException();

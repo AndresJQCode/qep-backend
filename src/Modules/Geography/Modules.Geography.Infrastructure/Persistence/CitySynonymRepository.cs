@@ -21,6 +21,9 @@ internal sealed class CitySynonymRepository(GeographyDbContext dbContext) : ICit
 
     public void Add(CitySynonym synonym) => dbContext.CitySynonyms.Add(synonym);
 
+    public Task RefreshAsync(CitySynonym synonym, CancellationToken cancellationToken) =>
+        dbContext.Entry(synonym).ReloadAsync(cancellationToken);
+
     public async Task<(IReadOnlyList<CitySynonym> Items, int Total)> ListAsync(
         DepartmentId? departmentId,
         string? normalizedSearch,

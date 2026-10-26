@@ -199,8 +199,12 @@ public sealed class CorrectCitySynonymHandler(
         // Disponer sin commit hace rollback y suelta el candado.
         await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
         {
+            // La primera lectura sólo dice qué candado tomar (departamento y texto no cambian); con el candado se relee y se
+            // vuelve a verificar: un borrado que se confirmó mientras esperábamos es 404, no 412.
             synonym = SynonymPrecheck.Live(await synonyms.FindAsync(command.Id, cancellationToken));
             await unitOfWork.LockCityTextAsync(synonym.DepartmentId, synonym.NormalizedText, cancellationToken);
+            await synonyms.RefreshAsync(synonym, cancellationToken);
+            SynonymPrecheck.Live(synonym);
             if (synonym.Version != command.ExpectedVersion)
             {
                 throw new RequestConcurrencyException("concurrency.conflict", "The city synonym changed after it was loaded.");
@@ -256,6 +260,9 @@ public sealed class DeleteCitySynonymHandler(
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         var synonym = SynonymPrecheck.Live(await synonyms.FindAsync(command.Id, cancellationToken));
         await unitOfWork.LockCityTextAsync(synonym.DepartmentId, synonym.NormalizedText, cancellationToken);
+        // Con el candado se relee y se vuelve a verificar: si otro lo borró mientras esperábamos, es 404.
+        await synonyms.RefreshAsync(synonym, cancellationToken);
+        SynonymPrecheck.Live(synonym);
 
         var now = clock.UtcNow;
         synonym.Delete(executionContext.SubjectId, now);

@@ -17,19 +17,18 @@ public sealed record ShopifyCityBackfillResult(int Scanned, int Reported, int Al
 /// tienda y sus notas todavía tienen la línea de la dirección cruda; si no, <c>skipped</c>.</item>
 /// <item>Se resuelve la ciudad del snapshot con la regla de la importación: si ahora casa (por el nombre real o por un sinónimo)
 /// es <c>nowMatching</c> y no se reporta; si no hay departamento (ni Colombia, ni ciudad, ni provincia) es <c>skipped</c>.</item>
-/// <item>Si no, se reporta. El cliente viaja (<c>CustomerId</c>, desvío S4) sólo si sigue incompleto, y el recorrido no puede saber
-/// si lo creó esa importación o ya existía: es la mejor aproximación. <c>CustomerCityOnly</c> es que la tienda hoy tendría con qué
-/// completarlo salvo la ciudad (<see cref="ShopifyCustomerResolver.CompletableExceptCity"/>), y <c>PartyCityOnly</c>, que al pedido
-/// sólo le faltaba la ciudad (<see cref="ShopifyOrderImporter.ShippingPartyFields"/>).</item>
+/// <item>Si no, se reporta sin cliente: <c>CustomerId</c> nulo y <c>CustomerCityOnly</c> falso (desvío S4, ruling P15). Sólo el
+/// cliente que <b>esa</b> importación creó incompleto se completa al confirmar el sinónimo, y el recorrido no puede saber cuál
+/// fue: el importador reutiliza clientes incompletos que ya existían (por ejemplo, uno nacido en WhatsApp, también en versión 1) y
+/// la única guarda del trabajo es la versión. <c>PartyCityOnly</c> es que al pedido sólo le faltaba la ciudad
+/// (<see cref="ShopifyOrderImporter.ShippingPartyFields"/>).</item>
 /// </list>
 /// Idempotente: la ocurrencia es única por la fila del espejo, así que correrlo dos veces cuenta la segunda vez como
 /// <c>alreadyReported</c>. Un error de cualquier fila se propaga y se vuelve a correr entero.
 /// </summary>
 public sealed class ShopifyUnresolvedCityBackfill(
     IShopifyOrderMirrorRepository mirrors,
-    IShopifyStoreRepository stores,
     ShopifyCustomerResolver resolver,
-    IShopifyCustomerDirectory customers,
     IShopifyCityCorrectionWriter writer,
     IShopifyUnresolvedCityReporter reporter,
     IClock clock)
@@ -54,7 +53,6 @@ public sealed class ShopifyUnresolvedCityBackfill(
     public async Task<ShopifyCityBackfillResult> RunAsync(CancellationToken cancellationToken)
     {
         var counters = new Counters();
-        var storesByConnection = new Dictionary<(Guid TenantId, Guid ConnectionId), ShopifyStore?>();
         Guid? afterId = null;
         while (true)
         {
@@ -62,7 +60,7 @@ public sealed class ShopifyUnresolvedCityBackfill(
             foreach (var row in batch)
             {
                 counters.Scanned++;
-                await ProcessAsync(row, storesByConnection, counters, cancellationToken);
+                await ProcessAsync(row, counters, cancellationToken);
             }
 
             if (batch.Count < BatchSize)
@@ -77,11 +75,7 @@ public sealed class ShopifyUnresolvedCityBackfill(
             counters.Scanned, counters.Reported, counters.AlreadyReported, counters.NowMatching, counters.Skipped);
     }
 
-    private async Task ProcessAsync(
-        ShopifyOrderMirror row,
-        Dictionary<(Guid TenantId, Guid ConnectionId), ShopifyStore?> storesByConnection,
-        Counters counters,
-        CancellationToken cancellationToken)
+    private async Task ProcessAsync(ShopifyOrderMirror row, Counters counters, CancellationToken cancellationToken)
     {
         // El repositorio sólo trae filas con pedido; el guard es para no confiar en eso.
         if (row.QepOrderId is not { } orderId
@@ -108,19 +102,18 @@ public sealed class ShopifyUnresolvedCityBackfill(
             return;
         }
 
-        var (customerId, customerCityOnly) = await CustomerAsync(row, snapshot, storesByConnection, cancellationToken);
         var result = await reporter.ReportAsync(
             new ShopifyUnresolvedCityReport(
                 row.TenantId,
                 row.Id,
                 orderId,
-                customerId,
+                CustomerId: null,
                 departmentId,
                 cityText,
                 ShopifyUnresolvedCitySample.Of(address),
                 Blank(address.ProvinceCode),
                 PartyCityOnly: ShopifyOrderImporter.ShippingPartyFields(snapshot) is not null,
-                CustomerCityOnly: customerCityOnly,
+                CustomerCityOnly: false,
                 row.ImportedAt ?? clock.UtcNow),
             cancellationToken);
         switch (result.Outcome)
@@ -140,30 +133,6 @@ public sealed class ShopifyUnresolvedCityBackfill(
                 counters.Skipped++;
                 break;
         }
-    }
-
-    // El cliente de la fila viaja sólo si sigue incompleto (S4). Con él, «sólo la ciudad» es que la tienda de hoy lo completaría
-    // con lo que trae el snapshot; sin tienda no hay con qué.
-    private async Task<(Guid? CustomerId, bool CityOnly)> CustomerAsync(
-        ShopifyOrderMirror row,
-        ShopifyOrderSnapshot snapshot,
-        Dictionary<(Guid TenantId, Guid ConnectionId), ShopifyStore?> storesByConnection,
-        CancellationToken cancellationToken)
-    {
-        if (row.QepCustomerId is not { } customerId
-            || await customers.FindByIdAsync(row.TenantId, customerId, cancellationToken) is not { IsComplete: false })
-        {
-            return (null, false);
-        }
-
-        var key = (row.TenantId, row.ConnectionId);
-        if (!storesByConnection.TryGetValue(key, out var store))
-        {
-            store = await stores.FindAsync(row.TenantId, row.ConnectionId, cancellationToken);
-            storesByConnection[key] = store;
-        }
-
-        return (customerId, store is not null && ShopifyCustomerResolver.CompletableExceptCity(store, snapshot));
     }
 
     // Un payload que no se lee no se arregla recorriendo otra vez: esa fila se salta.

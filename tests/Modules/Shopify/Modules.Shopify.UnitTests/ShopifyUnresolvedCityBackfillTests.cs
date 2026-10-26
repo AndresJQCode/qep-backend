@@ -150,9 +150,11 @@ public sealed class ShopifyUnresolvedCityBackfillTests
         Assert.Single(world.Shop.UnresolvedCities.Reports);
     }
 
-    // S4: el cliente viaja sólo si sigue incompleto, y es «sólo la ciudad» si la tienda de hoy lo completaría con lo del snapshot.
+    // Ruling P15/S4: el recorrido no sabe si el cliente incompleto lo creó esa importación (el importador reutiliza clientes que ya
+    // existían, p. ej. uno nacido en WhatsApp en versión 1), así que nunca manda cliente: ni con uno incompleto que la tienda de
+    // hoy completaría, ni con uno incompleto cualquiera, ni con uno completo.
     [Fact]
-    public async Task AnIncompleteCustomerTravelsAndIsCityOnlyWhenTheStoreCouldCompleteIt()
+    public async Task HistoricalOccurrencesNeverCarryACustomer()
     {
         var world = new BackfillWorld();
         world.Shop.WithClassification();
@@ -165,19 +167,17 @@ public sealed class ShopifyUnresolvedCityBackfillTests
             ImporterWorld.Order(address: Calli, attributes: Document, orderId: 5_550_000_000_001L), Waiting, customerId: incomplete);
         world.Imported(
             ImporterWorld.Order(address: Calli, attributes: Document, orderId: 5_550_000_000_002L), Waiting, customerId: complete);
-        // Incompleto pero sin documento: la tienda no lo completaría aunque la ciudad casara, así que no es «sólo la ciudad».
-        var lacking = Guid.CreateVersion7();
-        world.Shop.Customers.ById[lacking] = new ShopifyCustomerRef(lacking, false, true, Version: 1);
-        world.Imported(ImporterWorld.Order(address: Calli, orderId: 5_550_000_000_003L), Waiting, customerId: lacking);
+        world.Imported(ImporterWorld.Order(address: Calli, orderId: 5_550_000_000_003L), Waiting);
 
         var result = await world.Backfill.RunAsync(Ct);
 
         Assert.Equal(new ShopifyCityBackfillResult(3, 3, 0, 0, 0), result);
-        var reports = world.Shop.UnresolvedCities.Reports;
-        Assert.True(Assert.Single(reports, report => report.CustomerId == incomplete).CustomerCityOnly);
-        Assert.False(Assert.Single(reports, report => report.CustomerId == lacking).CustomerCityOnly);
-        // El cliente ya completo no viaja: la ocurrencia no es de un cliente que la importación dejó incompleto.
-        Assert.False(Assert.Single(reports, report => report.CustomerId is null).CustomerCityOnly);
+        Assert.All(world.Shop.UnresolvedCities.Reports, report =>
+        {
+            Assert.Null(report.CustomerId);
+            Assert.False(report.CustomerCityOnly);
+            Assert.True(report.PartyCityOnly);
+        });
     }
 
     // Más filas que un lote: el recorrido pagina por id y no se salta ni repite ninguna.
@@ -206,9 +206,7 @@ public sealed class ShopifyUnresolvedCityBackfillTests
         public ShopifyUnresolvedCityBackfill Backfill =>
             new(
                 Shop.Mirrors,
-                new FakeStoreRepository(Shop.Database),
                 Shop.Resolver,
-                Shop.Customers,
                 Writer,
                 Shop.UnresolvedCities,
                 new FakeClock(ImporterWorld.Now));
