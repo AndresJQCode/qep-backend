@@ -550,6 +550,100 @@ El cuerpo va a archivo porque PowerShell rompe las comillas dobles al pasarlas a
 escribe en UTF-8 sin BOM y con el mismo formato del archivo, así que el diff muestra sólo los
 municipios que cambiaron. Después corre `Modules.Geography.UnitTests` antes de commitear.
 
+## Sinónimos de ciudades
+
+Cuando una importación trae un texto de ciudad que no casa con ningún municipio del departamento (`CALLI` en vez de `CALI`),
+el pedido entra igual y el texto queda en una bandeja que el operador resuelve (spec `2026-10-26`). Confirmarlo como sinónimo
+de una ciudad real hace que **los pedidos siguientes casen solos** y que los ya importados se corrijan. Hoy sólo Shopify
+reporta a la bandeja; es el estado de hoy, no una regla: van a reportar más proveedores. Uno nuevo necesita su propio reporter
+hacia el puerto de Geography (`IUnresolvedCityReporter`, con su `source`) y su propio consumidor de los eventos
+`geography.city_synonym.*` con su worker que corrige, porque los de hoy viven en el módulo de Shopify. Las tablas de Geography ya
+llevan `source`. Módulo `geography` (sinónimos y bandeja) y `shopify` (el trabajo que corrige).
+
+**Orden de coincidencia.** Primero el nombre de la ciudad, luego el nombre oficial del DANE y, sólo si ninguno casa, el
+sinónimo vivo del departamento (`CityRepository.MatchByNameAsync`). Un texto que ya es el nombre de una ciudad real no se
+puede confirmar como sinónimo: 422 `geography.synonym.matches_city`.
+
+**Consola del operador.** Todo bajo `/api/v1/tenants/{tenantId}/operator/cities`, con el tenant operador en la ruta
+(`Platform:OperatorTenantId`) y doble capa: la política `operator.cities.read` o `operator.cities.manage` y el handler.
+
+| Ruta | Permiso | Qué hace |
+| --- | --- | --- |
+| `GET summary` | read | Contadores: pendientes, descartados, sinónimos y pedidos esperando. |
+| `GET unresolved`, `GET unresolved/{id}` | read | La bandeja y el detalle, con hasta tres sugerencias (similitud mínima 50). |
+| `POST unresolved/{id}/impact` `{ cityId }` | read | Qué pasaría al confirmar; no escribe. |
+| `POST unresolved/{id}/resolve` `{ cityId }` | manage | Crea el sinónimo y publica `resolved`. 409 si ya hay uno vivo. |
+| `POST unresolved/{id}/discard`, `.../restore` | manage | Saca o devuelve una fila de la bandeja. |
+| `GET synonyms` | read | La lista, con los contadores de lo corregido, pendiente y fallido. |
+| `POST synonyms/{id}/impact` `{ cityId }` | read | Qué pasaría al corregirlo a otra ciudad. |
+| `PUT synonyms/{id}` `{ cityId, expectedVersion }` | manage | Cambia la ciudad y publica `corrected`. 412 si la versión cambió. |
+| `DELETE synonyms/{id}` | manage | Borrado lógico: deja de casar y no deshace lo corregido; no publica nada. |
+| `POST synonyms/{id}/retry` | manage | Devuelve a `Pending` los trabajos `Failed` del sinónimo. |
+| `POST backfill` | manage | Recorre los pedidos ya importados (ver abajo). |
+
+Un `cityId` de otro departamento es 422 `geography.city.not_in_department`; los listados devuelven la `page` pedida, sin
+recortarla.
+
+**Eventos.** `resolved` y `corrected` salen por el outbox de plataforma en la misma transacción que el cambio, con el id del
+sinónimo como `correlation_id`: `geography.city_synonym.resolved.v1` (con las ocurrencias de la fila: pedido, cliente y si a
+cada uno sólo le faltaba la ciudad) y `geography.city_synonym.corrected.v1` (con la ciudad anterior y la nueva). Los nombres
+de campo son contrato con Shopify: los escribe `GeographyEventPublisher` y los lee `CitySynonymEventPayloads`.
+
+**Consumidor y worker.** `CitySynonymEventsWorker` llama cada 10 s al consumidor `shopify.city-synonym-events`, que reclama
+los mensajes del outbox y siembra los trabajos de `shopify.city_correction_jobs` y marca el inbox en el mismo guardado: un
+mensaje procesado nunca queda sin sus trabajos. Un mensaje que falla vuelve a los 5 s, 30 s y 5 minutos, y después cada 5
+minutos: nunca se abandona. `resolved` siembra un trabajo por pedido (y uno por cliente que sólo le faltaba la ciudad);
+`corrected` siembra una recorrección por cada corrección ya escrita con otra ciudad. `ShopifyCityCorrectionWorker` también
+corre cada 10 s: toma lotes de 50 trabajos, los reclama uno a uno (un solo ganador entre réplicas) y los procesa cada uno en su
+scope. Un trabajo aplica la **ciudad actual** del sinónimo, no la del evento; si el sinónimo ya se borró, o el pedido salió de
+`Pending`, o ya tiene parte de envío, el trabajo termina `Skipped` con su motivo (`synonym_deleted`, `order_not_pending`,
+`shipping_present`, …). Lo que lanza se reintenta al vencer su lease (10 s, 1, 5, 15 y 30 minutos); al quinto intento queda
+`Failed` con la causa. La corrección escribe en Quotations y Customers, deja su huella en `shopify.city_corrections` y una
+auditoría (`shopify.order.city_resolved`, `shopify.customer.city_resolved` y las `city_corrected` de la recorrección) en el tenant del pedido.
+
+**Reintentar lo fallido.** El contador `failedCorrections` de `GET synonyms` dice cuántos hay. `POST synonyms/{id}/retry`
+los devuelve a `Pending` con los intentos en cero y el worker los toma en su siguiente pasada; el endpoint devuelve el sinónimo
+con los contadores frescos.
+
+**Recorrido de la historia.** `POST backfill` revisa los pedidos de Shopify ya importados que siguen `Pending`, sin parte de
+envío y con la dirección cruda en las notas, y reporta a la bandeja los que hoy no casan. Responde
+`{ scanned, reported, alreadyReported, nowMatching, skipped }`. Es idempotente: un texto ya reportado cuenta como
+`alreadyReported`, y correrlo otra vez es seguro.
+
+Si el texto de un pedido ya casa por un **sinónimo vivo** (no por el nombre real de la ciudad), cuenta como `nowMatching` y además
+siembra el trabajo `Resolve` de ese pedido, sin operador ni mensaje de origen: el evento de la confirmación no traía ese pedido y
+nadie más lo iba a corregir. La siembra usa la misma regla del evento y del importador (`ResolveJobs`) y no repite un trabajo del
+mismo (sinónimo, pedido), aunque el anterior siga pendiente. Si casa por el nombre real no se siembra nada: el pedido no necesita
+un sinónimo.
+
+El recorrido es **síncrono** y revisa cada fila `Imported` del espejo de todos los tenants: con un espejo grande puede toparse con
+el 524 de Cloudflare. Córrelo una vez, justo después de desplegar.
+
+### Riesgos conocidos
+
+Decisiones aceptadas al cerrar el trabajo; ninguna se arregla sola.
+
+- **Lease solapado y huella de cliente.** Si dos pasadas del worker se solapan sobre el mismo trabajo en una intercalación
+  estrecha, se puede perder la huella de un cliente y su auditoría. La mitigación (registrar la ciudad pedida antes de leer el
+  sinónimo, o releer `requested_city_ids` y reintentar una vez ante `NotEligible`) **no está implementada**. Si un cliente
+  completado no tiene huella, no entra en «corregido» al cambiar el sinónimo: se corrige a mano.
+- **Auditoría del pedido.** La entrada de una corrección de pedido lleva `resource_type = "order"`, no `"quotation"` como las
+  auditorías de pedidos del propio Quotations: un filtro por tipo de recurso no las junta.
+- **Reintento tras un commit entre módulos.** El worker escribe en Quotations y Customers en su propia unidad de trabajo y
+  después guarda su fila. Si muere en medio, el reintento puede encontrar el pedido ya fuera de `Pending` y terminar
+  `Skipped` con `order_not_pending` aunque la ciudad ya esté escrita. Es no atomicidad inherente a que sean módulos distintos.
+- **`ShopifyClaimedOutboxConsumer` y `ShopifyInbox` son copia literal de las de Pipeline.** Un arreglo a la lógica de reclamo
+  va en los dos sitios.
+- **Impacto sin tope.** `POST synonyms/{id}/impact` lee todas las huellas del sinónimo, y la vista previa de `resolve` y su
+  evento leen todas las ocurrencias de la fila, porque el contrato exige la lista completa de `ordersNotPending`. Es un límite
+  conocido al volumen de hoy.
+- **El recorrido no completa clientes.** `POST backfill` nunca siembra un cliente: la importación reutiliza clientes
+  incompletos que ya existían (por ejemplo, uno nacido en WhatsApp, con versión 1), y un sinónimo no debe completarlos. El
+  tenant los completa a mano.
+- **Auditoría del recorrido y del reintento.** La del recorrido se escribe sólo si todo el recorrido termina bien. Y en
+  `POST synonyms/{id}/retry` los trabajos `Failed` vuelven a `Pending` en una sentencia que se confirma sola, antes de guardar la
+  auditoría: si ésta falla, los trabajos ya se reintentan sin su rastro.
+
 ## Numeración de documentos por tenant
 
 El número de cotización y el de pedido salen de un formato **por tenant y por tipo de documento**,

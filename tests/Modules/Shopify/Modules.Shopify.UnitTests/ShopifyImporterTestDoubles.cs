@@ -201,6 +201,12 @@ internal sealed class FakeCityCorrectionJobRepository(FakeShopifyDatabase databa
 
     public void Add(ShopifyCityCorrectionJob job) => database.PendingCityCorrectionJobs.Add(job);
 
+    public Task<bool> ResolveExistsAsync(
+        Guid tenantId, Guid synonymId, ShopifyCityCorrectionTarget target, Guid targetId, CancellationToken cancellationToken) =>
+        Task.FromResult(database.CityCorrectionJobs.Concat(database.PendingCityCorrectionJobs).Any(job =>
+            job.TenantId == tenantId && job.SynonymId == synonymId && job.Kind == ShopifyCityCorrectionJobKind.Resolve
+            && job.Target == target && job.TargetId == targetId));
+
     public Task<bool> LockIfPendingAsync(Guid id, CancellationToken cancellationToken)
     {
         database.Log.Add($"job-lock:{id}");

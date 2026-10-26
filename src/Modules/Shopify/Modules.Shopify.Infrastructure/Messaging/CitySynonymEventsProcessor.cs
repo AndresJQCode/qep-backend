@@ -14,8 +14,8 @@ namespace Modules.Shopify.Infrastructure.Messaging;
 internal sealed partial class CitySynonymEventsProcessor(IServiceScopeFactory scopeFactory, ILogger<CitySynonymEventsProcessor> logger)
 {
     internal const string Consumer = "shopify.city-synonym-events";
-    internal const string ResolvedEvent = "geography.city_synonym.resolved.v1";
-    internal const string CorrectedEvent = "geography.city_synonym.corrected.v1";
+    internal const string ResolvedEvent = ShopifyCitySynonymEventNames.Resolved;
+    internal const string CorrectedEvent = ShopifyCitySynonymEventNames.Corrected;
 
     /// <summary>Desde qué intento una falla se loguea en Error: el primero que deja la espera de 5 minutos por delante.</summary>
     internal const int ErrorAfterAttempts = 3;

@@ -133,6 +133,16 @@ internal sealed class UnresolvedCityRepository(GeographyDbContext dbContext) : I
             .ThenBy(occurrence => occurrence.Id)
             .ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<UnresolvedCityOccurrence>> ListOccurrencesBySynonymAsync(
+        CitySynonymId synonymId, CancellationToken cancellationToken) =>
+        await dbContext.UnresolvedCityOccurrences
+            .AsNoTracking()
+            .Where(occurrence => dbContext.UnresolvedCities.Any(
+                row => row.Id == occurrence.UnresolvedCityId && row.SynonymId == synonymId))
+            .OrderBy(occurrence => occurrence.SeenAt)
+            .ThenBy(occurrence => occurrence.Id)
+            .ToListAsync(cancellationToken);
+
     public async Task<CitySummaryCounts> CountAsync(CancellationToken cancellationToken)
     {
         var pending = await dbContext.UnresolvedCities.CountAsync(

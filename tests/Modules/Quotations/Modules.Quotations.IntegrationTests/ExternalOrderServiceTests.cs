@@ -430,6 +430,31 @@ public sealed class ExternalOrderServiceTests
         Assert.Equal(("3001112233", (Guid?)CityA, "Shopify #3001"), await ReadShippingAsync(database, order.OrderId));
     }
 
+    // D-C12 (ruling P9): lo que lee el recorrido de la historia previa, sólo lectura: estado, recoger en tienda, la parte de envío y las
+    // notas tal cual; null si el pedido no existe en ese tenant.
+    [Fact]
+    public async Task FindShippingStateReadsTheStatusThePickupFlagThePartyAndTheNotes()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var notes = $"Shopify #3013\n{RawAddressPrefix} Cra 5, CALLI";
+        var order = await CreateAsync(factory, Draft(setup, "#3013", notes: notes));
+
+        var withoutParty = await FindStateAsync(factory, setup.TenantId, order.OrderId);
+        await AttachAsync(factory, setup, order.OrderId, Party());
+        var withParty = await FindStateAsync(factory, setup.TenantId, order.OrderId);
+        await ExecuteOnOrderAsync(database, "UPDATE quotations.orders SET status = 'Approved', is_store_pickup = true WHERE id = @id", order.OrderId);
+        var approvedPickup = await FindStateAsync(factory, setup.TenantId, order.OrderId);
+
+        Assert.Equal(new ExternalShippingState(OrderStatus.Pending, false, null, notes), withoutParty);
+        Assert.Equal(new ExternalShippingState(OrderStatus.Pending, false, Party(), "Shopify #3013"), withParty);
+        Assert.Equal((OrderStatus.Approved, true), (approvedPickup?.Status, approvedPickup?.IsStorePickup));
+        Assert.Null(await FindStateAsync(factory, Guid.CreateVersion7(), order.OrderId));
+        Assert.Null(await FindStateAsync(factory, setup.TenantId, Guid.CreateVersion7()));
+    }
+
     // Review Focus 3: un pedido que ya no está pendiente no recibe la parte, y nada cambia.
     [Fact]
     public async Task AttachShippingOnAnApprovedOrderIsNotPending()
@@ -623,6 +648,13 @@ public sealed class ExternalOrderServiceTests
         await using var scope = factory.Services.CreateAsyncScope();
         var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
         return await writer.AttachShippingAsync(setup.TenantId, orderId, party, RawAddressPrefix, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<ExternalShippingState?> FindStateAsync(QepApiFactory factory, Guid tenantId, Guid orderId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>()
+            .FindShippingStateAsync(tenantId, orderId, TestContext.Current.CancellationToken);
     }
 
     private static async Task ExecuteOnOrderAsync(PostgreSqlContainer database, string sql, Guid orderId)

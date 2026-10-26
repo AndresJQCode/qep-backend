@@ -48,6 +48,22 @@ internal sealed class ShopifyCityCorrectionJobRepository(ShopifyDbContext dbCont
 
     public void Add(ShopifyCityCorrectionJob job) => dbContext.CityCorrectionJobs.Add(job);
 
+    public async Task<bool> ResolveExistsAsync(
+        Guid tenantId, Guid synonymId, ShopifyCityCorrectionTarget target, Guid targetId, CancellationToken cancellationToken) =>
+        dbContext.CityCorrectionJobs.Local.Any(job => IsResolveOf(job, tenantId, synonymId, target, targetId))
+        || await dbContext.CityCorrectionJobs.AsNoTracking().AnyAsync(
+            job => job.TenantId == tenantId
+                && job.SynonymId == synonymId
+                && job.Kind == ShopifyCityCorrectionJobKind.Resolve
+                && job.Target == target
+                && job.TargetId == targetId,
+            cancellationToken);
+
+    private static bool IsResolveOf(
+        ShopifyCityCorrectionJob job, Guid tenantId, Guid synonymId, ShopifyCityCorrectionTarget target, Guid targetId) =>
+        job.TenantId == tenantId && job.SynonymId == synonymId && job.Kind == ShopifyCityCorrectionJobKind.Resolve
+        && job.Target == target && job.TargetId == targetId;
+
     public async Task<bool> LockIfPendingAsync(Guid id, CancellationToken cancellationToken)
     {
         // Fuera de una transacción el FOR UPDATE se soltaría al terminar la sentencia y no frenaría a la otra réplica.
@@ -62,6 +78,26 @@ internal sealed class ShopifyCityCorrectionJobRepository(ShopifyDbContext dbCont
     }
 
     private sealed record StatusRow(string Status);
+}
+
+/// <summary>
+/// Spec 2026-10-26 D-C6 y S6: reintentar desde la consola los trabajos <c>Failed</c> de un sinónimo, en una sola sentencia que se
+/// confirma en el acto. El estado va por nombre, como lo guarda la conversión de EF.
+/// </summary>
+internal sealed class ShopifyCityCorrectionJobs(ShopifyDbContext dbContext) : IShopifyCityCorrectionJobs
+{
+    private static readonly string Pending = nameof(ShopifyCityCorrectionJobStatus.Pending);
+
+    private static readonly string Failed = nameof(ShopifyCityCorrectionJobStatus.Failed);
+
+    public Task<int> RetryFailedAsync(Guid synonymId, CancellationToken cancellationToken) =>
+        dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE shopify.city_correction_jobs
+               SET status = {Pending}, attempts = 0, lease_until = NULL, last_error = NULL, skip_reason = NULL, processed_at = NULL
+             WHERE synonym_id = {synonymId} AND status = {Failed}
+            """,
+            cancellationToken);
 }
 
 /// <summary>

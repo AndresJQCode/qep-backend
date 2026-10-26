@@ -58,6 +58,14 @@ public interface IShopifyOrderMirrorRepository
 
     /// <summary>§7 <c>GET /stores</c>: las filas <c>Waiting</c> de cada tienda del tenant; una tienda sin ninguna no aparece.</summary>
     Task<IReadOnlyDictionary<Guid, int>> CountWaitingByConnectionAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-10-26 D-C12: el recorrido de la historia previa. Las filas <c>Imported</c> con pedido (<c>qep_order_id</c>) de
+    /// <b>todos</b> los tenants, por id y después de <paramref name="afterId"/> (<c>null</c>: desde el principio), hasta
+    /// <paramref name="limit"/>. Sin tracking: sólo se leen. Va por la llave primaria; paginar por id no se salta ni repite filas
+    /// aunque el recorrido tarde.
+    /// </summary>
+    Task<IReadOnlyList<ShopifyOrderMirror>> ListImportedAfterAsync(Guid? afterId, int limit, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-26 §5: las huellas de los sinónimos (<c>shopify.city_corrections</c>). Con tracking; lo agregado commitea
@@ -85,6 +93,11 @@ public interface IShopifyCityCorrectionJobRepository
     Task<ShopifyCityCorrectionJob?> FindAsync(Guid id, CancellationToken cancellationToken);
 
     void Add(ShopifyCityCorrectionJob job);
+
+    /// <summary>¿Hay ya un trabajo <c>Resolve</c> de ese sinónimo para ese pedido o cliente, en cualquier estado, guardado o recién
+    /// agregado? El índice único (mensaje, destino, id) no frena a los que se siembran sin mensaje (el importador y el recorrido).</summary>
+    Task<bool> ResolveExistsAsync(
+        Guid tenantId, Guid synonymId, ShopifyCityCorrectionTarget target, Guid targetId, CancellationToken cancellationToken);
 
     /// <summary>Toma la fila del trabajo (<c>FOR UPDATE</c>) dentro de la transacción abierta y dice si sigue <c>Pending</c>. Con
     /// el lease vencido, otra réplica puede reclamar un trabajo que todavía corre: su reclamo espera esta fila, y al soltarla ve el
@@ -117,6 +130,19 @@ public interface IShopifyCityCorrectionJobQueue
     /// (fuera de toda transacción): si el proceso cae después de que Customers o Quotations confirmen, el reintento sabe que esa
     /// ciudad la pidió el trabajo. Devuelve todas las que pidió hasta ahora, ésta incluida.</summary>
     Task<IReadOnlyList<Guid>> RecordRequestedCityAsync(Guid id, Guid cityId, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Spec 2026-10-26 D-C6 y S6: lo que la consola del operador le hace a los trabajos de un sinónimo. Una sentencia que se
+/// confirma en el acto, fuera del tracker, como <see cref="IShopifyCityCorrectionJobQueue"/>.
+/// </summary>
+public interface IShopifyCityCorrectionJobs
+{
+    /// <summary><c>Failed</c> → <c>Pending</c>, con los intentos en cero y sin lease, error ni cierre, para los trabajos del
+    /// sinónimo (<paramref name="synonymId"/> es una referencia blanda a <c>geography.city_synonyms</c>). Conserva las ciudades
+    /// que pidió cada intento (<c>requested_city_ids</c>): el reintento las necesita para reconocer su propio trabajo. Devuelve
+    /// cuántos pasó.</summary>
+    Task<int> RetryFailedAsync(Guid synonymId, CancellationToken cancellationToken);
 }
 
 /// <summary>El filtro de la bandeja (§7). <see cref="States"/> vacío es cualquier estado («con avisos» sin

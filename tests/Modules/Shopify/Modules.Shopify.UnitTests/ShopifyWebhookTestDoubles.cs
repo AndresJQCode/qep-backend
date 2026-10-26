@@ -184,6 +184,15 @@ internal sealed class FakeOrderMirrorRepository(FakeShopifyDatabase database) : 
                 .Take(limit)
                 .Select(row => new ShopifyWaitingOrder(row.ShopifyOrderId, row.Payload))]);
 
+    // Sin filtro de tenant a propósito, como el repositorio real: el recorrido de la historia previa cruza tenants.
+    public Task<IReadOnlyList<ShopifyOrderMirror>> ListImportedAfterAsync(Guid? afterId, int limit, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyOrderMirror>>(
+            [.. database.Orders.Values
+                .Where(row => row.ImportState == ShopifyImportState.Imported && row.QepOrderId is not null)
+                .Where(row => afterId is not { } after || row.Id.CompareTo(after) > 0)
+                .OrderBy(row => row.Id)
+                .Take(limit)]);
+
     public Task<ShopifyOrderMirror?> FindByIdAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
         Task.FromResult(
             database.Orders.Values.FirstOrDefault(row => row.TenantId == tenantId && row.Id == id)

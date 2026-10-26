@@ -2,6 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Testcontainers.PostgreSql;
 
 namespace Modules.Geography.IntegrationTests;
@@ -88,6 +91,20 @@ internal static class GeographyApiHarness
             // Siempre fijado, aunque la prueba no pida operador: un Platform:OperatorTenantId en los user-secrets de quien corre
             // las pruebas convertiría en operador a un tenant ajeno. Vacío vale lo mismo que ausente.
             builder.UseSetting("Platform:OperatorTenantId", operatorTenantId?.ToString() ?? string.Empty);
+            // El host registra el consumidor de los eventos de sinónimos y el worker que corrige pedidos de Shopify. En estas pruebas
+            // no corren solos: uno en segundo plano reclamaría los eventos y trabajos que la prueba mira (una carrera con sus
+            // aserciones sobre el outbox y los trabajos). Los tipos son internos de Shopify.Infrastructure, que este proyecto no
+            // referencia: se quitan por nombre.
+            builder.ConfigureTestServices(services =>
+            {
+                foreach (var worker in services
+                    .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                        && descriptor.ImplementationType?.Name is "ShopifyCityCorrectionWorker" or "CitySynonymEventsWorker")
+                    .ToArray())
+                {
+                    services.Remove(worker);
+                }
+            });
         }
     }
 }

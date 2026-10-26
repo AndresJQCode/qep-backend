@@ -899,6 +899,27 @@ public sealed class ShopifyAdaptersTests
         Assert.Equal(requested, corrected.Requested);
     }
 
+    // D-C12: el recorrido de la historia previa lee el estado del pedido. La marca de la dirección cruda es una línea de las notas
+    // que empieza por el rótulo del importador, con la misma comparación que Quotations usa para quitarla (ordinal, línea por línea);
+    // un pedido que no existe es null.
+    [Fact]
+    public async Task CityCorrectionWriterReadsTheOrderStateAndTheRawAddressMark()
+    {
+        var (orderId, other, party) = (
+            Guid.CreateVersion7(), Guid.CreateVersion7(),
+            new ExternalShippingParty("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", Guid.CreateVersion7(), Guid.CreateVersion7()));
+        var label = ShopifyOrderImporter.RawAddressLabel;
+        var orders = new FakeExternalOrderWriter();
+        orders.ShippingStates[(TenantId, orderId)] = new ExternalShippingState(OrderStatus.Pending, false, null, $"Shopify #1001\n{label}Cra 5, CALLI");
+        orders.ShippingStates[(TenantId, other)] = new ExternalShippingState(OrderStatus.Approved, true, party, $"Shopify #1002 {label}no es una línea\n");
+        var adapter = CityCorrectionWriter(orders: orders);
+
+        Assert.Equal(new ShopifyOrderCityState("Pending", false, false, true), await adapter.ReadOrderCityStateAsync(TenantId, orderId, Ct));
+        Assert.Equal(new ShopifyOrderCityState("Approved", true, true, false), await adapter.ReadOrderCityStateAsync(TenantId, other, Ct));
+        Assert.Null(await adapter.ReadOrderCityStateAsync(TenantId, Guid.CreateVersion7(), Ct));
+        Assert.Null(await adapter.ReadOrderCityStateAsync(Guid.CreateVersion7(), orderId, Ct));
+    }
+
     // El trabajo tiene que saber que el sinónimo se borró (synonym_deleted), así que el adaptador no los filtra; uno que no
     // existe es null. Cada lectura va en su scope: la segunda de un mismo trabajo ve la base, no la primera.
     [Fact]
