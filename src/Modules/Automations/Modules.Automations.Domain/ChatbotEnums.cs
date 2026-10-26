@@ -21,7 +21,8 @@ public enum ChatbotTrigger
 }
 
 /// <summary>Spec 2026-10-25 D-2: qué hace el motor cuando se agotan los intentos de un bloque sin salida de agotamiento conectada.
-/// <c>Restart</c> reinicia la corrida (el comportamiento de siempre); <c>Handoff</c> la pasa a un asesor. Se guarda por nombre.</summary>
+/// <c>Restart</c> reinicia la corrida (el comportamiento de siempre); <c>Handoff</c> pausa el bot y deja la conversación en la bandeja, sin asignar o asignada al miembro elegido
+/// (D-1, D-6). Se guarda por nombre.</summary>
 public enum AttemptsExhaustedAction
 {
     Restart,

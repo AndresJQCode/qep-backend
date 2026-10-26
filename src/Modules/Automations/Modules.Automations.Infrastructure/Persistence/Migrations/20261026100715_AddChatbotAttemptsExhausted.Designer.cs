@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Modules.Automations.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AutomationsDbContext))]
-    [Migration("20261026054759_AddChatbotAttemptsExhausted")]
+    [Migration("20261026100715_AddChatbotAttemptsExhausted")]
     partial class AddChatbotAttemptsExhausted
     {
         /// <inheritdoc />
@@ -214,6 +214,10 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
 
                     b.ToTable("chatbots", "automations", t =>
                         {
+                            t.HasCheckConstraint("CK_chatbots_exhausted_action", "exhausted_action IN ('Restart','Handoff')");
+
+                            t.HasCheckConstraint("CK_chatbots_exhausted_member", "exhausted_action = 'Handoff' OR exhausted_member_id IS NULL");
+
                             t.HasCheckConstraint("CK_chatbots_max_attempts", "max_attempts BETWEEN 1 AND 5");
 
                             t.HasCheckConstraint("CK_chatbots_published", "(status = 'Draft') = (published_version_id IS NULL)");

@@ -91,10 +91,6 @@ internal sealed partial class AutomationConversations(
             && await scope.ServiceProvider.GetRequiredService<IMessagingAssignees>().CanReplyAsync(tenantId, id, cancellationToken)
                 ? id
                 : null;
-        if (assignToMemberId is not null && assignee is null)
-        {
-            LogAssigneeCannotReply(logger, tenantId, conversationId, assignToMemberId.Value);
-        }
 
         // Spec 2026-10-24 §5.3: la causa viaja en el mismo evento, un solo cambio con el mismo now; el dominio de Mensajería la limpia.
         // Spec 2026-10-25 D-1, D-7: pausa y asignación en un solo cambio, sin evento Transferred.
@@ -102,6 +98,12 @@ internal sealed partial class AutomationConversations(
         services.Events.Record(tenantId, conversation.ConnectionId, conversation.Id, change, now);
         services.Audit.RecordBySystem(tenantId, MessagingAuditActions.AutomationPaused, conversation.Id, now);
         await services.UnitOfWork.SaveChangesAsync(cancellationToken);
+        // Sólo se avisa una vez confirmado el traspaso: un fallo al guardar no deja un log de algo que no ocurrió.
+        if (assignToMemberId is not null && assignee is null)
+        {
+            LogAssigneeCannotReply(logger, tenantId, conversationId, assignToMemberId.Value);
+        }
+
         await NotifyAsync(tenantId, conversationId, async () =>
         {
             await services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken);

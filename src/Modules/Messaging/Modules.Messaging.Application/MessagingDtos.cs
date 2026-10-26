@@ -117,7 +117,7 @@ public sealed record MessageEventDto(
     EventCustomerRefDto? TargetCustomer = null, EventCustomerRefDto? PreviousCustomer = null, AutomationHandoffDto? Handoff = null);
 
 /// <summary>Spec 2026-10-24 (BFF): la causa del traspaso, en códigos; el texto lo arma el frontend, que es dueño del diccionario
-/// (D-T3). <c>Kind</c> viaja por nombre (<c>Block</c>, <c>InvalidReply</c>, <c>SendFailed</c>, <c>FlowFailed</c>): uno desconocido
+/// (D-T3). <c>Kind</c> viaja por nombre (<c>Block</c>, <c>InvalidReply</c>, <c>SendFailed</c>, <c>FlowFailed</c>, <c>AttemptsExhausted</c>): uno desconocido
 /// lo pinta con el texto genérico. <c>AssignedTo</c> (spec 2026-10-25 D-8): a quién quedó asignada la conversación; <c>null</c> = sin asignar.
 /// Ningún campo trae texto de una API externa: sólo títulos de bloques y nombres de conexiones.</summary>
 public sealed record AutomationHandoffDto(

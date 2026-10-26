@@ -48,6 +48,12 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
 
     public const string MaxAttemptsCheck = "max_attempts BETWEEN 1 AND 5";
 
+    /// <summary>Spec 2026-10-25 D-2: los dos valores de <c>AttemptsExhaustedAction</c>, por nombre.</summary>
+    public const string ExhaustedActionCheck = "exhausted_action IN ('Restart','Handoff')";
+
+    /// <summary>Spec 2026-10-25 D-2: sólo <c>Handoff</c> lleva miembro; <c>Restart</c> ⇒ sin miembro (el agregado ya lo garantiza).</summary>
+    public const string ExhaustedMemberCheck = "exhausted_action = 'Handoff' OR exhausted_member_id IS NULL";
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public DbSet<Chatbot> Chatbots => Set<Chatbot>();
@@ -87,6 +93,8 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
             table.HasCheckConstraint("CK_chatbots_trigger", TriggerCheck);
             table.HasCheckConstraint("CK_chatbots_published", PublishedCheck);
             table.HasCheckConstraint("CK_chatbots_max_attempts", MaxAttemptsCheck);
+            table.HasCheckConstraint("CK_chatbots_exhausted_action", ExhaustedActionCheck);
+            table.HasCheckConstraint("CK_chatbots_exhausted_member", ExhaustedMemberCheck);
         });
         chatbot.HasKey(value => value.Id);
         chatbot.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();

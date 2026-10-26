@@ -15,7 +15,10 @@ public sealed class AutomationsSchemaTests
     ];
 
     private static readonly string[] ExpectedChecks =
-        ["CK_chatbots_max_attempts", "CK_chatbots_published", "CK_chatbots_status", "CK_chatbots_trigger"];
+        [
+            "CK_chatbots_exhausted_action", "CK_chatbots_exhausted_member", "CK_chatbots_max_attempts", "CK_chatbots_published",
+            "CK_chatbots_status", "CK_chatbots_trigger",
+        ];
 
     private static readonly string[] ExpectedIndexes =
     [
@@ -79,6 +82,32 @@ public sealed class AutomationsSchemaTests
 
         Assert.EndsWith("(tenant_id, conversation_id, started_at DESC)", latest, StringComparison.Ordinal);
         Assert.Contains("(updated_at) WHERE ((status)::text = 'Waiting'::text)", waiting, StringComparison.Ordinal);
+    }
+
+    // Spec 2026-10-25 D-2: la regla de agotamiento sólo admite los dos valores y sólo Handoff lleva miembro.
+    [Fact]
+    public async Task TheExhaustedRuleRejectsAnUnknownActionAndAMemberWithRestart()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var id = await InsertChatbotAsync(connectionString, Guid.CreateVersion7(), "Ventas");
+
+        var unknownAction = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connectionString,
+            "UPDATE automations.chatbots SET exhausted_action = 'Other' WHERE id = @id", ("id", id)));
+        var memberWithRestart = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connectionString,
+            "UPDATE automations.chatbots SET exhausted_action = 'Restart', exhausted_member_id = @member WHERE id = @id",
+            ("id", id), ("member", Guid.CreateVersion7())));
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, unknownAction.SqlState);
+        Assert.Equal("CK_chatbots_exhausted_action", unknownAction.ConstraintName);
+        Assert.Equal(PostgresErrorCodes.CheckViolation, memberWithRestart.SqlState);
+        Assert.Equal("CK_chatbots_exhausted_member", memberWithRestart.ConstraintName);
+        // Handoff con o sin miembro es válido.
+        await ExecuteAsync(connectionString,
+            "UPDATE automations.chatbots SET exhausted_action = 'Handoff', exhausted_member_id = @member WHERE id = @id",
+            ("id", id), ("member", Guid.CreateVersion7()));
+        await ExecuteAsync(connectionString,
+            "UPDATE automations.chatbots SET exhausted_action = 'Handoff', exhausted_member_id = NULL WHERE id = @id", ("id", id));
     }
 
     // D-C4: una conexión, un chatbot activo.

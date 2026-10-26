@@ -26,11 +26,33 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
                 table: "chatbots",
                 type: "uuid",
                 nullable: true);
+
+            migrationBuilder.AddCheckConstraint(
+                name: "CK_chatbots_exhausted_action",
+                schema: "automations",
+                table: "chatbots",
+                sql: "exhausted_action IN ('Restart','Handoff')");
+
+            migrationBuilder.AddCheckConstraint(
+                name: "CK_chatbots_exhausted_member",
+                schema: "automations",
+                table: "chatbots",
+                sql: "exhausted_action = 'Handoff' OR exhausted_member_id IS NULL");
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropCheckConstraint(
+                name: "CK_chatbots_exhausted_action",
+                schema: "automations",
+                table: "chatbots");
+
+            migrationBuilder.DropCheckConstraint(
+                name: "CK_chatbots_exhausted_member",
+                schema: "automations",
+                table: "chatbots");
+
             migrationBuilder.DropColumn(
                 name: "exhausted_action",
                 schema: "automations",
