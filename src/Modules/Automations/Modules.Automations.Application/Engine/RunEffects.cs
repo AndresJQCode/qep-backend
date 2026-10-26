@@ -13,9 +13,9 @@ public sealed record RunUnit(ConversationRun Run, FlowDefinition Flow, EngineSet
 
 /// <summary>
 /// Spec 2026-10-21 §5.2 paso 5, D-M5 y D-M14: el bucle de efectos que <see cref="RunProcessor"/> delega. Ejecuta en orden lo que pide
-/// <see cref="FlowEngine.Step"/>, vuelve a entrar al motor con el resultado de un horario o de un HTTP (D-M2; el bloque HTTP lo ejecuta
-/// <see cref="IHttpBlockExecutor"/>, que nunca lanza por la API), y deja el desenlace en la corrida
-/// (que el procesador guarda). Traspasar y resolver son siempre el último efecto de un paso, así que van justo antes del guardado de
+/// <see cref="FlowEngine.Step"/>, vuelve a entrar al motor con el resultado de un horario, de un HTTP (D-M2; el bloque HTTP lo ejecuta
+/// <see cref="IHttpBlockExecutor"/>, que nunca lanza por la API) o de la verificación de Política de datos (spec 2026-10-26 D-2), y
+/// deja el desenlace en la corrida (que el procesador guarda). Traspasar y resolver son siempre el último efecto de un paso, así que van justo antes del guardado de
 /// Automations (P2-R23): si ese guardado fallara después, el reintento encuentra la conversación pausada o resuelta con la corrida viva y
 /// la cierra <c>Interrupted</c> (D-M15). Es raro y el lado de Mensajería ya quedó bien; se acepta.
 /// </summary>
@@ -26,6 +26,8 @@ public sealed partial class RunEffects(
     IHttpBlockExecutor httpBlocks,
     IAutomationMedia media,
     IAutomationsAuditRecorder audit,
+    IAutomationDataConsents dataConsents,
+    IChatbotRepository chatbots,
     ILogger<RunEffects> logger)
 {
     [LoggerMessage(Level = LogLevel.Information, Message = "Conversation {ConversationId} of tenant {TenantId} left the bot during run {RunId}; the run ends Interrupted.")]
@@ -50,6 +52,13 @@ public sealed partial class RunEffects(
         EngineInput? next = input;
         while (next is not null)
         {
+            // Spec 2026-10-26 D-7: sin cliente al que registrarle la respuesta, el motor sale por «rejected» sin preguntar; la auditoría es
+            // la única huella. Acá y no en el efecto: la entrada también puede venir de PendingInputAsync.
+            if (next is EngineInput.DataConsent { CanRecord: false })
+            {
+                Audit(run, AutomationsAuditActions.DataConsentUnavailable, now);
+            }
+
             // P2-R43: el motor interpola los textos de SendText y SendInteractive dentro del paso, así que el refresco de los adjuntos va
             // antes de cada paso (el de la unidad y el de cada reentrada); un adjunto que se recibe en este mismo paso todavía no tiene url.
             state = await RefreshAttachmentsAsync(run, state, attachments, cancellationToken);
@@ -65,17 +74,26 @@ public sealed partial class RunEffects(
                 {
                     case Effect.SendText or Effect.SendInteractive:
                         var clientId = DeterministicClientId.For(run.Id, unit.BaseStepNumber, sends++);
-                        if (await SendAsync(run, effect, clientId, cancellationToken) is not BotSendOutcome.Sent and var refused)
+                        var outcome = await SendAsync(run, effect, clientId, cancellationToken);
+                        if (outcome is not BotSendOutcome.Sent sent)
                         {
-                            await StopAsync(run, state, refused, effect, TitleOf(unit.Flow, effect.NodeId), http, now, cancellationToken);
+                            await StopAsync(run, state, outcome, effect, TitleOf(unit.Flow, effect.NodeId), http, now, cancellationToken);
                             return;
+                        }
+
+                        // Spec 2026-10-26 D-6: la pregunta de Política de datos recuerda qué mensaje salió, para registrarlo con la respuesta.
+                        if (effect is Effect.SendInteractive
+                            && state.ConsentPrompt is { PromptMessageId: null } prompt
+                            && prompt.NodeId == effect.NodeId)
+                        {
+                            state = state with { ConsentPrompt = prompt with { PromptMessageId = sent.MessageId } };
                         }
 
                         break;
                     case Effect.WaitForCustomer wait:
                         await conversations.SetStepAsync(run.TenantId, run.ConversationId, wait.StepTitle, cancellationToken);
                         break;
-                    case Effect.CheckBusinessHours or Effect.CallHttp:
+                    case Effect.CheckBusinessHours or Effect.CallHttp or Effect.CheckDataConsent:
                         // P2-R40: una salida que vuelve al bloque (o a uno anterior) daría vueltas dentro de la unidad; se trata como el ciclo
                         // de P2-R13. FailAsync traspasa al final, como cualquier traspaso (P2-R23).
                         if (++reentries > EngineReentries.Max)
@@ -97,6 +115,18 @@ public sealed partial class RunEffects(
                         }
 
                         next = await ExternalAsync(run, effect, state.Variables, cancellationToken);
+                        break;
+                    case Effect.RecordDataConsent record:
+                        // D-5: la respuesta se registra antes de seguir con el bloque siguiente; sin registro, la corrida no sigue.
+                        if (!await RecordDataConsentAsync(unit, state, record, http, now, cancellationToken))
+                        {
+                            return;
+                        }
+
+                        break;
+                    case Effect.DataConsentUnanswered:
+                        // D-4: agotar los intentos no registra nada; queda la auditoría.
+                        Audit(run, AutomationsAuditActions.DataConsentUnanswered, now);
                         break;
                     case Effect.Handoff handoff:
                         // D-T9: el motor dice por qué camino llegó; el procesador no lo deduce por el tipo de bloque.
@@ -160,6 +190,7 @@ public sealed partial class RunEffects(
         {
             HttpNode http => await ExternalAsync(unit.Run, new Effect.CallHttp(http.Id, http), unit.Run.ToState().Variables, cancellationToken),
             BusinessHoursNode hours => await ExternalAsync(unit.Run, new Effect.CheckBusinessHours(hours.Id), unit.Run.ToState().Variables, cancellationToken),
+            DataConsentNode consent => await ExternalAsync(unit.Run, new Effect.CheckDataConsent(consent.Id), unit.Run.ToState().Variables, cancellationToken),
             _ => null,
         };
     }
@@ -280,6 +311,7 @@ public sealed partial class RunEffects(
             Effect.CheckBusinessHours hours => new EngineInput.BusinessHours(
                 hours.NodeId, await businessHours.IsOpenAsync(run.TenantId, run.ConnectionId, cancellationToken)),
             Effect.CallHttp http => await CallHttpAsync(run, http, variables, cancellationToken),
+            Effect.CheckDataConsent consent => await CheckDataConsentAsync(run, consent, cancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(effect), effect.GetType().Name, "No es un efecto externo."),
         };
 
@@ -293,6 +325,47 @@ public sealed partial class RunEffects(
         var result = await httpBlocks.ExecuteAsync(new HttpCallContext(run.TenantId, run.Id, null, http.NodeId), http.Node, variables, cancellationToken);
         // Spec 2026-10-24 §4.2: el outcome y el nombre de la conexión no los lee el motor; viajan para explicar un traspaso.
         return new EngineInput.HttpResult(http.NodeId, result.Ok, result.Status, result.Mapped, result.ErrorCode, result.Outcome, result.ConnectionName);
+    }
+
+    /// <summary>Spec 2026-10-26 D-2 y D-7: <see cref="DataConsentCheck.Unavailable"/> no es una aceptación y no deja registrar.</summary>
+    private async Task<EngineInput> CheckDataConsentAsync(ConversationRun run, Effect.CheckDataConsent consent, CancellationToken cancellationToken)
+    {
+        var check = await dataConsents.CheckAsync(run.TenantId, run.ConversationId, cancellationToken);
+        return new EngineInput.DataConsent(consent.NodeId, check == DataConsentCheck.Accepted, CanRecord: check != DataConsentCheck.Unavailable);
+    }
+
+    /// <summary>
+    /// Spec 2026-10-26 D-5 y D-10: registra la respuesta con la versión de la corrida y el entrante que la respondió. <c>false</c> si la
+    /// corrida falló (la versión ya no existe, o Customers no pudo registrarla); quien llama corta la unidad. Lo que lance el puerto (un
+    /// conflicto de concurrencia) sube como en cualquier otro efecto: la unidad se deshace y la fila se reintenta.
+    /// </summary>
+    private async Task<bool> RecordDataConsentAsync(
+        RunUnit unit, RunState state, Effect.RecordDataConsent record, HandoffHttpFailure? http, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var run = unit.Run;
+        var title = TitleOf(unit.Flow, record.NodeId);
+        if (await chatbots.FindVersionLabelAsync(run.TenantId, run.ChatbotVersionId, cancellationToken) is not { } label)
+        {
+            await FailAsync(run, state, HandoffCause.FlowFailed(AutomationsRunFailures.VersionMissing, record.NodeId, title, http), now, cancellationToken);
+            return false;
+        }
+
+        // El procesador marca el entrante antes de entrar al motor; una respuesta sin él no puede pasar.
+        var replyMessageId = run.LastInboundMessageId
+            ?? throw new InvalidOperationException($"La corrida {run.Id} respondió Política de datos sin un entrante marcado.");
+        var recorded = await dataConsents.RecordAsync(
+            new DataConsentRecord(
+                run.TenantId, run.ConversationId, record.Decision, record.ShownText, record.PromptMessageId, replyMessageId, run.ChatbotId,
+                label.ChatbotName, run.ChatbotVersionId, label.Number, record.NodeId),
+            cancellationToken);
+        if (!recorded)
+        {
+            await FailAsync(
+                run, state, HandoffCause.FlowFailed(AutomationsRunFailures.DataConsentUnrecorded, record.NodeId, title, http), now, cancellationToken);
+            return false;
+        }
+
+        return true;
     }
 
     private void Audit(ConversationRun run, string action, DateTimeOffset now) =>

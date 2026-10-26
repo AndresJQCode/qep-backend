@@ -34,6 +34,10 @@ public sealed class CustomerWhatsAppDirectoryRaceTests
         public void PublishByIntegration(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt)
         {
         }
+
+        public void PublishBySystem(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt)
+        {
+        }
     }
 
     private sealed class TakenUnitOfWork : ICustomersUnitOfWork

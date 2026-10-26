@@ -97,9 +97,11 @@ public sealed partial class EngineEndToEndTests
         await DrainDeliveriesAsync(f.Host);
     }
 
-    private static async Task TapAsync(Fixture f, string wamid, string replyId, string title)
+    /// <summary><paramref name="quotedWamid"/>: el mensaje del botón tocado, que Meta manda en <c>context.id</c>.</summary>
+    private static async Task TapAsync(Fixture f, string wamid, string replyId, string title, string? quotedWamid = null)
     {
-        var response = await PostWebhookAsync(f.Anonymous, Payloads.InboundButtonReply(PhoneNumberId, WaId, wamid, Timestamp(wamid), replyId, title));
+        var response = await PostWebhookAsync(
+            f.Anonymous, Payloads.InboundButtonReply(PhoneNumberId, WaId, wamid, Timestamp(wamid), replyId, title, quotedWamid));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         await DrainDeliveriesAsync(f.Host);
     }
@@ -651,15 +653,24 @@ public sealed partial class EngineEndToEndTests
                 ["text"] = new JsonObject { ["body"] = text },
             });
 
-        public static string InboundButtonReply(string phoneNumberId, string waId, string wamid, long timestamp, string replyId, string title) =>
-            Messages(phoneNumberId, waId, new JsonObject
+        public static string InboundButtonReply(
+            string phoneNumberId, string waId, string wamid, long timestamp, string replyId, string title, string? quotedWamid = null)
+        {
+            var message = new JsonObject
             {
                 ["from"] = waId, ["id"] = wamid, ["timestamp"] = Seconds(timestamp), ["type"] = "interactive",
                 ["interactive"] = new JsonObject
                 {
                     ["type"] = "button_reply", ["button_reply"] = new JsonObject { ["id"] = replyId, ["title"] = title },
                 },
-            });
+            };
+            if (quotedWamid is not null)
+            {
+                message["context"] = new JsonObject { ["from"] = "15550000000", ["id"] = quotedWamid };
+            }
+
+            return Messages(phoneNumberId, waId, message);
+        }
 
         private static string Messages(string phoneNumberId, string waId, JsonObject message)
         {

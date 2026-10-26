@@ -772,6 +772,8 @@ internal sealed class FakeConversationRepository : IConversationRepository
     public Task<bool> SetAutomationStepAsync(Guid tenantId, Guid conversationId, string? stepTitle, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<bool> SetAutomationChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<Guid?> LinkCustomerAsync(Guid tenantId, Guid conversationId, Guid customerId, bool created, DateTimeOffset now, CancellationToken cancellationToken) => throw new NotSupportedException();
 }
 
 internal sealed class FakeMessageQueries : IMessageQueries

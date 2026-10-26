@@ -27,6 +27,19 @@ public sealed class FlowNormalizerTests
         });
     }
 
+    [Fact]
+    public void ADataConsentIsUntouched()
+    {
+        var outputs = new Dictionary<string, string?> { ["accepted"] = "n2", ["rejected"] = "n3", ["other"] = "n4" };
+        var consent = new DataConsentNode("d1", "Política", outputs, "t");
+
+        var result = FlowNormalizer.Normalize(Flow(consent));
+
+        var kept = Assert.IsType<DataConsentNode>(Assert.Single(result.Nodes));
+        Assert.Equal(consent.Text, kept.Text);
+        Assert.Equal(outputs, kept.Outputs);
+    }
+
     [Theory]
     [InlineData("repeat", false)]
     [InlineData("otherOutput", false)]

@@ -59,6 +59,8 @@ public static partial class FlowValidator
         [FlowOutputs.Closed] = "cerrado",
         [FlowOutputs.Ok] = "ok",
         [FlowOutputs.Error] = "error",
+        [FlowOutputs.Accepted] = DataConsentButtons.AcceptLabel,
+        [FlowOutputs.Rejected] = DataConsentButtons.RejectLabel,
     }.ToFrozenDictionary(StringComparer.Ordinal);
 
     public static IReadOnlyList<FlowIssue> Validate(FlowDefinition flow, FlowValidationContext context)
@@ -206,6 +208,16 @@ public static partial class FlowValidator
                 if (!string.IsNullOrWhiteSpace(buttons.SaveTo))
                 {
                     CheckName(node, buttons.SaveTo, issues);
+                }
+
+                break;
+            case DataConsentNode consent:
+                CheckText(node, consent.Text, InteractiveBodyMaxLength, issues);
+                if (!string.IsNullOrWhiteSpace(consent.Text) && !WebLink().IsMatch(consent.Text))
+                {
+                    issues.Add(Warning(
+                        FlowIssueCodes.DataConsentNoLink, node.Id,
+                        $"El texto de «{node.Title}» no tiene un enlace a tu política de datos."));
                 }
 
                 break;
@@ -641,6 +653,7 @@ public static partial class FlowValidator
         OpenQuestionNode question => [question.Text],
         ButtonsNode buttons => [buttons.Text],
         ListNode list => [list.Text],
+        DataConsentNode consent => [consent.Text],
         AttachmentNode attachment => [attachment.Text],
         ConditionNode condition => condition.Rules.Select(rule => rule.Value),
         HttpNode http =>
@@ -709,6 +722,10 @@ public static partial class FlowValidator
 
     [GeneratedRegex(@"\{(?<reference>[a-zA-Z][a-zA-Z0-9_.\[\]]*)\}", RegexOptions.CultureInvariant)]
     private static partial Regex VariableToken();
+
+    // Spec 2026-10-26 D-3: basta un esquema seguido de algo; no se valida que el enlace exista.
+    [GeneratedRegex(@"https?://\S", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex WebLink();
 
     // Anexo A: la forma de los ids de botón y de fila.
     [GeneratedRegex(@"^[a-zA-Z0-9_-]{1,40}\z", RegexOptions.CultureInvariant)]

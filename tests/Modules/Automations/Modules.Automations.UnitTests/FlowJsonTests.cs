@@ -215,6 +215,61 @@ public sealed class FlowJsonTests
         Assert.False(FlowNodeKinds.IsTerminal(FlowNodeKinds.Message));
     }
 
+    private const string DataConsentJson = """
+        {
+          "schema": 1,
+          "start": { "firstNodeId": "n7" },
+          "variables": [],
+          "nodes": [
+            { "id": "n7", "kind": "dataConsent", "title": "Política de datos", "text": "Hola {nombre}, lee https://empresa.co/datos y dinos si aceptas.", "outputs": { "accepted": "n8", "rejected": "n9" } },
+            { "id": "n8", "kind": "resolve", "title": "Fin", "text": null, "reasonId": null },
+            { "id": "n9", "kind": "resolve", "title": "Fin", "text": null, "reasonId": null }
+          ]
+        }
+        """;
+
+    [Fact]
+    public void ADataConsentNodeRoundTrips()
+    {
+        var flow = FlowJson.Parse(DataConsentJson);
+        var consent = Assert.IsType<DataConsentNode>(flow.Nodes[0]);
+
+        Assert.Equal("Hola {nombre}, lee https://empresa.co/datos y dinos si aceptas.", consent.Text);
+        Assert.Equal("Política de datos", consent.Title);
+        Assert.Equal("n8", consent.Outputs["accepted"]);
+        Assert.Equal("n9", consent.Outputs["rejected"]);
+
+        var serialized = FlowJson.Serialize(flow);
+        var again = Assert.IsType<DataConsentNode>(FlowJson.Parse(serialized).Nodes[0]);
+        Assert.Equal(consent.Text, again.Text);
+        Assert.Equal(consent.Outputs, again.Outputs);
+        Assert.Equal(serialized, FlowJson.Serialize(FlowJson.Parse(serialized)));
+
+        var written = Assert.IsType<JsonObject>(JsonNode.Parse(serialized)!["nodes"]![0]);
+        Assert.False(written.ContainsKey("buttons"));
+        Assert.False(written.ContainsKey("saveTo"));
+        Assert.False(written.ContainsKey("fallback"));
+    }
+
+    [Fact]
+    public void ADataConsentWithoutTextReadsEmpty()
+    {
+        var flow = FlowJson.Parse(DataConsentJson.Replace("\"text\": \"Hola {nombre}, lee https://empresa.co/datos y dinos si aceptas.\", ", string.Empty));
+
+        Assert.Equal(string.Empty, Assert.IsType<DataConsentNode>(flow.Nodes[0]).Text);
+    }
+
+    [Fact]
+    public void OutputsOfADataConsentAreAcceptedAndRejected()
+    {
+        var node = new DataConsentNode("n7", "Política", new Dictionary<string, string?>(), "t");
+
+        Assert.Equal(["accepted", "rejected"], FlowNodeKinds.OutputsOf(node));
+        Assert.Contains(FlowNodeKinds.DataConsent, FlowNodeKinds.All);
+        Assert.Equal(["Acepto", "No acepto"], DataConsentButtons.All.Select(button => button.Label));
+        Assert.Equal(["accepted", "rejected"], DataConsentButtons.All.Select(button => button.Id));
+    }
+
     private const string EveryKindJson = """
         {
           "schema": 1,
@@ -230,6 +285,7 @@ public sealed class FlowJsonTests
             { "id": "c1", "kind": "condition", "title": "¿Hay documento?", "match": "any", "rules": [ { "variable": "doc", "operator": "equals", "value": "123" }, { "variable": "foto.url", "operator": "isNotEmpty", "value": null } ], "outputs": { "yes": "bh", "no": "h1" } },
             { "id": "bh", "kind": "businessHours", "title": "Horario", "outputs": { "open": "w1", "closed": "h1" } },
             { "id": "w1", "kind": "http", "title": "Crear cliente", "connectionId": "11111111-1111-1111-1111-111111111111", "method": "POST", "path": "/customers/{doc}", "query": [ { "key": "source", "value": "bot" } ], "body": { "kind": "multipart", "template": null, "fields": [ { "key": "doc", "value": "{doc}" } ], "fileField": "file", "fileVariable": "foto" }, "timeoutSeconds": 5, "okWhen": [ 200, 201 ], "mapping": [ { "from": "data.id", "to": "orden" } ], "sampleResponse": { "data": { "id": 7, "tags": [ "a" ] } }, "outputs": { "ok": "r1", "error": "h1" } },
+            { "id": "dc", "kind": "dataConsent", "title": "Datos", "text": "Lee https://empresa.co/datos y acepta.", "outputs": { "accepted": "r1", "rejected": "h1" } },
             { "id": "h1", "kind": "handoff", "title": "Asesor", "text": "Te paso con un asesor.", "outputs": {} },
             { "id": "r1", "kind": "resolve", "title": "Listo", "text": "Tu orden es la {orden.id}.", "reasonId": "33333333-3333-3333-3333-333333333333", "outputs": {} }
           ]

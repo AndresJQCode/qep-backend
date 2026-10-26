@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
+using Modules.Messaging.Infrastructure.Webhook;
 
 namespace Modules.Messaging.Infrastructure.Persistence;
 
@@ -19,6 +20,34 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
              WHERE id = {conversationId} AND tenant_id = {tenantId} AND automation_status <> 'None'
             """, cancellationToken) > 0;
     }
+
+    public async Task<Guid?> LinkCustomerAsync(
+        Guid tenantId, Guid conversationId, Guid customerId, bool created, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var linked = await dbContext.Database.SqlQuery<LinkedRow>(
+            $"""
+            UPDATE messaging.conversations SET customer_id = {customerId}
+             WHERE id = {conversationId} AND tenant_id = {tenantId} AND customer_id IS NULL
+            RETURNING connection_id AS "ConnectionId"
+            """).ToListAsync(cancellationToken);
+        if (linked.Count == 1)
+        {
+            await ConversationEventRows.InsertAsync(dbContext, tenantId, linked[0].ConnectionId, conversationId,
+                new ConversationEvent(created ? ConversationEventType.CustomerCreated : ConversationEventType.CustomerLinked, CustomerId: customerId),
+                now, now, cancellationToken);
+        }
+
+        var current = await dbContext.Database.SqlQuery<Guid>(
+            $"""
+            SELECT customer_id AS "Value" FROM messaging.conversations
+             WHERE id = {conversationId} AND tenant_id = {tenantId} AND customer_id IS NOT NULL
+            """).ToListAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return current.Count == 0 ? null : current[0];
+    }
+
+    private sealed record LinkedRow(Guid ConnectionId);
 
     public async Task<bool> SetAutomationChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken) =>
         await dbContext.Database.ExecuteSqlAsync(

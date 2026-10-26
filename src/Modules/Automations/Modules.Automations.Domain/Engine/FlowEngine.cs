@@ -28,6 +28,7 @@ public static class FlowEngine
             EngineInput.Start => new Walk(flow, state, now).Go(flow.Start.FirstNodeId, StartNodeId),
             EngineInput.HttpResult result => OnHttpResult(flow, state, result, now),
             EngineInput.BusinessHours hours => OnBusinessHours(flow, state, hours, now),
+            EngineInput.DataConsent consent => OnDataConsent(flow, state, consent, now),
             EngineInput.CustomerMessage message => OnCustomerMessage(flow, settings, state, message, now),
             _ => throw new ArgumentOutOfRangeException(nameof(input), input.GetType().Name, "Entrada del motor desconocida."),
         };
@@ -61,8 +62,18 @@ public static class FlowEngine
             return walk.Restart(node);
         }
 
+        if (node is DataConsentNode && IsStaleConsentTap(state.ConsentPrompt, node.Id, message))
+        {
+            return walk.Reject(node, settings);
+        }
+
         if (CustomerReply.Classify(node, message, state.Variables) is ReplyOutcome.Output output)
         {
+            if (node is DataConsentNode consent)
+            {
+                return walk.Consent(consent, output.Name);
+            }
+
             walk.Save(SaveToOf(node), output.Saved);
             return walk.Leave(node, output.Name);
         }
@@ -82,11 +93,24 @@ public static class FlowEngine
             && TextMatch.Same(message.Text, settings.RestartKeyword);
     }
 
+    /// <summary>
+    /// Spec 2026-10-26 D-5 y D-6 (final review F1): los botones de Política de datos tienen ids fijos en todo bloque, versión y corrida, y
+    /// WhatsApp deja tocar los de un mensaje viejo, así que el id no ata el toque a su pregunta como en Botones (D-I5). Lo ata el mensaje que
+    /// cita: un toque sobre otra pregunta (una corrida abandonada, la de antes de una revocación) mostró otro texto y no es respuesta a ésta;
+    /// se trata como cualquier respuesta inválida. Lo escrito no tiene botón viejo y vale como hoy, y sin saber qué cita el toque o cuál fue
+    /// la pregunta no hay con qué compararlo.
+    /// </summary>
+    private static bool IsStaleConsentTap(ConsentPrompt? prompt, string nodeId, EngineInput.CustomerMessage message) =>
+        message is { ReplyId: not null, ReplyToMessageId: { } quoted }
+        && prompt is { PromptMessageId: { } promptMessageId }
+        && prompt.NodeId == nodeId
+        && quoted != promptMessageId;
+
     /// <summary>El bloque en que espera la corrida; el primero con ese id, como el diccionario de <see cref="Walk"/>.</summary>
     private static FlowNode? WaitingNode(FlowDefinition flow, string? nodeId) =>
         nodeId is null ? null : flow.Nodes.FirstOrDefault(node => node.Id == nodeId) is { } found && Waits(found) ? found : null;
 
-    private static bool Waits(FlowNode node) => node is OpenQuestionNode or ButtonsNode or ListNode or AttachmentNode;
+    private static bool Waits(FlowNode node) => node is OpenQuestionNode or ButtonsNode or ListNode or AttachmentNode or DataConsentNode;
 
     private static string? SaveToOf(FlowNode node) => node switch
     {
@@ -118,6 +142,24 @@ public static class FlowEngine
             ? new Walk(flow, state, now).Leave(node, hours.IsOpen ? FlowOutputs.Open : FlowOutputs.Closed)
             : Unchanged(state);
 
+    /// <summary>Spec 2026-10-26 D-2 y D-7: con una aceptación vigente sale por <c>accepted</c> sin preguntar; sin cliente al que registrarle
+    /// la respuesta, por <c>rejected</c>; si no, pregunta y espera.</summary>
+    private static StepResult OnDataConsent(FlowDefinition flow, RunState state, EngineInput.DataConsent consent, DateTimeOffset now)
+    {
+        if (PendingAt<DataConsentNode>(flow, state, consent.NodeId) is not { } node)
+        {
+            return Unchanged(state);
+        }
+
+        var walk = new Walk(flow, state, now);
+        if (consent.Accepted)
+        {
+            return walk.Leave(node, FlowOutputs.Accepted);
+        }
+
+        return consent.CanRecord ? walk.Ask(node) : walk.Leave(node, FlowOutputs.Rejected);
+    }
+
     /// <summary>
     /// El bloque que pidió el efecto externo, si la corrida sigue parada en él. Un resultado de otro bloque (la fila se reintentó y la
     /// corrida ya avanzó, o el procesador reejecutó un efecto viejo) no cambia nada.
@@ -145,6 +187,9 @@ public static class FlowEngine
         private int stepNumber;
         private int attempts;
 
+        // D-6: la pregunta de Política de datos que espera respuesta. Sólo Ask la pone; salir, reiniciar o entrar en un bloque la borra.
+        private ConsentPrompt? consentPrompt;
+
         public Walk(FlowDefinition flow, RunState state, DateTimeOffset now)
         {
             foreach (var node in flow.Nodes)
@@ -158,6 +203,7 @@ public static class FlowEngine
             currentNodeId = state.CurrentNodeId;
             stepNumber = state.StepNumber;
             attempts = state.Attempts;
+            consentPrompt = state.ConsentPrompt;
             this.now = now;
         }
 
@@ -172,6 +218,7 @@ public static class FlowEngine
         /// <summary>Termina la corrida <c>Failed</c> sin entrar en ningún bloque.</summary>
         public StepResult Fail(string nodeId, string reason)
         {
+            consentPrompt = null;
             effects.Add(new Effect.EndRun(nodeId, reason));
             status = RunStatus.Failed;
             return Result();
@@ -222,6 +269,13 @@ public static class FlowEngine
                 return Resend(node);
             }
 
+            // Spec 2026-10-26 D-4: Política de datos sin respuesta no pasa a un asesor ni reinicia: sale por «rejected» sin registrar nada.
+            if (node is DataConsentNode)
+            {
+                effects.Add(new Effect.DataConsentUnanswered(node.Id));
+                return Leave(node, FlowOutputs.Rejected);
+            }
+
             // D-2: sólo Pregunta abierta y Pedir adjunto tienen salida de agotamiento («invalid»); conectada, gana a la regla del chatbot.
             if (node is OpenQuestionNode or AttachmentNode && node.Outputs.GetValueOrDefault(FlowOutputs.Invalid) is not null)
             {
@@ -247,6 +301,7 @@ public static class FlowEngine
         {
             variables = variables.FixedOnly();
             attempts = 0;
+            consentPrompt = null;
             Record(node, TraceOutcomes.Restart);
             entered.Clear();
             return Go(firstNodeId, StartNodeId);
@@ -260,8 +315,37 @@ public static class FlowEngine
         /// <summary>Sale de <paramref name="node"/> (donde la corrida estaba parada) por <paramref name="output"/> y sigue el recorrido.</summary>
         public StepResult Leave(FlowNode node, string output)
         {
+            consentPrompt = null;
             Record(node, output);
             return Go(node.Outputs.GetValueOrDefault(output), node.Id);
+        }
+
+        /// <summary>Spec 2026-10-26 D-2: el cliente no tiene una aceptación vigente; se le pregunta con los botones fijos y se recuerda el
+        /// texto que se le mostró (D-6). No pasa por <see cref="Enter"/>: el bloque ya entró al pedir <see cref="Effect.CheckDataConsent"/>, y
+        /// los intentos de una respuesta inválida anterior se conservan. Como todo envío del mensaje de un bloque que espera, suma
+        /// <see cref="RunState.StepNumber"/> (ruling P2-R5): la respuesta a la verificación puede llegar en una unidad propia, y sin subirlo
+        /// la unidad siguiente partiría de la misma base y su reenvío reusaría el clientId de esta pregunta.</summary>
+        public StepResult Ask(DataConsentNode node)
+        {
+            stepNumber++;
+            var text = Text(node.Text);
+            consentPrompt = new ConsentPrompt(node.Id, text, null);
+            effects.Add(new Effect.SendInteractive(node.Id, new InteractiveMessage.Buttons(
+                text, [.. DataConsentButtons.All.Select(button => (button.Id, button.Label))])));
+            _ = Wait(node);
+            return Result();
+        }
+
+        /// <summary>Spec 2026-10-26 D-6: registra la respuesta con el texto que se le mostró al cliente, no con la plantilla interpolada de
+        /// nuevo. Sin pregunta recordada de este bloque (una corrida guardada antes de recordarla) se interpola ahora.</summary>
+        public StepResult Consent(DataConsentNode node, string output)
+        {
+            var (shownText, promptMessageId) = consentPrompt is { } prompt && prompt.NodeId == node.Id
+                ? (prompt.ShownText, prompt.PromptMessageId)
+                : (Text(node.Text), (Guid?)null);
+            var decision = output == FlowOutputs.Accepted ? DataConsentDecision.Accepted : DataConsentDecision.Rejected;
+            effects.Add(new Effect.RecordDataConsent(node.Id, decision, shownText, promptMessageId));
+            return Leave(node, output);
         }
 
         /// <summary>Entra en <paramref name="targetId"/> y en los que siguen hasta un bloque que espera o un final.</summary>
@@ -312,13 +396,15 @@ public static class FlowEngine
 
         /// <summary>
         /// Entra en un bloque: lo anota, emite lo que §5.4 dice «al entrar» y devuelve la salida que toma, o <c>null</c> si la corrida se
-        /// queda en él (espera, efecto externo o final). Es el único lugar que envía el mensaje de un bloque que espera, así que reenviarlo
-        /// tras una respuesta inválida (tarea 3) es volver a entrar: también suma <see cref="RunState.StepNumber"/> (ruling P2-R5).
+        /// queda en él (espera, efecto externo o final). Envía el mensaje de todo bloque que espera salvo Política de datos, que lo manda
+        /// <see cref="Ask"/> después de verificar la aceptación. Reenviarlo tras una respuesta inválida (tarea 3) es volver a entrar, así que
+        /// también suma <see cref="RunState.StepNumber"/>, como <see cref="Ask"/> (ruling P2-R5).
         /// </summary>
         private string? Enter(FlowNode node)
         {
             stepNumber++;
             currentNodeId = node.Id;
+            consentPrompt = null;
             switch (node)
             {
                 case MessageNode message:
@@ -328,6 +414,10 @@ public static class FlowEngine
                     return Took(node, Holds(condition) ? FlowOutputs.Yes : FlowOutputs.No);
                 case BusinessHoursNode:
                     effects.Add(new Effect.CheckBusinessHours(node.Id));
+                    return Stop(node, RunStatus.Running, TraceOutcomes.Pending);
+                case DataConsentNode:
+                    // D-2: primero se pregunta si el cliente ya aceptó; la respuesta vuelve como EngineInput.DataConsent.
+                    effects.Add(new Effect.CheckDataConsent(node.Id));
                     return Stop(node, RunStatus.Running, TraceOutcomes.Pending);
                 case HttpNode http:
                     effects.Add(new Effect.CallHttp(node.Id, http));
@@ -390,7 +480,7 @@ public static class FlowEngine
         }
 
         private StepResult Result() =>
-            new(new RunState(status, currentNodeId, stepNumber, attempts, variables, [.. trace]), [.. effects]);
+            new(new RunState(status, currentNodeId, stepNumber, attempts, variables, [.. trace], consentPrompt), [.. effects]);
 
         private string Text(string template) => TemplateText.Interpolate(template, variables);
 

@@ -286,6 +286,9 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
                 writer.WriteString("text", handoff.Text);
                 WriteGuid(writer, "memberId", handoff.MemberId);
                 break;
+            case DataConsentNode consent:
+                writer.WriteString("text", consent.Text);
+                break;
             case ResolveNode resolve:
                 writer.WriteString("text", resolve.Text);
                 WriteGuid(writer, "reasonId", resolve.ReasonId);
@@ -350,6 +353,7 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
             FlowNodeKinds.Http => ReadHttp(element, id, title, outputs, where),
             FlowNodeKinds.Handoff => new HandoffNode(
                 id, title, outputs, JsonFields.OptionalString(element, "text", where), JsonFields.OptionalGuid(element, "memberId", where)),
+            FlowNodeKinds.DataConsent => new DataConsentNode(id, title, outputs, JsonFields.Text(element, "text", where)),
             FlowNodeKinds.Resolve => new ResolveNode(
                 id, title, outputs, JsonFields.OptionalString(element, "text", where), JsonFields.OptionalGuid(element, "reasonId", where)),
             _ => throw new ArgumentOutOfRangeException(nameof(element), kind, "Tipo de bloque sin lectura definida."),

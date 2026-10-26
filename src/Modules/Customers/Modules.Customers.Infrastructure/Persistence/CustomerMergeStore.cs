@@ -94,6 +94,12 @@ internal sealed class CustomerMergeStore(CustomersDbContext dbContext) : ICustom
                     .SetProperty(address => address.CustomerId, survivor)
                     .SetProperty(address => address.IsPrincipal, false),
                 cancellationToken);
+        // Spec 2026-10-26 D-7: el historial de consentimiento es del cliente y pasa entero al que queda. Sólo cambia customer_id
+        // (es prueba legal: nada se recalcula ni se renumera, y el vigente sigue saliendo de (occurred_at, sequence)). El
+        // tenant filtra: las filas de otro tenant no se tocan aunque su id venga en la lista.
+        _ = await dbContext.DataConsents
+            .Where(consent => consent.TenantId == tenantId && ids.Contains(consent.CustomerId))
+            .ExecuteUpdateAsync(setters => setters.SetProperty(consent => consent.CustomerId, survivor), cancellationToken);
     }
 
     public async Task<Guid?> FindSurvivorIdAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)

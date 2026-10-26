@@ -205,6 +205,7 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
         run.Property(value => value.Attempts).HasColumnName("attempts").HasColumnType("smallint").HasDefaultValue(0);
         run.Property(value => value.VariablesJson).HasColumnName("variables").HasColumnType("jsonb").HasDefaultValueSql("'{}'");
         run.Property(value => value.TraceJson).HasColumnName("trace").HasColumnType("jsonb").HasDefaultValueSql("'[]'");
+        run.Property(value => value.ConsentPromptJson).HasColumnName("consent_prompt").HasColumnType("jsonb");
         run.Property(value => value.StartedAt).HasColumnName("started_at");
         run.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         run.Property(value => value.EndedAt).HasColumnName("ended_at");

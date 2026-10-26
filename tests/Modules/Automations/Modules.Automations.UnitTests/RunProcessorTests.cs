@@ -714,6 +714,174 @@ public sealed class RunProcessorTests
         Assert.Equal([AutomationsAuditActions.RunAbandoned], bed.Audit.Actions);
     }
 
+    // ---- Spec 2026-10-26: Política de datos por el puerto IAutomationDataConsents. ----
+
+    /// <summary>Política de datos → un Mensaje por cada salida.</summary>
+    private const string ConsentFlow = """
+        { "schema": 1, "start": { "firstNodeId": "consent" }, "variables": [],
+          "nodes": [
+            { "id": "consent", "kind": "dataConsent", "title": "Política de datos", "text": "Lee https://e.co/d y dinos si aceptas.", "outputs": { "accepted": "ok", "rejected": "no" } },
+            { "id": "ok", "kind": "message", "title": "Gracias", "text": "Gracias por aceptar.", "outputs": { "next": null } },
+            { "id": "no", "kind": "message", "title": "Entendido", "text": "Entendido.", "outputs": { "next": null } }
+          ] }
+        """;
+
+    /// <summary>D-2 y D-6: sin aceptación vigente pregunta con los botones fijos, espera, y recuerda el mensaje que salió.</summary>
+    [Fact]
+    public async Task TheConsentBlockAsksWhenThereIsNoAcceptance()
+    {
+        var bed = new Bed(null, flow: ConsentFlow, dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        var run = Assert.Single(bed.Runs.Added);
+        var (message, messageId) = Assert.Single(bed.Messenger.Interactives);
+        var buttons = Assert.IsType<InteractiveMessage.Buttons>(message);
+        Assert.Equal([("accepted", "Acepto"), ("rejected", "No acepto")], buttons.Items);
+        Assert.Equal(RunStatus.Waiting, run.Status);
+        Assert.Equal(new ConsentPrompt("consent", "Lee https://e.co/d y dinos si aceptas.", messageId), run.ToState().ConsentPrompt);
+        Assert.Equal([(TenantId, ConversationId)], bed.DataConsents.Checks);
+        Assert.Empty(bed.Messenger.Texts);
+    }
+
+    /// <summary>D-2: con una aceptación vigente no pregunta y sigue por <c>accepted</c>.</summary>
+    [Fact]
+    public async Task ACurrentAcceptanceSkipsTheQuestion()
+    {
+        var bed = new Bed(null, flow: ConsentFlow, dataConsents: new RecordingDataConsents(DataConsentCheck.Accepted));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Empty(bed.Messenger.Interactives);
+        Assert.Equal(["Gracias por aceptar."], bed.Messenger.Texts);
+        Assert.Empty(bed.DataConsents.Records);
+    }
+
+    /// <summary>D-7: sin cliente al que registrarle la respuesta no pregunta, sale por <c>rejected</c> y lo audita el sistema.</summary>
+    [Fact]
+    public async Task AnUnresolvableCustomerLeavesByRejectedAndAuditsTheSystem()
+    {
+        var bed = new Bed(null, flow: ConsentFlow, dataConsents: new RecordingDataConsents(DataConsentCheck.Unavailable));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Empty(bed.Messenger.Interactives);
+        Assert.Equal(["Entendido."], bed.Messenger.Texts);
+        Assert.Contains((AutomationsAuditActions.DataConsentUnavailable, true), bed.Audit.Entries);
+        Assert.Equal("automations.run.data_consent_unavailable", AutomationsAuditActions.DataConsentUnavailable);
+        Assert.Empty(bed.DataConsents.Records);
+    }
+
+    /// <summary>D-5 y D-10: el toque se registra con la versión de la corrida, el texto que se mostró, el mensaje de la pregunta y el
+    /// entrante que la respondió, antes de enviar el bloque siguiente.</summary>
+    [Fact]
+    public async Task ATapIsRecordedWithTheRunVersionAndTheReply()
+    {
+        var prompt = Guid.CreateVersion7();
+        var bed = new Bed(null, ActiveState(), flow: ConsentFlow, dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted));
+        bed.Runs.Added.Add(ConsentRun(new ConsentPrompt("consent", "Texto", prompt)));
+        bed.Inbox.Messages[Item.MessageId] = Tapped(Item.MessageId, "accepted");
+        int? sentBeforeRecord = null;
+        bed.DataConsents.OnRecord = () => sentBeforeRecord = bed.Messenger.Sent.Count;
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            [new DataConsentRecord(
+                TenantId, ConversationId, DataConsentDecision.Accepted, "Texto", prompt, Item.MessageId, ChatbotId, "Bienvenida", VersionId, 1, "consent")],
+            bed.DataConsents.Records);
+        Assert.Equal(0, sentBeforeRecord);
+        Assert.Equal(["Gracias por aceptar."], bed.Messenger.Texts);
+    }
+
+    /// <summary>D-5: una respuesta que no se pudo registrar falla la corrida antes de seguir; el Mensaje de <c>accepted</c> no sale.</summary>
+    [Fact]
+    public async Task AReplyThatCannotBeRecordedFailsTheRunBeforeContinuing()
+    {
+        var bed = new Bed(null, ActiveState(), flow: ConsentFlow, dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted, records: false));
+        var run = ConsentRun(new ConsentPrompt("consent", "Texto", Guid.CreateVersion7()));
+        bed.Runs.Added.Add(run);
+        bed.Inbox.Messages[Item.MessageId] = Tapped(Item.MessageId, "accepted");
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal((RunStatus.Failed, "automations.run.data_consent_unrecorded"), (run.Status, run.FailureCode));
+        Assert.Equal(AutomationsRunFailures.DataConsentUnrecorded, run.FailureCode);
+        Assert.Equal(
+            new HandoffCause(HandoffCauseKind.FlowFailed, "automations.run.data_consent_unrecorded", "consent", "Política de datos", null, null, null),
+            Assert.Single(bed.Conversations.Causes));
+        Assert.Empty(bed.Messenger.Sent);
+    }
+
+    /// <summary>Una excepción del puerto (un conflicto de concurrencia de Customers) no es «no se pudo registrar»: sube, la unidad se
+    /// deshace y la fila se reintenta, sin fallar la corrida ni enviar el bloque siguiente.</summary>
+    [Fact]
+    public async Task ARecordThatThrowsLeavesTheUnitRetryable()
+    {
+        var dataConsents = new RecordingDataConsents(DataConsentCheck.NotAccepted)
+        {
+            Failure = new RequestConcurrencyException("concurrency.conflict", "El cliente cambió."),
+        };
+        var bed = new Bed(null, ActiveState(), flow: ConsentFlow, dataConsents: dataConsents);
+        var run = ConsentRun(new ConsentPrompt("consent", "Texto", Guid.CreateVersion7()));
+        bed.Runs.Added.Add(run);
+        bed.Inbox.Messages[Item.MessageId] = Tapped(Item.MessageId, "accepted");
+
+        var outcome = await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Retry, outcome);
+        Assert.Equal([$"retry {Item.MessageId} 1 00:00:02"], bed.Inbox.Calls);
+        Assert.Equal((RunStatus.Waiting, (string?)null), (run.Status, run.FailureCode));
+        Assert.Empty(bed.Conversations.Handoffs);
+        Assert.Empty(bed.Messenger.Sent);
+    }
+
+    /// <summary>D-4: agotar los intentos sale por <c>rejected</c> sin registrar nada, y queda la auditoría.</summary>
+    [Fact]
+    public async Task ExhaustingTheConsentAuditsAndRecordsNothing()
+    {
+        var bed = new Bed(null, ActiveState(), flow: ConsentFlow, dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted));
+        var run = ConsentRun(new ConsentPrompt("consent", "Texto", Guid.CreateVersion7()));
+        bed.Runs.Added.Add(run);
+
+        for (var reply = 0; reply < 3; reply++)
+        {
+            await bed.Processor().ProcessAsync(Item with { MessageId = Guid.CreateVersion7() }, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Empty(bed.DataConsents.Records);
+        Assert.Contains((AutomationsAuditActions.DataConsentUnanswered, true), bed.Audit.Entries);
+        Assert.Equal("automations.run.data_consent_unanswered", AutomationsAuditActions.DataConsentUnanswered);
+        Assert.Equal(["Entendido."], bed.Messenger.Texts);
+        Assert.Equal(RunStatus.Completed, run.Status);
+    }
+
+    /// <summary>Una unidad que murió a mitad de la verificación deja la corrida <c>Running</c> en el bloque: se vuelve a preguntar.</summary>
+    [Fact]
+    public async Task ARunStuckOnTheConsentCheckAsksAgain()
+    {
+        var bed = new Bed(null, ActiveState(), flow: ConsentFlow, dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted));
+        var run = ConversationRun.Start(
+            Guid.CreateVersion7(), TenantId, ConversationId, ConnectionId, ChatbotId, VersionId,
+            RunState.Initial(RunVariables.Empty()) with { Status = RunStatus.Running, CurrentNodeId = "consent" }, DateTimeOffset.UtcNow.AddMinutes(-1));
+        bed.Runs.Added.Add(run);
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal([(TenantId, ConversationId)], bed.DataConsents.Checks);
+        Assert.Single(bed.Messenger.Interactives);
+        Assert.Equal(RunStatus.Waiting, run.Status);
+    }
+
+    private static ConversationRun ConsentRun(ConsentPrompt prompt) =>
+        ConversationRun.Start(
+            Guid.CreateVersion7(), TenantId, ConversationId, ConnectionId, ChatbotId, VersionId,
+            RunState.Initial(RunVariables.Empty()) with { Status = RunStatus.Waiting, CurrentNodeId = "consent", ConsentPrompt = prompt },
+            DateTimeOffset.UtcNow.AddMinutes(-1));
+
+    private static InboundMessage Tapped(Guid messageId, string replyId) =>
+        new(messageId, CustomerMessageKinds.Interactive, replyId == "accepted" ? "Acepto" : "No acepto", replyId, null, DateTimeOffset.UtcNow);
+
     /// <summary>Pedir adjunto → pregunta → mensaje que usa la url del adjunto (D-M8).</summary>
     private const string AttachmentFlow = """
         { "schema": 1, "start": { "firstNodeId": "n1" }, "variables": [ { "name": "factura", "type": "attachment" } ],
@@ -748,9 +916,11 @@ public sealed class RunProcessorTests
     private sealed class Bed(
         Exception? startFailure, AutomationConversationState? state = null, IClock? clock = null, Action? onLock = null, string? flow = Flow,
         IHttpBlockExecutor? http = null, bool moduleEnabled = true, bool lockBusy = false, Exception? endFailure = null, IAutomationMedia? media = null,
-        EngineSettings? engineSettings = null)
+        EngineSettings? engineSettings = null, RecordingDataConsents? dataConsents = null)
     {
         public RecordingInbox Inbox { get; } = new();
+
+        public RecordingDataConsents DataConsents { get; } = dataConsents ?? new(DataConsentCheck.NotAccepted);
 
         public MemoryRuns Runs { get; } = new();
 
@@ -767,7 +937,8 @@ public sealed class RunProcessorTests
             var hours = new OpenHours();
             var files = media ?? new NoMedia();
             var effects = new RunEffects(
-                Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), files, audit, NullLogger<RunEffects>.Instance);
+                Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), files, audit, DataConsents, new ServingChatbots(flow, engineSettings),
+                NullLogger<RunEffects>.Instance);
             return new RunProcessor(
                 new NoUnitOfWork(onLock, lockBusy), Runs, new ServingChatbots(flow, engineSettings), Inbox, conversations, new TenantNames(), new Connections(), hours,
                 files, new ModuleStatus(moduleEnabled), audit, effects, clock ?? new FixedClock(), NullLogger<RunProcessor>.Instance);
@@ -842,6 +1013,9 @@ public sealed class RunProcessorTests
 
         public Task<EngineSettings?> FindEngineSettingsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken) =>
             Task.FromResult<EngineSettings?>(settings ?? new EngineSettings(Chatbot.DefaultRestartKeyword, 3));
+
+        public Task<ChatbotVersionLabel?> FindVersionLabelAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken) =>
+            Task.FromResult<ChatbotVersionLabel?>(tenantId == TenantId && versionId == VersionId ? new ChatbotVersionLabel("Bienvenida", 1) : null);
 
         public Task<Chatbot?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) => throw new NotSupportedException();
 
@@ -947,6 +1121,9 @@ public sealed class RunProcessorTests
 
         public List<string> Texts { get; } = [];
 
+        /// <summary>Cada interactivo enviado con el id de mensaje que Mensajería devolvió.</summary>
+        public List<(InteractiveMessage Message, Guid MessageId)> Interactives { get; } = [];
+
         /// <summary>Cómo responde Mensajería a cada texto; sin respuesta, lo da por enviado.</summary>
         public Func<string, BotSendOutcome>? Reply { get; set; }
 
@@ -961,7 +1138,9 @@ public sealed class RunProcessorTests
             Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, InteractiveMessage message, CancellationToken cancellationToken)
         {
             Sent.Add(clientId);
-            return Task.FromResult<BotSendOutcome>(new BotSendOutcome.Sent(Guid.CreateVersion7()));
+            var messageId = Guid.CreateVersion7();
+            Interactives.Add((message, messageId));
+            return Task.FromResult<BotSendOutcome>(new BotSendOutcome.Sent(messageId));
         }
     }
 
@@ -1025,10 +1204,48 @@ public sealed class RunProcessorTests
 
     private sealed class RecordingAudit : IAutomationsAuditRecorder
     {
-        public List<string> Actions { get; } = [];
+        public List<(string Action, bool BySystem)> Entries { get; } = [];
+
+        public List<string> Actions => [.. Entries.Select(entry => entry.Action)];
 
         public void Record(Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset at) =>
-            Actions.Add(action);
+            Entries.Add((action, bySystem));
+    }
+
+    /// <summary>Spec 2026-10-26: el registro de Customers de mentira. Responde <paramref name="check"/> a cada verificación y
+    /// <paramref name="records"/> a cada registro; con <see cref="Failure"/>, el registro lanza como lo haría el adaptador.</summary>
+    private sealed class RecordingDataConsents(DataConsentCheck check, bool records = true) : IAutomationDataConsents
+    {
+        public List<(Guid TenantId, Guid ConversationId)> Checks { get; } = [];
+
+        public List<DataConsentRecord> Records { get; } = [];
+
+        public Exception? Failure { get; init; }
+
+        /// <summary>Corre al registrar, para que la prueba mire qué había salido hasta ese momento.</summary>
+        public Action? OnRecord { get; set; }
+
+        public Task<DataConsentCheck> CheckAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+        {
+            Checks.Add((tenantId, conversationId));
+            return Task.FromResult(check);
+        }
+
+        public Task<bool> RecordAsync(DataConsentRecord record, CancellationToken cancellationToken)
+        {
+            OnRecord?.Invoke();
+            if (Failure is not null)
+            {
+                return Task.FromException<bool>(Failure);
+            }
+
+            if (records)
+            {
+                Records.Add(record);
+            }
+
+            return Task.FromResult(records);
+        }
     }
 
     private sealed class FixedClock : IClock

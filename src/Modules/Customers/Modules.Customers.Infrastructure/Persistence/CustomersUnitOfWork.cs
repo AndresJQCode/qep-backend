@@ -102,6 +102,14 @@ internal sealed class CustomersUnitOfWork(CustomersDbContext dbContext) : ICusto
             dbContext.ChangeTracker.Clear();
             throw new InstagramUserIdTakenException(exception);
         }
+        catch (DbUpdateException exception) when (IsUniqueViolationOf(exception, CustomersDbContext.DataConsentReplyIndex))
+        {
+            // Spec 2026-10-26 D-5: un lote que se reintenta llegó con una respuesta ya registrada. Quien registra lo lee como
+            // «ya registrado». El tracker se limpia como con el BSUID: la fila que no entró quedaría Added y el siguiente
+            // SaveChanges del scope la reintentaría (Clear descarta también cualquier otro cambio pendiente del scope).
+            dbContext.ChangeTracker.Clear();
+            throw new DataConsentReplyRecordedException(exception);
+        }
         catch (DbUpdateException exception)
             when (IsUniqueViolationOf(exception, CustomersDbContext.TagNameIndex))
         {

@@ -382,6 +382,10 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("connection_id");
 
+                    b.Property<string>("ConsentPromptJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("consent_prompt");
+
                     b.Property<Guid>("ConversationId")
                         .HasColumnType("uuid")
                         .HasColumnName("conversation_id");

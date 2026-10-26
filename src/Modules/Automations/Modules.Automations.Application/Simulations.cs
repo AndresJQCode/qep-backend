@@ -60,7 +60,7 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
                     case Effect.WaitForCustomer:
                         // El estado ya dice en qué bloque espera: currentNodeId es lo que el lienzo marca.
                         break;
-                    case Effect.CheckBusinessHours or Effect.CallHttp:
+                    case Effect.CheckBusinessHours or Effect.CallHttp or Effect.CheckDataConsent:
                         // P2-R40: el mismo tope de reentradas que el procesador.
                         if (++external > EngineReentries.Max)
                         {
@@ -68,10 +68,25 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
                             return (state with { Status = RunStatus.Failed }, lines.All);
                         }
 
-                        next = effect is Effect.CallHttp call
-                            ? await CallHttpAsync(call, state.Variables, context, lines, cancellationToken)
-                            : new EngineInput.BusinessHours(
-                                effect.NodeId, await businessHours.IsOpenAsync(context.TenantId, context.ConnectionId, cancellationToken));
+                        next = effect switch
+                        {
+                            Effect.CallHttp call => await CallHttpAsync(call, state.Variables, context, lines, cancellationToken),
+                            // Spec 2026-10-26 D-11: el simulador no consulta el registro: siempre pregunta.
+                            Effect.CheckDataConsent => new EngineInput.DataConsent(effect.NodeId, Accepted: false),
+                            _ => new EngineInput.BusinessHours(
+                                effect.NodeId, await businessHours.IsOpenAsync(context.TenantId, context.ConnectionId, cancellationToken)),
+                        };
+                        break;
+                    case Effect.RecordDataConsent record:
+                        // D-11: el simulador no escribe en customers.data_consents; sólo dice qué registraría.
+                        lines.System(
+                            record.NodeId,
+                            record.Decision == DataConsentDecision.Accepted
+                                ? "Registraría que el cliente aceptó la política de datos."
+                                : "Registraría que el cliente no aceptó la política de datos.");
+                        break;
+                    case Effect.DataConsentUnanswered unanswered:
+                        lines.System(unanswered.NodeId, "Seguiría por «No acepto» sin registrar nada: se agotaron los intentos.");
                         break;
                     case Effect.Handoff handoff:
                         // Spec 2026-10-25 D-4: el simulador dice adónde iría el traspaso, no sólo que ocurre.

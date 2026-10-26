@@ -47,6 +47,9 @@ internal static class EngagementTestBed
 
         public void PublishByIntegration(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
             Events.Add((tenantId, Guid.Empty, action, resourceId));
+
+        public void PublishBySystem(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+            Events.Add((tenantId, Guid.Empty, action, resourceId));
     }
 
     public sealed class CountingUnitOfWork : ICustomersUnitOfWork

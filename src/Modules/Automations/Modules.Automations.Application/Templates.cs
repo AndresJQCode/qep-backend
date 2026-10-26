@@ -119,6 +119,7 @@ public static partial class TemplateParameters
             },
             AttachmentNode attachment => attachment with { Title = Text(attachment.Title), Text = Text(attachment.Text) },
             HandoffNode handoff => handoff with { Title = Text(handoff.Title), Text = Optional(handoff.Text) },
+            DataConsentNode consent => consent with { Title = Text(consent.Title), Text = Text(consent.Text) },
             ResolveNode resolve => resolve with { Title = Text(resolve.Title), Text = Optional(resolve.Text) },
             // Condición, horario y HTTP no tienen texto que el cliente lea: sólo el título del bloque.
             ConditionNode condition => condition with { Title = Text(condition.Title) },

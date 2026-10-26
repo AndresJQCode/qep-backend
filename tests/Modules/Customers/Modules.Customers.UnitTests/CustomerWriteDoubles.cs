@@ -37,11 +37,16 @@ internal static class CustomerWriteDoubles
 
         public List<(Guid Tenant, string Action, string ResourceId, string Outcome)> ByIntegration { get; } = [];
 
+        public List<(Guid Tenant, string Action, string ResourceId, string Outcome)> BySystem { get; } = [];
+
         public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, string? source = null) =>
             Human.Add((tenantId, actorId, action, resourceId, outcome, source));
 
         public void PublishByIntegration(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
             ByIntegration.Add((tenantId, action, resourceId, outcome));
+
+        public void PublishBySystem(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+            BySystem.Add((tenantId, action, resourceId, outcome));
     }
 
     public sealed class UnitOfWork(Exception? failure = null) : ICustomersUnitOfWork

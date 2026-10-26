@@ -423,7 +423,7 @@ public sealed partial class RunProcessor(
     {
         if (inbound.Attachment is not { } attachment)
         {
-            return new EngineInput.CustomerMessage(inbound.Kind, inbound.Text, inbound.ReplyId, null);
+            return new EngineInput.CustomerMessage(inbound.Kind, inbound.Text, inbound.ReplyId, null, inbound.ReplyToMessageId);
         }
 
         string? url = null;
@@ -435,7 +435,8 @@ public sealed partial class RunProcessor(
         }
 
         return new EngineInput.CustomerMessage(
-            inbound.Kind, inbound.Text, inbound.ReplyId, new AttachmentInput(inbound.MessageId, attachment.FileName, attachment.MimeType, attachment.Stored, url));
+            inbound.Kind, inbound.Text, inbound.ReplyId, new AttachmentInput(inbound.MessageId, attachment.FileName, attachment.MimeType, attachment.Stored, url),
+            inbound.ReplyToMessageId);
     }
 
     /// <summary><c>null</c> si la versión no existe o no se puede leer (una guardada corrupta): como en P2-R13/R14, lanzar reintentaría la

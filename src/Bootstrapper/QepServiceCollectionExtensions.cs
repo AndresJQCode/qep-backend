@@ -332,6 +332,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetCustomerMergePreviewQuery, CustomerMergePreviewResponse>,
             GetCustomerMergePreviewHandler>();
+        // Spec 2026-10-26 D-8: el estado y el historial de la autorización de datos.
+        services.AddScoped<
+            IQueryHandler<GetCustomerDataConsentQuery, CustomerDataConsentDto>,
+            GetCustomerDataConsentHandler>();
+        // Spec 2026-10-26 D-5 (medium) y D-9: la revocación de un miembro. El validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<
+            ICommandHandler<RevokeDataConsentCommand, CustomerDataConsentDto>,
+            RevokeDataConsentHandler>();
         services.AddScoped<
             ICommandHandler<MergeCustomersCommand, CustomerMergeResult>,
             MergeCustomersHandler>();
@@ -972,6 +980,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAutomationExternalApis, AutomationExternalApis>();
         // Spec 2026-10-25 D-5: los miembros que pueden responder, los mismos que ofrece «Transferir».
         services.AddScoped<IAutomationMembers, AutomationMembers>();
+        // Spec 2026-10-26 D-5, D-7 y D-10: la autorización de datos del cliente de la conversación, en Customers.
+        services.AddScoped<IAutomationDataConsents, AutomationDataConsents>();
         services.AddScoped<IAutomationBusinessHours, AutomationBusinessHours>();
         // Spec 2026-10-21 D-H2, D-H5 y fallo P2-R31: el cliente del bloque HTTP va acá y no en AddAutomationsInfrastructure porque su handler
         // primario (anti-SSRF: sin redirecciones, sin proxy, ConnectCallback que rechaza rangos internos) es de Integrations.Infrastructure.
@@ -996,6 +1006,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IMessagingTenantNames, MessagingTenantNames>();
         // Spec 2026-10-11 §4.2: el autor de una nota de cliente (usuario, no membresía) con su nombre visible.
         services.AddScoped<ICustomerAuthorNames, CustomersAuthorNames>();
+        // Spec 2026-10-26 D-5 (medium): la conversación por la que se revoca la autorización de datos, por Mensajería.
+        services.AddScoped<ICustomerConversations, CustomersConversations>();
         // Spec 2026-10-10 §6.1.3: quién puede responder, por Tenancy, Identity y Authorization.
         services.AddScoped<IMessagingAssignees, MessagingAssignees>();
         // Messaging (spec 2026-10-09 §6.4 y §8.6): la copia de los medios entrantes, en el bucket privado de Storage.
@@ -1195,6 +1207,8 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.CustomerImport,
                 // Spec 2026-10-24 D-F1: fusionar duplicados es trabajo de quien atiende al cliente y del admin.
                 CustomersPermissions.CustomerMerge,
+                // Spec 2026-10-26 D-9: quien atiende al titular registra su revocación; el admin también.
+                CustomersPermissions.DataConsentRevoke,
                 CustomersPermissions.ClassificationRead,
                 CustomersPermissions.ClassificationManage,
                 // Spec 2026-10-11 §4.3: renombrar o borrar etiquetas y borrar notas ajenas. Sólo admin: el
@@ -1297,6 +1311,8 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.CustomerManage,
                 // Spec 2026-10-24 D-F1: el asesor es quien ve los duplicados en la bandeja y en el listado.
                 CustomersPermissions.CustomerMerge,
+                // Spec 2026-10-26 D-9: el asesor es quien recibe el pedido de revocación del titular.
+                CustomersPermissions.DataConsentRevoke,
                 // Mismo criterio que CustomerRead/CustomerManage y no el de CustomerImport:
                 // gestionar clasificaciones es trabajo diario de un asesor, no una operacion
                 // privilegiada.
@@ -1517,6 +1533,13 @@ public static class QepServiceCollectionExtensions
             CustomersPermissions.CustomerMerge,
             "Fusionar clientes",
             "Permite fusionar clientes duplicados en uno. No se puede deshacer.",
+            "Customers",
+            "high",
+            RequiredModules: [ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.DataConsentRevoke,
+            "Revocar autorización de datos",
+            "Permite registrar que un cliente revocó su autorización de tratamiento de datos personales.",
             "Customers",
             "high",
             RequiredModules: [ModuleKeys.Customers]));
@@ -2036,6 +2059,11 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 CustomersPermissions.CustomerMerge,
                 policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerMerge))
+            // La otra mitad del permiso de revocar la autorización de datos (spec 2026-10-26 D-9). Sin esta política la ruta
+            // POST …/data-consent/revocations no resuelve y el síntoma es 500.
+            .AddPolicy(
+                CustomersPermissions.DataConsentRevoke,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.DataConsentRevoke))
             // La otra mitad del permiso de clasificaciones. Sin esta politica RequireAuthorization
             // no resuelve y el sintoma es 500, no 403 — mismo gotcha que TaxRateRead/TaxRateManage.
             .AddPolicy(

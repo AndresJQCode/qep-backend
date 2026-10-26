@@ -28,4 +28,15 @@ public interface ICustomersAuditPublisher
         string resourceId,
         string outcome,
         DateTimeOffset occurredAt);
+
+    /// <summary>
+    /// Spec 2026-10-26 D-9: lo que registra el sistema sin persona detrás ni integración externa (la respuesta al bot de la
+    /// política de datos). Va con actor vacío y tipo <c>System</c>.
+    /// </summary>
+    void PublishBySystem(
+        Guid tenantId,
+        string action,
+        string resourceId,
+        string outcome,
+        DateTimeOffset occurredAt);
 }

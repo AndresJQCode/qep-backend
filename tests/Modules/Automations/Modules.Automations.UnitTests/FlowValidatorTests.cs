@@ -640,6 +640,76 @@ public sealed class FlowValidatorTests
             FlowValidator.Validate(Flow(Question(new QuestionValidation("keywords", null, ["sí", "no"]), 3), End()), Ctx()),
             i => i.Code == "question.keywords_empty");
 
+    // D-3: Política de datos — texto, aviso sin enlace y las dos salidas fijas.
+    [Fact]
+    public void AnEmptyConsentTextIsAnError()
+    {
+        var issue = Single(FlowValidator.Validate(Flow(Consent("  "), End()), Ctx()), "text.empty");
+
+        Assert.Equal((FlowIssueSeverity.Error, "n1"), (issue.Severity, issue.NodeId));
+    }
+
+    [Fact]
+    public void AConsentTextOver1024IsAnError()
+    {
+        var issue = Single(FlowValidator.Validate(Flow(Consent(new string('a', 1025)), End()), Ctx()), "text.too_long");
+
+        Assert.Equal((FlowIssueSeverity.Error, "n1"), (issue.Severity, issue.NodeId));
+        Assert.Contains("el máximo es 1024", issue.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Acepta nuestra política")]
+    [InlineData("Lee empresa.co/datos")]
+    public void AConsentTextWithoutALinkIsOnlyAWarning(string text)
+    {
+        var issues = FlowValidator.Validate(Flow(Consent(text), End()), Ctx());
+
+        var issue = Single(issues, "data_consent.no_link");
+        Assert.Equal(FlowIssueSeverity.Warning, issue.Severity);
+        Assert.Equal("n1", issue.NodeId);
+        Assert.Equal("El texto de «Política de datos» no tiene un enlace a tu política de datos.", issue.Message);
+        Assert.DoesNotContain(issues, i => i.Severity == FlowIssueSeverity.Error);
+    }
+
+    [Theory]
+    [InlineData("Lee https://empresa.co/datos")]
+    [InlineData("HTTP://empresa.co")]
+    public void AConsentTextWithALinkHasNoWarning(string text) =>
+        Assert.DoesNotContain(FlowValidator.Validate(Flow(Consent(text), End()), Ctx()), i => i.Code == "data_consent.no_link");
+
+    [Fact]
+    public void UnconnectedConsentOutputsAreErrorsNamedLikeTheButtons()
+    {
+        var accepted = Single(FlowValidator.Validate(Flow(Consent(accepted: null), End()), Ctx()), "node.output_unconnected");
+        var rejected = Single(FlowValidator.Validate(Flow(Consent(rejected: null), End()), Ctx()), "node.output_unconnected");
+
+        Assert.Equal(FlowIssueSeverity.Error, accepted.Severity);
+        Assert.Equal("La salida «Acepto» de «Política de datos» no está conectada.", accepted.Message);
+        Assert.Equal(FlowIssueSeverity.Error, rejected.Severity);
+        Assert.Equal("La salida «No acepto» de «Política de datos» no está conectada.", rejected.Message);
+    }
+
+    [Fact]
+    public void AVariableInTheConsentTextCounts()
+    {
+        var issue = Single(FlowValidator.Validate(Flow(Consent("{cedula} lee https://empresa.co/datos"), End()), Ctx()), "variable.never_set");
+
+        Assert.Equal(FlowIssueSeverity.Warning, issue.Severity);
+    }
+
+    [Fact]
+    public void AConsentReachesBothOutputs()
+    {
+        var other = new HandoffNode("other", "Otro asesor", Out(), null);
+        var flow = Flow(Consent(accepted: "end", rejected: "other"), End(), other);
+
+        Assert.DoesNotContain(FlowValidator.Validate(flow, Ctx()), i => i.Code == "node.unreachable");
+    }
+
+    private static DataConsentNode Consent(string text = "Lee https://empresa.co/datos", string? accepted = "end", string? rejected = "end") =>
+        new("n1", "Política de datos", Out(("accepted", accepted), ("rejected", rejected)), text);
+
     private static OpenQuestionNode Question(QuestionValidation validation, int? attempts) =>
         new("n1", "Documento", Out(("answered", "end"), ("invalid", "end")), "¿Documento?", "cedula", validation, attempts);
 

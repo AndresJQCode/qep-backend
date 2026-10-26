@@ -48,6 +48,12 @@ public interface IConversationRepository
     /// al asistente y la conexión ya la sirve otro chatbot. Mismo criterio que <see cref="SetAutomationStepAsync"/>: una sentencia, sin
     /// token ni <c>version</c>, sólo con el asistente activo; <c>true</c> si escribió.</summary>
     Task<bool> SetAutomationChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-26 D-5/D-7: cuelga el cliente de una conversación que no tiene uno (<c>customer_id IS NULL</c>), en una
+    /// transacción con su evento <c>CustomerCreated</c> (si <paramref name="created"/>) o <c>CustomerLinked</c>, como la ingesta. Una
+    /// sentencia sin token ni <c>version</c>, como <see cref="SetAutomationStepAsync"/>. Devuelve el <c>customer_id</c> que quedó: el
+    /// de otro si ganó la carrera, o <c>null</c> si la conversación no es del tenant.</summary>
+    Task<Guid?> LinkCustomerAsync(Guid tenantId, Guid conversationId, Guid customerId, bool created, DateTimeOffset now, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-10 §8.5 paso 5.</summary>

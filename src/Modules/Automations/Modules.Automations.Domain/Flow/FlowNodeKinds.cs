@@ -15,10 +15,11 @@ public static class FlowNodeKinds
     public const string Http = "http";
     public const string Handoff = "handoff";
     public const string Resolve = "resolve";
+    public const string DataConsent = "dataConsent";
 
     public static readonly IReadOnlySet<string> All = new[]
     {
-        Message, OpenQuestion, Buttons, List, Attachment, Condition, BusinessHours, Http, Handoff, Resolve,
+        Message, OpenQuestion, Buttons, List, Attachment, Condition, BusinessHours, Http, Handoff, Resolve, DataConsent,
     }.ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>
@@ -36,6 +37,7 @@ public static class FlowNodeKinds
         ButtonsNode buttons => [.. buttons.Buttons.Select(button => button.Id), .. OtherOutput(buttons.Fallback)],
         ListNode list => ListOutputs(list),
         AttachmentNode => [FlowOutputs.Received, FlowOutputs.Invalid],
+        DataConsentNode => [FlowOutputs.Accepted, FlowOutputs.Rejected],
         HandoffNode or ResolveNode => [],
         _ => throw new ArgumentOutOfRangeException(nameof(node), node.Kind, "Bloque sin salidas definidas."),
     };
@@ -82,4 +84,6 @@ public static class FlowOutputs
     public const string Closed = "closed";
     public const string Ok = "ok";
     public const string Error = "error";
+    public const string Accepted = "accepted";
+    public const string Rejected = "rejected";
 }
