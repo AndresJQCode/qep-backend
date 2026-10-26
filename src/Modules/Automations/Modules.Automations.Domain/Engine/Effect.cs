@@ -20,8 +20,9 @@ public abstract record Effect(string NodeId)
     public sealed record WaitForCustomer(string NodeId, string StepTitle) : Effect(NodeId);
 
     /// <summary>Spec 2026-10-24 D-T9: <see cref="Reason"/> es uno de <see cref="HandoffReasons"/>; lo dice el motor, que es quien sabe por
-    /// qué camino llegó, en vez de que el procesador lo deduzca por el tipo de bloque.</summary>
-    public sealed record Handoff(string NodeId, string Reason = HandoffReasons.Block) : Effect(NodeId);
+    /// qué camino llegó, en vez de que el procesador lo deduzca por el tipo de bloque. <see cref="MemberId"/> (spec 2026-10-25 D-1) es a quién
+    /// se asigna; <c>null</c> deja la conversación sin asignar.</summary>
+    public sealed record Handoff(string NodeId, string Reason = HandoffReasons.Block, Guid? MemberId = null) : Effect(NodeId);
 
     public sealed record Resolve(string NodeId, Guid? ReasonId) : Effect(NodeId);
 
@@ -40,6 +41,9 @@ public static class HandoffReasons
 
     /// <summary>Botones o Lista con <c>fallback = handoff</c> y una respuesta inválida.</summary>
     public const string InvalidReply = "invalid_reply";
+
+    /// <summary>Spec 2026-10-25 D-2: se agotaron los intentos y la regla del chatbot es pasar a un asesor.</summary>
+    public const string AttemptsExhausted = "attempts_exhausted";
 }
 
 public static class EndReasons

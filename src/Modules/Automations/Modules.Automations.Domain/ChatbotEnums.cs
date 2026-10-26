@@ -19,3 +19,11 @@ public enum ChatbotTrigger
     Keyword,
     OutsideHours,
 }
+
+/// <summary>Spec 2026-10-25 D-2: qué hace el motor cuando se agotan los intentos de un bloque sin salida de agotamiento conectada.
+/// <c>Restart</c> reinicia la corrida (el comportamiento de siempre); <c>Handoff</c> la pasa a un asesor. Se guarda por nombre.</summary>
+public enum AttemptsExhaustedAction
+{
+    Restart,
+    Handoff,
+}

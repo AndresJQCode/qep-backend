@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Modules.Automations.Domain;
 using Modules.Automations.Domain.Engine;
 using Modules.Automations.Domain.Flow;
 
@@ -13,13 +14,19 @@ public sealed class FlowEngineWaitingTests
 
     private static FlowDefinition Flow(params FlowNode[] nodes) => new(FlowDefinition.CurrentSchema, new FlowStart(nodes[0].Id), [], nodes);
 
-    private static EngineSettings Settings() => new("reiniciar", 3);
+    private static readonly Guid Member = Guid.Parse("44444444-4444-4444-4444-444444444444");
 
-    private static StepResult Start(FlowDefinition flow, RunVariables? variables = null) =>
-        FlowEngine.Step(flow, Settings(), RunState.Initial(variables ?? RunVariables.Empty()), new EngineInput.Start(), Now);
+    private static EngineSettings Settings(AttemptsExhaustedAction action = AttemptsExhaustedAction.Restart, Guid? member = null) =>
+        new("reiniciar", 3, action, member);
 
-    private static StepResult Reply(FlowDefinition flow, StepResult previous, EngineInput.CustomerMessage message) =>
-        FlowEngine.Step(flow, Settings(), previous.State, message, Now);
+    private static StepResult Start(FlowDefinition flow, RunVariables? variables = null, EngineSettings? settings = null) =>
+        FlowEngine.Step(flow, settings ?? Settings(), RunState.Initial(variables ?? RunVariables.Empty()), new EngineInput.Start(), Now);
+
+    private static StepResult Reply(FlowDefinition flow, StepResult previous, EngineInput.CustomerMessage message, EngineSettings? settings = null) =>
+        FlowEngine.Step(flow, settings ?? Settings(), previous.State, message, Now);
+
+    private static StepResult RepliesWith(EngineSettings settings, FlowDefinition flow, StepResult previous, params EngineInput.CustomerMessage[] messages) =>
+        messages.Aggregate(previous, (result, message) => Reply(flow, result, message, settings));
 
     /// <summary>Varias respuestas seguidas, una por paso, como las procesa el worker (§5.2: un entrante por unidad).</summary>
     private static StepResult Replies(FlowDefinition flow, StepResult previous, params EngineInput.CustomerMessage[] messages) =>
@@ -43,9 +50,9 @@ public sealed class FlowEngineWaitingTests
         new(id, "Número de documento", Out((FlowOutputs.Answered, answered), (FlowOutputs.Invalid, invalid)), "¿Cuál es tu número de documento?",
             saveTo, new QuestionValidation(validation, pattern, keywords), maxAttempts);
 
-    private static ButtonsNode Buttons(string id, string fallback = InteractiveFallbacks.Repeat, string? other = null) =>
+    private static ButtonsNode Buttons(string id, string fallback = InteractiveFallbacks.Repeat, string? other = null, Guid? fallbackMember = null) =>
         new(id, "Motivo", Out(("tech", "t"), ("sales", "s"), (FlowOutputs.Other, other)), "¿En qué te ayudamos?",
-            [new FlowButton("tech", "Servicio técnico"), new FlowButton("sales", "Ventas")], "motivo", fallback);
+            [new FlowButton("tech", "Servicio técnico"), new FlowButton("sales", "Ventas")], "motivo", fallback, fallbackMember);
 
     private static ListNode EquipmentList(string id, bool extra = true, string fallback = InteractiveFallbacks.Repeat, string? tooMany = "muchos") =>
         new(id, "Equipo", Out((FlowOutputs.Chosen, "elegido"), (FlowOutputs.Extra, "otra"), (FlowOutputs.TooMany, tooMany), (FlowOutputs.Other, null)),
@@ -626,8 +633,9 @@ public sealed class FlowEngineWaitingTests
     }
 
     [Fact]
-    public void ExhaustedRepeatButtonsTakeOtherWhenConnected()
+    public void ExhaustedRepeatButtonsIgnoreAHiddenOtherAndRestart()
     {
+        // Spec 2026-10-25 D-4: con «repeat» la salida «other» no se dibuja; aunque el JSON la traiga conectada, nadie la sigue.
         var flow = Flow(Buttons("b", other: "o"), Message("t", "Técnico"), Message("s", "Ventas"), Message("o", "Te paso"));
         var started = Start(flow);
 
@@ -637,8 +645,100 @@ public sealed class FlowEngineWaitingTests
 
         AssertResent(first, "b", attempts: 1);
         AssertResent(second, "b", attempts: 2);
-        Assert.Equal("o", third.State.CurrentNodeId);
-        Assert.Contains(third.State.Trace, entry => entry is { NodeId: "b", Outcome: FlowOutputs.Other });
+        Assert.Contains(third.State.Trace, entry => entry is { NodeId: "b", Outcome: TraceOutcomes.Restart });
+        Assert.DoesNotContain(third.State.Trace, entry => entry is { NodeId: "b", Outcome: FlowOutputs.Other });
+        Assert.Equal(0, third.State.Attempts);
+    }
+
+    [Fact]
+    public void ExhaustedAttemptsHandOffUnassignedWithTheChatbotRule()
+    {
+        var flow = Flow(Question("q", QuestionValidationKinds.Digits, invalid: null), Message("ok", "Gracias"));
+        var settings = Settings(AttemptsExhaustedAction.Handoff);
+
+        var result = RepliesWith(settings, flow, Start(flow, settings: settings), Typed("abc"), Typed("abc"), Typed("abc"));
+
+        Assert.Equal<Effect>([new Effect.Handoff("q", HandoffReasons.AttemptsExhausted, null)], result.Effects);
+        Assert.Equal(RunStatus.HandedOff, result.State.Status);
+        Assert.Equal("q", result.State.CurrentNodeId);
+    }
+
+    [Fact]
+    public void ExhaustedAttemptsHandOffToTheChosenMember()
+    {
+        var flow = Flow(Question("q", QuestionValidationKinds.Digits, invalid: null), Message("ok", "Gracias"));
+        var settings = Settings(AttemptsExhaustedAction.Handoff, Member);
+
+        var result = RepliesWith(settings, flow, Start(flow, settings: settings), Typed("abc"), Typed("abc"), Typed("abc"));
+
+        Assert.Equal<Effect>([new Effect.Handoff("q", HandoffReasons.AttemptsExhausted, Member)], result.Effects);
+        Assert.Equal(RunStatus.HandedOff, result.State.Status);
+    }
+
+    [Fact]
+    public void ExhaustedRepeatButtonsApplyTheChatbotRule()
+    {
+        var flow = Flow(Buttons("b"), Message("t", "Técnico"), Message("s", "Ventas"));
+        var settings = Settings(AttemptsExhaustedAction.Handoff, Member);
+
+        var result = RepliesWith(settings, flow, Start(flow, settings: settings), Typed("x"), Typed("y"), Typed("z"));
+
+        Assert.Equal<Effect>([new Effect.Handoff("b", HandoffReasons.AttemptsExhausted, Member)], result.Effects);
+        Assert.Equal(RunStatus.HandedOff, result.State.Status);
+    }
+
+    [Fact]
+    public void AConnectedInvalidStillWinsOverTheRule()
+    {
+        // D-2: la regla del chatbot sólo aplica cuando la salida de agotamiento no está conectada.
+        var flow = Flow(Question("n1", QuestionValidationKinds.Digits, invalid: "bad"), Message("ok", "Gracias"), Message("bad", "No válido"));
+        var settings = Settings(AttemptsExhaustedAction.Handoff);
+
+        var result = RepliesWith(settings, flow, Start(flow, settings: settings), Typed("abc"), Typed("abc"), Typed("abc"));
+
+        Assert.Equal("bad", result.State.CurrentNodeId);
+        Assert.DoesNotContain(result.Effects, effect => effect is Effect.Handoff);
+    }
+
+    [Fact]
+    public void AnUnconnectedOtherOutputRepeatsThenAppliesTheRule()
+    {
+        // D-3: un borrador simulado sin validar puede traer «otherOutput» sin «other»; reenvía y al agotar manda la regla.
+        var flow = Flow(Buttons("b", "otherOutput"), Message("t", "Técnico"), Message("s", "Ventas"));
+        var settings = Settings(AttemptsExhaustedAction.Handoff);
+
+        var first = Reply(flow, Start(flow, settings: settings), Typed("x"), settings);
+        AssertResent(first, "b", attempts: 1);
+
+        var third = RepliesWith(settings, flow, first, Typed("y"), Typed("z"));
+
+        Assert.Equal<Effect>([new Effect.Handoff("b", HandoffReasons.AttemptsExhausted, null)], third.Effects);
+    }
+
+    [Fact]
+    public void AHandoffFallbackCarriesItsMember()
+    {
+        var flow = Flow(Buttons("b", InteractiveFallbacks.Handoff, fallbackMember: Member), Message("t", "Técnico"), Message("s", "Ventas"));
+
+        var result = Reply(flow, Start(flow), Typed("x"));
+
+        Assert.Equal<Effect>([new Effect.Handoff("b", HandoffReasons.InvalidReply, Member)], result.Effects);
+    }
+
+    [Fact]
+    public void TheRestartKeywordRestartsWhateverTheRule()
+    {
+        // D-2: la palabra de reinicio gana a la regla del chatbot.
+        var flow = Flow(Question("q0", saveTo: "motivo", answered: "b"), Buttons("b"), Message("t", "Técnico"), Message("s", "Ventas"));
+        var settings = Settings(AttemptsExhaustedAction.Handoff, Member);
+        var atButtons = RepliesWith(settings, flow, Start(flow, settings: settings), Typed("Tengo una falla"), Typed("no sé"));
+
+        var restarted = Reply(flow, atButtons, Typed("reiniciar"), settings);
+
+        Assert.Equal("q0", restarted.State.CurrentNodeId);
+        Assert.Equal(RunStatus.Waiting, restarted.State.Status);
+        Assert.Equal(0, restarted.State.Attempts);
+        Assert.DoesNotContain(restarted.Effects, effect => effect is Effect.Handoff);
     }
 
     [Theory]
