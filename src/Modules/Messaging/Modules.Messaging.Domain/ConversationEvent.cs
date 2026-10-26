@@ -18,6 +18,12 @@ public enum ConversationEventType
 
     /// <summary>Spec 2026-10-24: un asesor cambió el cliente de la conversación (se guarda por nombre: va al final).</summary>
     CustomerChanged,
+
+    /// <summary>Spec 2026-10-26: un asesor bloqueó al contacto en WhatsApp.</summary>
+    ContactBlocked,
+
+    /// <summary>Spec 2026-10-26: un asesor desbloqueó al contacto.</summary>
+    ContactUnblocked,
 }
 
 /// <summary>

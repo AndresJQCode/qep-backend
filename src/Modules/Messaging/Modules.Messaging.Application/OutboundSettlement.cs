@@ -55,8 +55,8 @@ internal sealed class OutboundSettlement(
                 await ReportRejectedAsync(tenantId, connectionId, MetaErrorCodes.RejectedReason(result.Code.Value));
                 throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "Meta rejected the connection credentials.");
 
-            case SendOutcome.GraphError when result.Code is 131047:
-                await claim.CommitFailedAsync(131047, result.Title, answeredAt, metaMediaId, CancellationToken.None);
+            case SendOutcome.GraphError when result.Code is MetaErrorCodes.CustomerWindowClosed:
+                await claim.CommitFailedAsync(MetaErrorCodes.CustomerWindowClosed, result.Title, answeredAt, metaMediaId, CancellationToken.None);
                 await NotifyConsolidatedAsync(tenantId, claim.ConversationId);
                 throw new MessagingDomainException(MessagingErrorCodes.WindowClosed, "Meta closed the 24-hour window.");
 

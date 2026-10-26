@@ -172,4 +172,19 @@ public static class MessagingErrorCodes
 
     /// <summary>Spec 2026-10-21 §5: el horario predeterminado no se borra.</summary>
     public const string BusinessHoursIsDefault = "messaging.business_hours.is_default";
+
+    /// <summary>Spec 2026-10-26 §3.3: bloquear sólo existe en WhatsApp con número (no Instagram ni conversaciones sin <c>wa_id</c>).</summary>
+    public const string BlockUnsupportedChannel = "messaging.contact.block_unsupported_channel";
+
+    /// <summary>Spec 2026-10-26 §3.3: Meta sólo deja bloquear a quien escribió en las últimas 24 horas.</summary>
+    public const string BlockWindowClosed = "messaging.contact.block_window_closed";
+
+    /// <summary>Spec 2026-10-26: Meta no aceptó el bloqueo.</summary>
+    public const string BlockFailed = "messaging.contact.block_failed";
+
+    /// <summary>Spec 2026-10-26: Meta no aceptó el desbloqueo.</summary>
+    public const string UnblockRejected = "messaging.contact.unblock_rejected";
+
+    /// <summary>Spec 2026-10-26: el contacto está bloqueado, así que la conversación no envía.</summary>
+    public const string ContactBlocked = "messaging.contact.blocked";
 }
