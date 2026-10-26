@@ -388,7 +388,7 @@ public sealed class MessagingPersistenceTests
         {
             var conversation = await scope.ServiceProvider.GetRequiredService<IConversationRepository>().FindAsync(tenantId, conversationId, Ct);
             Assert.NotNull(conversation);
-            conversation.Block(memberId, now);
+            conversation.Block(memberId, "573001234567", now);
             await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
         }
 
@@ -431,7 +431,7 @@ public sealed class MessagingPersistenceTests
         using var scope = factory.Services.CreateScope();
         var conversation = await scope.ServiceProvider.GetRequiredService<IConversationRepository>().FindAsync(tenantId, conversationId, Ct);
         Assert.NotNull(conversation);
-        var blocked = conversation.Block(Guid.CreateVersion7(), now);
+        var blocked = conversation.Block(Guid.CreateVersion7(), "573001234567", now);
         Assert.NotNull(blocked);
         scope.ServiceProvider.GetRequiredService<IConversationEvents>().Record(tenantId, connectionId, conversationId, blocked, now);
         var unitOfWork = scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>();

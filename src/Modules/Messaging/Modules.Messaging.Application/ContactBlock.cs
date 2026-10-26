@@ -29,11 +29,13 @@ public sealed class BlockContactHandler(
 
         conversation.EnsureCanBlock(now);
         var sender = await ContactBlockSteps.ResolveSenderAsync(connections, command.TenantId, conversation.ConnectionId, cancellationToken);
-        var result = await client.BlockUserAsync(sender, conversation.WaId!, cancellationToken);
+        // El número se fija acá: el reintento relee la conversación y su wa_id pudo cambiar, pero Meta bloqueó éste.
+        var waId = conversation.WaId!;
+        var result = await client.BlockUserAsync(sender, waId, cancellationToken);
         await ContactBlockSteps.EnsureAppliedAsync(
             ContactBlockResponse.Classify(result, ContactBlockDirection.Block), ContactBlockDirection.Block, connections, logger, command.TenantId, conversation);
         // Meta ya bloqueó: guardarlo no depende de que el navegador siga esperando.
-        return await steps.CommitWithRetryAsync(command.TenantId, conversation, loaded => loaded.Block(member, now), now, CancellationToken.None);
+        return await steps.CommitWithRetryAsync(command.TenantId, conversation, loaded => loaded.Block(member, waId, now), now, CancellationToken.None);
     }
 }
 

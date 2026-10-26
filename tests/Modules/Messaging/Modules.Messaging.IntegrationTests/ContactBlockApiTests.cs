@@ -283,22 +283,27 @@ public sealed class ContactBlockApiTests
         Assert.Equal(0L, await AuditAsync(f, "messaging.conversation.contact_unblocked"));
     }
 
+    /// <summary>Otro request escribe la conversación (<paramref name="sql"/>) mientras Meta contesta: el guardado ve una versión vieja.</summary>
+    private static void ScriptWithConcurrentWrite(Fixture f, string sql, HttpStatusCode status, string body)
+    {
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.RespondWith("/111/block_users", _ =>
+        {
+            using var connection = new NpgsqlConnection(f.ConnectionString);
+            connection.Open();
+            using var command = new NpgsqlCommand(sql, connection);
+            command.ExecuteNonQuery();
+            return FakeMetaGraphHandler.Json(status, body);
+        });
+    }
+
     [Fact]
     public async Task AConflictAfterMetaAcceptedIsRetriedAndBlocksOnce()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
-        f.Factory.MetaHandler.Reset();
-        // Otro request escribe la conversación mientras Meta contesta: el guardado ve una versión vieja.
-        f.Factory.MetaHandler.RespondWith("/111/block_users", _ =>
-        {
-            using var connection = new NpgsqlConnection(f.ConnectionString);
-            connection.Open();
-            using var command = new NpgsqlCommand("UPDATE messaging.conversations SET version = version + 1", connection);
-            command.ExecuteNonQuery();
-            return FakeMetaGraphHandler.Json(HttpStatusCode.OK, Added);
-        });
+        ScriptWithConcurrentWrite(f, "UPDATE messaging.conversations SET version = version + 1", HttpStatusCode.OK, Added);
 
         var response = await ActAsync(f, "block");
 
@@ -307,6 +312,25 @@ public sealed class ContactBlockApiTests
         Assert.Single(BlockRequests(f));
         Assert.Equal(1L, await EventsAsync(f, "ContactBlocked"));
         Assert.Equal(1L, await AuditAsync(f, "messaging.conversation.contact_blocked"));
+    }
+
+    // El número cambia (ContactNumberChange reescribe wa_id y sube la versión) mientras Meta bloquea: el reintento guarda el número
+    // que Meta bloqueó, no el nuevo; si no, desbloquear apuntaría a un número que Meta nunca bloqueó.
+    [Fact]
+    public async Task ARetryAfterANumberChangeKeepsTheNumberSentToMeta()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        ScriptWithConcurrentWrite(
+            f, "UPDATE messaging.conversations SET wa_id = '573009999999', version = version + 1", HttpStatusCode.OK, Added);
+
+        var response = await ActAsync(f, "block");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotEqual(JsonValueKind.Null, (await ReadAsync(response)).GetProperty("blocked").ValueKind);
+        Assert.Equal(WaId, await ScalarAsync<string>(f.ConnectionString, "SELECT blocked_wa_id FROM messaging.conversations"));
+        Assert.Single(BlockRequests(f));
     }
 
     [Fact]

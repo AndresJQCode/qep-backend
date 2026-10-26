@@ -9,6 +9,9 @@ public sealed class ConversationBlockTests
     private static readonly Guid MemberA = Guid.CreateVersion7();
     private static readonly Guid MemberB = Guid.CreateVersion7();
 
+    /// <summary>El número que el handler le mandó a Meta.</summary>
+    private const string Sent = "573001234567";
+
     private static Conversation WhatsApp(string? waId = "573001234567", DateTimeOffset? lastInboundAt = null, bool hasInbound = true) =>
         Conversation.ForTests(
             Conversation.StartWithUserId(
@@ -27,7 +30,7 @@ public sealed class ConversationBlockTests
         var assigned = conversation.AssignedMemberId;
         var automation = conversation.AutomationStatus;
 
-        var ev = conversation.Block(MemberA, Now);
+        var ev = conversation.Block(MemberA, Sent, Now);
 
         Assert.Equal(Now, conversation.BlockedAt);
         Assert.Equal(MemberA, conversation.BlockedByMemberId);
@@ -43,13 +46,24 @@ public sealed class ConversationBlockTests
         Assert.Equal(MemberA, ev.Actor);
     }
 
+    // Un reintento por conflicto relee la conversación, y su wa_id pudo cambiar en el medio: se guarda el número que Meta bloqueó.
+    [Fact]
+    public void BlockingStoresTheNumberSentToMetaNotTheCurrentOne()
+    {
+        var conversation = WhatsApp(waId: "573009999999");
+
+        conversation.Block(MemberA, Sent, Now);
+
+        Assert.Equal(Sent, conversation.BlockedWaId);
+    }
+
     [Fact]
     public void BlockingAResolvedConversationKeepsItResolved()
     {
         var conversation = WhatsApp();
         conversation.Resolve(Now.AddMinutes(-5));
 
-        conversation.Block(MemberA, Now);
+        conversation.Block(MemberA, Sent, Now);
 
         Assert.Equal(ConversationStatus.Resolved, conversation.Status);
         Assert.True(conversation.IsBlocked);
@@ -59,10 +73,10 @@ public sealed class ConversationBlockTests
     public void BlockingTwiceIsANoOp()
     {
         var conversation = WhatsApp();
-        conversation.Block(MemberA, Now);
+        conversation.Block(MemberA, Sent, Now);
         var version = conversation.Version;
 
-        var second = conversation.Block(MemberB, Now.AddMinutes(1));
+        var second = conversation.Block(MemberB, Sent, Now.AddMinutes(1));
 
         Assert.Null(second);
         Assert.Equal(version, conversation.Version);
@@ -73,7 +87,7 @@ public sealed class ConversationBlockTests
     public void UnblockingClearsTheThreeFields()
     {
         var conversation = WhatsApp();
-        conversation.Block(MemberA, Now);
+        conversation.Block(MemberA, Sent, Now);
         var version = conversation.Version;
 
         var ev = conversation.Unblock(MemberB, Now.AddMinutes(5));

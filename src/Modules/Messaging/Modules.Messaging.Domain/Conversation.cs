@@ -511,15 +511,18 @@ public sealed partial class Conversation
     }
 
     /// <summary>Se llama cuando Meta ya aceptó el bloqueo, así que no revisa la ventana (<see cref="EnsureCanBlock"/> va antes).
+    /// <paramref name="blockedWaId"/> es el número que se le mandó a Meta, no el <see cref="WaId"/> de ahora: un reintento por conflicto
+    /// relee la conversación, y si el número cambió en el medio, desbloquear apuntaría a uno que Meta nunca bloqueó.
     /// <c>null</c> si ya estaba bloqueada.</summary>
-    public ConversationEvent? Block(Guid memberId, DateTimeOffset now)
+    public ConversationEvent? Block(Guid memberId, string blockedWaId, DateTimeOffset now)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(blockedWaId);
         if (IsBlocked)
         {
             return null;
         }
 
-        BlockedWaId = WaId ?? throw new InvalidOperationException("A conversation without a wa_id cannot be blocked; call EnsureCanBlock first.");
+        BlockedWaId = blockedWaId;
         BlockedAt = now;
         BlockedByMemberId = memberId;
         Touch(now);
