@@ -34,6 +34,15 @@ public sealed record CitySynonymOccurrenceFact(
     bool PartyCityOnly,
     bool CustomerCityOnly);
 
+/// <summary>Los nombres de los eventos de sinónimos de Geography a los que Shopify se suscribe. Públicos para que la prueba de paridad
+/// de Bootstrapper.UnitTests, que ve los dos módulos, los amarre con <c>CitySynonymEventNames</c> de Geography: si uno cambia solo,
+/// el consumidor deja de recibir el evento y ningún pedido se corrige, sin error en ningún lado.</summary>
+public static class ShopifyCitySynonymEventNames
+{
+    public const string Resolved = "geography.city_synonym.resolved.v1";
+    public const string Corrected = "geography.city_synonym.corrected.v1";
+}
+
 /// <summary><c>geography.city_synonym.resolved.v1</c>: el operador confirmó un texto como sinónimo, con sus ocurrencias.</summary>
 public sealed record CitySynonymResolvedFact(
     Guid SynonymId,

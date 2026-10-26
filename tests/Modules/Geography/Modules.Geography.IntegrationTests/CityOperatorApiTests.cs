@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Geography.Application;
@@ -429,6 +430,101 @@ public sealed class CityOperatorApiTests
         Assert.All(audit, entry => Assert.Equal(
             (OperatorTenantId, OperatorSubjectId, row.UnresolvedCityId.Value.Value.ToString()),
             (entry.TenantId, entry.ActorId, entry.ResourceId)));
+    }
+
+    // Review SC-10/11: el 403 vale también para el impacto (lectura) y para confirmar y restaurar (escritura), con un id que no
+    // existe: el 403 no depende de si el id existe.
+    [Fact]
+    public async Task TheImpactAndTheWriteRoutesAnswer403WithoutThePermission()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), OperatorTenantId);
+        using var noPermission = StubClient(factory, OperatorSubjectId, OperatorTenantId, "tenancy.settings.read");
+        using var readOnly = StubClient(factory, OperatorSubjectId, OperatorTenantId, GeographyOperatorPermissions.CitiesRead);
+        var row = $"{Base}/unresolved/{Guid.CreateVersion7()}";
+        var body = new { cityId = Guid.CreateVersion7() };
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        var impact = await noPermission.PostAsJsonAsync($"{row}/impact", body, cancellationToken);
+        var resolve = await readOnly.PostAsJsonAsync($"{row}/resolve", body, cancellationToken);
+        var restore = await readOnly.PostAsync($"{row}/restore", null, cancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, impact.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, resolve.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, restore.StatusCode);
+    }
+
+    // Review SC-10/11: confirmar y descartar no llevan expectedVersion en el contrato; el único camino a 412 que tiene el código es
+    // la carrera entre leer la fila y guardarla (Version es token de concurrencia). La prueba la provoca de verdad: el decorador de
+    // la auditoría —que corre justo antes del guardado— sube la versión de la fila desde otra conexión.
+    [Fact]
+    public async Task ResolvingARowThatChangedAfterItWasReadIs412()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), OperatorTenantId);
+        var valle = await DepartmentAsync(factory, "76");
+        var cali = await CityAsync(factory, "76001");
+        var row = await ReportAsync(factory, Report(valle, "Calli", Seen));
+        using var racing = RowBumpedBeforeSaving(factory);
+
+        var response = await racing.PostAsJsonAsync(
+            $"{Base}/unresolved/{row.UnresolvedCityId!.Value.Value}/resolve", new { cityId = cali.Id.Value },
+            TestContext.Current.CancellationToken);
+
+        await AssertProblemAsync(response, HttpStatusCode.PreconditionFailed, "concurrency.conflict");
+        Assert.Equal(UnresolvedCityStatus.Pending, (await RowAsync(factory, row.UnresolvedCityId.Value)).Status);
+        Assert.Empty(await OutboxAsync(factory));
+    }
+
+    [Fact]
+    public async Task DiscardingARowThatChangedAfterItWasReadIs412()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), OperatorTenantId);
+        var valle = await DepartmentAsync(factory, "76");
+        var row = await ReportAsync(factory, Report(valle, "Calli", Seen));
+        using var racing = RowBumpedBeforeSaving(factory);
+
+        var response = await racing.PostAsync(
+            $"{Base}/unresolved/{row.UnresolvedCityId!.Value.Value}/discard", null, TestContext.Current.CancellationToken);
+
+        await AssertProblemAsync(response, HttpStatusCode.PreconditionFailed, "concurrency.conflict");
+        Assert.Equal(UnresolvedCityStatus.Pending, (await RowAsync(factory, row.UnresolvedCityId.Value)).Status);
+    }
+
+    /// <summary>Un cliente del stub sobre un host cuyo registro de auditoría sube la versión de las filas de la bandeja justo antes
+    /// del guardado, desde otra conexión que confirma en el acto: la fila cambia entre que el handler la lee y la guarda.</summary>
+    private static HttpClient RowBumpedBeforeSaving(QepApiFactory factory)
+    {
+        var racing = factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            var original = services.Single(descriptor => descriptor.ServiceType == typeof(IGeographyAuditRecorder));
+            services.Remove(original);
+            services.AddScoped<IGeographyAuditRecorder>(provider => new VersionBumpingAuditRecorder(
+                (IGeographyAuditRecorder)ActivatorUtilities.CreateInstance(provider, original.ImplementationType!),
+                provider.GetRequiredService<IServiceScopeFactory>()));
+        }));
+        var client = racing.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Subject-Id", OperatorSubjectId.ToString());
+        client.DefaultRequestHeaders.Add("X-Tenant-Id", OperatorTenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-Permissions", string.Join(',', ReadAndManage));
+        return client;
+    }
+
+    private sealed class VersionBumpingAuditRecorder(IGeographyAuditRecorder inner, IServiceScopeFactory scopes) : IGeographyAuditRecorder
+    {
+        public void Record(
+            Guid tenantId, Guid actorId, Modules.Audit.Domain.AuditActorType actorType, string action, string resourceType,
+            string resourceId, string changedFieldsJson, DateTimeOffset occurredAt)
+        {
+            using (var scope = scopes.CreateScope())
+            {
+                scope.ServiceProvider.GetRequiredService<GeographyDbContext>().Database
+                    .ExecuteSql($"UPDATE geography.unresolved_cities SET version = version + 1");
+            }
+
+            inner.Record(tenantId, actorId, actorType, action, resourceType, resourceId, changedFieldsJson, occurredAt);
+        }
     }
 
     private static Task<HttpResponseMessage> ResolveAsync(HttpClient client, UnresolvedCityId id, Guid cityId) =>

@@ -56,7 +56,8 @@ public static class ResolveImpactCalculator
         var notPending = new List<ImpactOrderDto>();
         foreach (var group in occurrences.GroupBy(occurrence => (occurrence.TenantId, occurrence.OrderId)))
         {
-            if (!ordersByKey.TryGetValue(group.Key, out var order))
+            // Un pedido que ya no existe, o uno de recoger en tienda (nunca recibe parte de envío, P10), no está en ningún grupo.
+            if (!ordersByKey.TryGetValue(group.Key, out var order) || order.IsStorePickup)
             {
                 continue;
             }
@@ -96,12 +97,19 @@ public static class ResolveImpactCalculator
                 continue;
             }
 
-            // Desvío S7: sólo el que sigue como lo creó la importación (versión 1), activo y sin fusionar.
-            var completes = !customer.IsMerged
-                && customer.IsActive
-                && customer.Version == 1
-                && group.Any(occurrence => occurrence.CustomerCityOnly);
-            (completes ? toComplete : stayIncomplete).Add(customer.TenantId);
+            if (!group.Any(occurrence => occurrence.CustomerCityOnly))
+            {
+                // La importación lo creó incompleto y le falta algo más que la ciudad: confirmar no lo completa.
+                stayIncomplete.Add(customer.TenantId);
+            }
+            else if (!customer.IsMerged && customer.IsActive && customer.Version == 1)
+            {
+                // Desvío S7: sólo el que sigue como lo creó la importación (versión 1), activo y sin fusionar, se completa.
+                toComplete.Add(customer.TenantId);
+            }
+
+            // Sólo le faltaba la ciudad pero ya no es elegible (fusionado, inactivo o editado): no le falta "algo más", así que
+            // no está en ningún grupo.
         }
 
         return new ResolveImpactDto(
