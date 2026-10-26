@@ -94,6 +94,11 @@ public interface IShopifyCityCorrectionJobRepository
 
     void Add(ShopifyCityCorrectionJob job);
 
+    /// <summary>¿Hay ya un trabajo <c>Resolve</c> de ese sinónimo para ese pedido o cliente, en cualquier estado, guardado o recién
+    /// agregado? El índice único (mensaje, destino, id) no frena a los que se siembran sin mensaje (el importador y el recorrido).</summary>
+    Task<bool> ResolveExistsAsync(
+        Guid tenantId, Guid synonymId, ShopifyCityCorrectionTarget target, Guid targetId, CancellationToken cancellationToken);
+
     /// <summary>Toma la fila del trabajo (<c>FOR UPDATE</c>) dentro de la transacción abierta y dice si sigue <c>Pending</c>. Con
     /// el lease vencido, otra réplica puede reclamar un trabajo que todavía corre: su reclamo espera esta fila, y al soltarla ve el
     /// trabajo terminado. Si aun así llegan dos al mismo, el segundo encuentra <c>false</c> y no escribe nada.</summary>

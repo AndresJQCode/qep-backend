@@ -114,6 +114,60 @@ public sealed class ShopifyUnresolvedCityBackfillTests
         Assert.Empty(world.Shop.UnresolvedCities.Reports);
     }
 
+    // Casar por un sinónimo vivo: el evento de su confirmación no traía este pedido, así que el recorrido siembra el trabajo del
+    // pedido (sólo del pedido) y la segunda corrida, con el trabajo todavía pendiente, no siembra otro.
+    [Fact]
+    public async Task ASynonymMatchSeedsOneOrderOnlyResolveJobAndASecondRunSeedsNone()
+    {
+        var world = new BackfillWorld();
+        world.Shop.Geography.Cities[("VALLE DEL CAUCA", "CALLI")] = new ShopifyCityRef(ValleId, CaliId, SynonymId);
+        var row = world.Imported(ImporterWorld.Order(address: Calli), Waiting);
+
+        var first = await world.Backfill.RunAsync(Ct);
+        var second = await world.Backfill.RunAsync(Ct);
+
+        Assert.Equal(new ShopifyCityBackfillResult(1, 0, 0, 1, 0), first);
+        Assert.Equal(first, second);
+        var job = Assert.Single(world.Shop.Database.CityCorrectionJobs);
+        Assert.Empty(world.Shop.Database.PendingCityCorrectionJobs);
+        Assert.Equal(
+            (ImporterWorld.TenantId, SynonymId, ShopifyCityCorrectionJobKind.Resolve, ShopifyCityCorrectionTarget.Order,
+                row.QepOrderId!.Value, row.Id, Guid.Empty, (Guid?)null),
+            (job.TenantId, job.SynonymId, job.Kind, job.Target, job.TargetId, job.MirrorOrderId, job.OperatorSubjectId,
+                job.SourceMessageId));
+        Assert.Empty(world.Shop.UnresolvedCities.Reports);
+    }
+
+    // Casar por el nombre real (sin sinónimo) no siembra nada: el pedido no necesita ningún sinónimo.
+    [Fact]
+    public async Task ARealNameMatchSeedsNothing()
+    {
+        var world = new BackfillWorld();
+        world.Shop.Geography.Cities[("VALLE DEL CAUCA", "CALLI")] = new ShopifyCityRef(ValleId, CaliId);
+        world.Imported(ImporterWorld.Order(address: Calli), Waiting);
+
+        var result = await world.Backfill.RunAsync(Ct);
+
+        Assert.Equal(new ShopifyCityBackfillResult(1, 0, 0, 1, 0), result);
+        Assert.Empty(world.Shop.Database.CityCorrectionJobs);
+        Assert.Empty(world.Shop.Database.PendingCityCorrectionJobs);
+    }
+
+    // Un sinónimo confirmado entre resolver la ciudad y reportar (SynonymExists) se siembra igual que uno que ya estaba.
+    [Fact]
+    public async Task ASynonymConfirmedBetweenResolvingAndReportingSeedsTheOrderJob()
+    {
+        var world = new BackfillWorld();
+        world.Imported(ImporterWorld.Order(address: Calli), Waiting);
+        world.Shop.UnresolvedCities.Outcome = new ShopifyUnresolvedCityResult(ShopifyUnresolvedCityOutcome.SynonymExists, SynonymId);
+
+        var result = await world.Backfill.RunAsync(Ct);
+
+        Assert.Equal(new ShopifyCityBackfillResult(1, 0, 0, 1, 0), result);
+        var job = Assert.Single(world.Shop.Database.CityCorrectionJobs);
+        Assert.Equal((SynonymId, ShopifyCityCorrectionTarget.Order), (job.SynonymId, job.Target));
+    }
+
     [Fact]
     public async Task RunningTwiceReportsNothingNew()
     {
@@ -209,6 +263,8 @@ public sealed class ShopifyUnresolvedCityBackfillTests
                 Shop.Resolver,
                 Writer,
                 Shop.UnresolvedCities,
+                Shop.CityCorrectionJobs,
+                Shop.UnitOfWork,
                 new FakeClock(ImporterWorld.Now));
 
         /// <summary>Una fila <c>Imported</c> con su pedido; <paramref name="state"/> es lo que Quotations dice de ese pedido

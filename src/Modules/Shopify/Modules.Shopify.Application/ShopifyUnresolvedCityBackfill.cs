@@ -23,6 +23,8 @@ public sealed record ShopifyCityBackfillResult(int Scanned, int Reported, int Al
 /// la única guarda del trabajo es la versión. <c>PartyCityOnly</c> es que al pedido sólo le faltaba la ciudad
 /// (<see cref="ShopifyOrderImporter.ShippingPartyFields"/>).</item>
 /// </list>
+/// Si casa por un sinónimo vivo (no por el nombre real), siembra además el trabajo <c>Resolve</c> del pedido, que el evento de la
+/// confirmación no pudo sembrar porque este pedido no estaba en sus ocurrencias; sigue contando como <c>nowMatching</c>.
 /// Idempotente: la ocurrencia es única por la fila del espejo, así que correrlo dos veces cuenta la segunda vez como
 /// <c>alreadyReported</c>. Un error de cualquier fila se propaga y se vuelve a correr entero.
 /// </summary>
@@ -31,6 +33,8 @@ public sealed class ShopifyUnresolvedCityBackfill(
     ShopifyCustomerResolver resolver,
     IShopifyCityCorrectionWriter writer,
     IShopifyUnresolvedCityReporter reporter,
+    IShopifyCityCorrectionJobRepository jobs,
+    IShopifyUnitOfWork unitOfWork,
     IClock clock)
 {
     /// <summary>Filas por lote; el recorrido pagina por id y no carga todo el espejo de una vez.</summary>
@@ -90,9 +94,16 @@ public sealed class ShopifyUnresolvedCityBackfill(
         }
 
         var resolution = await resolver.ResolveCityAsync(address, cancellationToken);
-        if (resolution.City is not null)
+        if (resolution.City is { } matched)
         {
             counters.NowMatching++;
+            // Casó por un sinónimo vivo: ese pedido se importó antes de que existiera y su confirmación ya publicó el evento sin su
+            // ocurrencia, así que nadie lo va a corregir. Casó por el nombre real: el pedido no necesita ningún sinónimo.
+            if (matched.SynonymId is { } synonymId)
+            {
+                await SeedResolveAsync(row, orderId, synonymId, snapshot, cancellationToken);
+            }
+
             return;
         }
 
@@ -125,13 +136,51 @@ public sealed class ShopifyUnresolvedCityBackfill(
                 counters.AlreadyReported++;
                 break;
             case ShopifyUnresolvedCityOutcome.SynonymExists:
-                // Se confirmó un sinónimo entre resolver la ciudad y reportar: ahora casa. No se reporta ni se siembra nada.
+                // Se confirmó un sinónimo entre resolver la ciudad y reportar: ahora casa. No se reporta; se siembra el trabajo del
+                // pedido, igual que cuando el sinónimo ya estaba al resolver la ciudad.
                 counters.NowMatching++;
+                if (result.SynonymId is { } existing)
+                {
+                    await SeedResolveAsync(row, orderId, existing, snapshot, cancellationToken);
+                }
+
                 break;
             default:
                 // Ignored: un texto que se normaliza a vacío no tiene nada que resolver.
                 counters.Skipped++;
                 break;
+        }
+    }
+
+    // Spec 2026-10-26 D-C12: con la regla de siembra del evento y del importador (ResolveJobs), sólo del pedido (el recorrido no
+    // manda cliente, P15). Los trabajos sembrados sin mensaje de origen no los frena el índice único (mensaje, destino, id), así que la
+    // idempotencia es la consulta previa: correr el recorrido otra vez, con el trabajo todavía pendiente, no lo siembra de nuevo.
+    private async Task SeedResolveAsync(
+        ShopifyOrderMirror row, Guid orderId, Guid synonymId, ShopifyOrderSnapshot snapshot, CancellationToken cancellationToken)
+    {
+        var seeded = false;
+        foreach (var job in ShopifyCitySynonymEventApplier.ResolveJobs(
+            row.TenantId,
+            synonymId,
+            row.Id,
+            orderId,
+            customerId: null,
+            partyCityOnly: ShopifyOrderImporter.ShippingPartyFields(snapshot) is not null,
+            customerCityOnly: false,
+            operatorSubjectId: Guid.Empty,
+            sourceMessageId: null,
+            clock.UtcNow))
+        {
+            if (!await jobs.ResolveExistsAsync(job.TenantId, job.SynonymId, job.Target, job.TargetId, cancellationToken))
+            {
+                jobs.Add(job);
+                seeded = true;
+            }
+        }
+
+        if (seeded)
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
         }
     }
 

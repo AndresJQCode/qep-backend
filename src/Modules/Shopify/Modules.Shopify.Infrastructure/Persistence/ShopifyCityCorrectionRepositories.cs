@@ -48,6 +48,22 @@ internal sealed class ShopifyCityCorrectionJobRepository(ShopifyDbContext dbCont
 
     public void Add(ShopifyCityCorrectionJob job) => dbContext.CityCorrectionJobs.Add(job);
 
+    public async Task<bool> ResolveExistsAsync(
+        Guid tenantId, Guid synonymId, ShopifyCityCorrectionTarget target, Guid targetId, CancellationToken cancellationToken) =>
+        dbContext.CityCorrectionJobs.Local.Any(job => IsResolveOf(job, tenantId, synonymId, target, targetId))
+        || await dbContext.CityCorrectionJobs.AsNoTracking().AnyAsync(
+            job => job.TenantId == tenantId
+                && job.SynonymId == synonymId
+                && job.Kind == ShopifyCityCorrectionJobKind.Resolve
+                && job.Target == target
+                && job.TargetId == targetId,
+            cancellationToken);
+
+    private static bool IsResolveOf(
+        ShopifyCityCorrectionJob job, Guid tenantId, Guid synonymId, ShopifyCityCorrectionTarget target, Guid targetId) =>
+        job.TenantId == tenantId && job.SynonymId == synonymId && job.Kind == ShopifyCityCorrectionJobKind.Resolve
+        && job.Target == target && job.TargetId == targetId;
+
     public async Task<bool> LockIfPendingAsync(Guid id, CancellationToken cancellationToken)
     {
         // Fuera de una transacción el FOR UPDATE se soltaría al terminar la sentencia y no frenaría a la otra réplica.
