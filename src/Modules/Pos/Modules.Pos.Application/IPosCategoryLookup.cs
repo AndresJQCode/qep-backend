@@ -14,7 +14,8 @@ public interface IPosCategoryLookup
 
 /// <param name="ParentId">null en una raíz.</param>
 /// <param name="ProductCount">Activos de la categoría y de todas sus descendientes: lo que encuentra el filtro.</param>
-public sealed record PosCategoryRef(Guid Id, string Name, Guid? ParentId, int ProductCount);
+/// <param name="QuickAccessPosition">Lugar entre los chips de acceso rápido (1..N); null si no está fijada.</param>
+public sealed record PosCategoryRef(Guid Id, string Name, Guid? ParentId, int ProductCount, int? QuickAccessPosition);
 
 /// <param name="Total">Activos del tenant con o sin categoría; no es la suma de las raíces.</param>
 public sealed record PosCategoryList(IReadOnlyList<PosCategoryRef> Items, int Total);

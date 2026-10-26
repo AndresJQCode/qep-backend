@@ -17,7 +17,8 @@ public sealed class ListPosCategoriesHandler(IPosCategoryLookup categories, IExe
         PosAuthorization.EnsureAuthorized(executionContext, query.TenantId, PosPermissions.SaleCreate);
         var list = await categories.ListAsync(query.TenantId, cancellationToken);
         return new PosCategoriesResponse(
-            list.Items.Select(item => new PosCategoryResponse(item.Id, item.Name, item.ParentId, item.ProductCount)).ToArray(),
+            list.Items.Select(item => new PosCategoryResponse(
+                item.Id, item.Name, item.ParentId, item.ProductCount, item.QuickAccessPosition)).ToArray(),
             list.Total);
     }
 }

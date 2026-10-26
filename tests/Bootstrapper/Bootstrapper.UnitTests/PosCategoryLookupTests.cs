@@ -61,6 +61,25 @@ public sealed class PosCategoryLookupTests
         Assert.Equal(3, list.Total);
     }
 
+    // The position comes from Catalog untouched; the adapter neither sorts by it nor renumbers it.
+    [Fact]
+    public async Task TheQuickAccessPositionTravelsAsIsAndTheOrderStaysByName()
+    {
+        var bebidas = Category("Bebidas");
+        var calzado = Category("Calzado");
+        var zapatos = Category("Zapatos", calzado);
+        ProductCategoryQuickAccess.Replace([bebidas, calzado, zapatos], [zapatos.Id, bebidas.Id]);
+        var lookup = new PosCategoryLookup(
+            new FakeProductCategoryRepository((bebidas, 0), (calzado, 0), (zapatos, 0)),
+            new FakeProductRepository());
+
+        var list = await lookup.ListAsync(TenantId, Ct);
+
+        Assert.Equal(
+            [("Bebidas", (int?)2), ("Calzado", null), ("Zapatos", 1)],
+            list.Items.Select(item => (item.Name, item.QuickAccessPosition)));
+    }
+
     private static ProductCategory Category(string name, ProductCategory? parent = null, Guid? tenantId = null) =>
         ProductCategory.Create(ProductCategoryId.New(), tenantId ?? TenantId, name, parent?.Id, Now);
 
