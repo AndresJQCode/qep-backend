@@ -9,8 +9,8 @@ namespace Modules.Messaging.Application;
 internal static class ConnectionRejection
 {
     // Si Integrations no logra pasar la conexión a NeedsAttention, la respuesta sigue siendo el 422 documentado;
-    // la causa viaja como InnerException y ApiExceptionHandler la deja en platform.request_failures (Application no
-    // tiene logger). El próximo intento vuelve a recibir 190/133010 y reintenta el reporte.
+    // la causa viaja como InnerException y ApiExceptionHandler la deja en platform.request_failures (esta clase es estática
+    // y no recibe logger). El próximo intento vuelve a recibir 190/133010 y reintenta el reporte.
     public static async Task ReportAsync(IMessagingConnectionDirectory connections, Guid tenantId, Guid connectionId, int code)
     {
         ArgumentNullException.ThrowIfNull(connections);
