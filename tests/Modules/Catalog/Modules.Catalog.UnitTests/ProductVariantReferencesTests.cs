@@ -97,6 +97,7 @@ public sealed class ProductVariantReferencesTests
             null,
             null,
             null,
+            null,
             [Request("CAM-001"), Request("CAM-002"), Request(" CAM-001 ")],
             null));
 
@@ -111,6 +112,7 @@ public sealed class ProductVariantReferencesTests
         var result = new CreateProductValidator().Validate(new CreateProductCommand(
             TenantId,
             "Camiseta",
+            null,
             null,
             null,
             null,

@@ -36,7 +36,7 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
 
     // Sin relevancia ni filtro de texto: lo que se prueba es el mapeo del adaptador, no la consulta.
     public Task<(IReadOnlyList<Product> Items, int Total)> SearchAsync(
-        Guid tenantId, string? search, string? name, string? code, bool? isActive, int page, int pageSize,
+        Guid tenantId, string? search, string? name, string? code, bool? isActive, IReadOnlyCollection<Guid>? categoryIds, int page, int pageSize,
         CancellationToken cancellationToken)
     {
         var matching = products
@@ -75,6 +75,7 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
         string? name,
         string? code,
         bool? isActive,
+        IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,
         CancellationToken cancellationToken) =>

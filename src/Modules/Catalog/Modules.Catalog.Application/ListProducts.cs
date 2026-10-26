@@ -93,6 +93,7 @@ public sealed class ListProductsHandler(
             query.Name,
             query.Code,
             query.IsActive,
+            null,
             page,
             pageSize,
             cancellationToken);
@@ -139,6 +140,7 @@ public sealed class ListProductsHandler(
                 product.ImageFileId,
                 lookups.UrlOf(product.ImageFileId),
                 product.TaxRateId?.Value,
+                product.CategoryId?.Value,
                 product.VariantCount,
                 // Catalogue order (spec D10), como los precios del detalle.
                 product.PriceRanges

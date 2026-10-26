@@ -22,6 +22,7 @@ public sealed record ProductDto(
     Guid? ImageFileId,
     string? ImageUrl,
     Guid? TaxRateId,
+    Guid? CategoryId,
     IReadOnlyList<ProductOptionResponse> Options,
     IReadOnlyList<ProductVariantResponse> Variants,
     IReadOnlyList<ProductGalleryImageResponse> Gallery,
@@ -41,6 +42,7 @@ public sealed record ProductResponse(
     // catalog. Viene en null si la imagen no fue publicada o es de otro tenant.
     string? ImageUrl,
     Guid? TaxRateId,
+    Guid? CategoryId,
     // Las opciones del producto en su orden, con sus nombres ya resueltos de la biblioteca.
     IReadOnlyList<ProductOptionResponse> Options,
     // **Todas** las variantes en orden de presentación, activas e inactivas: el formulario edita
@@ -134,6 +136,7 @@ public sealed record ProductListItemDto(
     Guid? ImageFileId,
     string? ImageUrl,
     Guid? TaxRateId,
+    Guid? CategoryId,
     int VariantCount,
     IReadOnlyDictionary<string, PriceRangeResponse> PriceRange,
     long Version,
@@ -255,6 +258,7 @@ public sealed record CreateProductRequest(
     string Name,
     string? Description,
     Guid? TaxRateId,
+    Guid? CategoryId,
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery);
@@ -327,6 +331,7 @@ public sealed record UpdateProductRequest(
     string Name,
     string? Description,
     Guid? TaxRateId,
+    Guid? CategoryId,
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery,

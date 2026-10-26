@@ -20,7 +20,7 @@ internal sealed class PosProductLookup(
         Guid tenantId, string? search, int page, int pageSize, CancellationToken cancellationToken)
     {
         var (items, total) = await products.SearchAsync(
-            tenantId, string.IsNullOrWhiteSpace(search) ? null : search, null, null, true, page, pageSize, cancellationToken);
+            tenantId, string.IsNullOrWhiteSpace(search) ? null : search, null, null, true, null, page, pageSize, cancellationToken);
 
         // Sólo las variantes que se venden. El producto ya viene activo por el filtro de la consulta.
         var selected = items
