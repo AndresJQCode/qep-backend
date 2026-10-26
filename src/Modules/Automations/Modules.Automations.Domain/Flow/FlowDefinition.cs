@@ -109,6 +109,11 @@ public sealed record HttpMapping(string From, string To);
 public sealed record HandoffNode(string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, string? Text, Guid? MemberId = null)
     : FlowNode(Id, FlowNodeKinds.Handoff, Title, Outputs);
 
+/// <summary>Spec 2026-10-26 D-1: pide aceptar la política de datos. Los botones son fijos (<see cref="DataConsentButtons"/>) y no se leen
+/// del JSON; <see cref="Text"/> se interpola como el de Botones.</summary>
+public sealed record DataConsentNode(string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, string Text)
+    : FlowNode(Id, FlowNodeKinds.DataConsent, Title, Outputs);
+
 public sealed record ResolveNode(string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, string? Text, Guid? ReasonId)
     : FlowNode(Id, FlowNodeKinds.Resolve, Title, Outputs);
 
@@ -152,6 +157,19 @@ public static class InteractiveFallbacks
     public const string Handoff = "handoff";
 
     public static readonly IReadOnlySet<string> All = new[] { Repeat, OtherOutput, Handoff }.ToFrozenSet(StringComparer.Ordinal);
+}
+
+/// <summary>Spec 2026-10-26 D-1: los dos botones del bloque Política de datos; su id es la salida y no cambian por flujo.</summary>
+public static class DataConsentButtons
+{
+    public const string AcceptLabel = "Acepto";
+    public const string RejectLabel = "No acepto";
+
+    public static readonly IReadOnlyList<FlowButton> All =
+    [
+        new FlowButton(FlowOutputs.Accepted, AcceptLabel),
+        new FlowButton(FlowOutputs.Rejected, RejectLabel),
+    ];
 }
 
 public static class ListOptionKinds

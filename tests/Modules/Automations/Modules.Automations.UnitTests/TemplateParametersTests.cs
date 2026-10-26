@@ -52,6 +52,29 @@ public sealed class TemplateParametersTests
         """;
 
     [Fact]
+    public void ADataConsentTextAndTitleTakeTheParameters()
+    {
+        const string json = """
+            {
+              "schema": 1,
+              "start": { "firstNodeId": "d1" },
+              "variables": [],
+              "nodes": [
+                { "id": "d1", "kind": "dataConsent", "title": "Política {param.politica}", "text": "Lee {param.politica}",
+                  "outputs": { "accepted": "d1", "rejected": null } }
+              ]
+            }
+            """;
+
+        var flow = FlowJson.Parse(TemplateParameters.Apply(json, new Dictionary<string, string>(StringComparer.Ordinal) { ["politica"] = "https://empresa.co/datos" }));
+
+        var consent = Assert.IsType<DataConsentNode>(Assert.Single(flow.Nodes));
+        Assert.Equal("Política https://empresa.co/datos", consent.Title);
+        Assert.Equal("Lee https://empresa.co/datos", consent.Text);
+        Assert.Equal(["accepted", "rejected"], consent.Outputs.Keys);
+    }
+
+    [Fact]
     public void ApplyReplacesParamsOnlyInTextFields()
     {
         var flow = FlowJson.Parse(TemplateParameters.Apply(Flow, Values));
