@@ -70,6 +70,12 @@ public sealed class Product
     public TaxRateId? TaxRateId { get; private set; }
 
     /// <summary>
+    /// Categoría del producto. Igual que <see cref="TaxRateId"/>: la FK garantiza que exista, no
+    /// que sea del mismo tenant; eso lo verifica el handler antes de asignarla.
+    /// </summary>
+    public ProductCategoryId? CategoryId { get; private set; }
+
+    /// <summary>
     /// Las opciones de la biblioteca del tenant (<see cref="OptionDefinition"/>) que arman las
     /// variantes, en orden; a lo sumo <see cref="MaxOptions"/>. Vacía en un producto sin opciones,
     /// que tiene exactamente una variante: la variante por defecto.
@@ -227,7 +233,7 @@ public sealed class Product
         UpdatedAt = occurredAt;
     }
 
-    // Asigna los dos siempre, incluidos los null. Se puede **limpiar** un campo, no sólo
+    // Asigna todos siempre, incluidos los null. Se puede **limpiar** un campo, no sólo
     // setearlo: una implementación que ignore los null "para no pisar" deja campos imborrables y
     // pasa todas las demás pruebas. Por eso CA-CAT-04-03 existe.
     private void Apply(ProductDetails details)
@@ -236,6 +242,7 @@ public sealed class Product
 
         Description = normalized.Description;
         TaxRateId = normalized.TaxRateId;
+        CategoryId = normalized.CategoryId;
     }
 
     private static void EnsureOptions(IReadOnlyList<Guid> optionIds)

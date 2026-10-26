@@ -149,6 +149,10 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<Guid?>("CategoryId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("category_id");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -187,6 +191,9 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CategoryId")
+                        .HasDatabaseName("IX_products_category");
+
                     b.HasIndex("Name")
                         .HasDatabaseName("IX_products_name_trgm");
 
@@ -199,6 +206,50 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_products_tenant");
 
                     b.ToTable("products", "catalog");
+                });
+
+            modelBuilder.Entity("Modules.Catalog.Domain.ProductCategory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid?>("ParentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("parent_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ParentId")
+                        .HasDatabaseName("IX_product_categories_parent");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("IX_product_categories_tenant");
+
+                    b.ToTable("product_categories", "catalog");
                 });
 
             modelBuilder.Entity("Modules.Catalog.Domain.ProductGalleryImage", b =>
@@ -489,6 +540,11 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Modules.Catalog.Domain.Product", b =>
                 {
+                    b.HasOne("Modules.Catalog.Domain.ProductCategory", null)
+                        .WithMany()
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Modules.Catalog.Domain.TaxRate", null)
                         .WithMany()
                         .HasForeignKey("TaxRateId")
@@ -526,6 +582,14 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         });
 
                     b.Navigation("_options");
+                });
+
+            modelBuilder.Entity("Modules.Catalog.Domain.ProductCategory", b =>
+                {
+                    b.HasOne("Modules.Catalog.Domain.ProductCategory", null)
+                        .WithMany()
+                        .HasForeignKey("ParentId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Modules.Catalog.Domain.ProductGalleryImage", b =>
