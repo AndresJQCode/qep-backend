@@ -19,4 +19,18 @@ internal static class QuotationsAuthorization
                 "The subject cannot perform this quotation operation for this tenant.");
         }
     }
+
+    /// <summary>Lo mismo con "cualquiera de" varios permisos: la contraparte de una política con
+    /// <c>RequireClaim</c> de varios valores.</summary>
+    public static void EnsureAuthorizedAny(
+        IExecutionContext executionContext, Guid tenantId, params string[] permissions)
+    {
+        if (executionContext.TenantId.Value != tenantId ||
+            !permissions.Any(executionContext.HasPermission))
+        {
+            throw new RequestForbiddenException(
+                "authorization.denied",
+                "The subject cannot perform this quotation operation for this tenant.");
+        }
+    }
 }

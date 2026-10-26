@@ -597,6 +597,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateQuotationSettingsCommand, QuotationSettingsDto>,
             UpdateQuotationSettingsHandler>();
+        // Los canales de WhatsApp del tenant y su elección desde Configuración (spec 2026-10-21 §4.4, §5.2).
+        services.AddScoped<
+            IQueryHandler<GetWhatsAppChannelsQuery, WhatsAppChannelsDto>,
+            GetWhatsAppChannelsHandler>();
+        services.AddScoped<
+            ICommandHandler<ChooseWhatsAppChannelCommand, WhatsAppChannelsDto>,
+            ChooseWhatsAppChannelHandler>();
         // Transportadoras y el IVA del envío (spec 2026-10-17 §4.3), a mano como el resto.
         services.AddScoped<IQueryHandler<ListCarriersQuery, CarrierSettingsDto>, ListCarriersHandler>();
         services.AddScoped<ICommandHandler<CreateCarrierCommand, CarrierDto>, CreateCarrierHandler>();
@@ -2047,6 +2054,16 @@ public static class QepServiceCollectionExtensions
                     policy.RequireAuthenticatedUser();
                     policy.RequireClaim(
                         QepClaimTypes.Permission, CustomersPermissions.CustomerManage, CustomersPermissions.NoteModerate);
+                })
+            // Leer los canales de WhatsApp: gestionar cotizaciones o actualizar la configuración (decisión del owner
+            // 2026-10-25). RequireClaim con varios valores deja pasar a quien tenga cualquiera.
+            .AddPolicy(
+                QuotationsPolicies.WhatsAppChannelsRead,
+                policy =>
+                {
+                    policy.RequireAuthenticatedUser();
+                    policy.RequireClaim(
+                        QepClaimTypes.Permission, QuotationsPermissions.QuotationManage, TenancyPermissions.SettingsUpdate);
                 })
             // La otra mitad del permiso, para los dos de Quotations. Sin esta politica
             // RequireAuthorization no resuelve y el sintoma es 500, no 403 — mismo gotcha que
