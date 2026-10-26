@@ -77,6 +77,14 @@ internal sealed class OutboundGuards(
         ArgumentNullException.ThrowIfNull(target);
         var conversation = target.Conversation;
         var now = clock.UtcNow;
+
+        // Spec 2026-10-26 §3.4: bloqueada y resuelta, reabrir no alcanza; por eso va antes del status y de la ventana.
+        // El «ya salió» se resolvió antes de llegar acá: un reintento de algo enviado devuelve lo enviado.
+        if (conversation.BlockedAt is not null)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.ContactBlocked, "The contact is blocked; unblock it to write.");
+        }
+
         if (conversation.Status != ConversationStatus.Open)
         {
             throw new MessagingDomainException(MessagingErrorCodes.ConversationNotOpen, "The conversation is resolved; reopen it to answer.");

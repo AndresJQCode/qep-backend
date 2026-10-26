@@ -125,13 +125,14 @@ internal sealed class MessagingTestBed
 
     public ConversationRow OpenConversation(
         int? lastInboundHoursAgo, bool resolved = false, Guid? assignedTo = null, Guid? customerId = null, string? userId = null, string? waId = "573001234567",
-        ConversationChannel channel = ConversationChannel.WhatsApp)
+        ConversationChannel channel = ConversationChannel.WhatsApp, bool blocked = false)
     {
         var row = new ConversationRow(
             Guid.CreateVersion7(), TenantId, ConnectionId, UserId: userId, WaId: waId, Username: null, "Laura",
             CustomerId: customerId, AssignedMemberId: assignedTo, resolved ? ConversationStatus.Resolved : ConversationStatus.Open, 0,
             lastInboundHoursAgo is { } hours ? Now.AddHours(-hours) : null,
-            null, null, null, null, null, null, Now, 1, channel);
+            null, null, null, null, null, null, Now, 1, channel,
+            BlockedAt: blocked ? Now.AddHours(-2) : null, BlockedByMemberId: blocked ? MemberId : null);
         Conversations.Rows.Add(row);
         return row;
     }
