@@ -132,6 +132,7 @@ public sealed class ProductDetailsApiTests
         Assert.Null(created.Description);
         Assert.Null(created.ImageFileId);
         Assert.Null(created.TaxRateId);
+        Assert.Null(created.CategoryId);
     }
 
     // CA-CAT-04-03: se puede limpiar, no sólo setear. Sin esta prueba, una implementación que
@@ -162,6 +163,120 @@ public sealed class ProductDetailsApiTests
         Assert.Null(updated.Description);
         Assert.Null(updated.ImageFileId);
         Assert.Null(updated.TaxRateId);
+        Assert.Null(updated.CategoryId);
+    }
+
+    [Fact]
+    public async Task CreateWithACategoryPersistsItAndEveryReadReturnsIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        var categoryId = await SeedCategoryAsync(factory, TenantId, "Bebidas");
+
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Jugo de mora", "JM-001", categoryId: categoryId));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await ReadProductAsync(response);
+        Assert.Equal(categoryId, created.CategoryId);
+
+        // Releído desde la base, no desde la respuesta de la escritura.
+        var fetched = await ReadProductAsync(await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            TestContext.Current.CancellationToken));
+        Assert.Equal(categoryId, fetched.CategoryId);
+
+        var listed = Assert.Single(await ListAsync(client, TenantId));
+        Assert.Equal(categoryId, listed.CategoryId);
+    }
+
+    [Fact]
+    public async Task UpdateSetsAndThenClearsTheCategory()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        var categoryId = await SeedCategoryAsync(factory, TenantId, "Bebidas");
+        var created = await ReadProductAsync(await CreateProductAsync(
+            client, TenantId, ProductBodies.Create("Jugo de mora", "JM-001")));
+        Assert.Null(created.CategoryId);
+
+        var set = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            ProductBodies.Update(created, "Jugo de mora", "JM-001", categoryId: categoryId),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, set.StatusCode);
+        var withCategory = await ReadProductAsync(set);
+        Assert.Equal(categoryId, withCategory.CategoryId);
+
+        var cleared = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            ProductBodies.Update(withCategory, "Jugo de mora", "JM-001", categoryId: null),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+        Assert.Null((await ReadProductAsync(cleared)).CategoryId);
+    }
+
+    [Fact]
+    public async Task AnUnknownOrForeignCategoryIsCategoryNotFoundOnCreateAndUpdate()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        var foreignCategoryId = await SeedCategoryAsync(factory, OtherTenantId, "Ajena");
+
+        var unknown = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Jugo de mora", "JM-001", categoryId: Guid.CreateVersion7()));
+        await AssertCategoryNotFoundAsync(unknown);
+
+        var foreign = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Jugo de mora", "JM-001", categoryId: foreignCategoryId));
+        await AssertCategoryNotFoundAsync(foreign);
+
+        var created = await ReadProductAsync(await CreateProductAsync(
+            client, TenantId, ProductBodies.Create("Jugo de mora", "JM-001")));
+        var update = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            ProductBodies.Update(created, "Jugo de mora", "JM-001", categoryId: foreignCategoryId),
+            TestContext.Current.CancellationToken);
+        await AssertCategoryNotFoundAsync(update);
+
+        var fetched = await ReadProductAsync(await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            TestContext.Current.CancellationToken));
+        Assert.Null(fetched.CategoryId);
+    }
+
+    private static async Task AssertCategoryNotFoundAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "catalog.product.category_not_found",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
+    }
+
+    // El endpoint de categorías llega en otra tarea: por ahora se siembra por el repositorio.
+    private static async Task<Guid> SeedCategoryAsync(
+        QepApiFactory factory, string tenantId, string name, Guid? parentId = null)
+    {
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IProductCategoryRepository>();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<ICatalogUnitOfWork>();
+
+        var category = ProductCategory.Create(
+            ProductCategoryId.New(),
+            Guid.Parse(tenantId),
+            name,
+            parentId is { } p ? new ProductCategoryId(p) : null,
+            DateTimeOffset.UtcNow);
+        repository.Add(category);
+        await unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken);
+        return category.Id.Value;
     }
 
     /// <summary>

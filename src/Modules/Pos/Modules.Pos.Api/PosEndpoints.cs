@@ -57,6 +57,12 @@ public static class PosEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Los chips que filtran la cuadrícula (spec 2026-10-26 §3.4): mismo permiso que /products.
+        group.MapGet("/categories", ListCategoriesAsync)
+            .RequireAuthorization(PosPermissions.SaleCreate)
+            .Produces<PosCategoriesResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         group.MapGet("/products/by-code", FindProductByCodeAsync)
             .RequireAuthorization(PosPermissions.SaleCreate)
             .Produces<PosProductResponse>()
@@ -173,9 +179,14 @@ public static class PosEndpoints
         CancellationToken cancellationToken,
         string? search = null,
         int page = 1,
-        int pageSize = 40) =>
+        int pageSize = 40,
+        Guid? categoryId = null) =>
         Results.Ok(await dispatcher.QueryAsync(
-            new SearchPosProductsQuery(tenantId, search, page, pageSize), cancellationToken));
+            new SearchPosProductsQuery(tenantId, search, page, pageSize, categoryId), cancellationToken));
+
+    private static async Task<IResult> ListCategoriesAsync(
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListPosCategoriesQuery(tenantId), cancellationToken));
 
     private static async Task<IResult> FindProductByCodeAsync(
         Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken, string? code = null) =>

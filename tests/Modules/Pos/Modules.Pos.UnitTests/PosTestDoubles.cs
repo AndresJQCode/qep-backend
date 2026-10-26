@@ -326,11 +326,15 @@ internal sealed class FakeProductLookup : IPosProductLookup
         Products[index] = (Products[index].TenantId, product);
     }
 
+    /// <summary>La categoría de la última búsqueda: el doble la graba y no filtra por ella (eso lo prueba el adaptador).</summary>
+    public Guid? LastCategoryId { get; private set; }
+
     // Como el adaptador: productos con alguna variante activa que coincide por nombre del producto,
     // Code o código de barras, cada uno con sus variantes activas.
     public Task<(IReadOnlyList<PosCatalogProductRef> Items, int Total)> SearchAsync(
-        Guid tenantId, string? search, int page, int pageSize, CancellationToken cancellationToken)
+        Guid tenantId, string? search, Guid? categoryId, int page, int pageSize, CancellationToken cancellationToken)
     {
+        LastCategoryId = categoryId;
         var matches = Products
             .Where(entry => entry.TenantId == tenantId && entry.Product.IsActive)
             .Select(entry => entry.Product)
@@ -360,6 +364,22 @@ internal sealed class FakeProductLookup : IPosProductLookup
         Task.FromResult<IReadOnlyDictionary<Guid, PosProductRef>>(Products
             .Where(entry => entry.TenantId == tenantId && variantIds.Contains(entry.Product.VariantId))
             .ToDictionary(entry => entry.Product.VariantId, entry => entry.Product));
+}
+
+/// <summary>
+/// Las categorías de la caja en memoria, con el <c>ProductCount</c> ya acumulado como lo entrega el adaptador;
+/// <see cref="Totals"/> es el total de productos activos de cada tenant (con o sin categoría).
+/// </summary>
+internal sealed class FakeCategoryLookup : IPosCategoryLookup
+{
+    public List<(Guid TenantId, PosCategoryRef Category)> Categories { get; } = [];
+
+    public Dictionary<Guid, int> Totals { get; } = [];
+
+    public Task<PosCategoryList> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(new PosCategoryList(
+            Categories.Where(entry => entry.TenantId == tenantId).Select(entry => entry.Category).ToList(),
+            Totals.GetValueOrDefault(tenantId)));
 }
 
 /// <summary>
@@ -474,6 +494,8 @@ internal sealed class PosTestBed
     public FakeCashierLookup Cashiers { get; } = new();
 
     public FakeProductLookup Products { get; } = new();
+
+    public FakeCategoryLookup Categories { get; } = new();
 
     public FakeCustomerLookup Customers { get; } = new();
 

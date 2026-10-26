@@ -174,6 +174,7 @@ app.MapStorageEndpoints();
 app.MapCatalogEndpoints();
 app.MapCatalogTaxRateEndpoints();
 app.MapCatalogOptionEndpoints();
+app.MapCatalogCategoryEndpoints();
 app.MapCompanyEndpoints();
 app.MapCustomerEndpoints();
 app.MapClientClassificationEndpoints();

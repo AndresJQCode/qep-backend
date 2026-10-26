@@ -181,7 +181,7 @@ public sealed class PosProductLookupTests
             new ProductImageRef(world.MediumFileId, TenantId, "image/png", true, "https://cdn.example.co/m.png"));
         var lookup = Lookup(new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size), images);
 
-        var (items, total) = await lookup.SearchAsync(TenantId, null, 1, 20, Ct);
+        var (items, total) = await lookup.SearchAsync(TenantId, null, null, 1, 20, Ct);
 
         Assert.Equal(1, total);
         var product = Assert.Single(items);
@@ -195,11 +195,57 @@ public sealed class PosProductLookupTests
         Assert.Equal(1, images.Calls);
     }
 
+    // Spec 2026-10-26 §3.4: el filtro de la caja es la categoría y todas sus descendientes; el repositorio
+    // de productos recibe los ids ya expandidos.
+    [Fact]
+    public async Task SearchWithACategoryPassesTheCategoryAndItsDescendants()
+    {
+        var bebidas = ProductCategory.Create(ProductCategoryId.New(), TenantId, "Bebidas", null, Now);
+        var gaseosas = ProductCategory.Create(ProductCategoryId.New(), TenantId, "Gaseosas", bebidas.Id, Now);
+        var products = new FakeProductRepository();
+        var lookup = Lookup(products, categories: new FakeProductCategoryRepository((bebidas, 0), (gaseosas, 0)));
+
+        await lookup.SearchAsync(TenantId, null, bebidas.Id.Value, 1, 40, Ct);
+
+        Assert.NotNull(products.LastCategoryIds);
+        Assert.Equal(
+            new[] { bebidas.Id.Value, gaseosas.Id.Value }.Order(),
+            products.LastCategoryIds.Order());
+    }
+
+    [Fact]
+    public async Task SearchWithoutACategoryPassesNull()
+    {
+        var products = new FakeProductRepository();
+        var lookup = Lookup(products);
+
+        await lookup.SearchAsync(TenantId, null, null, 1, 40, Ct);
+
+        Assert.Equal(1, products.SearchCalls);
+        Assert.Null(products.LastCategoryIds);
+    }
+
+    // Un id que no existe o es de otro tenant da página vacía, no 404, y ni siquiera llega a la consulta de productos.
+    [Fact]
+    public async Task SearchWithAnUnknownCategoryIsEmptyWithoutQueryingProducts()
+    {
+        var products = new FakeProductRepository(NewProduct(imageFileId: null));
+        var lookup = Lookup(products);
+
+        var (items, total) = await lookup.SearchAsync(TenantId, null, Guid.CreateVersion7(), 1, 40, Ct);
+
+        Assert.Empty(items);
+        Assert.Equal(0, total);
+        Assert.Equal(0, products.SearchCalls);
+    }
+
     private static PosProductLookup Lookup(
         FakeProductRepository products,
         FakeOptionDefinitionRepository? options = null,
-        FakeProductImageLookup? images = null) =>
-        new(products, options ?? new FakeOptionDefinitionRepository(), new FakeTaxRateRepository(), images ?? new FakeProductImageLookup());
+        FakeProductImageLookup? images = null,
+        FakeProductCategoryRepository? categories = null) =>
+        new(products, options ?? new FakeOptionDefinitionRepository(), new FakeTaxRateRepository(), images ?? new FakeProductImageLookup(),
+            categories ?? new FakeProductCategoryRepository());
 
     private static PosProductLookup LookupFor(Guid fileId, ProductImageRef image, out Guid variantId)
     {

@@ -22,12 +22,14 @@ internal static class ProductBodies
         string? description = null,
         Guid? taxRateId = null,
         Guid? imageFileId = null,
-        string? barcode = null) =>
+        string? barcode = null,
+        Guid? categoryId = null) =>
         new
         {
             name,
             description,
             taxRateId,
+            categoryId,
             gallery = imageFileId is { } image ? new[] { image } : [],
             variants = new[] { Variant(null, code, pricing ?? UsdPricing(), barcode) }
         };
@@ -42,8 +44,9 @@ internal static class ProductBodies
         object? pricing = null,
         string? description = null,
         Guid? taxRateId = null,
-        Guid? imageFileId = null) =>
-        Update(current.Version, Assert.Single(current.Variants).Id, name, code, pricing, description, taxRateId, imageFileId);
+        Guid? imageFileId = null,
+        Guid? categoryId = null) =>
+        Update(current.Version, Assert.Single(current.Variants).Id, name, code, pricing, description, taxRateId, imageFileId, categoryId);
 
     public static object Update(
         long expectedVersion,
@@ -53,13 +56,15 @@ internal static class ProductBodies
         object? pricing = null,
         string? description = null,
         Guid? taxRateId = null,
-        Guid? imageFileId = null) =>
+        Guid? imageFileId = null,
+        Guid? categoryId = null) =>
         new
         {
             expectedVersion,
             name,
             description,
             taxRateId,
+            categoryId,
             gallery = imageFileId is { } image ? new[] { image } : [],
             variants = new[] { Variant(variantId, code, pricing ?? UsdPricing(), barcode: null) }
         };

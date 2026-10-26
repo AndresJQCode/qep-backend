@@ -96,6 +96,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         string? name,
         string? code,
         bool? isActive,
+        IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
@@ -103,7 +104,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         // CAT-09: sin los Include, las escalas llegan vacías en cada listado — EF no trae
         // colecciones hijas por su cuenta.
         var (ordered, total) = await SearchQueryAsync(
-            Aggregates().AsNoTracking(), tenantId, search, name, code, isActive, cancellationToken);
+            Aggregates().AsNoTracking(), tenantId, search, name, code, isActive, categoryIds, cancellationToken);
 
         var items = await ordered
             .Skip((page - 1) * pageSize)
@@ -123,12 +124,13 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         string? name,
         string? code,
         bool? isActive,
+        IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
         var (ordered, total) = await SearchQueryAsync(
-            dbContext.Products.AsNoTracking(), tenantId, search, name, code, isActive, cancellationToken);
+            dbContext.Products.AsNoTracking(), tenantId, search, name, code, isActive, categoryIds, cancellationToken);
 
         var rows = await ordered
             .Skip((page - 1) * pageSize)
@@ -140,6 +142,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 product.IsActive,
                 product.Description,
                 product.TaxRateId,
+                product.CategoryId,
                 ImageFileId = product.Gallery
                     .OrderBy(image => image.Position)
                     .Select(image => (Guid?)image.FileId)
@@ -209,6 +212,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 row.IsActive,
                 row.Description,
                 row.TaxRateId,
+                row.CategoryId,
                 row.ImageFileId,
                 variantStats.GetValueOrDefault(row.Id)?.Count ?? 0,
                 variantStats.GetValueOrDefault(row.Id) is { } stats
@@ -352,12 +356,26 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         string? name,
         string? code,
         bool? isActive,
+        IReadOnlyCollection<Guid>? categoryIds,
         CancellationToken cancellationToken)
     {
         var query = source.Where(product => product.TenantId == tenantId);
         if (isActive is not null)
         {
             query = query.Where(product => product.IsActive == isActive);
+        }
+
+        // null = sin filtro; una colección vacía no devuelve filas. Lo usa el POS; el listado de
+        // productos no lo expone todavía (spec 2026-10-26 §3.3).
+        if (categoryIds is not null)
+        {
+            // Los ids con el tipo exacto de la propiedad, ProductCategoryId? (nullable), y el Contains sobre
+            // la propiedad entera. Con ProductCategoryId[] contra product.CategoryId.Value, EF le aplicaba
+            // al parámetro el conversor de la columna nullable a elementos no nullable y el GET respondía 500
+            // (TargetInvocationException; lo encontró PosCategoryApiTests contra Postgres). Un producto sin
+            // categoría no entra: null nunca está en la lista.
+            var ids = categoryIds.Select(id => (ProductCategoryId?)new ProductCategoryId(id)).ToArray();
+            query = query.Where(product => ids.Contains(product.CategoryId));
         }
 
         // ILike es la coincidencia case-insensitive de Npgsql. Los comodines tienen que ser
@@ -558,5 +576,11 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         CancellationToken cancellationToken) =>
         dbContext.Products.AnyAsync(
             product => product.TenantId == tenantId && product.TaxRateId == taxRateId,
+            cancellationToken);
+
+    // CountAsync sobre el DbSet: un SELECT count(*) sin materializar productos ni variantes.
+    public Task<int> CountActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        dbContext.Products.CountAsync(
+            product => product.TenantId == tenantId && product.IsActive,
             cancellationToken);
 }

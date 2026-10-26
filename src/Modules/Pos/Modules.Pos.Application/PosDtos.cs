@@ -109,6 +109,21 @@ public sealed record PosCatalogProductResponse(
     string? ImageUrl,
     IReadOnlyList<PosProductResponse> Variants);
 
+/// <summary>
+/// Un chip de categoría de la caja (spec 2026-10-26 §3.4). La lista viaja plana y en orden por nombre;
+/// la pantalla arma el árbol con <see cref="ParentId"/>.
+/// </summary>
+/// <param name="ParentId">null en una raíz.</param>
+/// <param name="ProductCount">Productos activos de la categoría **y de todas sus descendientes**: lo que
+/// encuentra <c>GET /pos/products?categoryId=</c>. Viaja ya acumulado porque el navegador no puede sumarlo
+/// sin conocer todo el árbol, y una categoría en 0 viaja igual.</param>
+public sealed record PosCategoryResponse(Guid Id, string Name, Guid? ParentId, int ProductCount);
+
+/// <summary>Las categorías de la caja.</summary>
+/// <param name="Total">BFF: es lo que pinta «Todas las categorías · N productos», incluidos los productos
+/// activos sin categoría. Sumar las raíces en el cliente los perdería.</param>
+public sealed record PosCategoriesResponse(IReadOnlyList<PosCategoryResponse> Items, int Total);
+
 public sealed record PosPreviewLineRequest(Guid VariantId, decimal Quantity, decimal DiscountPercentage);
 
 /// <param name="ProductId">null con NotFound, como Code y Name.</param>

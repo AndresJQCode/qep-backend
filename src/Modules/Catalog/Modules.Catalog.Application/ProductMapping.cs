@@ -57,6 +57,7 @@ internal static class ProductMapping
             product.ImageFileId,
             mainImageUrl,
             product.TaxRateId?.Value,
+            product.CategoryId?.Value,
             OptionsOf(product, lookups),
             product.Variants
                 .Select(variant => ToResponse(product, variant, galleryById, valueNames, mainImageUrl, lookups))
