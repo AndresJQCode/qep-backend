@@ -432,6 +432,8 @@ public sealed class SendQuotationHandlerTests
         Assert.Equal(harness.Repository.Pdf!.StorageKey, harness.Sender.Sent.DocumentStorageKey);
         Assert.Equal(AdvisorId.Value, harness.Sender.Sent.SentByMemberId);
         Assert.Equal(ClientId, harness.Sender.Sent.CustomerId);
+        // El adaptador de Meta lanza sin tenant y la prueba de integración reemplaza el sender: sólo aquí se ve.
+        Assert.Equal(TenantId, harness.Sender.Sent.TenantId);
     }
 
     [Fact]

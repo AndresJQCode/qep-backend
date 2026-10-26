@@ -9,8 +9,9 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>
-/// Plan 2026-10-21 (Zenvia por tenant): la cotización sale por la conexión de Zenvia del tenant. Sin canal, o con varios
-/// mientras no exista la elección (plan 3), el envío responde 422 sin tocar la cotización ni anotar una falla.
+/// Plan 2026-10-21 (Zenvia por tenant) y plan 3 (envío por canal): la cotización sale por el canal de WhatsApp del tenant.
+/// Sin canal, o con varios y sin elección guardada, el envío responde 422 sin tocar la cotización ni anotar una falla.
+/// La elección se guarda con el primer envío o con el PUT de Configuración, y el GET lista los canales disponibles.
 /// </summary>
 public sealed class WhatsAppChannelApiTests
 {
@@ -438,6 +439,40 @@ public sealed class WhatsAppChannelApiTests
         Assert.Equal("validation.failed", await CodeAsync(response));
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("connectionId", out _));
+    }
+
+    // Sin cuerpo no hay nada que enlazar: un parámetro requerido lo mataba con 500 (mismo caso que SendWorksWithoutABody).
+    [Fact]
+    public async Task PutWithoutABodyIs422WithTheFieldError()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, OwnerPermissions);
+        using var owned = client;
+
+        using var response = await client.PutAsync(ChannelUrl(tenantId), content: null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeAsync(response));
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("connectionId", out _));
+    }
+
+    // Quien tiene el permiso en su tenant no lo tiene en el ajeno: 403 y no 404, para no confirmar que el id existe.
+    [Fact]
+    public async Task PutForAnotherTenantIs403()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, owner) = await RegisterTenantAsync(factory, OwnerPermissions);
+        using var _ = owner;
+        var (_, _, otherOwner) = await RegisterTenantAsync(factory, OwnerPermissions);
+        using var __ = otherOwner;
+        factory.WhatsAppChannels.Channels.Add(RecordingWhatsAppChannelDirectory.Meta);
+
+        using var response = await PutChannelAsync(otherOwner, tenantId, RecordingWhatsAppChannelDirectory.Meta.ConnectionId);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
     // Criterio 3: cambiar el canal es de Configuración; quien sólo gestiona cotizaciones lo elige al enviar, no aquí.

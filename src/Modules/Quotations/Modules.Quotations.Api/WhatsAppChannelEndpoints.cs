@@ -41,11 +41,11 @@ public static class WhatsAppChannelEndpoints
 
     private static async Task<IResult> ChooseAsync(
         Guid tenantId,
-        ChooseWhatsAppChannelRequest request,
         IRequestDispatcher dispatcher,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        ChooseWhatsAppChannelRequest? request = null) =>
         Results.Ok(await dispatcher.SendAsync(
-            new ChooseWhatsAppChannelCommand(tenantId, request.ConnectionId), cancellationToken));
+            new ChooseWhatsAppChannelCommand(tenantId, request?.ConnectionId), cancellationToken));
 }
 
 /// <summary><c>ConnectionId</c> nullable a propósito: un cuerpo sin él llega al validador como null y es un 422 con el

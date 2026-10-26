@@ -190,7 +190,7 @@ public sealed class SendQuotationHandler(
                     auditPublisher.Publish(
                         command.TenantId,
                         executionContext.SubjectId,
-                        "quotations.whatsapp_channel.chosen",
+                        ChooseWhatsAppChannelHandler.AuditAction,
                         channel.ConnectionId.ToString(),
                         "success",
                         now);
