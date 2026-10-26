@@ -36,6 +36,7 @@ public sealed class ShopifyOrderImporter(
     IShopifyOrderWriter orders,
     IShopifyOrderChangeReaction changes,
     IShopifyCityCorrectionRepository cityCorrections,
+    IShopifyCityCorrectionJobRepository cityCorrectionJobs,
     IShopifyUnresolvedCityReporter unresolvedCities,
     IShopifyUnitOfWork unitOfWork,
     IClock clock) : IShopifyOrderImporter
@@ -349,8 +350,11 @@ public sealed class ShopifyOrderImporter(
     /// S3). Va en la unidad de trabajo de Shopify, en el guardado final del llamador.</item>
     /// <item>La ciudad de Colombia que no casó por ningún camino, con su departamento resuelto (D-C11), va a la bandeja si frenó
     /// algo: la parte de envío (no es recogida) o el alta completa del cliente. Si el reporte lanza, la importación lanza y la
-    /// entrega se reintenta; la ocurrencia es idempotente por la fila del espejo. Un texto vacío (<c>Ignored</c>) o un sinónimo
-    /// que se confirmó en el medio (<c>SynonymExists</c>, lo atiende el trabajo de corrección) no cambian nada acá.</item>
+    /// entrega se reintenta; la ocurrencia es idempotente por la fila del espejo. Un texto vacío (<c>Ignored</c>) no cambia nada
+    /// acá.</item>
+    /// <item>Un sinónimo que se confirmó entre el match y el reporte (<c>SynonymExists</c>) ya publicó su evento sin esta
+    /// ocurrencia: el importador siembra los trabajos directo, con las reglas del evento
+    /// (<see cref="ShopifyCitySynonymEventApplier.ResolveJobs"/>), sin mensaje de origen ni operador, en el guardado final.</item>
     /// </list>
     /// </summary>
     private async Task RecordShippingCityAsync(
@@ -383,20 +387,28 @@ public sealed class ShopifyOrderImporter(
         }
 
         var bornIncomplete = creation is { Customer: { Created: true, IsComplete: false } } ? creation.Customer.Id : (Guid?)null;
-        await unresolvedCities.ReportAsync(
-            new ShopifyUnresolvedCityReport(
-                row.TenantId,
-                row.Id,
-                result.OrderId,
-                bornIncomplete,
-                departmentId,
-                cityText,
-                ShopifyUnresolvedCitySample.Of(snapshot.ShippingAddress!),
-                Blank(snapshot.ShippingAddress!.ProvinceCode),
-                PartyCityOnly: !draft.IsStorePickup && ShippingPartyFields(snapshot) is not null,
-                CustomerCityOnly: creation is { CityBlocked: true },
-                now),
-            cancellationToken);
+        var report = new ShopifyUnresolvedCityReport(
+            row.TenantId,
+            row.Id,
+            result.OrderId,
+            bornIncomplete,
+            departmentId,
+            cityText,
+            ShopifyUnresolvedCitySample.Of(snapshot.ShippingAddress!),
+            Blank(snapshot.ShippingAddress!.ProvinceCode),
+            PartyCityOnly: !draft.IsStorePickup && ShippingPartyFields(snapshot) is not null,
+            CustomerCityOnly: creation is { CityBlocked: true },
+            now);
+        var reported = await unresolvedCities.ReportAsync(report, cancellationToken);
+        if (reported is { Outcome: ShopifyUnresolvedCityOutcome.SynonymExists, SynonymId: { } synonymId })
+        {
+            foreach (var job in ShopifyCitySynonymEventApplier.ResolveJobs(
+                row.TenantId, synonymId, row.Id, result.OrderId, report.CustomerId, report.PartyCityOnly, report.CustomerCityOnly,
+                operatorSubjectId: Guid.Empty, sourceMessageId: null, now))
+            {
+                cityCorrectionJobs.Add(job);
+            }
+        }
     }
 
     /// <summary>

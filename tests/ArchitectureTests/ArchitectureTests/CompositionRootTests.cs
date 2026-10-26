@@ -522,6 +522,11 @@ public sealed class CompositionRootTests
             provider.GetServices<IHostedService>(),
             service => service.GetType().FullName == "Modules.Shopify.Infrastructure.Workers.ShopifyReconcileWorker");
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ICommandHandler<SyncShopifyStoreCommand, ShopifySyncResult>>());
+        // Spec 2026-10-26 D-C6: sin el consumidor, confirmar un sinónimo publica su evento y ningún pedido se corrige nunca.
+        Assert.Contains(
+            provider.GetServices<IHostedService>(),
+            service => service.GetType().FullName == "Modules.Shopify.Infrastructure.Workers.CitySynonymEventsWorker");
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ShopifyCitySynonymEventApplier>());
     }
 
     /// <summary>

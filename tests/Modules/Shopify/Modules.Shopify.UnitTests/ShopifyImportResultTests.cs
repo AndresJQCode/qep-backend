@@ -402,6 +402,52 @@ public sealed class ShopifyImportResultTests
         Assert.Equal((false, false, row.QepCustomerId), (report.PartyCityOnly, report.CustomerCityOnly, report.CustomerId));
     }
 
+    // El sinónimo se confirmó entre el match y el reporte: su evento ya salió sin esta ocurrencia, así que nadie más la va a
+    // sembrar. El importador siembra los trabajos con las mismas reglas del evento, sin mensaje de origen ni operador, en la misma
+    // unidad de trabajo que marca la fila importada.
+    [Fact]
+    public async Task ASynonymConfirmedDuringTheImportSeedsTheJobDirectly()
+    {
+        var world = WorldWithValle().WithClassification();
+        world.UnresolvedCities.Outcome = new ShopifyUnresolvedCityResult(ShopifyUnresolvedCityOutcome.SynonymExists, SynonymId);
+        var orderId = Guid.CreateVersion7();
+        world.Writer.Result = draft => ShopifyOrderWriteResult.Written(orderId, "PED-0024", 119_000m, alreadyExisted: false, draft.ClientId);
+        var snapshot = Order(attributes: Document, address: Calli, shippingLines: [Line(19_000m)]);
+        var row = world.RowFor(snapshot);
+
+        await world.ImportAsync(row, snapshot);
+
+        var customerId = Assert.IsType<Guid>(row.QepCustomerId);
+        Assert.Equal(ShopifyImportState.Imported, row.ImportState);
+        Assert.Equal(
+            [
+                (ShopifyCityCorrectionJobKind.Resolve, TenantId, SynonymId, ShopifyCityCorrectionTarget.Order, orderId, (Guid?)row.Id, Guid.Empty, (Guid?)null, Now),
+                (ShopifyCityCorrectionJobKind.Resolve, TenantId, SynonymId, ShopifyCityCorrectionTarget.Customer, customerId, row.Id, Guid.Empty, null, Now),
+            ],
+            world.Database.PendingCityCorrectionJobs.Select(job =>
+                (job.Kind, job.TenantId, job.SynonymId, job.Target, job.TargetId, job.MirrorOrderId, job.OperatorSubjectId, job.SourceMessageId, job.CreatedAt)));
+    }
+
+    // Si Geography no responde, la importación lanza: la fila no queda importada y nada de lo que iba en el guardado final (el
+    // trabajo que habría sembrado un sinónimo) queda confirmado. La entrega se reintenta y la ocurrencia es idempotente.
+    [Fact]
+    public async Task AFailingReportMakesTheImportThrow()
+    {
+        var world = WorldWithValle().WithClassification();
+        world.UnresolvedCities.OnReport = () => new InvalidOperationException("Geography is down.");
+        var snapshot = Order(attributes: Document, address: Calli, shippingLines: [Line(19_000m)]);
+        var row = world.RowFor(snapshot);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => world.ImportAsync(row, snapshot));
+
+        Assert.Equal("Geography is down.", error.Message);
+        Assert.Equal(ShopifyImportState.Waiting, row.ImportState);
+        Assert.Single(world.UnresolvedCities.Reports);
+        Assert.Empty(world.Database.CityCorrections);
+        Assert.Empty(world.Database.CityCorrectionJobs);
+        Assert.Empty(world.Database.PendingCityCorrectionJobs);
+    }
+
     // D-C11: sin departamento no hay en qué lista sugerir; el pedido entra como hoy, con la dirección cruda en las notas.
     [Fact]
     public async Task WithoutDepartmentNothingIsReported()

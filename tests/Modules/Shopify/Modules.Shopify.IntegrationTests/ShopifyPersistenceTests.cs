@@ -282,6 +282,40 @@ public sealed class ShopifyPersistenceTests
             connectionString, "SELECT string_agg(target || '|' || origin, ',') FROM shopify.city_corrections"));
     }
 
+    // Spec 2026-10-26 §4.6 y O8: corregir un sinónimo recorrige todo lo que arregló, de los dos orígenes y en todos los tenants (el
+    // sinónimo es de plataforma). Lo de otro sinónimo no entra.
+    [Fact]
+    public async Task ListBySynonymSeesTheCorrectionsOfEveryTenantAndOrigin()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (synonymId, departmentId, cityId) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+        var party = new ShopifyShippingFingerprint("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", departmentId, cityId);
+        var order = ShopifyCityCorrection.ForOrder(
+            Guid.CreateVersion7(), synonymId, ShopifyCityCorrectionOrigin.Correction, Guid.CreateVersion7(), Guid.CreateVersion7(), party, Now);
+        var customer = ShopifyCityCorrection.ForCustomer(
+            Guid.CreateVersion7(), synonymId, ShopifyCityCorrectionOrigin.Import, Guid.CreateVersion7(), null, departmentId, cityId, 1L, Now);
+        var other = ShopifyCityCorrection.ForOrder(
+            order.TenantId, Guid.CreateVersion7(), ShopifyCityCorrectionOrigin.Correction, Guid.CreateVersion7(), Guid.CreateVersion7(), party, Now);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var repository = scope.ServiceProvider.GetRequiredService<IShopifyCityCorrectionRepository>();
+            repository.Add(order);
+            repository.Add(customer);
+            repository.Add(other);
+            await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var reader = factory.Services.CreateScope();
+        var listed = await reader.ServiceProvider.GetRequiredService<IShopifyCityCorrectionRepository>().ListBySynonymAsync(synonymId, Ct);
+
+        Assert.Equal(
+            new[] { (order.Id, order.TenantId, ShopifyCityCorrectionOrigin.Correction), (customer.Id, customer.TenantId, ShopifyCityCorrectionOrigin.Import) }
+                .OrderBy(entry => entry.Item3),
+            listed.Select(correction => (correction.Id, correction.TenantId, correction.Origin)).OrderBy(entry => entry.Item3));
+    }
+
     // §6.1: la tienda nace al primer contacto, y dos a la vez chocan con la PK.
     [Fact]
     public async Task TheStoreCreatedTwiceAtOnceIsAConcurrencyConflict()

@@ -182,6 +182,21 @@ internal sealed class FakeCityCorrectionRepository(FakeShopifyDatabase database)
         Task.FromResult(database.CityCorrections.Concat(database.PendingCityCorrections).FirstOrDefault(correction => correction.Id == id));
 
     public void Add(ShopifyCityCorrection correction) => database.PendingCityCorrections.Add(correction);
+
+    // Como la consulta de EF: sólo lo guardado, de todos los tenants, en orden de id.
+    public Task<IReadOnlyList<ShopifyCityCorrection>> ListBySynonymAsync(Guid synonymId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyCityCorrection>>(
+            [.. database.CityCorrections.Where(correction => correction.SynonymId == synonymId).OrderBy(correction => correction.Id)]);
+}
+
+/// <summary>Los trabajos de corrección (spec 2026-10-26 D-C6) en la «base»: lo agregado queda pendiente hasta el guardado de
+/// <see cref="FakeUnitOfWork"/>.</summary>
+internal sealed class FakeCityCorrectionJobRepository(FakeShopifyDatabase database) : IShopifyCityCorrectionJobRepository
+{
+    public Task<ShopifyCityCorrectionJob?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+        Task.FromResult(database.CityCorrectionJobs.Concat(database.PendingCityCorrectionJobs).FirstOrDefault(job => job.Id == id));
+
+    public void Add(ShopifyCityCorrectionJob job) => database.PendingCityCorrectionJobs.Add(job);
 }
 
 /// <summary>Transportadoras por título exacto y la tasa del envío del tenant; anota qué se le preguntó. La normalización del
@@ -311,6 +326,7 @@ internal sealed class ImporterWorld
         UnitOfWork = new FakeUnitOfWork(Database);
         Mirrors = new FakeOrderMirrorRepository(Database);
         CityCorrections = new FakeCityCorrectionRepository(Database);
+        CityCorrectionJobs = new FakeCityCorrectionJobRepository(Database);
         Writer = new FakeOrderWriter(UnitOfWork);
         Members.Active.Add(AdvisorId);
         Billing.Account = new ShopifyBillingAccountRef(CompanyId, "Bancolombia", "123-456", "COP");
@@ -347,6 +363,8 @@ internal sealed class ImporterWorld
 
     public FakeCityCorrectionRepository CityCorrections { get; }
 
+    public FakeCityCorrectionJobRepository CityCorrectionJobs { get; }
+
     public FakeUnresolvedCityReporter UnresolvedCities { get; } = new();
 
     public FakeOrderWriter Writer { get; }
@@ -361,7 +379,7 @@ internal sealed class ImporterWorld
     public ShopifyOrderImporter Importer =>
         new(
             Members, Billing, Resolver, Products, Shipping, Writer, new ShopifyOrderChanges(Writer, Customers, new FakeClock(Now)),
-            CityCorrections, UnresolvedCities, UnitOfWork, new FakeClock(Now));
+            CityCorrections, CityCorrectionJobs, UnresolvedCities, UnitOfWork, new FakeClock(Now));
 
     /// <summary>La tienda con clasificación por defecto: con documento y dirección, el comprador puede nacer completo.</summary>
     public ImporterWorld WithClassification()

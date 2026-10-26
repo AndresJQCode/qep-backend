@@ -145,11 +145,13 @@ internal static class ShopifyApiHarness
             // (DrainAsync) y decide cuándo, así que uno en segundo plano reclamaría la misma entrega a la vez.
             builder.ConfigureTestServices(services =>
             {
-                // La conciliación tampoco: la prueba que la necesita la corre a mano (RunOnceAsync).
+                // La conciliación tampoco: la prueba que la necesita la corre a mano (RunOnceAsync). Ni el consumidor de los
+                // eventos de sinónimos (ProcessBatchAsync).
                 foreach (var worker in services
                     .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
                         && (descriptor.ImplementationType == typeof(ShopifyWebhookDeliveryWorker)
-                            || descriptor.ImplementationType == typeof(ShopifyReconcileWorker)))
+                            || descriptor.ImplementationType == typeof(ShopifyReconcileWorker)
+                            || descriptor.ImplementationType == typeof(CitySynonymEventsWorker)))
                     .ToArray())
                 {
                     services.Remove(worker);

@@ -8,8 +8,9 @@ namespace Modules.Shopify.Infrastructure.Persistence;
 /// <summary>
 /// Esquema <c>shopify</c> (spec 2026-10-15 §9): la configuración de cada tienda (<c>stores</c>, §6.1), el espejo de pedidos
 /// (<c>orders</c>, §5.4), la cola de entregas de webhook (<c>webhook_deliveries</c>, §5.1) y las huellas de los sinónimos de
-/// ciudad (<c>city_corrections</c>, spec 2026-10-26 §5). Proyecta <c>audit.entries</c> sin ser
-/// su dueño (<c>ExcludeFromMigrations</c>, H19), como Integrations y Messaging. Sin FKs a otros esquemas: conexión, cliente,
+/// ciudad (<c>city_corrections</c>, spec 2026-10-26 §5) con sus trabajos de corrección (<c>city_correction_jobs</c>, D-C6) y el
+/// inbox de sus consumidores (<c>inbox_messages</c>). Proyecta <c>audit.entries</c> y <c>platform.outbox_messages</c> sin ser
+/// su dueño (<c>ExcludeFromMigrations</c>, H19), como Integrations, Messaging y Pipeline. Sin FKs a otros esquemas: conexión, cliente,
 /// pedido, asesor, empresa y clasificación son referencias blandas.
 /// </summary>
 public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options) : DbContext(options)
@@ -28,6 +29,9 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
     /// <summary>Spec 2026-10-26: una huella por sinónimo y pedido o cliente. <c>ShopifyUnitOfWork</c> discrimina por este nombre.</summary>
     public const string CityCorrectionSynonymTargetIndex = "IX_city_corrections_synonym_target";
 
+    /// <summary>Spec 2026-10-26 D-C6: un trabajo por mensaje, destino e id; el consumidor de eventos no siembra dos veces.</summary>
+    public const string CityCorrectionJobMessageTargetIndex = "IX_city_correction_jobs_message_target";
+
     private const int EnumNameMaxLength = 16;
 
     public DbSet<ShopifyStore> Stores => Set<ShopifyStore>();
@@ -35,6 +39,12 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
     public DbSet<ShopifyOrderMirror> Orders => Set<ShopifyOrderMirror>();
 
     public DbSet<ShopifyCityCorrection> CityCorrections => Set<ShopifyCityCorrection>();
+
+    public DbSet<ShopifyCityCorrectionJob> CityCorrectionJobs => Set<ShopifyCityCorrectionJob>();
+
+    internal DbSet<ShopifyInboxMessage> Inbox => Set<ShopifyInboxMessage>();
+
+    internal DbSet<ShopifyOutboxRecord> Outbox => Set<ShopifyOutboxRecord>();
 
     internal DbSet<ShopifyWebhookDeliveryRecord> Deliveries => Set<ShopifyWebhookDeliveryRecord>();
 
@@ -52,7 +62,75 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
         ConfigureOrder(modelBuilder);
         ConfigureDelivery(modelBuilder);
         ConfigureCityCorrection(modelBuilder);
+        ConfigureCityCorrectionJob(modelBuilder);
+        ConfigureInbox(modelBuilder);
+        ConfigureOutboxProjection(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
+    }
+
+    private static void ConfigureCityCorrectionJob(ModelBuilder modelBuilder)
+    {
+        var job = modelBuilder.Entity<ShopifyCityCorrectionJob>();
+        job.ToTable("city_correction_jobs", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_city_correction_jobs_kind", NamesCheck<ShopifyCityCorrectionJobKind>("kind"));
+            table.HasCheckConstraint("CK_city_correction_jobs_target", NamesCheck<ShopifyCityCorrectionTarget>("target"));
+            table.HasCheckConstraint("CK_city_correction_jobs_status", NamesCheck<ShopifyCityCorrectionJobStatus>("status"));
+        });
+        job.HasKey(value => value.Id);
+        job.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        job.Property(value => value.TenantId).HasColumnName("tenant_id");
+        // Referencias blandas: el sinónimo es de geography, el pedido de quotations, el cliente de customers y el mensaje del
+        // outbox de plataforma. La huella sí es de este esquema, pero tampoco lleva FK: un trabajo terminado no frena nada.
+        job.Property(value => value.SynonymId).HasColumnName("synonym_id");
+        // Texto: lo nombran los CHECK y el lector de Geography (D-C3b), que cuenta pendientes y fallidos por nombre.
+        job.Property(value => value.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(EnumNameMaxLength);
+        job.Property(value => value.Target).HasColumnName("target").HasConversion<string>().HasMaxLength(EnumNameMaxLength);
+        job.Property(value => value.TargetId).HasColumnName("target_id");
+        job.Property(value => value.MirrorOrderId).HasColumnName("mirror_order_id");
+        job.Property(value => value.CorrectionId).HasColumnName("correction_id");
+        job.Property(value => value.OperatorSubjectId).HasColumnName("operator_subject_id");
+        job.Property(value => value.SourceMessageId).HasColumnName("source_message_id");
+        job.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(EnumNameMaxLength);
+        job.Property(value => value.SkipReason).HasColumnName("skip_reason").HasMaxLength(ShopifyCityCorrectionJob.SkipReasonMaxLength);
+        // Los nombres van a mano: la cola del worker los escribe en SQL crudo.
+        job.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(0);
+        job.Property(value => value.LeaseUntil).HasColumnName("lease_until");
+        job.Property(value => value.LastError).HasColumnName("last_error").HasMaxLength(ShopifyCityCorrectionJob.LastErrorMaxLength);
+        job.Property(value => value.CreatedAt).HasColumnName("created_at");
+        job.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+
+        job.HasIndex(value => new { value.SourceMessageId, value.Target, value.TargetId })
+            .IsUnique()
+            .HasFilter("source_message_id IS NOT NULL")
+            .HasDatabaseName(CityCorrectionJobMessageTargetIndex);
+        // El worker busca los pendientes con el lease vencido; la consola cuenta pendientes y fallidos por sinónimo.
+        job.HasIndex(value => new { value.Status, value.LeaseUntil }).HasDatabaseName("IX_city_correction_jobs_status_lease");
+        job.HasIndex(value => new { value.SynonymId, value.Status }).HasDatabaseName("IX_city_correction_jobs_synonym_status");
+    }
+
+    private static void ConfigureInbox(ModelBuilder modelBuilder)
+    {
+        var inbox = modelBuilder.Entity<ShopifyInboxMessage>();
+        inbox.ToTable("inbox_messages", Schema);
+        inbox.HasKey(value => new { value.Consumer, value.MessageId });
+        inbox.Property(value => value.Consumer).HasColumnName("consumer").HasMaxLength(200);
+        inbox.Property(value => value.MessageId).HasColumnName("message_id");
+        inbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        // Los nombres van a mano porque ShopifyInboxClaims los escribe en SQL crudo.
+        inbox.Property(value => value.ClaimedUntil).HasColumnName("claimed_until");
+        inbox.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(1);
+    }
+
+    private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
+    {
+        var outbox = modelBuilder.Entity<ShopifyOutboxRecord>();
+        outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
+        outbox.HasKey(value => value.Id);
+        outbox.Property(value => value.Id).HasColumnName("id");
+        outbox.Property(value => value.EventName).HasColumnName("event_name");
+        outbox.Property(value => value.PayloadJson).HasColumnName("payload").HasColumnType("jsonb");
+        outbox.Property(value => value.OccurredAt).HasColumnName("occurred_at");
     }
 
     private static void ConfigureCityCorrection(ModelBuilder modelBuilder)

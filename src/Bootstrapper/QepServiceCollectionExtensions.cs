@@ -927,6 +927,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IShopifyOrderChangeReaction, ShopifyOrderChanges>();
         services.AddShopifyWebhookProcessing();
         services.AddShopifyWebhookWorker();
+        // Spec 2026-10-26 D-C6: el consumidor de los eventos de sinónimos de Geography, que siembra los trabajos de corrección.
+        services.AddShopifyCityCorrections();
         // §5.3: el cron de la conciliación, cada Shopify:Reconcile:IntervalMinutes.
         services.AddShopifyReconcileWorker();
 

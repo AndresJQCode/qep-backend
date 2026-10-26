@@ -67,10 +67,24 @@ public interface IShopifyCityCorrectionRepository
     Task<ShopifyCityCorrection?> FindAsync(
         Guid tenantId, Guid synonymId, ShopifyCityCorrectionTarget target, Guid targetId, CancellationToken cancellationToken);
 
-    /// <summary>Por id, sin tenant: la usa el trabajo de corrección, que corre fuera de un request (SC-07).</summary>
+    /// <summary>Por id, sin tenant: la usa el trabajo de corrección, que corre fuera de un request (SC-08).</summary>
     Task<ShopifyCityCorrection?> FindByIdAsync(Guid id, CancellationToken cancellationToken);
 
     void Add(ShopifyCityCorrection correction);
+
+    /// <summary>§4.6 y O8: las huellas de un sinónimo, de los dos orígenes y de <b>todos</b> los tenants (el sinónimo es de
+    /// plataforma), sin tracking y en orden de id: la siembra del evento <c>corrected</c> sólo las lee. Va por
+    /// <c>IX_city_corrections_synonym_target</c>.</summary>
+    Task<IReadOnlyList<ShopifyCityCorrection>> ListBySynonymAsync(Guid synonymId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-10-26 D-C6: los trabajos de corrección (<c>shopify.city_correction_jobs</c>). Con tracking; lo agregado
+/// commitea con <see cref="IShopifyUnitOfWork"/>. Sin tenant: el worker corre fuera de un request y el trabajo lleva el suyo.</summary>
+public interface IShopifyCityCorrectionJobRepository
+{
+    Task<ShopifyCityCorrectionJob?> FindAsync(Guid id, CancellationToken cancellationToken);
+
+    void Add(ShopifyCityCorrectionJob job);
 }
 
 /// <summary>El filtro de la bandeja (§7). <see cref="States"/> vacío es cualquier estado («con avisos» sin

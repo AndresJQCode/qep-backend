@@ -25,8 +25,25 @@ internal sealed class ShopifyCityCorrectionRepository(ShopifyDbContext dbContext
 
     public void Add(ShopifyCityCorrection correction) => dbContext.CityCorrections.Add(correction);
 
+    // Sin tenant a propósito: el sinónimo es de plataforma y corregirlo recorrige en todos los tenants (§4.6).
+    public async Task<IReadOnlyList<ShopifyCityCorrection>> ListBySynonymAsync(Guid synonymId, CancellationToken cancellationToken) =>
+        await dbContext.CityCorrections
+            .AsNoTracking()
+            .Where(correction => correction.SynonymId == synonymId)
+            .OrderBy(correction => correction.Id)
+            .ToListAsync(cancellationToken);
+
     private static bool Matches(
         ShopifyCityCorrection correction, Guid tenantId, Guid synonymId, ShopifyCityCorrectionTarget target, Guid targetId) =>
         correction.TenantId == tenantId && correction.SynonymId == synonymId && correction.Target == target
         && correction.TargetId == targetId;
+}
+
+/// <summary>Con tracking: el worker que corrige marca el trabajo y guarda con <c>IShopifyUnitOfWork</c>.</summary>
+internal sealed class ShopifyCityCorrectionJobRepository(ShopifyDbContext dbContext) : IShopifyCityCorrectionJobRepository
+{
+    public Task<ShopifyCityCorrectionJob?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+        dbContext.CityCorrectionJobs.SingleOrDefaultAsync(job => job.Id == id, cancellationToken);
+
+    public void Add(ShopifyCityCorrectionJob job) => dbContext.CityCorrectionJobs.Add(job);
 }
