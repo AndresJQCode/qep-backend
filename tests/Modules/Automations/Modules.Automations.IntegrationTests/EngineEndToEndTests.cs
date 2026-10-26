@@ -369,6 +369,42 @@ public sealed partial class EngineEndToEndTests
     }
 
     [Fact]
+    public async Task ABlockBetweenClaimAndSendInterruptsTheRunSilently()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        var owner = await OwnerMembershipIdAsync(f.ConnectionString, f.Tenant);
+        // Spec 2026-10-26 §3.4: bloquean al contacto mientras Meta recibe el primer mensaje; el segundo ya no sale.
+        f.Meta.BeforeAnswer = sent =>
+        {
+            if (sent == 1)
+            {
+                using var connection = new NpgsqlConnection(f.ConnectionString);
+                connection.Open();
+                // Lo que escribe Conversation.Block (CK_conversations_block: las tres columnas juntas).
+                using var command = new NpgsqlCommand(
+                    """
+                    UPDATE messaging.conversations SET blocked_at = now(), blocked_by_member_id = @m, blocked_wa_id = '573001234567', version = version + 1
+                    """,
+                    connection);
+                command.Parameters.AddWithValue("m", owner);
+                command.ExecuteNonQuery();
+            }
+        };
+
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Single(f.Meta.Sends());
+        Assert.Equal("Interrupted|", await RunAsync(f, "status || '|' || coalesce(failure_code, '')"));
+        // No es un fallo ni un traspaso: la automatización sigue Active y no queda auditoría de fallo ni aviso de pausa.
+        Assert.Equal("Active", await ConversationAsync(f, "automation_status"));
+        Assert.Equal(0L, await AuditAsync(f, "automations.run.failed"));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.messages WHERE kind = 13 AND details->>'type' = 'AutomationPaused'"));
+    }
+
+    [Fact]
     public async Task AHumanResumeStartsANewRunWithoutTheTrigger()
     {
         await using var database = await StartDatabaseAsync();

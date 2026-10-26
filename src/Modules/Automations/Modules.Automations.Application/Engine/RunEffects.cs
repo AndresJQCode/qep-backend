@@ -31,6 +31,9 @@ public sealed partial class RunEffects(
     [LoggerMessage(Level = LogLevel.Information, Message = "Conversation {ConversationId} of tenant {TenantId} left the bot during run {RunId}; the run ends Interrupted.")]
     private static partial void LogTakenOver(ILogger logger, Guid tenantId, Guid conversationId, Guid runId);
 
+    [LoggerMessage(Level = LogLevel.Information, Message = "Contact of conversation {ConversationId} of tenant {TenantId} is blocked during run {RunId}; the run ends Interrupted.")]
+    private static partial void LogContactBlocked(ILogger logger, Guid tenantId, Guid conversationId, Guid runId);
+
     /// <summary>Entra al motor con <paramref name="input"/> y ejecuta lo que pida hasta que la corrida espere, termine o se corte.</summary>
     public async Task RunAsync(RunUnit unit, EngineInput input, DateTimeOffset now, CancellationToken cancellationToken)
     {
@@ -226,6 +229,12 @@ public sealed partial class RunEffects(
             case BotSendOutcome.NotAutomated:
                 // D-M15: una persona la tomó entre el reclamo y el envío. No es un fallo: no se traspasa (ya tiene quien la atienda).
                 LogTakenOver(logger, run.TenantId, run.ConversationId, run.Id);
+                run.Close(state, RunStatus.Interrupted, null, now);
+                break;
+            case BotSendOutcome.Blocked:
+                // Spec 2026-10-26 §3.4: bloquear al contacto no es un fallo ni pide traspaso, y no toca la automatización: sin FailAsync,
+                // HandoffAsync ni EndAsync. Al desbloquear, la conversación sigue donde estaba.
+                LogContactBlocked(logger, run.TenantId, run.ConversationId, run.Id);
                 run.Close(state, RunStatus.Interrupted, null, now);
                 break;
             case BotSendOutcome.WindowClosed:
