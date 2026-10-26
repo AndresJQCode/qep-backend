@@ -90,4 +90,8 @@ public sealed record RepliedTarget(ReadReceiptTarget Receipt, int RemainingUnrea
 public interface IMessagingUnitOfWork
 {
     Task<int> SaveChangesAsync(CancellationToken cancellationToken);
+
+    /// <summary>Descarta lo que el tracker acumuló sin guardar (spec 2026-10-26 §3.2): si Meta falla después de mutar el agregado,
+    /// nada de eso debe llegar a la base con el siguiente guardado.</summary>
+    void DiscardPendingChanges();
 }

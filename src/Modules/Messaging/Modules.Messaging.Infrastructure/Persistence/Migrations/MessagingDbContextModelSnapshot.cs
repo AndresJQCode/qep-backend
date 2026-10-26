@@ -356,6 +356,19 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(120)")
                         .HasColumnName("automation_step");
 
+                    b.Property<DateTimeOffset?>("BlockedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("blocked_at");
+
+                    b.Property<Guid?>("BlockedByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("blocked_by_member_id");
+
+                    b.Property<string>("BlockedWaId")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("blocked_wa_id");
+
                     b.Property<string>("Channel")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -541,6 +554,8 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_conversations_automation_started", "(automation_status = 'None') = (automation_started_at IS NULL)");
 
                             t.HasCheckConstraint("CK_conversations_automation_status", "automation_status IN ('None','Active','Paused')");
+
+                            t.HasCheckConstraint("CK_conversations_block", "(blocked_at IS NULL AND blocked_by_member_id IS NULL AND blocked_wa_id IS NULL) OR (blocked_at IS NOT NULL AND blocked_by_member_id IS NOT NULL AND blocked_wa_id IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_conversations_channel", "channel IN ('WhatsApp','Instagram')");
 
