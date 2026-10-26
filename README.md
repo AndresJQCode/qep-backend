@@ -818,6 +818,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles`, `profile` por membership   | `advisorship.invite` / `.read` / `.manage`                                            |
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET` (`includeVariants`), `POST`, `export`, `price-scales/copy`, y por producto `GET`, `PUT` (`expectedVersion`), `activate`, `deactivate` (ver [Catálogo](#catálogo-opciones-variantes-y-galería)) | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/catalog/options`       | `GET`, `POST`, y por opción `PUT`, `DELETE`                                                 | `catalog.product.read` / `.manage`                                                           |
+| `/api/v1/tenants/{tenantId}/catalog/categories`    | `GET`, `POST`                                                                               | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 | `/api/v1/tenants/{tenantId}/customers`             | `identification-matches` (`GET`) y `anomalies` (`GET`); el resto del módulo está en sus secciones (ver [Clientes: documento repetido](#clientes-documento-repetido-coincidencias-y-anomalías)) | `customers.customer.read` |
 | `/api/v1/tenants/{tenantId}/customers/{customerId}` | `merge-preview` (`GET`) y `merge` (`POST`, `If-Match`); ver [Clientes: fusión](#clientes-fusión) | `customers.customer.merge` |
@@ -1278,6 +1279,14 @@ error en [`docs/integracion-cotizaciones-y-pedidos.md`](docs/integracion-cotizac
 
 ### Catálogo: opciones, variantes y galería
 
+Las **categorías de producto** (spec 2026-10-26) son un árbol por tenant, de profundidad máxima 10. Un producto
+tiene a lo sumo una (`categoryId`, que viaja en todas las respuestas de producto; en el `PUT`, `null` la limpia).
+El nombre (máx. 80) es único entre hermanas sin distinguir mayúsculas, también entre dos raíces. Errores:
+`catalog.category.name_required`, `catalog.category.name_too_long`, `catalog.category.parent_not_found`,
+`catalog.category.too_deep`, `catalog.category.name_taken` y, al asignarla a un producto,
+`catalog.product.category_not_found`. `GET /catalog/categories` trae el `productCount` de cada una: sólo los
+productos directos, activos e inactivos.
+
 Spec 2026-10-20 (`docs/superpowers/specs/2026-10-20-variantes-de-producto-design.md`). Un producto tiene
 hasta **3 opciones** (Talla, Color…) y hasta **2.048 variantes**, una por combinación de valores, como
 Shopify. El código, el código de barras, los precios, las escalas y los empaques son de **cada variante**;
@@ -1633,7 +1642,8 @@ el spec del slice; esta tabla es el inventario.
 | `POST /sessions/{sessionId}/close` | `pos.register.operate` | Cierra la caja con el conteo (`countedCash`, obligatorio); exige `If-Match`      |
 | `GET /sessions`                    | `pos.sale.read`        | Lista paginada de sesiones de caja                                               |
 | `GET /sessions/{sessionId}`        | `pos.sale.read`        | Detalle y arqueo de una sesión                                                   |
-| `GET /products`                    | `pos.sale.create`      | Búsqueda paginada por nombre, `Code` o código de barras: productos con sus variantes vendibles |
+| `GET /products`                    | `pos.sale.create`      | Búsqueda paginada por nombre, `Code` o código de barras: productos con sus variantes vendibles; `categoryId` filtra por esa categoría y sus descendientes (un id ajeno o desconocido da página vacía) |
+| `GET /categories`                  | `pos.sale.create`      | Categorías con el conteo de productos activos acumulado, incluidas las de 0, y `total` de activos del tenant con o sin categoría |
 | `GET /products/by-code`            | `pos.sale.create`      | El escáner: la variante por código de barras exacto y, si ninguna lo tiene, por su `Code` |
 | `POST /sales/preview`              | `pos.sale.create`      | Calcula totales de un carrito sin guardar nada; cada línea es una variante (`variantId`) |
 | `POST /sales`                      | `pos.sale.create`      | Crea la venta, con una línea por variante; idempotente por el `id` del cliente (201 la primera vez, 200 al repetir); `customerId` opcional |
