@@ -422,7 +422,8 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
                 + "OR (event = 'Revoked' AND actor_kind = 'Member' AND actor_user_id IS NOT NULL)");
             table.HasCheckConstraint(
                 "CK_data_consents_chatbot_fields",
-                "(event = 'Revoked' AND shown_text IS NULL AND prompt_message_id IS NULL AND reply_message_id IS NULL "
+                "(event = 'Revoked' AND shown_text IS NULL AND prompt_message_id IS NULL AND replied_to_message_id IS NULL "
+                + "AND reply_message_id IS NULL "
                 + "AND reply_wamid IS NULL AND chatbot_id IS NULL AND chatbot_name IS NULL AND chatbot_version_id IS NULL "
                 + "AND chatbot_version_number IS NULL AND node_id IS NULL) "
                 + "OR (event <> 'Revoked' AND shown_text IS NOT NULL AND reply_message_id IS NOT NULL AND chatbot_id IS NOT NULL "
@@ -457,6 +458,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         consent.Property(value => value.ActorUserId).HasColumnName("actor_user_id");
         consent.Property(value => value.ShownText).HasColumnName("shown_text");
         consent.Property(value => value.PromptMessageId).HasColumnName("prompt_message_id");
+        consent.Property(value => value.RepliedToMessageId).HasColumnName("replied_to_message_id");
         consent.Property(value => value.ReplyMessageId).HasColumnName("reply_message_id");
         consent.Property(value => value.ReplyWamid).HasColumnName("reply_wamid");
         consent.Property(value => value.ChatbotId).HasColumnName("chatbot_id");

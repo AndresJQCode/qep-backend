@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Http.Json;
 using Modules.Automations.IntegrationTests;
 using static Modules.Automations.IntegrationTests.AutomationsApiHarness;
 
@@ -61,6 +63,67 @@ public sealed partial class EngineEndToEndTests
         var after = f.Meta.Sends()[sentBefore..];
         Assert.Equal(["Gracias."], after);
         Assert.Equal(1L, await ConsentRowsAsync(f));
+    }
+
+    private static async Task<(Guid Id, string Wamid)> LastBotMessageAsync(Fixture f)
+    {
+        var row = await ScalarAsync<string>(f.ConnectionString,
+            "SELECT id || '|' || wamid FROM messaging.messages WHERE sent_by_kind = 2 ORDER BY occurred_at DESC, id DESC LIMIT 1");
+        var parts = row.Split('|');
+        return (Guid.Parse(parts[0]), parts[1]);
+    }
+
+    private static async Task RevokeInThisConversationAsync(Fixture f)
+    {
+        var customerId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT customer_id FROM messaging.conversations");
+        var conversationId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations");
+        using var client = CreateClient(f.Host, f.Tenant.OwnerUserId, f.Tenant.TenantId, ["customers.customer.read", "customers.data_consent.revoke"]);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, $"/api/v1/tenants/{f.Tenant.TenantId}/customers/{customerId}/data-consent/revocations")
+        {
+            Content = JsonContent.Create(new { medium = "ThisConversation", conversationId, note = "Lo pidió por el chat." }),
+        };
+        request.Headers.TryAddWithoutValidation("X-Qep-Client", "web");
+        using var response = await client.SendAsync(request, Ct);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    /// <summary>Final review F1 (D-5, D-6): los botones de Política de datos tienen ids fijos y WhatsApp deja tocar los de una pregunta
+    /// vieja. Tras una revocación el bot vuelve a preguntar; el «Acepto» viejo cita la primera pregunta y no se toma como respuesta a la
+    /// nueva: no hay fila y se pregunta otra vez. El toque sobre la pregunta vigente sí se registra, con esa pregunta como citada.</summary>
+    [Fact]
+    public async Task ATapOnAnOldPromptIsNotRecordedAsTheAnswerToTheCurrentOne()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database, flowJson: ConsentFlowJson);
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        var first = await LastBotMessageAsync(f);
+        await TapAsync(f, "w2", "accepted", "Acepto", quotedWamid: first.Wamid);
+        await DrainAutomationsAsync(f.Host);
+        Assert.Equal($"{first.Id}|{first.Id}", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT prompt_message_id || '|' || replied_to_message_id FROM customers.data_consents WHERE reply_wamid = 'w2'"));
+
+        await RevokeInThisConversationAsync(f);
+        await InboundAsync(f, "w3", "Hola otra vez");
+        await DrainAutomationsAsync(f.Host);
+        var second = await LastBotMessageAsync(f);
+        Assert.Equal($"[button] {ConsentPromptSent}", f.Meta.Sends()[^1]);
+
+        await TapAsync(f, "w4", "accepted", "Acepto", quotedWamid: first.Wamid);
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM customers.data_consents WHERE reply_wamid = 'w4'"));
+        var third = await LastBotMessageAsync(f);
+        Assert.NotEqual(second.Id, third.Id);
+        Assert.Equal($"[button] {ConsentPromptSent}", f.Meta.Sends()[^1]);
+
+        await TapAsync(f, "w5", "accepted", "Acepto", quotedWamid: third.Wamid);
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal($"Accepted|{third.Id}|{third.Id}", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT event || '|' || prompt_message_id || '|' || replied_to_message_id FROM customers.data_consents WHERE reply_wamid = 'w5'"));
+        Assert.Equal(3L, await ConsentRowsAsync(f));
     }
 
     [Fact]

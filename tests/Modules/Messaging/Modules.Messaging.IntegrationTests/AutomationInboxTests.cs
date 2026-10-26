@@ -325,6 +325,31 @@ public sealed class AutomationInboxTests
         Assert.Equal("wamid.ABC", inbound.Wamid);
     }
 
+    /// <summary>Final review F1 y F2 (spec 2026-10-26 D-5): el mensaje que cita el entrante, como id de QEP (<c>reply_to_message_id</c>,
+    /// no el wamid), y su conversación, para que Política de datos ate la respuesta a su pregunta y a su conversación.</summary>
+    [Fact]
+    public async Task ReadInboundCarriesTheQuotedMessageAndTheConversation()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await PostTextAsync(f, "wamid.Q1");
+        var quoted = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.messages WHERE wamid = 'wamid.Q1'");
+        await PostAsync(f, MetaPayloads.Inbound(
+            "111", MetaPayloads.UserIdFor("573001234567"), "573001234567", "wamid.Q2", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 590, "sí",
+            quotedWamid: "wamid.Q1"));
+        var reply = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.messages WHERE wamid = 'wamid.Q2'");
+        var conversationId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT conversation_id FROM messaging.messages WHERE id = @id", ("id", reply));
+
+        var quoting = await WithInboxAsync(f, inbox => inbox.ReadInboundAsync(f.Tenant.TenantId, reply, Ct));
+        var unquoted = await WithInboxAsync(f, inbox => inbox.ReadInboundAsync(f.Tenant.TenantId, quoted, Ct));
+
+        Assert.Equal(quoted, quoting!.ReplyToMessageId);
+        Assert.Equal(conversationId, quoting.ConversationId);
+        Assert.Null(unquoted!.ReplyToMessageId);
+        Assert.Equal(conversationId, unquoted.ConversationId);
+    }
+
     [Fact]
     public async Task ReadInboundReportsWhetherMediaIsStored()
     {

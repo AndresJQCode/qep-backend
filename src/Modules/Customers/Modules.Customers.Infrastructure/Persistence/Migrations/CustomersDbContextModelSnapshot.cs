@@ -418,6 +418,10 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("prompt_message_id");
 
+                    b.Property<Guid?>("RepliedToMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("replied_to_message_id");
+
                     b.Property<Guid?>("ReplyMessageId")
                         .HasColumnType("uuid")
                         .HasColumnName("reply_message_id");
@@ -463,7 +467,7 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_data_consents_channel", "channel IS NULL OR channel IN ('WhatsApp', 'Instagram')");
 
-                            t.HasCheckConstraint("CK_data_consents_chatbot_fields", "(event = 'Revoked' AND shown_text IS NULL AND prompt_message_id IS NULL AND reply_message_id IS NULL AND reply_wamid IS NULL AND chatbot_id IS NULL AND chatbot_name IS NULL AND chatbot_version_id IS NULL AND chatbot_version_number IS NULL AND node_id IS NULL) OR (event <> 'Revoked' AND shown_text IS NOT NULL AND reply_message_id IS NOT NULL AND chatbot_id IS NOT NULL AND chatbot_name IS NOT NULL AND chatbot_version_id IS NOT NULL AND chatbot_version_number IS NOT NULL AND node_id IS NOT NULL)");
+                            t.HasCheckConstraint("CK_data_consents_chatbot_fields", "(event = 'Revoked' AND shown_text IS NULL AND prompt_message_id IS NULL AND replied_to_message_id IS NULL AND reply_message_id IS NULL AND reply_wamid IS NULL AND chatbot_id IS NULL AND chatbot_name IS NULL AND chatbot_version_id IS NULL AND chatbot_version_number IS NULL AND node_id IS NULL) OR (event <> 'Revoked' AND shown_text IS NOT NULL AND reply_message_id IS NOT NULL AND chatbot_id IS NOT NULL AND chatbot_name IS NOT NULL AND chatbot_version_id IS NOT NULL AND chatbot_version_number IS NOT NULL AND node_id IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_data_consents_event", "event IN ('Accepted', 'Rejected', 'Revoked')");
 

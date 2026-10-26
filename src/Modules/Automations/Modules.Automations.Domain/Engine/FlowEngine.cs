@@ -62,6 +62,11 @@ public static class FlowEngine
             return walk.Restart(node);
         }
 
+        if (node is DataConsentNode && IsStaleConsentTap(state.ConsentPrompt, node.Id, message))
+        {
+            return walk.Reject(node, settings);
+        }
+
         if (CustomerReply.Classify(node, message, state.Variables) is ReplyOutcome.Output output)
         {
             if (node is DataConsentNode consent)
@@ -87,6 +92,19 @@ public static class FlowEngine
         return message.ReplyId is null && !string.IsNullOrWhiteSpace(settings.RestartKeyword) && !string.IsNullOrWhiteSpace(message.Text)
             && TextMatch.Same(message.Text, settings.RestartKeyword);
     }
+
+    /// <summary>
+    /// Spec 2026-10-26 D-5 y D-6 (final review F1): los botones de Política de datos tienen ids fijos en todo bloque, versión y corrida, y
+    /// WhatsApp deja tocar los de un mensaje viejo, así que el id no ata el toque a su pregunta como en Botones (D-I5). Lo ata el mensaje que
+    /// cita: un toque sobre otra pregunta (una corrida abandonada, la de antes de una revocación) mostró otro texto y no es respuesta a ésta;
+    /// se trata como cualquier respuesta inválida. Lo escrito no tiene botón viejo y vale como hoy, y sin saber qué cita el toque o cuál fue
+    /// la pregunta no hay con qué compararlo.
+    /// </summary>
+    private static bool IsStaleConsentTap(ConsentPrompt? prompt, string nodeId, EngineInput.CustomerMessage message) =>
+        message is { ReplyId: not null, ReplyToMessageId: { } quoted }
+        && prompt is { PromptMessageId: { } promptMessageId }
+        && prompt.NodeId == nodeId
+        && quoted != promptMessageId;
 
     /// <summary>El bloque en que espera la corrida; el primero con ese id, como el diccionario de <see cref="Walk"/>.</summary>
     private static FlowNode? WaitingNode(FlowDefinition flow, string? nodeId) =>

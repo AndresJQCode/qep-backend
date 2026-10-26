@@ -168,8 +168,9 @@ public interface IAutomationDataConsents
 {
     Task<DataConsentCheck> CheckAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
 
-    /// <summary><c>false</c> = no se pudo registrar: la conversación no tiene cliente o identidad, o el entrante de la respuesta no
-    /// existe. Un fallo transitorio (un conflicto de concurrencia) lanza, como cualquier puerto.</summary>
+    /// <summary><c>false</c> = no se pudo registrar: la conversación no tiene cliente o identidad, su canal no se puede registrar, o el
+    /// entrante de la respuesta no existe o es de otra conversación. Un fallo transitorio (un conflicto de concurrencia) lanza, como
+    /// cualquier puerto.</summary>
     Task<bool> RecordAsync(DataConsentRecord record, CancellationToken cancellationToken);
 }
 
@@ -238,7 +239,8 @@ public sealed record InboundAttachment(string MimeType, string? FileName, bool S
 /// <summary>Lo que el motor lee de un entrante. <see cref="Kind"/> es el nombre del <c>MessageKind</c> de Mensajería
 /// (<c>CustomerMessageKinds</c>); <see cref="Text"/> es el texto o, si no tiene, la leyenda del adjunto (P2-R4: una palabra clave
 /// también se dispara con la leyenda de una foto).</summary>
-public sealed record InboundMessage(Guid MessageId, string Kind, string? Text, string? ReplyId, InboundAttachment? Attachment, DateTimeOffset OccurredAt);
+public sealed record InboundMessage(
+    Guid MessageId, string Kind, string? Text, string? ReplyId, InboundAttachment? Attachment, DateTimeOffset OccurredAt, Guid? ReplyToMessageId = null);
 
 /// <summary>Spec 2026-10-21 §5.1 y §5.3: la cola del motor (adaptador en Bootstrapper sobre <c>IAutomationInbox</c> de Mensajería).
 /// <c>Complete</c> y <c>RetryLater</c> llevan el <c>Attempts</c> del reclamo como testigo (P2-R3): <c>false</c> = otra réplica volvió a

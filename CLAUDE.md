@@ -581,6 +581,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   traduce por nombre; no lo cambies por la consulta previa. Los CHECK de la tabla exigen identidad de canal en lo que escribe el bot y
   en `Revoked` + `ThisConversation`, y la prohíben en `Revoked` + `Other`: un `INSERT` a mano tiene que cumplirlos. El texto que se
   guarda es el que salió (`RunState.ConsentPrompt`, columna `conversation_runs.consent_prompt`), no la plantilla del bloque.
+  **Dos relojes:** la fila del bot lleva la hora de Meta (truncada al segundo) y la revocación la del servidor; ordenar por
+  `(occurred_at, sequence)` es lo buscado, nunca por `sequence` sola. **Un toque vale sólo para la pregunta que cita:** los ids
+  `accepted`/`rejected` son fijos y WhatsApp deja tocar los botones viejos, así que un toque cuyo `reply_to_message_id` no es el
+  `ConsentPrompt.PromptMessageId` vigente es una respuesta inválida (`FlowEngine.IsStaleConsentTap`); la fila guarda el citado en
+  `replied_to_message_id`. **Deploy y rollback:** el kind `dataConsent` es sólo hacia adelante —un backend viejo no lee un flujo
+  publicado que lo tenga— y el `Down` de `AddCustomerDataConsents` borra la prueba legal: nunca se corre. El rollback es revertir el
+  código y dejar la tabla.
 
 ## Verificación
 

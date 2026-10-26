@@ -70,16 +70,17 @@ public sealed class AutomationDataConsentsAdapterTests
         return id;
     }
 
-    private static async Task<Guid> SeedInboundAsync(Fixture f, string wamid, Guid? conversationId = null)
+    private static async Task<Guid> SeedInboundAsync(Fixture f, string wamid, Guid? conversationId = null, Guid? replyTo = null)
     {
         var id = Guid.CreateVersion7();
         await ExecuteAsync(f.ConnectionString,
             """
-            INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, wamid, created_at)
-            SELECT @id, c.id, c.tenant_id, c.connection_id, now() - interval '1 minute', 1, 1, 2, 'Acepto', @wamid, now()
+            INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, wamid,
+                reply_to_message_id, created_at)
+            SELECT @id, c.id, c.tenant_id, c.connection_id, now() - interval '1 minute', 1, 1, 2, 'Acepto', @wamid, @replyTo, now()
               FROM messaging.conversations AS c WHERE c.id = @c
             """,
-            ("id", id), ("c", conversationId ?? f.ConversationId), ("wamid", wamid));
+            ("id", id), ("c", conversationId ?? f.ConversationId), ("wamid", wamid), ("replyTo", (object?)replyTo ?? DBNull.Value));
         return id;
     }
 
@@ -209,6 +210,43 @@ public sealed class AutomationDataConsentsAdapterTests
                 """,
                 ("r", reply)));
         Assert.Equal(1L, await ConsentRowsAsync(f));
+    }
+
+    /// <summary>Final review F1: la fila guarda el mensaje que citó el toque (la pregunta que se respondió), como id de QEP.</summary>
+    [Fact]
+    public async Task ARecordStoresTheQuotedMessage()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var prompt = await SeedInboundAsync(f, "wamid.P1");
+        var reply = await SeedInboundAsync(f, "wamid.P2", replyTo: prompt);
+        var unquoted = await SeedInboundAsync(f, "wamid.P3");
+
+        Assert.True(await RecordAsync(f, reply));
+        Assert.True(await RecordAsync(f, unquoted));
+
+        Assert.Equal(prompt, await ScalarAsync<Guid>(f.ConnectionString,
+            "SELECT replied_to_message_id FROM customers.data_consents WHERE reply_message_id = @r", ("r", reply)));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM customers.data_consents WHERE reply_message_id = @r AND replied_to_message_id IS NULL", ("r", unquoted)));
+    }
+
+    /// <summary>Final review F2: la respuesta tiene que ser un entrante de la conversación del registro; uno de otra conversación (del
+    /// mismo tenant) no es prueba de que este titular respondió y no crea a nadie.</summary>
+    [Fact]
+    public async Task AReplyFromAnotherConversationCannotBeRecorded()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var other = await SeedConversationAsync(f.ConnectionString, f.TenantId, f.ConnectionId, "CO.marta2", "573009876543", "Marta Ruiz");
+        var foreign = await SeedInboundAsync(f, "wamid.X1", conversationId: other);
+
+        Assert.False(await RecordAsync(f, foreign));
+
+        Assert.Equal(0L, await ConsentRowsAsync(f));
+        Assert.Null(await ConversationCustomerAsync(f));
     }
 
     [Fact]

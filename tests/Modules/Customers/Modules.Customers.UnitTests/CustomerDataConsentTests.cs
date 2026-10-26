@@ -25,7 +25,8 @@ public sealed class CustomerDataConsentTests
         "Bienvenida",
         Guid.CreateVersion7(),
         3,
-        "n4");
+        "n4",
+        Guid.CreateVersion7());
 
     private static CustomerDataConsent RevocationWith(string note) =>
         CustomerDataConsent.Revocation(TenantId, CustomerId, Now, Member, DataConsentMedium.Other, identity: null, note);
@@ -56,6 +57,7 @@ public sealed class CustomerDataConsentTests
         Assert.Equal(Evidence.ChatbotVersionId, consent.ChatbotVersionId);
         Assert.Equal(Evidence.ChatbotVersionNumber, consent.ChatbotVersionNumber);
         Assert.Equal(Evidence.NodeId, consent.NodeId);
+        Assert.Equal(Evidence.RepliedToMessageId, consent.RepliedToMessageId);
         Assert.NotEqual(Guid.Empty, consent.Id);
     }
 

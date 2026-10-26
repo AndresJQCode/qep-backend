@@ -35,6 +35,7 @@ internal sealed class AutomationInboundQueue(IAutomationInbox inbox) : IAutomati
                 inbound.Text,
                 inbound.ReplyId,
                 inbound.Media is { } media ? new InboundAttachment(media.MimeType, media.FileName, media.Stored) : null,
-                inbound.OccurredAt)
+                inbound.OccurredAt,
+                inbound.ReplyToMessageId)
             : null;
 }

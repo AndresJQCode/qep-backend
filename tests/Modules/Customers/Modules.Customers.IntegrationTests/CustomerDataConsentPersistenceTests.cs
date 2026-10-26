@@ -117,6 +117,7 @@ public sealed class CustomerDataConsentPersistenceTests
         ["actor_user_id"] = null,
         ["shown_text"] = "¿Aceptas nuestra política de datos?",
         ["prompt_message_id"] = Guid.CreateVersion7(),
+        ["replied_to_message_id"] = Guid.CreateVersion7(),
         ["reply_message_id"] = Guid.CreateVersion7(),
         ["reply_wamid"] = "wamid.HBgM",
         ["chatbot_id"] = Guid.CreateVersion7(),
@@ -185,6 +186,7 @@ public sealed class CustomerDataConsentPersistenceTests
     {
         ChatbotWithoutReply,
         RevocationWithShownText,
+        RevocationWithRepliedTo,
         OtherMediumWithConversation,
         ThisConversationWithoutChannelUser,
         ChatbotWithActorUser,
@@ -193,7 +195,7 @@ public sealed class CustomerDataConsentPersistenceTests
 
     private static Dictionary<string, object?> ColumnsFor(ViolatedRow row, Guid customerId)
     {
-        var columns = row is ViolatedRow.RevocationWithShownText or ViolatedRow.OtherMediumWithConversation
+        var columns = row is ViolatedRow.RevocationWithShownText or ViolatedRow.RevocationWithRepliedTo or ViolatedRow.OtherMediumWithConversation
             or ViolatedRow.ThisConversationWithoutChannelUser
             ? RevocationColumns(customerId)
             : ChatbotColumns(customerId);
@@ -204,6 +206,9 @@ public sealed class CustomerDataConsentPersistenceTests
                 break;
             case ViolatedRow.RevocationWithShownText:
                 columns["shown_text"] = "¿Aceptas nuestra política de datos?";
+                break;
+            case ViolatedRow.RevocationWithRepliedTo:
+                columns["replied_to_message_id"] = Guid.CreateVersion7();
                 break;
             case ViolatedRow.OtherMediumWithConversation:
                 columns["conversation_id"] = Guid.CreateVersion7();
@@ -227,6 +232,7 @@ public sealed class CustomerDataConsentPersistenceTests
     [Theory]
     [InlineData(ViolatedRow.ChatbotWithoutReply, "CK_data_consents_chatbot_fields")]
     [InlineData(ViolatedRow.RevocationWithShownText, "CK_data_consents_chatbot_fields")]
+    [InlineData(ViolatedRow.RevocationWithRepliedTo, "CK_data_consents_chatbot_fields")]
     [InlineData(ViolatedRow.OtherMediumWithConversation, "CK_data_consents_identity")]
     [InlineData(ViolatedRow.ThisConversationWithoutChannelUser, "CK_data_consents_identity")]
     [InlineData(ViolatedRow.ChatbotWithActorUser, "CK_data_consents_actor")]

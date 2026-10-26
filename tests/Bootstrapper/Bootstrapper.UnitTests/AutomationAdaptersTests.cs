@@ -314,6 +314,14 @@ public sealed class AutomationAdaptersTests
             new InboundMessage(messageId, "Document", "leyenda", null, new InboundAttachment("application/pdf", "f.pdf", false), createdAt),
             await queue.ReadAsync(TenantId, messageId, Ct));
 
+        // Final review F1: el mensaje citado viaja para que Política de datos ate el toque a su pregunta.
+        var quoted = Guid.CreateVersion7();
+        inbox.Inbound = new InboundForAutomation(
+            messageId, MessageKind.Interactive, "Acepto", "accepted", null, createdAt, "wamid.R", ReplyToMessageId: quoted, ConversationId: conversationId);
+        Assert.Equal(
+            new InboundMessage(messageId, "Interactive", "Acepto", "accepted", null, createdAt, quoted),
+            await queue.ReadAsync(TenantId, messageId, Ct));
+
         inbox.Inbound = null;
         Assert.Null(await queue.ReadAsync(TenantId, messageId, Ct));
     }

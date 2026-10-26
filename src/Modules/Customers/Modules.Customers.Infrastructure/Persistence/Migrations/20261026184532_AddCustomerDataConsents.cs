@@ -38,6 +38,7 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                     actor_user_id = table.Column<Guid>(type: "uuid", nullable: true),
                     shown_text = table.Column<string>(type: "text", nullable: true),
                     prompt_message_id = table.Column<Guid>(type: "uuid", nullable: true),
+                    replied_to_message_id = table.Column<Guid>(type: "uuid", nullable: true),
                     reply_message_id = table.Column<Guid>(type: "uuid", nullable: true),
                     reply_wamid = table.Column<string>(type: "text", nullable: true),
                     chatbot_id = table.Column<Guid>(type: "uuid", nullable: true),
@@ -60,7 +61,7 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         onDelete: ReferentialAction.Restrict);
                     table.CheckConstraint("CK_data_consents_actor", "(event IN ('Accepted', 'Rejected') AND actor_kind = 'Chatbot' AND actor_user_id IS NULL) OR (event = 'Revoked' AND actor_kind = 'Member' AND actor_user_id IS NOT NULL)");
                     table.CheckConstraint("CK_data_consents_channel", "channel IS NULL OR channel IN ('WhatsApp', 'Instagram')");
-                    table.CheckConstraint("CK_data_consents_chatbot_fields", "(event = 'Revoked' AND shown_text IS NULL AND prompt_message_id IS NULL AND reply_message_id IS NULL AND reply_wamid IS NULL AND chatbot_id IS NULL AND chatbot_name IS NULL AND chatbot_version_id IS NULL AND chatbot_version_number IS NULL AND node_id IS NULL) OR (event <> 'Revoked' AND shown_text IS NOT NULL AND reply_message_id IS NOT NULL AND chatbot_id IS NOT NULL AND chatbot_name IS NOT NULL AND chatbot_version_id IS NOT NULL AND chatbot_version_number IS NOT NULL AND node_id IS NOT NULL)");
+                    table.CheckConstraint("CK_data_consents_chatbot_fields", "(event = 'Revoked' AND shown_text IS NULL AND prompt_message_id IS NULL AND replied_to_message_id IS NULL AND reply_message_id IS NULL AND reply_wamid IS NULL AND chatbot_id IS NULL AND chatbot_name IS NULL AND chatbot_version_id IS NULL AND chatbot_version_number IS NULL AND node_id IS NULL) OR (event <> 'Revoked' AND shown_text IS NOT NULL AND reply_message_id IS NOT NULL AND chatbot_id IS NOT NULL AND chatbot_name IS NOT NULL AND chatbot_version_id IS NOT NULL AND chatbot_version_number IS NOT NULL AND node_id IS NOT NULL)");
                     table.CheckConstraint("CK_data_consents_event", "event IN ('Accepted', 'Rejected', 'Revoked')");
                     table.CheckConstraint("CK_data_consents_identity", "(event = 'Revoked' AND medium = 'Other' AND conversation_id IS NULL AND channel IS NULL AND channel_user_id IS NULL AND wa_id IS NULL) OR ((event <> 'Revoked' OR medium = 'ThisConversation') AND conversation_id IS NOT NULL AND channel IS NOT NULL AND channel_user_id IS NOT NULL)");
                     table.CheckConstraint("CK_data_consents_medium", "medium IS NULL OR medium IN ('ThisConversation', 'Other')");

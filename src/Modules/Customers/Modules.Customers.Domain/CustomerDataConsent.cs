@@ -35,7 +35,8 @@ public enum DataConsentActorKind
 public sealed record DataConsentIdentity(Guid ConversationId, DataConsentChannel Channel, string ChannelUserId, string? WaId);
 
 /// <summary>Lo que prueba una respuesta al bot (D-5, D-6): el texto ya interpolado que se le mostró, el mensaje que la llevó y
-/// qué flujo la pidió. El nombre del chatbot se copia porque Customers no puede leer chatbots.</summary>
+/// qué flujo la pidió. El nombre del chatbot se copia porque Customers no puede leer chatbots. <see cref="RepliedToMessageId"/> es el
+/// mensaje que citó la respuesta (el del botón tocado), si Meta lo mandó y Mensajería lo encontró.</summary>
 public sealed record ChatbotConsentEvidence(
     string ShownText,
     Guid? PromptMessageId,
@@ -45,7 +46,8 @@ public sealed record ChatbotConsentEvidence(
     string ChatbotName,
     Guid ChatbotVersionId,
     int ChatbotVersionNumber,
-    string NodeId);
+    string NodeId,
+    Guid? RepliedToMessageId = null);
 
 /// <summary>
 /// Spec 2026-10-26 D-5: una fila del registro de consentimiento de datos (Ley 1581). **Sólo se agregan filas**: no hay ningún
@@ -115,6 +117,9 @@ public sealed class CustomerDataConsent
 
     public Guid? PromptMessageId { get; private set; }
 
+    /// <summary>El mensaje que citó la respuesta: el de la pregunta cuyo botón se tocó. Nulo en una revocación.</summary>
+    public Guid? RepliedToMessageId { get; private set; }
+
     public Guid? ReplyMessageId { get; private set; }
 
     public string? ReplyWamid { get; private set; }
@@ -153,6 +158,7 @@ public sealed class CustomerDataConsent
         {
             ShownText = evidence.ShownText,
             PromptMessageId = evidence.PromptMessageId,
+            RepliedToMessageId = evidence.RepliedToMessageId,
             ReplyMessageId = evidence.ReplyMessageId,
             ReplyWamid = evidence.ReplyWamid,
             ChatbotId = evidence.ChatbotId,

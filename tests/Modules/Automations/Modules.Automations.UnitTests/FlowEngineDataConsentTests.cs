@@ -39,7 +39,8 @@ public sealed class FlowEngineDataConsentTests
 
     private static EngineInput.CustomerMessage Typed(string text) => new("Text", text, null, null);
 
-    private static EngineInput.CustomerMessage Tapped(string id, string title) => new("Interactive", title, id, null);
+    private static EngineInput.CustomerMessage Tapped(string id, string title, Guid? quoting = null) =>
+        new("Interactive", title, id, null, quoting);
 
     private static Effect.RecordDataConsent Recorded(StepResult result) => Assert.IsType<Effect.RecordDataConsent>(result.Effects[0]);
 
@@ -245,6 +246,56 @@ public sealed class FlowEngineDataConsentTests
 
         Assert.Equal(new Effect.SendText("yes", "Gracias"), result.Effects[0]);
         Assert.Contains(result.State.Trace, entry => entry is { NodeId: "consent", Outcome: FlowOutputs.Accepted });
+    }
+
+    /// <summary>Final review F1 (D-5, D-6): los ids de los botones son fijos y WhatsApp deja tocar los viejos. Un toque que cita una
+    /// pregunta anterior no es respuesta al texto de la vigente: se pregunta otra vez, cuenta como intento y no se registra nada.</summary>
+    [Fact]
+    public void ATapQuotingAnOlderPromptAsksAgain()
+    {
+        var waiting = Asked().State with { ConsentPrompt = new ConsentPrompt("consent", "Texto vigente", PromptId) };
+
+        var result = Step(waiting, Tapped("accepted", "Acepto", quoting: Guid.CreateVersion7()));
+
+        Assert.DoesNotContain(result.Effects, effect => effect is Effect.RecordDataConsent);
+        Assert.Equal<Effect>([new Effect.CheckDataConsent("consent")], result.Effects);
+        Assert.Equal(1, result.State.Attempts);
+        Assert.Equal("consent", result.State.CurrentNodeId);
+    }
+
+    [Fact]
+    public void ATapQuotingTheCurrentPromptRecords()
+    {
+        var waiting = Asked().State with { ConsentPrompt = new ConsentPrompt("consent", "Texto vigente", PromptId) };
+
+        var result = Step(waiting, Tapped("accepted", "Acepto", quoting: PromptId));
+
+        Assert.Equal(new Effect.RecordDataConsent("consent", DataConsentDecision.Accepted, "Texto vigente", PromptId), result.Effects[0]);
+    }
+
+    /// <summary>Sólo un toque se ata a su mensaje: lo escrito no tiene botón viejo que tocar, aunque cite otro mensaje.</summary>
+    [Fact]
+    public void ATypedLabelRecordsEvenQuotingAnotherMessage()
+    {
+        var waiting = Asked().State with { ConsentPrompt = new ConsentPrompt("consent", "Texto vigente", PromptId) };
+
+        var result = Step(waiting, new EngineInput.CustomerMessage("Text", "Acepto", null, null, Guid.CreateVersion7()));
+
+        Assert.Equal(new Effect.RecordDataConsent("consent", DataConsentDecision.Accepted, "Texto vigente", PromptId), result.Effects[0]);
+    }
+
+    /// <summary>Sin saber qué mensaje cita el toque, o sin saber cuál fue la pregunta, no hay con qué compararlo: vale como hoy.</summary>
+    [Fact]
+    public void WithoutBothMessagesKnownATapRecords()
+    {
+        var known = Asked().State with { ConsentPrompt = new ConsentPrompt("consent", "Texto vigente", PromptId) };
+        var unknownPrompt = Asked().State with { ConsentPrompt = new ConsentPrompt("consent", "Texto vigente", null) };
+
+        var unquoted = Step(known, Tapped("accepted", "Acepto"));
+        var promptUnknown = Step(unknownPrompt, Tapped("accepted", "Acepto", quoting: Guid.CreateVersion7()));
+
+        Assert.Equal(new Effect.RecordDataConsent("consent", DataConsentDecision.Accepted, "Texto vigente", PromptId), unquoted.Effects[0]);
+        Assert.Equal(new Effect.RecordDataConsent("consent", DataConsentDecision.Accepted, "Texto vigente", null), promptUnknown.Effects[0]);
     }
 
     [Fact]

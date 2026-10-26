@@ -6,6 +6,7 @@ using Modules.Automations.Domain.Engine;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Modules.Messaging.Application;
+using Modules.Messaging.Domain;
 
 namespace Bootstrapper;
 
@@ -38,6 +39,7 @@ internal sealed partial class AutomationDataConsents(
     public async Task<DataConsentCheck> CheckAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
     {
         if (await queries.FindAsync(tenantId, conversationId, cancellationToken) is not { } row
+            || ChannelOf(row) is null
             || await CustomerOfAsync(row, cancellationToken) is not { } customerId)
         {
             return DataConsentCheck.Unavailable;
@@ -51,22 +53,26 @@ internal sealed partial class AutomationDataConsents(
     public async Task<bool> RecordAsync(DataConsentRecord record, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(record);
-        if (await queries.FindAsync(record.TenantId, record.ConversationId, cancellationToken) is not { UserId: { } userId } row)
+        if (await queries.FindAsync(record.TenantId, record.ConversationId, cancellationToken) is not { UserId: { } userId } row
+            || ChannelOf(row) is not { } channel)
         {
             return false;
         }
 
-        // El entrante antes que el cliente: una respuesta que no existe no tiene por qué crear a nadie.
+        // El entrante antes que el cliente: una respuesta que no existe no tiene por qué crear a nadie. Y de esta conversación (final review
+        // F2): un entrante de otra no prueba que esta identidad respondió.
         if (await inbox.ReadInboundAsync(record.TenantId, record.ReplyMessageId, cancellationToken) is not { } inbound
+            || inbound.ConversationId != row.Id
             || await CustomerOfAsync(row, cancellationToken) is not { } customerId)
         {
             return false;
         }
 
-        var identity = new DataConsentIdentity(row.Id, Enum.Parse<DataConsentChannel>(row.Channel.ToString()), userId, row.WaId);
+        // Final review F1: el mensaje que citó la respuesta (la pregunta cuyo botón se tocó) queda en la fila, como el resto de la prueba.
+        var identity = new DataConsentIdentity(row.Id, channel, userId, row.WaId);
         var evidence = new ChatbotConsentEvidence(
             record.ShownText, record.PromptMessageId, record.ReplyMessageId, inbound.Wamid, record.ChatbotId, record.ChatbotName,
-            record.ChatbotVersionId, record.ChatbotVersionNumber, record.NodeId);
+            record.ChatbotVersionId, record.ChatbotVersionNumber, record.NodeId, inbound.ReplyToMessageId);
         var outcome = await consents.RecordFromChatbotAsync(
             new ChatbotDataConsentRecord(record.TenantId, customerId, ToEvent(record.Decision), inbound.OccurredAt, identity, evidence),
             cancellationToken);
@@ -77,6 +83,15 @@ internal sealed partial class AutomationDataConsents(
             _ => throw new ArgumentOutOfRangeException(nameof(record), outcome, "Unknown data consent record outcome."),
         };
     }
+
+    /// <summary>Final review F3: un canal de Mensajería que Customers todavía no conoce es «no se puede registrar» —el bot sale por
+    /// «No acepto» sin preguntar—, no una excepción: ésa haría fallar cada reintento de la unidad y el toque se perdería igual.</summary>
+    private static DataConsentChannel? ChannelOf(ConversationRow row) => row.Channel switch
+    {
+        ConversationChannel.WhatsApp => DataConsentChannel.WhatsApp,
+        ConversationChannel.Instagram => DataConsentChannel.Instagram,
+        _ => null,
+    };
 
     private static DataConsentEvent ToEvent(DataConsentDecision decision) => decision switch
     {

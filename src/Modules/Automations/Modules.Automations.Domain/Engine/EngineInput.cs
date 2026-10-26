@@ -14,8 +14,11 @@ public abstract record EngineInput
     public sealed record Start : EngineInput;
 
     /// <summary><see cref="Kind"/> es uno de <c>Text | Interactive | Image | Document | Video | Audio | Unsupported</c> (los kinds que
-    /// encola <c>automation_inbox</c>, §5.1); <see cref="ReplyId"/> es el id del botón o de la fila que el cliente tocó.</summary>
-    public sealed record CustomerMessage(string Kind, string? Text, string? ReplyId, AttachmentInput? Attachment) : EngineInput;
+    /// encola <c>automation_inbox</c>, §5.1); <see cref="ReplyId"/> es el id del botón o de la fila que el cliente tocó.
+    /// <see cref="ReplyToMessageId"/> (final review F1 de la spec 2026-10-26): el mensaje de QEP que cita el entrante —el del botón tocado—,
+    /// o <c>null</c> si no cita ninguno o Mensajería no lo encontró.</summary>
+    public sealed record CustomerMessage(string Kind, string? Text, string? ReplyId, AttachmentInput? Attachment, Guid? ReplyToMessageId = null)
+        : EngineInput;
 
     /// <summary><see cref="Mapped"/> son las variables que escribe el mapeo del bloque (D-H4); el motor sólo las mezcla si <see cref="Ok"/>.
     /// <see cref="Outcome"/> y <see cref="ConnectionName"/> (spec 2026-10-24 §4.2) el motor no los lee, como tampoco <see cref="Status"/> ni
