@@ -329,6 +329,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetCustomerMergePreviewQuery, CustomerMergePreviewResponse>,
             GetCustomerMergePreviewHandler>();
+        // Spec 2026-10-26 D-8: el estado y el historial de la autorización de datos.
+        services.AddScoped<
+            IQueryHandler<GetCustomerDataConsentQuery, CustomerDataConsentDto>,
+            GetCustomerDataConsentHandler>();
         services.AddScoped<
             ICommandHandler<MergeCustomersCommand, CustomerMergeResult>,
             MergeCustomersHandler>();
@@ -1191,6 +1195,8 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.CustomerImport,
                 // Spec 2026-10-24 D-F1: fusionar duplicados es trabajo de quien atiende al cliente y del admin.
                 CustomersPermissions.CustomerMerge,
+                // Spec 2026-10-26 D-9: quien atiende al titular registra su revocación; el admin también.
+                CustomersPermissions.DataConsentRevoke,
                 CustomersPermissions.ClassificationRead,
                 CustomersPermissions.ClassificationManage,
                 // Spec 2026-10-11 §4.3: renombrar o borrar etiquetas y borrar notas ajenas. Sólo admin: el
@@ -1293,6 +1299,8 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.CustomerManage,
                 // Spec 2026-10-24 D-F1: el asesor es quien ve los duplicados en la bandeja y en el listado.
                 CustomersPermissions.CustomerMerge,
+                // Spec 2026-10-26 D-9: el asesor es quien recibe el pedido de revocación del titular.
+                CustomersPermissions.DataConsentRevoke,
                 // Mismo criterio que CustomerRead/CustomerManage y no el de CustomerImport:
                 // gestionar clasificaciones es trabajo diario de un asesor, no una operacion
                 // privilegiada.
@@ -1513,6 +1521,13 @@ public static class QepServiceCollectionExtensions
             CustomersPermissions.CustomerMerge,
             "Fusionar clientes",
             "Permite fusionar clientes duplicados en uno. No se puede deshacer.",
+            "Customers",
+            "high",
+            RequiredModules: [ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.DataConsentRevoke,
+            "Revocar autorización de datos",
+            "Permite registrar que un cliente revocó su autorización de tratamiento de datos personales.",
             "Customers",
             "high",
             RequiredModules: [ModuleKeys.Customers]));
@@ -2032,6 +2047,11 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 CustomersPermissions.CustomerMerge,
                 policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerMerge))
+            // La otra mitad del permiso de revocar la autorización de datos (spec 2026-10-26 D-9). Sin esta política la ruta
+            // POST …/data-consent/revocations no resuelve y el síntoma es 500.
+            .AddPolicy(
+                CustomersPermissions.DataConsentRevoke,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.DataConsentRevoke))
             // La otra mitad del permiso de clasificaciones. Sin esta politica RequireAuthorization
             // no resuelve y el sintoma es 500, no 403 — mismo gotcha que TaxRateRead/TaxRateManage.
             .AddPolicy(

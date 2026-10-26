@@ -99,8 +99,19 @@ public static class CustomerEngagementEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // Spec 2026-10-26 D-8: el estado y el historial de la autorización de datos. Leer es customer.read; revocar tiene su propio permiso.
+        group.MapGet("/{customerId:guid}/data-consent", GetDataConsentAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerRead)
+            .Produces<CustomerDataConsentDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         return endpoints;
     }
+
+    private static async Task<IResult> GetDataConsentAsync(
+        Guid tenantId, Guid customerId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetCustomerDataConsentQuery(tenantId, customerId), cancellationToken));
 
     private static async Task<IResult> ListNotesAsync(
         Guid tenantId, Guid customerId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

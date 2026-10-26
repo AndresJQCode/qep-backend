@@ -1,4 +1,6 @@
+using BuildingBlocks.Application;
 using Modules.Customers.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Customers.Application;
 
@@ -151,4 +153,98 @@ public sealed class CustomerDataConsents(
         DataConsentEvent.Rejected => CustomerAuditActions.DataConsentRejected,
         _ => throw new ArgumentOutOfRangeException(nameof(decision), decision, "The chatbot only records an acceptance or a rejection."),
     };
+}
+
+// Spec 2026-10-26 D-8: lo que la pantalla del cliente pinta de su autorización de datos.
+
+public sealed record GetCustomerDataConsentQuery(Guid TenantId, Guid CustomerId) : IQuery<CustomerDataConsentDto>;
+
+/// <summary>
+/// <c>Current</c> es la última fila del historial (<c>null</c> = «Sin respuesta»). <c>CanRevoke</c> viaja calculado (BFF: la
+/// pantalla no repite la regla): la última fila es una aceptación, el llamador tiene
+/// <c>customers.data_consent.revoke</c> y el cliente no está fusionado. <c>History</c> va del más nuevo al más viejo, completo.
+/// </summary>
+public sealed record CustomerDataConsentDto(DataConsentCurrentDto? Current, bool CanRevoke, IReadOnlyList<DataConsentEventDto> History);
+
+/// <summary><c>Event</c> es <c>Accepted</c>, <c>Rejected</c> o <c>Revoked</c>; <c>Channel</c>, <c>WhatsApp</c>, <c>Instagram</c> o
+/// null (una revocación por otro medio no lleva canal).</summary>
+public sealed record DataConsentCurrentDto(string Event, DateTimeOffset OccurredAt, string? Channel);
+
+/// <summary><c>Medium</c> y <c>Note</c> sólo existen en las revocaciones; el bot no los llena.</summary>
+public sealed record DataConsentEventDto(
+    Guid Id, string Event, DateTimeOffset OccurredAt, string? Channel, string? Medium, string? Note, DataConsentActorDto Actor);
+
+/// <summary>Quién registró la fila. <c>Kind</c> es <c>Chatbot</c> (<c>Id</c> es el chatbot) o <c>Member</c> (<c>Id</c> es el usuario;
+/// si ya no existe, <c>Name</c> vale «Usuario eliminado»).</summary>
+public sealed record DataConsentActorDto(string Kind, Guid? Id, string Name);
+
+internal static class DataConsentMapping
+{
+    private const string DeletedUser = "Usuario eliminado";
+
+    /// <summary>Un solo lookup de nombres para todos los miembros del historial. Lo reusa la revocación, que responde lo mismo.</summary>
+    public static async Task<CustomerDataConsentDto> ToDtoAsync(
+        Customer customer,
+        IReadOnlyList<CustomerDataConsent> rows,
+        ICustomerAuthorNames names,
+        IExecutionContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(customer);
+        ArgumentNullException.ThrowIfNull(rows);
+        ArgumentNullException.ThrowIfNull(names);
+        ArgumentNullException.ThrowIfNull(context);
+
+        var userIds = rows.Where(row => row.ActorUserId is not null).Select(row => row.ActorUserId!.Value).Distinct().ToArray();
+        var found = userIds.Length == 0
+            ? new Dictionary<Guid, string>()
+            : await names.FindAsync(context.TenantId.Value, userIds, cancellationToken);
+
+        var history = rows.Select(row => new DataConsentEventDto(
+            row.Id,
+            row.Event.ToString(),
+            row.OccurredAt,
+            row.Channel?.ToString(),
+            row.Medium?.ToString(),
+            row.Note,
+            ActorOf(row, found))).ToArray();
+
+        var latest = rows.Count == 0 ? null : rows[0];
+        var canRevoke = latest?.Event == DataConsentEvent.Accepted
+            && !customer.IsMerged
+            && context.HasPermission(CustomersPermissions.DataConsentRevoke);
+        return new CustomerDataConsentDto(
+            latest is null ? null : new DataConsentCurrentDto(latest.Event.ToString(), latest.OccurredAt, latest.Channel?.ToString()),
+            canRevoke,
+            history);
+    }
+
+    private static DataConsentActorDto ActorOf(CustomerDataConsent row, IReadOnlyDictionary<Guid, string> names) =>
+        row.ActorKind == DataConsentActorKind.Chatbot
+            ? new DataConsentActorDto(nameof(DataConsentActorKind.Chatbot), row.ChatbotId, row.ChatbotName ?? string.Empty)
+            : new DataConsentActorDto(
+                nameof(DataConsentActorKind.Member),
+                row.ActorUserId,
+                row.ActorUserId is { } userId && names.TryGetValue(userId, out var name) && !string.IsNullOrWhiteSpace(name)
+                    ? name
+                    : DeletedUser);
+}
+
+public sealed class GetCustomerDataConsentHandler(
+    ICustomerRepository customers,
+    ICustomerDataConsentRepository consents,
+    ICustomerAuthorNames names,
+    IExecutionContext context) : IQueryHandler<GetCustomerDataConsentQuery, CustomerDataConsentDto>
+{
+    public async Task<CustomerDataConsentDto> HandleAsync(GetCustomerDataConsentQuery query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        CustomersAuthorization.EnsureAuthorized(context, query.TenantId, CustomersPermissions.CustomerRead);
+        var id = new CustomerId(query.CustomerId);
+        var customer = await customers.FindAsync(query.TenantId, id, cancellationToken)
+            ?? throw CustomerNotFound.For(query.CustomerId);
+
+        var rows = await consents.ListAsync(query.TenantId, id, cancellationToken);
+        return await DataConsentMapping.ToDtoAsync(customer, rows, names, context, cancellationToken);
+    }
 }
