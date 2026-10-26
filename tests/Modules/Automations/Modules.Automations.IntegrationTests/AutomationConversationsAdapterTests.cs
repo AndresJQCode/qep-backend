@@ -113,7 +113,7 @@ public sealed class AutomationConversationsAdapterTests
         await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), "Menú", Ct));
         f.Notifier.Events.Clear();
 
-        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, Ct));
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, null, Ct));
 
         Assert.Equal("Paused|Handoff|true|true|true",
             await RowAsync(f, "automation_status || '|' || automation_pause_reason || '|' || (automation_paused_by_member_id IS NULL)::text || '|' || (assigned_member_id IS NULL)::text || '|' || (automation_paused_at IS NOT NULL)::text"));
@@ -123,6 +123,55 @@ public sealed class AutomationConversationsAdapterTests
             "SELECT count(*) FROM audit.entries WHERE action = 'messaging.conversation.automation_paused' AND actor_type = 'System' AND resource_id = @id AND tenant_id = @t",
             ("id", f.ConversationId.ToString()), ("t", f.TenantId)));
         // D-M5: suena a todo el tenant como el último entrante sin asignar.
+        Assert.Equal([$"changed {f.ConversationId}", $"inbound {f.ConversationId} {last} -"], f.Notifier.Events);
+    }
+
+    /// <summary>Spec 2026-10-25 D-1, D-7: el destino que sí puede responder queda asignado en el mismo cambio que la pausa, sin evento
+    /// <c>Transferred</c>, y el aviso suena sólo a él.</summary>
+    [Fact]
+    public async Task AHandoffToAMemberWhoCanReplyAssignsAndRingsOnlyThem()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var advisor = (await SeedMemberAsync(f.ConnectionString, f.TenantId, "Ana Asesora")).MembershipId;
+        var last = await SeedInboundAsync(f, "hola", 5);
+        await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), "Menú", Ct));
+        f.Notifier.Events.Clear();
+        var cause = new HandoffCause(HandoffCauseKind.AttemptsExhausted, null, "q", "Documento", null, null, null);
+
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, cause, advisor, Ct));
+
+        Assert.Equal($"{advisor}|Paused", await RowAsync(f, "assigned_member_id || '|' || automation_status"));
+        Assert.Equal($"AttemptsExhausted|{advisor}", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT (details->'handoff'->>'kind') || '|' || (details->'handoff'->>'assignedMemberId') FROM messaging.messages WHERE details->>'type' = 'AutomationPaused'"));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE details->>'type' = 'Transferred'"));
+        Assert.Equal([$"changed {f.ConversationId}", $"inbound {f.ConversationId} {last} {advisor}"], f.Notifier.Events);
+    }
+
+    /// <summary>Spec 2026-10-25 D-5: un miembro ajeno o suspendido ya no puede responder; el traspaso cae sin asignar, como hoy, y no
+    /// lanza (la corrida no puede quedarse reintentando por eso).</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AHandoffToAMemberWhoCannotReplyFallsUnassigned(bool suspended)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var member = suspended
+            ? (await SeedMemberAsync(f.ConnectionString, f.TenantId, "Sofía Suspendida", state: "Suspended")).MembershipId
+            : Guid.CreateVersion7();
+        var last = await SeedInboundAsync(f, "hola", 5);
+        await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), "Menú", Ct));
+        f.Notifier.Events.Clear();
+        var cause = new HandoffCause(HandoffCauseKind.AttemptsExhausted, null, "q", "Documento", null, null, null);
+
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, cause, member, Ct));
+
+        Assert.Equal("Paused|true", await RowAsync(f, "automation_status || '|' || (assigned_member_id IS NULL)::text"));
+        Assert.Equal("false", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT (details->'handoff' ? 'assignedMemberId')::text FROM messaging.messages WHERE details->>'type' = 'AutomationPaused'"));
         Assert.Equal([$"changed {f.ConversationId}", $"inbound {f.ConversationId} {last} -"], f.Notifier.Events);
     }
 
@@ -138,7 +187,7 @@ public sealed class AutomationConversationsAdapterTests
             HandoffCauseKind.SendFailed, "messaging.connection_unavailable", "handoff", "Pasar a un asesor", "Servicio Clasic", "secret_unreadable",
             new HandoffHttpFailure("policy-lookup", "Buscar cliente por teléfono", "connection_unavailable", "secret_unreadable", null, "API de Clasic"));
 
-        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, cause, Ct));
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, cause, null, Ct));
 
         Assert.Equal(
             "SendFailed|messaging.connection_unavailable|handoff|Pasar a un asesor|Servicio Clasic|secret_unreadable|policy-lookup|Buscar cliente por teléfono|connection_unavailable|secret_unreadable|API de Clasic|false|false",
@@ -166,7 +215,7 @@ public sealed class AutomationConversationsAdapterTests
             HandoffCauseKind.Block, null, "handoff", "Pasar a un asesor", null, null,
             new HandoffHttpFailure("orders", "Crear orden", "error_status", "Ya existe una orden abierta", 409, "API de Clasic"));
 
-        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, cause, Ct));
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, cause, null, Ct));
 
         Assert.Equal("false|409|error_status", await ScalarAsync<string>(f.ConnectionString,
             """
@@ -189,7 +238,7 @@ public sealed class AutomationConversationsAdapterTests
 
         await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), "Menú", Ct));
         await WithAdapterAsync(f, adapter => adapter.SetStepAsync(f.TenantId, f.ConversationId, "Documento", Ct));
-        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, Ct));
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, null, Ct));
 
         Assert.Equal("Paused|Handoff|Documento", await RowAsync(f, "automation_status || '|' || automation_pause_reason || '|' || automation_step"));
     }
@@ -203,7 +252,7 @@ public sealed class AutomationConversationsAdapterTests
         await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), null, Ct));
         f.Notifier.Events.Clear();
 
-        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, Ct));
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, null, Ct));
 
         Assert.Equal("Paused", await RowAsync(f, "automation_status"));
         Assert.Equal([$"changed {f.ConversationId}"], f.Notifier.Events);
@@ -221,7 +270,7 @@ public sealed class AutomationConversationsAdapterTests
         {
             await adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), null, Ct);
             await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET version = version + 1");
-            await adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, Ct);
+            await adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, null, Ct);
         });
 
         Assert.Equal("Paused|4", await RowAsync(f, "automation_status || '|' || version"));

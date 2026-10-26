@@ -372,7 +372,7 @@ public sealed class RunsPersistenceTests
         public Task SetChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, Guid? assignToMemberId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

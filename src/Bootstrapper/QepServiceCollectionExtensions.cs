@@ -963,6 +963,8 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-10-21 §5.3: lo que Automations necesita de Mensajería e Integrations, por adaptadores.
         services.AddScoped<IAutomationConnections, AutomationConnections>();
         services.AddScoped<IAutomationExternalApis, AutomationExternalApis>();
+        // Spec 2026-10-25 D-5: los miembros que pueden responder, los mismos que ofrece «Transferir».
+        services.AddScoped<IAutomationMembers, AutomationMembers>();
         services.AddScoped<IAutomationBusinessHours, AutomationBusinessHours>();
         // Spec 2026-10-21 D-H2, D-H5 y fallo P2-R31: el cliente del bloque HTTP va acá y no en AddAutomationsInfrastructure porque su handler
         // primario (anti-SSRF: sin redirecciones, sin proxy, ConnectCallback que rechaza rangos internos) es de Integrations.Infrastructure.

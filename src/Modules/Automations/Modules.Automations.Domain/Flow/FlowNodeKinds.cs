@@ -23,7 +23,7 @@ public static class FlowNodeKinds
 
     /// <summary>
     /// Las salidas que el motor puede tomar desde el bloque, en el orden en que el editor las pinta. Las de Botones son
-    /// los <c>id</c> de sus botones más <c>other</c>; la Lista tiene <c>extra</c> sólo con <c>extraOption</c> y
+    /// los <c>id</c> de sus botones más <c>other</c> (sólo con <c>otherOutput</c>, D-3); la Lista tiene <c>extra</c> sólo con <c>extraOption</c> y
     /// <c>tooMany</c> sólo si es dinámica (con filas fijas el tope se valida al guardar).
     /// </summary>
     public static IReadOnlyList<string> OutputsOf(FlowNode node) => node switch
@@ -33,7 +33,7 @@ public static class FlowNodeKinds
         ConditionNode => [FlowOutputs.Yes, FlowOutputs.No],
         HttpNode => [FlowOutputs.Ok, FlowOutputs.Error],
         OpenQuestionNode => [FlowOutputs.Answered, FlowOutputs.Invalid],
-        ButtonsNode buttons => [.. buttons.Buttons.Select(button => button.Id), FlowOutputs.Other],
+        ButtonsNode buttons => [.. buttons.Buttons.Select(button => button.Id), .. OtherOutput(buttons.Fallback)],
         ListNode list => ListOutputs(list),
         AttachmentNode => [FlowOutputs.Received, FlowOutputs.Invalid],
         HandoffNode or ResolveNode => [],
@@ -42,6 +42,10 @@ public static class FlowNodeKinds
 
     /// <summary>Pasar a un asesor y Resolver terminan la corrida: no tienen salidas.</summary>
     public static bool IsTerminal(string kind) => kind is Handoff or Resolve;
+
+    /// <summary><c>other</c> existe sólo con <c>fallback = otherOutput</c> (spec 2026-10-25 D-3): con <c>repeat</c> o <c>handoff</c> el
+    /// canvas no la dibuja y nadie debe seguirla.</summary>
+    private static string[] OtherOutput(string fallback) => fallback == InteractiveFallbacks.OtherOutput ? [FlowOutputs.Other] : [];
 
     private static List<string> ListOutputs(ListNode list)
     {
@@ -56,7 +60,7 @@ public static class FlowNodeKinds
             outputs.Add(FlowOutputs.TooMany);
         }
 
-        outputs.Add(FlowOutputs.Other);
+        outputs.AddRange(OtherOutput(list.Fallback));
         return outputs;
     }
 }

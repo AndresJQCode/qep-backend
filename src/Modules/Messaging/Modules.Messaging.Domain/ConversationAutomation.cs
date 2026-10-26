@@ -36,6 +36,9 @@ public enum AutomationHandoffKind
 
     /// <summary>El flujo falló (ciclo, bloque inexistente, versión borrada).</summary>
     FlowFailed,
+
+    /// <summary>Spec 2026-10-25 D-1: el asistente agotó los reintentos de una pregunta y el traspaso lo decide el destino configurado.</summary>
+    AttemptsExhausted,
 }
 
 /// <summary>Spec 2026-10-24 D-T6: el bloque HTTP fallido que arrancó el paso que terminó en traspaso. Sólo códigos y la foto de
@@ -55,7 +58,8 @@ public sealed partial record AutomationHandoff(
     string? NodeTitle,
     string? ConnectionName,
     string? ConnectionReason,
-    AutomationHandoffHttp? Http)
+    AutomationHandoffHttp? Http,
+    Guid? AssignedMemberId = null)
 {
     /// <summary>Títulos y nombres: <see cref="SnapshotText.Fit"/>. Es el largo del paso del asistente.</summary>
     public const int TextMaxLength = 120;
@@ -65,7 +69,8 @@ public sealed partial record AutomationHandoff(
 
     /// <summary>Títulos y nombres se recortan a <see cref="TextMaxLength"/> (en blanco → <c>null</c>); un código que no cumple
     /// <c>^[a-z0-9_.]{1,64}$</c> o un id de más de 64 se guardan <c>null</c>; un status fuera de 100..599 también. Un
-    /// <paramref name="http"/> que queda sin nodo ni outcome se descarta entero.</summary>
+    /// <paramref name="http"/> que queda sin nodo ni outcome se descarta entero. Spec 2026-10-25 D-7:
+    /// <paramref name="assignedMemberId"/> es el asesor a quien el traspaso asigna la conversación; <see cref="Guid.Empty"/> es «nadie».</summary>
     public static AutomationHandoff Create(
         AutomationHandoffKind kind,
         string? code,
@@ -73,8 +78,10 @@ public sealed partial record AutomationHandoff(
         string? nodeTitle,
         string? connectionName,
         string? connectionReason,
-        AutomationHandoffHttp? http) =>
-        new(kind, CleanCode(code), CleanId(nodeId), CleanText(nodeTitle), CleanText(connectionName), CleanCode(connectionReason), CleanHttp(http));
+        AutomationHandoffHttp? http,
+        Guid? assignedMemberId = null) =>
+        new(kind, CleanCode(code), CleanId(nodeId), CleanText(nodeTitle), CleanText(connectionName), CleanCode(connectionReason), CleanHttp(http),
+            assignedMemberId == Guid.Empty ? null : assignedMemberId);
 
     private static AutomationHandoffHttp? CleanHttp(AutomationHandoffHttp? http)
     {

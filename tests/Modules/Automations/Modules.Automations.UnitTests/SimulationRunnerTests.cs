@@ -117,9 +117,29 @@ public sealed class SimulationRunnerTests
 
         Assert.Equal(["bot", "system"], transcript.Select(entry => entry.From));
         Assert.Equal("Te paso con un asesor.", transcript[0].Text);
-        Assert.Equal("Pasaría a un asesor", transcript[1].Text);
+        Assert.Equal("Pasaría la conversación a la bandeja, sin asignar", transcript[1].Text);
         Assert.Equal("Pasar a un asesor", transcript[1].NodeTitle);
         Assert.Equal(RunStatus.HandedOff, state.Status);
+    }
+
+    /// <summary>Spec 2026-10-25 D-4: el simulador dice adónde iría el traspaso: a la bandeja sin asignar o al miembro elegido.</summary>
+    [Fact]
+    public async Task TheSimulatorSaysWhereTheHandoffGoes()
+    {
+        var unassigned = FlowJson.Parse("""
+            { "schema": 1, "start": { "firstNodeId": "n9" }, "variables": [],
+              "nodes": [ { "id": "n9", "kind": "handoff", "title": "Pasar a un asesor", "text": null } ] }
+            """);
+        var assigned = FlowJson.Parse($$"""
+            { "schema": 1, "start": { "firstNodeId": "n9" }, "variables": [],
+              "nodes": [ { "id": "n9", "kind": "handoff", "title": "Pasar a un asesor", "text": null, "memberId": "{{Guid.CreateVersion7()}}" } ] }
+            """);
+
+        var (_, withoutMember) = await Runner(new RecordingHttpBlocks(null)).RunAsync(unassigned, Settings, Initial(), new EngineInput.Start(), Context(), Ct);
+        var (_, withMember) = await Runner(new RecordingHttpBlocks(null)).RunAsync(assigned, Settings, Initial(), new EngineInput.Start(), Context(), Ct);
+
+        Assert.Equal("Pasaría la conversación a la bandeja, sin asignar", withoutMember.Single(entry => entry.From == "system").Text);
+        Assert.Equal("Pasaría la conversación al miembro elegido", withMember.Single(entry => entry.From == "system").Text);
     }
 
     /// <summary>El motor corta un ciclo dentro de un recorrido (P2-R13), pero no uno que pasa por un bloque HTTP: cada resultado es un

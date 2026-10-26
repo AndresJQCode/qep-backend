@@ -63,7 +63,12 @@ public sealed record ChatbotSummaryRow(
 /// normalizadas por el agregado.</summary>
 public sealed record ServingChatbot(
     Guid ChatbotId, string Name, ChatbotStatus Status, ChatbotTrigger Trigger, IReadOnlyList<string> Keywords, string RestartKeyword,
-    int MaxAttempts, Guid PublishedVersionId);
+    int MaxAttempts, Guid PublishedVersionId, AttemptsExhaustedAction ExhaustedAction = AttemptsExhaustedAction.Restart,
+    Guid? ExhaustedMemberId = null)
+{
+    /// <summary>Spec 2026-10-25 D-4: lo que el motor lee del chatbot, igual que <see cref="Chatbot.EngineSettings"/>.</summary>
+    public EngineSettings EngineSettings => new(RestartKeyword, MaxAttempts, ExhaustedAction, ExhaustedMemberId);
+}
 
 /// <summary>La conexión <see cref="ConnectionId"/> la atiende el chatbot publicado <see cref="ChatbotId"/>.</summary>
 public sealed record ChatbotServingConnection(Guid ConnectionId, Guid ChatbotId, string Name);
@@ -114,6 +119,16 @@ public sealed record AutomationConnectionRef(Guid Id, string Name, string Channe
 public interface IAutomationConnections
 {
     Task<IReadOnlyList<AutomationConnectionRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
+/// <summary>Un miembro que puede responder conversaciones (spec 2026-10-25 D-5).</summary>
+public sealed record AutomationMemberRef(Guid Id, string Name);
+
+/// <summary>Los miembros activos con <c>messaging.conversation.manage</c>, los mismos que ofrece «Transferir» y en el mismo orden (adaptador en
+/// Bootstrapper sobre <c>IMessagingAssignees</c>): Automations no referencia Messaging.</summary>
+public interface IAutomationMembers
+{
+    Task<IReadOnlyList<AutomationMemberRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
 /// <summary>Una conexión «API externa» del tenant (D-H4); <see cref="Status"/> es el nombre del estado de Integrations.</summary>
@@ -236,9 +251,10 @@ public interface IAutomationConversations
     /// no mueve su versión; sin asistente activo no escribe nada.</summary>
     Task SetChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken);
 
-    /// <summary>D-M5: <c>Paused</c> con motivo <c>Handoff</c>, sin asesor, con evento en el hilo, auditoría de sistema y aviso a todo el
-    /// tenant como un entrante sin asignar.</summary>
-    Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, CancellationToken cancellationToken);
+    /// <summary>D-M5: <c>Paused</c> con motivo <c>Handoff</c>, con evento en el hilo y auditoría de sistema. Spec 2026-10-25 D-1, D-5:
+    /// con <paramref name="assignToMemberId"/> la asigna a ese miembro en el mismo cambio y avisa sólo a él, si todavía puede responder;
+    /// si no puede (o es <c>null</c>) queda sin asesor y el aviso suena a todo el tenant como un entrante sin asignar.</summary>
+    Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, Guid? assignToMemberId, CancellationToken cancellationToken);
 
     /// <summary>D-M5: resuelta con el motivo (si sigue activo en el tenant), con evento <c>Resolved</c> sin actor y auditoría de sistema.</summary>
     Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken);

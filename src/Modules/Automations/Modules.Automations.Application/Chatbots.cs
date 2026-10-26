@@ -33,7 +33,8 @@ public sealed record CreateChatbotCommand(
 /// en un <c>Draft</c> se ignora (spec 2026-10-23 D-X1, D-X4).</summary>
 public sealed record UpdateChatbotCommand(
     Guid TenantId, Guid ChatbotId, long Version, string Name, string Description, string Trigger, IReadOnlyList<string> Keywords,
-    string RestartKeyword, int MaxAttempts, IReadOnlyList<Guid> ConnectionIds, IReadOnlyList<Guid> TakeOverConnectionIds)
+    string RestartKeyword, int MaxAttempts, IReadOnlyList<Guid> ConnectionIds, IReadOnlyList<Guid> TakeOverConnectionIds,
+    string? ExhaustedAction, Guid? ExhaustedMemberId)
     : ICommand<ChatbotEditorDto>;
 
 public sealed record SaveChatbotDraftCommand(Guid TenantId, Guid ChatbotId, long Version, JsonElement Flow, JsonElement Layout)
@@ -130,6 +131,11 @@ internal static class ChatbotRules
             .Must(ids => ids.Distinct().Count() == ids.Count)
             .WithMessage("A connection cannot be repeated.");
 
+    /// <summary>Spec 2026-10-25 D-2: ausente es <c>Restart</c> (D-4); cualquier valor que no sea <c>Restart</c> o <c>Handoff</c> es un
+    /// 422 bajo la clave de la acción, con el mismo criterio que <see cref="TryParseTrigger"/>.</summary>
+    public static void ExhaustedAction<T>(IRuleBuilderInitial<T, string?> rule, string? key = null) =>
+        Keyed(rule.Must(action => action is null || TryParseExhaustedAction(action, out _)).WithMessage("ExhaustedAction must be Restart or Handoff."), key);
+
     private static void Keyed<T, TProperty>(IRuleBuilderOptions<T, TProperty> rule, string? key)
     {
         if (key is not null)
@@ -137,6 +143,17 @@ internal static class ChatbotRules
             rule.OverridePropertyName(key);
         }
     }
+
+    public static bool TryParseExhaustedAction(string? value, out AttemptsExhaustedAction action)
+    {
+        action = default;
+        return value is not null && Enum.TryParse(value, ignoreCase: false, out action) && Enum.IsDefined(action)
+            && !int.TryParse(value, out _);
+    }
+
+    /// <summary>Ausente = <c>Restart</c> (D-4). El validador ya garantizó el valor: esta conversión no lanza.</summary>
+    public static AttemptsExhaustedAction ExhaustedActionOrRestart(string? value) =>
+        value is null ? AttemptsExhaustedAction.Restart : Enum.Parse<AttemptsExhaustedAction>(value);
 
     public static bool TryParseTrigger(string? value, out ChatbotTrigger trigger)
     {
@@ -193,6 +210,7 @@ public sealed class UpdateChatbotValidator : AbstractValidator<UpdateChatbotComm
         RuleFor(command => command.TakeOverConnectionIds).NotNull()
             .Must(ids => ids.Count <= ChatbotLimits.MaxConnections)
             .WithMessage($"At most {ChatbotLimits.MaxConnections} connections can be taken over.");
+        ChatbotRules.ExhaustedAction(RuleFor(command => command.ExhaustedAction));
     }
 }
 
@@ -250,6 +268,7 @@ public sealed class ImportChatbotValidator : AbstractValidator<ImportChatbotComm
                     .NotEmpty().MaximumLength(Chatbot.RestartKeywordMaxLength).OverridePropertyName("export.restartKeyword");
                 RuleFor(command => command.Request.Export.MaxAttempts)
                     .InclusiveBetween(Chatbot.MinAttempts, Chatbot.MaxAttemptsLimit).OverridePropertyName("export.maxAttempts");
+                ChatbotRules.ExhaustedAction(RuleFor(command => command.Request.Export.ExhaustedAction), "export.exhaustedAction");
                 RuleFor(command => command.Request.Export.Flow)
                     .Cascade(CascadeMode.Stop)
                     .Must(flow => flow.ValueKind == JsonValueKind.Object)
@@ -441,6 +460,8 @@ public sealed class CreateChatbotHandler(
         {
             // Como POST /duplicate (D-C12): la palabra de reinicio y el tope de intentos vienen con el borrador; lo demás, del pedido.
             chatbot.UpdateSettings(trigger, command.Keywords, source.RestartKeyword, source.MaxAttempts, now);
+            // Spec 2026-10-25 D-8: el flujo viaja con los miembros de sus bloques, así que la regla viaja con él. Una plantilla no (source null).
+            chatbot.SetAttemptsExhausted(source.ExhaustedAction, source.ExhaustedMemberId, now);
         }
 
         chatbot.SetConnections(command.ConnectionIds, now);
@@ -488,6 +509,7 @@ public sealed class UpdateChatbotHandler(
     ITenantModules tenantModules,
     IChatbotRepository chatbots,
     IAutomationConnections connections,
+    IAutomationMembers members,
     IAutomationsUnitOfWork unitOfWork,
     IAutomationsAuditRecorder audit,
     IClock clock,
@@ -505,10 +527,19 @@ public sealed class UpdateChatbotHandler(
         var tenantConnections = await connections.ListAsync(command.TenantId, cancellationToken);
         ChatbotConnectionCheck.Ensure(tenantConnections, command.ConnectionIds);
         await ChatbotConnectionCheck.EnsureNameIsFreeAsync(chatbots, command.TenantId, command.Name, chatbot.Id, cancellationToken);
+        var action = ChatbotRules.ExhaustedActionOrRestart(command.ExhaustedAction);
+        // Spec 2026-10-25 D-5: antes de tocar el agregado, para que un rechazo no deje cambios a medias. Con Restart el miembro se descarta y no se mira.
+        if (action == AttemptsExhaustedAction.Handoff && command.ExhaustedMemberId is { } memberId
+            && (await members.ListAsync(command.TenantId, cancellationToken)).All(member => member.Id != memberId))
+        {
+            throw new AutomationsDomainException(
+                AutomationsErrorCodes.ChatbotMemberCannotReply, "Ese miembro ya no puede responder conversaciones: elige otro.");
+        }
 
         var now = clock.UtcNow;
         chatbot.Rename(command.Name, command.Description, now);
         chatbot.UpdateSettings(Enum.Parse<ChatbotTrigger>(command.Trigger), command.Keywords, command.RestartKeyword, command.MaxAttempts, now);
+        chatbot.SetAttemptsExhausted(action, command.ExhaustedMemberId, now);
         chatbot.SetConnections(command.ConnectionIds, now);
         // D-X4: un borrador no ocupa (D-C13), así que no hay nada que quitarle a nadie; el traspaso se confirma al publicar.
         if (chatbot.Status != ChatbotStatus.Draft)
@@ -547,7 +578,7 @@ public sealed class SaveChatbotDraftHandler(
     {
         await AutomationsAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AutomationsPermissions.ChatbotManage, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
-        var flow = Parse(command.Flow);
+        var flow = FlowNormalizer.Normalize(Parse(command.Flow));
         var chatbot = await chatbots.FindAsync(command.TenantId, command.ChatbotId, cancellationToken)
             ?? throw AutomationsNotFound.Chatbot(command.ChatbotId);
         AutomationsVersions.Ensure(chatbot.Version, command.Version);
@@ -730,6 +761,8 @@ public sealed class DuplicateChatbotHandler(
         var copy = Chatbot.Create(
             command.TenantId, name, source.Description, source.Trigger, source.Keywords, source.DraftFlowJson, source.DraftLayoutJson, by, now);
         copy.UpdateSettings(source.Trigger, source.Keywords, source.RestartKeyword, source.MaxAttempts, now);
+        // Spec 2026-10-25 D-8: la copia lleva el flujo con los miembros de sus bloques y la regla que les hace juego.
+        copy.SetAttemptsExhausted(source.ExhaustedAction, source.ExhaustedMemberId, now);
         await chatbots.AddAsync(copy, cancellationToken);
         audit.Record(command.TenantId, executionContext.SubjectId, false, AutomationsAuditActions.ChatbotCreated, AutomationsAuditActions.ResourceChatbot, copy.Id, now);
         // Dos duplicados simultáneos pueden elegir el mismo nombre: el índice (IX_chatbots_tenant_name) responde 409 name_taken al segundo.
@@ -823,7 +856,9 @@ public sealed class ExportChatbotHandler(
             [.. referenced.Select(id => known.TryGetValue(id, out var api)
                 ? new ExternalApiRefDto(api.Id, api.Name, api.Status)
                 : new ExternalApiRefDto(id, string.Empty, "Unknown"))],
-            clock.UtcNow);
+            clock.UtcNow,
+            chatbot.ExhaustedAction.ToString(),
+            chatbot.ExhaustedMemberId);
     }
 
     /// <summary>Un borrador ilegible (dato viejo) se exporta igual, sin APIs: el archivo es el respaldo, no la validación.</summary>
@@ -849,6 +884,7 @@ public sealed class ImportChatbotHandler(
     ITenantModules tenantModules,
     AutomationsCaller caller,
     IChatbotRepository chatbots,
+    IAutomationMembers members,
     IAutomationsUnitOfWork unitOfWork,
     IAutomationsAuditRecorder audit,
     IClock clock,
@@ -861,7 +897,10 @@ public sealed class ImportChatbotHandler(
         await AutomationsAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AutomationsPermissions.ChatbotManage, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var export = command.Request.Export;
-        var flow = Remap(Parse(export.Flow), command.Request.ConnectionMap);
+        // Spec 2026-10-25 D-8: un miembro del archivo sólo vale si puede responder en este tenant; si no, queda sin asignar. Normalizar va
+        // al final para que un archivo con `other` o miembros huérfanos se guarde como lo guardaría el borrador (D-3, D-4).
+        var assignable = (await members.ListAsync(command.TenantId, cancellationToken)).Select(member => member.Id).ToHashSet();
+        var flow = FlowNormalizer.Normalize(DropForeignMembers(Remap(Parse(export.Flow), command.Request.ConnectionMap), assignable));
         var by = await caller.RequireAsync(command.TenantId, cancellationToken);
         var name = command.Request.Name ?? export.Name;
         await ChatbotConnectionCheck.EnsureNameIsFreeAsync(chatbots, command.TenantId, name, null, cancellationToken);
@@ -872,6 +911,11 @@ public sealed class ImportChatbotHandler(
         var chatbot = Chatbot.Create(
             command.TenantId, name, export.Description, trigger, export.Keywords, FlowJson.Serialize(flow), export.Layout.GetRawText(), by, now);
         chatbot.UpdateSettings(trigger, export.Keywords, export.RestartKeyword, export.MaxAttempts, now);
+        // La acción se conserva; el miembro de la regla, sólo si puede responder aquí (un archivo viejo sin regla entra como Restart, D-4).
+        chatbot.SetAttemptsExhausted(
+            ChatbotRules.ExhaustedActionOrRestart(export.ExhaustedAction),
+            export.ExhaustedMemberId is { } exhausted && assignable.Contains(exhausted) ? exhausted : null,
+            now);
         await chatbots.AddAsync(chatbot, cancellationToken);
         audit.Record(command.TenantId, executionContext.SubjectId, false, AutomationsAuditActions.ChatbotImported, AutomationsAuditActions.ResourceChatbot, chatbot.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -889,6 +933,22 @@ public sealed class ImportChatbotHandler(
         {
             throw FlowFormatFailures.For("export.flow", exception);
         }
+    }
+
+    private static FlowDefinition DropForeignMembers(FlowDefinition flow, HashSet<Guid> assignable)
+    {
+        Guid? Keep(Guid? member) => member is { } id && assignable.Contains(id) ? id : null;
+
+        return flow with
+        {
+            Nodes = [.. flow.Nodes.Select(node => node switch
+            {
+                HandoffNode handoff => handoff with { MemberId = Keep(handoff.MemberId) },
+                ButtonsNode buttons => buttons with { FallbackMemberId = Keep(buttons.FallbackMemberId) },
+                ListNode list => list with { FallbackMemberId = Keep(list.FallbackMemberId) },
+                _ => node,
+            })],
+        };
     }
 
     private static FlowDefinition Remap(FlowDefinition flow, IReadOnlyDictionary<Guid, Guid>? map)

@@ -13,7 +13,7 @@ public sealed partial class SystemTemplatesTests
 
     // WhatsApp, sin «API externa» (D-C14: una plantilla no referencia conexiones) y con horario en todas las conexiones.
     private static FlowValidationContext Ctx() =>
-        new(new HashSet<string> { "WhatsApp" }, new HashSet<Guid>(), new HashSet<Guid>(), AllConnectionsHaveBusinessHours: true);
+        new(new HashSet<string> { "WhatsApp" }, new HashSet<Guid>(), new HashSet<Guid>(), AllConnectionsHaveBusinessHours: true, HandoffMembers: new HashSet<Guid>());
 
     [Fact]
     public void EverySystemTemplateParsesAndValidatesWithoutErrors()

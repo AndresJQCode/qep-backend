@@ -377,6 +377,67 @@ public sealed class AutomationsPersistenceTests
         Assert.Equal("concurrency.conflict", error.Code);
     }
 
+    /// <summary>Spec 2026-10-25 D-2: la regla sobrevive a la base y la leen tanto el agregado como las dos proyecciones del motor.</summary>
+    [Fact]
+    public async Task TheAttemptsExhaustedRuleSurvivesTheDatabase()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var memberId = Guid.CreateVersion7();
+        var chatbot = NewChatbot(tenantId, "Ventas");
+        chatbot.SetConnections([connectionId], Now);
+        chatbot.SetAttemptsExhausted(AttemptsExhaustedAction.Handoff, memberId, Now);
+        chatbot.Publish([], Guid.CreateVersion7(), Now);
+        using (var seed = factory.Services.CreateScope())
+        {
+            await seed.ServiceProvider.GetRequiredService<IChatbotRepository>().AddAsync(chatbot, Ct);
+            await seed.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IChatbotRepository>();
+        var loaded = await repository.FindAsync(tenantId, chatbot.Id, Ct);
+        Assert.NotNull(loaded);
+        Assert.Equal((AttemptsExhaustedAction.Handoff, (Guid?)memberId), (loaded.ExhaustedAction, loaded.ExhaustedMemberId));
+
+        var settings = await repository.FindEngineSettingsAsync(tenantId, chatbot.Id, Ct);
+        Assert.Equal(new Modules.Automations.Domain.Engine.EngineSettings(
+            chatbot.RestartKeyword, chatbot.MaxAttempts, AttemptsExhaustedAction.Handoff, memberId), settings);
+
+        var serving = await repository.FindServingByConnectionAsync(tenantId, connectionId, Ct);
+        Assert.NotNull(serving);
+        Assert.Equal((AttemptsExhaustedAction.Handoff, (Guid?)memberId), (serving.ExhaustedAction, serving.ExhaustedMemberId));
+    }
+
+    /// <summary>Spec 2026-10-25 D-2: una fila anterior a las columnas (insertada sin ellas) se lee como «reiniciar», sin miembro.</summary>
+    [Fact]
+    public async Task AnExistingRowReadsRestart()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var chatbotId = Guid.CreateVersion7();
+        await ExecuteAsync(connectionString,
+            """
+            INSERT INTO automations.chatbots (id, tenant_id, name, draft_flow, draft_updated_at, draft_updated_by, created_at, created_by, updated_at)
+            VALUES (@id, @tenantId, 'Antiguo', '{}'::jsonb, now(), @by, now(), @by, now())
+            """,
+            ("id", chatbotId), ("tenantId", tenantId), ("by", Guid.CreateVersion7()));
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IChatbotRepository>();
+        var loaded = await repository.FindAsync(tenantId, chatbotId, Ct);
+
+        Assert.NotNull(loaded);
+        Assert.Equal((AttemptsExhaustedAction.Restart, (Guid?)null), (loaded.ExhaustedAction, loaded.ExhaustedMemberId));
+        Assert.Equal(
+            (AttemptsExhaustedAction.Restart, (Guid?)null),
+            (await repository.FindEngineSettingsAsync(tenantId, chatbotId, Ct) is { } settings ? (settings.ExhaustedAction, settings.ExhaustedMemberId) : default));
+    }
+
     private static async Task<Guid> InsertTemplateAsync(string connectionString, Guid tenantId, string name)
     {
         var id = Guid.CreateVersion7();

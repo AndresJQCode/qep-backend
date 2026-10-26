@@ -189,28 +189,28 @@ public static class FlowEngine
         /// <summary>
         /// Una respuesta que no es lo que <paramref name="node"/> espera (D-M7) es un intento. El <c>fallback</c> de Botones y Lista decide
         /// primero (ruling P2-R9); Pregunta abierta y Pedir adjunto siempre se comportan como <c>repeat</c>. Mientras queden intentos se
-        /// reenvía el mensaje; al agotarlos se sale por <c>invalid</c>/<c>other</c> si está conectada, y si no, la corrida reinicia.
+        /// reenvía el mensaje; al agotarlos se sale por <c>invalid</c> (sólo Pregunta abierta y Pedir adjunto) si está conectada,
+        /// y si no manda la regla del chatbot (spec 2026-10-25 D-2): reiniciar o pasar a un asesor.
         /// </summary>
         public StepResult Reject(FlowNode node, EngineSettings settings)
         {
             attempts++;
-            var fallback = node switch
+            var (fallback, fallbackMemberId) = node switch
             {
-                ButtonsNode buttons => buttons.Fallback,
-                ListNode list => list.Fallback,
-                _ => InteractiveFallbacks.Repeat,
+                ButtonsNode buttons => (buttons.Fallback, buttons.FallbackMemberId),
+                ListNode list => (list.Fallback, list.FallbackMemberId),
+                _ => (InteractiveFallbacks.Repeat, (Guid?)null),
             };
 
             if (fallback == InteractiveFallbacks.Handoff)
             {
-                effects.Add(new Effect.Handoff(node.Id, HandoffReasons.InvalidReply));
+                effects.Add(new Effect.Handoff(node.Id, HandoffReasons.InvalidReply, fallbackMemberId));
                 _ = Stop(node, RunStatus.HandedOff, TraceOutcomes.HandedOff);
                 return Result();
             }
 
-            var exhausted = node is OpenQuestionNode or AttachmentNode ? FlowOutputs.Invalid : FlowOutputs.Other;
-            var connected = node.Outputs.GetValueOrDefault(exhausted) is not null;
-            if (fallback == InteractiveFallbacks.OtherOutput && connected)
+            // D-3: «other» existe sólo con «otherOutput»; con «repeat» el JSON puede traerla conectada y nadie la sigue.
+            if (fallback == InteractiveFallbacks.OtherOutput && node.Outputs.GetValueOrDefault(FlowOutputs.Other) is not null)
             {
                 return Leave(node, FlowOutputs.Other);
             }
@@ -222,7 +222,20 @@ public static class FlowEngine
                 return Resend(node);
             }
 
-            return connected ? Leave(node, exhausted) : Restart(node);
+            // D-2: sólo Pregunta abierta y Pedir adjunto tienen salida de agotamiento («invalid»); conectada, gana a la regla del chatbot.
+            if (node is OpenQuestionNode or AttachmentNode && node.Outputs.GetValueOrDefault(FlowOutputs.Invalid) is not null)
+            {
+                return Leave(node, FlowOutputs.Invalid);
+            }
+
+            if (settings.ExhaustedAction == AttemptsExhaustedAction.Handoff)
+            {
+                effects.Add(new Effect.Handoff(node.Id, HandoffReasons.AttemptsExhausted, settings.ExhaustedMemberId));
+                _ = Stop(node, RunStatus.HandedOff, TraceOutcomes.HandedOff);
+                return Result();
+            }
+
+            return Restart(node);
         }
 
         /// <summary>
@@ -321,7 +334,7 @@ public static class FlowEngine
                     return Stop(node, RunStatus.Running, TraceOutcomes.Pending);
                 case HandoffNode handoff:
                     SendOptional(node.Id, handoff.Text);
-                    effects.Add(new Effect.Handoff(node.Id, HandoffReasons.Block));
+                    effects.Add(new Effect.Handoff(node.Id, HandoffReasons.Block, handoff.MemberId));
                     return Stop(node, RunStatus.HandedOff, TraceOutcomes.HandedOff);
                 case ResolveNode resolve:
                     SendOptional(node.Id, resolve.Text);

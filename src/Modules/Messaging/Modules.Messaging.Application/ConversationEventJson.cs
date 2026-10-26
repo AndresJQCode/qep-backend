@@ -112,6 +112,8 @@ public static class ConversationEventJson
             writer.WriteEndObject();
         }
 
+        // Spec 2026-10-25 D-8: a quién quedó asignada la conversación; interna, el frontend nunca la lee.
+        WriteId(writer, "assignedMemberId", handoff.AssignedMemberId);
         writer.WriteEndObject();
     }
 
@@ -149,7 +151,7 @@ public static class ConversationEventJson
 
         return AutomationHandoff.Create(
             kind, ReadText(handoff, "code"), ReadText(handoff, "nodeId"), ReadText(handoff, "nodeTitle"),
-            ReadText(handoff, "connectionName"), ReadText(handoff, "connectionReason"), http);
+            ReadText(handoff, "connectionName"), ReadText(handoff, "connectionReason"), http, ReadId(handoff, "assignedMemberId"));
     }
 
     private static string? ReadText(JsonElement element, string name) =>

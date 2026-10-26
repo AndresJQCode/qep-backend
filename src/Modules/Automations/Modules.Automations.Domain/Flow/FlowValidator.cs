@@ -38,9 +38,9 @@ public static partial class FlowValidator
 
     private static readonly FrozenSet<string> FixedVariables = FlowFixedVariables.Names.ToFrozenSet(StringComparer.Ordinal);
 
-    /// <summary>Sin conectar, D-M7 las cubre en tiempo de ejecución (reinicia o repite), así que son aviso y no error.</summary>
-    private static readonly FrozenSet<string> OptionalOutputs =
-        new[] { FlowOutputs.Invalid, FlowOutputs.Other, FlowOutputs.TooMany }.ToFrozenSet(StringComparer.Ordinal);
+    /// <summary>Sin conectar, D-M7 la cubre en tiempo de ejecución, así que es aviso y no error. <c>invalid</c> ni avisa (spec 2026-10-25 D-8)
+    /// y <c>other</c> —que ya sólo existe con <c>otherOutput</c>— es obligatoria (D-3).</summary>
+    private static readonly FrozenSet<string> OptionalOutputs = new[] { FlowOutputs.TooMany }.ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>Cómo el editor rotula cada salida (qep-frontend, editor de chatbots); las de Botones son la etiqueta del botón.</summary>
     private static readonly FrozenDictionary<string, string> OutputLabels = new Dictionary<string, string>
@@ -135,6 +135,12 @@ public static partial class FlowValidator
             var target = node.Outputs.GetValueOrDefault(output);
             if (target is null)
             {
+                // D-8: sin conectar, el motor reinicia o repite la pregunta; no hay nada que revisar.
+                if (output == FlowOutputs.Invalid)
+                {
+                    continue;
+                }
+
                 var message = $"La salida «{OutputLabel(node, output)}» de «{node.Title}» no está conectada.";
                 issues.Add(OptionalOutputs.Contains(output)
                     ? Warning(FlowIssueCodes.NodeOutputUnconnectedOptional, node.Id, message)
@@ -194,6 +200,7 @@ public static partial class FlowValidator
                 }
 
                 CheckButtonIds(buttons, issues);
+                CheckFallbackMember(buttons, buttons.Fallback, buttons.FallbackMemberId, context, issues);
 
                 // Guardar la respuesta de Botones es opcional: un saveTo en blanco es «no guardar».
                 if (!string.IsNullOrWhiteSpace(buttons.SaveTo))
@@ -230,12 +237,36 @@ public static partial class FlowValidator
             case HttpNode http:
                 CheckHttp(http, context, issues);
                 break;
-            case HandoffNode { Text: { } text }:
-                CheckOptionalText(node, text, issues);
+            case HandoffNode handoff:
+                if (handoff.Text is { } handoffText)
+                {
+                    CheckOptionalText(node, handoffText, issues);
+                }
+
+                if (handoff.MemberId is { } memberId && !context.HandoffMembers.Contains(memberId))
+                {
+                    issues.Add(Error(
+                        FlowIssueCodes.HandoffMemberInvalid, node.Id,
+                        $"«{node.Title}» asigna la conversación a alguien que ya no puede responder conversaciones: elige otro miembro o déjala sin asignar."));
+                }
+
                 break;
             case ResolveNode { Text: { } text }:
                 CheckOptionalText(node, text, issues);
                 break;
+        }
+    }
+
+    /// <summary>Spec 2026-10-25 D-5: el miembro de «Si responde otra cosa» sólo cuenta con <c>fallback = handoff</c>; con otro fallback un
+    /// borrador sin normalizar puede traer uno huérfano que el motor ignora (D-3).</summary>
+    private static void CheckFallbackMember(
+        FlowNode node, string fallback, Guid? memberId, FlowValidationContext context, List<FlowIssue> issues)
+    {
+        if (fallback == InteractiveFallbacks.Handoff && memberId is { } member && !context.HandoffMembers.Contains(member))
+        {
+            issues.Add(Error(
+                FlowIssueCodes.HandoffMemberInvalid, node.Id,
+                $"«Si responde otra cosa» de «{node.Title}» asigna la conversación a alguien que ya no puede responder conversaciones: elige otro miembro o déjala sin asignar."));
         }
     }
 
@@ -244,6 +275,7 @@ public static partial class FlowValidator
         CheckText(list, list.Text, InteractiveBodyMaxLength, issues);
         CheckLabel(list, list.ButtonLabel, issues);
         CheckName(list, list.SaveTo, issues);
+        CheckFallbackMember(list, list.Fallback, list.FallbackMemberId, context, issues);
 
         if (context.Channels.Contains(Instagram))
         {

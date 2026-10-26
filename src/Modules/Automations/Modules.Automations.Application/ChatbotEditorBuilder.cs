@@ -13,6 +13,7 @@ namespace Modules.Automations.Application;
 public sealed class ChatbotEditorBuilder(
     IAutomationConnections connections,
     IAutomationExternalApis externalApis,
+    IAutomationMembers members,
     IAutomationBusinessHours businessHours,
     IChatbotRepository chatbots,
     IConversationRunQueries runs,
@@ -39,11 +40,13 @@ public sealed class ChatbotEditorBuilder(
         var scheduleNames = await businessHours.ScheduleNamesAsync(
             chatbot.TenantId, [.. tenantConnections.Select(connection => connection.Id)], cancellationToken);
         var apis = await externalApis.ListAsync(chatbot.TenantId, cancellationToken);
+        // D-5: una sola lectura de miembros por request, para el selector y para validar los destinos.
+        var assignable = await members.ListAsync(chatbot.TenantId, cancellationToken);
         var servedBy = await ServedByAsync(chatbot.TenantId, cancellationToken);
         var today = await TodayAsync(chatbot.TenantId, [chatbot.Id], cancellationToken);
 
         var (flow, problem) = ParseStored(chatbot);
-        var issues = flow is null ? [problem!] : Validate(chatbot, flow, tenantConnections, apis, scheduleNames);
+        var issues = flow is null ? [problem!] : Validate(chatbot, flow, tenantConnections, apis, assignable, scheduleNames);
         var published = chatbot.PublishedVersionId is { } publishedId
             ? chatbot.Versions.FirstOrDefault(version => version.Id == publishedId)
             : null;
@@ -59,7 +62,10 @@ public sealed class ChatbotEditorBuilder(
             issues,
             ToSelectable(tenantConnections, servedBy, scheduleNames),
             [.. apis.Select(api => new ExternalApiRefDto(api.Id, api.Name, api.Status))],
-            FlowValidator.KnownVariables(flow ?? EmptyFlow));
+            FlowValidator.KnownVariables(flow ?? EmptyFlow),
+            chatbot.ExhaustedAction.ToString(),
+            chatbot.ExhaustedMemberId,
+            [.. assignable.Select(member => new ChatbotMemberDto(member.Id, member.Name))]);
     }
 
     /// <summary>`GET /connections` (§4.4): las mismas conexiones que trae el editor, armadas por el mismo código.</summary>
@@ -102,7 +108,8 @@ public sealed class ChatbotEditorBuilder(
         var scheduleNames = await businessHours.ScheduleNamesAsync(
             chatbot.TenantId, [.. chatbot.Connections.Select(connection => connection.ConnectionId)], cancellationToken);
         var apis = await externalApis.ListAsync(chatbot.TenantId, cancellationToken);
-        return Validate(chatbot, flow, tenantConnections, apis, scheduleNames);
+        var assignable = await members.ListAsync(chatbot.TenantId, cancellationToken);
+        return Validate(chatbot, flow, tenantConnections, apis, assignable, scheduleNames);
     }
 
     /// <summary>La validación del borrador guardado (<c>/validate</c>): la misma que trae <see cref="BuildAsync(Chatbot, CancellationToken)"/>.</summary>
@@ -148,11 +155,12 @@ public sealed class ChatbotEditorBuilder(
 
     private static readonly FlowDefinition EmptyFlow = new(FlowDefinition.CurrentSchema, new FlowStart(null), [], []);
 
-    private static IReadOnlyList<FlowIssueDto> Validate(
+    private static List<FlowIssueDto> Validate(
         Chatbot chatbot,
         FlowDefinition flow,
         IReadOnlyList<AutomationConnectionRef> tenantConnections,
         IReadOnlyList<ExternalApiRef> apis,
+        IReadOnlyList<AutomationMemberRef> assignable,
         IReadOnlyDictionary<Guid, string?> scheduleNames)
     {
         var own = chatbot.Connections.Select(connection => connection.ConnectionId).ToHashSet();
@@ -162,12 +170,29 @@ public sealed class ChatbotEditorBuilder(
             channels.Add(DefaultChannel);
         }
 
+        var replyingMembers = assignable.Select(member => member.Id).ToHashSet();
         var context = new FlowValidationContext(
             channels,
             apis.Where(api => api.Status == Active).Select(api => api.Id).ToHashSet(),
             apis.Where(api => api.Status == Paused).Select(api => api.Id).ToHashSet(),
-            own.All(id => scheduleNames.GetValueOrDefault(id) is not null));
-        return [.. FlowValidator.Validate(flow, context).Select(issue => new FlowIssueDto(issue.Severity.ToString(), issue.Code, issue.NodeId, issue.Message))];
+            own.All(id => scheduleNames.GetValueOrDefault(id) is not null),
+            replyingMembers);
+        var issues = FlowValidator.Validate(flow, context)
+            .Select(issue => new FlowIssueDto(issue.Severity.ToString(), issue.Code, issue.NodeId, issue.Message))
+            .ToList();
+
+        // D-5: la regla de agotamiento es un ajuste del chatbot (como trigger.keywords_empty), no del flujo, así que la revisa este método
+        // y no el validador: el editor, /validate y publicar la ven por el mismo camino.
+        if (chatbot.ExhaustedAction == AttemptsExhaustedAction.Handoff
+            && chatbot.ExhaustedMemberId is { } exhaustedMember
+            && !replyingMembers.Contains(exhaustedMember))
+        {
+            issues.Add(new FlowIssueDto(
+                nameof(FlowIssueSeverity.Error), FlowIssueCodes.ExhaustedMemberInvalid, null,
+                "Al agotar los intentos, el chatbot asigna la conversación a alguien que ya no puede responder conversaciones: elige otro miembro en los ajustes."));
+        }
+
+        return issues;
     }
 
     /// <summary>§4.4: «hoy» es el día del tenant (su zona horaria), no el de UTC.</summary>

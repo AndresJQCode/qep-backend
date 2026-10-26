@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Modules.Automations.Application;
+using Modules.Automations.Domain;
 using Modules.Automations.Domain.Engine;
 using Modules.Automations.Domain.Flow;
 
@@ -104,6 +105,24 @@ public sealed class ClasicFlowTests
 
         Assert.Equal(expectedNode, after.State.CurrentNodeId);
         Assert.Equal(expectedNode != "policy", after.State.Variables.Has("aceptacion"));
+    }
+
+    /// <summary>Spec 2026-10-25 D-2: los botones de la política, sin salida de agotamiento, aplican la regla del chatbot.</summary>
+    [Fact]
+    public void ThePolicyButtonsHandOffWhenAttemptsRunOutAndTheChatbotSaysSo()
+    {
+        var flow = ClasicFlow.Parse() with { Start = new FlowStart("policy") };
+        var settings = new EngineSettings("reiniciar", 3, AttemptsExhaustedAction.Handoff);
+        var now = new DateTimeOffset(2026, 10, 25, 15, 0, 0, TimeSpan.Zero);
+        var step = FlowEngine.Step(flow, settings, RunState.Initial(RunVariables.Empty()), new EngineInput.Start(), now);
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            step = FlowEngine.Step(flow, settings, step.State, new EngineInput.CustomerMessage("Text", "hola", null, null), now);
+        }
+
+        Assert.Equal((RunStatus.HandedOff, "policy"), (step.State.Status, step.State.CurrentNodeId));
+        Assert.Equal<Effect>([new Effect.Handoff("policy", HandoffReasons.AttemptsExhausted, null)], step.Effects);
     }
 
     /// <summary>Un documento que no son sólo dígitos («1.036.123.456») tres veces seguidas no reinicia el flujo desde la política: pasa a un

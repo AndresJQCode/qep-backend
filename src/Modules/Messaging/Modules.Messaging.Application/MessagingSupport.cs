@@ -226,7 +226,7 @@ internal static class MessageMapping
                     conversationEvent.PauseReason?.ToString(),
                     EventCustomer(conversationEvent.CustomerId, customerRefs),
                     EventCustomer(conversationEvent.PreviousCustomerId, customerRefs),
-                    ToDto(conversationEvent.Handoff)),
+                    ToDto(conversationEvent.Handoff, memberNames)),
             row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
             row.Kind == MessageKind.Unsupported ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson)) : null,
             row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson),
@@ -320,7 +320,7 @@ internal static class MessageMapping
 
             if (row.Kind == MessageKind.Event && ConversationEventJson.Parse(row.DetailsJson) is { } value)
             {
-                foreach (var id in new[] { value.Actor, value.Target, value.Previous })
+                foreach (var id in new[] { value.Actor, value.Target, value.Previous, value.Handoff?.AssignedMemberId })
                 {
                     if (id is { } member)
                     {
@@ -344,14 +344,15 @@ internal static class MessageMapping
         memberId is { } id ? new MemberRefDto(id, memberNames.GetValueOrDefault(id) ?? DeletedMemberName) : null;
 
     /// <summary>Spec 2026-10-24 §5.2: la causa del traspaso tal como se guardó (ya limpia); el kind por nombre.</summary>
-    private static AutomationHandoffDto? ToDto(AutomationHandoff? handoff) =>
+    private static AutomationHandoffDto? ToDto(AutomationHandoff? handoff, IReadOnlyDictionary<Guid, string> memberNames) =>
         handoff is null
             ? null
             : new AutomationHandoffDto(
                 handoff.Kind.ToString(), handoff.Code, handoff.NodeId, handoff.NodeTitle, handoff.ConnectionName, handoff.ConnectionReason,
                 handoff.Http is { } http
                     ? new AutomationHandoffHttpDto(http.NodeId, http.NodeTitle, http.Outcome, http.ErrorCode, http.Status, http.ConnectionName)
-                    : null);
+                    : null,
+                Member(handoff.AssignedMemberId, memberNames));
 
     /// <summary><c>details</c> de un <c>Unsupported</c> es <c>{ type, errors }</c> con los <c>errors</c> de Meta tal cual
     /// (<c>WebhookPayloadParser</c>). El primer <c>code</c> numérico, o <c>null</c> si no hay o el JSON no tiene esa forma.</summary>
