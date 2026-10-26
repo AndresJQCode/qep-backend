@@ -40,6 +40,6 @@ public sealed class ColombiaProvinceCodesGeographyTests
         var department = ColombiaProvinceCodes.DepartmentNameFor(provinceCode);
 
         Assert.NotNull(department);
-        Assert.NotNull(await lookup.FindCityAsync(department, city, Ct));
+        Assert.NotNull((await lookup.LookupCityAsync(department, city, Ct)).City);
     }
 }

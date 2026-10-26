@@ -110,8 +110,11 @@ public sealed class NoShopifyOrderChangeReaction : IShopifyOrderChangeReaction
 }
 
 /// <summary>Un cliente de QEP como lo necesita el importador (§6.2.1): si existe, si está completo y si está activo. Un cliente
-/// encontrado inactivo deja el pedido en espera con <c>customer_inactive</c>.</summary>
-public sealed record ShopifyCustomerRef(Guid Id, bool IsComplete, bool IsActive);
+/// encontrado inactivo deja el pedido en espera con <c>customer_inactive</c>.
+/// <para>Spec 2026-10-26: <see cref="Created"/> dice que el alta lo creó (no es el dueño del documento que ya existía, H8) y
+/// <see cref="Version"/> es la del cliente recién creado, que es la huella del cliente (desvío S7). Un cliente encontrado los trae
+/// en su valor por defecto.</para></summary>
+public sealed record ShopifyCustomerRef(Guid Id, bool IsComplete, bool IsActive, bool Created = false, long Version = 0);
 
 /// <summary>Los datos de un alta completa (§6.2.1 paso 3), con tipos propios: Shopify no referencia Customers. Mismas reglas
 /// que el <c>POST</c> de clientes; <see cref="CityId"/> es la ciudad DIVIPOLA, obligatoria si el país es <c>CO</c>.</summary>
@@ -188,14 +191,65 @@ public interface IShopifyProductLookup
         Guid tenantId, IReadOnlyCollection<string> skus, CancellationToken cancellationToken);
 }
 
-/// <summary>La ciudad DIVIPOLA de la dirección de envío, con su departamento: la parte de envío del pedido pide los dos.</summary>
-public sealed record ShopifyCityRef(Guid DepartmentId, Guid CityId);
+/// <summary>La ciudad DIVIPOLA de la dirección de envío, con su departamento: la parte de envío del pedido pide los dos.
+/// <see cref="SynonymId"/> es el sinónimo por el que casó, si casó por uno (spec 2026-10-26 D-C13): lo que casa así deja huella
+/// para que corregir el sinónimo lo alcance (O8).</summary>
+public sealed record ShopifyCityRef(Guid DepartmentId, Guid CityId, Guid? SynonymId = null);
+
+/// <summary>Lo que Geography encontró: el departamento, aunque la ciudad no casara (D-C11: sin él no hay bandeja), y la ciudad si
+/// casó por alguno de los tres caminos de §4.1. Sin departamento, los dos <c>null</c>.</summary>
+public sealed record ShopifyCityLookup(Guid? DepartmentId, ShopifyCityRef? City);
 
 /// <summary>Spec 2026-10-15 §6.2.1 paso 5 (H10): Geography resuelve la ciudad por nombre dentro de un departamento. Geography
 /// es global, sin tenant.</summary>
 public interface IShopifyGeographyLookup
 {
-    Task<ShopifyCityRef?> FindCityAsync(string departmentName, string cityName, CancellationToken cancellationToken);
+    /// <summary>El nombre real, el DIVIPOLA y, si ninguno casa, un sinónimo del departamento (§4.1).</summary>
+    Task<ShopifyCityLookup> LookupCityAsync(string departmentName, string cityName, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Spec 2026-10-26 §4.2: una ciudad de Colombia que no casó por ningún camino, con su departamento resuelto, en un pedido que ya
+/// entró. <see cref="MirrorOrderId"/> es la fila de <c>shopify.orders</c> (la ocurrencia es idempotente por ella).
+/// <see cref="CustomerId"/> es el cliente que <b>esta</b> importación creó incompleto, o <c>null</c> (desvío S4);
+/// <see cref="CustomerCityOnly"/> dice que la ciudad era lo único que le faltaba para nacer completo, y
+/// <see cref="PartyCityOnly"/>, que lo único que le faltaba a la parte de envío (con correo, desvío S10). <see cref="SampleAddress"/>
+/// es la dirección sin nombre ni teléfono del comprador (<see cref="ShopifyUnresolvedCitySample"/>): la ve un operador de otro
+/// tenant.
+/// </summary>
+public sealed record ShopifyUnresolvedCityReport(
+    Guid TenantId,
+    Guid MirrorOrderId,
+    Guid OrderId,
+    Guid? CustomerId,
+    Guid DepartmentId,
+    string CityText,
+    string SampleAddress,
+    string? ProvinceCode,
+    bool PartyCityOnly,
+    bool CustomerCityOnly,
+    DateTimeOffset SeenAt);
+
+/// <summary>Cómo quedó el reporte. <see cref="Ignored"/> es un texto que se normaliza a vacío: no hay nada que resolver y la
+/// importación sigue (no se reintenta por él).</summary>
+public enum ShopifyUnresolvedCityOutcome
+{
+    Recorded,
+    AlreadyRecorded,
+    SynonymExists,
+    Ignored,
+}
+
+/// <summary><see cref="SynonymId"/> viene con <see cref="ShopifyUnresolvedCityOutcome.SynonymExists"/>: el texto ya tiene
+/// sinónimo (se confirmó entre el match y el reporte).</summary>
+public sealed record ShopifyUnresolvedCityResult(ShopifyUnresolvedCityOutcome Outcome, Guid? SynonymId);
+
+/// <summary>Spec 2026-10-26 D-C3: Shopify reporta a la bandeja de Geography al importar. Adaptador en Bootstrapper sobre
+/// <c>IUnresolvedCityReporter</c>, que confirma en su propia transacción. Lo que lance se propaga: la importación lanza y la
+/// entrega se reintenta, y la ocurrencia es idempotente por la fila del espejo.</summary>
+public interface IShopifyUnresolvedCityReporter
+{
+    Task<ShopifyUnresolvedCityResult> ReportAsync(ShopifyUnresolvedCityReport report, CancellationToken cancellationToken);
 }
 
 /// <summary>Una transportadora activa del tenant; <see cref="Name"/> es la foto del nombre de QEP que guarda el pedido.</summary>
@@ -265,11 +319,19 @@ public sealed record ShopifyOrderDraft(
 /// <summary>Lo que devolvió el alta: el pedido (nuevo o el que ya existía con esa clave, <see cref="AlreadyExisted"/>) o el
 /// código con que una regla del pedido lo rechazó (<c>order_rejected</c>, §6.2.3 paso 5). <see cref="ClientId"/> es el cliente
 /// del pedido <b>como quedó en Quotations</b>: con <see cref="AlreadyExisted"/> es el del intento que lo creó, que puede no ser el
-/// que este intento encontró, y es el que la fila del espejo tiene que anotar.</summary>
+/// que este intento encontró, y es el que la fila del espejo tiene que anotar. <see cref="ShippingParty"/> es la parte de envío
+/// como quedó guardada (spec 2026-10-26 D-C4), también con <see cref="AlreadyExisted"/>: la huella sale de acá, nunca del
+/// borrador.</summary>
 public sealed record ShopifyOrderWriteResult
 {
     private ShopifyOrderWriteResult(
-        Guid orderId, string? orderNumber, decimal total, bool alreadyExisted, Guid clientId, string? rejectedCode)
+        Guid orderId,
+        string? orderNumber,
+        decimal total,
+        bool alreadyExisted,
+        Guid clientId,
+        string? rejectedCode,
+        ShopifyShippingFingerprint? shippingParty)
     {
         OrderId = orderId;
         OrderNumber = orderNumber;
@@ -277,7 +339,10 @@ public sealed record ShopifyOrderWriteResult
         AlreadyExisted = alreadyExisted;
         ClientId = clientId;
         RejectedCode = rejectedCode;
+        ShippingParty = shippingParty;
     }
+
+    public ShopifyShippingFingerprint? ShippingParty { get; }
 
     public Guid OrderId { get; }
 
@@ -293,16 +358,22 @@ public sealed record ShopifyOrderWriteResult
 
     public bool IsRejected => RejectedCode is not null;
 
-    public static ShopifyOrderWriteResult Written(Guid orderId, string orderNumber, decimal total, bool alreadyExisted, Guid clientId)
+    public static ShopifyOrderWriteResult Written(
+        Guid orderId,
+        string orderNumber,
+        decimal total,
+        bool alreadyExisted,
+        Guid clientId,
+        ShopifyShippingFingerprint? shippingParty = null)
     {
         ArgumentOutOfRangeException.ThrowIfEqual(clientId, Guid.Empty);
-        return new(orderId, orderNumber, total, alreadyExisted, clientId, null);
+        return new(orderId, orderNumber, total, alreadyExisted, clientId, null, shippingParty);
     }
 
     public static ShopifyOrderWriteResult Rejected(string code)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(code);
-        return new(Guid.Empty, null, 0m, false, Guid.Empty, code);
+        return new(Guid.Empty, null, 0m, false, Guid.Empty, code, null);
     }
 }
 
@@ -414,4 +485,82 @@ public interface IShopifyStoreReferences
     Task<string?> CompanyNameAsync(Guid tenantId, Guid companyId, CancellationToken cancellationToken);
 
     Task<string?> ClassificationNameAsync(Guid tenantId, Guid classificationId, CancellationToken cancellationToken);
+}
+
+/// <summary>Un sinónimo de Geography como lo necesita el trabajo de corrección: su ciudad <b>actual</b> y si está borrado (spec
+/// 2026-10-26 D-C6).</summary>
+public sealed record ShopifyCitySynonymRef(Guid SynonymId, Guid DepartmentId, Guid CityId, bool IsDeleted);
+
+/// <summary>Spec 2026-10-26: el trabajo lee el sinónimo al correr, no al sembrarse. Adaptador en Bootstrapper sobre
+/// <c>ICitySynonymRepository</c>, con un scope propio por llamada: el repositorio rastrea, y la segunda lectura de un mismo trabajo
+/// (después de guardar, por si el operador corrigió el sinónimo en el medio) tiene que ver la base, no la primera lectura.</summary>
+public interface IShopifyCitySynonymLookup
+{
+    /// <summary>Borrados incluidos (<see cref="ShopifyCitySynonymRef.IsDeleted"/>); <c>null</c> si no existe.</summary>
+    Task<ShopifyCitySynonymRef?> FindAsync(Guid synonymId, CancellationToken cancellationToken);
+}
+
+/// <summary>Qué pasó con una escritura del trabajo de corrección. <see cref="Applied"/> y <see cref="AlreadyApplied"/> son éxito
+/// (la segunda es un reintento: Quotations o Customers ya lo tenían); el resto son las razones por las que el pedido o el cliente ya
+/// no admiten el cambio, y terminan el trabajo <c>Skipped</c>.</summary>
+public enum ShopifyCityWriteKind
+{
+    Applied,
+    AlreadyApplied,
+    NotFound,
+    NotPending,
+    StorePickup,
+    ShippingPresent,
+    ShippingChanged,
+    PartyIncomplete,
+    NotEligible,
+    NotCompletable,
+}
+
+/// <summary><see cref="Party"/> es la parte de envío como quedó guardada, con un éxito de pedido: es la huella.
+/// <see cref="CustomerVersion"/> y <see cref="CustomerCityId"/> son la versión y la ciudad del cliente como quedaron, con un
+/// éxito de cliente (desvío S7). Con <c>AlreadyApplied</c> la ciudad, en los dos casos, es la que escribió un intento anterior y
+/// puede no ser la que se pidió: la huella guarda ésa, y el paso 5 la recorrige. <see cref="Detail"/> es el motivo de Quotations
+/// o Customers (el estado del pedido, <c>edited</c>, <c>validation.failed</c>…), para el log.</summary>
+public sealed record ShopifyCityWriteResult(
+    ShopifyCityWriteKind Kind, ShopifyShippingFingerprint? Party, long? CustomerVersion, string? Detail, Guid? CustomerCityId = null);
+
+/// <summary>
+/// Spec 2026-10-26 §4.4 y §4.6: lo que el trabajo de corrección escribe en Quotations y en Customers. Adaptador en Bootstrapper sobre
+/// <c>IExternalOrderWriter</c> e <c>ICustomerProvisioning</c>, <b>un scope propio por llamada</b> (como <c>ShopifyOrderWriter</c>): cada
+/// llamada confirma lo suyo y no se suma a la unidad de trabajo de Shopify. Las razones por las que no se puede vuelven en el
+/// resultado; la concurrencia (<c>concurrency.conflict</c>) y los errores transitorios se propagan y el trabajo reintenta.
+/// </summary>
+public interface IShopifyCityCorrectionWriter
+{
+    /// <summary>Pone la parte de envío que el pedido no tenía y quita de las notas las líneas que empiezan por
+    /// <paramref name="notesLinePrefix"/>.</summary>
+    Task<ShopifyCityWriteResult> AttachShippingAsync(
+        Guid tenantId, Guid orderId, ShopifyPartyDraft party, string notesLinePrefix, CancellationToken cancellationToken);
+
+    /// <summary>Lleva la parte de envío a la ciudad nueva sólo si sigue siendo <paramref name="expected"/>.</summary>
+    Task<ShopifyCityWriteResult> CorrectShippingCityAsync(
+        Guid tenantId, Guid orderId, ShopifyShippingFingerprint expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken);
+
+    /// <summary>Completa al cliente que la importación creó incompleto, sólo si sigue en <paramref name="expectedVersion"/>.
+    /// <paramref name="requestedCityIds"/> son las ciudades que este trabajo pidió hasta ahora: con ellas Customers reconoce su
+    /// propio reintento (una ciudad que no pidió la puso una persona).</summary>
+    Task<ShopifyCityWriteResult> CompleteCustomerAsync(
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        ShopifyCompleteCustomer data,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken);
+
+    /// <summary>Lleva al cliente de <paramref name="previousCityId"/> a <paramref name="cityId"/> sólo si sigue en
+    /// <paramref name="expectedVersion"/>; <paramref name="requestedCityIds"/> como en <see cref="CompleteCustomerAsync"/>.</summary>
+    Task<ShopifyCityWriteResult> CorrectCustomerCityAsync(
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        Guid previousCityId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken);
 }

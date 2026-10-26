@@ -26,4 +26,10 @@ public sealed class NameMatchingTests
     {
         Assert.NotEqual(NameMatching.Normalize(first), NameMatching.Normalize(second));
     }
+
+    [Fact]
+    public void InnerSpacesCollapseIntoOne()
+    {
+        Assert.Equal(NameMatching.Normalize("SANTIAGO DE CALI"), NameMatching.Normalize("Santiago  de   Cali"));
+    }
 }

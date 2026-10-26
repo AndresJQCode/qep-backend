@@ -122,6 +122,34 @@ internal sealed class FakeExternalOrderWriter : IExternalOrderWriter
         Calls++;
         return Task.FromResult(ByExternalKey.GetValueOrDefault((tenantId, source, externalKey)));
     }
+
+    public Func<ExternalShippingParty, ExternalShippingOutcome>? OnAttach { get; init; }
+
+    public Func<ExternalShippingParty, ExternalShippingOutcome>? OnCorrect { get; init; }
+
+    public List<(Guid TenantId, Guid OrderId, ExternalShippingParty Shipping, string NotesLinePrefix)> Attached { get; } = [];
+
+    public List<(Guid TenantId, Guid OrderId, ExternalShippingParty Expected, Guid DepartmentId, Guid CityId)> Corrected { get; } = [];
+
+    public Task<ExternalShippingOutcome> AttachShippingAsync(
+        Guid tenantId, Guid orderId, ExternalShippingParty shipping, string notesLinePrefix, CancellationToken cancellationToken)
+    {
+        Calls++;
+        Attached.Add((tenantId, orderId, shipping, notesLinePrefix));
+        return Task.FromResult(
+            OnAttach?.Invoke(shipping) ?? new ExternalShippingOutcome(ExternalShippingOutcomeKind.Applied, shipping, null));
+    }
+
+    public Task<ExternalShippingOutcome> CorrectShippingCityAsync(
+        Guid tenantId, Guid orderId, ExternalShippingParty expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken)
+    {
+        Calls++;
+        Corrected.Add((tenantId, orderId, expected, departmentId, cityId));
+        return Task.FromResult(
+            OnCorrect?.Invoke(expected)
+            ?? new ExternalShippingOutcome(
+                ExternalShippingOutcomeKind.Applied, expected with { DepartmentId = departmentId, CityId = cityId }, null));
+    }
 }
 
 internal sealed class PassThroughPhones : IPhoneNumberNormalizer
@@ -271,19 +299,71 @@ internal sealed class FakeCustomerProvisioning : ICustomerProvisioning
         OnComplete?.Invoke();
         Completes.Add((tenantId, data));
         LastId = Guid.CreateVersion7();
-        return Task.FromResult(new ProvisionedCustomer(LastId, true, true, true));
+        return Task.FromResult(new ProvisionedCustomer(LastId, true, true, Created, Version));
     }
 
     public Task<ProvisionedCustomer> CreateIncompleteAsync(
         Guid tenantId, string? name, string? phone, string? email, string? country, CancellationToken cancellationToken)
     {
         LastId = Guid.CreateVersion7();
-        return Task.FromResult(new ProvisionedCustomer(LastId, false, true, true));
+        return Task.FromResult(new ProvisionedCustomer(LastId, false, true, Created, Version));
     }
+
+    /// <summary>Lo que el alta dice: <c>false</c> es «el documento ya era de otro» (H8).</summary>
+    public bool Created { get; set; } = true;
+
+    /// <summary>La versión con que nace el cliente: 1 en Customers (S7).</summary>
+    public long Version { get; set; } = 1;
 
     public Task<ProvisionedCustomer> CreateFromRegisterAsync(
         Guid tenantId, Guid actorId, RegisterCustomerData data, string? source, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    /// <summary>Lo que responden completar y corregir la ciudad; sin él, <c>Applied</c> en la versión siguiente.</summary>
+    public Func<ExternalCustomerCityOutcome>? OnExternalCity { get; init; }
+
+    public List<(Guid TenantId, Guid CustomerId, long ExpectedVersion, CompleteCustomerData Data, IReadOnlyCollection<Guid> Requested)> ExternalCompletes { get; } = [];
+
+    public List<(Guid TenantId, Guid CustomerId, long ExpectedVersion, Guid PreviousCityId, Guid CityId, IReadOnlyCollection<Guid> Requested)> CityCorrections { get; } = [];
+
+    public Task<ExternalCustomerCityOutcome> CompleteExternalSaleAsync(
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        CompleteCustomerData data,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
+    {
+        ExternalCompletes.Add((tenantId, customerId, expectedVersion, data, requestedCityIds));
+        return Task.FromResult(
+            OnExternalCity?.Invoke() ?? new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, expectedVersion + 1, null, data.CityId));
+    }
+
+    public Task<ExternalCustomerCityOutcome> CorrectCityAsync(
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        Guid previousCityId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
+    {
+        CityCorrections.Add((tenantId, customerId, expectedVersion, previousCityId, cityId, requestedCityIds));
+        return Task.FromResult(
+            OnExternalCity?.Invoke() ?? new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, expectedVersion + 1, null, cityId));
+    }
+}
+
+/// <summary>Los sinónimos de Geography por id, borrados incluidos, como <c>CitySynonymRepository.FindAsync</c>.</summary>
+internal sealed class FakeCitySynonymRepository(params CitySynonym[] synonyms) : ICitySynonymRepository
+{
+    public Task<CitySynonym?> FindAsync(CitySynonymId id, CancellationToken cancellationToken) =>
+        Task.FromResult(synonyms.FirstOrDefault(synonym => synonym.Id == id));
+
+    public Task<CitySynonym?> FindActiveAsync(DepartmentId departmentId, string normalizedText, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public void Add(CitySynonym synonym) => throw new NotSupportedException();
 }
 
 /// <summary>Una tienda Shopify enlazada en el estado que pide la prueba, con su ruta y el módulo prendido o no. El
@@ -418,8 +498,18 @@ internal sealed class NamedDepartments(params Department[] departments) : IDepar
 
 internal sealed class NamedCities(params City[] cities) : ICityRepository
 {
+    /// <summary>Sinónimos por <c>(departamento, texto)</c> exacto; el nombre real les gana, como en Geography (§4.1).</summary>
+    public Dictionary<(DepartmentId Department, string Text), (City City, CitySynonymId Synonym)> Synonyms { get; } = [];
+
     public Task<City?> FindByNameAsync(DepartmentId departmentId, string name, CancellationToken cancellationToken) =>
         Task.FromResult(cities.FirstOrDefault(city => city.DepartmentId == departmentId && city.Name == name));
+
+    public async Task<CityNameMatch?> MatchByNameAsync(DepartmentId departmentId, string name, CancellationToken cancellationToken) =>
+        await FindByNameAsync(departmentId, name, cancellationToken) is { } city
+            ? new CityNameMatch(city, SynonymId: null)
+            : Synonyms.TryGetValue((departmentId, name), out var synonym)
+                ? new CityNameMatch(synonym.City, synonym.Synonym)
+                : null;
 
     public Task<IReadOnlyList<City>> ListByDepartmentAsync(DepartmentId departmentId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
@@ -431,6 +521,21 @@ internal sealed class NamedCities(params City[] cities) : ICityRepository
 
     public Task<IReadOnlyList<City>> ListByDepartmentsAsync(
         IReadOnlyCollection<DepartmentId> departmentIds, CancellationToken cancellationToken) => throw new NotSupportedException();
+}
+
+/// <summary>La bandeja de Geography: anota cada reporte y responde <see cref="Result"/>.</summary>
+internal sealed class RecordingUnresolvedCityReporter : IUnresolvedCityReporter
+{
+    public List<UnresolvedCityReport> Reports { get; } = [];
+
+    public UnresolvedCityReportResult Result { get; set; } =
+        new(UnresolvedCityReportOutcome.Recorded, UnresolvedCityId.New(), null, null);
+
+    public Task<UnresolvedCityReportResult> ReportAsync(UnresolvedCityReport report, CancellationToken cancellationToken)
+    {
+        Reports.Add(report);
+        return Task.FromResult(Result);
+    }
 }
 
 internal sealed class FakeCompanyRepository(params Company[] companies) : ICompanyRepository

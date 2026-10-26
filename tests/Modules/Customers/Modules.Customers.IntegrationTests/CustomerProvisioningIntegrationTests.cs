@@ -70,7 +70,7 @@ public sealed class CustomerProvisioningIntegrationTests
         var created = await InScopeAsync<ProvisionedCustomer, ICustomerProvisioning>(factory, provisioning =>
             provisioning.CreateCompleteAsync(Tenant, data, TestContext.Current.CancellationToken));
 
-        Assert.Equal(new ProvisionedCustomer(created.Id, true, true, true), created);
+        Assert.Equal(new ProvisionedCustomer(created.Id, true, true, true, 1), created);
         Assert.Equal($"Complete|CLI{city.DepartmentDivipolaCode}000001|Cc|1020304050|laura@verde.co|+573109352187|false|false|1",
             await ScalarAsync(database.GetConnectionString(),
                 "SELECT completeness || '|' || cuc || '|' || identification_type || '|' || identification_number || '|' || email || '|' || "
@@ -91,7 +91,7 @@ public sealed class CustomerProvisioningIntegrationTests
         var created = await InScopeAsync<ProvisionedCustomer, ICustomerProvisioning>(factory, provisioning =>
             provisioning.CreateIncompleteAsync(Tenant, null, "+573001234567", " Comprador@Tienda.co ", "CO", TestContext.Current.CancellationToken));
 
-        Assert.Equal(new ProvisionedCustomer(created.Id, false, true, true), created);
+        Assert.Equal(new ProvisionedCustomer(created.Id, false, true, true, 1), created);
         Assert.Equal("Incomplete|Cliente de Shopify|comprador@tienda.co|CO|+573001234567|true|true|true",
             await ScalarAsync(database.GetConnectionString(),
                 "SELECT completeness || '|' || name || '|' || email || '|' || country || '|' || phone_e164 || '|' || "
@@ -127,7 +127,7 @@ public sealed class CustomerProvisioningIntegrationTests
         var next = await provisioning.CreateCompleteAsync(Tenant, otherBuyer, TestContext.Current.CancellationToken);
         var incomplete = await provisioning.CreateIncompleteAsync(Tenant, "Comprador", null, null, null, TestContext.Current.CancellationToken);
 
-        Assert.Equal(new ProvisionedCustomer(existing.Id, true, true, false), lost);
+        Assert.Equal(new ProvisionedCustomer(existing.Id, true, true, false, 1), lost);
         Assert.True(next.Created);
         Assert.True(incomplete.Created);
         Assert.Equal("3", await ScalarAsync(database.GetConnectionString(),
@@ -136,6 +136,75 @@ public sealed class CustomerProvisioningIntegrationTests
         Assert.Equal("2", await ScalarAsync(database.GetConnectionString(),
             "SELECT count(*) FROM platform.outbox_messages WHERE payload->>'action' = 'customers.customer.created' "
             + "AND payload->>'actorType' = 'Integration'"));
+    }
+
+    // Spec de ciudades 2026-10-26 §4.4 contra la base: el incompleto de la venta externa se completa con el CUC del
+    // departamento de la ciudad, su libreta nace con la dirección principal y la auditoría sale una vez como Integration.
+    [Fact]
+    public async Task CompleteExternalSalePersistsCucAddressAndAudit()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var incomplete = await InScopeAsync<ProvisionedCustomer, ICustomerProvisioning>(factory, provisioning =>
+            provisioning.CreateIncompleteAsync(Tenant, "Laura Pérez", "310 935 2187", "laura@verde.co", "CO", TestContext.Current.CancellationToken));
+        var data = new CompleteCustomerData(
+            "Laura Pérez", "CC", "1020304050", "310 935 2187", "Laura@Verde.co", "Calle 10 # 45-12", "CO", city.CityId, null,
+            classification.Id);
+
+        var completed = await InScopeAsync<ExternalCustomerCityOutcome, ICustomerProvisioning>(factory, provisioning =>
+            provisioning.CompleteExternalSaleAsync(Tenant, incomplete.Id, incomplete.Version, data, [], TestContext.Current.CancellationToken));
+        var again = await InScopeAsync<ExternalCustomerCityOutcome, ICustomerProvisioning>(factory, provisioning =>
+            provisioning.CompleteExternalSaleAsync(Tenant, incomplete.Id, incomplete.Version, data, [], TestContext.Current.CancellationToken));
+        // El reintento de un trabajo cuyo sinónimo cambió de ciudad entre intentos (el anterior pidió la ciudad que quedó): la misma
+        // escritura, con la ciudad que quedó.
+        var movedSynonym = await InScopeAsync<ExternalCustomerCityOutcome, ICustomerProvisioning>(factory, provisioning =>
+            provisioning.CompleteExternalSaleAsync(
+                Tenant, incomplete.Id, incomplete.Version, data with { CityId = Guid.NewGuid() }, [city.CityId], TestContext.Current.CancellationToken));
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, 2, null, city.CityId), completed);
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null, city.CityId), again);
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null, city.CityId), movedSynonym);
+        Assert.Equal(
+            $"Complete|CLI{city.DepartmentDivipolaCode}000001|Cc|1020304050|{city.CityId}|2|1|{city.CityId}|true",
+            await ScalarAsync(database.GetConnectionString(),
+                "SELECT completeness || '|' || cuc || '|' || identification_type || '|' || identification_number || '|' || city_id || '|' || version || '|' || "
+                + $"(SELECT count(*) FROM customers.customer_addresses WHERE customer_id = c.id) || '|' || "
+                + $"(SELECT city_id FROM customers.customer_addresses WHERE customer_id = c.id) || '|' || "
+                + $"(SELECT is_principal FROM customers.customer_addresses WHERE customer_id = c.id) FROM customers.customers c WHERE id = '{incomplete.Id}'"));
+        Assert.Equal("1", await ScalarAsync(database.GetConnectionString(),
+            "SELECT count(*) FROM platform.outbox_messages WHERE payload->>'action' = 'customers.customer.completed' "
+            + $"AND payload->>'resourceId' = '{incomplete.Id}' AND payload->>'actorType' = 'Integration'"));
+    }
+
+    // D-C4b contra la base: la ciudad del cliente y la de su dirección principal se mudan juntas, con la versión
+    // optimista subida, y la corrección no deja auditoría de Customers (la escribe Shopify, P12).
+    [Fact]
+    public async Task CorrectCityPersistsTheCustomerAndItsPrincipalAddress()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateManager(factory);
+        var cities = await EnsureCitiesAsync(client, 2);
+        var classification = await CreateClassificationAsync(client);
+        var existing = await CreateCustomerAsync(client, cities[0].CityId, classification.Id);
+
+        var corrected = await InScopeAsync<ExternalCustomerCityOutcome, ICustomerProvisioning>(factory, provisioning =>
+            provisioning.CorrectCityAsync(Tenant, existing.Id, 1, cities[0].CityId, cities[1].CityId, [], TestContext.Current.CancellationToken));
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, 2, null, cities[1].CityId), corrected);
+        Assert.Equal($"{cities[1].CityId}|2|1|{cities[1].CityId}",
+            await ScalarAsync(database.GetConnectionString(),
+                "SELECT city_id || '|' || version || '|' || "
+                + "(SELECT count(*) FROM customers.customer_addresses WHERE customer_id = c.id) || '|' || "
+                + $"(SELECT city_id FROM customers.customer_addresses WHERE customer_id = c.id AND is_principal) FROM customers.customers c WHERE id = '{existing.Id}'"));
+        Assert.Equal("0", await ScalarAsync(database.GetConnectionString(),
+            "SELECT count(*) FROM platform.outbox_messages WHERE payload->>'resourceId' = "
+            + $"'{existing.Id}' AND payload->>'action' <> 'customers.customer.created'"));
     }
 
     // El payload ya tenía source, fijo en «customers»; la caja lo cambia a «pos» y todo lo demás sigue igual.

@@ -56,6 +56,12 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
     // no cierra la carrera entre dos altas simultáneas, este índice sí.
     private const string CarrierNameIndex = "IX_carrier_names_tenant_name";
 
+    // Una parte por rol en cada pedido (spec 2026-10-26 §4.4). Dos trabajos de Shopify que ponen la parte de envío del mismo
+    // pedido leen los dos el pedido sin ella y el segundo choca acá. Es el mismo 412 que si la versión del pedido hubiera
+    // cambiado —ganó otro—: el trabajo reintenta y ve la parte ya puesta. La prueba es
+    // ExternalOrderServiceTests.AttachShippingLosingTheRaceForTheShippingPartyIsAConcurrencyConflict.
+    private const string OrderPartyRoleIndex = "IX_order_parties_order_role";
+
     // IOrderNumberGenerator recibe el mismo QuotationsDbContext scoped que esta clase, así que su
     // SQL crudo corre en esta conexión y queda dentro de la transacción. Si alguna vez se
     // registrara con un DbContext propio, el incremento volvería a autocommitearse aparte.
@@ -174,6 +180,16 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
             throw new RequestConcurrencyException(
                 "concurrency.conflict",
                 "The quotation settings were saved by another request while this one was being committed.",
+                exception);
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, OrderPartyRoleIndex, StringComparison.Ordinal))
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict",
+                "The order party was written by another process while this one was being committed.",
                 exception);
         }
     }

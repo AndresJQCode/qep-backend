@@ -1,5 +1,4 @@
-using System.Globalization;
-using System.Text;
+using Modules.Geography.Domain;
 
 namespace Modules.Geography.Infrastructure.Persistence;
 
@@ -17,18 +16,5 @@ namespace Modules.Geography.Infrastructure.Persistence;
 /// </summary>
 internal static class NameMatching
 {
-    public static string Normalize(string value)
-    {
-        var decomposed = value.Trim().Normalize(NormalizationForm.FormD);
-        var builder = new StringBuilder(decomposed.Length);
-        foreach (var character in decomposed)
-        {
-            if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
-            {
-                builder.Append(character);
-            }
-        }
-
-        return builder.ToString().Normalize(NormalizationForm.FormC).ToUpperInvariant();
-    }
+    public static string Normalize(string value) => CityText.Normalize(value);
 }

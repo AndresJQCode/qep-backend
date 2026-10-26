@@ -6,6 +6,8 @@
   <ItemGroup>
     <ProjectReference Include="..\Modules.Geography.Application\Modules.Geography.Application.csproj" />
     <ProjectReference Include="..\Modules.Geography.Domain\Modules.Geography.Domain.csproj" />
+    <ProjectReference Include="..\..\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
+    <ProjectReference Include="..\..\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
   </ItemGroup>
   <ItemGroup>

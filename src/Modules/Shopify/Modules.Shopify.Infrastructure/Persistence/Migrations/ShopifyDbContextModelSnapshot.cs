@@ -91,6 +91,211 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Shopify.Domain.ShopifyCityCorrection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("AppliedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("applied_at");
+
+                    b.Property<Guid>("CityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("city_id");
+
+                    b.Property<long?>("CustomerVersion")
+                        .HasColumnType("bigint")
+                        .HasColumnName("customer_version");
+
+                    b.Property<Guid>("DepartmentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("department_id");
+
+                    b.Property<Guid?>("MirrorOrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("mirror_order_id");
+
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("origin");
+
+                    b.Property<string>("PartyAddress")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("party_address");
+
+                    b.Property<string>("PartyEmail")
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)")
+                        .HasColumnName("party_email");
+
+                    b.Property<string>("PartyName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("party_name");
+
+                    b.Property<string>("PartyPhone")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("party_phone");
+
+                    b.Property<Guid?>("PreviousCityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("previous_city_id");
+
+                    b.Property<Guid>("SynonymId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("synonym_id");
+
+                    b.Property<string>("Target")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("target");
+
+                    b.Property<Guid>("TargetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("target_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SynonymId", "Target", "TargetId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_city_corrections_synonym_target");
+
+                    b.HasIndex("TenantId", "Target", "TargetId")
+                        .HasDatabaseName("IX_city_corrections_tenant_target");
+
+                    b.ToTable("city_corrections", "shopify", t =>
+                        {
+                            t.HasCheckConstraint("CK_city_corrections_origin", "origin IN ('Correction','Import')");
+
+                            t.HasCheckConstraint("CK_city_corrections_target", "target IN ('Order','Customer')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Shopify.Domain.ShopifyCityCorrectionJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("attempts");
+
+                    b.Property<Guid?>("CorrectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("correction_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("last_error");
+
+                    b.Property<DateTimeOffset?>("LeaseUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_until");
+
+                    b.Property<Guid?>("MirrorOrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("mirror_order_id");
+
+                    b.Property<Guid>("OperatorSubjectId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("operator_subject_id");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.Property<Guid[]>("RequestedCityIds")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid[]")
+                        .HasColumnName("requested_city_ids")
+                        .HasDefaultValueSql("'{}'::uuid[]");
+
+                    b.Property<string>("SkipReason")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("skip_reason");
+
+                    b.Property<Guid?>("SourceMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("source_message_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("SynonymId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("synonym_id");
+
+                    b.Property<string>("Target")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("target");
+
+                    b.Property<Guid>("TargetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("target_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status", "LeaseUntil")
+                        .HasDatabaseName("IX_city_correction_jobs_status_lease");
+
+                    b.HasIndex("SynonymId", "Status")
+                        .HasDatabaseName("IX_city_correction_jobs_synonym_status");
+
+                    b.HasIndex("SourceMessageId", "Target", "TargetId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_city_correction_jobs_message_target")
+                        .HasFilter("source_message_id IS NOT NULL");
+
+                    b.ToTable("city_correction_jobs", "shopify", t =>
+                        {
+                            t.HasCheckConstraint("CK_city_correction_jobs_kind", "kind IN ('Resolve','Recorrect')");
+
+                            t.HasCheckConstraint("CK_city_correction_jobs_status", "status IN ('Pending','Applied','Skipped','Failed')");
+
+                            t.HasCheckConstraint("CK_city_correction_jobs_target", "target IN ('Order','Customer')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Shopify.Domain.ShopifyOrderMirror", b =>
                 {
                     b.Property<Guid>("Id")
@@ -309,6 +514,65 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_stores_tenant");
 
                     b.ToTable("stores", "shopify");
+                });
+
+            modelBuilder.Entity("Modules.Shopify.Infrastructure.Persistence.ShopifyInboxMessage", b =>
+                {
+                    b.Property<string>("Consumer")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("consumer");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<int>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1)
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTimeOffset?>("ClaimedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_until");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.HasKey("Consumer", "MessageId");
+
+                    b.ToTable("inbox_messages", "shopify");
+                });
+
+            modelBuilder.Entity("Modules.Shopify.Infrastructure.Persistence.ShopifyOutboxRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("EventName")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("event_name");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("payload");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("outbox_messages", "platform", t =>
+                        {
+                            t.ExcludeFromMigrations();
+                        });
                 });
 
             modelBuilder.Entity("Modules.Shopify.Infrastructure.Persistence.ShopifyWebhookDeliveryRecord", b =>

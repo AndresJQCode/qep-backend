@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Shopify.Application;
+using Modules.Shopify.Domain;
 
 namespace Bootstrapper;
 
@@ -35,7 +36,8 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
         try
         {
             var result = await writer.CreateAsync(external, cancellationToken);
-            return ShopifyOrderWriteResult.Written(result.OrderId, result.OrderNumber, result.Total, result.AlreadyExisted, result.ClientId);
+            return ShopifyOrderWriteResult.Written(
+                result.OrderId, result.OrderNumber, result.Total, result.AlreadyExisted, result.ClientId, Fingerprint(result.Shipping));
         }
         catch (QuotationsDomainException error) when (error.Code != NumberTaken)
         {
@@ -155,6 +157,19 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
             draft.ExternalKey,
             draft.ExternalShippingTitle);
     }
+
+    // Spec 2026-10-26 D-C4: la parte de envío como la guardó Quotations. Una guardada está completa (OrderParty.IsComplete), así
+    // que departamento y ciudad vienen siempre; si no, es un error de programación y no una huella a medias.
+    internal static ShopifyShippingFingerprint? Fingerprint(ExternalShippingParty? party) =>
+        party is null
+            ? null
+            : new ShopifyShippingFingerprint(
+                party.Name,
+                party.Phone,
+                party.Email,
+                party.Address,
+                party.DepartmentId ?? throw new InvalidOperationException("A persisted shipping party always has a department."),
+                party.CityId ?? throw new InvalidOperationException("A persisted shipping party always has a city."));
 
     private static string Normalize(string? financialStatus) => financialStatus?.Trim().ToLowerInvariant() ?? string.Empty;
 

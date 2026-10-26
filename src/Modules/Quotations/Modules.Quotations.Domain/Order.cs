@@ -395,7 +395,7 @@ public sealed class Order
         if (source is OrderSource.Quotation or OrderSource.Manual)
         {
             throw new QuotationsDomainException(
-                "order.order.source_invalid",
+                ExternalOrderErrors.SourceInvalid,
                 "An external order needs an external source.");
         }
 
@@ -475,7 +475,7 @@ public sealed class Order
         if (Shipping is { } shipping && !shipping.IsComplete)
         {
             throw new QuotationsDomainException(
-                "order.shipping.party_incomplete",
+                ExternalOrderErrors.ShippingPartyIncomplete,
                 "The shipping party must have all its fields filled.");
         }
 
@@ -967,6 +967,85 @@ public sealed class Order
         return true;
     }
 
+    /// <summary>
+    /// Spec 2026-10-26 §4.4: agrega la parte de envío que Shopify no pudo completar al crear el pedido (la ciudad
+    /// no se reconocía). <c>true</c> si la agregó; <c>false</c> si ya estaba esa misma parte, en esa ciudad o en otra (un
+    /// reintento: como un pedido no edita sus partes, desvío S1, la misma parte en otra ciudad la puso un intento anterior con
+    /// la ciudad que el sinónimo tenía entonces; el consumidor lee la que quedó en <see cref="Shipping"/>).
+    /// Quita de las notas toda línea que empiece por <paramref name="notesLinePrefix"/> (ordinal): la dirección en
+    /// crudo que se anotó mientras no había parte. Sólo pedidos externos pendientes, sin recogida en tienda y sin
+    /// otra parte de envío; la parte debe quedar completa. No recalcula totales.
+    /// </summary>
+    public bool AttachExternalShipping(QuotationPartyDetails shipping, string notesLinePrefix, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(shipping);
+        ArgumentException.ThrowIfNullOrEmpty(notesLinePrefix);
+        EnsurePending("The shipping party can only be attached while the order is pending.");
+        if (!IsExternal)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.SourceInvalid, "Only an external order takes its shipping party from the platform.");
+        }
+
+        if (IsStorePickup)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.StorePickup, "An order picked up at the store has no shipping party.");
+        }
+
+        var candidate = OrderParty.Create(Id, QuotationPartyRole.Shipping, shipping);
+        if (Shipping is { } current)
+        {
+            return SameExceptCity(current.ToDetails(), candidate.ToDetails())
+                ? false
+                : throw new QuotationsDomainException(
+                    ExternalOrderErrors.ShippingPartyPresent, "The order already has another shipping party.");
+        }
+
+        if (!candidate.IsComplete)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.ShippingPartyIncomplete, "The shipping party must have all its fields filled.");
+        }
+
+        _parties.Add(candidate);
+        Notes = NormalizeNotes(string.Join(
+            '\n',
+            (Notes ?? string.Empty).Split('\n').Where(line => !line.StartsWith(notesLinePrefix, StringComparison.Ordinal))));
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
+    /// <summary>
+    /// Spec 2026-10-26 §4.6: cambia sólo el departamento y la ciudad de la parte de envío, y sólo si sigue siendo
+    /// la que se guardó (<paramref name="expected"/>) salvo la ciudad: si alguien tocó otro campo, lanza
+    /// <c>order.order.shipping_party_changed</c>. <c>true</c> si cambió; <c>false</c> si la parte ya no está en la ciudad de
+    /// <paramref name="expected"/> (un reintento: la llevó un intento anterior, a ésta o a la que el sinónimo tenía entonces, y el
+    /// consumidor cayó antes de actualizar su huella; lee la que quedó en <see cref="Shipping"/>).
+    /// </summary>
+    public bool CorrectExternalShippingCity(
+        QuotationPartyDetails expected, Guid departmentId, Guid cityId, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        EnsurePending("The shipping city can only be corrected while the order is pending.");
+        if (Shipping is not { } party || !SameExceptCity(party.ToDetails(), expected))
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.ShippingPartyChanged, "The shipping party is no longer the one the platform sent.");
+        }
+
+        if (party.ToDetails() != expected || (party.DepartmentId == departmentId && party.CityId == cityId))
+        {
+            return false;
+        }
+
+        party.Apply(party.ToDetails() with { DepartmentId = departmentId, CityId = cityId });
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
     // US-14: "se requiere al menos un comprobante, salvo que el estado del pago sea
     // 'Payment pending'". Sólo para los pedidos que se cobran desde QEP: uno de origen externo entra
     // con el estado de pago que avisa la plataforma y el pago vive allá (spec de Shopify §6.3).
@@ -990,11 +1069,16 @@ public sealed class Order
 
     private bool IsExternal => Source is not OrderSource.Quotation and not OrderSource.Manual;
 
+    // Spec 2026-10-26 y desvío S1: un pedido no edita sus partes, así que una parte de envío igual salvo el departamento y la
+    // ciudad es la que puso la plataforma (en otra ciudad del mismo sinónimo), no una de otra persona.
+    private static bool SameExceptCity(QuotationPartyDetails party, QuotationPartyDetails other) =>
+        party with { DepartmentId = other.DepartmentId, CityId = other.CityId } == other;
+
     private void EnsurePending(string message)
     {
         if (Status != OrderStatus.Pending)
         {
-            throw new QuotationsDomainException("order.order.not_pending", message);
+            throw new QuotationsDomainException(ExternalOrderErrors.NotPending, message);
         }
     }
 

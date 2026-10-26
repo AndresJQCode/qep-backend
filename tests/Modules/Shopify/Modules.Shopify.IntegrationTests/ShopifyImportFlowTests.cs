@@ -350,6 +350,43 @@ public sealed class ShopifyImportFlowTests
                 """));
     }
 
+    // Spec 2026-10-26 §4.2: «CALLI» no casa en el Valle por ningún camino. El pedido entra igual (dirección cruda en las notas) y
+    // el texto llega a la bandeja de Geography con su ocurrencia: el pedido, la fila del espejo y el cliente que nació incompleto
+    // porque la ciudad era lo único que le faltaba.
+    [Fact]
+    public async Task AnOrderWithCalliLandsInTheGeographyBandeja()
+    {
+        await using var flow = await Flow.StartAsync();
+
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture("taxes-included", order =>
+        {
+            var address = order["shipping_address"]!.AsObject();
+            address["city"] = "CALLI";
+            address["province"] = "Valle del Cauca";
+            address["province_code"] = "VAC";
+        }));
+
+        Assert.Equal("Imported", await flow.MirrorAsync(5550000000001, "import_state"));
+        Assert.Equal(
+            "CALLI|VALLE DEL CAUCA|Pending|VAC|shopify|true|true|true|true|true|Incomplete",
+            await flow.ScalarAsync(
+                """
+                SELECT u.city_text || '|' || d.name || '|' || u.status || '|' || u.province_code || '|' || o.source || '|'
+                       || (o.tenant_id = m.tenant_id) || '|' || (o.order_id = m.qep_order_id) || '|'
+                       || (o.customer_id = m.qep_customer_id) || '|' || o.party_city_only || '|' || o.customer_city_only || '|'
+                       || c.completeness
+                FROM geography.unresolved_city_occurrences o
+                JOIN geography.unresolved_cities u ON u.id = o.unresolved_city_id
+                JOIN geography.departments d ON d.id = u.department_id
+                JOIN shopify.orders m ON m.id = o.source_ref
+                JOIN customers.customers c ON c.id = o.customer_id AND c.tenant_id = o.tenant_id
+                """));
+        Assert.Equal(
+            "Calle 10 # 43-20, Apto 301, CALLI, Valle del Cauca, CO",
+            await flow.ScalarAsync("SELECT sample_address FROM geography.unresolved_cities"));
+        Assert.Contains("Dirección de envío de Shopify: ", await flow.ScalarAsync("SELECT notes FROM quotations.orders"), StringComparison.Ordinal);
+    }
+
     private static int Column(IReadOnlyList<string> header, string name)
     {
         var index = header.ToList().IndexOf(name);

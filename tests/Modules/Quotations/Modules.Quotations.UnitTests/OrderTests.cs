@@ -1227,6 +1227,178 @@ public sealed class OrderTests
         Assert.Equal("order.order.not_pending", error.Code);
     }
 
+    // Spec 2026-10-26 §4.4 y §4.6: la parte de envío de un pedido externo y su ciudad corregible.
+    private static readonly Guid DepartmentA = Guid.CreateVersion7();
+    private static readonly Guid CityA = Guid.CreateVersion7();
+    private static readonly Guid CityB = Guid.CreateVersion7();
+
+    private static QuotationPartyDetails ShippingParty(Guid? cityId = null, string? email = "ana@correo.co") => new()
+    {
+        Name = "Ana Pérez",
+        Phone = "3001112233",
+        Email = email,
+        Address = "Cra 5 # 1-2",
+        DepartmentId = DepartmentA,
+        CityId = cityId ?? CityA,
+    };
+
+    private const string RawAddressPrefix = "Dirección de envío de Shopify:";
+
+    private static Order NewShopifyOrder(string? notes = null, QuotationParties? parties = null) =>
+        Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0003", Header(), parties ?? QuotationParties.Empty, Account, [Line()],
+            OrderPaymentStatus.PaymentPending, notes, ConvertedBy, [], Now, OrderSource.Shopify, "#1001",
+            ShippingDetails.None, null, null);
+
+    [Fact]
+    public void AttachExternalShippingAddsThePartyAndDropsTheRawAddressLine()
+    {
+        var order = NewShopifyOrder("Shopify #1001\nNota\nDirección de envío de Shopify: Cra 5, CALLI");
+        var later = Now.AddHours(1);
+
+        var changed = order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, later);
+
+        Assert.True(changed);
+        Assert.Equal("Shopify #1001\nNota", order.Notes);
+        Assert.NotNull(order.Shipping);
+        Assert.Equal(ShippingParty(), order.Shipping!.ToDetails());
+        Assert.Equal((later, 2), (order.UpdatedAt, order.Version));
+    }
+
+    [Fact]
+    public void AttachExternalShippingWithTheSamePartyIsANoOp()
+    {
+        var order = NewShopifyOrder();
+        order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(1));
+
+        var changed = order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(2));
+
+        Assert.False(changed);
+        Assert.Equal(2, order.Version);
+    }
+
+    [Fact]
+    public void AttachExternalShippingOverAnotherPartyIsShippingPartyPresent()
+    {
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty() with { Phone = "3009998877" }));
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(1)));
+
+        Assert.Equal("order.order.shipping_party_present", error.Code);
+    }
+
+    // Spec 2026-10-26 §4.4 y desvío S1 (un pedido no edita sus partes): la misma parte en otra ciudad la puso un intento anterior
+    // del mismo trabajo, con la ciudad que el sinónimo tenía entonces. Es la misma escritura: no la toca, y el consumidor guarda
+    // la ciudad que quedó (y la recorrige si el sinónimo ya apunta a otra).
+    [Fact]
+    public void AttachExternalShippingOverOurPartyInAnotherCityIsANoOp()
+    {
+        var order = NewShopifyOrder();
+        order.AttachExternalShipping(ShippingParty(CityB), RawAddressPrefix, Now.AddHours(1));
+
+        var changed = order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(2));
+
+        Assert.False(changed);
+        Assert.Equal(2, order.Version);
+        Assert.Equal(ShippingParty(CityB), order.Shipping!.ToDetails());
+    }
+
+    // Review Focus 3: sólo se agrega la parte mientras el pedido está pendiente.
+    [Fact]
+    public void AttachExternalShippingOnANonPendingOrderIsNotPending()
+    {
+        var order = NewShopifyOrder();
+        order.Approve(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(1)));
+
+        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Null(order.Shipping);
+    }
+
+    [Fact]
+    public void AttachExternalShippingNeedsACompleteParty()
+    {
+        var order = NewShopifyOrder("Nota");
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.AttachExternalShipping(ShippingParty(email: null), RawAddressPrefix, Now.AddHours(1)));
+
+        Assert.Equal("order.shipping.party_incomplete", error.Code);
+        Assert.Null(order.Shipping);
+        Assert.Equal(1, order.Version);
+    }
+
+    [Fact]
+    public void CorrectExternalShippingCityChangesOnlyCityAndDepartment()
+    {
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty()));
+        var newDepartment = Guid.CreateVersion7();
+        var later = Now.AddHours(1);
+
+        var changed = order.CorrectExternalShippingCity(ShippingParty(), newDepartment, CityB, later);
+
+        Assert.True(changed);
+        Assert.Equal(ShippingParty(CityB) with { DepartmentId = newDepartment }, order.Shipping!.ToDetails());
+        Assert.Equal((later, 2), (order.UpdatedAt, order.Version));
+    }
+
+    // Review Focus 4: si alguien tocó la parte, ya no es la que Shopify guardó y no se corrige.
+    [Fact]
+    public void CorrectExternalShippingCityWithAnEditedPartyIsShippingPartyChanged()
+    {
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty() with { Phone = "3009998877" }));
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, Now.AddHours(1)));
+
+        Assert.Equal("order.order.shipping_party_changed", error.Code);
+    }
+
+    [Fact]
+    public void CorrectExternalShippingCityAlreadyAtTheTargetIsANoOp()
+    {
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty()));
+
+        var changed = order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityA, Now.AddHours(1));
+
+        Assert.False(changed);
+        Assert.Equal(1, order.Version);
+    }
+
+    // Spec 2026-10-26 §4.6: el trabajo que recorrige puede caer después de que Quotations guardó y antes de que Shopify
+    // actualizara su huella. Al reintentar manda la huella vieja y encuentra la parte ya en la ciudad nueva: es el mismo cambio,
+    // no una edición de otra persona.
+    // Lo mismo con una ciudad que no es ni la esperada ni la de destino: un intento anterior la llevó a la que el sinónimo tenía
+    // entonces. No la toca; el consumidor guarda la que quedó y su paso 5 siembra la recorrección.
+    [Fact]
+    public void CorrectExternalShippingCityOfOurPartyInAThirdCityIsANoOp()
+    {
+        var cityC = Guid.CreateVersion7();
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty(cityC)));
+
+        var changed = order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, Now.AddHours(1));
+
+        Assert.False(changed);
+        Assert.Equal(1, order.Version);
+        Assert.Equal(ShippingParty(cityC), order.Shipping!.ToDetails());
+    }
+
+    [Fact]
+    public void CorrectExternalShippingCityRetriedAfterItWasAppliedIsANoOp()
+    {
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty()));
+        order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, Now.AddHours(1));
+
+        var changed = order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, Now.AddHours(2));
+
+        Assert.False(changed);
+        Assert.Equal(2, order.Version);
+        Assert.Equal(ShippingParty(CityB), order.Shipping!.ToDetails());
+    }
+
     // Spec 2026-10-05 (facturar un pedido), decisiones 1 y 3: se factura un aprobado, queda quién
     // y cuándo, y la aprobación no se toca.
     [Fact]

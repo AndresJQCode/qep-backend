@@ -1143,7 +1143,7 @@ public sealed class CustomerTests
     }
 
     public static TheoryData<string> Writes() =>
-        ["Update", "Complete", "Activate", "Deactivate", "AddAddress", "UpdateAddress", "MakeAddressPrincipal", "RemoveAddress", "OptOut", "OptIn"];
+        ["Update", "Complete", "Activate", "Deactivate", "AddAddress", "UpdateAddress", "MakeAddressPrincipal", "RemoveAddress", "OptOut", "OptIn", "CorrectCity"];
 
     // Spec 2026-10-24 §3.1: el código dice «fusionado» y no «inactivo», aunque el fusionado también lo esté.
     [Theory]
@@ -1171,10 +1171,98 @@ public sealed class CustomerTests
             "RemoveAddress" => () => merged.RemoveAddress(addressId, Now),
             "OptOut" => () => merged.OptOutOfMarketing(MarketingConsentSource.Manual, Now),
             "OptIn" => () => merged.OptInToMarketing(),
+            "CorrectCity" => () => merged.CorrectCity(CityId, OtherCityId, Now),
             _ => throw new ArgumentOutOfRangeException(nameof(write)),
         };
 
         var error = Assert.Throws<CustomersDomainException>(action);
         Assert.Equal("customers.customer.merged", error.Code);
+    }
+
+    private static readonly DateTimeOffset Later = Now.AddHours(3);
+
+    // Spec de ciudades 2026-10-26 §4.6 (D-C4b): el cliente y su dirección principal se mudan juntos.
+    [Fact]
+    public void CorrectCityMovesTheCustomerAndItsPrincipalAddress()
+    {
+        var customer = Create();
+
+        customer.CorrectCity(CityId, OtherCityId, Later);
+
+        Assert.Equal(OtherCityId, customer.CityId);
+        var principal = Assert.Single(customer.Addresses);
+        Assert.Equal(OtherCityId, principal.CityId);
+        Assert.Equal(Later, principal.UpdatedAt);
+        Assert.Equal(2, customer.Version);
+        Assert.Equal(Later, customer.UpdatedAt);
+    }
+
+    // La dirección que una persona movió a mano después no se pisa: sólo se mueve la que sigue en la ciudad corregida.
+    [Fact]
+    public void CorrectCityLeavesAPrincipalAddressThatAlreadyMovedOn()
+    {
+        var customer = Create();
+        var principal = Assert.Single(customer.Addresses);
+        customer.UpdateAddress(principal.Id, Warehouse(), false, Now);
+        var version = customer.Version;
+
+        customer.CorrectCity(CityId, Guid.Parse("01900000-0000-7000-8000-000000000012"), Later);
+
+        Assert.Equal(Guid.Parse("01900000-0000-7000-8000-000000000012"), customer.CityId);
+        Assert.Equal(OtherCityId, Assert.Single(customer.Addresses).CityId);
+        Assert.Equal(version + 1, customer.Version);
+    }
+
+    [Fact]
+    public void CorrectCityKeepsTheCuc()
+    {
+        var customer = Create(cuc: "CLI08000142");
+
+        customer.CorrectCity(CityId, OtherCityId, Later);
+
+        Assert.Equal("CLI08000142", customer.Cuc);
+    }
+
+    [Fact]
+    public void CorrectCityWithAnotherCurrentCityIsCityChangedAndTouchesNothing()
+    {
+        var customer = Create();
+        var principalUpdatedAt = Assert.Single(customer.Addresses).UpdatedAt;
+
+        var error = Assert.Throws<CustomersDomainException>(() => customer.CorrectCity(OtherCityId, Guid.NewGuid(), Later));
+
+        Assert.Equal(CustomersErrorCodes.CityChanged, error.Code);
+        Assert.Equal("customers.customer.city_changed", error.Code);
+        Assert.Equal(CityId, customer.CityId);
+        Assert.Equal(CityId, Assert.Single(customer.Addresses).CityId);
+        Assert.Equal(principalUpdatedAt, Assert.Single(customer.Addresses).UpdatedAt);
+        Assert.Equal(1, customer.Version);
+        Assert.Equal(Now, customer.UpdatedAt);
+    }
+
+    [Fact]
+    public void CorrectCityOfAnInactiveCustomerIsInactive()
+    {
+        var customer = Create();
+        customer.Deactivate(Now);
+        var version = customer.Version;
+
+        var error = Assert.Throws<CustomersDomainException>(() => customer.CorrectCity(CityId, OtherCityId, Later));
+
+        Assert.Equal(CustomersErrorCodes.Inactive, error.Code);
+        Assert.Equal(CityId, customer.CityId);
+        Assert.Equal(version, customer.Version);
+    }
+
+    [Fact]
+    public void CorrectCityOfAnIncompleteCustomerIsRejected()
+    {
+        var customer = Customer.CreateIncompleteFromExternalSale(
+            CustomerId.New(), TenantId, "Laura", null, null, null, Now, new StubPhoneNormalizer());
+
+        Assert.Throws<InvalidOperationException>(() => customer.CorrectCity(CityId, OtherCityId, Later));
+
+        Assert.Null(customer.CityId);
+        Assert.Equal(1, customer.Version);
     }
 }

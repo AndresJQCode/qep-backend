@@ -13,6 +13,7 @@ internal static class CustomerWriteDoubles
     public static readonly Guid Tenant = Guid.Parse("01900000-0000-7000-8000-0000000000c1");
     public static readonly DateTimeOffset Now = new(2026, 10, 18, 12, 0, 0, TimeSpan.Zero);
     public static readonly Guid CityId = Guid.Parse("01900000-0000-7000-8000-0000000000c2");
+    public static readonly Guid ValleCityId = Guid.Parse("01900000-0000-7000-8000-0000000000c3");
     public static readonly ClientClassification Classification =
         ClientClassification.Create(ClientClassificationId.New(), Tenant, "Mediano", "CLI", Now);
 
@@ -98,7 +99,11 @@ internal static class CustomerWriteDoubles
         {
             calls.Add("city");
             return Task.FromResult<CustomerCityRef?>(
-                cityId == CityId ? new CustomerCityRef(CityId, "08001", "Barranquilla", Guid.NewGuid(), "08", "Atlántico") : null);
+                cityId == CityId
+                    ? new CustomerCityRef(CityId, "08001", "Barranquilla", Guid.NewGuid(), "08", "Atlántico")
+                    : cityId == ValleCityId
+                        ? new CustomerCityRef(ValleCityId, "76001", "Cali", Guid.NewGuid(), "76", "Valle del Cauca")
+                        : null);
         }
 
         public Task<IReadOnlyDictionary<Guid, CustomerCityRef>> FindCitiesAsync(IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>

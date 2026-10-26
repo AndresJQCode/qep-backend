@@ -462,6 +462,17 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ListCitiesQuery, IReadOnlyList<CityDto>>,
             ListCitiesHandler>();
+        // Spec 2026-10-26 §6: las lecturas de la consola de ciudades del operador. La política exige el permiso y el handler
+        // revalida con OperatorAuthorization; el validador entra con AddValidatorsFromAssemblyContaining de abajo.
+        services.AddScoped<IQueryHandler<GetCitySummaryQuery, CitySummaryDto>, GetCitySummaryHandler>();
+        services.AddScoped<IQueryHandler<ListUnresolvedCitiesQuery, UnresolvedCityPageDto>, ListUnresolvedCitiesHandler>();
+        services.AddScoped<IQueryHandler<GetUnresolvedCityQuery, UnresolvedCityDetailDto>, GetUnresolvedCityHandler>();
+        // Confirmar, descartar y restaurar, y el impacto de confirmar (que no escribe).
+        services.AddScoped<IQueryHandler<PreviewResolveImpactQuery, ResolveImpactDto>, PreviewResolveImpactHandler>();
+        services.AddScoped<ICommandHandler<ResolveUnresolvedCityCommand, CitySynonymDto>, ResolveUnresolvedCityHandler>();
+        services.AddScoped<UnresolvedCityTriage>();
+        services.AddScoped<ICommandHandler<DiscardUnresolvedCityCommand, UnresolvedCityListItemDto>, DiscardUnresolvedCityHandler>();
+        services.AddScoped<ICommandHandler<RestoreUnresolvedCityCommand, UnresolvedCityListItemDto>, RestoreUnresolvedCityHandler>();
         // Quotations, fase 1 (borrador: crear, agregar/editar/quitar lineas, editar encabezado).
         // Los seis van aca por la misma razon que el resto: el dispatcher resuelve por registro
         // explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla recien en
@@ -853,6 +864,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
         services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateConnectionValidator>();
+        services.AddValidatorsFromAssemblyContaining<ListUnresolvedCitiesValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);
@@ -919,6 +931,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IShopifyCustomerDirectory, ShopifyCustomerDirectory>();
         services.AddScoped<IShopifyProductLookup, ShopifyProductLookup>();
         services.AddScoped<IShopifyGeographyLookup, ShopifyGeographyLookup>();
+        // Spec 2026-10-26 §4.2: la ciudad que no casa va a la bandeja de Geography.
+        services.AddScoped<IShopifyUnresolvedCityReporter, ShopifyUnresolvedCityReporter>();
         services.AddScoped<IShopifyShippingLookup, ShopifyShippingLookup>();
         services.AddScoped<IShopifyOrderWriter, ShopifyOrderWriter>();
         services.AddScoped<IShopifyMemberDirectory, ShopifyMemberDirectory>();
@@ -936,6 +950,15 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IShopifyOrderChangeReaction, ShopifyOrderChanges>();
         services.AddShopifyWebhookProcessing();
         services.AddShopifyWebhookWorker();
+        // Spec 2026-10-26 D-C6: el consumidor de los eventos de sinónimos de Geography, que siembra los trabajos de corrección, y
+        // el worker que los corrige, con sus dos puertos: el sinónimo de Geography y el escritor sobre Quotations y Customers (los
+        // dos abren un scope propio por llamada).
+        services.AddScoped<IShopifyCitySynonymLookup, ShopifyCitySynonymLookup>();
+        services.AddScoped<IShopifyCityCorrectionWriter, ShopifyCityCorrectionWriter>();
+        services.AddShopifyCityCorrections();
+        // Spec 2026-10-26 D-C3b: lo que la consola de ciudades lee de pedidos, clientes, huellas, tenants y usuarios, que
+        // Geography no referencia. Scoped como el GeographyDbContext sobre el que corre.
+        services.AddScoped<ICityCorrectionInsights, CityCorrectionInsights>();
         // §5.3: el cron de la conciliación, cada Shopify:Reconcile:IntervalMinutes.
         services.AddShopifyReconcileWorker();
 
@@ -1256,6 +1279,9 @@ public static class QepServiceCollectionExtensions
                 OperatorPermissions.TenantsRead,
                 OperatorPermissions.ModulesManage,
                 OperatorPermissions.TenantsManage,
+                // Spec 2026-10-26 §6: la consola de ciudades del operador, con el mismo criterio que las tres de arriba.
+                GeographyOperatorPermissions.CitiesRead,
+                GeographyOperatorPermissions.CitiesManage,
                 // Spec 2026-10-08 (Integraciones), decisión 3: de fábrica en admin. El rol vive en
                 // código, así que no hay migración de datos.
                 IntegrationsPermissions.ConnectionRead,
@@ -1754,6 +1780,22 @@ public static class QepServiceCollectionExtensions
             "Operator",
             "high",
             RequiredModules: []));
+        // Spec 2026-10-26 §6: misma categoría y núcleo. Gestionar es "high": un sinónimo corrige pedidos y clientes de todos los
+        // tenants.
+        services.AddSingleton(new PermissionDefinition(
+            GeographyOperatorPermissions.CitiesRead,
+            "Ver ciudades sin resolver",
+            "Permite ver la bandeja de ciudades sin resolver, los sinónimos y lo que cambiaría al confirmarlos.",
+            "Operator",
+            "medium",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            GeographyOperatorPermissions.CitiesManage,
+            "Gestionar sinónimos de ciudades",
+            "Permite confirmar, descartar, corregir y borrar sinónimos de ciudades, que corrigen pedidos y clientes de todos los tenants.",
+            "Operator",
+            "high",
+            RequiredModules: []));
 
         // Spec 2026-10-08 (Integraciones), «Permisos»: núcleo, para que el enmascarado por módulos no
         // las toque. Gestionar es "high": cambia las credenciales con las que la empresa le habla a sus
@@ -2184,6 +2226,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 OperatorPermissions.TenantsManage,
                 policy => AddPermissionRequirement(policy, OperatorPermissions.TenantsManage))
+            // Sin estas dos, RequireAuthorization de la consola de ciudades no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
+            .AddPolicy(
+                GeographyOperatorPermissions.CitiesRead,
+                policy => AddPermissionRequirement(policy, GeographyOperatorPermissions.CitiesRead))
+            .AddPolicy(
+                GeographyOperatorPermissions.CitiesManage,
+                policy => AddPermissionRequirement(policy, GeographyOperatorPermissions.CitiesManage))
             .AddPolicy(
                 IntegrationsPermissions.ConnectionRead,
                 policy => AddPermissionRequirement(policy, IntegrationsPermissions.ConnectionRead))
