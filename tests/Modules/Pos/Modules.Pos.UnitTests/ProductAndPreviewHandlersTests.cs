@@ -71,6 +71,19 @@ public sealed class ProductAndPreviewHandlersTests
         Assert.Equal("pos.product.not_found", missing.Code);
     }
 
+    // Spec 2026-10-26 §3.4: el handler no resuelve categorías; le pasa el id al adaptador, que expande las descendientes.
+    [Fact]
+    public async Task SearchForwardsTheCategoryToTheLookup()
+    {
+        var bed = new PosTestBed();
+        var categoryId = Guid.CreateVersion7();
+
+        await Search(bed, Seller).HandleAsync(
+            new SearchPosProductsQuery(TenantId, null, 1, 40, categoryId), TestContext.Current.CancellationToken);
+
+        Assert.Equal(categoryId, bed.Products.LastCategoryId);
+    }
+
     [Fact]
     public async Task ProductReadsNeedTheSalePermission()
     {

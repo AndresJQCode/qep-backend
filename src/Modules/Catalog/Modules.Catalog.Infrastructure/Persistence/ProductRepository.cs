@@ -369,10 +369,13 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         // productos no lo expone todavía (spec 2026-10-26 §3.3).
         if (categoryIds is not null)
         {
-            // Los ids tipados: la columna se convierte a ProductCategoryId, y así el Contains traduce a IN.
-            var ids = categoryIds.Select(id => new ProductCategoryId(id)).ToArray();
-            query = query.Where(product =>
-                product.CategoryId != null && ids.Contains(product.CategoryId.Value));
+            // Los ids con el tipo exacto de la propiedad, ProductCategoryId? (nullable), y el Contains sobre
+            // la propiedad entera. Con ProductCategoryId[] contra product.CategoryId.Value, EF le aplicaba
+            // al parámetro el conversor de la columna nullable a elementos no nullable y el GET respondía 500
+            // (TargetInvocationException; lo encontró PosCategoryApiTests contra Postgres). Un producto sin
+            // categoría no entra: null nunca está en la lista.
+            var ids = categoryIds.Select(id => (ProductCategoryId?)new ProductCategoryId(id)).ToArray();
+            query = query.Where(product => ids.Contains(product.CategoryId));
         }
 
         // ILike es la coincidencia case-insensitive de Npgsql. Los comodines tienen que ser
@@ -573,5 +576,11 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         CancellationToken cancellationToken) =>
         dbContext.Products.AnyAsync(
             product => product.TenantId == tenantId && product.TaxRateId == taxRateId,
+            cancellationToken);
+
+    // CountAsync sobre el DbSet: un SELECT count(*) sin materializar productos ni variantes.
+    public Task<int> CountActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        dbContext.Products.CountAsync(
+            product => product.TenantId == tenantId && product.IsActive,
             cancellationToken);
 }

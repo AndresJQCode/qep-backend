@@ -239,10 +239,11 @@ internal static class PosApiHarness
     /// <summary>
     /// Producto con precio COP de lista y las escalas por defecto de QuotationsApiHarness.
     /// <paramref name="prices"/>, cuando viene, reemplaza al COP: es la forma de dar un precio EUR.
+    /// <paramref name="categoryId"/> es la categoría del producto (spec 2026-10-26 §3.3); null, sin categoría.
     /// </summary>
     public static async Task<Guid> CreateProductAsync(
         HttpClient client, Guid tenantId, string code, string name, decimal priceCop, Guid? taxRateId,
-        IReadOnlyDictionary<string, decimal>? prices = null)
+        IReadOnlyDictionary<string, decimal>? prices = null, Guid? categoryId = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
@@ -251,6 +252,7 @@ internal static class PosApiHarness
             {
                 name,
                 taxRateId,
+                categoryId,
                 variants = new[]
                 {
                     new
@@ -270,6 +272,19 @@ internal static class PosApiHarness
                     },
                 },
             },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<IdDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        return body.Id;
+    }
+
+    /// <summary>Una categoría de producto por la API de Catalog (spec 2026-10-26 §3.2); el seeder trae ProductManage.</summary>
+    public static async Task<Guid> CreateCategoryAsync(HttpClient client, Guid tenantId, string name, Guid? parentId = null)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/categories",
+            new { name, parentId },
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<IdDto>(TestContext.Current.CancellationToken);

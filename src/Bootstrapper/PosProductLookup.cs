@@ -13,14 +13,29 @@ internal sealed class PosProductLookup(
     IProductRepository products,
     IOptionDefinitionRepository options,
     ITaxRateRepository taxRates,
-    IProductImageLookup images)
+    IProductImageLookup images,
+    IProductCategoryRepository categories)
     : IPosProductLookup
 {
     public async Task<(IReadOnlyList<PosCatalogProductRef> Items, int Total)> SearchAsync(
-        Guid tenantId, string? search, int page, int pageSize, CancellationToken cancellationToken)
+        Guid tenantId, string? search, Guid? categoryId, int page, int pageSize, CancellationToken cancellationToken)
     {
+        // Spec 2026-10-26 §3.4: la categoría y todas sus descendientes. Un id inexistente o de otro tenant
+        // expande a nada, y eso es una página vacía (nunca un 404): se corta acá, sin consultar productos.
+        Guid[]? categoryIds = null;
+        if (categoryId is { } id)
+        {
+            var expanded = await categories.ListIdsWithDescendantsAsync(tenantId, new ProductCategoryId(id), cancellationToken);
+            if (expanded.Count == 0)
+            {
+                return ([], 0);
+            }
+
+            categoryIds = expanded.Select(category => category.Value).ToArray();
+        }
+
         var (items, total) = await products.SearchAsync(
-            tenantId, string.IsNullOrWhiteSpace(search) ? null : search, null, null, true, null, page, pageSize, cancellationToken);
+            tenantId, string.IsNullOrWhiteSpace(search) ? null : search, null, null, true, categoryIds, page, pageSize, cancellationToken);
 
         // Sólo las variantes que se venden. El producto ya viene activo por el filtro de la consulta.
         var selected = items

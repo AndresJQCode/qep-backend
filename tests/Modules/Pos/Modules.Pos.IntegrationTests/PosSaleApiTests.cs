@@ -233,8 +233,8 @@ public sealed class PosSaleApiTests
     private sealed class GatedLookup(IPosProductLookup inner, ProductLookupGate gate) : IPosProductLookup
     {
         public Task<(IReadOnlyList<PosCatalogProductRef> Items, int Total)> SearchAsync(
-            Guid tenantId, string? search, int page, int pageSize, CancellationToken cancellationToken) =>
-            inner.SearchAsync(tenantId, search, page, pageSize, cancellationToken);
+            Guid tenantId, string? search, Guid? categoryId, int page, int pageSize, CancellationToken cancellationToken) =>
+            inner.SearchAsync(tenantId, search, categoryId, page, pageSize, cancellationToken);
 
         public Task<PosProductRef?> FindByCodeAsync(Guid tenantId, string code, CancellationToken cancellationToken) =>
             inner.FindByCodeAsync(tenantId, code, cancellationToken);

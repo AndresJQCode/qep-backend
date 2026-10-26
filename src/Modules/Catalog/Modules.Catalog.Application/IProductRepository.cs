@@ -175,6 +175,13 @@ public interface IProductRepository
         Guid tenantId,
         TaxRateId taxRateId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Cuántos productos activos tiene el tenant, con o sin categoría. Es el «Todas las categorías · N
+    /// productos» de la caja (spec 2026-10-26 §3.4): sumar las categorías raíz perdería los que no tienen
+    /// ninguna. Un <c>COUNT</c> en la base, sin traer filas.
+    /// </summary>
+    Task<int> CountActiveAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
 /// <summary>Una fila del listado de productos (<see cref="IProductRepository.SearchSummariesAsync"/>).</summary>
