@@ -47,6 +47,20 @@ public sealed class AutomationAdaptersTests
             result.Select(connection => (connection.Id, connection.Channel, connection.Handle, connection.Status)));
     }
 
+    // Spec 2026-10-25 D-5: los miembros del chatbot son los mismos que ofrece «Transferir», en el mismo orden.
+    [Fact]
+    public async Task TheMembersAreTheAssigneesOfMessaging()
+    {
+        var ana = Guid.CreateVersion7();
+        var luis = Guid.CreateVersion7();
+        var assignees = new StubAssignees([new AssigneeDto(ana, "Ana"), new AssigneeDto(luis, "Luis")]);
+
+        var result = await new AutomationMembers(assignees).ListAsync(TenantId, Ct);
+
+        Assert.Equal(TenantId, assignees.RequestedTenant);
+        Assert.Equal([(ana, "Ana"), (luis, "Luis")], result.Select(member => (member.Id, member.Name)));
+    }
+
     [Fact]
     public async Task ExternalApisComeFromTheExternalApiProvider()
     {
@@ -433,6 +447,19 @@ public sealed class AutomationAdaptersTests
 
         public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken) =>
             Task.FromResult(new Uri($"https://r2.test/{key}?minutes={lifetime.TotalMinutes}"));
+    }
+
+    private sealed class StubAssignees(IReadOnlyList<AssigneeDto> items) : IMessagingAssignees
+    {
+        public Guid? RequestedTenant { get; private set; }
+
+        public Task<bool> CanReplyAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<AssigneeDto>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
+        {
+            RequestedTenant = tenantId;
+            return Task.FromResult(items);
+        }
     }
 
     private sealed class StubDirectory(IReadOnlyList<MessagingConnectionRef> all, IReadOnlyList<MessagingConnectionDto> active) : IMessagingConnectionDirectory

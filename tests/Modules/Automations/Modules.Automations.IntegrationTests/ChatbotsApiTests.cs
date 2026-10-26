@@ -560,6 +560,89 @@ public sealed class ChatbotsApiTests
         Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM automations.chatbot_versions"));
     }
 
+    // Spec 2026-10-25 D-5: el editor trae la regla y los miembros que pueden responder (los de «Transferir»), no los que no.
+    [Fact]
+    public async Task TheEditorBringsTheRuleAndTheMembersWhoCanReply()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var advisor = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Asesora Ana");
+        var billing = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Facturación Fer", role: "billing");
+        var editor = await CreateAsync(setup);
+
+        var reloaded = await GetAsync(setup, editor.Chatbot.Id);
+
+        Assert.Equal(("Restart", (Guid?)null), (reloaded.ExhaustedAction, reloaded.ExhaustedMemberId));
+        Assert.Contains(new ChatbotMemberDto(advisor.MembershipId, "Asesora Ana"), reloaded.Members);
+        Assert.DoesNotContain(reloaded.Members, member => member.Id == billing.MembershipId);
+        Assert.Equal(reloaded.Members.OrderBy(member => member.Name, StringComparer.CurrentCultureIgnoreCase), reloaded.Members);
+    }
+
+    // Spec 2026-10-25 D-5: un traspaso a un miembro que no puede responder es un Error del bloque, y bloquea publicar.
+    [Fact]
+    public async Task AHandoffToAMemberWhoCannotReplyBlocksPublishing()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+        var stranger = Guid.CreateVersion7();
+        var flow = $$"""
+            {
+              "schema": 1,
+              "start": { "firstNodeId": "n1" },
+              "nodes": [ { "id": "n1", "kind": "handoff", "title": "Asesor", "text": "Un asesor te escribe.", "memberId": "{{stranger}}" } ]
+            }
+            """;
+        var save = await SaveDraftAsync(setup, editor, flow);
+        Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+        var saved = await save.Content.ReadFromJsonAsync<DraftSavedDto>(Ct);
+
+        var issue = Assert.Single((await GetAsync(setup, editor.Chatbot.Id)).Issues, item => item.Code == FlowIssueCodes.HandoffMemberInvalid);
+        var response = await ActAsync(setup.Client, setup, editor.Chatbot.Id, "publish", saved!.Version);
+
+        Assert.Equal((nameof(FlowIssueSeverity.Error), "n1"), (issue.Severity, issue.NodeId));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        var errors = problem.RootElement.GetProperty("errors").GetProperty("flow").EnumerateArray().Select(item => item.GetString()!).ToList();
+        Assert.Contains(errors, item => item.StartsWith($"{FlowIssueCodes.HandoffMemberInvalid}: ", StringComparison.Ordinal));
+    }
+
+    // Spec 2026-10-25 D-5: el miembro de la regla de agotamiento también tiene que poder responder al publicar. La regla se escribe por
+    // SQL porque el PUT de ajustes recién la aprende en la Task 8.
+    [Fact]
+    public async Task TheExhaustedMemberMustStillReplyToPublish()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var advisor = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Asesora Ana");
+        var (id, _) = await PublishableAsync(setup);
+        await ExecuteAsync(connectionString,
+            "UPDATE automations.chatbots SET exhausted_action = 'Handoff', exhausted_member_id = @member WHERE id = @id",
+            ("member", advisor.MembershipId), ("id", id));
+        Assert.DoesNotContain((await GetAsync(setup, id)).Issues, item => item.Code == FlowIssueCodes.ExhaustedMemberInvalid);
+        await ExecuteAsync(connectionString,
+            "UPDATE tenancy.memberships SET state = 'Suspended' WHERE id = @id", ("id", advisor.MembershipId));
+
+        var editor = await GetAsync(setup, id);
+        var response = await ActAsync(setup.Client, setup, id, "publish", editor.Chatbot.Version);
+
+        var issue = Assert.Single(editor.Issues, item => item.Code == FlowIssueCodes.ExhaustedMemberInvalid);
+        Assert.Equal((nameof(FlowIssueSeverity.Error), (string?)null), (issue.Severity, issue.NodeId));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        var errors = problem.RootElement.GetProperty("errors").GetProperty("flow").EnumerateArray().Select(item => item.GetString()!).ToList();
+        Assert.Contains(errors, item => item.StartsWith($"{FlowIssueCodes.ExhaustedMemberInvalid}: ", StringComparison.Ordinal));
+    }
+
     // Ruling P2-R8: el disparador por palabra clave sin palabras es un problema de los ajustes; los ajustes se guardan, publicar no.
     [Fact]
     public async Task PublishAKeywordChatbotWithoutKeywordsIs422()

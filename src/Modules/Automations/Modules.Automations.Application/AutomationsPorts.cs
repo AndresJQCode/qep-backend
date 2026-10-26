@@ -121,6 +121,16 @@ public interface IAutomationConnections
     Task<IReadOnlyList<AutomationConnectionRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
+/// <summary>Un miembro que puede responder conversaciones (spec 2026-10-25 D-5).</summary>
+public sealed record AutomationMemberRef(Guid Id, string Name);
+
+/// <summary>Los miembros activos con <c>messaging.conversation.manage</c>, los mismos que ofrece «Transferir» y en el mismo orden (adaptador en
+/// Bootstrapper sobre <c>IMessagingAssignees</c>): Automations no referencia Messaging.</summary>
+public interface IAutomationMembers
+{
+    Task<IReadOnlyList<AutomationMemberRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
 /// <summary>Una conexión «API externa» del tenant (D-H4); <see cref="Status"/> es el nombre del estado de Integrations.</summary>
 public sealed record ExternalApiRef(Guid Id, string Name, string Status);
 

@@ -36,6 +36,9 @@ public sealed record SelectableConnectionDto(
 
 public sealed record ExternalApiRefDto(Guid Id, string Name, string Status);
 
+/// <summary>Spec 2026-10-25 D-5: un miembro al que el chatbot puede asignar la conversación.</summary>
+public sealed record ChatbotMemberDto(Guid Id, string Name);
+
 public sealed record ChatbotEditorDto(
     ChatbotSummaryDto Chatbot,
     IReadOnlyList<string> Keywords,
@@ -46,7 +49,10 @@ public sealed record ChatbotEditorDto(
     IReadOnlyList<FlowIssueDto> Issues,
     IReadOnlyList<SelectableConnectionDto> Connections,
     IReadOnlyList<ExternalApiRefDto> ExternalApis,
-    IReadOnlyList<string> Variables);
+    IReadOnlyList<string> Variables,
+    string ExhaustedAction,
+    Guid? ExhaustedMemberId,
+    IReadOnlyList<ChatbotMemberDto> Members);
 
 public sealed record DraftSavedDto(long Version, DateTimeOffset UpdatedAt, IReadOnlyList<FlowIssueDto> Issues);
 
