@@ -459,8 +459,30 @@ public sealed class SendQuotationHandlerTests
         Assert.Equal(AdvisorId.Value, harness.Sender.Sent.SentByMemberId);
     }
 
-    private static SendQuotationCommand NewCommand(string? recipient = null) =>
-        new(TenantId, CurrentQuotationId, recipient);
+    // Una elección rechazada es un envío que nunca empezó: ni PDF, ni registro de falla, ni cambio de estado.
+    [Theory]
+    [InlineData("channel_already_set")]
+    [InlineData("channel_unavailable")]
+    public async Task ARejectedChoiceTouchesNothing(string code)
+    {
+        var saved = WhatsAppChannels.Any();
+        var other = WhatsAppChannels.Meta();
+        var harness = code == "channel_already_set"
+            ? NewHandler(channels: [saved, other], choices: new InMemoryWhatsAppChannelChoiceStore(saved.ConnectionId))
+            : NewHandler(channels: [saved]);
+        var requested = code == "channel_already_set" ? other.ConnectionId : Guid.CreateVersion7();
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(connectionId: requested), TestContext.Current.CancellationToken));
+
+        Assert.Equal($"quotation.whatsapp.{code}", error.Code);
+        Assert.Equal(0, harness.Renderer.Calls);
+        Assert.Null(harness.FailureLog.HistoryEntry);
+        Assert.Equal(QuotationStatus.Draft, harness.Repository.Quotation.Status);
+    }
+
+    private static SendQuotationCommand NewCommand(string? recipient = null, Guid? connectionId = null) =>
+        new(TenantId, CurrentQuotationId, recipient, connectionId);
 
     private static readonly QuotationPartyDetails BillingParty = new()
     {
@@ -493,7 +515,8 @@ public sealed class SendQuotationHandlerTests
         Exception? whatsAppFailure = null,
         QuotationPartyDetails? billing = null,
         WhatsAppChannel[]? channels = null,
-        StubTenantDirectory? tenantDirectory = null)
+        StubTenantDirectory? tenantDirectory = null,
+        InMemoryWhatsAppChannelChoiceStore? choices = null)
     {
         var tenant = tenantDirectory ?? new StubTenantDirectory();
         var quotation = Quotation.Create(
@@ -561,6 +584,7 @@ public sealed class SendQuotationHandlerTests
                 ? sender
                 : new FailingWhatsAppSender(whatsAppFailure),
             new StubWhatsAppChannelDirectory(channels ?? [WhatsAppChannels.Any()]),
+            choices ?? new InMemoryWhatsAppChannelChoiceStore(),
             tenant,
             new StubMembershipDirectory(AdvisorId.Value),
             failureLog,

@@ -60,6 +60,8 @@ public static class QuotationsInfrastructureExtensions
         // The tenant's minimum purchase (spec 2026-10-08, D7): read by the recalculation and the
         // response composer, written by PUT /quotations/settings, all on the request's DbContext.
         services.AddScoped<IQuotationSettingsStore, QuotationSettingsStore>();
+        // La conexión de WhatsApp que el tenant eligió (spec 2026-10-21 D5–D10): la lee y la guarda el envío.
+        services.AddScoped<IWhatsAppChannelChoiceStore, WhatsAppChannelChoiceStore>();
         // Las transportadoras del tenant (spec 2026-10-17 §4).
         services.AddScoped<ICarrierRepository, CarrierRepository>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).

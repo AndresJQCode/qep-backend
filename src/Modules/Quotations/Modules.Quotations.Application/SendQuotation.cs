@@ -16,7 +16,7 @@ namespace Modules.Quotations.Application;
 /// pantalla mande la cotizacion a donde quiera.
 /// </summary>
 public sealed record SendQuotationCommand(
-    Guid TenantId, Guid QuotationId, string? Recipient = null) : ICommand<QuotationDto>;
+    Guid TenantId, Guid QuotationId, string? Recipient = null, Guid? ConnectionId = null) : ICommand<QuotationDto>;
 
 /// <summary>A quien va el mensaje. Texto en el borde, enum adentro: llega por HTTP y un valor
 /// que no matchea es un 422 con codigo, no un cast que revienta.</summary>
@@ -37,6 +37,7 @@ public sealed class SendQuotationHandler(
     IQuotationProductLookup productLookup,
     IWhatsAppSender whatsAppSender,
     IWhatsAppChannelDirectory whatsAppChannels,
+    IWhatsAppChannelChoiceStore channelChoices,
     ITenantDirectory tenantDirectory,
     IMembershipDirectory membershipDirectory,
     IQuotationSendFailureLog sendFailureLog,
@@ -66,9 +67,13 @@ public sealed class SendQuotationHandler(
         quotation.EnsureSendable();
 
         // Por dónde sale, con el mismo criterio: sin canal, o con varios sin elegir, el envío nunca empezó
-        // (plan 2026-10-21). Antes del PDF, que cuesta una llamada a `qcode-pdf`.
-        var channel = WhatsAppChannelSelection.ForQuotation(
-            await whatsAppChannels.ListAvailableAsync(command.TenantId, cancellationToken));
+        // (plan 2026-10-21), y una elección que no corresponde (otra conexión cuando el tenant ya tiene una, o una que no
+        // está) tampoco: fuera del try, que anota las fallas. Antes del PDF, que cuesta una llamada a `qcode-pdf`.
+        var resolved = WhatsAppChannelSelection.Resolve(
+            await whatsAppChannels.ListAvailableAsync(command.TenantId, cancellationToken),
+            await channelChoices.FindAsync(command.TenantId, cancellationToken),
+            command.ConnectionId);
+        var channel = resolved.Channel;
 
         // Se lee antes de mutar: `Send` deja la cotización en Sent venga de donde venga, así que
         // después de llamarlo ya no hay forma de saber si esto fue el primer envío o un reenvío.
@@ -171,7 +176,33 @@ public sealed class SendQuotationHandler(
                 now);
             // Spec 2026-10-13 §4.5: en el mismo SaveChanges que el Sent. También en un reenvío (H5): Pipeline es idempotente.
             lifecycleEvents.PublishSent(quotation, now);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
+
+            if (resolved.Remember)
+            {
+                // La elección viaja con el `Sent` (spec D9): un envío que no llegó a guardarse no la deja. Sin
+                // transacción, el INSERT ... ON CONFLICT quedaría confirmado aparte de la cotización.
+                await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+                var remembered = await channelChoices.RememberAsync(
+                    command.TenantId, channel.ConnectionId, resolved.PreviousChoice, sentBy.Value.Value, now,
+                    cancellationToken);
+                if (remembered)
+                {
+                    auditPublisher.Publish(
+                        command.TenantId,
+                        executionContext.SubjectId,
+                        "quotations.whatsapp_channel.chosen",
+                        channel.ConnectionId.ToString(),
+                        "success",
+                        now);
+                }
+
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+            }
+            else
+            {
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+            }
 
             return quotation.ToDto();
         }

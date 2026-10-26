@@ -42,6 +42,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<TenantMinimumTotalRow> TenantMinimumTotals => Set<TenantMinimumTotalRow>();
 
+    internal DbSet<TenantWhatsAppChannelRow> TenantWhatsAppChannels => Set<TenantWhatsAppChannelRow>();
+
     internal DbSet<Carrier> Carriers => Set<Carrier>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -62,6 +64,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureExportJob(modelBuilder);
         ConfigureOrdersExportLayout(modelBuilder);
         ConfigureQuotationSettings(modelBuilder);
+        ConfigureTenantWhatsAppChannel(modelBuilder);
         ConfigureCarrier(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
@@ -956,6 +959,19 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .WithMany()
             .HasForeignKey(value => value.TenantId)
             .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    // La conexión de WhatsApp elegida por el tenant (spec 2026-10-21 D5–D10): una por tenant, así que la PK es el tenant.
+    // Sin FK: la conexión es de Integrations y el miembro, de Tenancy.
+    private static void ConfigureTenantWhatsAppChannel(ModelBuilder modelBuilder)
+    {
+        var channel = modelBuilder.Entity<TenantWhatsAppChannelRow>();
+        channel.ToTable("tenant_whatsapp_channels", "quotations");
+        channel.HasKey(value => value.TenantId);
+        channel.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
+        channel.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        channel.Property(value => value.ChosenAt).HasColumnName("chosen_at");
+        channel.Property(value => value.ChosenByMemberId).HasColumnName("chosen_by_member_id");
     }
 
     /// <summary>

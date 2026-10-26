@@ -28,6 +28,39 @@ internal sealed class StubWhatsAppChannelDirectory(params WhatsAppChannel[] chan
         Task.FromResult<IReadOnlyList<WhatsAppChannel>>(channels);
 }
 
+/// <summary>La elección del canal en memoria: una sola por tenant, como la tabla. <see cref="Remembered"/> cuenta las
+/// escrituras que de verdad entraron.</summary>
+internal sealed class InMemoryWhatsAppChannelChoiceStore(Guid? saved = null) : IWhatsAppChannelChoiceStore
+{
+    public Guid? Saved { get; private set; } = saved;
+
+    public int Remembered { get; private set; }
+
+    public Task<Guid?> FindAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(Saved);
+
+    public Task<bool> RememberAsync(
+        Guid tenantId, Guid connectionId, Guid? previous, Guid chosenByMemberId, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        // Como el SQL: inserta si no hay fila, y reemplaza sólo si la guardada sigue siendo `previous`.
+        if (Saved is not null && Saved != previous)
+        {
+            return Task.FromResult(false);
+        }
+
+        Saved = connectionId;
+        Remembered++;
+        return Task.FromResult(true);
+    }
+
+    public Task ReplaceAsync(
+        Guid tenantId, Guid connectionId, Guid chosenByMemberId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        Saved = connectionId;
+        return Task.CompletedTask;
+    }
+}
+
 internal static class WhatsAppChannels
 {
     public const string OrderTemplateId = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
