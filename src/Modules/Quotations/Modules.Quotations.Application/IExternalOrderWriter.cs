@@ -49,6 +49,13 @@ public sealed record ExternalOrderResult(
 public sealed record ExternalShippingParty(
     string? Name, string? Phone, string? Email, string? Address, Guid? DepartmentId, Guid? CityId);
 
+/// <summary>
+/// Spec 2026-10-26 D-C12: lo que el recorrido de la historia previa necesita de un pedido para decidir si le falta la parte de
+/// envío: su estado, si es de recoger en tienda, su parte de envío (<c>null</c> si no tiene) y sus notas tal cual están
+/// guardadas (<c>null</c> si no tiene). Sólo lee.
+/// </summary>
+public sealed record ExternalShippingState(OrderStatus Status, bool IsStorePickup, ExternalShippingParty? Shipping, string? Notes);
+
 /// <summary>Qué pasó con una parte de envío: <see cref="Applied"/> y <see cref="AlreadyApplied"/> son éxito (la segunda es
 /// un reintento); el resto son las razones por las que el pedido ya no admite el cambio.</summary>
 public enum ExternalShippingOutcomeKind
@@ -108,6 +115,10 @@ public interface IExternalOrderWriter
     /// <see cref="AttachShippingAsync"/>.</summary>
     Task<ExternalShippingOutcome> CorrectShippingCityAsync(
         Guid tenantId, Guid orderId, ExternalShippingParty expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-26 D-C12: el estado de envío del pedido, o <c>null</c> si no existe en ese tenant. Sólo lee y sólo ve
+    /// el tenant pedido; no mira el origen (el recorrido llega por la fila del espejo, que ya es de una plataforma).</summary>
+    Task<ExternalShippingState?> FindShippingStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
 }
 
 public sealed class ExternalOrderService(
@@ -254,6 +265,13 @@ public sealed class ExternalOrderService(
             tenantId, orderId,
             (order, now) => order.CorrectExternalShippingCity(ToDetails(expected), departmentId, cityId, now),
             cancellationToken);
+    }
+
+    public async Task<ExternalShippingState?> FindShippingStateAsync(
+        Guid tenantId, Guid orderId, CancellationToken cancellationToken)
+    {
+        var order = await orderRepository.FindByIdAsync(tenantId, new OrderId(orderId), cancellationToken);
+        return order is null ? null : new ExternalShippingState(order.Status, order.IsStorePickup, ToExternal(order.Shipping), order.Notes);
     }
 
     // Sin auditoría ni historial acá (desvío S9): la entrada la escribe el consumidor, que sabe el sinónimo y el operador.

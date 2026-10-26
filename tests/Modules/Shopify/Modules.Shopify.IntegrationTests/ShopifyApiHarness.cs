@@ -139,8 +139,14 @@ internal static class ShopifyApiHarness
         /// compuerta).</summary>
         public Action<IServiceCollection>? ConfigureTestServices { get; init; }
 
+        /// <summary>El tenant operador (<c>Platform:OperatorTenantId</c>), para las pruebas que llaman a la consola del operador.
+        /// Siempre fijado, aunque no se pida: un valor en los user-secrets de quien corre las pruebas convertiría en operador a un
+        /// tenant ajeno.</summary>
+        public Guid? OperatorTenantId { get; init; }
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            builder.UseSetting("Platform:OperatorTenantId", OperatorTenantId?.ToString() ?? string.Empty);
             // El host registra el worker de entregas y el de la conciliación. En las pruebas no corre solo: la que lo necesita lo corre a mano
             // (DrainAsync) y decide cuándo, así que uno en segundo plano reclamaría la misma entrega a la vez.
             builder.ConfigureTestServices(services =>

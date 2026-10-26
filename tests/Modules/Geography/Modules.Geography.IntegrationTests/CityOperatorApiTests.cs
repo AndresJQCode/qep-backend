@@ -796,6 +796,7 @@ public sealed class CityOperatorApiTests
             await readOnly.PutAsJsonAsync(synonym, body, cancellationToken),
             await readOnly.DeleteAsync(synonym, cancellationToken),
             await readOnly.PostAsync($"{synonym}/retry", null, cancellationToken),
+            await readOnly.PostAsync($"{Base}/backfill", null, cancellationToken),
         };
 
         Assert.All(responses, response => Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode));

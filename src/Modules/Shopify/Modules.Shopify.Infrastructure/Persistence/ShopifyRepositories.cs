@@ -142,6 +142,26 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
         return new ShopifyOrderCounts(counts.Waiting, counts.WithWarnings, counts.CancelledAfterInvoice, counts.ImportedToday);
     }
 
+    public async Task<IReadOnlyList<ShopifyOrderMirror>> ListImportedAfterAsync(
+        Guid? afterId, int limit, CancellationToken cancellationToken)
+    {
+        // Los ids por SQL y no por LINQ: Guid no tiene operadores de orden en C#, y el orden que importa es el de uuid de Postgres,
+        // el mismo del ORDER BY. Después, las filas por esos ids (a lo sumo `limit`).
+        var imported = nameof(ShopifyImportState.Imported);
+        var ids = await dbContext.Database.SqlQuery<Guid>(
+            $"""
+            SELECT id AS "Value" FROM shopify.orders
+            WHERE import_state = {imported} AND qep_order_id IS NOT NULL
+              AND ({afterId}::uuid IS NULL OR id > {afterId}::uuid)
+            ORDER BY id
+            LIMIT {limit}
+            """).ToListAsync(cancellationToken);
+        return await dbContext.Orders.AsNoTracking()
+            .Where(row => ids.Contains(row.Id))
+            .OrderBy(row => row.Id)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyDictionary<Guid, int>> CountWaitingByConnectionAsync(Guid tenantId, CancellationToken cancellationToken) =>
         await dbContext.Orders
             .AsNoTracking()

@@ -107,6 +107,11 @@ public static class CityOperatorEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        group.MapPost("/backfill", BackfillAsync)
+            .RequireAuthorization(GeographyOperatorPermissions.CitiesManage)
+            .Produces<CityBackfillResultDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         return endpoints;
     }
 
@@ -146,6 +151,9 @@ public static class CityOperatorEndpoints
         Guid tenantId, Guid id, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             new RetryCitySynonymCorrectionsCommand(new TenantId(tenantId), new CitySynonymId(id)), cancellationToken));
+
+    private static async Task<IResult> BackfillAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new RunCityBackfillCommand(new TenantId(tenantId)), cancellationToken));
 
     private static async Task<IResult> GetSummaryAsync(
         Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

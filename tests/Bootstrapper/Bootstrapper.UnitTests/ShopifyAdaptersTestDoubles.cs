@@ -123,6 +123,15 @@ internal sealed class FakeExternalOrderWriter : IExternalOrderWriter
         return Task.FromResult(ByExternalKey.GetValueOrDefault((tenantId, source, externalKey)));
     }
 
+    /// <summary>Lo que lee el recorrido de la historia previa, por pedido; el que no está no existe (<c>null</c>).</summary>
+    public Dictionary<(Guid TenantId, Guid OrderId), ExternalShippingState> ShippingStates { get; } = [];
+
+    public Task<ExternalShippingState?> FindShippingStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult(ShippingStates.TryGetValue((tenantId, orderId), out var state) ? state : null);
+    }
+
     public Func<ExternalShippingParty, ExternalShippingOutcome>? OnAttach { get; init; }
 
     public Func<ExternalShippingParty, ExternalShippingOutcome>? OnCorrect { get; init; }

@@ -58,6 +58,14 @@ public interface IShopifyOrderMirrorRepository
 
     /// <summary>§7 <c>GET /stores</c>: las filas <c>Waiting</c> de cada tienda del tenant; una tienda sin ninguna no aparece.</summary>
     Task<IReadOnlyDictionary<Guid, int>> CountWaitingByConnectionAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-10-26 D-C12: el recorrido de la historia previa. Las filas <c>Imported</c> con pedido (<c>qep_order_id</c>) de
+    /// <b>todos</b> los tenants, por id y después de <paramref name="afterId"/> (<c>null</c>: desde el principio), hasta
+    /// <paramref name="limit"/>. Sin tracking: sólo se leen. Va por la llave primaria; paginar por id no se salta ni repite filas
+    /// aunque el recorrido tarde.
+    /// </summary>
+    Task<IReadOnlyList<ShopifyOrderMirror>> ListImportedAfterAsync(Guid? afterId, int limit, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-26 §5: las huellas de los sinónimos (<c>shopify.city_corrections</c>). Con tracking; lo agregado commitea

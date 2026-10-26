@@ -449,6 +449,9 @@ public sealed class ShopifyCityCorrectionFlowTests
             IReadOnlyCollection<Guid> requestedCityIds,
             CancellationToken cancellationToken) =>
             inner.CorrectCustomerCityAsync(tenantId, customerId, expectedVersion, previousCityId, cityId, requestedCityIds, cancellationToken);
+
+        public Task<ShopifyOrderCityState?> ReadOrderCityStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+            inner.ReadOrderCityStateAsync(tenantId, orderId, cancellationToken);
     }
 
     /// <summary>Un escritor que falla como Quotations caído (con la causa de fondo envuelta): para todos los pedidos, o sólo para
@@ -481,6 +484,9 @@ public sealed class ShopifyCityCorrectionFlowTests
             Guid cityId,
             IReadOnlyCollection<Guid> requestedCityIds,
             CancellationToken cancellationToken) =>
+            throw Down();
+
+        public Task<ShopifyOrderCityState?> ReadOrderCityStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             throw Down();
 
         private static InvalidOperationException Down() =>
@@ -528,10 +534,15 @@ public sealed class ShopifyCityCorrectionFlowTests
 
         /// <summary>Con <paramref name="withSibling"/>, otro pedido «CALLI» del mismo comprador, importado también antes de confirmar
         /// el sinónimo (después, la importación ya casaría CALLI y le pondría la parte).</summary>
-        public static async Task<CalliShop> StartAsync(Action<IServiceCollection>? configure = null, bool withSibling = false)
+        public static async Task<CalliShop> StartAsync(
+            Action<IServiceCollection>? configure = null, bool withSibling = false, Guid? operatorTenantId = null)
         {
             var database = await StartDatabaseAsync();
-            var factory = new QepApiFactory(database.GetConnectionString()) { ConfigureTestServices = configure };
+            var factory = new QepApiFactory(database.GetConnectionString())
+            {
+                ConfigureTestServices = configure,
+                OperatorTenantId = operatorTenantId,
+            };
             var world = await ShopifyWorld.ArrangeAsync(factory, database.GetConnectionString());
             await world.ConfigureStoreAsync(factory);
             var shop = new CalliShop(database, factory, world);

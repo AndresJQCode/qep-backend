@@ -480,6 +480,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<CorrectCitySynonymCommand, CitySynonymDto>, CorrectCitySynonymHandler>();
         services.AddScoped<ICommandHandler<DeleteCitySynonymCommand, bool>, DeleteCitySynonymHandler>();
         services.AddScoped<ICommandHandler<RetryCitySynonymCorrectionsCommand, CitySynonymDto>, RetryCitySynonymCorrectionsHandler>();
+        services.AddScoped<ICommandHandler<RunCityBackfillCommand, CityBackfillResultDto>, RunCityBackfillHandler>();
         // Quotations, fase 1 (borrador: crear, agregar/editar/quitar lineas, editar encabezado).
         // Los seis van aca por la misma razon que el resto: el dispatcher resuelve por registro
         // explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla recien en
@@ -969,6 +970,8 @@ public static class QepServiceCollectionExtensions
         // Lo que la consola le hace a lo de Shopify: reintentar los trabajos fallidos de un sinónimo y recorrer la historia previa
         // (D-C12, S6). Los dos puertos son de Geography y Geography no referencia Shopify.
         services.AddScoped<ICityCorrectionJobs, CityCorrectionJobsAdapter>();
+        services.AddScoped<ShopifyUnresolvedCityBackfill>();
+        services.AddScoped<IHistoricalCityBackfill, HistoricalCityBackfillAdapter>();
         // §5.3: el cron de la conciliación, cada Shopify:Reconcile:IntervalMinutes.
         services.AddShopifyReconcileWorker();
 

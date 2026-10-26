@@ -630,4 +630,10 @@ internal sealed class FakeCityCorrectionWriter : IShopifyCityCorrectionWriter
         CustomerCities.Add((tenantId, customerId, expectedVersion, previousCityId, cityId, [.. requestedCityIds]));
         return Task.FromResult(new ShopifyCityWriteResult(ShopifyCityWriteKind.Applied, null, expectedVersion + 1, null, cityId));
     }
+
+    /// <summary>Lo que lee el recorrido de la historia previa, por pedido; el que no está no existe (<c>null</c>).</summary>
+    public Dictionary<(Guid TenantId, Guid OrderId), ShopifyOrderCityState> OrderStates { get; } = [];
+
+    public Task<ShopifyOrderCityState?> ReadOrderCityStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+        Task.FromResult(OrderStates.TryGetValue((tenantId, orderId), out var state) ? state : null);
 }
