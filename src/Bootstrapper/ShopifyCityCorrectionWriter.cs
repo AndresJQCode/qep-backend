@@ -49,21 +49,32 @@ internal sealed class ShopifyCityCorrectionWriter(IServiceScopeFactory scopes) :
     }
 
     public async Task<ShopifyCityWriteResult> CompleteCustomerAsync(
-        Guid tenantId, Guid customerId, long expectedVersion, ShopifyCompleteCustomer data, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        ShopifyCompleteCustomer data,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(data);
         await using var scope = scopes.CreateAsyncScope();
         var outcome = await scope.ServiceProvider.GetRequiredService<ICustomerProvisioning>().CompleteExternalSaleAsync(
-            tenantId, customerId, expectedVersion, ShopifyCustomerDirectory.ToData(data), cancellationToken);
+            tenantId, customerId, expectedVersion, ShopifyCustomerDirectory.ToData(data), requestedCityIds, cancellationToken);
         return FromCustomer(outcome);
     }
 
     public async Task<ShopifyCityWriteResult> CorrectCustomerCityAsync(
-        Guid tenantId, Guid customerId, long expectedVersion, Guid previousCityId, Guid cityId, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        Guid previousCityId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         await using var scope = scopes.CreateAsyncScope();
         var outcome = await scope.ServiceProvider.GetRequiredService<ICustomerProvisioning>().CorrectCityAsync(
-            tenantId, customerId, expectedVersion, previousCityId, cityId, cancellationToken);
+            tenantId, customerId, expectedVersion, previousCityId, cityId, requestedCityIds, cancellationToken);
         return FromCustomer(outcome);
     }
 

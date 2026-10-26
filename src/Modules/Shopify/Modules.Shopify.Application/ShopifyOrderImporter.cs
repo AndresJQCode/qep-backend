@@ -38,6 +38,7 @@ public sealed class ShopifyOrderImporter(
     IShopifyCityCorrectionRepository cityCorrections,
     IShopifyCityCorrectionJobRepository cityCorrectionJobs,
     IShopifyUnresolvedCityReporter unresolvedCities,
+    IShopifyCitySynonymLookup synonyms,
     IShopifyUnitOfWork unitOfWork,
     IClock clock) : IShopifyOrderImporter
 {
@@ -161,19 +162,23 @@ public sealed class ShopifyOrderImporter(
 
         // D-S24: el cliente se anota en su propia transacción antes del pedido. Si el pedido falla o el worker cae, el reintento
         // lo encuentra en la fila y no crea otro incompleto (uno sin teléfono ni correo no se volvería a encontrar). La huella del
-        // cliente que nació completo por un sinónimo (O8) va en el mismo guardado: un reintento usa el cliente anotado y no la
-        // volvería a escribir.
+        // cliente que nació completo por un sinónimo (O8) va en el mismo guardado, bajo el candado del sinónimo: un reintento usa el
+        // cliente anotado y no la volvería a escribir.
         if (row.QepCustomerId != customer.Id)
         {
+            row.AttachCustomer(customer.Id);
             if (creation is { Customer: { Created: true, IsComplete: true }, City: { SynonymId: { } customerSynonym } city })
             {
-                cityCorrections.Add(ShopifyCityCorrection.ForCustomer(
-                    tenantId, customerSynonym, ShopifyCityCorrectionOrigin.Import, customer.Id, row.Id, city.DepartmentId, city.CityId,
-                    customer.Version, now));
+                await SaveImportCorrectionAsync(
+                    ShopifyCityCorrection.ForCustomer(
+                        tenantId, customerSynonym, ShopifyCityCorrectionOrigin.Import, customer.Id, row.Id, city.DepartmentId, city.CityId,
+                        customer.Version, now),
+                    cancellationToken);
             }
-
-            row.AttachCustomer(customer.Id);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
+            else
+            {
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+            }
         }
 
         var draft = shippingResult.Draft;
@@ -347,7 +352,7 @@ public sealed class ShopifyOrderImporter(
     /// <list type="bullet">
     /// <item>La parte de envío que casó por un sinónimo deja su huella <c>origin = import</c> (O8, D-C13) con la parte como la
     /// guardó Quotations, si no estaba ya: con <c>AlreadyExisted</c> el intento anterior pudo haberla guardado o perdido (desvío
-    /// S3). Va en la unidad de trabajo de Shopify, en el guardado final del llamador.</item>
+    /// S3). Se guarda en el acto, bajo el candado del sinónimo (<see cref="SaveImportCorrectionAsync"/>).</item>
     /// <item>La ciudad de Colombia que no casó por ningún camino, con su departamento resuelto (D-C11), va a la bandeja si frenó
     /// algo: la parte de envío (no es recogida) o el alta completa del cliente. Si el reporte lanza, la importación lanza y la
     /// entrega se reintenta; la ocurrencia es idempotente por la fila del espejo. Un texto vacío (<c>Ignored</c>) no cambia nada
@@ -376,8 +381,10 @@ public sealed class ShopifyOrderImporter(
             && await cityCorrections.FindAsync(
                 row.TenantId, partySynonym, ShopifyCityCorrectionTarget.Order, result.OrderId, cancellationToken) is null)
         {
-            cityCorrections.Add(ShopifyCityCorrection.ForOrder(
-                row.TenantId, partySynonym, ShopifyCityCorrectionOrigin.Import, result.OrderId, row.Id, persisted, now));
+            await SaveImportCorrectionAsync(
+                ShopifyCityCorrection.ForOrder(
+                    row.TenantId, partySynonym, ShopifyCityCorrectionOrigin.Import, result.OrderId, row.Id, persisted, now),
+                cancellationToken);
         }
 
         if (shippingCity is not { City: null, UnmatchedDepartmentId: { } departmentId, CityText: { } cityText }
@@ -409,6 +416,28 @@ public sealed class ShopifyOrderImporter(
                 cityCorrectionJobs.Add(job);
             }
         }
+    }
+
+    /// <summary>
+    /// Spec 2026-10-26 D-C6: la huella <c>origin = import</c> se guarda como la del worker que corrige, en su propia transacción y
+    /// bajo el candado del sinónimo, que es el mismo con que el evento <c>corrected</c> lista las huellas. Con el candado tomado se
+    /// relee el sinónimo: si ya no apunta a la ciudad que casó (el operador lo corrigió durante la importación), el evento pudo
+    /// listar antes de esta huella, así que la recorrección se siembra acá, sin operador ni mensaje. Guarda también lo que la
+    /// importación tenga pendiente (el cliente anotado en la fila); el commit final sigue siendo del llamador.
+    /// </summary>
+    private async Task SaveImportCorrectionAsync(ShopifyCityCorrection correction, CancellationToken cancellationToken)
+    {
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        await unitOfWork.LockCitySynonymAsync(correction.SynonymId, cancellationToken);
+        cityCorrections.Add(correction);
+        if (await synonyms.FindAsync(correction.SynonymId, cancellationToken) is { IsDeleted: false } current
+            && current.CityId != correction.CityId)
+        {
+            cityCorrectionJobs.Add(ShopifyCityCorrectionJob.Recorrect(correction, Guid.Empty, sourceMessageId: null, clock.UtcNow));
+        }
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     /// <summary>

@@ -233,6 +233,13 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("processed_at");
 
+                    b.Property<Guid[]>("RequestedCityIds")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid[]")
+                        .HasColumnName("requested_city_ids")
+                        .HasDefaultValueSql("'{}'::uuid[]");
+
                     b.Property<string>("SkipReason")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")

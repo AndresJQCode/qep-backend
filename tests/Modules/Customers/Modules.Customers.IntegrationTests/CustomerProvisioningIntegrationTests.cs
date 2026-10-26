@@ -156,13 +156,14 @@ public sealed class CustomerProvisioningIntegrationTests
             classification.Id);
 
         var completed = await InScopeAsync<ExternalCustomerCityOutcome, ICustomerProvisioning>(factory, provisioning =>
-            provisioning.CompleteExternalSaleAsync(Tenant, incomplete.Id, incomplete.Version, data, TestContext.Current.CancellationToken));
+            provisioning.CompleteExternalSaleAsync(Tenant, incomplete.Id, incomplete.Version, data, [], TestContext.Current.CancellationToken));
         var again = await InScopeAsync<ExternalCustomerCityOutcome, ICustomerProvisioning>(factory, provisioning =>
-            provisioning.CompleteExternalSaleAsync(Tenant, incomplete.Id, incomplete.Version, data, TestContext.Current.CancellationToken));
-        // El reintento de un trabajo cuyo sinónimo cambió de ciudad entre intentos: la misma escritura, con la ciudad que quedó.
+            provisioning.CompleteExternalSaleAsync(Tenant, incomplete.Id, incomplete.Version, data, [], TestContext.Current.CancellationToken));
+        // El reintento de un trabajo cuyo sinónimo cambió de ciudad entre intentos (el anterior pidió la ciudad que quedó): la misma
+        // escritura, con la ciudad que quedó.
         var movedSynonym = await InScopeAsync<ExternalCustomerCityOutcome, ICustomerProvisioning>(factory, provisioning =>
             provisioning.CompleteExternalSaleAsync(
-                Tenant, incomplete.Id, incomplete.Version, data with { CityId = Guid.NewGuid() }, TestContext.Current.CancellationToken));
+                Tenant, incomplete.Id, incomplete.Version, data with { CityId = Guid.NewGuid() }, [city.CityId], TestContext.Current.CancellationToken));
 
         Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, 2, null, city.CityId), completed);
         Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null, city.CityId), again);
@@ -193,7 +194,7 @@ public sealed class CustomerProvisioningIntegrationTests
         var existing = await CreateCustomerAsync(client, cities[0].CityId, classification.Id);
 
         var corrected = await InScopeAsync<ExternalCustomerCityOutcome, ICustomerProvisioning>(factory, provisioning =>
-            provisioning.CorrectCityAsync(Tenant, existing.Id, 1, cities[0].CityId, cities[1].CityId, TestContext.Current.CancellationToken));
+            provisioning.CorrectCityAsync(Tenant, existing.Id, 1, cities[0].CityId, cities[1].CityId, [], TestContext.Current.CancellationToken));
 
         Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, 2, null, cities[1].CityId), corrected);
         Assert.Equal($"{cities[1].CityId}|2|1|{cities[1].CityId}",

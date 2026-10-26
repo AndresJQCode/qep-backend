@@ -31,6 +31,7 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                     attempts = table.Column<int>(type: "integer", nullable: false, defaultValue: 0),
                     lease_until = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
                     last_error = table.Column<string>(type: "character varying(512)", maxLength: 512, nullable: true),
+                    requested_city_ids = table.Column<Guid[]>(type: "uuid[]", nullable: false, defaultValueSql: "'{}'::uuid[]"),
                     created_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     processed_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true)
                 },

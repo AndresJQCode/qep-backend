@@ -74,18 +74,33 @@ public interface ICustomerProvisioning
     /// importación: activo, sin fusionar, incompleto y en <paramref name="expectedVersion"/>. No lanza por datos: lo que
     /// no se puede hacer vuelve como <see cref="ExternalCustomerCityOutcomeKind.NotEligible"/> o
     /// <see cref="ExternalCustomerCityOutcomeKind.NotCompletable"/>. Es idempotente: completo en
-    /// <c>expectedVersion + 1</c> y con esa ciudad es <see cref="ExternalCustomerCityOutcomeKind.AlreadyApplied"/>.
+    /// <c>expectedVersion + 1</c>, con los mismos datos salvo la ciudad y en una ciudad que el llamador pidió (la de
+    /// <paramref name="data"/> o una de <paramref name="requestedCityIds"/>, las que pidió en intentos anteriores) es
+    /// <see cref="ExternalCustomerCityOutcomeKind.AlreadyApplied"/>, con la ciudad que quedó.
     /// </summary>
     Task<ExternalCustomerCityOutcome> CompleteExternalSaleAsync(
-        Guid tenantId, Guid customerId, long expectedVersion, CompleteCustomerData data, CancellationToken cancellationToken);
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        CompleteCustomerData data,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken);
 
     /// <summary>
     /// Spec de ciudades 2026-10-26 §4.6 (D-C4b): cambia la ciudad de un cliente completo de <paramref name="previousCityId"/>
     /// a <paramref name="cityId"/> (y la de su dirección principal si sigue ahí), sólo si no cambió desde
-    /// <paramref name="expectedVersion"/>. Sin auditoría propia: la corrección la audita Shopify una sola vez.
+    /// <paramref name="expectedVersion"/>. Sin auditoría propia: la corrección la audita Shopify una sola vez. En
+    /// <c>expectedVersion + 1</c> y en una ciudad que el llamador pidió (<paramref name="cityId"/> o una de
+    /// <paramref name="requestedCityIds"/>) es <see cref="ExternalCustomerCityOutcomeKind.AlreadyApplied"/>.
     /// </summary>
     Task<ExternalCustomerCityOutcome> CorrectCityAsync(
-        Guid tenantId, Guid customerId, long expectedVersion, Guid previousCityId, Guid cityId, CancellationToken cancellationToken);
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        Guid previousCityId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken);
 }
 
 public sealed class CustomerProvisioning(
@@ -155,9 +170,15 @@ public sealed class CustomerProvisioning(
     }
 
     public async Task<ExternalCustomerCityOutcome> CompleteExternalSaleAsync(
-        Guid tenantId, Guid customerId, long expectedVersion, CompleteCustomerData data, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        CompleteCustomerData data,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(data);
+        ArgumentNullException.ThrowIfNull(requestedCityIds);
         var customer = await repository.FindAsync(tenantId, new CustomerId(customerId), cancellationToken);
         if (customer is null)
         {
@@ -165,8 +186,12 @@ public sealed class CustomerProvisioning(
         }
 
         // Un reintento: un intento anterior lo completó con estos datos y cayó antes de que Shopify guardara. La ciudad puede ser
-        // otra (el sinónimo cambió entre intentos), así que no se compara: vuelve la que quedó, y Shopify la recorrige.
-        if (customer.IsComplete && customer.Version == expectedVersion + 1 && WasCompletedWith(customer, data))
+        // otra de las que pidió el llamador (el sinónimo cambió entre intentos): vuelve la que quedó, y Shopify la recorrige. Una
+        // que no pidió nunca la puso una persona, y eso no es un reintento.
+        if (customer.IsComplete
+            && customer.Version == expectedVersion + 1
+            && WasRequested(customer, data.CityId, requestedCityIds)
+            && WasCompletedWith(customer, data))
         {
             return new(ExternalCustomerCityOutcomeKind.AlreadyApplied, customer.Version, null, customer.CityId);
         }
@@ -214,18 +239,28 @@ public sealed class CustomerProvisioning(
     }
 
     public async Task<ExternalCustomerCityOutcome> CorrectCityAsync(
-        Guid tenantId, Guid customerId, long expectedVersion, Guid previousCityId, Guid cityId, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        Guid previousCityId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(requestedCityIds);
         var customer = await repository.FindAsync(tenantId, new CustomerId(customerId), cancellationToken);
         if (customer is null)
         {
             return new(ExternalCustomerCityOutcomeKind.NotFound, null, null);
         }
 
-        // Un reintento: un intento anterior ya lo sacó de la ciudad anterior (a ésta, o a la que el sinónimo tenía entonces) y
-        // cayó antes de que Shopify guardara. Vuelve la ciudad que quedó. Lo único que no distingue es una persona que le cambió
-        // la ciudad exactamente una vez en esa ventana; fuera de ella, cualquier edición sube la versión otra vez.
-        if (customer.IsComplete && customer.Version == expectedVersion + 1 && customer.CityId != previousCityId)
+        // Un reintento: un intento anterior ya lo llevó a una de las ciudades que pidió el llamador (ésta, o la que el sinónimo
+        // tenía entonces) y cayó antes de que Shopify guardara. Vuelve la ciudad que quedó. Una persona que le cambió la ciudad
+        // una vez la llevó a una que nadie pidió: no es un reintento, y sale Edited.
+        if (customer.IsComplete
+            && customer.Version == expectedVersion + 1
+            && customer.CityId != previousCityId
+            && WasRequested(customer, cityId, requestedCityIds))
         {
             return new(ExternalCustomerCityOutcomeKind.AlreadyApplied, customer.Version, null, customer.CityId);
         }
@@ -248,6 +283,9 @@ public sealed class CustomerProvisioning(
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return new(ExternalCustomerCityOutcomeKind.Applied, customer.Version, null, customer.CityId);
     }
+
+    private static bool WasRequested(Customer customer, Guid? cityId, IReadOnlyCollection<Guid> requestedCityIds) =>
+        customer.CityId is { } current && (current == cityId || requestedCityIds.Contains(current));
 
     // Lo que la venta trajo y no es la ciudad: el documento, la clasificación y el país. Una persona que completó la ficha con
     // otro documento no es un reintento nuestro.

@@ -150,11 +150,22 @@ public sealed class PosCustomerLookupTests
             throw new NotSupportedException();
 
         public Task<ExternalCustomerCityOutcome> CompleteExternalSaleAsync(
-            Guid tenantId, Guid customerId, long expectedVersion, CompleteCustomerData data, CancellationToken cancellationToken) =>
+            Guid tenantId,
+            Guid customerId,
+            long expectedVersion,
+            CompleteCustomerData data,
+            IReadOnlyCollection<Guid> requestedCityIds,
+            CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalCustomerCityOutcome> CorrectCityAsync(
-            Guid tenantId, Guid customerId, long expectedVersion, Guid previousCityId, Guid cityId, CancellationToken cancellationToken) =>
+            Guid tenantId,
+            Guid customerId,
+            long expectedVersion,
+            Guid previousCityId,
+            Guid cityId,
+            IReadOnlyCollection<Guid> requestedCityIds,
+            CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 

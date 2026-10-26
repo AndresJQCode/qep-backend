@@ -874,21 +874,29 @@ public sealed class ShopifyAdaptersTests
         {
             var provisioning = new FakeCustomerProvisioning { OnExternalCity = () => outcome };
             var adapter = CityCorrectionWriter(provisioning: provisioning);
-            Assert.Equal(expected, await adapter.CompleteCustomerAsync(TenantId, customerId, 1, CompleteCustomer(), Ct));
-            Assert.Equal(expected, await adapter.CorrectCustomerCityAsync(TenantId, customerId, 2, previousCityId, cityId, Ct));
+            Assert.Equal(expected, await adapter.CompleteCustomerAsync(TenantId, customerId, 1, CompleteCustomer(), [], Ct));
+            Assert.Equal(expected, await adapter.CorrectCustomerCityAsync(TenantId, customerId, 2, previousCityId, cityId, [], Ct));
         }
 
         var sent = new FakeCustomerProvisioning();
         var writer = CityCorrectionWriter(provisioning: sent);
         var data = CompleteCustomer();
-        await writer.CompleteCustomerAsync(TenantId, customerId, 1, data, Ct);
-        await writer.CorrectCustomerCityAsync(TenantId, customerId, 2, previousCityId, cityId, Ct);
+        // Las ciudades que el trabajo pidió en intentos anteriores viajan tal cual: con ellas Customers reconoce su propio reintento.
+        Guid[] requested = [previousCityId, cityId];
+        await writer.CompleteCustomerAsync(TenantId, customerId, 1, data, requested, Ct);
+        await writer.CorrectCustomerCityAsync(TenantId, customerId, 2, previousCityId, cityId, requested, Ct);
+        var completed = Assert.Single(sent.ExternalCompletes);
         Assert.Equal(
             (TenantId, customerId, 1L, new CompleteCustomerData(
                 data.Name, data.IdentificationType, data.IdentificationNumber, data.Phone, data.Email, data.Address, data.Country,
                 data.CityId, data.CityName, data.ClassificationId)),
-            Assert.Single(sent.ExternalCompletes));
-        Assert.Equal((TenantId, customerId, 2L, previousCityId, cityId), Assert.Single(sent.CityCorrections));
+            (completed.TenantId, completed.CustomerId, completed.ExpectedVersion, completed.Data));
+        Assert.Equal(requested, completed.Requested);
+        var corrected = Assert.Single(sent.CityCorrections);
+        Assert.Equal(
+            (TenantId, customerId, 2L, previousCityId, cityId),
+            (corrected.TenantId, corrected.CustomerId, corrected.ExpectedVersion, corrected.PreviousCityId, corrected.CityId));
+        Assert.Equal(requested, corrected.Requested);
     }
 
     // El trabajo tiene que saber que el sinónimo se borró (synonym_deleted), así que el adaptador no los filtra; uno que no

@@ -149,27 +149,32 @@ public sealed class ShopifyCitySynonymEventApplier(
 /// Spec 2026-10-26 §4.4, §4.6 y D-C6: corrige el pedido o el cliente de un trabajo de <c>shopify.city_correction_jobs</c>. Lo llama
 /// el worker después de reclamarlo, en un scope propio por trabajo, y todo corre en una transacción de Shopify.
 /// <list type="number">
-/// <item>Toma la fila del trabajo (<see cref="IShopifyCityCorrectionJobRepository.LockIfPendingAsync"/>): si otra réplica ya lo
-/// terminó (el lease venció mientras corría), no escribe nada.</item>
 /// <item>Lee el sinónimo al correr: uno borrado (o que ya no existe) termina <c>synonym_deleted</c> sin escribir nada (O6), y la
 /// ciudad que se pide es la <b>actual</b> del sinónimo, no la del evento que sembró el trabajo.</item>
 /// <item>Lo que ya hizo otro trabajo no se repite: un <c>Resolve</c> cuyo pedido o cliente ya tiene la huella de este sinónimo (el
 /// importador siembra sin mensaje, así que un pedido reimportado puede sembrar otro) y un <c>Recorrect</c> cuya huella ya está en
 /// la ciudad del sinónimo terminan <c>Skipped</c> sin llamar a Quotations ni a Customers.</item>
+/// <item>Antes de cada escritura anota en la fila la ciudad que pide (<see cref="IShopifyCityCorrectionJobQueue.RecordRequestedCityAsync"/>,
+/// en su propia sentencia) y le pasa al escritor todas las que pidió el trabajo: así Customers reconoce un reintento suyo y no
+/// confunde lo que hizo una persona con lo que hizo un intento anterior.</item>
 /// <item>Escribe por <see cref="IShopifyCityCorrectionWriter"/>, que confirma en su propio scope. Con éxito, también con
 /// <c>AlreadyApplied</c> (un intento anterior escribió y cayó antes de guardar acá), la huella guarda la ciudad que de verdad quedó
 /// escrita, que en un reintento puede ser la que el sinónimo tenía antes. Cualquier rechazo termina <c>Skipped</c> con su motivo,
 /// sin huella ni auditoría.</item>
-/// <item>Con éxito, bajo el candado del sinónimo (<see cref="IShopifyUnitOfWork.LockCitySynonymAsync"/>, el mismo que toma el evento
+/// <item>Cierra el trabajo en una transacción de Shopify que primero toma su fila
+/// (<see cref="IShopifyCityCorrectionJobRepository.LockIfPendingAsync"/>): si otra réplica ya lo terminó (el lease venció mientras
+/// corría), no escribe nada. Con éxito, bajo el candado del sinónimo (<see cref="IShopifyUnitOfWork.LockCitySynonymAsync"/>, el mismo que toma el evento
 /// <c>corrected</c> antes de listar las huellas) relee el sinónimo y guarda en un solo guardado la huella, la auditoría, el trabajo
 /// <c>Applied</c> y, si la ciudad del sinónimo ya no es la escrita, el <c>Recorrect</c> de esa huella. Así ninguna huella queda en
 /// la ciudad vieja: o el evento la lista, o esta relectura ve la ciudad nueva.</item>
 /// </list>
-/// Lo que lanza (concurrencia, base, red, un payload ilegible) sale tal cual: la transacción se deshace y el worker lo reintenta.
+/// Lo que lanza (concurrencia, base, red, un payload ilegible) sale tal cual: nada de Shopify se guarda (salvo la ciudad pedida) y
+/// el worker lo reintenta.
 /// </summary>
 public sealed class ShopifyCityCorrectionProcessor(
     IShopifyCitySynonymLookup synonyms,
     IShopifyCityCorrectionWriter writer,
+    IShopifyCityCorrectionJobQueue queue,
     IShopifyOrderMirrorRepository mirrors,
     IShopifyStoreRepository stores,
     IShopifyCityCorrectionRepository corrections,
@@ -188,30 +193,30 @@ public sealed class ShopifyCityCorrectionProcessor(
     public async Task ProcessAsync(ShopifyCityCorrectionJob job, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(job);
-        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
-        if (!await jobs.LockIfPendingAsync(job.Id, cancellationToken))
-        {
-            return;
-        }
-
         var synonym = await synonyms.FindAsync(job.SynonymId, cancellationToken);
         if (synonym is not { IsDeleted: false })
         {
-            await SkipAsync(job, ShopifyCityCorrectionSkipReasons.SynonymDeleted, transaction, cancellationToken);
+            await SkipAsync(job, ShopifyCityCorrectionSkipReasons.SynonymDeleted, cancellationToken);
             return;
         }
 
         var existing = await ExistingCorrectionAsync(job, cancellationToken);
         if (existing is not null && (job.Kind == ShopifyCityCorrectionJobKind.Resolve || existing.CityId == synonym.CityId))
         {
-            await SkipAsync(job, AlreadyDoneReason(job.Target), transaction, cancellationToken);
+            await SkipAsync(job, AlreadyDoneReason(job.Target), cancellationToken);
             return;
         }
 
         var (result, preconditionFailed) = await WriteAsync(job, synonym, existing, cancellationToken);
         if (result is not { Kind: ShopifyCityWriteKind.Applied or ShopifyCityWriteKind.AlreadyApplied })
         {
-            await SkipAsync(job, preconditionFailed ?? SkipReasonFor(result!.Kind, job.Target), transaction, cancellationToken);
+            await SkipAsync(job, preconditionFailed ?? SkipReasonFor(result!.Kind, job.Target), cancellationToken);
+            return;
+        }
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        if (!await jobs.LockIfPendingAsync(job.Id, cancellationToken))
+        {
             return;
         }
 
@@ -274,11 +279,13 @@ public sealed class ShopifyCityCorrectionProcessor(
     {
         if (job.Kind == ShopifyCityCorrectionJobKind.Recorrect)
         {
+            var requested = await queue.RecordRequestedCityAsync(job.Id, synonym.CityId, cancellationToken);
             var recorrected = job.Target == ShopifyCityCorrectionTarget.Order
                 ? await writer.CorrectShippingCityAsync(
                     job.TenantId, job.TargetId, existing!.Party!, synonym.DepartmentId, synonym.CityId, cancellationToken)
                 : await writer.CorrectCustomerCityAsync(
-                    job.TenantId, job.TargetId, existing!.CustomerVersion!.Value, existing.CityId, synonym.CityId, cancellationToken);
+                    job.TenantId, job.TargetId, existing!.CustomerVersion!.Value, existing.CityId, synonym.CityId, requested,
+                    cancellationToken);
             return (recorrected, null);
         }
 
@@ -298,6 +305,7 @@ public sealed class ShopifyCityCorrectionProcessor(
             }
 
             var party = new ShopifyPartyDraft(fields.Name, fields.Phone, fields.Email, fields.Address, synonym.DepartmentId, synonym.CityId);
+            await queue.RecordRequestedCityAsync(job.Id, synonym.CityId, cancellationToken);
             return (await writer.AttachShippingAsync(
                 job.TenantId, job.TargetId, party, ShopifyOrderImporter.RawAddressLabel, cancellationToken), null);
         }
@@ -309,8 +317,9 @@ public sealed class ShopifyCityCorrectionProcessor(
             return (null, ShopifyCityCorrectionSkipReasons.CustomerNotCompletable);
         }
 
+        var cities = await queue.RecordRequestedCityAsync(job.Id, synonym.CityId, cancellationToken);
         return (await writer.CompleteCustomerAsync(
-            job.TenantId, job.TargetId, IncompleteCustomerVersion, data, cancellationToken), null);
+            job.TenantId, job.TargetId, IncompleteCustomerVersion, data, cities, cancellationToken), null);
     }
 
     // La huella sale de lo que devolvió el escritor (la parte como la guardó Quotations, la versión y la ciudad que dejó
@@ -362,9 +371,16 @@ public sealed class ShopifyCityCorrectionProcessor(
         return correction;
     }
 
-    private async Task SkipAsync(
-        ShopifyCityCorrectionJob job, string reason, IShopifyTransaction transaction, CancellationToken cancellationToken)
+    // Como el cierre con éxito: en una transacción que primero toma la fila, para no cerrar dos veces un trabajo que otra réplica
+    // ya terminó.
+    private async Task SkipAsync(ShopifyCityCorrectionJob job, string reason, CancellationToken cancellationToken)
     {
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        if (!await jobs.LockIfPendingAsync(job.Id, cancellationToken))
+        {
+            return;
+        }
+
         job.MarkSkipped(reason, clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);

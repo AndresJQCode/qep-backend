@@ -86,16 +86,23 @@ internal sealed class ShopifyCityCorrectionJobQueue(ShopifyDbContext dbContext) 
             .Take(limit)
             .ToListAsync(cancellationToken);
 
+    // N2: SKIP LOCKED. Una réplica que está cerrando el trabajo tiene su fila tomada (LockIfPendingAsync); esperarla podría agotar
+    // el tiempo del comando fuera del try de cada trabajo y cortar la pasada entera. Saltarla es lo correcto: está terminando.
     public async Task<int?> TryClaimAsync(Guid id, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var leases = LeaseArray;
         var rows = await dbContext.Database.SqlQuery<ClaimRow>(
             $"""
-            UPDATE shopify.city_correction_jobs
-               SET lease_until = {now} + ({leases})[LEAST(attempts + 1, cardinality({leases}))],
-                   attempts = attempts + 1
-             WHERE id = {id} AND status = {Pending} AND (lease_until IS NULL OR lease_until < {now})
-            RETURNING attempts AS "Attempts"
+            WITH claimable AS (
+                SELECT id FROM shopify.city_correction_jobs
+                 WHERE id = {id} AND status = {Pending} AND (lease_until IS NULL OR lease_until < {now})
+                   FOR UPDATE SKIP LOCKED)
+            UPDATE shopify.city_correction_jobs job
+               SET lease_until = {now} + ({leases})[LEAST(job.attempts + 1, cardinality({leases}))],
+                   attempts = job.attempts + 1
+              FROM claimable
+             WHERE job.id = claimable.id
+            RETURNING job.attempts AS "Attempts"
             """).ToListAsync(cancellationToken);
         return rows.Count == 1 ? rows[0].Attempts : null;
     }
@@ -109,5 +116,26 @@ internal sealed class ShopifyCityCorrectionJobQueue(ShopifyDbContext dbContext) 
             """,
             cancellationToken);
 
+    public async Task<IReadOnlyList<Guid>> RecordRequestedCityAsync(Guid id, Guid cityId, CancellationToken cancellationToken)
+    {
+        // Tiene que quedar aunque el intento caiga: una transacción abierta la arrastraría a su rollback.
+        if (dbContext.Database.CurrentTransaction is not null)
+        {
+            throw new InvalidOperationException("RecordRequestedCityAsync commits on its own and cannot run inside a transaction.");
+        }
+
+        var rows = await dbContext.Database.SqlQuery<RequestedRow>(
+            $"""
+            UPDATE shopify.city_correction_jobs
+               SET requested_city_ids = CASE WHEN {cityId} = ANY(requested_city_ids) THEN requested_city_ids
+                                             ELSE array_append(requested_city_ids, {cityId}) END
+             WHERE id = {id}
+            RETURNING requested_city_ids AS "Cities"
+            """).ToListAsync(cancellationToken);
+        return rows.Count == 1 ? rows[0].Cities : [cityId];
+    }
+
     private sealed record ClaimRow(int Attempts);
+
+    private sealed record RequestedRow(Guid[] Cities);
 }

@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Modules.Shopify.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(ShopifyDbContext))]
-    [Migration("20261026192226_AddCityCorrectionJobs")]
+    [Migration("20261026211954_AddCityCorrectionJobs")]
     partial class AddCityCorrectionJobs
     {
         /// <inheritdoc />
@@ -235,6 +235,13 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("ProcessedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("processed_at");
+
+                    b.Property<Guid[]>("RequestedCityIds")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid[]")
+                        .HasColumnName("requested_city_ids")
+                        .HasDefaultValueSql("'{}'::uuid[]");
 
                     b.Property<string>("SkipReason")
                         .HasMaxLength(32)

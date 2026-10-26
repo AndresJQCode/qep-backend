@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Modules.Audit.Domain;
 using Modules.Audit.Infrastructure.Persistence;
 using Modules.Shopify.Domain;
@@ -33,6 +35,14 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
     public const string CityCorrectionJobMessageTargetIndex = "IX_city_correction_jobs_message_target";
 
     private const int EnumNameMaxLength = 16;
+
+    // La lista de ciudades pedidas por un trabajo como uuid[] (el mismo par que Messaging usa para sus audiencias).
+    private static readonly ValueConverter<IReadOnlyList<Guid>, Guid[]> GuidListConverter = new(list => list.ToArray(), array => array);
+
+    private static readonly ValueComparer<IReadOnlyList<Guid>> GuidListComparer = new(
+        (left, right) => left!.SequenceEqual(right!),
+        list => list.Aggregate(0, (hash, id) => HashCode.Combine(hash, id)),
+        list => list.ToArray());
 
     public DbSet<ShopifyStore> Stores => Set<ShopifyStore>();
 
@@ -97,6 +107,11 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
         job.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(0);
         job.Property(value => value.LeaseUntil).HasColumnName("lease_until");
         job.Property(value => value.LastError).HasColumnName("last_error").HasMaxLength(ShopifyCityCorrectionJob.LastErrorMaxLength);
+        job.Property(value => value.RequestedCityIds)
+            .HasColumnName("requested_city_ids")
+            .HasColumnType("uuid[]")
+            .HasDefaultValueSql("'{}'::uuid[]")
+            .HasConversion(GuidListConverter, GuidListComparer);
         job.Property(value => value.CreatedAt).HasColumnName("created_at");
         job.Property(value => value.ProcessedAt).HasColumnName("processed_at");
 

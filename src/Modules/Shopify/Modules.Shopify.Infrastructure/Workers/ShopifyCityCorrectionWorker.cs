@@ -41,7 +41,7 @@ internal sealed partial class ShopifyCityCorrectionWorker(
     [LoggerMessage(Level = LogLevel.Warning, Message = "Shopify city correction job {JobId} failed on attempt {Attempt} of {MaxAttempts}; it is retried in {Lease}.")]
     private static partial void LogAttemptFailed(ILogger logger, Exception exception, Guid jobId, int attempt, int maxAttempts, TimeSpan lease);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Shopify city correction job {JobId} failed on its last attempt ({Attempt}) and is closed as Failed: {Reason}.")]
+    [LoggerMessage(Level = LogLevel.Error, Message = "Shopify city correction job {JobId} failed on its last attempt ({Attempt}); closing it as Failed unless another replica already finished it: {Reason}.")]
     private static partial void LogGaveUp(ILogger logger, Exception exception, Guid jobId, int attempt, string reason);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

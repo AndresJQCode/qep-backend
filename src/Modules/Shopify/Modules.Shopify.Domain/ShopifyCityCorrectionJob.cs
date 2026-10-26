@@ -75,6 +75,11 @@ public sealed class ShopifyCityCorrectionJob
 
     public string? LastError { get; private set; }
 
+    /// <summary>Las ciudades que pidió cada intento, en orden y sin repetir. Las escribe la cola por SQL antes de cada escritura
+    /// (<c>RecordRequestedCityAsync</c>): con ellas Customers distingue el reintento de este trabajo (una ciudad que pidió) de lo que
+    /// hizo una persona (una que no pidió nunca).</summary>
+    public IReadOnlyList<Guid> RequestedCityIds { get; private set; } = [];
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     public DateTimeOffset? ProcessedAt { get; private set; }

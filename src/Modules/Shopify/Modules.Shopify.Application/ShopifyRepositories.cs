@@ -112,6 +112,11 @@ public interface IShopifyCityCorrectionJobQueue
 
     /// <summary>Lo cierra <c>Failed</c> con <paramref name="lastError"/>, si sigue <c>Pending</c>.</summary>
     Task MarkFailedAsync(Guid id, DateTimeOffset now, string lastError, CancellationToken cancellationToken);
+
+    /// <summary>N1: anota en la fila la ciudad que pide este intento, <b>antes</b> de llamar al escritor y en su propia sentencia
+    /// (fuera de toda transacción): si el proceso cae después de que Customers o Quotations confirmen, el reintento sabe que esa
+    /// ciudad la pidió el trabajo. Devuelve todas las que pidió hasta ahora, ésta incluida.</summary>
+    Task<IReadOnlyList<Guid>> RecordRequestedCityAsync(Guid id, Guid cityId, CancellationToken cancellationToken);
 }
 
 /// <summary>El filtro de la bandeja (§7). <see cref="States"/> vacío es cualquier estado («con avisos» sin

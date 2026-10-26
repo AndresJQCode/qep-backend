@@ -379,6 +379,9 @@ internal sealed class ImporterWorld
 
     public FakeUnresolvedCityReporter UnresolvedCities { get; } = new();
 
+    /// <summary>Lo que el importador relee bajo el candado del sinónimo; sin sinónimos, nada que recorregir.</summary>
+    public FakeCitySynonymLookup Synonyms { get; } = new();
+
     public FakeOrderWriter Writer { get; }
 
     public ShopifyStore Store { get; set; }
@@ -391,7 +394,7 @@ internal sealed class ImporterWorld
     public ShopifyOrderImporter Importer =>
         new(
             Members, Billing, Resolver, Products, Shipping, Writer, new ShopifyOrderChanges(Writer, Customers, new FakeClock(Now)),
-            CityCorrections, CityCorrectionJobs, UnresolvedCities, UnitOfWork, new FakeClock(Now));
+            CityCorrections, CityCorrectionJobs, UnresolvedCities, Synonyms, UnitOfWork, new FakeClock(Now));
 
     /// <summary>La tienda con clasificación por defecto: con documento y dirección, el comprador puede nacer completo.</summary>
     public ImporterWorld WithClassification()

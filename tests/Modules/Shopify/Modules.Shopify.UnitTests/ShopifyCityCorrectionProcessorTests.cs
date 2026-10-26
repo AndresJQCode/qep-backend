@@ -244,7 +244,9 @@ public sealed class ShopifyCityCorrectionProcessorTests
 
         await world.ProcessAsync(job);
 
-        Assert.Equal((TenantId, CustomerId, 2L, CalimaId, CaliId), Assert.Single(world.Writer.CustomerCities));
+        var sent = Assert.Single(world.Writer.CustomerCities);
+        Assert.Equal((TenantId, CustomerId, 2L, CalimaId, CaliId), (sent.TenantId, sent.CustomerId, sent.ExpectedVersion, sent.PreviousCityId, sent.CityId));
+        Assert.Equal([CaliId], sent.Requested);
         Assert.Equal((CaliId, (Guid?)CalimaId, (long?)3), (correction.CityId, correction.PreviousCityId, correction.CustomerVersion));
         Assert.Equal(ShopifyAuditActions.CustomerCityCorrected, Assert.Single(world.Shop.Database.Audit).Action);
     }
@@ -335,8 +337,10 @@ public sealed class ShopifyCityCorrectionProcessorTests
             Assert.Single(world.Shop.Database.CityCorrectionJobs, other => other.Kind == ShopifyCityCorrectionJobKind.Recorrect).CorrectionId);
     }
 
-    // Un solo guardado, en una transacción: primero el candado de la fila del trabajo (otra réplica con el lease vencido espera
-    // ahí), después el del sinónimo, que comparte con el evento corrected, y con él tomado se relee la ciudad.
+    // Antes de llamar al escritor queda escrita, en su propia sentencia, la ciudad que pide este intento: si el proceso cae después
+    // de que Customers confirme, el reintento sabe que esa ciudad la pidió el trabajo. Después, un solo guardado en una
+    // transacción: primero el candado de la fila del trabajo, después el del sinónimo (el mismo del evento corrected), y con él
+    // tomado se relee la ciudad.
     [Fact]
     public async Task TheAppliedJobIsSavedOnceUnderTheJobAndSynonymLocks()
     {
@@ -348,12 +352,12 @@ public sealed class ShopifyCityCorrectionProcessorTests
         await world.ProcessAsync(job);
 
         Assert.Equal(
-            ["begin", $"job-lock:{job.Id}", "synonym-read", $"synonym-lock:{SynonymId}", "synonym-read", "save", "commit"],
+            ["synonym-read", $"requested:{job.Id}:{CaliId}", "begin", $"job-lock:{job.Id}", $"synonym-lock:{SynonymId}", "synonym-read", "save", "commit"],
             world.Shop.Database.Log);
     }
 
-    // Dos réplicas con el mismo trabajo (el lease venció mientras la primera seguía): la segunda encuentra la fila ya terminada y
-    // no deja otra huella, otra auditoría ni otro guardado.
+    // Dos réplicas con el mismo trabajo (el lease venció mientras la primera seguía): la segunda escribe en Quotations (que es
+    // idempotente), pero al tomar la fila la encuentra terminada y no deja otra huella, otra auditoría ni otro guardado.
     [Fact]
     public async Task AJobAlreadyFinishedByAnotherReplicaWritesNothing()
     {
@@ -367,10 +371,26 @@ public sealed class ShopifyCityCorrectionProcessorTests
 
         await world.ProcessAsync(job);
 
-        Assert.Equal(0, world.Writer.Calls);
+        Assert.Equal(1, world.Writer.Calls);
         Assert.Equal((PartyIn(CalimaId), (Guid?)null), (correction.Party, correction.PreviousCityId));
         Assert.Empty(world.Shop.Database.Audit);
         Assert.Equal(0, world.Shop.UnitOfWork.Saves);
+    }
+
+    // N1: el intento anterior pidió CALIMA (y quizá Customers lo escribió antes de que el proceso cayera); el sinónimo ya apunta a
+    // CALI. El escritor recibe las dos: con ellas Customers reconoce su propio reintento, y sólo ése.
+    [Fact]
+    public async Task ACustomerRetryPassesEveryCityTheJobRequested()
+    {
+        var world = new CorrectionWorld();
+        world.Synonyms.Point(SynonymId, ValleId, CaliId);
+        var job = world.Seed(world.ResolveCustomer());
+        world.Queue.Requested[job.Id] = [CalimaId];
+
+        await world.ProcessAsync(job);
+
+        Assert.Equal([CalimaId, CaliId], Assert.Single(world.Writer.Completed).Requested);
+        Assert.Equal([CalimaId, CaliId], world.Queue.Requested[job.Id]);
     }
 
     // Cada rechazo de Quotations o Customers termina el trabajo con su motivo, sin huella ni auditoría. Lo que el espejo no trae
@@ -442,6 +462,8 @@ public sealed class ShopifyCityCorrectionProcessorTests
     /// con documento, y los dobles del sinónimo y del escritor.</summary>
     private sealed class CorrectionWorld
     {
+        private readonly Dictionary<Guid, List<Guid>> requested = [];
+
         public CorrectionWorld(ShopifyOrderSnapshot? snapshot = null, bool classification = true)
         {
             Shop = classification ? new ImporterWorld().WithClassification() : new ImporterWorld();
@@ -462,6 +484,8 @@ public sealed class ShopifyCityCorrectionProcessorTests
 
         public FakeCityCorrectionWriter Writer { get; } = new();
 
+        public FakeCityCorrectionJobQueue Queue => new(Shop.Database) { Requested = requested };
+
         public ShopifyCityCorrectionJob ResolveOrder() =>
             ShopifyCityCorrectionJob.Resolve(
                 TenantId, SynonymId, ShopifyCityCorrectionTarget.Order, OrderId, Mirror.Id, OperatorId, MessageId, Now);
@@ -481,6 +505,7 @@ public sealed class ShopifyCityCorrectionProcessorTests
             new ShopifyCityCorrectionProcessor(
                 Synonyms,
                 Writer,
+                Queue,
                 Shop.Mirrors,
                 new FakeStoreRepository(Shop.Database),
                 Shop.CityCorrections,
@@ -489,6 +514,33 @@ public sealed class ShopifyCityCorrectionProcessorTests
                 Shop.UnitOfWork,
                 new FakeClock(Now))
                 .ProcessAsync(job, Ct);
+    }
+}
+
+/// <summary>La cola del worker vista desde el procesador: sólo las ciudades que pide cada trabajo (las anteriores en
+/// <see cref="Requested"/>), anotadas en el registro de la «base».</summary>
+internal sealed class FakeCityCorrectionJobQueue(FakeShopifyDatabase database) : IShopifyCityCorrectionJobQueue
+{
+    public Dictionary<Guid, List<Guid>> Requested { get; init; } = [];
+
+    public Task<IReadOnlyList<Guid>> ListPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<int?> TryClaimAsync(Guid id, DateTimeOffset now, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task MarkFailedAsync(Guid id, DateTimeOffset now, string lastError, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyList<Guid>> RecordRequestedCityAsync(Guid id, Guid cityId, CancellationToken cancellationToken)
+    {
+        database.Log.Add($"requested:{id}:{cityId}");
+        var cities = Requested.TryGetValue(id, out var existing) ? existing : Requested[id] = [];
+        if (!cities.Contains(cityId))
+        {
+            cities.Add(cityId);
+        }
+
+        return Task.FromResult<IReadOnlyList<Guid>>([.. cities]);
     }
 }
 
@@ -526,9 +578,9 @@ internal sealed class FakeCityCorrectionWriter : IShopifyCityCorrectionWriter
 
     public List<(Guid TenantId, Guid OrderId, ShopifyShippingFingerprint Expected, Guid DepartmentId, Guid CityId)> Corrected { get; } = [];
 
-    public List<(Guid TenantId, Guid CustomerId, long ExpectedVersion, ShopifyCompleteCustomer Data)> Completed { get; } = [];
+    public List<(Guid TenantId, Guid CustomerId, long ExpectedVersion, ShopifyCompleteCustomer Data, IReadOnlyCollection<Guid> Requested)> Completed { get; } = [];
 
-    public List<(Guid TenantId, Guid CustomerId, long ExpectedVersion, Guid PreviousCityId, Guid CityId)> CustomerCities { get; } = [];
+    public List<(Guid TenantId, Guid CustomerId, long ExpectedVersion, Guid PreviousCityId, Guid CityId, IReadOnlyCollection<Guid> Requested)> CustomerCities { get; } = [];
 
     public Task<ShopifyCityWriteResult> AttachShippingAsync(
         Guid tenantId, Guid orderId, ShopifyPartyDraft party, string notesLinePrefix, CancellationToken cancellationToken)
@@ -552,19 +604,30 @@ internal sealed class FakeCityCorrectionWriter : IShopifyCityCorrectionWriter
     }
 
     public Task<ShopifyCityWriteResult> CompleteCustomerAsync(
-        Guid tenantId, Guid customerId, long expectedVersion, ShopifyCompleteCustomer data, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        ShopifyCompleteCustomer data,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         Calls++;
-        Completed.Add((tenantId, customerId, expectedVersion, data));
+        Completed.Add((tenantId, customerId, expectedVersion, data, [.. requestedCityIds]));
         return Task.FromResult(
             OnComplete?.Invoke(data) ?? new ShopifyCityWriteResult(ShopifyCityWriteKind.Applied, null, expectedVersion + 1, null, data.CityId));
     }
 
     public Task<ShopifyCityWriteResult> CorrectCustomerCityAsync(
-        Guid tenantId, Guid customerId, long expectedVersion, Guid previousCityId, Guid cityId, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        Guid previousCityId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         Calls++;
-        CustomerCities.Add((tenantId, customerId, expectedVersion, previousCityId, cityId));
+        CustomerCities.Add((tenantId, customerId, expectedVersion, previousCityId, cityId, [.. requestedCityIds]));
         return Task.FromResult(new ShopifyCityWriteResult(ShopifyCityWriteKind.Applied, null, expectedVersion + 1, null, cityId));
     }
 }

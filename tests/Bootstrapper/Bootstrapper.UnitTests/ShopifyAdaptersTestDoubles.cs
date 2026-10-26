@@ -322,22 +322,33 @@ internal sealed class FakeCustomerProvisioning : ICustomerProvisioning
     /// <summary>Lo que responden completar y corregir la ciudad; sin él, <c>Applied</c> en la versión siguiente.</summary>
     public Func<ExternalCustomerCityOutcome>? OnExternalCity { get; init; }
 
-    public List<(Guid TenantId, Guid CustomerId, long ExpectedVersion, CompleteCustomerData Data)> ExternalCompletes { get; } = [];
+    public List<(Guid TenantId, Guid CustomerId, long ExpectedVersion, CompleteCustomerData Data, IReadOnlyCollection<Guid> Requested)> ExternalCompletes { get; } = [];
 
-    public List<(Guid TenantId, Guid CustomerId, long ExpectedVersion, Guid PreviousCityId, Guid CityId)> CityCorrections { get; } = [];
+    public List<(Guid TenantId, Guid CustomerId, long ExpectedVersion, Guid PreviousCityId, Guid CityId, IReadOnlyCollection<Guid> Requested)> CityCorrections { get; } = [];
 
     public Task<ExternalCustomerCityOutcome> CompleteExternalSaleAsync(
-        Guid tenantId, Guid customerId, long expectedVersion, CompleteCustomerData data, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        CompleteCustomerData data,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
-        ExternalCompletes.Add((tenantId, customerId, expectedVersion, data));
+        ExternalCompletes.Add((tenantId, customerId, expectedVersion, data, requestedCityIds));
         return Task.FromResult(
             OnExternalCity?.Invoke() ?? new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, expectedVersion + 1, null, data.CityId));
     }
 
     public Task<ExternalCustomerCityOutcome> CorrectCityAsync(
-        Guid tenantId, Guid customerId, long expectedVersion, Guid previousCityId, Guid cityId, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        Guid previousCityId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
-        CityCorrections.Add((tenantId, customerId, expectedVersion, previousCityId, cityId));
+        CityCorrections.Add((tenantId, customerId, expectedVersion, previousCityId, cityId, requestedCityIds));
         return Task.FromResult(
             OnExternalCity?.Invoke() ?? new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, expectedVersion + 1, null, cityId));
     }

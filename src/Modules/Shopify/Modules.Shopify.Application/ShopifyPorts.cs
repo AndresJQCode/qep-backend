@@ -542,12 +542,25 @@ public interface IShopifyCityCorrectionWriter
     Task<ShopifyCityWriteResult> CorrectShippingCityAsync(
         Guid tenantId, Guid orderId, ShopifyShippingFingerprint expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken);
 
-    /// <summary>Completa al cliente que la importación creó incompleto, sólo si sigue en <paramref name="expectedVersion"/>.</summary>
+    /// <summary>Completa al cliente que la importación creó incompleto, sólo si sigue en <paramref name="expectedVersion"/>.
+    /// <paramref name="requestedCityIds"/> son las ciudades que este trabajo pidió hasta ahora: con ellas Customers reconoce su
+    /// propio reintento (una ciudad que no pidió la puso una persona).</summary>
     Task<ShopifyCityWriteResult> CompleteCustomerAsync(
-        Guid tenantId, Guid customerId, long expectedVersion, ShopifyCompleteCustomer data, CancellationToken cancellationToken);
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        ShopifyCompleteCustomer data,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken);
 
     /// <summary>Lleva al cliente de <paramref name="previousCityId"/> a <paramref name="cityId"/> sólo si sigue en
-    /// <paramref name="expectedVersion"/>.</summary>
+    /// <paramref name="expectedVersion"/>; <paramref name="requestedCityIds"/> como en <see cref="CompleteCustomerAsync"/>.</summary>
     Task<ShopifyCityWriteResult> CorrectCustomerCityAsync(
-        Guid tenantId, Guid customerId, long expectedVersion, Guid previousCityId, Guid cityId, CancellationToken cancellationToken);
+        Guid tenantId,
+        Guid customerId,
+        long expectedVersion,
+        Guid previousCityId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken);
 }

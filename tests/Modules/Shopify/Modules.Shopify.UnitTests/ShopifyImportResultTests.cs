@@ -495,13 +495,60 @@ public sealed class ShopifyImportResultTests
 
         var drafted = Assert.Single(world.Writer.Creates).Draft.ShippingParty!;
         Assert.Equal((ValleId, CaliId), (drafted.DepartmentId, drafted.CityId));
-        var correction = Assert.Single(world.Database.PendingCityCorrections);
+        var correction = Assert.Single(world.Database.CityCorrections);
         Assert.Equal(
             (TenantId, SynonymId, ShopifyCityCorrectionOrigin.Import, ShopifyCityCorrectionTarget.Order, orderId, (Guid?)row.Id, (Guid?)null, Now),
             (correction.TenantId, correction.SynonymId, correction.Origin, correction.Target, correction.TargetId, correction.MirrorOrderId,
                 correction.PreviousCityId, correction.AppliedAt));
         Assert.Equal(persisted, correction.Party);
         Assert.Empty(world.UnresolvedCities.Reports);
+    }
+
+    // La huella de import se escribe como la del worker: en su propia transacción, bajo el candado del sinónimo que comparte con el
+    // evento corrected, y guardada en el acto. Con el candado tomado se relee el sinónimo: si ya no apunta a la ciudad que casó (el
+    // operador lo corrigió durante la importación), el evento pudo listar las huellas antes de ésta, así que la recorrección se
+    // siembra acá, en el mismo guardado.
+    [Fact]
+    public async Task AnImportCorrectionIsSavedUnderTheSynonymLockAndSeedsARecorrectionIfTheSynonymMoved()
+    {
+        var world = WorldWithValle();
+        world.Geography.Cities[("VALLE DEL CAUCA", "CALLI")] = new ShopifyCityRef(ValleId, CaliId, SynonymId);
+        world.Synonyms.Point(SynonymId, ValleId, Guid.Parse("01900000-0000-7000-8000-0000000000e9"));
+        world.Synonyms.Log = world.Database.Log;
+        var persisted = new ShopifyShippingFingerprint("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", ValleId, CaliId);
+        world.Writer.Result = draft => ShopifyOrderWriteResult.Written(
+            Guid.CreateVersion7(), "PED-0024", 119_000m, alreadyExisted: false, draft.ClientId, persisted);
+        var snapshot = Order(address: Calli, shippingLines: [Line(19_000m)]);
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        Assert.Equal(
+            ["begin", $"synonym-lock:{SynonymId}", "synonym-read", "save", "commit"],
+            world.Database.Log.SkipWhile(entry => entry != "begin"));
+        var correction = Assert.Single(world.Database.CityCorrections);
+        var recorrect = Assert.Single(world.Database.CityCorrectionJobs);
+        Assert.Equal(
+            (ShopifyCityCorrectionJobKind.Recorrect, (Guid?)correction.Id, Guid.Empty, (Guid?)null),
+            (recorrect.Kind, recorrect.CorrectionId, recorrect.OperatorSubjectId, recorrect.SourceMessageId));
+    }
+
+    // Si el sinónimo sigue en la ciudad que casó, no hay nada que recorregir.
+    [Fact]
+    public async Task AnImportCorrectionOfASynonymThatDidNotMoveSeedsNothing()
+    {
+        var world = WorldWithValle().WithClassification();
+        world.Geography.Cities[("VALLE DEL CAUCA", "CALLI")] = new ShopifyCityRef(ValleId, CaliId, SynonymId);
+        world.Synonyms.Point(SynonymId, ValleId, CaliId);
+        var persisted = new ShopifyShippingFingerprint("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", ValleId, CaliId);
+        world.Writer.Result = draft => ShopifyOrderWriteResult.Written(
+            Guid.CreateVersion7(), "PED-0025", 119_000m, alreadyExisted: false, draft.ClientId, persisted);
+        var snapshot = Order(attributes: Document, address: Calli, shippingLines: [Line(19_000m)]);
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        Assert.Equal(2, world.Database.CityCorrections.Count);
+        Assert.Empty(world.Database.CityCorrectionJobs);
+        Assert.Equal([SynonymId, SynonymId], world.UnitOfWork.SynonymLocks);
     }
 
     // Con AlreadyExisted la parte guardada puede no ser la que armó este intento (una persona la cambió a otra ciudad): esa no

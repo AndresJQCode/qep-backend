@@ -283,6 +283,116 @@ public sealed class ShopifyCityCorrectionFlowTests
                 ("synonym", synonymId)));
     }
 
+    // N1 de punta a punta, contra Customers real: el primer intento completa al cliente en Cali y el proceso cae antes de guardar
+    // en Shopify. El operador corrige el sinónimo a otra ciudad del Valle. El reintento pide esa ciudad, Customers reconoce su
+    // propia escritura (la versión siguiente, en una ciudad que este trabajo pidió) y responde AlreadyApplied con Cali: la huella
+    // guarda Cali, la recorrección se siembra en el mismo guardado y, al correr, lleva al cliente a la ciudad nueva.
+    [Fact]
+    public async Task ACustomerRetryAfterTheSynonymMovedKeepsTheWrittenCityAndRecorrectsIt()
+    {
+        var crash = new System.Runtime.CompilerServices.StrongBox<bool>(true);
+        await using var shop = await CalliShop.StartAsync(services =>
+        {
+            var real = services.Single(descriptor => descriptor.ServiceType == typeof(IShopifyCityCorrectionWriter));
+            services.Remove(real);
+            services.AddScoped<IShopifyCityCorrectionWriter>(provider => new CrashAfterCustomersWriter(
+                crash, (IShopifyCityCorrectionWriter)ActivatorUtilities.CreateInstance(provider, real.ImplementationType!)));
+        });
+        var job = await shop.SeedResolveCustomerAsync();
+
+        await shop.DrainCorrectionsAsync();
+        Assert.Equal("Pending|none|1", await shop.JobAsync(job));
+        Assert.Equal($"Complete|{shop.CaliId}|2", await shop.CustomerAsync());
+
+        var otherCity = await ScalarAsync<Guid>(
+            shop.ConnectionString,
+            """
+            SELECT c.id FROM geography.cities c
+            WHERE c.department_id = (SELECT department_id FROM geography.cities WHERE id = @cali) AND c.id <> @cali
+            ORDER BY c.divipola_code LIMIT 1
+            """,
+            ("cali", shop.CaliId));
+        await ExecuteAsync(
+            shop.ConnectionString,
+            "UPDATE geography.city_synonyms SET city_id = @city WHERE id = @id",
+            ("city", otherCity),
+            ("id", shop.SynonymId));
+        await ExecuteAsync(
+            shop.ConnectionString,
+            "UPDATE shopify.city_correction_jobs SET lease_until = now() - interval '1 second' WHERE id = @id",
+            ("id", job));
+
+        await shop.DrainCorrectionsAsync();
+
+        Assert.Equal("Applied|none|2", await shop.JobAsync(job));
+        Assert.Equal(
+            $"{shop.CaliId}|2",
+            await ScalarAsync<string>(
+                shop.ConnectionString,
+                "SELECT city_id || '|' || customer_version FROM shopify.city_corrections WHERE target = 'Customer' AND target_id = @customer",
+                ("customer", shop.CustomerId)));
+        Assert.Equal(
+            "Recorrect|Pending",
+            await ScalarAsync<string>(
+                shop.ConnectionString,
+                "SELECT kind || '|' || status FROM shopify.city_correction_jobs WHERE id <> @id",
+                ("id", job)));
+
+        await shop.DrainCorrectionsAsync();
+
+        Assert.Equal($"Complete|{otherCity}|3", await shop.CustomerAsync());
+        Assert.Equal(
+            $"{otherCity}|{shop.CaliId}|3",
+            await ScalarAsync<string>(
+                shop.ConnectionString,
+                "SELECT city_id || '|' || previous_city_id || '|' || customer_version FROM shopify.city_corrections WHERE target = 'Customer'"));
+    }
+
+    // N2: otra réplica tiene tomada la fila del trabajo (lo está terminando). El reclamo la salta en vez de esperarla: si esperara,
+    // podría agotar el tiempo del comando fuera del try de cada trabajo y cortar la pasada entera.
+    [Fact]
+    public async Task AClaimSkipsAJobAnotherReplicaIsFinishingInsteadOfWaiting()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var job = ShopifyCityCorrectionJob.Resolve(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), ShopifyCityCorrectionTarget.Order, Guid.CreateVersion7(), Guid.CreateVersion7(),
+            Guid.CreateVersion7(), null, DateTimeOffset.UtcNow);
+        await using (var seed = factory.Services.CreateAsyncScope())
+        {
+            seed.ServiceProvider.GetRequiredService<IShopifyCityCorrectionJobRepository>().Add(job);
+            await seed.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        await using var holder = new NpgsqlConnection(connectionString);
+        await holder.OpenAsync(Ct);
+        await using var transaction = await holder.BeginTransactionAsync(Ct);
+        await using (var lockRow = new NpgsqlCommand("SELECT 1 FROM shopify.city_correction_jobs WHERE id = @id FOR UPDATE", holder, transaction))
+        {
+            lockRow.Parameters.AddWithValue("id", job.Id);
+            await lockRow.ExecuteScalarAsync(Ct);
+        }
+
+        int? whileHeld;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            whileHeld = await scope.ServiceProvider.GetRequiredService<IShopifyCityCorrectionJobQueue>()
+                .TryClaimAsync(job.Id, DateTimeOffset.UtcNow, Ct)
+                .WaitAsync(TimeSpan.FromSeconds(5), Ct);
+        }
+
+        await transaction.CommitAsync(Ct);
+        int? afterwards;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            afterwards = await scope.ServiceProvider.GetRequiredService<IShopifyCityCorrectionJobQueue>()
+                .TryClaimAsync(job.Id, DateTimeOffset.UtcNow, Ct);
+        }
+
+        Assert.Equal(((int?)null, (int?)1), (whileHeld, afterwards));
+    }
+
     // Hasta 10 s a que alguien espere un candado de aviso: es la señal de que el evento quedó detrás del candado.
     private static async Task WaitForAnAdvisoryLockWaiterAsync(string connectionString)
     {
@@ -299,6 +409,48 @@ public sealed class ShopifyCityCorrectionFlowTests
         Assert.Fail("Nobody waited for the synonym lock.");
     }
 
+    /// <summary>El adaptador real, salvo que la primera vez que completa un cliente cae justo después de que Customers confirmó:
+    /// el proceso que se muere entre la escritura y el guardado de Shopify.</summary>
+    private sealed class CrashAfterCustomersWriter(
+        System.Runtime.CompilerServices.StrongBox<bool> crash, IShopifyCityCorrectionWriter inner) : IShopifyCityCorrectionWriter
+    {
+        public Task<ShopifyCityWriteResult> AttachShippingAsync(
+            Guid tenantId, Guid orderId, ShopifyPartyDraft party, string notesLinePrefix, CancellationToken cancellationToken) =>
+            inner.AttachShippingAsync(tenantId, orderId, party, notesLinePrefix, cancellationToken);
+
+        public Task<ShopifyCityWriteResult> CorrectShippingCityAsync(
+            Guid tenantId, Guid orderId, ShopifyShippingFingerprint expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken) =>
+            inner.CorrectShippingCityAsync(tenantId, orderId, expected, departmentId, cityId, cancellationToken);
+
+        public async Task<ShopifyCityWriteResult> CompleteCustomerAsync(
+            Guid tenantId,
+            Guid customerId,
+            long expectedVersion,
+            ShopifyCompleteCustomer data,
+            IReadOnlyCollection<Guid> requestedCityIds,
+            CancellationToken cancellationToken)
+        {
+            var result = await inner.CompleteCustomerAsync(tenantId, customerId, expectedVersion, data, requestedCityIds, cancellationToken);
+            if (crash.Value)
+            {
+                crash.Value = false;
+                throw new InvalidOperationException("The process died after Customers committed.");
+            }
+
+            return result;
+        }
+
+        public Task<ShopifyCityWriteResult> CorrectCustomerCityAsync(
+            Guid tenantId,
+            Guid customerId,
+            long expectedVersion,
+            Guid previousCityId,
+            Guid cityId,
+            IReadOnlyCollection<Guid> requestedCityIds,
+            CancellationToken cancellationToken) =>
+            inner.CorrectCustomerCityAsync(tenantId, customerId, expectedVersion, previousCityId, cityId, requestedCityIds, cancellationToken);
+    }
+
     /// <summary>Un escritor que falla como Quotations caído (con la causa de fondo envuelta): para todos los pedidos, o sólo para
     /// el de <c>failing</c> y delega el resto en el adaptador real.</summary>
     private sealed class QuotationsDownWriter(
@@ -313,11 +465,22 @@ public sealed class ShopifyCityCorrectionFlowTests
             Fails(orderId) ? throw Down() : inner!.CorrectShippingCityAsync(tenantId, orderId, expected, departmentId, cityId, cancellationToken);
 
         public Task<ShopifyCityWriteResult> CompleteCustomerAsync(
-            Guid tenantId, Guid customerId, long expectedVersion, ShopifyCompleteCustomer data, CancellationToken cancellationToken) =>
+            Guid tenantId,
+            Guid customerId,
+            long expectedVersion,
+            ShopifyCompleteCustomer data,
+            IReadOnlyCollection<Guid> requestedCityIds,
+            CancellationToken cancellationToken) =>
             throw Down();
 
         public Task<ShopifyCityWriteResult> CorrectCustomerCityAsync(
-            Guid tenantId, Guid customerId, long expectedVersion, Guid previousCityId, Guid cityId, CancellationToken cancellationToken) =>
+            Guid tenantId,
+            Guid customerId,
+            long expectedVersion,
+            Guid previousCityId,
+            Guid cityId,
+            IReadOnlyCollection<Guid> requestedCityIds,
+            CancellationToken cancellationToken) =>
             throw Down();
 
         private static InvalidOperationException Down() =>
@@ -355,6 +518,9 @@ public sealed class ShopifyCityCorrectionFlowTests
 
         public Guid OrderId { get; private set; }
 
+        /// <summary>El cliente que la importación creó incompleto porque la ciudad era lo único que le faltaba.</summary>
+        public Guid CustomerId { get; private set; }
+
         public Guid SiblingMirrorId { get; private set; }
 
         public Guid SiblingOrderId { get; private set; }
@@ -374,6 +540,8 @@ public sealed class ShopifyCityCorrectionFlowTests
                 (shop.SiblingMirrorId, shop.SiblingOrderId) = await shop.ImportCalliAsync(5550000000002, "#1002", "wh-calli-2");
             }
 
+            shop.CustomerId = await ScalarAsync<Guid>(
+                shop.ConnectionString, "SELECT qep_customer_id FROM shopify.orders WHERE id = @id", ("id", shop.MirrorId));
             await shop.ConfirmCalliAsync();
             return shop;
         }
@@ -388,6 +556,24 @@ public sealed class ShopifyCityCorrectionFlowTests
             await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
             return job.Id;
         }
+
+        public async Task<Guid> SeedResolveCustomerAsync()
+        {
+            await using var scope = Factory.Services.CreateAsyncScope();
+            var job = ShopifyCityCorrectionJob.Resolve(
+                World.TenantId, SynonymId, ShopifyCityCorrectionTarget.Customer, CustomerId, MirrorId, OperatorId, Guid.CreateVersion7(),
+                DateTimeOffset.UtcNow);
+            scope.ServiceProvider.GetRequiredService<IShopifyCityCorrectionJobRepository>().Add(job);
+            await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+            return job.Id;
+        }
+
+        /// <summary><c>completeness|city_id|version</c> del cliente de la importación.</summary>
+        public Task<string> CustomerAsync() =>
+            ScalarAsync<string>(
+                ConnectionString,
+                "SELECT completeness || '|' || coalesce(city_id::text, 'none') || '|' || version FROM customers.customers WHERE id = @id",
+                ("id", CustomerId));
 
         public Task DrainCorrectionsAsync() =>
             ActivatorUtilities.CreateInstance<ShopifyCityCorrectionWorker>(Factory.Services).DrainAsync(Ct);
