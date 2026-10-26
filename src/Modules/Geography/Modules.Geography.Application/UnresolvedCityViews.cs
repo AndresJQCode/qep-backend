@@ -49,4 +49,8 @@ internal static class UnresolvedCityViews
             best.Count == 0 ? null : best[0],
             city.Version);
     }
+
+    /// <summary>La fila como la pinta la tabla, desde sus ocurrencias: lo que devuelven descartar y restaurar.</summary>
+    public static UnresolvedCityRow Row(UnresolvedCity city, IReadOnlyList<UnresolvedCityOccurrence> occurrences) =>
+        new(city, occurrences.Count, occurrences.Select(occurrence => occurrence.TenantId).Distinct().Count());
 }

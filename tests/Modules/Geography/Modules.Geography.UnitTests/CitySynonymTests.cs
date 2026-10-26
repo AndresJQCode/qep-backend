@@ -28,6 +28,25 @@ public sealed class CitySynonymTests
         Assert.False(synonym.IsDeleted);
     }
 
+    // P17: un texto de más de 120 llega recortado a la fila; el sinónimo usa la llave de la fila, sin volver a normalizar el
+    // visible recortado (con espacios repetidos daría otra llave más corta).
+    [Fact]
+    public void CreateFromARowKeepsTheRowsNormalizedTextAsTheKey()
+    {
+        var department = DepartmentId.New();
+        var row = UnresolvedCity.Create(
+            UnresolvedCityId.New(), department, "Calli  " + new string('a', 130), "Calle 5", null, Now);
+        var cityId = CityId.New();
+        var by = Guid.NewGuid();
+
+        var synonym = CitySynonym.Create(CitySynonymId.New(), row, cityId, by, Now);
+
+        Assert.Equal(row.NormalizedText, synonym.NormalizedText);
+        Assert.NotEqual(CityText.Normalize(row.CityText), synonym.NormalizedText);
+        Assert.Equal(row.CityText, synonym.DisplayText);
+        Assert.Equal((department, cityId, by, 1L), (synonym.DepartmentId, synonym.CityId, synonym.CreatedBy, synonym.Version));
+    }
+
     [Fact]
     public void CreateGivenAnAlreadyNormalizedTextKeepsItAsIs()
     {

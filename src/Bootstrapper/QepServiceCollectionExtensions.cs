@@ -456,6 +456,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<GetCitySummaryQuery, CitySummaryDto>, GetCitySummaryHandler>();
         services.AddScoped<IQueryHandler<ListUnresolvedCitiesQuery, UnresolvedCityPageDto>, ListUnresolvedCitiesHandler>();
         services.AddScoped<IQueryHandler<GetUnresolvedCityQuery, UnresolvedCityDetailDto>, GetUnresolvedCityHandler>();
+        // Confirmar, descartar y restaurar, y el impacto de confirmar (que no escribe).
+        services.AddScoped<IQueryHandler<PreviewResolveImpactQuery, ResolveImpactDto>, PreviewResolveImpactHandler>();
+        services.AddScoped<ICommandHandler<ResolveUnresolvedCityCommand, CitySynonymDto>, ResolveUnresolvedCityHandler>();
+        services.AddScoped<UnresolvedCityTriage>();
+        services.AddScoped<ICommandHandler<DiscardUnresolvedCityCommand, UnresolvedCityListItemDto>, DiscardUnresolvedCityHandler>();
+        services.AddScoped<ICommandHandler<RestoreUnresolvedCityCommand, UnresolvedCityListItemDto>, RestoreUnresolvedCityHandler>();
         // Quotations, fase 1 (borrador: crear, agregar/editar/quitar lineas, editar encabezado).
         // Los seis van aca por la misma razon que el resto: el dispatcher resuelve por registro
         // explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla recien en

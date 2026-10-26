@@ -32,6 +32,8 @@ public static class GeographyInfrastructureExtensions
         services.AddScoped<IUnresolvedCityReporter, UnresolvedCityReporter>();
         services.AddScoped<IGeographyUnitOfWork, GeographyUnitOfWork>();
         services.AddScoped<IGeographyAuditRecorder, GeographyAuditRecorder>();
+        // Spec 2026-10-26 D-C6: los eventos de sinónimos, en el outbox de plataforma dentro de la transacción de Geography.
+        services.AddScoped<IGeographyEventPublisher, GeographyEventPublisher>();
         services.AddScoped<GeographySeeder>();
 
         return services;

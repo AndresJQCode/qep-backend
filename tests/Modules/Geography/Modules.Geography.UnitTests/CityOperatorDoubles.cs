@@ -105,6 +105,8 @@ internal sealed class CityOperatorDoubles(TenantId operatorTenant)
         public Task<UnresolvedCity?> FindAsync(UnresolvedCityId id, CancellationToken cancellationToken) =>
             Task.FromResult(rows.Select(row => row.City).SingleOrDefault(city => city.Id == id));
 
+        public Task RefreshAsync(UnresolvedCity city, CancellationToken cancellationToken) => Task.CompletedTask;
+
         public Task<(IReadOnlyList<UnresolvedCityRow> Rows, int Total)> ListAsync(
             UnresolvedCityStatus status, DepartmentId? departmentId, string? normalizedSearch, int page, int pageSize,
             CancellationToken cancellationToken)

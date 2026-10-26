@@ -81,6 +81,9 @@ internal sealed class UnresolvedCityRepository(GeographyDbContext dbContext) : I
     public Task<UnresolvedCity?> FindAsync(UnresolvedCityId id, CancellationToken cancellationToken) =>
         dbContext.UnresolvedCities.SingleOrDefaultAsync(row => row.Id == id, cancellationToken);
 
+    public Task RefreshAsync(UnresolvedCity city, CancellationToken cancellationToken) =>
+        dbContext.Entry(city).ReloadAsync(cancellationToken);
+
     public async Task<(IReadOnlyList<UnresolvedCityRow> Rows, int Total)> ListAsync(
         UnresolvedCityStatus status,
         DepartmentId? departmentId,

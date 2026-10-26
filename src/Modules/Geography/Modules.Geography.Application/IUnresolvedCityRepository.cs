@@ -19,6 +19,10 @@ public interface IUnresolvedCityRepository
     /// <see cref="IGeographyUnitOfWork.SaveChangesAsync"/>.</summary>
     Task<UnresolvedCity?> FindAsync(UnresolvedCityId id, CancellationToken cancellationToken);
 
+    /// <summary>Vuelve a leer de la base una fila ya seguida: confirmar la lee para saber qué candado tomar y la relee con el
+    /// candado tomado, porque una consulta con seguimiento devuelve la instancia ya cargada sin refrescarla.</summary>
+    Task RefreshAsync(UnresolvedCity city, CancellationToken cancellationToken);
+
     /// <summary>
     /// Una página de filas en <paramref name="status"/>, por <c>last_seen_at</c> descendente y luego <c>id</c> descendente, con
     /// sus conteos. <paramref name="normalizedSearch"/> (ya de <see cref="CityText.Normalize"/>) se busca dentro del texto

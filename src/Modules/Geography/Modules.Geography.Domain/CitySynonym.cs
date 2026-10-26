@@ -56,8 +56,32 @@ public sealed class CitySynonym
         Guid createdBy,
         DateTimeOffset now)
     {
-        var display = displayText.Trim();
-        var normalized = CityText.Normalize(displayText);
+        return New(id, departmentId, CityText.Normalize(displayText), displayText.Trim(), cityId, createdBy, now);
+    }
+
+    /// <summary>
+    /// Confirmar una fila de la bandeja (SC-11): la llave es el <see cref="UnresolvedCity.NormalizedText"/> de la fila, tal
+    /// cual, y el texto visible su <see cref="UnresolvedCity.CityText"/>. No se vuelve a normalizar: en un texto de más de
+    /// <see cref="CityText.MaxLength"/> los dos ya vienen recortados, y normalizar el visible recortado daría otra llave que la
+    /// que el reporte busca (preflight F17, ruling P17).
+    /// </summary>
+    public static CitySynonym Create(
+        CitySynonymId id,
+        UnresolvedCity row,
+        CityId cityId,
+        Guid createdBy,
+        DateTimeOffset now) =>
+        New(id, row.DepartmentId, row.NormalizedText, row.CityText, cityId, createdBy, now);
+
+    private static CitySynonym New(
+        CitySynonymId id,
+        DepartmentId departmentId,
+        string normalized,
+        string display,
+        CityId cityId,
+        Guid createdBy,
+        DateTimeOffset now)
+    {
         if (normalized.Length == 0)
         {
             throw new GeographyDomainException(

@@ -38,6 +38,40 @@ public static class CityOperatorEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        group.MapPost("/unresolved/{id:guid}/impact", PreviewResolveAsync)
+            .RequireAuthorization(GeographyOperatorPermissions.CitiesRead)
+            .Accepts<CityChoiceRequest>("application/json")
+            .Produces<ResolveImpactDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/unresolved/{id:guid}/resolve", ResolveAsync)
+            .RequireAuthorization(GeographyOperatorPermissions.CitiesManage)
+            .Accepts<CityChoiceRequest>("application/json")
+            .Produces<CitySynonymDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/unresolved/{id:guid}/discard", DiscardAsync)
+            .RequireAuthorization(GeographyOperatorPermissions.CitiesManage)
+            .Produces<UnresolvedCityListItemDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/unresolved/{id:guid}/restore", RestoreAsync)
+            .RequireAuthorization(GeographyOperatorPermissions.CitiesManage)
+            .Produces<UnresolvedCityListItemDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -65,4 +99,31 @@ public static class CityOperatorEndpoints
         Guid tenantId, Guid id, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(
             new GetUnresolvedCityQuery(new TenantId(tenantId), new UnresolvedCityId(id)), cancellationToken));
+
+    // Un cityId ausente o nulo llega como Guid.Empty y es 422 del validador (CityId), no 400 del binder.
+    private static async Task<IResult> PreviewResolveAsync(
+        Guid tenantId, Guid id, CityChoiceRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(
+            new PreviewResolveImpactQuery(new TenantId(tenantId), new UnresolvedCityId(id), request.CityId ?? Guid.Empty),
+            cancellationToken));
+
+    private static async Task<IResult> ResolveAsync(
+        Guid tenantId, Guid id, CityChoiceRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new ResolveUnresolvedCityCommand(new TenantId(tenantId), new UnresolvedCityId(id), request.CityId ?? Guid.Empty),
+            cancellationToken));
+
+    private static async Task<IResult> DiscardAsync(
+        Guid tenantId, Guid id, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new DiscardUnresolvedCityCommand(new TenantId(tenantId), new UnresolvedCityId(id)), cancellationToken));
+
+    private static async Task<IResult> RestoreAsync(
+        Guid tenantId, Guid id, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new RestoreUnresolvedCityCommand(new TenantId(tenantId), new UnresolvedCityId(id)), cancellationToken));
 }
+
+/// <summary>La ciudad elegida en el modal de confirmar. Nullable para que un campo ausente o nulo sea 422 del validador
+/// (<c>CityId</c>), no un 400 del binder.</summary>
+public sealed record CityChoiceRequest(Guid? CityId);
