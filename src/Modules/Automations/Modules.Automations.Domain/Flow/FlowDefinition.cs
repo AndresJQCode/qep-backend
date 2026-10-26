@@ -21,7 +21,8 @@ public sealed record FlowVariable(string Name, string Type);
 
 /// <summary>
 /// Un bloque. <see cref="Outputs"/> va de nombre de salida a id del bloque destino (<c>null</c> = sin conectar); las salidas que
-/// cuentan son las de <see cref="FlowNodeKinds.OutputsOf"/>, y una clave de más (un botón borrado) no la sigue nadie.
+/// cuentan son las de <see cref="FlowNodeKinds.OutputsOf"/>, y una clave de más (un botón borrado, o <c>other</c> con un
+/// <c>fallback</c> distinto de <c>otherOutput</c>, spec 2026-10-25 D-3) no la sigue nadie.
 /// </summary>
 public abstract record FlowNode(string Id, string Kind, string Title, IReadOnlyDictionary<string, string?> Outputs);
 
@@ -42,7 +43,7 @@ public sealed record QuestionValidation(string Kind, string? Pattern, IReadOnlyL
 
 public sealed record ButtonsNode(
     string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, string Text, IReadOnlyList<FlowButton> Buttons, string? SaveTo,
-    string Fallback)
+    string Fallback, Guid? FallbackMemberId = null)
     : FlowNode(Id, FlowNodeKinds.Buttons, Title, Outputs);
 
 /// <summary><see cref="Id"/> es también el nombre de la salida del botón.</summary>
@@ -50,7 +51,7 @@ public sealed record FlowButton(string Id, string Label);
 
 public sealed record ListNode(
     string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, string Text, string ButtonLabel, ListOptions Options,
-    string SaveTo, string Fallback)
+    string SaveTo, string Fallback, Guid? FallbackMemberId = null)
     : FlowNode(Id, FlowNodeKinds.List, Title, Outputs);
 
 /// <summary>
@@ -103,7 +104,9 @@ public sealed record HttpBody(string Kind, string? Template, IReadOnlyList<KeyVa
 /// <summary><see cref="From"/> es una ruta por puntos e índices sobre la respuesta (<c>data[0]</c>); <see cref="To"/>, la variable que escribe.</summary>
 public sealed record HttpMapping(string From, string To);
 
-public sealed record HandoffNode(string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, string? Text)
+/// <summary><see cref="MemberId"/> es el destino del traspaso (spec 2026-10-25 D-1); <c>null</c> = sin asignar, que es también lo que
+/// significa un flujo guardado antes de que existiera el campo (D-4).</summary>
+public sealed record HandoffNode(string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, string? Text, Guid? MemberId = null)
     : FlowNode(Id, FlowNodeKinds.Handoff, Title, Outputs);
 
 public sealed record ResolveNode(string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, string? Text, Guid? ReasonId)
@@ -142,7 +145,7 @@ public static class InteractiveFallbacks
     /// <summary>Reenvía el mensaje hasta agotar los intentos y luego aplica D-M7.</summary>
     public const string Repeat = "repeat";
 
-    /// <summary>Sale por <c>other</c> en la primera respuesta inválida si está conectada; si no, como <see cref="Repeat"/>.</summary>
+    /// <summary>Sale por <c>other</c> en la primera respuesta inválida; el validador exige la salida conectada (spec 2026-10-25 D-3).</summary>
     public const string OtherOutput = "otherOutput";
 
     /// <summary>Pasa a un asesor en la primera respuesta inválida.</summary>

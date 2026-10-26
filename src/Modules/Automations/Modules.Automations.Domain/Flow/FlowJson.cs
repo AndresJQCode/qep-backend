@@ -170,6 +170,7 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
                 writer.WriteEndArray();
                 writer.WriteString("saveTo", buttons.SaveTo);
                 writer.WriteString("fallback", buttons.Fallback);
+                WriteGuid(writer, "fallbackMemberId", buttons.FallbackMemberId);
                 break;
             case ListNode list:
                 writer.WriteString("text", list.Text);
@@ -208,6 +209,7 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
                 writer.WriteEndObject();
                 writer.WriteString("saveTo", list.SaveTo);
                 writer.WriteString("fallback", list.Fallback);
+                WriteGuid(writer, "fallbackMemberId", list.FallbackMemberId);
                 break;
             case AttachmentNode attachment:
                 writer.WriteString("text", attachment.Text);
@@ -282,6 +284,7 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
                 break;
             case HandoffNode handoff:
                 writer.WriteString("text", handoff.Text);
+                WriteGuid(writer, "memberId", handoff.MemberId);
                 break;
             case ResolveNode resolve:
                 writer.WriteString("text", resolve.Text);
@@ -331,10 +334,12 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
                 ReadValidation(element, where), JsonFields.OptionalInt(element, "maxAttempts", where)),
             FlowNodeKinds.Buttons => new ButtonsNode(
                 id, title, outputs, JsonFields.Text(element, "text", where), ReadButtons(element, where),
-                JsonFields.OptionalString(element, "saveTo", where), JsonFields.RequiredOneOf(element, "fallback", where, InteractiveFallbacks.All)),
+                JsonFields.OptionalString(element, "saveTo", where), JsonFields.RequiredOneOf(element, "fallback", where, InteractiveFallbacks.All),
+                JsonFields.OptionalGuid(element, "fallbackMemberId", where)),
             FlowNodeKinds.List => new ListNode(
                 id, title, outputs, JsonFields.Text(element, "text", where), JsonFields.Text(element, "buttonLabel", where),
-                ReadListOptions(element, where), JsonFields.Text(element, "saveTo", where), JsonFields.RequiredOneOf(element, "fallback", where, InteractiveFallbacks.All)),
+                ReadListOptions(element, where), JsonFields.Text(element, "saveTo", where), JsonFields.RequiredOneOf(element, "fallback", where, InteractiveFallbacks.All),
+                JsonFields.OptionalGuid(element, "fallbackMemberId", where)),
             FlowNodeKinds.Attachment => new AttachmentNode(
                 id, title, outputs, JsonFields.Text(element, "text", where),
                 JsonFields.RequiredOneOf(element, "accept", where, AttachmentAccepts.All), JsonFields.Text(element, "saveTo", where)),
@@ -343,7 +348,8 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
                 JsonFields.RequiredArray(element, "rules", where, rule => ReadRule(rule, where))),
             FlowNodeKinds.BusinessHours => new BusinessHoursNode(id, title, outputs),
             FlowNodeKinds.Http => ReadHttp(element, id, title, outputs, where),
-            FlowNodeKinds.Handoff => new HandoffNode(id, title, outputs, JsonFields.OptionalString(element, "text", where)),
+            FlowNodeKinds.Handoff => new HandoffNode(
+                id, title, outputs, JsonFields.OptionalString(element, "text", where), JsonFields.OptionalGuid(element, "memberId", where)),
             FlowNodeKinds.Resolve => new ResolveNode(
                 id, title, outputs, JsonFields.OptionalString(element, "text", where), JsonFields.OptionalGuid(element, "reasonId", where)),
             _ => throw new ArgumentOutOfRangeException(nameof(element), kind, "Tipo de bloque sin lectura definida."),

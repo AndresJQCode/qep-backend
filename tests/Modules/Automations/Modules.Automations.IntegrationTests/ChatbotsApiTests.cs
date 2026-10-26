@@ -435,6 +435,32 @@ public sealed class ChatbotsApiTests
             "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.draft_saved'", ("id", editor.Chatbot.Id.ToString())));
     }
 
+    // Spec 2026-10-25 D-3: «otra respuesta» sólo existe con otherOutput; al guardar se quita la conexión que el canvas no dibuja.
+    [Fact]
+    public async Task SavingADraftDropsTheRouteTheCanvasDoesNotDraw()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "b1" }, "variables": [],
+              "nodes": [
+                { "id": "b1", "kind": "buttons", "title": "B", "text": "t", "buttons": [ { "id": "a", "label": "A" } ], "saveTo": null, "fallback": "repeat", "outputs": { "a": "r1", "other": "r1" } },
+                { "id": "r1", "kind": "resolve", "title": "R", "text": null, "reasonId": null, "outputs": {} } ] }
+            """;
+
+        var saved = await SaveDraftAsync(setup, editor, flow);
+        var reloaded = await GetAsync(setup, editor.Chatbot.Id);
+
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var outputs = reloaded.Draft.Flow.GetProperty("nodes")[0].GetProperty("outputs");
+        Assert.Equal("r1", outputs.GetProperty("a").GetString());
+        Assert.False(outputs.TryGetProperty("other", out var hidden), $"other sobrevivió: {hidden}");
+    }
+
     // Un borrador guardado que ya no se lee (dato viejo, cambio de esquema) abre el editor con un error en vez de un 500.
     [Fact]
     public async Task AStoredFlowThatNoLongerParsesIsAnIssueNotA500()

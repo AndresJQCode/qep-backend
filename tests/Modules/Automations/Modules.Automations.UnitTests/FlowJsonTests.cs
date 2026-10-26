@@ -120,14 +120,85 @@ public sealed class FlowJsonTests
             issues.Select(issue => (issue.Code, issue.NodeId!)));
     }
 
-    [Fact]
-    public void OutputsOfAButtonsNodeAreItsButtonsPlusOther()
+    // Spec 2026-10-25 D-3: «otra respuesta» es una salida sólo cuando el canvas la dibuja, o sea con otherOutput.
+    [Theory]
+    [InlineData("repeat", false)]
+    [InlineData("handoff", false)]
+    [InlineData("otherOutput", true)]
+    public void OutputsOfButtonsAndListIncludeOtherOnlyWithOtherOutput(string fallback, bool includesOther)
     {
-        var node = new ButtonsNode(
+        var buttons = new ButtonsNode(
             "n1", "Motivo", new Dictionary<string, string?>(), "¿Qué necesitas?",
-            [new FlowButton("tech", "Servicio técnico"), new FlowButton("maint", "Mantenimiento")], null, "repeat");
+            [new FlowButton("tech", "Servicio técnico"), new FlowButton("maint", "Mantenimiento")], null, fallback);
+        var list = List(new ListOptions("fixed", [new ListFixedRow("a", "A", null)], null, null, null, null, null)) with { Fallback = fallback };
 
-        Assert.Equal(["tech", "maint", "other"], FlowNodeKinds.OutputsOf(node));
+        Assert.Equal(includesOther ? ["tech", "maint", "other"] : ["tech", "maint"], FlowNodeKinds.OutputsOf(buttons));
+        Assert.Equal(includesOther ? ["chosen", "other"] : ["chosen"], FlowNodeKinds.OutputsOf(list));
+    }
+
+    private const string DestinationsJson = """
+        {
+          "schema": 1,
+          "start": { "firstNodeId": "b1" },
+          "variables": [],
+          "nodes": [
+            { "id": "b1", "kind": "buttons", "title": "B", "text": "t", "buttons": [ { "id": "a", "label": "A" } ], "saveTo": null, "fallback": "handoff", "fallbackMemberId": "44444444-4444-4444-4444-444444444444", "outputs": { "a": "l1" } },
+            { "id": "l1", "kind": "list", "title": "L", "text": "t", "buttonLabel": "Ver", "options": { "kind": "fixed", "fixed": [ { "id": "n", "title": "N", "description": null } ], "collection": null, "idField": null, "titleField": null, "descriptionField": null, "extraOption": null }, "saveTo": "x", "fallback": "handoff", "fallbackMemberId": "55555555-5555-5555-5555-555555555555", "outputs": { "chosen": "h1" } },
+            { "id": "h1", "kind": "handoff", "title": "H", "text": null, "memberId": "66666666-6666-6666-6666-666666666666", "outputs": {} }
+          ]
+        }
+        """;
+
+    [Fact]
+    public void TheHandoffDestinationsRoundTrip()
+    {
+        var flow = FlowJson.Parse(DestinationsJson);
+
+        Assert.Equal(Guid.Parse("44444444-4444-4444-4444-444444444444"), Assert.IsType<ButtonsNode>(flow.Nodes[0]).FallbackMemberId);
+        Assert.Equal(Guid.Parse("55555555-5555-5555-5555-555555555555"), Assert.IsType<ListNode>(flow.Nodes[1]).FallbackMemberId);
+        Assert.Equal(Guid.Parse("66666666-6666-6666-6666-666666666666"), Assert.IsType<HandoffNode>(flow.Nodes[2]).MemberId);
+        // Los records con listas no se comparan por valor: el idempotente de Serialize es la prueba de ida y vuelta.
+        var serialized = FlowJson.Serialize(flow);
+        Assert.Equal(serialized, FlowJson.Serialize(FlowJson.Parse(serialized)));
+        AssertContains(JsonNode.Parse(DestinationsJson), JsonNode.Parse(serialized), "$");
+    }
+
+    [Fact]
+    public void SerializeWritesNullDestinationsWhenThereAreNone()
+    {
+        var json = FlowJson.Serialize(FlowJson.Parse(EveryKindJson));
+        var nodes = JsonNode.Parse(json)!["nodes"]!.AsArray();
+
+        foreach (var kind in new[] { "buttons", "list", "handoff" })
+        {
+            var node = nodes.Single(n => n!["kind"]!.GetValue<string>() == kind)!.AsObject();
+            var key = kind == "handoff" ? "memberId" : "fallbackMemberId";
+            Assert.True(node.ContainsKey(key), $"{kind} no escribió {key}");
+            Assert.Null(node[key]);
+        }
+    }
+
+    // D-4: el JSON de antes de este cambio no trae las claves y se lee «sin asignar».
+    [Fact]
+    public void AFlowWithoutDestinationsReadsUnassigned()
+    {
+        var flow = FlowJson.Parse(EveryKindJson);
+
+        Assert.All(flow.Nodes.OfType<ButtonsNode>(), node => Assert.Null(node.FallbackMemberId));
+        Assert.All(flow.Nodes.OfType<ListNode>(), node => Assert.Null(node.FallbackMemberId));
+        Assert.All(flow.Nodes.OfType<HandoffNode>(), node => Assert.Null(node.MemberId));
+    }
+
+    [Theory]
+    [InlineData("""{ "id": "h1", "kind": "handoff", "title": "H", "memberId": "ana" }""")]
+    [InlineData("""{ "id": "b1", "kind": "buttons", "title": "B", "text": "t", "buttons": [], "fallback": "handoff", "fallbackMemberId": "ana" }""")]
+    public void ADestinationThatIsNotAGuidIsMalformed(string node)
+    {
+        var json = $$"""{ "schema": 1, "start": { "firstNodeId": null }, "variables": [], "nodes": [ {{node}} ] }""";
+
+        var exception = Assert.Throws<FlowFormatException>(() => FlowJson.Parse(json));
+
+        Assert.Equal("flow.malformed", exception.Code);
     }
 
     [Fact]
@@ -136,8 +207,9 @@ public sealed class FlowJsonTests
         var fixedRows = new ListOptions("fixed", [new ListFixedRow("a", "A", null)], null, null, null, null, null);
         var dynamicWithExtra = new ListOptions("dynamic", null, "equipos", "id", "name", null, new ListFixedRow("x", "Otra", null));
 
-        Assert.Equal(["chosen", "other"], FlowNodeKinds.OutputsOf(List(fixedRows)));
-        Assert.Equal(["chosen", "extra", "tooMany", "other"], FlowNodeKinds.OutputsOf(List(dynamicWithExtra)));
+        Assert.Equal(["chosen"], FlowNodeKinds.OutputsOf(List(fixedRows)));
+        Assert.Equal(["chosen", "extra", "tooMany"], FlowNodeKinds.OutputsOf(List(dynamicWithExtra)));
+        Assert.Equal(["chosen", "other"], FlowNodeKinds.OutputsOf(List(fixedRows) with { Fallback = "otherOutput" }));
         Assert.Empty(FlowNodeKinds.OutputsOf(new ResolveNode("n1", "Listo", new Dictionary<string, string?>(), null, null)));
         Assert.True(FlowNodeKinds.IsTerminal(FlowNodeKinds.Handoff));
         Assert.False(FlowNodeKinds.IsTerminal(FlowNodeKinds.Message));

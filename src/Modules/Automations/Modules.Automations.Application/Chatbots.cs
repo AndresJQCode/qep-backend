@@ -547,7 +547,7 @@ public sealed class SaveChatbotDraftHandler(
     {
         await AutomationsAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AutomationsPermissions.ChatbotManage, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
-        var flow = Parse(command.Flow);
+        var flow = FlowNormalizer.Normalize(Parse(command.Flow));
         var chatbot = await chatbots.FindAsync(command.TenantId, command.ChatbotId, cancellationToken)
             ?? throw AutomationsNotFound.Chatbot(command.ChatbotId);
         AutomationsVersions.Ensure(chatbot.Version, command.Version);
