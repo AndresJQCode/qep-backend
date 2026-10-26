@@ -571,6 +571,10 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **`OrdersExportProcessor` no lee el formato del tenant, a propósito** (D-R8): la hoja del pedido la importa el ERP.
   «Unificarlo» con el Excel de cotizaciones compila, pasa sus pruebas unitarias y rompe la importación en silencio. La amarra
   `OrderExportApiTests.TheErpSheetIgnoresTheTenantRegionalFormat`.
+- **`other` de Botones/Lista existe sólo con `fallback = otherOutput`** (spec 2026-10-25 D-3): `FlowNodeKinds.OutputsOf` la omite con
+  `repeat` y `handoff`, el motor no la sigue aunque la versión publicada la tenga, y `FlowNormalizer` la quita al guardar. Al agotar los
+  intentos sin salida conectada manda `Chatbot.ExhaustedAction` (`Restart` por defecto), no el flujo. El traspaso a un miembro pasa por
+  `IMessagingAssignees.CanReplyAsync` en el adaptador: si no puede, cae sin asignar sin fallar.
 
 ## Verificación
 
