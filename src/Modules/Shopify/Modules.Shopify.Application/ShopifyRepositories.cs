@@ -60,6 +60,19 @@ public interface IShopifyOrderMirrorRepository
     Task<IReadOnlyDictionary<Guid, int>> CountWaitingByConnectionAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
+/// <summary>Spec 2026-10-26 §5: las huellas de los sinónimos (<c>shopify.city_corrections</c>). Con tracking; lo agregado commitea
+/// con <see cref="IShopifyUnitOfWork"/>, que traduce el índice único <c>(sinónimo, destino, id)</c> a <c>concurrency.conflict</c>.</summary>
+public interface IShopifyCityCorrectionRepository
+{
+    Task<ShopifyCityCorrection?> FindAsync(
+        Guid tenantId, Guid synonymId, ShopifyCityCorrectionTarget target, Guid targetId, CancellationToken cancellationToken);
+
+    /// <summary>Por id, sin tenant: la usa el trabajo de corrección, que corre fuera de un request (SC-07).</summary>
+    Task<ShopifyCityCorrection?> FindByIdAsync(Guid id, CancellationToken cancellationToken);
+
+    void Add(ShopifyCityCorrection correction);
+}
+
 /// <summary>El filtro de la bandeja (§7). <see cref="States"/> vacío es cualquier estado («con avisos» sin
 /// <c>state</c>, BFF: así la lista cierra con <c>summary.withWarnings</c>); el handler pone <c>Waiting</c> cuando no hay <c>state</c> ni <c>withWarnings</c>. <see cref="WithWarnings"/>
 /// deja sólo las filas con avisos <b>sin revisar</b>.</summary>

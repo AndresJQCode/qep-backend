@@ -88,7 +88,7 @@ internal sealed class ShopifyCustomerDirectory(
                     data.Name, data.IdentificationType, data.IdentificationNumber, data.Phone, data.Email, data.Address,
                     data.Country, data.CityId, data.CityName, data.ClassificationId),
                 cancellationToken);
-            return new ShopifyCustomerRef(created.Id, created.IsComplete, created.IsActive);
+            return ToRef(created);
         }
         catch (ValidationException error)
         {
@@ -104,8 +104,12 @@ internal sealed class ShopifyCustomerDirectory(
         Guid tenantId, string? name, string? phone, string? email, string? country, CancellationToken cancellationToken)
     {
         var created = await provisioning.CreateIncompleteAsync(tenantId, name, phone, email, country, cancellationToken);
-        return new ShopifyCustomerRef(created.Id, created.IsComplete, created.IsActive);
+        return ToRef(created);
     }
+
+    // Spec 2026-10-26 (desvío S7): si el alta lo creó y con qué versión nació, que es la huella del cliente.
+    private static ShopifyCustomerRef ToRef(ProvisionedCustomer created) =>
+        new(created.Id, created.IsComplete, created.IsActive, created.Created, created.Version);
 
     private async Task<ShopifyCustomerRef?> FindAsync(Guid tenantId, CustomerId id, CancellationToken cancellationToken) =>
         await ToRefAsync(tenantId, await customers.FindAsync(tenantId, id, cancellationToken), cancellationToken);

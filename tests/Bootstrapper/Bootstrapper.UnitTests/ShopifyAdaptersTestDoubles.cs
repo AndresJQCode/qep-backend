@@ -299,15 +299,21 @@ internal sealed class FakeCustomerProvisioning : ICustomerProvisioning
         OnComplete?.Invoke();
         Completes.Add((tenantId, data));
         LastId = Guid.CreateVersion7();
-        return Task.FromResult(new ProvisionedCustomer(LastId, true, true, true));
+        return Task.FromResult(new ProvisionedCustomer(LastId, true, true, Created, Version));
     }
 
     public Task<ProvisionedCustomer> CreateIncompleteAsync(
         Guid tenantId, string? name, string? phone, string? email, string? country, CancellationToken cancellationToken)
     {
         LastId = Guid.CreateVersion7();
-        return Task.FromResult(new ProvisionedCustomer(LastId, false, true, true));
+        return Task.FromResult(new ProvisionedCustomer(LastId, false, true, Created, Version));
     }
+
+    /// <summary>Lo que el alta dice: <c>false</c> es «el documento ya era de otro» (H8).</summary>
+    public bool Created { get; set; } = true;
+
+    /// <summary>La versión con que nace el cliente: 1 en Customers (S7).</summary>
+    public long Version { get; set; } = 1;
 
     public Task<ProvisionedCustomer> CreateFromRegisterAsync(
         Guid tenantId, Guid actorId, RegisterCustomerData data, string? source, CancellationToken cancellationToken) =>
@@ -454,11 +460,18 @@ internal sealed class NamedDepartments(params Department[] departments) : IDepar
 
 internal sealed class NamedCities(params City[] cities) : ICityRepository
 {
+    /// <summary>Sinónimos por <c>(departamento, texto)</c> exacto; el nombre real les gana, como en Geography (§4.1).</summary>
+    public Dictionary<(DepartmentId Department, string Text), (City City, CitySynonymId Synonym)> Synonyms { get; } = [];
+
     public Task<City?> FindByNameAsync(DepartmentId departmentId, string name, CancellationToken cancellationToken) =>
         Task.FromResult(cities.FirstOrDefault(city => city.DepartmentId == departmentId && city.Name == name));
 
     public async Task<CityNameMatch?> MatchByNameAsync(DepartmentId departmentId, string name, CancellationToken cancellationToken) =>
-        await FindByNameAsync(departmentId, name, cancellationToken) is { } city ? new CityNameMatch(city, SynonymId: null) : null;
+        await FindByNameAsync(departmentId, name, cancellationToken) is { } city
+            ? new CityNameMatch(city, SynonymId: null)
+            : Synonyms.TryGetValue((departmentId, name), out var synonym)
+                ? new CityNameMatch(synonym.City, synonym.Synonym)
+                : null;
 
     public Task<IReadOnlyList<City>> ListByDepartmentAsync(DepartmentId departmentId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
@@ -470,6 +483,21 @@ internal sealed class NamedCities(params City[] cities) : ICityRepository
 
     public Task<IReadOnlyList<City>> ListByDepartmentsAsync(
         IReadOnlyCollection<DepartmentId> departmentIds, CancellationToken cancellationToken) => throw new NotSupportedException();
+}
+
+/// <summary>La bandeja de Geography: anota cada reporte y responde <see cref="Result"/>.</summary>
+internal sealed class RecordingUnresolvedCityReporter : IUnresolvedCityReporter
+{
+    public List<UnresolvedCityReport> Reports { get; } = [];
+
+    public UnresolvedCityReportResult Result { get; set; } =
+        new(UnresolvedCityReportOutcome.Recorded, UnresolvedCityId.New(), null, null);
+
+    public Task<UnresolvedCityReportResult> ReportAsync(UnresolvedCityReport report, CancellationToken cancellationToken)
+    {
+        Reports.Add(report);
+        return Task.FromResult(Result);
+    }
 }
 
 internal sealed class FakeCompanyRepository(params Company[] companies) : ICompanyRepository

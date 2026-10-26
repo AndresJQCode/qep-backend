@@ -102,6 +102,10 @@ internal sealed class FakeShopifyDatabase
     public List<(string Action, Guid TenantId, Guid ActorId, AuditActorType ActorType, string ResourceId, string Fields)> PendingAudit { get; } = [];
 
     public List<(string Action, Guid TenantId, Guid ActorId, AuditActorType ActorType, string ResourceId, string Fields)> Audit { get; } = [];
+
+    public List<ShopifyCityCorrection> PendingCityCorrections { get; } = [];
+
+    public List<ShopifyCityCorrection> CityCorrections { get; } = [];
 }
 
 internal sealed class FakeStoreRepository(FakeShopifyDatabase database) : IShopifyStoreRepository
@@ -237,13 +241,16 @@ internal sealed class FakeUnitOfWork(FakeShopifyDatabase database) : IShopifyUni
             await hook(Saves);
         }
 
-        var written = database.PendingStores.Count + database.PendingOrders.Count + database.PendingAudit.Count;
+        var written = database.PendingStores.Count + database.PendingOrders.Count + database.PendingAudit.Count
+            + database.PendingCityCorrections.Count;
         database.PendingStores.ForEach(store => database.Stores[store.ConnectionId] = store);
         database.PendingOrders.ForEach(row => database.Orders[(row.ConnectionId, row.ShopifyOrderId)] = row);
         database.Audit.AddRange(database.PendingAudit);
+        database.CityCorrections.AddRange(database.PendingCityCorrections);
         database.PendingStores.Clear();
         database.PendingOrders.Clear();
         database.PendingAudit.Clear();
+        database.PendingCityCorrections.Clear();
         return written;
     }
 
@@ -253,6 +260,7 @@ internal sealed class FakeUnitOfWork(FakeShopifyDatabase database) : IShopifyUni
         database.PendingStores.Clear();
         database.PendingOrders.Clear();
         database.PendingAudit.Clear();
+        database.PendingCityCorrections.Clear();
     }
 }
 

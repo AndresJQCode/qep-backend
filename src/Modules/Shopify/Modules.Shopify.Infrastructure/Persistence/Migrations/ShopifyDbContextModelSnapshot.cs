@@ -91,6 +91,101 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Shopify.Domain.ShopifyCityCorrection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("AppliedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("applied_at");
+
+                    b.Property<Guid>("CityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("city_id");
+
+                    b.Property<long?>("CustomerVersion")
+                        .HasColumnType("bigint")
+                        .HasColumnName("customer_version");
+
+                    b.Property<Guid>("DepartmentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("department_id");
+
+                    b.Property<Guid?>("MirrorOrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("mirror_order_id");
+
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("origin");
+
+                    b.Property<string>("PartyAddress")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("party_address");
+
+                    b.Property<string>("PartyEmail")
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)")
+                        .HasColumnName("party_email");
+
+                    b.Property<string>("PartyName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("party_name");
+
+                    b.Property<string>("PartyPhone")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("party_phone");
+
+                    b.Property<Guid?>("PreviousCityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("previous_city_id");
+
+                    b.Property<Guid>("SynonymId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("synonym_id");
+
+                    b.Property<string>("Target")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("target");
+
+                    b.Property<Guid>("TargetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("target_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SynonymId", "Target", "TargetId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_city_corrections_synonym_target");
+
+                    b.HasIndex("TenantId", "Target", "TargetId")
+                        .HasDatabaseName("IX_city_corrections_tenant_target");
+
+                    b.ToTable("city_corrections", "shopify", t =>
+                        {
+                            t.HasCheckConstraint("CK_city_corrections_origin", "origin IN ('Correction','Import')");
+
+                            t.HasCheckConstraint("CK_city_corrections_target", "target IN ('Order','Customer')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Shopify.Domain.ShopifyOrderMirror", b =>
                 {
                     b.Property<Guid>("Id")

@@ -36,6 +36,13 @@ internal sealed class ShopifyUnitOfWork(ShopifyDbContext dbContext) : IShopifyUn
             throw new RequestConcurrencyException(
                 "concurrency.conflict", "The Shopify store was created by another process meanwhile; reload it.", exception);
         }
+        // Spec 2026-10-26: la importación y un reintento escribieron a la vez la huella del mismo sinónimo y destino. Con el
+        // mismo código, ApplyAsync descarta, relee y ve la del ganador.
+        catch (DbUpdateException exception) when (IsUniqueViolation(exception, ShopifyDbContext.CityCorrectionSynonymTargetIndex))
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict", "The city correction was written by another process meanwhile; reload it.", exception);
+        }
     }
 
     public void DiscardPendingChanges() => dbContext.ChangeTracker.Clear();

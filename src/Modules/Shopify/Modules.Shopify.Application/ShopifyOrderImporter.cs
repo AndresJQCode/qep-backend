@@ -35,6 +35,8 @@ public sealed class ShopifyOrderImporter(
     IShopifyShippingLookup shipping,
     IShopifyOrderWriter orders,
     IShopifyOrderChangeReaction changes,
+    IShopifyCityCorrectionRepository cityCorrections,
+    IShopifyUnresolvedCityReporter unresolvedCities,
     IShopifyUnitOfWork unitOfWork,
     IClock clock) : IShopifyOrderImporter
 {
@@ -147,7 +149,8 @@ public sealed class ShopifyOrderImporter(
                 now);
         }
 
-        var customer = found ?? await customers.CreateAsync(store, snapshot, cancellationToken);
+        var creation = found is null ? await customers.CreateAsync(store, snapshot, cancellationToken) : null;
+        var customer = found ?? creation!.Customer;
         if (!customer.IsActive)
         {
             // El alta completa devuelve el dueño del documento si otra alta lo tomó entre la búsqueda y el commit (H8): puede
@@ -156,15 +159,28 @@ public sealed class ShopifyOrderImporter(
         }
 
         // D-S24: el cliente se anota en su propia transacción antes del pedido. Si el pedido falla o el worker cae, el reintento
-        // lo encuentra en la fila y no crea otro incompleto (uno sin teléfono ni correo no se volvería a encontrar).
+        // lo encuentra en la fila y no crea otro incompleto (uno sin teléfono ni correo no se volvería a encontrar). La huella del
+        // cliente que nació completo por un sinónimo (O8) va en el mismo guardado: un reintento usa el cliente anotado y no la
+        // volvería a escribir.
         if (row.QepCustomerId != customer.Id)
         {
+            if (creation is { Customer: { Created: true, IsComplete: true }, City: { SynonymId: { } customerSynonym } city })
+            {
+                cityCorrections.Add(ShopifyCityCorrection.ForCustomer(
+                    tenantId, customerSynonym, ShopifyCityCorrectionOrigin.Import, customer.Id, row.Id, city.DepartmentId, city.CityId,
+                    customer.Version, now));
+            }
+
             row.AttachCustomer(customer.Id);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
         var draft = shippingResult.Draft;
-        var party = draft.IsStorePickup ? null : await ShippingPartyAsync(snapshot, cancellationToken);
+        // Con recogida no hay parte de envío, pero la ciudad igual se mira si fue la que frenó el alta completa del cliente.
+        var shippingCity = snapshot.ShippingAddress is not null && (!draft.IsStorePickup || creation is { CityBlocked: true })
+            ? await customers.ResolveCityAsync(snapshot.ShippingAddress, cancellationToken)
+            : null;
+        var party = draft.IsStorePickup ? null : ShippingParty(snapshot, shippingCity?.City);
         var addressUnresolved = !draft.IsStorePickup && snapshot.ShippingAddress is not null && party is null;
         var result = await orders.CreateAsync(
             Draft(connection, store, advisorId, account, customer, snapshot, lines, shippingResult, party, addressUnresolved),
@@ -173,6 +189,8 @@ public sealed class ShopifyOrderImporter(
         {
             return Wait(row, ShopifyWaitReasons.OrderRejected, new { code = result.RejectedCode }, now);
         }
+
+        await RecordShippingCityAsync(row, snapshot, draft, creation, party, shippingCity, result, now, cancellationToken);
 
         // El pedido ya existía con esa clave (el worker cayó entre crearlo y marcar la fila, o el segundo guardado de la
         // ingesta perdió la carrera). Es un éxito; lo que no se repite es el estado de pago, que nació con el del intento anterior
@@ -285,7 +303,30 @@ public sealed class ShopifyOrderImporter(
     /// <summary>§6.2.3 paso 2 (H25): la dirección de Shopify es la parte de envío sólo si queda completa: nombre, teléfono,
     /// dirección, departamento y ciudad. El nombre y el teléfono, si la dirección no los trae, salen del comprador; el correo es
     /// el del comprador. La ciudad se resuelve con la misma regla que el alta del cliente (§6.2.1 paso 5).</summary>
-    private async Task<ShopifyPartyDraft?> ShippingPartyAsync(ShopifyOrderSnapshot snapshot, CancellationToken cancellationToken)
+    private static ShopifyPartyDraft? ShippingParty(ShopifyOrderSnapshot snapshot, ShopifyCityRef? city)
+    {
+        if (PartyFields(snapshot) is not { Name: { } name, Phone: { } phone, Address: { } line } fields || city is null)
+        {
+            return null;
+        }
+
+        return new ShopifyPartyDraft(name, phone, fields.Email, line, city.DepartmentId, city.CityId);
+    }
+
+    /// <summary>
+    /// Spec 2026-10-26 §4.4: nombre, teléfono, dirección y correo de la parte de envío, con la regla del alta (<c>ShippingParty</c>)
+    /// más el correo; <c>null</c> si falta alguno. Con estos campos y la ciudad, el pedido admite la parte de envío
+    /// (<c>Order.EnsureCreatable</c> la pide completa, con correo: desvío S10).
+    /// </summary>
+    public static (string Name, string Phone, string Address, string Email)? ShippingPartyFields(ShopifyOrderSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        return PartyFields(snapshot) is { Name: { } name, Phone: { } phone, Address: { } line, Email: { } email }
+            ? (name, phone, line, email)
+            : null;
+    }
+
+    private static (string? Name, string? Phone, string? Address, string? Email)? PartyFields(ShopifyOrderSnapshot snapshot)
     {
         if (snapshot.ShippingAddress is not { } address)
         {
@@ -293,16 +334,69 @@ public sealed class ShopifyOrderImporter(
         }
 
         var buyerName = string.Join(' ', new[] { snapshot.Buyer.FirstName, snapshot.Buyer.LastName }.Select(Blank).OfType<string>());
-        var name = Blank(address.Name) ?? Blank(buyerName);
-        var phone = Blank(address.Phone) ?? Blank(snapshot.Buyer.Phone);
-        var line = Blank(string.Join(' ', new[] { address.Address1, address.Address2 }.Select(Blank).OfType<string>()));
-        if (name is null || phone is null || line is null
-            || await customers.ResolveCityAsync(address, cancellationToken) is not { } city)
+        return (
+            Blank(address.Name) ?? Blank(buyerName),
+            Blank(address.Phone) ?? Blank(snapshot.Buyer.Phone),
+            Blank(string.Join(' ', new[] { address.Address1, address.Address2 }.Select(Blank).OfType<string>())),
+            Blank(snapshot.Buyer.Email));
+    }
+
+    /// <summary>
+    /// Spec 2026-10-26, antes de marcar la fila importada:
+    /// <list type="bullet">
+    /// <item>La parte de envío que casó por un sinónimo deja su huella <c>origin = import</c> (O8, D-C13) con la parte como la
+    /// guardó Quotations, si no estaba ya: con <c>AlreadyExisted</c> el intento anterior pudo haberla guardado o perdido (desvío
+    /// S3). Va en la unidad de trabajo de Shopify, en el guardado final del llamador.</item>
+    /// <item>La ciudad de Colombia que no casó por ningún camino, con su departamento resuelto (D-C11), va a la bandeja si frenó
+    /// algo: la parte de envío (no es recogida) o el alta completa del cliente. Si el reporte lanza, la importación lanza y la
+    /// entrega se reintenta; la ocurrencia es idempotente por la fila del espejo. Un texto vacío (<c>Ignored</c>) o un sinónimo
+    /// que se confirmó en el medio (<c>SynonymExists</c>, lo atiende el trabajo de corrección) no cambian nada acá.</item>
+    /// </list>
+    /// </summary>
+    private async Task RecordShippingCityAsync(
+        ShopifyOrderMirror row,
+        ShopifyOrderSnapshot snapshot,
+        ShopifyShippingDraft draft,
+        ShopifyCustomerCreation? creation,
+        ShopifyPartyDraft? party,
+        ShopifyCityResolution? shippingCity,
+        ShopifyOrderWriteResult result,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        // Con AlreadyExisted la parte guardada puede ser otra (alguien la cambió de ciudad): sólo es del sinónimo si tiene su ciudad.
+        if (party is not null
+            && shippingCity?.City is { SynonymId: { } partySynonym } matched
+            && result.ShippingParty is { } persisted
+            && persisted.CityId == matched.CityId
+            && await cityCorrections.FindAsync(
+                row.TenantId, partySynonym, ShopifyCityCorrectionTarget.Order, result.OrderId, cancellationToken) is null)
         {
-            return null;
+            cityCorrections.Add(ShopifyCityCorrection.ForOrder(
+                row.TenantId, partySynonym, ShopifyCityCorrectionOrigin.Import, result.OrderId, row.Id, persisted, now));
         }
 
-        return new ShopifyPartyDraft(name, phone, Blank(snapshot.Buyer.Email), line, city.DepartmentId, city.CityId);
+        if (shippingCity is not { City: null, UnmatchedDepartmentId: { } departmentId, CityText: { } cityText }
+            || (draft.IsStorePickup && creation is not { CityBlocked: true }))
+        {
+            return;
+        }
+
+        var bornIncomplete = creation is { Customer: { Created: true, IsComplete: false } } ? creation.Customer.Id : (Guid?)null;
+        await unresolvedCities.ReportAsync(
+            new ShopifyUnresolvedCityReport(
+                row.TenantId,
+                row.Id,
+                result.OrderId,
+                bornIncomplete,
+                departmentId,
+                cityText,
+                RawAddress(snapshot.ShippingAddress!),
+                Blank(snapshot.ShippingAddress!.ProvinceCode),
+                PartyCityOnly: !draft.IsStorePickup && ShippingPartyFields(snapshot) is not null,
+                CustomerCityOnly: creation is { CityBlocked: true },
+                now),
+            cancellationToken);
     }
 
     /// <summary>
@@ -357,22 +451,22 @@ public sealed class ShopifyOrderImporter(
             parts.Add(note);
         }
 
-        if (unresolvedAddress is { } address)
+        if (unresolvedAddress is { } address && RawAddress(address) is { Length: > 0 } raw)
         {
-            var raw = string.Join(", ", new[]
-                {
-                    address.Name, address.Address1, address.Address2, address.City, address.Province, address.CountryCode, address.Phone,
-                }
-                .Select(Blank)
-                .OfType<string>());
-            if (raw.Length > 0)
-            {
-                parts.Add($"{RawAddressLabel}{raw}");
-            }
+            parts.Add($"{RawAddressLabel}{raw}");
         }
 
         return string.Join('\n', parts);
     }
+
+    /// <summary>La dirección cruda de la línea de las notas, sin el rótulo: es también la muestra de la bandeja (§4.2).</summary>
+    private static string RawAddress(ShopifyAddress address) =>
+        string.Join(", ", new[]
+            {
+                address.Name, address.Address1, address.Address2, address.City, address.Province, address.CountryCode, address.Phone,
+            }
+            .Select(Blank)
+            .OfType<string>());
 
     /// <summary>D-S6: la diferencia avisa sólo si supera el 1 % del total de Shopify, en cualquier sentido. Con un total de 0,
     /// cualquier diferencia avisa.</summary>

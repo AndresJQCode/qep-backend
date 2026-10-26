@@ -908,6 +908,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IShopifyCustomerDirectory, ShopifyCustomerDirectory>();
         services.AddScoped<IShopifyProductLookup, ShopifyProductLookup>();
         services.AddScoped<IShopifyGeographyLookup, ShopifyGeographyLookup>();
+        // Spec 2026-10-26 §4.2: la ciudad que no casa va a la bandeja de Geography.
+        services.AddScoped<IShopifyUnresolvedCityReporter, ShopifyUnresolvedCityReporter>();
         services.AddScoped<IShopifyShippingLookup, ShopifyShippingLookup>();
         services.AddScoped<IShopifyOrderWriter, ShopifyOrderWriter>();
         services.AddScoped<IShopifyMemberDirectory, ShopifyMemberDirectory>();

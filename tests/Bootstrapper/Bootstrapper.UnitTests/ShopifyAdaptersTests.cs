@@ -6,11 +6,13 @@ using Modules.Catalog.Domain;
 using Modules.Companies.Domain;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
+using Modules.Geography.Application;
 using Modules.Geography.Domain;
 using Modules.Integrations.Domain;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Shopify.Application;
+using Modules.Shopify.Domain;
 using Modules.Tenancy.Domain;
 
 namespace Bootstrapper.UnitTests;
@@ -137,6 +139,28 @@ public sealed class ShopifyAdaptersTests
         Assert.Equal(existingClient, result.ClientId);
         Assert.Equal("PED-7", result.OrderNumber);
         Assert.Equal(134_000m, result.Total);
+    }
+
+    // Spec 2026-10-26 D-C4: la huella de la parte de envío es la que guardó Quotations (normalizada), también con AlreadyExisted;
+    // sin parte, no hay huella.
+    [Fact]
+    public async Task OrderWriterReturnsThePersistedShippingParty()
+    {
+        var (departmentId, cityId) = (Guid.CreateVersion7(), Guid.CreateVersion7());
+        var persisted = new ExternalShippingParty("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", departmentId, cityId);
+        var writer = new FakeExternalOrderWriter
+        {
+            OnCreate = draft => new ExternalOrderResult(
+                Guid.CreateVersion7(), "PED-8", 119_000m, 100_000m, "COP", draft.ClientId, AlreadyExisted: true, Shipping: persisted),
+        };
+
+        var result = await OrderWriter(writer).CreateAsync(Draft(), Ct);
+        var withoutParty = await OrderWriter(new FakeExternalOrderWriter()).CreateAsync(Draft(), Ct);
+
+        Assert.Equal(
+            new ShopifyShippingFingerprint("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", departmentId, cityId),
+            result.ShippingParty);
+        Assert.Null(withoutParty.ShippingParty);
     }
 
     // §6.3: la fila en espera que se canceló se busca por clave externa antes de ignorarla. El adaptador busca sólo pedidos de
@@ -561,7 +585,7 @@ public sealed class ShopifyAdaptersTests
         var complete = await directory.CreateCompleteAsync(TenantId, data, Ct);
         var incomplete = await directory.CreateIncompleteAsync(TenantId, null, "+573001234567", null, "CO", Ct);
 
-        Assert.Equal(new ShopifyCustomerRef(provisioning.LastId, false, true), incomplete);
+        Assert.Equal(new ShopifyCustomerRef(provisioning.LastId, false, true, Created: true, Version: 1), incomplete);
         Assert.True(complete.IsComplete);
         var (tenantId, sent) = Assert.Single(provisioning.Completes);
         Assert.Equal(TenantId, tenantId);
@@ -570,6 +594,23 @@ public sealed class ShopifyAdaptersTests
                 data.Name, data.IdentificationType, data.IdentificationNumber, data.Phone, data.Email, data.Address,
                 data.Country, data.CityId, data.CityName, data.ClassificationId),
             sent);
+    }
+
+    // Spec 2026-10-26 (desvío S7): la huella de un cliente que nació en la importación es su versión, y sólo si esta importación
+    // lo creó: el dueño del documento que devuelve el alta (H8) no lo creó Shopify.
+    [Fact]
+    public async Task CustomerDirectoryReportsCreatedAndVersion()
+    {
+        var provisioning = new FakeCustomerProvisioning();
+        var directory = new ShopifyCustomerDirectory(new FakeCustomerRepository(), new FakeCustomerMergeStore(), provisioning, new PassThroughPhones());
+
+        var created = await directory.CreateCompleteAsync(TenantId, CompleteCustomer(), Ct);
+        provisioning.Created = false;
+        provisioning.Version = 4;
+        var owner = await directory.CreateCompleteAsync(TenantId, CompleteCustomer(), Ct);
+
+        Assert.Equal((true, 1L), (created.Created, created.Version));
+        Assert.Equal((false, 4L), (owner.Created, owner.Version));
     }
 
     // ---- Conexión (§5.2) ----
@@ -672,10 +713,61 @@ public sealed class ShopifyAdaptersTests
         var medellin = City.Create(CityId.New(), "05001", "Medellín", antioquia.Id);
         var lookup = new ShopifyGeographyLookup(new NamedDepartments(antioquia), new NamedCities(medellin));
 
-        Assert.Equal(new ShopifyCityRef(antioquia.Id.Value, medellin.Id.Value), await lookup.FindCityAsync("Antioquia", "Medellín", Ct));
-        Assert.Null(await lookup.FindCityAsync("Antioquia", "Bello", Ct));
-        Assert.Null(await lookup.FindCityAsync("Cundinamarca", "Medellín", Ct));
-        Assert.Null(await lookup.FindCityAsync(" ", "Medellín", Ct));
+        Assert.Equal(new ShopifyCityRef(antioquia.Id.Value, medellin.Id.Value), (await lookup.LookupCityAsync("Antioquia", "Medellín", Ct)).City);
+        Assert.Null((await lookup.LookupCityAsync("Antioquia", "Bello", Ct)).City);
+        Assert.Null((await lookup.LookupCityAsync("Cundinamarca", "Medellín", Ct)).City);
+        Assert.Null((await lookup.LookupCityAsync(" ", "Medellín", Ct)).City);
+    }
+
+    // Spec 2026-10-26 D-C13 y D-C11: la ciudad dice si casó por un sinónimo, y el departamento viaja aunque la ciudad no case
+    // (es el de la bandeja). Sin departamento, o sin texto de ciudad, no hay nada.
+    [Fact]
+    public async Task GeographyLookupReportsTheSynonymAndTheUnmatchedDepartment()
+    {
+        var valle = Department.Create(DepartmentId.New(), "76", "VALLE DEL CAUCA");
+        var cali = City.Create(CityId.New(), "76001", "Cali", valle.Id);
+        var synonymId = CitySynonymId.New();
+        var cities = new NamedCities(cali) { Synonyms = { [(valle.Id, "CALLI")] = (cali, synonymId) } };
+        var lookup = new ShopifyGeographyLookup(new NamedDepartments(valle), cities);
+
+        Assert.Equal(
+            new ShopifyCityLookup(valle.Id.Value, new ShopifyCityRef(valle.Id.Value, cali.Id.Value, synonymId.Value)),
+            await lookup.LookupCityAsync("VALLE DEL CAUCA", " CALLI ", Ct));
+        Assert.Equal(
+            new ShopifyCityLookup(valle.Id.Value, new ShopifyCityRef(valle.Id.Value, cali.Id.Value)),
+            await lookup.LookupCityAsync("VALLE DEL CAUCA", "Cali", Ct));
+        Assert.Equal(new ShopifyCityLookup(valle.Id.Value, null), await lookup.LookupCityAsync("VALLE DEL CAUCA", "Pueblo Perdido", Ct));
+        Assert.Equal(new ShopifyCityLookup(valle.Id.Value, null), await lookup.LookupCityAsync("VALLE DEL CAUCA", "  ", Ct));
+        Assert.Equal(new ShopifyCityLookup(null, null), await lookup.LookupCityAsync("Narnia", "Cali", Ct));
+    }
+
+    // Spec 2026-10-26 §4.2: Shopify reporta con su origen y la fila del espejo como referencia; lo que vuelve es el resultado y,
+    // si el texto ya tiene sinónimo, cuál.
+    [Fact]
+    public async Task UnresolvedCityReporterMapsToGeography()
+    {
+        var geography = new RecordingUnresolvedCityReporter();
+        var reporter = new ShopifyUnresolvedCityReporter(geography);
+        var (mirrorId, orderId, customerId, departmentId) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+        var report = new ShopifyUnresolvedCityReport(
+            TenantId, mirrorId, orderId, customerId, departmentId, "CALLI", "Cra 5 # 10-20, CALLI, Valle del Cauca, CO", "VAC",
+            PartyCityOnly: true, CustomerCityOnly: false, Now);
+
+        var recorded = await reporter.ReportAsync(report, Ct);
+        var synonymId = CitySynonymId.New();
+        geography.Result = new UnresolvedCityReportResult(UnresolvedCityReportOutcome.SynonymExists, null, synonymId, CityId.New());
+        var existing = await reporter.ReportAsync(report, Ct);
+        geography.Result = new UnresolvedCityReportResult(UnresolvedCityReportOutcome.Ignored, null, null, null);
+        var ignored = await reporter.ReportAsync(report, Ct);
+
+        Assert.Equal(
+            new UnresolvedCityReport(
+                TenantId, "shopify", mirrorId, orderId, customerId, new DepartmentId(departmentId), "CALLI",
+                "Cra 5 # 10-20, CALLI, Valle del Cauca, CO", "VAC", PartyCityOnly: true, CustomerCityOnly: false, Now),
+            geography.Reports[0]);
+        Assert.Equal(new ShopifyUnresolvedCityResult(ShopifyUnresolvedCityOutcome.Recorded, null), recorded);
+        Assert.Equal(new ShopifyUnresolvedCityResult(ShopifyUnresolvedCityOutcome.SynonymExists, synonymId.Value), existing);
+        Assert.Equal(new ShopifyUnresolvedCityResult(ShopifyUnresolvedCityOutcome.Ignored, null), ignored);
     }
 
     [Fact]

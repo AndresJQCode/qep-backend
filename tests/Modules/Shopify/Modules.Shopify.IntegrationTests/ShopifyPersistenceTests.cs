@@ -242,6 +242,46 @@ public sealed class ShopifyPersistenceTests
             connectionString, "SELECT version FROM shopify.orders WHERE id = @id", ("id", row.Id)));
     }
 
+    // Spec 2026-10-26 (desvío S3): una huella por sinónimo y pedido o cliente. La importación y el reintento a la vez no dejan dos;
+    // el perdedor recibe concurrency.conflict (por nombre de índice) y ApplyAsync relee. La que ganó vuelve como se guardó.
+    [Fact]
+    public async Task ASecondCorrectionForTheSameTargetIsAConcurrencyConflict()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenantId, synonymId, orderId, mirrorId) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+        var party = new ShopifyShippingFingerprint("Laura Gómez", "+573001112233", null, "Cra 5 # 10-20", Guid.CreateVersion7(), Guid.CreateVersion7());
+        ShopifyCityCorrection NewCorrection() =>
+            ShopifyCityCorrection.ForOrder(tenantId, synonymId, ShopifyCityCorrectionOrigin.Import, orderId, mirrorId, party, Now);
+        var first = NewCorrection();
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IShopifyCityCorrectionRepository>().Add(first);
+            await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var saved = await scope.ServiceProvider.GetRequiredService<IShopifyCityCorrectionRepository>()
+                .FindAsync(tenantId, synonymId, ShopifyCityCorrectionTarget.Order, orderId, Ct);
+            Assert.NotNull(saved);
+            Assert.Equal(
+                (first.Id, ShopifyCityCorrectionOrigin.Import, (Guid?)mirrorId, party, (long?)null, Now),
+                (saved.Id, saved.Origin, saved.MirrorOrderId, saved.Party, saved.CustomerVersion, saved.AppliedAt));
+        }
+
+        using var second = factory.Services.CreateScope();
+        second.ServiceProvider.GetRequiredService<IShopifyCityCorrectionRepository>().Add(NewCorrection());
+        var error = await Assert.ThrowsAsync<RequestConcurrencyException>(
+            () => second.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct));
+
+        Assert.Equal("concurrency.conflict", error.Code);
+        Assert.Equal("Order|Import", await ScalarAsync<string>(
+            connectionString, "SELECT string_agg(target || '|' || origin, ',') FROM shopify.city_corrections"));
+    }
+
     // §6.1: la tienda nace al primer contacto, y dos a la vez chocan con la PK.
     [Fact]
     public async Task TheStoreCreatedTwiceAtOnceIsAConcurrencyConflict()
