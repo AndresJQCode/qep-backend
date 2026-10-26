@@ -129,7 +129,8 @@ public static class ResolveImpactCalculator
 /// cambia (<c>ordersToChange</c>) y uno que alguien editó se respeta (<c>ordersEdited</c>); uno que ya no está <c>Pending</c> se
 /// lista con su estado, completo, para avisar al tenant. Un pedido que ya no existe no cuenta en ningún grupo. Un cliente sigue
 /// como se escribió mientras su versión sea la de la huella; uno que ya no existe cuenta como editado (la lectura no distingue
-/// «editado» de «ya no está», y en los dos casos no se toca).
+/// «editado» de «ya no está», y en los dos casos no se toca). Una huella que ya está en la ciudad nueva no cuenta como cambio ni como
+/// editada (el consumidor la salta), pero sigue contando como corregida para <c>occurrencesUncorrected</c>.
 /// </summary>
 public static class CorrectImpactCalculator
 {
@@ -169,12 +170,12 @@ public static class CorrectImpactCalculator
                         correction.OrderNumber ?? correction.TargetId.ToString(),
                         status));
                 }
-                else
+                else if (correction.CityId != to.Id)
                 {
                     (correction.StillAsWritten ? ordersToChange : ordersEdited).Add(correction.TenantId);
                 }
             }
-            else
+            else if (correction.CityId != to.Id)
             {
                 (correction.StillAsWritten ? customersToChange : customersEdited).Add(correction.TenantId);
             }

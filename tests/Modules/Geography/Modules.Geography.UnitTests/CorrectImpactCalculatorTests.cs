@@ -116,6 +116,34 @@ public sealed class CorrectImpactCalculatorTests
             impact.OccurrencesUncorrected);
     }
 
+    // El consumidor salta la huella que ya está en la ciudad nueva: no es un cambio ni una edición, pero sí una ocurrencia corregida.
+    [Fact]
+    public void AFootprintAlreadyInTheTargetCityIsNotChangedNorEditedButStaysCorrected()
+    {
+        var customerId = Guid.CreateVersion7();
+        var order = ResolveImpactOccurrences.Of(TenantA, partyCityOnly: true);
+        var customerOccurrence = ResolveImpactOccurrences.Of(TenantA, partyCityOnly: false, customerId: customerId, customerCityOnly: true);
+
+        var impact = CorrectImpactCalculator.Compute(
+            Cali,
+            Palmira,
+            [
+                OrderFootprint(TenantA, "Pending", stillAsWritten: true, orderId: order.OrderId) with { CityId = Palmira.Id },
+                OrderFootprint(TenantB, "Pending", stillAsWritten: false) with { CityId = Palmira.Id },
+                CustomerFootprint(TenantA, stillAsWritten: true, customerId: customerId) with { CityId = Palmira.Id },
+                CustomerFootprint(TenantB, stillAsWritten: false) with { CityId = Palmira.Id },
+                OrderFootprint(TenantB, "Pending", stillAsWritten: true),
+            ],
+            [order, customerOccurrence],
+            Names);
+
+        Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.OrdersToChange);
+        Assert.Equal(0, impact.OrdersEdited.Count);
+        Assert.Equal(0, impact.CustomersToChange.Count);
+        Assert.Equal(0, impact.CustomersEdited.Count);
+        Assert.Equal(0, impact.OccurrencesUncorrected.Count);
+    }
+
     [Fact]
     public void EveryGroupTravelsInZero()
     {
