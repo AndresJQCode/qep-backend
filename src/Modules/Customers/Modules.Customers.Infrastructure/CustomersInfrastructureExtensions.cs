@@ -59,6 +59,8 @@ public static class CustomersInfrastructureExtensions
         services.AddScoped<ICustomerInstagramDirectory, CustomerInstagramDirectory>();
         // Spec de Shopify 2026-10-15 §6.2.1: altas de compradores desde una integración, sin persona detrás.
         services.AddScoped<ICustomerProvisioning, CustomerProvisioning>();
+        // Spec 2026-10-26 D-5: el registro de consentimiento de datos, sólo de inserción.
+        services.AddScoped<ICustomerDataConsentRepository, CustomerDataConsentRepository>();
         services.AddHostedService<CustomerPhoneBackfillWorker>();
 
         return services;

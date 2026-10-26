@@ -48,8 +48,9 @@ public sealed class SimulationsApiTests
           "nodes": [
             { "id": "n1", "kind": "dataConsent", "title": "Política de datos", "text": "Lee https://e.co/d",
               "outputs": { "accepted": "n2", "rejected": "n3" } },
-            { "id": "n2", "kind": "message", "title": "Gracias", "text": "Gracias", "outputs": { "next": null } },
-            { "id": "n3", "kind": "message", "title": "Entendido", "text": "Entendido", "outputs": { "next": null } }
+            { "id": "n2", "kind": "message", "title": "Gracias", "text": "Gracias", "outputs": { "next": "n4" } },
+            { "id": "n3", "kind": "message", "title": "Entendido", "text": "Entendido", "outputs": { "next": "n4" } },
+            { "id": "n4", "kind": "resolve", "title": "Listo" }
           ] }
         """;
 
@@ -234,7 +235,7 @@ public sealed class SimulationsApiTests
     }
 
     /// <summary>Spec 2026-10-26 D-11: el simulador pregunta siempre y no escribe en <c>customers.data_consents</c>.</summary>
-    [Fact(Skip = "Requires customers.data_consents (Task 6)")]
+    [Fact]
     public async Task SimulatingTheConsentBlockNeverWritesRows()
     {
         await using var database = await StartDatabaseAsync();
