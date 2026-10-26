@@ -30,6 +30,8 @@ public interface ICustomerMergeStore
     /// <summary>
     /// Notas y direcciones pasan al que queda; las direcciones llegan con <c>is_principal = false</c> (§3.2 paso 3), así la
     /// principal del que queda sigue siendo la única. Las notas no cambian su <c>version</c>.
+    /// Spec 2026-10-26 D-7: el historial de consentimiento (<c>data_consents</c>) también pasa al que queda; sólo cambia
+    /// <c>customer_id</c>.
     /// </summary>
     Task MoveOwnedAsync(
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
