@@ -107,4 +107,15 @@ public sealed class AutomationHandoffTests
         Assert.Null(empty.Http);
         Assert.Null(emptyAfterCleaning.Http);
     }
+
+    [Fact]
+    public void TheAssignedMemberSurvivesCleaning()
+    {
+        var member = Guid.CreateVersion7();
+
+        Assert.Equal(member, AutomationHandoff.Create(
+            AutomationHandoffKind.AttemptsExhausted, null, null, null, null, null, null, assignedMemberId: member).AssignedMemberId);
+        Assert.Null(AutomationHandoff.Create(
+            AutomationHandoffKind.AttemptsExhausted, null, null, null, null, null, null, assignedMemberId: Guid.Empty).AssignedMemberId);
+    }
 }

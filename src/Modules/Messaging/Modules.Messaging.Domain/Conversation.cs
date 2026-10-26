@@ -406,6 +406,32 @@ public sealed partial class Conversation
         return new ConversationEvent(ConversationEventType.AutomationPaused, Actor: actorMemberId, PauseReason: reason, Handoff: handoff);
     }
 
+    /// <summary>Spec 2026-10-25 D-1, D-7, D-8: el traspaso del asistente. Mismas comprobaciones y orden que <see cref="PauseAutomation"/>.
+    /// Pausa sin actor y, si la causa trae un asesor, le asigna la conversación con los campos directos: <c>TransferTo</c> exige un actor y
+    /// escribe <c>Transferred</c>, y el hilo no debe decir «Alguien transfirió…» (D-8). Con el asistente activo la conversación no tiene
+    /// asesor (tomarla pausa el bot y <see cref="ResumeAutomation"/> la libera), así que no hay asignado previo que comparar.</summary>
+    public ConversationEvent HandOffAutomation(AutomationHandoff handoff, DateTimeOffset now)
+    {
+        EnsureOpenForAutomation();
+        switch (AutomationStatus)
+        {
+            case ConversationAutomationStatus.Paused:
+                throw new MessagingDomainException(MessagingErrorCodes.AutomationAlreadyPaused, "The assistant is already paused.");
+            case ConversationAutomationStatus.None:
+                throw new MessagingDomainException(MessagingErrorCodes.AutomationNotAvailable, "The conversation has no assistant to pause.");
+        }
+
+        MarkPaused(null, Domain.AutomationPauseReason.Handoff, now);
+        if (handoff.AssignedMemberId is { } member)
+        {
+            AssignedMemberId = member;
+            AssignedAt = now;
+        }
+
+        Touch(now);
+        return new ConversationEvent(ConversationEventType.AutomationPaused, Actor: null, PauseReason: Domain.AutomationPauseReason.Handoff, Handoff: handoff);
+    }
+
     /// <summary>Reactiva un asistente pausado. Si hay un asesor asignado se le quita la conversación primero (evento
     /// <c>Released</c>); el orden de las comprobaciones es: abierta, hay asistente, no está activo.</summary>
     public IReadOnlyList<ConversationEvent> ResumeAutomation(Guid actorMemberId, DateTimeOffset now)

@@ -15,6 +15,9 @@ public enum HandoffCauseKind
 
     /// <summary>Un ciclo, un bloque inexistente o una versión borrada.</summary>
     FlowFailed,
+
+    /// <summary>Spec 2026-10-25 D-1: se agotaron los reintentos de una pregunta.</summary>
+    AttemptsExhausted,
 }
 
 /// <summary>Spec 2026-10-24 D-T6: el bloque HTTP fallido que arrancó el paso que terminó en traspaso. Sólo códigos y la foto del título y
