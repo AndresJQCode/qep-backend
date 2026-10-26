@@ -364,6 +364,10 @@ internal sealed class FakeCitySynonymRepository(params CitySynonym[] synonyms) :
         throw new NotSupportedException();
 
     public void Add(CitySynonym synonym) => throw new NotSupportedException();
+
+    public Task<(IReadOnlyList<CitySynonym> Items, int Total)> ListAsync(
+        DepartmentId? departmentId, string? normalizedSearch, int page, int pageSize, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 /// <summary>Una tienda Shopify enlazada en el estado que pide la prueba, con su ruta y el módulo prendido o no. El

@@ -98,6 +98,7 @@ public static class ShopifyInfrastructureExtensions
         services.AddSingleton<CitySynonymEventsProcessor>();
         services.AddHostedService<CitySynonymEventsWorker>();
         services.AddScoped<IShopifyCityCorrectionJobQueue, ShopifyCityCorrectionJobQueue>();
+        services.AddScoped<IShopifyCityCorrectionJobs, ShopifyCityCorrectionJobs>();
         services.AddScoped<ShopifyCityCorrectionProcessor>();
         services.AddHostedService<ShopifyCityCorrectionWorker>();
         return services;

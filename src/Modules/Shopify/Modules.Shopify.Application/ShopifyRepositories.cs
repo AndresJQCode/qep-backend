@@ -119,6 +119,19 @@ public interface IShopifyCityCorrectionJobQueue
     Task<IReadOnlyList<Guid>> RecordRequestedCityAsync(Guid id, Guid cityId, CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Spec 2026-10-26 D-C6 y S6: lo que la consola del operador le hace a los trabajos de un sinónimo. Una sentencia que se
+/// confirma en el acto, fuera del tracker, como <see cref="IShopifyCityCorrectionJobQueue"/>.
+/// </summary>
+public interface IShopifyCityCorrectionJobs
+{
+    /// <summary><c>Failed</c> → <c>Pending</c>, con los intentos en cero y sin lease, error ni cierre, para los trabajos del
+    /// sinónimo (<paramref name="synonymId"/> es una referencia blanda a <c>geography.city_synonyms</c>). Conserva las ciudades
+    /// que pidió cada intento (<c>requested_city_ids</c>): el reintento las necesita para reconocer su propio trabajo. Devuelve
+    /// cuántos pasó.</summary>
+    Task<int> RetryFailedAsync(Guid synonymId, CancellationToken cancellationToken);
+}
+
 /// <summary>El filtro de la bandeja (§7). <see cref="States"/> vacío es cualquier estado («con avisos» sin
 /// <c>state</c>, BFF: así la lista cierra con <c>summary.withWarnings</c>); el handler pone <c>Waiting</c> cuando no hay <c>state</c> ni <c>withWarnings</c>. <see cref="WithWarnings"/>
 /// deja sólo las filas con avisos <b>sin revisar</b>.</summary>

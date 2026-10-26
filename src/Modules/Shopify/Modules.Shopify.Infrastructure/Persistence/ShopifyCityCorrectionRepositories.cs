@@ -65,6 +65,26 @@ internal sealed class ShopifyCityCorrectionJobRepository(ShopifyDbContext dbCont
 }
 
 /// <summary>
+/// Spec 2026-10-26 D-C6 y S6: reintentar desde la consola los trabajos <c>Failed</c> de un sinónimo, en una sola sentencia que se
+/// confirma en el acto. El estado va por nombre, como lo guarda la conversión de EF.
+/// </summary>
+internal sealed class ShopifyCityCorrectionJobs(ShopifyDbContext dbContext) : IShopifyCityCorrectionJobs
+{
+    private static readonly string Pending = nameof(ShopifyCityCorrectionJobStatus.Pending);
+
+    private static readonly string Failed = nameof(ShopifyCityCorrectionJobStatus.Failed);
+
+    public Task<int> RetryFailedAsync(Guid synonymId, CancellationToken cancellationToken) =>
+        dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE shopify.city_correction_jobs
+               SET status = {Pending}, attempts = 0, lease_until = NULL, last_error = NULL, skip_reason = NULL, processed_at = NULL
+             WHERE synonym_id = {synonymId} AND status = {Failed}
+            """,
+            cancellationToken);
+}
+
+/// <summary>
 /// Spec 2026-10-26 D-C6: la cola del worker que corrige sobre <c>shopify.city_correction_jobs</c>, por SQL. El reclamo es la regla de
 /// <c>WebhookDeliveries</c>: una sentencia que se commitea sola y da un solo ganador entre réplicas, con el lease del intento que
 /// consume (<see cref="ShopifyCityCorrectionWorker.Leases"/>). Los estados van por nombre, como los guarda la conversión de EF.

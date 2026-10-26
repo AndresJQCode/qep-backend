@@ -492,6 +492,358 @@ public sealed class CityOperatorApiTests
         Assert.Equal(UnresolvedCityStatus.Pending, (await RowAsync(factory, row.UnresolvedCityId.Value)).Status);
     }
 
+    // SC-12: la lista de sinónimos, corregir, borrar y reintentar.
+
+    [Fact]
+    public async Task TheSynonymListCarriesCountsEmailAndVersion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), OperatorTenantId);
+        using var client = StubClient(factory, OperatorSubjectId, OperatorTenantId, ReadAndManage);
+        var valle = await DepartmentAsync(factory, "76");
+        var cali = await CityAsync(factory, "76001");
+        var palmira = await CityAsync(factory, "76520");
+        var older = await SeedSynonymAsync(factory, valle, "Kali", cali.Id, Seen);
+        var newer = await SeedSynonymAsync(factory, valle, "Palmyra", palmira.Id, Seen.AddHours(1));
+        await SeedUserAsync(factory, OperatorSubjectId, "operador@qcode.co");
+        // Sin trabajos los cuatro contadores son cero; con ellos, las huellas de los dos orígenes y sólo Pending y Failed.
+        await SeedCorrectionAsync(factory, newer, "Correction", "Order");
+        await SeedCorrectionAsync(factory, newer, "Import", "Order");
+        await SeedCorrectionAsync(factory, newer, "Import", "Customer");
+        await SeedJobAsync(factory, newer, "Pending");
+        await SeedJobAsync(factory, newer, "Failed");
+        await SeedJobAsync(factory, newer, "Failed");
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        var response = await client.GetAsync($"{Base}/synonyms", cancellationToken);
+        var echoed = await client.GetFromJsonAsync<CitySynonymPageDto>($"{Base}/synonyms?page=9&search=zzz", cancellationToken);
+        // «almir» está en el nombre de la ciudad (PALMIRA) y no en el texto del sinónimo (PALMYRA).
+        var byCityName = await client.GetFromJsonAsync<CitySynonymPageDto>($"{Base}/synonyms?search=%20almir", cancellationToken);
+        var byText = await client.GetFromJsonAsync<CitySynonymPageDto>($"{Base}/synonyms?search=KALI&pageSize=1", cancellationToken);
+        var otherDepartment = await client.GetFromJsonAsync<CitySynonymPageDto>(
+            $"{Base}/synonyms?departmentId={Guid.CreateVersion7()}", cancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        Assert.Equal(["items", "total", "page", "pageSize"], json.RootElement.EnumerateObject().Select(property => property.Name));
+        var items = json.RootElement.GetProperty("items").EnumerateArray().ToList();
+        Assert.Equal(
+            ["id", "text", "normalizedText", "department", "city", "correctedOrders", "correctedCustomers", "pendingCorrections",
+             "failedCorrections", "createdBy", "createdAt", "updatedAt", "version"],
+            items[0].EnumerateObject().Select(property => property.Name));
+        Assert.Equal(["subjectId", "email"], items[0].GetProperty("createdBy").EnumerateObject().Select(p => p.Name));
+        Assert.Equal((2, 1, 25), (json.RootElement.GetProperty("total").GetInt32(), json.RootElement.GetProperty("page").GetInt32(), json.RootElement.GetProperty("pageSize").GetInt32()));
+
+        // updatedAt descendente: el sinónimo más nuevo primero.
+        var page = await response.Content.ReadFromJsonAsync<CitySynonymPageDto>(cancellationToken);
+        Assert.NotNull(page);
+        Assert.Equal([newer.Value, older.Value], page.Items.Select(item => item.Id));
+        var withJobs = page.Items[0];
+        Assert.Equal(("Palmyra", "PALMYRA", 1L), (withJobs.Text, withJobs.NormalizedText, withJobs.Version));
+        Assert.Equal(
+            (2, 1, 1, 2), (withJobs.CorrectedOrders, withJobs.CorrectedCustomers, withJobs.PendingCorrections, withJobs.FailedCorrections));
+        Assert.Equal(new CitySynonymActorDto(OperatorSubjectId, "operador@qcode.co"), withJobs.CreatedBy);
+        Assert.Equal(("PALMIRA", "76520"), (withJobs.City.Name, withJobs.City.DivipolaCode));
+        Assert.Equal((valle.Value, "76"), (withJobs.Department.Id, withJobs.Department.DivipolaCode));
+        var withoutJobs = page.Items[1];
+        Assert.Equal(
+            (0, 0, 0, 0),
+            (withoutJobs.CorrectedOrders, withoutJobs.CorrectedCustomers, withoutJobs.PendingCorrections, withoutJobs.FailedCorrections));
+
+        // La página pedida se devuelve tal cual, también fuera de rango; la búsqueda mira el texto normalizado o el nombre de la ciudad.
+        Assert.NotNull(echoed);
+        Assert.Equal((0, 9, 25), (echoed.Total, echoed.Page, echoed.PageSize));
+        Assert.Empty(echoed.Items);
+        Assert.NotNull(byCityName);
+        Assert.Equal([newer.Value], byCityName.Items.Select(item => item.Id));
+        Assert.NotNull(byText);
+        Assert.Equal([older.Value], byText.Items.Select(item => item.Id));
+        Assert.Equal((1, 1), (byText.Total, byText.PageSize));
+        Assert.NotNull(otherDepartment);
+        Assert.Equal(0, otherDepartment.Total);
+    }
+
+    [Fact]
+    public async Task TheSynonymListRejectsOutOfRangeValuesWith422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), OperatorTenantId);
+        using var client = StubClient(factory, OperatorSubjectId, OperatorTenantId, ReadAndManage);
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        var zero = await client.GetAsync($"{Base}/synonyms?page=0", cancellationToken);
+        var huge = await client.GetAsync($"{Base}/synonyms?pageSize=101", cancellationToken);
+        var longSearch = await client.GetAsync($"{Base}/synonyms?search={new string('a', 101)}", cancellationToken);
+
+        await AssertProblemAsync(zero, HttpStatusCode.UnprocessableEntity, "validation.failed");
+        await AssertProblemAsync(huge, HttpStatusCode.UnprocessableEntity, "validation.failed");
+        await AssertProblemAsync(longSearch, HttpStatusCode.UnprocessableEntity, "validation.failed");
+    }
+
+    [Fact]
+    public async Task CorrectingWithAStaleVersionIs412()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), OperatorTenantId);
+        using var client = StubClient(factory, OperatorSubjectId, OperatorTenantId, ReadAndManage);
+        var valle = await DepartmentAsync(factory, "76");
+        var cali = await CityAsync(factory, "76001");
+        var palmira = await CityAsync(factory, "76520");
+        var synonym = await SeedSynonymAsync(factory, valle, "Kali", cali.Id, Seen);
+
+        var stale = await CorrectAsync(client, synonym, palmira.Id.Value, expectedVersion: 7);
+        var missingVersion = await client.PutAsJsonAsync(
+            $"{Base}/synonyms/{synonym.Value}", new { cityId = palmira.Id.Value }, TestContext.Current.CancellationToken);
+
+        await AssertProblemAsync(stale, HttpStatusCode.PreconditionFailed, "concurrency.conflict");
+        await AssertProblemAsync(missingVersion, HttpStatusCode.UnprocessableEntity, "validation.failed");
+        Assert.Equal((cali.Id, 1L), await SynonymStateAsync(factory, synonym));
+        Assert.Empty(await OutboxAsync(factory));
+    }
+
+    [Fact]
+    public async Task CorrectingToTheSameCityIs422SameCity()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), OperatorTenantId);
+        using var client = StubClient(factory, OperatorSubjectId, OperatorTenantId, ReadAndManage);
+        var valle = await DepartmentAsync(factory, "76");
+        var cali = await CityAsync(factory, "76001");
+        var medellin = await CityAsync(factory, "05001");
+        var synonym = await SeedSynonymAsync(factory, valle, "Kali", cali.Id, Seen);
+
+        var same = await CorrectAsync(client, synonym, cali.Id.Value, expectedVersion: 1);
+        var sameImpact = await ImpactAsync(client, synonym, cali.Id.Value);
+        var otherDepartment = await CorrectAsync(client, synonym, medellin.Id.Value, expectedVersion: 1);
+        var unknownCity = await CorrectAsync(client, synonym, Guid.CreateVersion7(), expectedVersion: 1);
+        var withoutCity = await client.PutAsJsonAsync(
+            $"{Base}/synonyms/{synonym.Value}", new { expectedVersion = 1 }, TestContext.Current.CancellationToken);
+
+        await AssertProblemAsync(same, HttpStatusCode.UnprocessableEntity, "geography.synonym.same_city");
+        await AssertProblemAsync(sameImpact, HttpStatusCode.UnprocessableEntity, "geography.synonym.same_city");
+        await AssertProblemAsync(otherDepartment, HttpStatusCode.UnprocessableEntity, "geography.city.not_in_department");
+        await AssertProblemAsync(unknownCity, HttpStatusCode.UnprocessableEntity, "geography.city.not_in_department");
+        await AssertProblemAsync(withoutCity, HttpStatusCode.UnprocessableEntity, "validation.failed");
+        Assert.Equal((cali.Id, 1L), await SynonymStateAsync(factory, synonym));
+        Assert.Empty(await OutboxAsync(factory));
+    }
+
+    // El literal de «Contrato de eventos» del plan: lo que Geography escribe aquí es lo que Shopify lee por nombre
+    // (CitySynonymEventPayloads). Los nombres, su orden y los valores, con la ciudad anterior.
+    [Fact]
+    public async Task CorrectingPublishesTheCorrectedEventWithThePreviousCity()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), OperatorTenantId);
+        using var client = StubClient(factory, OperatorSubjectId, OperatorTenantId, ReadAndManage);
+        var valle = await DepartmentAsync(factory, "76");
+        var cali = await CityAsync(factory, "76001");
+        var palmira = await CityAsync(factory, "76520");
+        var synonym = await SeedSynonymAsync(factory, valle, "Kali", cali.Id, Seen);
+
+        var response = await CorrectAsync(client, synonym, palmira.Id.Value, expectedVersion: 1);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var corrected = await response.Content.ReadFromJsonAsync<CitySynonymDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(corrected);
+        Assert.Equal((synonym.Value, "Kali", "KALI", 2L), (corrected.Id, corrected.Text, corrected.NormalizedText, corrected.Version));
+        Assert.Equal(new CityRefDto(palmira.Id.Value, "PALMIRA", "76520"), corrected.City);
+        Assert.Equal(OperatorSubjectId, corrected.CreatedBy.SubjectId);
+        Assert.Equal((palmira.Id, 2L), await SynonymStateAsync(factory, synonym));
+
+        var outbox = Assert.Single(await OutboxAsync(factory));
+        Assert.Equal((CitySynonymEventNames.Corrected, synonym.Value.ToString()), (outbox.EventName, outbox.CorrelationId));
+        using var payload = JsonDocument.Parse(outbox.Payload);
+        var root = payload.RootElement;
+        Assert.Equal(
+            ["synonymId", "departmentId", "previousCityId", "cityId", "operatorSubjectId", "operatorTenantId", "occurredAt"],
+            root.EnumerateObject().Select(property => property.Name));
+        Assert.Equal(
+            (synonym.Value, valle.Value, cali.Id.Value, palmira.Id.Value, OperatorSubjectId, OperatorTenantId),
+            (root.GetProperty("synonymId").GetGuid(), root.GetProperty("departmentId").GetGuid(),
+             root.GetProperty("previousCityId").GetGuid(), root.GetProperty("cityId").GetGuid(),
+             root.GetProperty("operatorSubjectId").GetGuid(), root.GetProperty("operatorTenantId").GetGuid()));
+        Assert.True(root.GetProperty("occurredAt").TryGetDateTimeOffset(out _));
+
+        var entry = Assert.Single(await AuditAsync(factory));
+        Assert.Equal(
+            (OperatorTenantId, OperatorSubjectId, "Human", GeographyAuditActions.SynonymCityChanged, "city_synonym", synonym.Value.ToString()),
+            (entry.TenantId, entry.ActorId, entry.ActorType, entry.Action, entry.ResourceType, entry.ResourceId));
+    }
+
+    // Impacto de corregir (no escribe): la forma del contrato con todos los grupos, también en cero.
+    [Fact]
+    public async Task TheCorrectImpactCarriesTheContractShapeAndNeverWrites()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), OperatorTenantId);
+        using var client = StubClient(factory, OperatorSubjectId, OperatorTenantId, ReadAndManage);
+        var valle = await DepartmentAsync(factory, "76");
+        var cali = await CityAsync(factory, "76001");
+        var palmira = await CityAsync(factory, "76520");
+        var synonym = await SeedSynonymAsync(factory, valle, "Kali", cali.Id, Seen);
+        // Una huella de cliente cuyo cliente ya no existe: la lectura no distingue «editado» de «ya no está», y en los dos casos no
+        // se toca, así que cuenta como editado. Una de pedido sin pedido no cuenta en ningún grupo.
+        await SeedCorrectionAsync(factory, synonym, "Correction", "Customer");
+        await SeedCorrectionAsync(factory, synonym, "Correction", "Order");
+
+        var response = await ImpactAsync(client, synonym, palmira.Id.Value);
+        var missing = await ImpactAsync(client, new CitySynonymId(Guid.CreateVersion7()), palmira.Id.Value);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var root = json.RootElement;
+        Assert.Equal(
+            ["from", "to", "ordersToChange", "ordersEdited", "ordersNotPending", "customersToChange", "customersEdited",
+             "occurrencesUncorrected"],
+            root.EnumerateObject().Select(property => property.Name));
+        Assert.Equal(("CALI", "PALMIRA"), (root.GetProperty("from").GetProperty("name").GetString(), root.GetProperty("to").GetProperty("name").GetString()));
+        foreach (var group in new[] { "ordersToChange", "ordersEdited", "customersToChange", "occurrencesUncorrected" })
+        {
+            Assert.Equal(0, root.GetProperty(group).GetProperty("count").GetInt32());
+            Assert.Equal(0, root.GetProperty(group).GetProperty("byTenant").GetArrayLength());
+        }
+
+        Assert.Equal(0, root.GetProperty("ordersNotPending").GetProperty("orders").GetArrayLength());
+        Assert.Equal(1, root.GetProperty("customersEdited").GetProperty("count").GetInt32());
+        await AssertProblemAsync(missing, HttpStatusCode.NotFound, "geography.synonym.not_found");
+        Assert.Equal((cali.Id, 1L), await SynonymStateAsync(factory, synonym));
+        Assert.Empty(await OutboxAsync(factory));
+        Assert.Empty(await AuditAsync(factory));
+    }
+
+    // O6 y §4.7: borrar deja de casar desde el commit, no publica nada y el próximo reporte del texto abre una fila Pending nueva
+    // (la Resolved vieja queda fuera del índice parcial, intacta).
+    [Fact]
+    public async Task DeletingStopsMatchingAndTheNextReportOpensAPendingRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), OperatorTenantId);
+        using var client = StubClient(factory, OperatorSubjectId, OperatorTenantId, ReadAndManage);
+        var valle = await DepartmentAsync(factory, "76");
+        var cali = await CityAsync(factory, "76001");
+        var resolvedRow = await ReportAsync(factory, Report(valle, "Calli", Seen));
+        var synonym = await (await ResolveAsync(client, resolvedRow.UnresolvedCityId!.Value, cali.Id.Value))
+            .Content.ReadFromJsonAsync<CitySynonymDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(synonym);
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        var response = await client.DeleteAsync($"{Base}/synonyms/{synonym.Id}", cancellationToken);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            Assert.Null(await scope.ServiceProvider.GetRequiredService<ICityRepository>().MatchByNameAsync(valle, "calli", cancellationToken));
+        }
+
+        var next = await ReportAsync(factory, Report(valle, "Calli", Seen.AddDays(1)));
+        Assert.Equal(UnresolvedCityReportOutcome.Recorded, next.Outcome);
+        Assert.NotEqual(resolvedRow.UnresolvedCityId, next.UnresolvedCityId);
+        Assert.Equal(UnresolvedCityStatus.Pending, (await RowAsync(factory, next.UnresolvedCityId!.Value)).Status);
+        Assert.Equal(UnresolvedCityStatus.Resolved, (await RowAsync(factory, resolvedRow.UnresolvedCityId.Value)).Status);
+
+        // No publica nada (sólo el evento de confirmarlo) y lo audita en el tenant operador.
+        Assert.Equal([CitySynonymEventNames.Resolved], (await OutboxAsync(factory)).Select(message => message.EventName));
+        var deleted = Assert.Single(await AuditAsync(factory), entry => entry.Action == GeographyAuditActions.SynonymDeleted);
+        Assert.Equal(
+            (OperatorTenantId, OperatorSubjectId, "city_synonym", synonym.Id.ToString()),
+            (deleted.TenantId, deleted.ActorId, deleted.ResourceType, deleted.ResourceId));
+        var page = await client.GetFromJsonAsync<CitySynonymPageDto>($"{Base}/synonyms", cancellationToken);
+        Assert.Empty(page!.Items);
+    }
+
+    [Fact]
+    public async Task ADeletedSynonymIs404OnEveryRoute()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), OperatorTenantId);
+        using var client = StubClient(factory, OperatorSubjectId, OperatorTenantId, ReadAndManage);
+        var valle = await DepartmentAsync(factory, "76");
+        var cali = await CityAsync(factory, "76001");
+        var palmira = await CityAsync(factory, "76520");
+        var synonym = await SeedSynonymAsync(factory, valle, "Kali", cali.Id, Seen);
+        var cancellationToken = TestContext.Current.CancellationToken;
+        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync($"{Base}/synonyms/{synonym.Value}", cancellationToken)).StatusCode);
+
+        var correct = await CorrectAsync(client, synonym, palmira.Id.Value, expectedVersion: 2);
+        var impact = await ImpactAsync(client, synonym, palmira.Id.Value);
+        var retry = await client.PostAsync($"{Base}/synonyms/{synonym.Value}/retry", null, cancellationToken);
+        var deleteAgain = await client.DeleteAsync($"{Base}/synonyms/{synonym.Value}", cancellationToken);
+
+        foreach (var response in new[] { correct, impact, retry, deleteAgain })
+        {
+            await AssertProblemAsync(response, HttpStatusCode.NotFound, "geography.synonym.not_found");
+        }
+    }
+
+    // Un 403 nunca depende de si el id existe: ids que no existen, y sin el permiso de lectura (lista e impacto) o de escritura
+    // (corregir, borrar, reintentar y el recorrido).
+    [Fact]
+    public async Task EverySynonymRouteAnswers403WithoutThePermission()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), OperatorTenantId);
+        using var noPermission = StubClient(factory, OperatorSubjectId, OperatorTenantId, "tenancy.settings.read");
+        using var readOnly = StubClient(factory, OperatorSubjectId, OperatorTenantId, GeographyOperatorPermissions.CitiesRead);
+        var synonym = $"{Base}/synonyms/{Guid.CreateVersion7()}";
+        var body = new { cityId = Guid.CreateVersion7(), expectedVersion = 1 };
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        var responses = new[]
+        {
+            await noPermission.GetAsync($"{Base}/synonyms", cancellationToken),
+            await noPermission.PostAsJsonAsync($"{synonym}/impact", body, cancellationToken),
+            await readOnly.PutAsJsonAsync(synonym, body, cancellationToken),
+            await readOnly.DeleteAsync(synonym, cancellationToken),
+            await readOnly.PostAsync($"{synonym}/retry", null, cancellationToken),
+        };
+
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode));
+    }
+
+    // D-C6: los trabajos Failed del sinónimo, sembrados por SQL, vuelven a Pending sin intentos, lease ni error; los de otro
+    // sinónimo y los que no estaban Failed no se tocan. La auditoría lleva cuántos eran.
+    [Fact]
+    public async Task RetryMovesFailedJobsBackToPending()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), OperatorTenantId);
+        using var client = StubClient(factory, OperatorSubjectId, OperatorTenantId, ReadAndManage);
+        var valle = await DepartmentAsync(factory, "76");
+        var cali = await CityAsync(factory, "76001");
+        var palmira = await CityAsync(factory, "76520");
+        var synonym = await SeedSynonymAsync(factory, valle, "Kali", cali.Id, Seen);
+        var other = await SeedSynonymAsync(factory, valle, "Palmyra", palmira.Id, Seen);
+        var failed = await SeedJobAsync(factory, synonym, "Failed");
+        var alreadyPending = await SeedJobAsync(factory, synonym, "Pending");
+        var skipped = await SeedJobAsync(factory, synonym, "Skipped");
+        var othersFailed = await SeedJobAsync(factory, other, "Failed");
+
+        var response = await client.PostAsync($"{Base}/synonyms/{synonym.Value}/retry", null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<CitySynonymDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(dto);
+        Assert.Equal((synonym.Value, 2, 0), (dto.Id, dto.PendingCorrections, dto.FailedCorrections));
+        Assert.Equal("Pending|0|none|none|none", await JobAsync(factory, failed));
+        Assert.Equal("Pending|0|none|none|none", await JobAsync(factory, alreadyPending));
+        Assert.Equal("Skipped", (await JobAsync(factory, skipped))[..7]);
+        Assert.Equal("Failed|5|boom|lease|closed", await JobAsync(factory, othersFailed));
+        var entry = Assert.Single(await AuditAsync(factory));
+        Assert.Equal(
+            (OperatorTenantId, GeographyAuditActions.SynonymCorrectionsRetried, "city_synonym", synonym.Value.ToString()),
+            (entry.TenantId, entry.Action, entry.ResourceType, entry.ResourceId));
+        // Repetirlo sin fallidos no cambia nada.
+        var again = await client.PostAsync($"{Base}/synonyms/{synonym.Value}/retry", null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+    }
+
+    private static Task<HttpResponseMessage> CorrectAsync(HttpClient client, CitySynonymId id, Guid cityId, long expectedVersion) =>
+        client.PutAsJsonAsync($"{Base}/synonyms/{id.Value}", new { cityId, expectedVersion }, TestContext.Current.CancellationToken);
+
+    private static Task<HttpResponseMessage> ImpactAsync(HttpClient client, CitySynonymId id, Guid cityId) =>
+        client.PostAsJsonAsync($"{Base}/synonyms/{id.Value}/impact", new { cityId }, TestContext.Current.CancellationToken);
+
     /// <summary>Un cliente del stub sobre un host cuyo registro de auditoría sube la versión de las filas de la bandeja justo antes
     /// del guardado, desde otra conexión que confirma en el acto: la fila cambia entre que el handler la lee y la guarda.</summary>
     private static HttpClient RowBumpedBeforeSaving(QepApiFactory factory)
@@ -525,6 +877,84 @@ public sealed class CityOperatorApiTests
 
             inner.Record(tenantId, actorId, actorType, action, resourceType, resourceId, changedFieldsJson, occurredAt);
         }
+    }
+
+    private static async Task<CitySynonymId> SeedSynonymAsync(
+        QepApiFactory factory, DepartmentId department, string text, CityId city, DateTimeOffset at)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var synonym = CitySynonym.Create(CitySynonymId.New(), department, text, city, OperatorSubjectId, at);
+        scope.ServiceProvider.GetRequiredService<ICitySynonymRepository>().Add(synonym);
+        await scope.ServiceProvider.GetRequiredService<IGeographyUnitOfWork>().SaveChangesAsync(TestContext.Current.CancellationToken);
+        return synonym.Id;
+    }
+
+    /// <summary>La ciudad y la versión del sinónimo en la base.</summary>
+    private static async Task<(CityId City, long Version)> SynonymStateAsync(QepApiFactory factory, CitySynonymId id)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var synonym = await scope.ServiceProvider.GetRequiredService<GeographyDbContext>().CitySynonyms.AsNoTracking()
+            .SingleAsync(value => value.Id == id, TestContext.Current.CancellationToken);
+        return (synonym.CityId, synonym.Version);
+    }
+
+    private static async Task SeedUserAsync(QepApiFactory factory, Guid userId, string email)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<GeographyDbContext>().Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO identity.users (id, email, status, created_at, updated_at)
+            VALUES ({userId}, {email}, 'Invited', now(), now())
+            """,
+            TestContext.Current.CancellationToken);
+    }
+
+    private static async Task SeedCorrectionAsync(QepApiFactory factory, CitySynonymId synonym, string origin, string target)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<GeographyDbContext>().Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO shopify.city_corrections (id, tenant_id, synonym_id, origin, target, target_id, department_id, city_id, applied_at, updated_at)
+            VALUES ({Guid.CreateVersion7()}, {ReportTenantId}, {synonym.Value}, {origin}, {target}, {Guid.CreateVersion7()},
+                    {Guid.CreateVersion7()}, {Guid.CreateVersion7()}, now(), now())
+            """,
+            TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Un trabajo de corrección del sinónimo. <c>Failed</c> nace como lo deja el worker al agotar los intentos (5 intentos,
+    /// error, lease y cierre); los demás, sin nada de eso.</summary>
+    private static async Task<Guid> SeedJobAsync(QepApiFactory factory, CitySynonymId synonym, string status)
+    {
+        var id = Guid.CreateVersion7();
+        var failed = status == "Failed";
+        await using var scope = factory.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<GeographyDbContext>().Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO shopify.city_correction_jobs
+                (id, tenant_id, synonym_id, kind, target, target_id, operator_subject_id, status, attempts, last_error, lease_until,
+                 processed_at, created_at)
+            VALUES ({id}, {ReportTenantId}, {synonym.Value}, 'Resolve', 'Order', {Guid.CreateVersion7()}, {OperatorSubjectId}, {status},
+                    CASE WHEN {failed} THEN 5 ELSE 0 END,
+                    CASE WHEN {failed} THEN 'boom' END,
+                    CASE WHEN {failed} THEN now() END,
+                    CASE WHEN {failed} OR {status} = 'Skipped' THEN now() END,
+                    now())
+            """,
+            TestContext.Current.CancellationToken);
+        return id;
+    }
+
+    /// <summary><c>status|attempts|last_error|lease|processed_at</c>, con <c>none</c> si es nulo, <c>lease</c> y <c>closed</c> si no.</summary>
+    private static async Task<string> JobAsync(QepApiFactory factory, Guid id)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<GeographyDbContext>().Database.SqlQuery<string>(
+            $"""
+            SELECT status || '|' || attempts || '|' || coalesce(last_error, 'none') || '|'
+                   || CASE WHEN lease_until IS NULL THEN 'none' ELSE 'lease' END || '|'
+                   || CASE WHEN processed_at IS NULL THEN 'none' ELSE 'closed' END AS "Value"
+            FROM shopify.city_correction_jobs WHERE id = {id}
+            """).SingleAsync(TestContext.Current.CancellationToken);
     }
 
     private static Task<HttpResponseMessage> ResolveAsync(HttpClient client, UnresolvedCityId id, Guid cityId) =>

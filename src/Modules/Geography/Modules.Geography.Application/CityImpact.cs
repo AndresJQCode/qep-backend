@@ -122,3 +122,83 @@ public static class ResolveImpactCalculator
             ImpactGroups.Count(stayIncomplete, tenantNames));
     }
 }
+
+/// <summary>
+/// Puro: el impacto de corregir un sinónimo a otra ciudad (spec 2026-10-26 §4.6), desde las huellas que dejó —de los dos orígenes,
+/// O8— y las ocurrencias de la fila que lo confirmó. Sólo un pedido <c>Pending</c> se recorrige: uno que sigue como se escribió
+/// cambia (<c>ordersToChange</c>) y uno que alguien editó se respeta (<c>ordersEdited</c>); uno que ya no está <c>Pending</c> se
+/// lista con su estado, completo, para avisar al tenant. Un pedido que ya no existe no cuenta en ningún grupo. Un cliente sigue
+/// como se escribió mientras su versión sea la de la huella; uno que ya no existe cuenta como editado (la lectura no distingue
+/// «editado» de «ya no está», y en los dos casos no se toca).
+/// </summary>
+public static class CorrectImpactCalculator
+{
+    private const string PendingOrderStatus = "Pending";
+    private const string OrderTarget = "Order";
+    private const string CustomerTarget = "Customer";
+
+    public static CorrectImpactDto Compute(
+        CityRefDto from,
+        CityRefDto to,
+        IReadOnlyList<CorrectionInsight> corrections,
+        IReadOnlyList<UnresolvedCityOccurrence> occurrences,
+        IReadOnlyDictionary<Guid, string> tenantNames)
+    {
+        ArgumentNullException.ThrowIfNull(corrections);
+        ArgumentNullException.ThrowIfNull(occurrences);
+        var ordersToChange = new List<Guid>();
+        var ordersEdited = new List<Guid>();
+        var notPending = new List<ImpactOrderDto>();
+        var customersToChange = new List<Guid>();
+        var customersEdited = new List<Guid>();
+        foreach (var correction in corrections)
+        {
+            if (string.Equals(correction.Target, OrderTarget, StringComparison.Ordinal))
+            {
+                if (correction.OrderStatus is not { } status)
+                {
+                    continue;
+                }
+
+                if (!string.Equals(status, PendingOrderStatus, StringComparison.Ordinal))
+                {
+                    notPending.Add(new ImpactOrderDto(
+                        correction.TenantId,
+                        UnresolvedCityViews.TenantName(tenantNames, correction.TenantId),
+                        correction.TargetId,
+                        correction.OrderNumber ?? correction.TargetId.ToString(),
+                        status));
+                }
+                else
+                {
+                    (correction.StillAsWritten ? ordersToChange : ordersEdited).Add(correction.TenantId);
+                }
+            }
+            else
+            {
+                (correction.StillAsWritten ? customersToChange : customersEdited).Add(correction.TenantId);
+            }
+        }
+
+        // Una ocurrencia está corregida si su pedido o su cliente tiene huella; si ninguno la tiene, el sinónimo no la alcanzó
+        // (el trabajo falló, se saltó o sigue pendiente) y sigue como está.
+        var footprints = corrections
+            .Select(correction => (correction.TenantId, correction.Target, correction.TargetId))
+            .ToHashSet();
+        var uncorrected = occurrences
+            .Where(occurrence => !footprints.Contains((occurrence.TenantId, OrderTarget, occurrence.OrderId))
+                && (occurrence.CustomerId is not { } customerId
+                    || !footprints.Contains((occurrence.TenantId, CustomerTarget, customerId))))
+            .Select(occurrence => occurrence.TenantId);
+
+        return new CorrectImpactDto(
+            from,
+            to,
+            ImpactGroups.Count(ordersToChange, tenantNames),
+            ImpactGroups.Count(ordersEdited, tenantNames),
+            ImpactGroups.Orders(notPending),
+            ImpactGroups.Count(customersToChange, tenantNames),
+            ImpactGroups.Count(customersEdited, tenantNames),
+            ImpactGroups.Count(uncorrected, tenantNames));
+    }
+}
