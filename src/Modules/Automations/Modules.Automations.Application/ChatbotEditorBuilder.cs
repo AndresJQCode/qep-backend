@@ -166,7 +166,9 @@ public sealed class ChatbotEditorBuilder(
             channels,
             apis.Where(api => api.Status == Active).Select(api => api.Id).ToHashSet(),
             apis.Where(api => api.Status == Paused).Select(api => api.Id).ToHashSet(),
-            own.All(id => scheduleNames.GetValueOrDefault(id) is not null));
+            own.All(id => scheduleNames.GetValueOrDefault(id) is not null),
+            // Task 7 pasa los miembros que pueden responder; hasta entonces ningún traspaso con miembro se da por válido.
+            new HashSet<Guid>());
         return [.. FlowValidator.Validate(flow, context).Select(issue => new FlowIssueDto(issue.Severity.ToString(), issue.Code, issue.NodeId, issue.Message))];
     }
 

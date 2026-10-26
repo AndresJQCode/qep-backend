@@ -46,20 +46,134 @@ public sealed class FlowValidatorTests
         Assert.Equal("La salida «sigue» de «Saludo» no está conectada.", issue.Message);
     }
 
+    // D-8: `invalid` sin conectar lo cubre el motor (reinicia o repite) y no se avisa.
     [Fact]
-    public void AnUnconnectedInvalidIsAWarning()
+    public void AnUnconnectedInvalidIsNotAnIssue()
     {
         var question = new OpenQuestionNode(
             "n1", "Número de documento", Out(("answered", "end"), ("invalid", null)), "¿Cuál es tu número de documento?",
             "cedula", new QuestionValidation("digits", null, null), 3);
+        var attachment = new AttachmentNode(
+            "n2", "Foto", Out(("received", "end"), ("invalid", null)), "Envíanos una foto", "image", "foto");
 
-        var issues = FlowValidator.Validate(Flow(question, End()), Ctx());
+        var issues = FlowValidator.Validate(Flow(question, attachment, End()), Ctx());
 
-        var issue = Single(issues, "node.output_unconnected_optional");
-        Assert.Equal(FlowIssueSeverity.Warning, issue.Severity);
-        Assert.Equal("n1", issue.NodeId);
-        Assert.Equal("La salida «no válido» de «Número de documento» no está conectada.", issue.Message);
+        Assert.DoesNotContain(issues, i => i.NodeId is "n1" or "n2" && i.Code.StartsWith("node.output_unconnected", StringComparison.Ordinal));
         Assert.DoesNotContain(issues, i => i.Severity == FlowIssueSeverity.Error);
+    }
+
+    [Fact]
+    public void AnUnconnectedTooManyIsStillAWarning()
+    {
+        var list = new ListNode(
+            "n1", "Clientes", Out(("chosen", "end"), ("tooMany", null)), "Elige", "Ver",
+            new ListOptions("dynamic", null, "clientes", "id", "nombre", null, null), "cliente", "repeat");
+
+        var issue = Single(FlowValidator.Validate(Flow(list, End()), Ctx()), "node.output_unconnected_optional");
+
+        Assert.Equal((FlowIssueSeverity.Warning, "n1"), (issue.Severity, issue.NodeId));
+        Assert.Equal("La salida «demasiadas» de «Clientes» no está conectada.", issue.Message);
+    }
+
+    // D-3: `other` es obligatoria con otherOutput y no existe con los demás fallbacks.
+    [Fact]
+    public void AnUnconnectedOtherWithOtherOutputIsAnError()
+    {
+        var buttons = Buttons(new FlowButton("a", "Sí")) with { Fallback = "otherOutput", Outputs = Out(("a", "end"), ("other", null)) };
+
+        var issues = FlowValidator.Validate(Flow(buttons, End()), Ctx());
+
+        var issue = Single(issues, "node.output_unconnected");
+        Assert.Equal((FlowIssueSeverity.Error, "n1"), (issue.Severity, issue.NodeId));
+        Assert.Equal("La salida «otra respuesta» de «Motivo» no está conectada.", issue.Message);
+    }
+
+    [Fact]
+    public void ARepeatFallbackHasNoOtherIssue()
+    {
+        var buttons = Buttons(new FlowButton("a", "Sí")) with { Outputs = Out(("a", "end"), ("other", null)) };
+
+        var issues = FlowValidator.Validate(Flow(buttons, End()), Ctx());
+
+        Assert.DoesNotContain(issues, i => i.NodeId == "n1");
+    }
+
+    [Fact]
+    public void AConnectedOtherWithRepeatIsNotFollowedForReachability()
+    {
+        var buttons = Buttons(new FlowButton("a", "Sí")) with { Outputs = Out(("a", "end"), ("other", "n9")) };
+
+        var issues = FlowValidator.Validate(Flow(buttons, End(), Message("n9")), Ctx());
+
+        var issue = Single(issues, "node.unreachable");
+        Assert.Equal((FlowIssueSeverity.Warning, "n9"), (issue.Severity, issue.NodeId));
+    }
+
+    // D-5: el destino de un traspaso tiene que poder responder conversaciones.
+    private static readonly Guid Agent = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
+    private static readonly Guid Gone = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
+
+    [Fact]
+    public void AHandoffToAMemberWhoCannotReplyIsAnError()
+    {
+        var handoff = new HandoffNode("end", "Asesor", Out(), null, Gone);
+
+        var issue = Single(FlowValidator.Validate(Flow(Message("n1"), handoff), Ctx(members: Agent)), "handoff.member_invalid");
+
+        Assert.Equal((FlowIssueSeverity.Error, "end"), (issue.Severity, issue.NodeId));
+        Assert.Equal(
+            "«Asesor» asigna la conversación a alguien que ya no puede responder conversaciones: elige otro miembro o déjala sin asignar.",
+            issue.Message);
+    }
+
+    [Fact]
+    public void AFallbackHandoffToAMemberWhoCannotReplyIsAnError()
+    {
+        var buttons = Buttons(new FlowButton("a", "Sí")) with { Fallback = "handoff", FallbackMemberId = Gone, Outputs = Out(("a", "end")) };
+        var list = FixedList([new ListFixedRow("r1", "Ventas", null)]) with
+        {
+            Id = "n2", Title = "Equipo", Fallback = "handoff", FallbackMemberId = Gone, Outputs = Out(("chosen", "end")),
+        };
+
+        var issues = FlowValidator.Validate(Flow(buttons, list, End()), Ctx(members: Agent));
+
+        var onButtons = Single(issues.Where(i => i.NodeId == "n1").ToList(), "handoff.member_invalid");
+        var onList = Single(issues.Where(i => i.NodeId == "n2").ToList(), "handoff.member_invalid");
+        Assert.All(new[] { onButtons, onList }, i => Assert.Equal(FlowIssueSeverity.Error, i.Severity));
+        Assert.Equal(
+            "«Si responde otra cosa» de «Motivo» asigna la conversación a alguien que ya no puede responder conversaciones: elige otro miembro o déjala sin asignar.",
+            onButtons.Message);
+        Assert.StartsWith("«Si responde otra cosa» de «Equipo»", onList.Message);
+    }
+
+    [Fact]
+    public void AnUnassignedHandoffIsValid()
+    {
+        var issues = FlowValidator.Validate(Flow(Message("n1"), End()), Ctx());
+
+        Assert.DoesNotContain(issues, i => i.Code == "handoff.member_invalid");
+    }
+
+    [Fact]
+    public void AMemberWhoCanReplyIsValid()
+    {
+        var handoff = new HandoffNode("end", "Asesor", Out(), null, Agent);
+        var buttons = Buttons(new FlowButton("a", "Sí")) with { Fallback = "handoff", FallbackMemberId = Agent, Outputs = Out(("a", "end")) };
+
+        var issues = FlowValidator.Validate(Flow(buttons, handoff), Ctx(members: Agent));
+
+        Assert.DoesNotContain(issues, i => i.Code == "handoff.member_invalid");
+    }
+
+    // Un borrador sin normalizar puede traer un miembro huérfano con `repeat`: no cuenta (D-3).
+    [Fact]
+    public void AFallbackMemberIsIgnoredOutsideHandoff()
+    {
+        var buttons = Buttons(new FlowButton("a", "Sí")) with { FallbackMemberId = Gone, Outputs = Out(("a", "end")) };
+
+        var issues = FlowValidator.Validate(Flow(buttons, End()), Ctx());
+
+        Assert.DoesNotContain(issues, i => i.Code == "handoff.member_invalid");
     }
 
     [Fact]
@@ -371,14 +485,10 @@ public sealed class FlowValidatorTests
         var issues = FlowValidator.Validate(AnnexAFlow.Parse(), AnnexAFlow.Context());
 
         Assert.DoesNotContain(issues, i => i.Severity == FlowIssueSeverity.Error);
-        // Lo que el anexo deja abierto a propósito: las salidas opcionales y n12 sin respuesta de ejemplo.
+        // Lo que el anexo deja abierto a propósito: n12 sin respuesta de ejemplo. Los `invalid` sin conectar
+        // (n2, n7, n10) ya no avisan (D-8) y los Botones/Lista del anexo (n5, n6) usan `repeat`, así que no tienen `other` (D-3).
         (string Code, string NodeId)[] expected =
         [
-            ("node.output_unconnected_optional", "n2"),
-            ("node.output_unconnected_optional", "n5"),
-            ("node.output_unconnected_optional", "n6"),
-            ("node.output_unconnected_optional", "n7"),
-            ("node.output_unconnected_optional", "n10"),
             ("http.no_sample_response", "n12"),
         ];
         Assert.Equal(expected.Order(), issues.Select(i => (i.Code, i.NodeId!)).Order());
@@ -549,8 +659,8 @@ public sealed class FlowValidatorTests
 
     private static FlowDefinition Flow(params FlowNode[] nodes) => new(1, new FlowStart(nodes[0].Id), [], nodes);
 
-    private static FlowValidationContext Ctx(string channel = "WhatsApp", bool businessHours = true) =>
-        new(new HashSet<string> { channel }, new HashSet<Guid> { ActiveApi }, new HashSet<Guid> { PausedApi }, businessHours);
+    private static FlowValidationContext Ctx(string channel = "WhatsApp", bool businessHours = true, params Guid[] members) =>
+        new(new HashSet<string> { channel }, new HashSet<Guid> { ActiveApi }, new HashSet<Guid> { PausedApi }, businessHours, members.ToHashSet());
 
     private static HandoffNode End() => new("end", "Asesor", Out(), null);
 

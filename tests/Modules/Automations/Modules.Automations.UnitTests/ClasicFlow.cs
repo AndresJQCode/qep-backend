@@ -20,7 +20,8 @@ internal static class ClasicFlow
         new HashSet<string> { "WhatsApp" },
         new HashSet<Guid> { ClasicApi },
         new HashSet<Guid>(),
-        AllConnectionsHaveBusinessHours: false);
+        AllConnectionsHaveBusinessHours: false,
+        HandoffMembers: new HashSet<Guid>());
 
     /// <summary>El archivo entero, tal como se manda en <c>export</c> al importar.</summary>
     public static string Raw()
