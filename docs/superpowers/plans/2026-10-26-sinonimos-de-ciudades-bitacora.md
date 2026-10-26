@@ -170,3 +170,41 @@ Final review: dispatched over 607f0a8f..1bbb3278
 Final review: Ready after fixes — 2 Important (stale resolved/discarded row drawn as pending; stale-impact refusal dead-ends) + 6 Minor bundled into ONE fix wave (final-fix-findings.md). Not fixed: client/server clock in 60 s window (can stay); contract-text dependency carried to backend.
 Final fix wave: f6db50f4 — re-review: 8/8 addressed, no new breakage. FINAL REVIEW CLEAN.
 Ruling: hold the FE merge to develop until the backend branch is done and merged — CLAUDE.md "desplegar back primero"; a develop FE calling endpoints that don't exist yet would break the Ciudades tab — cost if wrong: FE waits a few hours in its branch.
+
+## Backend — sesión 2 (SC-12..SC-14, rama feature/sinonimos-de-ciudades-2)
+
+Session 2 (2026-10-26). Worktree: qep-backend-worktrees/sinonimos-de-ciudades-2, branch feature/sinonimos-de-ciudades-2 from develop 90a20319.
+Prior session ledger (Tasks 1-9 complete, SC-10+11 merged unreviewed): docs/superpowers/plans/2026-10-26-sinonimos-de-ciudades-bitacora.md (lines 107-236 are a pasted build log, not ledger content).
+Task 1..Task 9: complete (previous session)
+Owner rules this session: no test execution; batch SC-12+13 in one dispatch, SC-14 in another; sonnet reviewers per block; opus final review; review SC-10+11 first, findings go into SC-12+13 batch.
+Ruling: no new pre-flight scan — preflight P1..P18 from the prior session stand and only SC-12..14 remain — cost if wrong: a cross-task conflict surfaces in the batch review.
+Review SC-10+11: dispatched over cb3101f0..ab95de0b
+Review SC-10+11: spec ✅ except 1 misunderstanding; 0 Critical, 1 Important, 7 Minor (review-sc10-11-report.md).
+Ruling (SC-10/11 Important 1): customersStayIncomplete = only customers this import created incomplete with !CustomerCityOnly (still incomplete); a city-only customer that is merged/inactive/edited (Version != 1) goes in NO resolve group — contract text wins, no new field because FE is built against the contract — cost if wrong: operator does not see those few customers counted anywhere.
+Ruling (SC-10/11 Minor 1 promoted): store-pickup orders count in no resolve-impact order group (they never get a shipping party, P10) — cost if wrong: totals of order groups < occurrences.
+Ruling (promoted): add 412 test on resolve/discard, 403 tests for POST impact/resolve/restore, a non-zero impact-through-endpoint test, and a Bootstrapper.UnitTests parity test for the geography.city_synonym.* event-name strings — cheap, protect the binding contract — cost: a few tests.
+SC-10/11 minor (deferred → final triage): LoadAsync after commit may 500 after a successful resolve; resolved payload + preview read all occurrences unbounded; binder 400 vs contract 422 for page=abc/malformed body (FE sends ints); test helper class `Occurrences` generic name; CompositionRootTests not touched.
+SC-10/11 ⚠️ (tests never run): seed values (Calima, CALLI→CALI 80), version sequences, raw-SQL test assumptions (audit source, actor_type string, payload jsonb), ProblemPayload.Code, advisory waiter count = 2 in race test — owner run will confirm.
+Batch SC-12+13: dispatched, BASE 90a20319 (includes SC-10/11 fixes per carry-sc10-11-fixes.md)
+Batch SC-12+13: implementer DONE_WITH_CONCERNS 3d18a448 (SC-11 fixes), e72e2d11 (SC-12), 41c600a4 (SC-13); build 0/0; tests written not run
+Review SC-12+13: spec ✅ except backfill CustomerId; 0 Critical, 1 Important, 7 Minor (review-sc12-13-report.md). Format 62 WHITESPACE confirmed pre-existing (not on added lines).
+Ruling (SC-13 Important 1): backfill sends CustomerId = null (fix a) — P15/S4 win over the brief's wording; the resolver reuses pre-existing incomplete customers (e.g. WhatsApp, Version 1) and the worker's only guard is version == 1, so historical customers would be completed with Shopify data they never came from — cost if wrong: historically imported incomplete customers are not auto-completed by a synonym; the tenant completes them by hand.
+Ruling (promoted): Correct/Delete load the synonym after LockCityTextAsync (404 instead of 412 on concurrent delete); add a test that a non-operator tenant holding operator.cities.* gets 403 on a new route; check ⚠️1 (resolve/discard row lock vs the 412 decorator — the tests must not hang) and fix the test if needed — cost: small.
+SC-12/13 minor (deferred → final triage): uncapped ReadCorrectionsAsync/ListOccurrencesBySynonymAsync (contract needs complete list — known limit, README); backfill audit only on full success; retry jobs committed before audit; corrected-event test same subject for creator/corrector; RunningTwiceReportsNothingNew unit test hand-fakes 2nd outcome.
+Batch SC-12+13: fix round 1 dispatched (resume implementer), FIX_BASE 41c600a4
+Batch SC-12+13: fix round 1/5 (4 addressed, 0 open; commits 41c600a4..df25e65b)
+Batch SC-12+13: minor (deferred): no test of the lock-then-404 race for Correct/Delete; backfill PartyCityOnly assertion relies on ImporterWorld defaults.
+Task 10/11/12/13: complete (commits 90a20319..df25e65b, 1 fix round, review clean)
+Task 14: dispatched, BASE df25e65b
+Task 14: implementer DONE 4b065934, 0e414686
+Task 14: review clean (0 Critical/Important). minor (deferred → final fix wave): README "Impacto sin tope" says resolve reads huellas (only correct-impact does); README risk 7 should name POST synonyms/{id}/retry; e2e test 1 new-order case doesn't assert notes/customer reuse; "sólo Shopify reporta" inferred.
+Task 14: complete (commits df25e65b..0e414686, review clean)
+Final review: dispatched (opus) over 90a20319..HEAD
+Owner (2026-10-26): more providers will report to the bandeja later — README must state 'hoy sólo Shopify' as current state and say what a new provider needs (its own reporter via the Geography port, source value, its own correction consumer/worker since the current one is Shopify's). → final fix wave.
+Final review (opus): Ready after fixes — 0 Critical, 2 Important, 5 Minor (final-review-report.md).
+Ruling (final Important 1): take the better fix — when the backfill finds the snapshot text now matches through a LIVE synonym (not a real city name), seed an order-only Resolve job the way the importer does on SynonymExists (ShopifyCitySynonymEventApplier.ResolveJobs), idempotent (no second job for the same synonym+order); still counted as nowMatching (contract DTO is fixed); plus README: run the backfill right after deploy, rerun is safe — a silently uncorrected order is the anti-goal — cost if wrong: one more seeding path into city_correction_jobs.
+Ruling (final): fix Important 2 (Geography harness removes ShopifyCityCorrectionWorker + CitySynonymEventsWorker hosted services), Minor 1 (correct impact skips footprints already at the target city in its groups, keeps them for occurrencesUncorrected), Minors 2-5 (docs) and the owner's multi-provider note in README:557 — one fix wave, then one scoped re-review.
+Final fix wave: dispatched (fresh sonnet), FIX_BASE 4b065934
+Final fix wave: re-review 8/8 addressed, no new breakage (commits 4b065934..21789f2c). FINAL REVIEW CLEAN.
+Final: parked minors — Ruling: backfill commits job rows mid-run (rerun idempotent); Failed seeded jobs are not re-seeded by the backfill (use retry); harness removes workers by type name (a rename makes it a silent no-op) — all real, nothing builds on them — cost if wrong: a stale doc phrase / a racy test after a rename.
+Controller build at 21789f2c: 0 warnings, 0 errors.
