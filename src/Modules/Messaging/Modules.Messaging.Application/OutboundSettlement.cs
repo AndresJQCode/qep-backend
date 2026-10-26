@@ -52,7 +52,7 @@ internal sealed class OutboundSettlement(
                     await afterRollback();
                 }
 
-                await ReportRejectedAsync(tenantId, connectionId, MetaErrorCodes.RejectedReason(result.Code.Value));
+                await ConnectionRejection.ReportAsync(connections, tenantId, connectionId, result.Code.Value);
                 throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "Meta rejected the connection credentials.");
 
             case SendOutcome.GraphError when result.Code is MetaErrorCodes.CustomerWindowClosed:
@@ -109,22 +109,6 @@ internal sealed class OutboundSettlement(
             // base no refleja.
             _ = exception;
             return null;
-        }
-    }
-
-    // Si Integrations no logra pasar la conexión a NeedsAttention, la respuesta sigue siendo el 422 documentado;
-    // la causa viaja como InnerException y ApiExceptionHandler la deja en platform.request_failures (Application no
-    // tiene logger). El próximo envío vuelve a recibir 190/133010 y reintenta el reporte.
-    private async Task ReportRejectedAsync(Guid tenantId, Guid connectionId, string failureCode)
-    {
-        try
-        {
-            await connections.ReportRejectedAsync(tenantId, connectionId, failureCode, CancellationToken.None);
-        }
-        catch (Exception exception)
-        {
-            throw new MessagingDomainException(
-                MessagingErrorCodes.ConnectionUnavailable, "Meta rejected the connection credentials; the connection state could not be updated.", exception);
         }
     }
 }
