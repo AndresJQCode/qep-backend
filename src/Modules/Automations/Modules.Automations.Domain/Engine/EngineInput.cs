@@ -25,6 +25,10 @@ public abstract record EngineInput
         : EngineInput;
 
     public sealed record BusinessHours(string NodeId, bool IsOpen) : EngineInput;
+
+    /// <summary>Spec 2026-10-26 D-2 y D-7: la respuesta a <see cref="Effect.CheckDataConsent"/>. <see cref="Accepted"/> dice si el cliente
+    /// tiene hoy una aceptación vigente; <see cref="CanRecord"/> es <c>false</c> si no hay cliente al que registrarle la respuesta.</summary>
+    public sealed record DataConsent(string NodeId, bool Accepted, bool CanRecord = true) : EngineInput;
 }
 
 /// <summary>El adjunto de un <see cref="EngineInput.CustomerMessage"/>; <see cref="Stored"/> dice si Messaging ya lo tiene guardado.

@@ -31,6 +31,26 @@ public abstract record Effect(string NodeId)
     /// llama <c>EndRun</c> porque <c>End</c> es palabra reservada de VB (CA1716, que el build trata como error).
     /// </summary>
     public sealed record EndRun(string NodeId, string Reason) : Effect(NodeId);
+
+    /// <summary>Spec 2026-10-26 D-2: el bloque Política de datos pregunta si el cliente ya aceptó; vuelve como
+    /// <see cref="EngineInput.DataConsent"/>.</summary>
+    public sealed record CheckDataConsent(string NodeId) : Effect(NodeId);
+
+    /// <summary>Spec 2026-10-26 D-6: la respuesta del cliente, con el texto que se le mostró (<see cref="ShownText"/>) y el mensaje en que
+    /// se le preguntó, si se conoce.</summary>
+    public sealed record RecordDataConsent(string NodeId, DataConsentDecision Decision, string ShownText, Guid? PromptMessageId)
+        : Effect(NodeId);
+
+    /// <summary>Spec 2026-10-26 D-4: se agotaron los intentos sin una respuesta válida. No se registra nada y el bloque sale por
+    /// <c>rejected</c>.</summary>
+    public sealed record DataConsentUnanswered(string NodeId) : Effect(NodeId);
+}
+
+/// <summary>Spec 2026-10-26 D-6: qué respondió el cliente a la política de datos.</summary>
+public enum DataConsentDecision
+{
+    Accepted,
+    Rejected,
 }
 
 /// <summary>Spec 2026-10-24 D-T9: por qué el motor pidió un <see cref="Effect.Handoff"/>.</summary>
