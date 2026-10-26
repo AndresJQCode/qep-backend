@@ -157,6 +157,70 @@ public sealed class RunProcessorTests
         Assert.Equal((RunStatus.HandedOff, (string?)null), (run.Status, run.FailureCode));
     }
 
+    /// <summary>Spec 2026-10-25 D-1: el bloque de traspaso trae el miembro elegido y el procesador se lo pasa al adaptador.</summary>
+    [Fact]
+    public async Task AHandoffBlockPassesItsMember()
+    {
+        var member = Guid.CreateVersion7();
+        var flow = $$"""
+            { "schema": 1, "start": { "firstNodeId": "n2" }, "variables": [],
+              "nodes": [
+                { "id": "n2", "kind": "handoff", "title": "Pasar a un asesor", "text": null, "memberId": "{{member}}", "outputs": {} }
+              ] }
+            """;
+        var bed = new Bed(null, flow: flow);
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            (new HandoffCause(HandoffCauseKind.Block, null, "n2", "Pasar a un asesor", null, null, null), (Guid?)member),
+            Assert.Single(bed.Conversations.Handoffs));
+    }
+
+    /// <summary>Spec 2026-10-25 D-4: la pregunta sin salida <c>invalid</c> que agota sus intentos traspasa con la causa
+    /// <c>AttemptsExhausted</c> y el miembro que dice la regla del chatbot.</summary>
+    [Fact]
+    public async Task AnExhaustedQuestionHandsOffWithItsCauseAndMember()
+    {
+        var member = Guid.CreateVersion7();
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "q" }, "variables": [],
+              "nodes": [ { "id": "q", "kind": "openQuestion", "title": "Documento", "text": "¿Cuál es tu documento?", "saveTo": "doc",
+                "validation": { "kind": "regex", "pattern": "^[0-9]{6,10}$", "keywords": null }, "outputs": { "answered": null, "invalid": null } } ] }
+            """;
+        var bed = new Bed(
+            null, ActiveState(), flow: flow, engineSettings: new EngineSettings(Chatbot.DefaultRestartKeyword, 3, AttemptsExhaustedAction.Handoff, member));
+        bed.Runs.Added.Add(ConversationRun.Start(
+            Guid.CreateVersion7(), TenantId, ConversationId, ConnectionId, ChatbotId, VersionId,
+            RunState.Initial(RunVariables.Empty()) with { Status = RunStatus.Waiting, CurrentNodeId = "q", Attempts = 2 }, DateTimeOffset.UtcNow.AddMinutes(-1)));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            (new HandoffCause(HandoffCauseKind.AttemptsExhausted, null, "q", "Documento", null, null, null), (Guid?)member),
+            Assert.Single(bed.Conversations.Handoffs));
+    }
+
+    /// <summary>Spec 2026-10-25 D-1: un fallo nunca asigna, aunque el chatbot tenga un miembro en su regla de agotamiento.</summary>
+    [Fact]
+    public async Task AFailureNeverAssigns()
+    {
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "n2" }, "variables": [],
+              "nodes": [
+                { "id": "n2", "kind": "http", "title": "Consultar", "connectionId": "11111111-1111-1111-1111-111111111111", "method": "GET", "path": "/status", "mapping": [], "outputs": { "ok": "n2", "error": null } }
+              ] }
+            """;
+        var bed = new Bed(
+            null, flow: flow, http: new RecordingHttpBlocks(new HttpCallResult(true, 200, RunVariables.Empty(), HttpCallOutcomes.Ok, null)),
+            engineSettings: new EngineSettings(Chatbot.DefaultRestartKeyword, 3, AttemptsExhaustedAction.Handoff, Guid.CreateVersion7()));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HandoffCauseKind.FlowFailed, Assert.Single(bed.Conversations.Handoffs).Cause.Kind);
+        Assert.Null(bed.Conversations.Handoffs[0].Member);
+    }
+
     /// <summary>Fila 1 con HTTP (caso 2 del owner): el paso empezó con el 404 del bloque HTTP.</summary>
     [Fact]
     public async Task AHandoffBlockAfterAFailedHttpNamesTheHttpBlock()
@@ -270,6 +334,9 @@ public sealed class RunProcessorTests
 
         Assert.Equal(RunStatus.HandedOff, run.Status);
         Assert.Equal(1, bed.Conversations.HandedOff);
+        Assert.Equal(
+            (new HandoffCause(HandoffCauseKind.AttemptsExhausted, null, "n1", "Documento", null, null, null), (Guid?)memberId),
+            Assert.Single(bed.Conversations.Handoffs));
     }
 
     /// <summary>Fila 6 (P2-R6): la versión de la corrida viva ya no existe; no hay flujo del que sacar un bloque.</summary>
@@ -811,7 +878,10 @@ public sealed class RunProcessorTests
         public int HandedOff { get; private set; }
 
         /// <summary>Spec 2026-10-24: la causa de cada traspaso, en orden.</summary>
-        public List<HandoffCause> Causes { get; } = [];
+        public List<HandoffCause> Causes => [.. Handoffs.Select(handoff => handoff.Cause)];
+
+        /// <summary>Spec 2026-10-25 D-1: la causa y el miembro al que se pidió asignar, en orden.</summary>
+        public List<(HandoffCause Cause, Guid? Member)> Handoffs { get; } = [];
 
         public int Started { get; private set; }
 
@@ -834,10 +904,10 @@ public sealed class RunProcessorTests
 
         public Task SetChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken) => Task.CompletedTask;
 
-        public Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, CancellationToken cancellationToken)
+        public Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, Guid? assignToMemberId, CancellationToken cancellationToken)
         {
             HandedOff++;
-            Causes.Add(cause);
+            Handoffs.Add((cause, assignToMemberId));
             return Task.CompletedTask;
         }
 

@@ -36,6 +36,9 @@ internal sealed partial class AutomationConversations(
     [LoggerMessage(Level = LogLevel.Warning, Message = "Live notification for conversation {ConversationId} of tenant {TenantId} failed after the automation change was committed.")]
     private static partial void LogNotifyFailed(ILogger logger, Exception exception, Guid tenantId, Guid conversationId);
 
+    [LoggerMessage(Level = LogLevel.Information, Message = "Handoff of conversation {ConversationId} of tenant {TenantId} left unassigned: member {MemberId} can no longer reply.")]
+    private static partial void LogAssigneeCannotReply(ILogger logger, Guid tenantId, Guid conversationId, Guid memberId);
+
     public async Task<AutomationConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
         // Sin seguimiento (ConversationQueries): lo que lee el motor no queda en ningún tracker.
         await queries.FindAsync(tenantId, conversationId, cancellationToken) is { } row
@@ -76,30 +79,42 @@ internal sealed partial class AutomationConversations(
         }
     }
 
-    public async Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, CancellationToken cancellationToken)
+    public async Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, Guid? assignToMemberId, CancellationToken cancellationToken)
     {
         await using var scope = scopes.CreateAsyncScope();
         var services = new Services(scope.ServiceProvider);
         var conversation = await services.LoadAsync(tenantId, conversationId, cancellationToken);
         var now = services.Clock.UtcNow;
+        // Spec 2026-10-25 D-5: el miembro pudo perder el permiso o la membresía desde que se eligió; en ese caso cae sin asignar, como
+        // hoy, en vez de dejar la conversación con alguien que no puede responderla.
+        Guid? assignee = assignToMemberId is { } id
+            && await scope.ServiceProvider.GetRequiredService<IMessagingAssignees>().CanReplyAsync(tenantId, id, cancellationToken)
+                ? id
+                : null;
+        if (assignToMemberId is not null && assignee is null)
+        {
+            LogAssigneeCannotReply(logger, tenantId, conversationId, assignToMemberId.Value);
+        }
+
         // Spec 2026-10-24 §5.3: la causa viaja en el mismo evento, un solo cambio con el mismo now; el dominio de Mensajería la limpia.
-        var change = conversation.PauseAutomation(actorMemberId: null, AutomationPauseReason.Handoff, now, ToHandoff(cause));
+        // Spec 2026-10-25 D-1, D-7: pausa y asignación en un solo cambio, sin evento Transferred.
+        var change = conversation.HandOffAutomation(ToHandoff(cause, assignee), now);
         services.Events.Record(tenantId, conversation.ConnectionId, conversation.Id, change, now);
         services.Audit.RecordBySystem(tenantId, MessagingAuditActions.AutomationPaused, conversation.Id, now);
         await services.UnitOfWork.SaveChangesAsync(cancellationToken);
         await NotifyAsync(tenantId, conversationId, async () =>
         {
             await services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken);
-            // D-M5: la conversación vuelve a la bandeja sin asesor y tiene que sonar a todo el tenant, como un entrante sin asignar.
+            // D-M5: sin asignar vuelve a la bandeja y suena a todo el tenant, como un entrante sin asignar; asignada (D-1), sólo a ese miembro.
             if (await services.Inbox.FindLastInboundIdAsync(tenantId, conversationId, cancellationToken) is { } lastInbound)
             {
-                await services.Notifier.InboundMessageAsync(tenantId, conversationId, lastInbound, assignedMemberId: null, cancellationToken);
+                await services.Notifier.InboundMessageAsync(tenantId, conversationId, lastInbound, assignedMemberId: assignee, cancellationToken);
             }
         });
     }
 
     /// <summary>Spec 2026-10-24 §5.3: el kind se traduce por nombre (<c>HandoffCauseKindParityTests</c> amarra los dos enums).</summary>
-    private static AutomationHandoff ToHandoff(HandoffCause cause)
+    private static AutomationHandoff ToHandoff(HandoffCause cause, Guid? assignedMemberId)
     {
         ArgumentNullException.ThrowIfNull(cause);
         return AutomationHandoff.Create(
@@ -111,7 +126,8 @@ internal sealed partial class AutomationConversations(
             cause.ConnectionReason,
             cause.Http is { } http
                 ? new AutomationHandoffHttp(http.NodeId, http.NodeTitle, http.Outcome, http.ErrorCode, http.Status, http.ConnectionName)
-                : null);
+                : null,
+            assignedMemberId);
     }
 
     public async Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken)

@@ -251,9 +251,10 @@ public interface IAutomationConversations
     /// no mueve su versión; sin asistente activo no escribe nada.</summary>
     Task SetChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken);
 
-    /// <summary>D-M5: <c>Paused</c> con motivo <c>Handoff</c>, sin asesor, con evento en el hilo, auditoría de sistema y aviso a todo el
-    /// tenant como un entrante sin asignar.</summary>
-    Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, CancellationToken cancellationToken);
+    /// <summary>D-M5: <c>Paused</c> con motivo <c>Handoff</c>, con evento en el hilo y auditoría de sistema. Spec 2026-10-25 D-1, D-5:
+    /// con <paramref name="assignToMemberId"/> la asigna a ese miembro en el mismo cambio y avisa sólo a él, si todavía puede responder;
+    /// si no puede (o es <c>null</c>) queda sin asesor y el aviso suena a todo el tenant como un entrante sin asignar.</summary>
+    Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, Guid? assignToMemberId, CancellationToken cancellationToken);
 
     /// <summary>D-M5: resuelta con el motivo (si sigue activo en el tenant), con evento <c>Resolved</c> sin actor y auditoría de sistema.</summary>
     Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken);

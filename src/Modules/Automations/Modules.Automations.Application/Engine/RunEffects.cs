@@ -98,9 +98,15 @@ public sealed partial class RunEffects(
                     case Effect.Handoff handoff:
                         // D-T9: el motor dice por qué camino llegó; el procesador no lo deduce por el tipo de bloque.
                         var cause = new HandoffCause(
-                            handoff.Reason == HandoffReasons.InvalidReply ? HandoffCauseKind.InvalidReply : HandoffCauseKind.Block,
+                            handoff.Reason switch
+                            {
+                                HandoffReasons.InvalidReply => HandoffCauseKind.InvalidReply,
+                                HandoffReasons.AttemptsExhausted => HandoffCauseKind.AttemptsExhausted,
+                                _ => HandoffCauseKind.Block,
+                            },
                             null, handoff.NodeId, TitleOf(unit.Flow, handoff.NodeId), null, null, http);
-                        if (!await HandsOverAsync(run, state, () => conversations.HandoffAsync(run.TenantId, run.ConversationId, cause, cancellationToken), now))
+                        // Spec 2026-10-25 D-1: el motor trae el destino; el adaptador decide si todavía puede responder (D-5).
+                        if (!await HandsOverAsync(run, state, () => conversations.HandoffAsync(run.TenantId, run.ConversationId, cause, handoff.MemberId, cancellationToken), now))
                         {
                             return;
                         }
@@ -167,7 +173,8 @@ public sealed partial class RunEffects(
             throw new ArgumentException("A failed run needs its failure code.", nameof(cause));
         }
 
-        if (!await HandsOverAsync(run, state, () => conversations.HandoffAsync(run.TenantId, run.ConversationId, cause, cancellationToken), now))
+        // Spec 2026-10-25 D-1: un fallo nunca asigna; que lo vea quien mire la bandeja.
+        if (!await HandsOverAsync(run, state, () => conversations.HandoffAsync(run.TenantId, run.ConversationId, cause, null, cancellationToken), now))
         {
             return;
         }
