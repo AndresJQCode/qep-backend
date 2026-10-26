@@ -35,7 +35,9 @@ internal abstract partial class OutboxDeliveryWorker(
 
     internal const string AttemptsExhaustedReason = "delivery_attempts_exhausted";
 
-    internal static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
+    /// <summary>Costo en reposo contra una base compartida: nadie espera un correo de forma interactiva, y
+    /// unos segundos más en un correo son invisibles.</summary>
+    internal static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
 
     /// <summary>Por encima del timeout del HttpClient de Infobip (30 s), con margen para el render y
     /// el guardado. Si venciera durante un envío, otra réplica retomaría el mensaje.</summary>

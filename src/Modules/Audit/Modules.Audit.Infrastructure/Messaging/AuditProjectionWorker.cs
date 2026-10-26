@@ -21,7 +21,8 @@ internal sealed partial class AuditProjectionWorker(
     private const string Consumer = "audit.projection";
     internal const string EventName = "platform.audit.recorded.v1";
     private const int BatchSize = 50;
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
+    // Costo en reposo contra una base compartida: nadie espera la proyección de forma interactiva.
+    internal static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Audit projection tick failed.")]
     private static partial void LogTickFailed(ILogger logger, Exception exception);
