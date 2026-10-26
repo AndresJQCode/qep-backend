@@ -575,6 +575,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `repeat` y `handoff`, el motor no la sigue aunque la versión publicada la tenga, y `FlowNormalizer` la quita al guardar. Al agotar los
   intentos sin salida conectada manda `Chatbot.ExhaustedAction` (`Restart` por defecto), no el flujo. El traspaso a un miembro pasa por
   `IMessagingAssignees.CanReplyAsync` en el adaptador: si no puede, cae sin asignar sin fallar.
+- **`customers.data_consents` es prueba legal: sólo se inserta** (spec 2026-10-26 D-5). Nada la edita ni la borra salvo la fusión,
+  que mueve `customer_id` (`CustomerMergeStore.MoveOwnedAsync`); el estado vigente es la última fila por `(occurred_at, sequence)`.
+  Una respuesta es una fila: el reintento de una unidad del motor lo frena `IX_data_consents_reply_message`, que `CustomersUnitOfWork`
+  traduce por nombre; no lo cambies por la consulta previa. Los CHECK de la tabla exigen identidad de canal en lo que escribe el bot y
+  en `Revoked` + `ThisConversation`, y la prohíben en `Revoked` + `Other`: un `INSERT` a mano tiene que cumplirlos. El texto que se
+  guarda es el que salió (`RunState.ConsentPrompt`, columna `conversation_runs.consent_prompt`), no la plantilla del bloque.
 
 ## Verificación
 
