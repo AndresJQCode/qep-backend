@@ -131,6 +131,42 @@ public sealed class WhatsAppCloudClientTemplatesTests
     }
 
     [Fact]
+    public async Task ADocumentHeaderTravelsAsTheFirstComponent()
+    {
+        var (_, request) = await SendAsync(
+            new SendToPhone("573001234567"),
+            new TemplateSend(
+                "qep_cotizacion_v2", "es", Named: true,
+                [new TemplateParameter("fullname", "Juan Perez"), new TemplateParameter("order_number", "COT-1")],
+                HeaderDocument: new TemplateHeaderDocument("media.out", "Cotizacion-COT-1.pdf")));
+
+        using var body = JsonDocument.Parse(request.Body!);
+        var components = body.RootElement.GetProperty("template").GetProperty("components").EnumerateArray().ToArray();
+        Assert.Equal(2, components.Length);
+        Assert.Equal("header", components[0].GetProperty("type").GetString());
+        var headerParameter = Assert.Single(components[0].GetProperty("parameters").EnumerateArray());
+        Assert.Equal("document", headerParameter.GetProperty("type").GetString());
+        Assert.Equal("media.out", headerParameter.GetProperty("document").GetProperty("id").GetString());
+        Assert.Equal("Cotizacion-COT-1.pdf", headerParameter.GetProperty("document").GetProperty("filename").GetString());
+        Assert.Equal("body", components[1].GetProperty("type").GetString());
+        Assert.Equal(
+            ["fullname", "order_number"],
+            components[1].GetProperty("parameters").EnumerateArray().Select(p => p.GetProperty("parameter_name").GetString()));
+    }
+
+    [Fact]
+    public async Task WithoutAHeaderDocumentTheFirstComponentIsTheBody()
+    {
+        var (_, request) = await SendAsync(
+            new SendToPhone("573001234567"),
+            new TemplateSend("order_update", "es", Named: true, [new TemplateParameter("first_name", "Ana")]));
+
+        using var body = JsonDocument.Parse(request.Body!);
+        var components = body.RootElement.GetProperty("template").GetProperty("components").EnumerateArray().ToArray();
+        Assert.Equal("body", Assert.Single(components).GetProperty("type").GetString());
+    }
+
+    [Fact]
     public async Task ATemplateWithoutParametersCarriesNoComponents()
     {
         var (_, request) = await SendAsync(new SendToPhone("573001234567"), new TemplateSend("fijo", "es", Named: false, []));

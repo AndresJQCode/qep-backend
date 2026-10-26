@@ -417,8 +417,74 @@ public sealed class SendQuotationHandlerTests
         Assert.Equal(QuotationStatus.Draft, harness.Repository.Quotation.Status);
     }
 
-    private static SendQuotationCommand NewCommand(string? recipient = null) =>
-        new(TenantId, CurrentQuotationId, recipient);
+    // Spec 2026-10-21 D17: Meta lee el PDF privado desde Mensajería, así que no hay copia pública que publicar.
+    [Fact]
+    public async Task AMetaChannelSkipsThePublicCopyAndCarriesTheStorageKey()
+    {
+        var harness = NewHandler(channels: [WhatsAppChannels.Meta()]);
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Null(harness.Storage.PublishedKey);
+        Assert.IsType<MetaWhatsAppChannel>(harness.Sender.Channel);
+        Assert.NotNull(harness.Sender.Sent);
+        Assert.Null(harness.Sender.Sent.DocumentUrl);
+        Assert.Equal(harness.Repository.Pdf!.StorageKey, harness.Sender.Sent.DocumentStorageKey);
+        Assert.Equal(AdvisorId.Value, harness.Sender.Sent.SentByMemberId);
+        Assert.Equal(ClientId, harness.Sender.Sent.CustomerId);
+        // El adaptador de Meta lanza sin tenant y la prueba de integración reemplaza el sender: sólo aquí se ve.
+        Assert.Equal(TenantId, harness.Sender.Sent.TenantId);
+    }
+
+    [Fact]
+    public async Task AZenviaChannelStillPublishesTheCopy()
+    {
+        var harness = NewHandler(channels: [WhatsAppChannels.Any()]);
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(harness.Repository.Pdf!.StorageKey, harness.Storage.PublishedKey);
+        Assert.Equal(RecordingPdfStorage.PublicUrl, harness.Sender.Sent!.DocumentUrl);
+        Assert.Equal(harness.Repository.Pdf.StorageKey, harness.Sender.Sent.DocumentStorageKey);
+    }
+
+    // Los datos de facturación no son un cliente: el mensaje no se asocia a ninguna ficha.
+    [Fact]
+    public async Task ABillingRecipientCarriesNoCustomerId()
+    {
+        var harness = NewHandler(billing: BillingParty, channels: [WhatsAppChannels.Meta()]);
+
+        await harness.Handler.HandleAsync(NewCommand("Billing"), TestContext.Current.CancellationToken);
+
+        Assert.NotNull(harness.Sender.Sent);
+        Assert.Null(harness.Sender.Sent.CustomerId);
+        Assert.Equal(AdvisorId.Value, harness.Sender.Sent.SentByMemberId);
+    }
+
+    // Una elección rechazada es un envío que nunca empezó: ni PDF, ni registro de falla, ni cambio de estado.
+    [Theory]
+    [InlineData("channel_already_set")]
+    [InlineData("channel_unavailable")]
+    public async Task ARejectedChoiceTouchesNothing(string code)
+    {
+        var saved = WhatsAppChannels.Any();
+        var other = WhatsAppChannels.Meta();
+        var harness = code == "channel_already_set"
+            ? NewHandler(channels: [saved, other], choices: new InMemoryWhatsAppChannelChoiceStore(saved.ConnectionId))
+            : NewHandler(channels: [saved]);
+        var requested = code == "channel_already_set" ? other.ConnectionId : Guid.CreateVersion7();
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(connectionId: requested), TestContext.Current.CancellationToken));
+
+        Assert.Equal($"quotation.whatsapp.{code}", error.Code);
+        Assert.Equal(0, harness.Renderer.Calls);
+        Assert.Null(harness.FailureLog.HistoryEntry);
+        Assert.Equal(QuotationStatus.Draft, harness.Repository.Quotation.Status);
+    }
+
+    private static SendQuotationCommand NewCommand(string? recipient = null, Guid? connectionId = null) =>
+        new(TenantId, CurrentQuotationId, recipient, connectionId);
 
     private static readonly QuotationPartyDetails BillingParty = new()
     {
@@ -451,7 +517,8 @@ public sealed class SendQuotationHandlerTests
         Exception? whatsAppFailure = null,
         QuotationPartyDetails? billing = null,
         WhatsAppChannel[]? channels = null,
-        StubTenantDirectory? tenantDirectory = null)
+        StubTenantDirectory? tenantDirectory = null,
+        InMemoryWhatsAppChannelChoiceStore? choices = null)
     {
         var tenant = tenantDirectory ?? new StubTenantDirectory();
         var quotation = Quotation.Create(
@@ -519,6 +586,7 @@ public sealed class SendQuotationHandlerTests
                 ? sender
                 : new FailingWhatsAppSender(whatsAppFailure),
             new StubWhatsAppChannelDirectory(channels ?? [WhatsAppChannels.Any()]),
+            choices ?? new InMemoryWhatsAppChannelChoiceStore(),
             tenant,
             new StubMembershipDirectory(AdvisorId.Value),
             failureLog,

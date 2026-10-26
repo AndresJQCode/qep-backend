@@ -330,7 +330,7 @@ public sealed class ZenviaWhatsAppSenderTests
         Assert.DoesNotContain(logger.Messages, message => message.Contains("pedido.pdf"));
     }
 
-    private static (IWhatsAppSender Sender, RequestCapture Capture, RecordingLogger Logger)
+    private static (IZenviaWhatsAppSender Sender, RequestCapture Capture, RecordingLogger Logger)
         NewSender(
             HttpStatusCode status = HttpStatusCode.OK,
             string responseBody = "{}")
@@ -352,8 +352,8 @@ public sealed class ZenviaWhatsAppSenderTests
             logger);
     }
 
-    private static WhatsAppChannel Channel(string? orderTemplateId = OrderTemplateId) =>
-        new(Guid.CreateVersion7(), "token-de-prueba", FromNumber, TemplateId, orderTemplateId);
+    private static ZenviaWhatsAppChannel Channel(string? orderTemplateId = OrderTemplateId) =>
+        new(Guid.CreateVersion7(), "Zenvia de prueba", "token-de-prueba", FromNumber, TemplateId, orderTemplateId);
 
     private sealed class RequestCapture
     {

@@ -9,9 +9,13 @@ namespace Modules.Quotations.IntegrationTests;
 /// </summary>
 public sealed class RecordingWhatsAppChannelDirectory : IWhatsAppChannelDirectory
 {
-    public static readonly WhatsAppChannel Default = new(
-        Guid.Parse("01900000-0000-7000-8000-00000000c0de"), "token-de-prueba", "570000000000",
+    public static readonly WhatsAppChannel Default = new ZenviaWhatsAppChannel(
+        Guid.Parse("01900000-0000-7000-8000-00000000c0de"), "Zenvia de prueba", "token-de-prueba", "570000000000",
         "d0e79149-ed61-4784-9883-d86807f46ce5", "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d");
+
+    /// <summary>La conexión de Meta del tenant, para las pruebas que eligen entre dos canales.</summary>
+    public static readonly MetaWhatsAppChannel Meta = new(
+        Guid.Parse("01900000-0000-7000-8000-00000000be7a"), "Meta de prueba", "573001112233", "cotizacion_qep", "es_CO");
 
     public List<WhatsAppChannel> Channels { get; } = [Default];
 
@@ -49,9 +53,14 @@ public sealed class RecordingWhatsAppSender : IWhatsAppSender
         }
     }
 
+    /// <summary>Si viene, el envío de la cotización la lanza en vez de registrarse (el camino de falla).</summary>
+    public Exception? Failure { get; set; }
+
     public Task SendQuotationAsync(
         WhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken) =>
-        Record(channel, message.OrderNumber, message.NumberFormat);
+        Failure is { } failure
+            ? Task.FromException(failure)
+            : Record(channel, message.OrderNumber, message.NumberFormat);
 
     public Task SendOrderAsync(
         WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken) =>

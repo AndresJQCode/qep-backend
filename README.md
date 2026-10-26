@@ -203,8 +203,9 @@ ID de la plantilla de cotización y, opcional, el de la de pedido— (plan 2026-
 2. Con `Integrations:SecretProtection:*` configurado (ver [Integraciones](#integraciones-conexiones-del-tenant)),
    se crea la conexión desde Integraciones con los datos de una cuenta de Zenvia real.
 
-Sin conexión, «Enviar» responde `422 quotation.whatsapp.no_channel`; no existe un envío de mentira
-que registre el mensaje y lo dé por enviado.
+La cotización también puede salir por la conexión de WhatsApp Business (Meta) del tenant; ver
+[Plantilla de WhatsApp](#plantilla-de-whatsapp-zenvia). Sin ningún canal, «Enviar» responde
+`422 quotation.whatsapp.no_channel`; no existe un envío de mentira que registre el mensaje y lo dé por enviado.
 
 Cloudflare R2 (object storage obligatorio, ADR 0020):
 
@@ -1271,6 +1272,9 @@ error en [`docs/integracion-cotizaciones-y-pedidos.md`](docs/integracion-cotizac
   [Plantilla de WhatsApp](#plantilla-de-whatsapp-zenvia). Sin él, enviar un pedido responde
   `order.whatsapp.not_configured` antes de generar el PDF; sin conexión, `order.whatsapp.no_channel`, y con
   más de una, `order.whatsapp.channel_required`.
+- **El pedido sigue saliendo sólo por Zenvia** (DP-1): no recibe `connectionId`, no lee la elección guardada del
+  tenant y, con una conexión de Meta sola, responde `order.whatsapp.no_channel`. Lo de
+  [Plantilla de WhatsApp](#plantilla-de-whatsapp-zenvia) sobre elegir canal aplica sólo a la cotización.
 
 ### Catálogo: opciones, variantes y galería
 
@@ -2163,12 +2167,39 @@ todavía no se adjuntaron o no se movieron: no debe haber ninguna.
 ### Plantilla de WhatsApp (Zenvia)
 
 Enviar una cotización (`POST /quotations/{id}/send`) manda un WhatsApp al cliente con el PDF
-adjunto, a través de una plantilla aprobada por Meta. Sale por **la conexión de Zenvia del tenant**
-(Integraciones, plan 2026-10-21): cuál es la plantilla vigente lo dice su campo `templateId`, y el
-número emisor, su `fromNumber`. No hay cuenta ni plantilla global. Un tenant sin conexión disponible
-recibe `422 quotation.whatsapp.no_channel`, y uno con más de una, `quotation.whatsapp.channel_required`
-(elegir entre varias es del plan 3 del spec 2026-10-21). Las variables de la plantilla son las que
-`ZenviaWhatsAppSender` completa en runtime:
+adjunto, a través de una plantilla aprobada por Meta. Sale por **una conexión del tenant**, de Zenvia o de
+WhatsApp Business (Meta) (Integraciones, planes 2026-10-21): en Zenvia, cuál es la plantilla vigente lo dice
+su campo `templateId`, y el número emisor, su `fromNumber`. No hay cuenta ni plantilla global.
+
+**Qué canal usa (spec 2026-10-21 §4.2).** Los canales son las conexiones de Zenvia y de Meta del tenant que
+están disponibles. Con uno solo, sale por él. Con varios, sale por la elección guardada del tenant
+(`quotations.tenant_whatsapp_channels`, migración nueva de Quotations) o por el `connectionId` del cuerpo. Los cuatro
+códigos, todos 422 que dejan la cotización como estaba y sin `SendFailed`:
+
+| Código | Cuándo |
+| --- | --- |
+| `quotation.whatsapp.no_channel` | No hay canales disponibles |
+| `quotation.whatsapp.channel_required` | Hay varios y ninguno elegido vigente; no viaja la lista, el cliente pide el `GET` |
+| `quotation.whatsapp.channel_unavailable` | El `connectionId` no está entre los disponibles |
+| `quotation.whatsapp.channel_already_set` | Ya hay una elección vigente y el `connectionId` es otro (el mismo id se acepta) |
+
+Con varios canales y ninguno elegido, un envío con `connectionId` válido **guarda** la elección para todo el
+tenant, pero sólo si el envío salió. Las fallas del envío en sí (`quotation.whatsapp.send_failed`,
+`recipient_missing`, `quotation.quotation.billing_phone_missing`, `quotation.send.failed`) dejan la cotización
+en borrador con `SendFailed` en el historial y no dicen por qué canal fue.
+
+**Dos endpoints** (bajo `/api/v1/tenants/{tenantId}`):
+
+- `GET /quotations/whatsapp-channels` lista los canales (Meta primero, después Zenvia, cada grupo por nombre)
+  con `selectedConnectionId` (sólo si la elección sigue disponible) y `needsChoice`. Se lee con
+  `quotations.quotation.manage` **o** `tenancy.settings.update` (decisión del owner DP-F1, 2026-10-25: quien
+  elige el canal desde Configuración no necesariamente envía cotizaciones). Política
+  `QuotationsPolicies.WhatsAppChannelsRead`, y el handler revalida con `QuotationsAuthorization.EnsureAuthorizedAny`.
+- `PUT /quotations/whatsapp-channel` con `{ "connectionId": "…" }` guarda la elección y responde con la forma
+  del `GET`. Exige `tenancy.settings.update`; `422 validation.failed` (`errors.connectionId`) si falta o es
+  `Guid.Empty`, y `422 quotation.whatsapp.channel_unavailable` si no está disponible.
+
+Las variables de la plantilla de Zenvia son las que `ZenviaWhatsAppSender` completa en runtime:
 
 | Variable | De dónde sale |
 | --- | --- |
@@ -2202,6 +2233,30 @@ editar una plantilla aprobada, y en Zenvia la plantilla va atada al número emis
 que creó con su propia cuenta. Si además cambian las variables, hay que tocar
 `WhatsAppQuotationMessage` y `ZenviaWhatsAppSender`, y actualizar el `templateId` de las conexiones en
 el mismo despliegue.
+
+**Despliegue del envío por canal (spec 2026-10-21 §7.4).** Backend antes que frontend. Es una migración nueva
+de Quotations (`tenant_whatsapp_channels`), **sin backfill** (plan, Decisión 15). Un tenant con Meta aprobado
+más Zenvia pasa a `channel_required` hasta que alguien elija, desde el envío o con el `PUT` (un administrador
+puede elegir antes del despliegue del frontend).
+
+**Paso manual, justo después de desplegar el backend y antes de que alguien envíe:**
+
+- [ ] Para cada tenant con Zenvia **y** una conexión de Meta con la plantilla de cotización `APPROVED`, elige el
+  canal con el `PUT`. Sin esto, todo envío de ese tenant responde `quotation.whatsapp.channel_required` y el
+  frontend actual no sabe contestarlo: «Enviar» queda roto hasta que se elija.
+- [ ] Antes, mira si Origen Botánico tiene esa conexión de Meta: `GET .../quotations/whatsapp-channels` lista
+  los canales disponibles, y si `needsChoice` es `false` no hay nada que hacer. Con un solo canal disponible
+  tampoco hace falta el `PUT`.
+
+```powershell
+'{ "connectionId": "<id-de-la-conexion>" }' | Set-Content -Encoding ascii canal.json
+curl.exe -s -X PUT "https://qep-api.qcode.co/api/v1/tenants/<tenantId>/quotations/whatsapp-channel" `
+  -H "Content-Type: application/json" -H "Cookie: <cookie-de-sesion-de-un-administrador>" -H "X-Qep-Client: web" `
+  -d "@canal.json"
+```
+
+El `PUT` exige `tenancy.settings.update` y responde el mismo documento que el `GET`. Un `connectionId`
+que no esté disponible da `422 quotation.whatsapp.channel_unavailable`.
 
 #### Crear una plantilla nueva
 
@@ -2453,6 +2508,13 @@ conversación que sube al tope mientras se recorre la lista no repite ni salta f
 `OFFSET`. Un cursor que no emitió el servidor da 422 `validation.failed` en `cursor`. No hay `total` ni `page`:
 los números de las pestañas son `counts`. El hilo (`…/messages?before=&limit=`) ya usaba el id del mensaje más
 viejo como cursor, con `hasMore`.
+
+**Cotización enviada por Meta.** Cuando el canal de la cotización es una conexión de Meta, el mensaje queda en
+el hilo del número del cliente como un `Template` con el cuerpo y el pie ya armados, y el PDF como media
+propia (`kind: "Template"`, `mimeType: "application/pdf"`, `fileName: "Cotizacion-{número}.pdf"`, que baja de
+`/messaging/media/{messageId}`). `QuotationTemplateOutbound` lo reclama y lo liquida por el mismo camino que los
+demás salientes (`IOutboundMessages`, `OutboundSettlement`); puede quedar `Failed`, y `sentBy` es quien envió la
+cotización. **No cambia el estado ni la asignación de la conversación** y no toca los no leídos.
 
 **Envío.** `POST …/conversations/{id}/messages` con `{ clientId, text }` es idempotente por
 `(conversación, clientId)`: repetir devuelve el mismo mensaje; un `Failed` se reenvía. Cada envío lleva

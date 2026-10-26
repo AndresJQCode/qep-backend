@@ -16,7 +16,7 @@ namespace Modules.Quotations.Application;
 /// pantalla mande la cotizacion a donde quiera.
 /// </summary>
 public sealed record SendQuotationCommand(
-    Guid TenantId, Guid QuotationId, string? Recipient = null) : ICommand<QuotationDto>;
+    Guid TenantId, Guid QuotationId, string? Recipient = null, Guid? ConnectionId = null) : ICommand<QuotationDto>;
 
 /// <summary>A quien va el mensaje. Texto en el borde, enum adentro: llega por HTTP y un valor
 /// que no matchea es un 422 con codigo, no un cast que revienta.</summary>
@@ -37,6 +37,7 @@ public sealed class SendQuotationHandler(
     IQuotationProductLookup productLookup,
     IWhatsAppSender whatsAppSender,
     IWhatsAppChannelDirectory whatsAppChannels,
+    IWhatsAppChannelChoiceStore channelChoices,
     ITenantDirectory tenantDirectory,
     IMembershipDirectory membershipDirectory,
     IQuotationSendFailureLog sendFailureLog,
@@ -66,9 +67,13 @@ public sealed class SendQuotationHandler(
         quotation.EnsureSendable();
 
         // Por dónde sale, con el mismo criterio: sin canal, o con varios sin elegir, el envío nunca empezó
-        // (plan 2026-10-21). Antes del PDF, que cuesta una llamada a `qcode-pdf`.
-        var channel = WhatsAppChannelSelection.ForQuotation(
-            await whatsAppChannels.ListAvailableAsync(command.TenantId, cancellationToken));
+        // (plan 2026-10-21), y una elección que no corresponde (otra conexión cuando el tenant ya tiene una, o una que no
+        // está) tampoco: fuera del try, que anota las fallas. Antes del PDF, que cuesta una llamada a `qcode-pdf`.
+        var resolved = WhatsAppChannelSelection.Resolve(
+            await whatsAppChannels.ListAvailableAsync(command.TenantId, cancellationToken),
+            await channelChoices.FindAsync(command.TenantId, cancellationToken),
+            command.ConnectionId);
+        var channel = resolved.Channel;
 
         // Se lee antes de mutar: `Send` deja la cotización en Sent venga de donde venga, así que
         // después de llamarlo ya no hay forma de saber si esto fue el primer envío o un reenvío.
@@ -103,8 +108,15 @@ public sealed class SendQuotationHandler(
             // el mensaje entero, minutos después de que Zenvia ya respondió 200. Por eso se
             // publica una copia con clave aleatoria, que además evita que Meta sirva de su caché
             // el documento viejo en un reenvío. La copia la limpia el lifecycle del bucket.
-            stage = QuotationSendStage.Publish;
-            var documentUrl = await pdfStorage.PublishAsync(pdf.StorageKey, cancellationToken);
+            //
+            // Sólo Zenvia la necesita: Meta lee el PDF privado desde Mensajería por su clave
+            // (spec 2026-10-21 D17), sin copia pública.
+            string? documentUrl = null;
+            if (channel is ZenviaWhatsAppChannel)
+            {
+                stage = QuotationSendStage.Publish;
+                documentUrl = await pdfStorage.PublishAsync(pdf.StorageKey, cancellationToken);
+            }
 
             stage = QuotationSendStage.Recipient;
             var customer = await customerLookup.FindAsync(
@@ -118,7 +130,7 @@ public sealed class SendQuotationHandler(
             // que ningún otro flujo sabe destrabar.
             // A quien se le manda. Se resuelve despues de validar al cliente porque el default
             // --y el respaldo de nombre-- sigue saliendo de ahi.
-            var (toPhone, fullName) = ResolveRecipient(command.Recipient, quotation, customer!);
+            var (recipient, toPhone, fullName) = ResolveRecipient(command.Recipient, quotation, customer!);
 
             // El mismo ajuste regional con el que se armó el PDF: mensaje y documento no pueden
             // mostrar el monto con separadores distintos (spec 2026-10-23, D-R4).
@@ -136,7 +148,12 @@ public sealed class SendQuotationHandler(
                     Currency: quotation.Currency,
                     ValidUntil: quotation.ValidUntil!.Value,
                     DocumentUrl: documentUrl,
-                    NumberFormat: regional?.NumberFormat),
+                    NumberFormat: regional?.NumberFormat,
+                    DocumentStorageKey: pdf.StorageKey,
+                    SentByMemberId: sentBy.Value.Value,
+                    // Los datos de facturación no son un cliente: el mensaje no se asocia a ninguna ficha.
+                    CustomerId: recipient == QuotationRecipient.Customer ? quotation.ClientId : null,
+                    TenantId: command.TenantId),
                 cancellationToken);
 
             stage = QuotationSendStage.Persistence;
@@ -159,7 +176,33 @@ public sealed class SendQuotationHandler(
                 now);
             // Spec 2026-10-13 §4.5: en el mismo SaveChanges que el Sent. También en un reenvío (H5): Pipeline es idempotente.
             lifecycleEvents.PublishSent(quotation, now);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
+
+            if (resolved.Remember)
+            {
+                // La elección viaja con el `Sent` (spec D9): un envío que no llegó a guardarse no la deja. Sin
+                // transacción, el INSERT ... ON CONFLICT quedaría confirmado aparte de la cotización.
+                await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+                var remembered = await channelChoices.RememberAsync(
+                    command.TenantId, channel.ConnectionId, resolved.PreviousChoice, sentBy.Value.Value, now,
+                    cancellationToken);
+                if (remembered)
+                {
+                    auditPublisher.Publish(
+                        command.TenantId,
+                        executionContext.SubjectId,
+                        ChooseWhatsAppChannelHandler.AuditAction,
+                        channel.ConnectionId.ToString(),
+                        "success",
+                        now);
+                }
+
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+            }
+            else
+            {
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+            }
 
             return quotation.ToDto();
         }
@@ -222,14 +265,14 @@ public sealed class SendQuotationHandler(
     /// se rechaza en vez de caer al cliente en silencio: la pantalla ofrecio una opcion que no
     /// existia, y mandarselo a otro sin avisar es peor que no mandarlo.
     /// </summary>
-    private static (string? ToPhone, string FullName) ResolveRecipient(
+    private static (QuotationRecipient Recipient, string? ToPhone, string FullName) ResolveRecipient(
         string? recipient,
         Quotation quotation,
         QuotationCustomerRef customer)
     {
         if (string.IsNullOrWhiteSpace(recipient))
         {
-            return (customer.Phone, customer.Name);
+            return (QuotationRecipient.Customer, customer.Phone, customer.Name);
         }
 
         if (!Enum.TryParse<QuotationRecipient>(recipient, ignoreCase: true, out var parsed))
@@ -241,7 +284,7 @@ public sealed class SendQuotationHandler(
 
         if (parsed == QuotationRecipient.Customer)
         {
-            return (customer.Phone, customer.Name);
+            return (QuotationRecipient.Customer, customer.Phone, customer.Name);
         }
 
         var billing = quotation.Billing;
@@ -255,6 +298,7 @@ public sealed class SendQuotationHandler(
         // El nombre cae al del cliente si la parte no lo tiene: un campo opcional vacio no
         // deberia mandar la plantilla sin a quien saludar.
         return (
+            QuotationRecipient.Billing,
             billing.Phone,
             string.IsNullOrWhiteSpace(billing.Name) ? customer.Name : billing.Name);
     }

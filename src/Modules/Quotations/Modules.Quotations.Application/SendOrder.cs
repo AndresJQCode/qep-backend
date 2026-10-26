@@ -123,7 +123,10 @@ public sealed class SendOrderHandler(
                     Total: order.Total,
                     Currency: order.Currency,
                     DocumentUrl: documentUrl,
-                    NumberFormat: regional?.NumberFormat),
+                    NumberFormat: regional?.NumberFormat,
+                    DocumentStorageKey: storageKey,
+                    SentByMemberId: sentBy.Value,
+                    CustomerId: recipient == QuotationRecipient.Customer ? order.ClientId : null),
                 cancellationToken);
 
             stage = QuotationSendStage.Persistence;

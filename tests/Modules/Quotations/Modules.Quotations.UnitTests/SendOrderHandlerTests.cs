@@ -262,6 +262,40 @@ public sealed class SendOrderHandlerTests
         Assert.Equal(channel.ConnectionId, harness.Sender.Channel?.ConnectionId);
     }
 
+    // Spec 2026-10-21 D12: los pedidos salen sólo por Zenvia; una conexión de Meta no cuenta como canal.
+    [Fact]
+    public async Task OrderIgnoresMetaChannels()
+    {
+        var zenvia = WhatsAppChannels.Any();
+        var harness = NewHarness(channels: [WhatsAppChannels.Meta(), zenvia]);
+
+        await harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken);
+
+        Assert.Equal(zenvia.ConnectionId, harness.Sender.Channel?.ConnectionId);
+
+        var onlyMeta = NewHarness(channels: [WhatsAppChannels.Meta()]);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            onlyMeta.Handler.HandleAsync(NewCommand(onlyMeta), TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.whatsapp.no_channel", error.Code);
+        Assert.Null(onlyMeta.Sender.SentOrder);
+    }
+
+    [Fact]
+    public async Task TheOrderMessageCarriesTheStorageKeyTheMemberAndTheCustomer()
+    {
+        var harness = NewHarness();
+
+        await harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken);
+
+        var sent = harness.Sender.SentOrder;
+        Assert.NotNull(sent);
+        Assert.NotNull(sent.DocumentStorageKey);
+        Assert.Equal(AdvisorId.Value, sent.SentByMemberId);
+        Assert.Equal(ClientId, sent.CustomerId);
+    }
+
     [Fact]
     public async Task NoChannelIsRejected()
     {

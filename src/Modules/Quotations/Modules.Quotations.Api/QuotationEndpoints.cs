@@ -486,7 +486,7 @@ public static class QuotationEndpoints
         SendQuotationRequest? request = null)
     {
         var quotation = await dispatcher.SendAsync(
-            new SendQuotationCommand(tenantId, quotationId, request?.Recipient),
+            new SendQuotationCommand(tenantId, quotationId, request?.Recipient, request?.ConnectionId),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));

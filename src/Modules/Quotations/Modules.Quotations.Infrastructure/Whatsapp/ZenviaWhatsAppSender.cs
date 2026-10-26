@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -23,18 +22,8 @@ internal sealed partial class ZenviaWhatsAppSender(
     HttpClient httpClient,
     IOptions<QuotationsOptions> options,
     ILogger<ZenviaWhatsAppSender> logger)
-    : IWhatsAppSender
+    : IZenviaWhatsAppSender
 {
-    // Sólo la vigencia: el locale de la plantilla (`es` en Zenvia) fija su texto largo, y no depende del
-    // formato numérico del tenant (D-R1). El monto usa los separadores del tenant.
-    private static readonly CultureInfo Colombia = CultureInfo.GetCultureInfo("es-CO");
-
-    private static string FormatTotal(decimal total, string currency, string? numberFormat)
-    {
-        var info = Currencies.Get(currency);
-        return $"{info.Symbol} {total.ToString($"N{info.Decimals}", RegionalNumberFormat.ToNumberFormatInfo(numberFormat))}";
-    }
-
     private const string UnknownMessageId = "(unknown)";
 
     private readonly WhatsAppOptions settings = options.Value.WhatsApp;
@@ -57,15 +46,17 @@ internal sealed partial class ZenviaWhatsAppSender(
         ILogger logger, string orderNumber, string messageId);
 
     public async Task SendQuotationAsync(
-        WhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken)
+        ZenviaWhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken)
     {
-        var to = NormalizePhone(message.ToPhone);
+        var to = WhatsAppPhone.Normalize(message.ToPhone);
         if (to is null)
         {
             throw new QuotationsDomainException(
                 "quotation.whatsapp.recipient_missing",
                 "The client has no phone number to send the quotation to.");
         }
+
+        var documentUrl = RequireDocumentUrl(message.DocumentUrl);
 
         var payload = new
         {
@@ -84,13 +75,12 @@ internal sealed partial class ZenviaWhatsAppSender(
                         // The quotation currency's symbol and decimals (catalogue), the tenant's separators
                         // (Colombian when it has none): "€ 2.450,50" or "€ 2,450.50". The template variable is the
                         // same, so the approved template stays valid.
-                        total = FormatTotal(message.Total, message.Currency, message.NumberFormat),
-                        valid_until = message.ValidUntil.ToString(
-                            "d 'de' MMMM 'de' yyyy", Colombia),
+                        total = WhatsAppTemplateValues.Total(message.Total, message.Currency, message.NumberFormat),
+                        valid_until = WhatsAppTemplateValues.ValidUntil(message.ValidUntil),
                         // La clave se llama `documentUrl` porque así la nombra Zenvia para los
                         // templates con media (`imageUrl`/`videoUrl` para los otros): no hay un
                         // contenido aparte de tipo `file`, el adjunto es una variable más.
-                        documentUrl = message.DocumentUrl,
+                        documentUrl,
                     },
                 },
             },
@@ -108,13 +98,13 @@ internal sealed partial class ZenviaWhatsAppSender(
     }
 
     /// <summary>
-    /// El pedido, por su propia plantilla (<see cref="WhatsAppChannel.OrderTemplateId"/>). Mismo cuerpo
+    /// El pedido, por su propia plantilla (<see cref="ZenviaWhatsAppChannel.OrderTemplateId"/>). Mismo cuerpo
     /// que la cotización menos <c>valid_until</c>: un pedido no vence. Los códigos son de pedido
     /// (<c>order.whatsapp.*</c>) para que la pantalla del pedido no tenga que traducir los de la
     /// cotización.
     /// </summary>
     public async Task SendOrderAsync(
-        WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken)
+        ZenviaWhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken)
     {
         // Defensa: `SendOrderHandler` ya lo rechaza al elegir el canal, antes del PDF. Va antes que el
         // teléfono porque decir "falta el teléfono" mandaría a corregir un dato que no destraba nada.
@@ -125,13 +115,15 @@ internal sealed partial class ZenviaWhatsAppSender(
                 "The WhatsApp channel has no order template: orders cannot be sent by WhatsApp yet.");
         }
 
-        var to = NormalizePhone(message.ToPhone);
+        var to = WhatsAppPhone.Normalize(message.ToPhone);
         if (to is null)
         {
             throw new QuotationsDomainException(
                 "order.whatsapp.recipient_missing",
                 "The recipient has no phone number to send the order to.");
         }
+
+        var documentUrl = RequireDocumentUrl(message.DocumentUrl);
 
         var payload = new
         {
@@ -147,8 +139,8 @@ internal sealed partial class ZenviaWhatsAppSender(
                     {
                         fullname = message.FullName,
                         order_number = message.OrderNumber,
-                        total = FormatTotal(message.Total, message.Currency, message.NumberFormat),
-                        documentUrl = message.DocumentUrl,
+                        total = WhatsAppTemplateValues.Total(message.Total, message.Currency, message.NumberFormat),
+                        documentUrl,
                     },
                 },
             },
@@ -166,7 +158,7 @@ internal sealed partial class ZenviaWhatsAppSender(
     /// <summary>El POST a Zenvia, compartido por los dos documentos. Devuelve el cuerpo para leer el id
     /// del mensaje; un no-2xx sale como <paramref name="failureCode"/>.</summary>
     private async Task<string> PostAsync(
-        WhatsAppChannel channel, object payload, string failureCode, CancellationToken cancellationToken)
+        ZenviaWhatsAppChannel channel, object payload, string failureCode, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
@@ -207,17 +199,9 @@ internal sealed partial class ZenviaWhatsAppSender(
         }
     }
 
-    // Mismo criterio que `buildWhatsAppLink` en el frontend (`whatsapp-link.ts`, ahora
-    // retirado): `Customer.Phone` es texto libre sin indicativo obligatorio — un número de 10
-    // dígitos se asume local (Colombia) y se le antepone 57; uno más largo se asume que ya lo
-    // trae.
-    private static string? NormalizePhone(string? phone)
-    {
-        if (string.IsNullOrWhiteSpace(phone)) return null;
-
-        var digits = new string(phone.Where(char.IsDigit).ToArray());
-        if (digits.Length == 0) return null;
-
-        return digits.Length == 10 ? $"57{digits}" : digits;
-    }
+    // Zenvia manda el PDF por su copia pública: sin ella el handler no llamó a este sender como debía. Es un error de
+    // programación, no del usuario, así que no es un código de dominio.
+    private static string RequireDocumentUrl(string? documentUrl) =>
+        documentUrl ?? throw new InvalidOperationException(
+            "A Zenvia message needs the public document URL; the handler published none.");
 }

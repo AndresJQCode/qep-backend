@@ -1356,6 +1356,29 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.TenantWhatsAppChannelRow", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("ChosenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("chosen_at");
+
+                    b.Property<Guid>("ChosenByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("chosen_by_member_id");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.HasKey("TenantId");
+
+                    b.ToTable("tenant_whatsapp_channels", "quotations");
+                });
+
             modelBuilder.Entity("Modules.Quotations.Domain.Carrier", b =>
                 {
                     b.OwnsMany("Modules.Quotations.Domain.CarrierNameEntry", "Names", b1 =>
