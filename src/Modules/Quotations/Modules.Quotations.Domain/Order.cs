@@ -967,6 +967,81 @@ public sealed class Order
         return true;
     }
 
+    /// <summary>
+    /// Spec 2026-10-26 §4.4: agrega la parte de envío que Shopify no pudo completar al crear el pedido (la ciudad
+    /// no se reconocía). <c>true</c> si la agregó; <c>false</c> si ya estaba esa misma parte (un reintento).
+    /// Quita de las notas toda línea que empiece por <paramref name="notesLinePrefix"/> (ordinal): la dirección en
+    /// crudo que se anotó mientras no había parte. Sólo pedidos externos pendientes, sin recogida en tienda y sin
+    /// otra parte de envío; la parte debe quedar completa. No recalcula totales.
+    /// </summary>
+    public bool AttachExternalShipping(QuotationPartyDetails shipping, string notesLinePrefix, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(shipping);
+        ArgumentException.ThrowIfNullOrEmpty(notesLinePrefix);
+        EnsurePending("The shipping party can only be attached while the order is pending.");
+        if (!IsExternal)
+        {
+            throw new QuotationsDomainException(
+                "order.order.source_invalid", "Only an external order takes its shipping party from the platform.");
+        }
+
+        if (IsStorePickup)
+        {
+            throw new QuotationsDomainException(
+                "order.order.store_pickup", "An order picked up at the store has no shipping party.");
+        }
+
+        var candidate = OrderParty.Create(Id, QuotationPartyRole.Shipping, shipping);
+        if (Shipping is { } current)
+        {
+            return current.ToDetails() == candidate.ToDetails()
+                ? false
+                : throw new QuotationsDomainException(
+                    "order.order.shipping_party_present", "The order already has another shipping party.");
+        }
+
+        if (!candidate.IsComplete)
+        {
+            throw new QuotationsDomainException(
+                "order.shipping.party_incomplete", "The shipping party must have all its fields filled.");
+        }
+
+        _parties.Add(candidate);
+        Notes = NormalizeNotes(string.Join(
+            '\n',
+            (Notes ?? string.Empty).Split('\n').Where(line => !line.StartsWith(notesLinePrefix, StringComparison.Ordinal))));
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
+    /// <summary>
+    /// Spec 2026-10-26 §4.6: cambia sólo el departamento y la ciudad de la parte de envío, y sólo si sigue siendo
+    /// la que se guardó (<paramref name="expected"/>): si alguien la tocó, lanza <c>order.order.shipping_party_changed</c>.
+    /// <c>true</c> si cambió; <c>false</c> si ya estaba en esa ciudad.
+    /// </summary>
+    public bool CorrectExternalShippingCity(
+        QuotationPartyDetails expected, Guid departmentId, Guid cityId, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        EnsurePending("The shipping city can only be corrected while the order is pending.");
+        if (Shipping is not { } party || party.ToDetails() != expected)
+        {
+            throw new QuotationsDomainException(
+                "order.order.shipping_party_changed", "The shipping party is no longer the one the platform sent.");
+        }
+
+        if (party.DepartmentId == departmentId && party.CityId == cityId)
+        {
+            return false;
+        }
+
+        party.Apply(party.ToDetails() with { DepartmentId = departmentId, CityId = cityId });
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
     // US-14: "se requiere al menos un comprobante, salvo que el estado del pago sea
     // 'Payment pending'". Sólo para los pedidos que se cobran desde QEP: uno de origen externo entra
     // con el estado de pago que avisa la plataforma y el pago vive allá (spec de Shopify §6.3).

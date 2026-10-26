@@ -4,6 +4,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
+using Npgsql;
+using Testcontainers.PostgreSql;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -362,6 +364,162 @@ public sealed class ExternalOrderServiceTests
         Assert.Null(plain!.Order.Shipping.ExternalShippingTitle);
     }
 
+    // Spec 2026-10-26 §4.4 y §4.6: la parte de envío de un pedido externo y su ciudad corregible.
+    private const string RawAddressPrefix = "Dirección de envío de Shopify:";
+
+    private static readonly Guid DepartmentId = Guid.CreateVersion7();
+    private static readonly Guid CityA = Guid.CreateVersion7();
+    private static readonly Guid CityB = Guid.CreateVersion7();
+
+    private static ExternalShippingParty Party(Guid? cityId = null) =>
+        new("Ana Pérez", "3001112233", "ana@correo.co", "Cra 5 # 1-2", DepartmentId, cityId ?? CityA);
+
+    private static QuotationPartiesRequest PartiesRequest(ExternalShippingParty party) =>
+        new(null, new QuotationPartyRequest(
+            party.Name, null, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId));
+
+    private static async Task<(string? Phone, Guid? CityId, string? Notes)> ReadShippingAsync(
+        PostgreSqlContainer database, Guid orderId)
+    {
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT p.phone, p.city_id, o.notes FROM quotations.orders o "
+            + "LEFT JOIN quotations.order_parties p ON p.order_id = o.id AND p.role = 'Shipping' WHERE o.id = @id",
+            connection);
+        command.Parameters.AddWithValue("id", orderId);
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        Assert.True(await reader.ReadAsync(TestContext.Current.CancellationToken));
+        return (
+            reader.IsDBNull(0) ? null : reader.GetString(0),
+            reader.IsDBNull(1) ? null : reader.GetGuid(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2));
+    }
+
+    [Fact]
+    public async Task AttachShippingPersistsThePartyAndTheNotes()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(
+            factory, Draft(setup, "#3001", notes: $"Shopify #3001\n{RawAddressPrefix} Cra 5, CALLI"));
+
+        ExternalShippingOutcome outcome;
+        ExternalShippingOutcome again;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
+            outcome = await writer.AttachShippingAsync(
+                setup.TenantId, order.OrderId, Party(), RawAddressPrefix, TestContext.Current.CancellationToken);
+        }
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
+            again = await writer.AttachShippingAsync(
+                setup.TenantId, order.OrderId, Party(), RawAddressPrefix, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(ExternalShippingOutcomeKind.Applied, outcome.Kind);
+        Assert.Equal(Party(), outcome.Party);
+        Assert.Equal(ExternalShippingOutcomeKind.AlreadyApplied, again.Kind);
+        Assert.Equal(Party(), again.Party);
+        Assert.Equal(("3001112233", (Guid?)CityA, "Shopify #3001"), await ReadShippingAsync(database, order.OrderId));
+    }
+
+    // Review Focus 3: un pedido que ya no está pendiente no recibe la parte, y nada cambia.
+    [Fact]
+    public async Task AttachShippingOnAnApprovedOrderIsNotPending()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#3002", notes: $"{RawAddressPrefix} Cra 5"));
+        await using (var connection = new NpgsqlConnection(database.GetConnectionString()))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var approve = new NpgsqlCommand(
+                "UPDATE quotations.orders SET status = 'Approved' WHERE id = @id", connection);
+            approve.Parameters.AddWithValue("id", order.OrderId);
+            await approve.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
+        var outcome = await writer.AttachShippingAsync(
+            setup.TenantId, order.OrderId, Party(), RawAddressPrefix, TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExternalShippingOutcomeKind.NotPending, outcome.Kind);
+        Assert.Equal(OrderStatus.Approved, outcome.Status);
+        Assert.Equal((null, null, $"{RawAddressPrefix} Cra 5"), await ReadShippingAsync(database, order.OrderId));
+    }
+
+    // Review Focus 4: si la parte se editó por fuera (hoy sólo por SQL, desvío S1), ya no es la que guardó Shopify.
+    [Fact]
+    public async Task CorrectShippingCityRespectsAPartyEditedBySql()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#3003", parties: PartiesRequest(Party())));
+        await using (var connection = new NpgsqlConnection(database.GetConnectionString()))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var update = new NpgsqlCommand(
+                "UPDATE quotations.order_parties SET phone = '3009998877' WHERE order_id = @id AND role = 'Shipping'",
+                connection);
+            update.Parameters.AddWithValue("id", order.OrderId);
+            await update.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        ExternalShippingOutcome edited;
+        ExternalShippingOutcome untouched;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
+            edited = await writer.CorrectShippingCityAsync(
+                setup.TenantId, order.OrderId, Party(), DepartmentId, CityB, TestContext.Current.CancellationToken);
+        }
+
+        var second = await CreateAsync(factory, Draft(setup, "#3004", parties: PartiesRequest(Party())));
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
+            untouched = await writer.CorrectShippingCityAsync(
+                setup.TenantId, second.OrderId, Party(), DepartmentId, CityB, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(ExternalShippingOutcomeKind.ShippingChanged, edited.Kind);
+        Assert.Equal(("3009998877", (Guid?)CityA, (string?)null), await ReadShippingAsync(database, order.OrderId));
+        Assert.Equal(ExternalShippingOutcomeKind.Applied, untouched.Kind);
+        Assert.Equal(("3001112233", (Guid?)CityB, (string?)null), await ReadShippingAsync(database, second.OrderId));
+    }
+
+    [Fact]
+    public async Task CreateAsyncReturnsTheShippingPartyAsPersisted()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var padded = Party() with { Name = "  Ana Pérez  ", Phone = " 3001112233 " };
+
+        var created = await CreateAsync(factory, Draft(setup, "#3005", parties: PartiesRequest(padded)));
+        var keyed = await CreateAsync(factory, Draft(setup, "#3006", externalKey: "shop-1:order-3006", parties: PartiesRequest(padded)));
+        var keyedAgain = await CreateAsync(factory, Draft(setup, "#3006", externalKey: "shop-1:order-3006"));
+        var without = await CreateAsync(factory, Draft(setup, "#3007"));
+
+        Assert.Equal(Party(), created.Shipping);
+        Assert.Equal(Party(), keyed.Shipping);
+        Assert.True(keyedAgain.AlreadyExisted);
+        Assert.Equal(Party(), keyedAgain.Shipping);
+        Assert.Null(without.Shipping);
+    }
+
     private sealed record ExternalSetup(
         Guid TenantId, HttpClient Client, Guid ClientId, Guid ProductId, Guid AdvisorId,
         QuotationBillingAccountRequest Billing);
@@ -383,9 +541,11 @@ public sealed class ExternalOrderServiceTests
         string reference,
         ShippingDetails? shipping = null,
         string? externalKey = null,
-        string? externalShippingTitle = null) =>
+        string? externalShippingTitle = null,
+        string? notes = null,
+        QuotationPartiesRequest? parties = null) =>
         new(
-            setup.TenantId, OrderSource.Shopify, reference, setup.ClientId, setup.AdvisorId, null, null, null,
+            setup.TenantId, OrderSource.Shopify, reference, setup.ClientId, setup.AdvisorId, null, notes, parties,
             setup.Billing, [new ExternalOrderLine(setup.ProductId, setup.ProductId, 2m, 11_900m, 0m, 19)],
             OrderPaymentStatus.PaymentPending, DateTimeOffset.UtcNow, shipping, externalKey, externalShippingTitle);
 

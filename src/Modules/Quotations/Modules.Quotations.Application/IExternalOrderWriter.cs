@@ -41,7 +41,32 @@ public sealed record ExternalOrderDraft(
 /// consumidor marca su espejo igual, sin volver a publicar nada. <see cref="ClientId"/> es el cliente del pedido
 /// guardado, que con <see cref="AlreadyExisted"/> puede no ser el del borrador: el espejo anota ése.</summary>
 public sealed record ExternalOrderResult(
-    Guid OrderId, string OrderNumber, decimal Total, decimal NetTotal, string Currency, Guid ClientId, bool AlreadyExisted = false);
+    Guid OrderId, string OrderNumber, decimal Total, decimal NetTotal, string Currency, Guid ClientId, bool AlreadyExisted = false,
+    ExternalShippingParty? Shipping = null);
+
+/// <summary>La parte de envío de un pedido externo (spec 2026-10-26 §4.4). Sin documento: a quien se le entrega no
+/// se le factura. Los seis campos son los de <c>OrderParty</c>, tal como el consumidor los guarda en su huella.</summary>
+public sealed record ExternalShippingParty(
+    string? Name, string? Phone, string? Email, string? Address, Guid? DepartmentId, Guid? CityId);
+
+/// <summary>Qué pasó con una parte de envío: <see cref="Applied"/> y <see cref="AlreadyApplied"/> son éxito (la segunda es
+/// un reintento); el resto son las razones por las que el pedido ya no admite el cambio.</summary>
+public enum ExternalShippingOutcomeKind
+{
+    Applied,
+    AlreadyApplied,
+    NotFound,
+    NotPending,
+    StorePickup,
+    ShippingPresent,
+    ShippingChanged,
+    PartyIncomplete,
+}
+
+/// <summary><see cref="Party"/> es la parte como quedó guardada (normalizada): la huella de Shopify sale de acá, nunca del
+/// borrador. <see cref="Status"/> viaja con <see cref="ExternalShippingOutcomeKind.NotPending"/>, para que el consumidor
+/// distinga un pedido aprobado de uno cancelado. Con <see cref="ExternalShippingOutcomeKind.NotFound"/> viajan nulos.</summary>
+public sealed record ExternalShippingOutcome(ExternalShippingOutcomeKind Kind, ExternalShippingParty? Party, OrderStatus? Status);
 
 /// <summary>Los códigos propios del camino externo que cruzan capas.</summary>
 public static class ExternalOrderErrors
@@ -75,6 +100,18 @@ public interface IExternalOrderWriter
     /// una fila en espera que se canceló).</summary>
     Task<ExternalOrderResult?> FindByExternalKeyAsync(
         Guid tenantId, OrderSource source, string externalKey, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-26 §4.4: pone la parte de envío que el pedido no tenía y quita de las notas las líneas
+    /// que empiezan por <paramref name="notesLinePrefix"/>. Las razones por las que no se puede viajan en el
+    /// resultado; la concurrencia (<c>concurrency.conflict</c>) se propaga y el trabajo reintenta.</summary>
+    Task<ExternalShippingOutcome> AttachShippingAsync(
+        Guid tenantId, Guid orderId, ExternalShippingParty shipping, string notesLinePrefix, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-26 §4.6: cambia sólo el departamento y la ciudad de la parte de envío, si sigue siendo
+    /// <paramref name="expected"/> (la que guardó el consumidor). Mismos resultados y concurrencia que
+    /// <see cref="AttachShippingAsync"/>.</summary>
+    Task<ExternalShippingOutcome> CorrectShippingCityAsync(
+        Guid tenantId, Guid orderId, ExternalShippingParty expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken);
 }
 
 public sealed class ExternalOrderService(
@@ -152,7 +189,9 @@ public sealed class ExternalOrderService(
             lifecycleEvents.PublishOrderCreated(order, draft.OccurredAt);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return new ExternalOrderResult(order.Id.Value, order.OrderNumber, order.Total, order.NetTotal, order.Currency, order.ClientId);
+            return new ExternalOrderResult(
+                order.Id.Value, order.OrderNumber, order.Total, order.NetTotal, order.Currency, order.ClientId,
+                Shipping: ToExternal(order.Shipping));
         }
         catch (QuotationsDomainException error)
             when (externalKey is not null && error.Code == ExternalOrderErrors.ExternalKeyTaken)
@@ -187,7 +226,80 @@ public sealed class ExternalOrderService(
     }
 
     private static ExternalOrderResult Existing(Order order) =>
-        new(order.Id.Value, order.OrderNumber, order.Total, order.NetTotal, order.Currency, order.ClientId, AlreadyExisted: true);
+        new(order.Id.Value, order.OrderNumber, order.Total, order.NetTotal, order.Currency, order.ClientId, AlreadyExisted: true,
+            Shipping: ToExternal(order.Shipping));
+
+    private static ExternalShippingParty? ToExternal(OrderParty? party) =>
+        party is null ? null : new(party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId);
+
+    private static QuotationPartyDetails ToDetails(ExternalShippingParty party) => new()
+    {
+        Name = party.Name,
+        Phone = party.Phone,
+        Email = party.Email,
+        Address = party.Address,
+        DepartmentId = party.DepartmentId,
+        CityId = party.CityId,
+    };
+
+    public Task<ExternalShippingOutcome> AttachShippingAsync(
+        Guid tenantId, Guid orderId, ExternalShippingParty shipping, string notesLinePrefix, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(shipping);
+        return ChangeShippingAsync(
+            tenantId, orderId, (order, now) => order.AttachExternalShipping(ToDetails(shipping), notesLinePrefix, now), cancellationToken);
+    }
+
+    public Task<ExternalShippingOutcome> CorrectShippingCityAsync(
+        Guid tenantId, Guid orderId, ExternalShippingParty expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        return ChangeShippingAsync(
+            tenantId, orderId,
+            (order, now) => order.CorrectExternalShippingCity(ToDetails(expected), departmentId, cityId, now),
+            cancellationToken);
+    }
+
+    // Sin auditoría ni historial acá (desvío S9): la entrada la escribe el consumidor, que sabe el sinónimo y el operador.
+    // Un código del dominio que no es del camino conocido (p. ej. source_invalid) se propaga: es un error de quien llama.
+    private async Task<ExternalShippingOutcome> ChangeShippingAsync(
+        Guid tenantId, Guid orderId, Func<Order, DateTimeOffset, bool> change, CancellationToken cancellationToken)
+    {
+        var order = await orderRepository.FindByIdAsync(tenantId, new OrderId(orderId), cancellationToken);
+        if (order is null)
+        {
+            return new ExternalShippingOutcome(ExternalShippingOutcomeKind.NotFound, null, null);
+        }
+
+        var now = (await tenantClock.GetAsync(tenantId, cancellationToken)).UtcNow;
+        ExternalShippingOutcomeKind kind;
+        try
+        {
+            kind = change(order, now) ? ExternalShippingOutcomeKind.Applied : ExternalShippingOutcomeKind.AlreadyApplied;
+        }
+        catch (QuotationsDomainException error) when (RefusalKind(error.Code) is { } refused)
+        {
+            return new ExternalShippingOutcome(
+                refused, ToExternal(order.Shipping), refused == ExternalShippingOutcomeKind.NotPending ? order.Status : null);
+        }
+
+        if (kind == ExternalShippingOutcomeKind.Applied)
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+
+        return new ExternalShippingOutcome(kind, ToExternal(order.Shipping), null);
+    }
+
+    private static ExternalShippingOutcomeKind? RefusalKind(string code) => code switch
+    {
+        "order.order.not_pending" => ExternalShippingOutcomeKind.NotPending,
+        "order.order.store_pickup" => ExternalShippingOutcomeKind.StorePickup,
+        "order.order.shipping_party_present" => ExternalShippingOutcomeKind.ShippingPresent,
+        "order.order.shipping_party_changed" => ExternalShippingOutcomeKind.ShippingChanged,
+        "order.shipping.party_incomplete" => ExternalShippingOutcomeKind.PartyIncomplete,
+        _ => null,
+    };
 
     public async Task SyncPaymentStatusAsync(
         Guid tenantId, Guid orderId, OrderPaymentStatus status, CancellationToken cancellationToken)

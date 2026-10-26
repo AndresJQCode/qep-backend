@@ -122,6 +122,34 @@ internal sealed class FakeExternalOrderWriter : IExternalOrderWriter
         Calls++;
         return Task.FromResult(ByExternalKey.GetValueOrDefault((tenantId, source, externalKey)));
     }
+
+    public Func<ExternalShippingParty, ExternalShippingOutcome>? OnAttach { get; init; }
+
+    public Func<ExternalShippingParty, ExternalShippingOutcome>? OnCorrect { get; init; }
+
+    public List<(Guid TenantId, Guid OrderId, ExternalShippingParty Shipping, string NotesLinePrefix)> Attached { get; } = [];
+
+    public List<(Guid TenantId, Guid OrderId, ExternalShippingParty Expected, Guid DepartmentId, Guid CityId)> Corrected { get; } = [];
+
+    public Task<ExternalShippingOutcome> AttachShippingAsync(
+        Guid tenantId, Guid orderId, ExternalShippingParty shipping, string notesLinePrefix, CancellationToken cancellationToken)
+    {
+        Calls++;
+        Attached.Add((tenantId, orderId, shipping, notesLinePrefix));
+        return Task.FromResult(
+            OnAttach?.Invoke(shipping) ?? new ExternalShippingOutcome(ExternalShippingOutcomeKind.Applied, shipping, null));
+    }
+
+    public Task<ExternalShippingOutcome> CorrectShippingCityAsync(
+        Guid tenantId, Guid orderId, ExternalShippingParty expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken)
+    {
+        Calls++;
+        Corrected.Add((tenantId, orderId, expected, departmentId, cityId));
+        return Task.FromResult(
+            OnCorrect?.Invoke(expected)
+            ?? new ExternalShippingOutcome(
+                ExternalShippingOutcomeKind.Applied, expected with { DepartmentId = departmentId, CityId = cityId }, null));
+    }
 }
 
 internal sealed class PassThroughPhones : IPhoneNumberNormalizer
