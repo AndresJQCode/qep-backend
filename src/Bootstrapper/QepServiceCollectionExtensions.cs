@@ -223,6 +223,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<CreateOptionCommand, OptionResponse>, CreateOptionHandler>();
         services.AddScoped<ICommandHandler<UpdateOptionCommand, OptionResponse>, UpdateOptionHandler>();
         services.AddScoped<ICommandHandler<DeleteOptionCommand, OptionDeletedResult>, DeleteOptionHandler>();
+        services.AddScoped<IQueryHandler<ListCategoriesQuery, IReadOnlyList<CategoryDto>>, ListCategoriesHandler>();
+        services.AddScoped<ICommandHandler<CreateCategoryCommand, CategoryDto>, CreateCategoryHandler>();
         // EMP. Los siete van aca por la misma razon que los de tasas: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
         // recien en runtime con 500 al no encontrar handler.

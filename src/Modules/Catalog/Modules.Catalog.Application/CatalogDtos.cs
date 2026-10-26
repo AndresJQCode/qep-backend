@@ -363,3 +363,29 @@ public sealed record TaxRatesResponse(IReadOnlyCollection<TaxRateResponse> Items
 public sealed record CreateTaxRateRequest(string Name, int Percentage);
 
 public sealed record UpdateTaxRateRequest(string Name, int Percentage);
+
+public sealed record CategoryDto(
+    Guid Id,
+    string Name,
+    Guid? ParentId,
+    int ProductCount,
+    long Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+/// <param name="ProductCount">
+/// Los productos asignados **directamente** a la categoria, activos e inactivos; los de las
+/// descendientes no suman. El POS trae otro conteo.
+/// </param>
+public sealed record CategoryResponse(
+    Guid Id,
+    string Name,
+    Guid? ParentId,
+    int ProductCount,
+    long Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+public sealed record CategoriesResponse(IReadOnlyList<CategoryResponse> Items);
+
+public sealed record CreateCategoryRequest(string Name, Guid? ParentId);
