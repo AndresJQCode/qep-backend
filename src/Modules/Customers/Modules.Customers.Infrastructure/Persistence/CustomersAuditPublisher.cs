@@ -29,6 +29,14 @@ internal sealed class CustomersAuditPublisher(CustomersDbContext dbContext)
         DateTimeOffset occurredAt) =>
         Add(tenantId, Guid.Empty, "Integration", action, resourceId, outcome, occurredAt, source: null);
 
+    public void PublishBySystem(
+        Guid tenantId,
+        string action,
+        string resourceId,
+        string outcome,
+        DateTimeOffset occurredAt) =>
+        Add(tenantId, Guid.Empty, "System", action, resourceId, outcome, occurredAt, source: null);
+
     private void Add(
         Guid tenantId,
         Guid actorId,

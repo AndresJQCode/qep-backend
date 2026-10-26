@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
@@ -334,5 +335,81 @@ public sealed class CustomerDataConsentPersistenceTests
         Assert.Null(await LockAsync(Guid.CreateVersion7()));
         await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.WithScopeAsync((repository, _) =>
             repository.LockCustomerAsync(Tenant, survivor, TestContext.Current.CancellationToken)));
+    }
+
+    /// <summary>
+    /// Bloquear un fusionado toma su fila y después la del que quedó (A y luego B); una fusión encadenada las toma al revés, y
+    /// PostgreSQL corta el ciclo con un deadlock (<c>40P01</c>). Es una carrera con otra escritura, no un error del servidor: sale
+    /// como <see cref="RequestConcurrencyException"/> (<c>CustomersWriteRaces</c>), igual que las sentencias de la fusión. La
+    /// prueba arma el ciclo: retiene B, deja que el bloqueo tome A y espere B, y entonces pide A. PostgreSQL corta a quien
+    /// revisa primero después de que el ciclo existe, y cada espera revisa una sola vez, a los <c>deadlock_timeout</c> de
+    /// empezar: el de la base sube a 3 s para que el bloqueo revise con el ciclo ya armado, y el de la otra sesión a 60 s para
+    /// que no revise antes.
+    /// </summary>
+    [Fact]
+    public async Task ADeadlockWhileLockingIsAConflict()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var fixture = Start(database.GetConnectionString());
+        var survivor = await InsertCustomerAsync(fixture.ConnectionString, Tenant);
+        var merged = await InsertCustomerAsync(fixture.ConnectionString, Tenant, mergedInto: survivor);
+        var ct = TestContext.Current.CancellationToken;
+
+        await ExecuteAsync(fixture.ConnectionString, "ALTER SYSTEM SET deadlock_timeout = '3s'");
+        await ExecuteAsync(fixture.ConnectionString, "SELECT pg_reload_conf()");
+        await using var other = new NpgsqlConnection(fixture.ConnectionString);
+        await other.OpenAsync(ct);
+        await using (var slow = new NpgsqlCommand("SET deadlock_timeout = '60s'", other))
+        {
+            await slow.ExecuteNonQueryAsync(ct);
+        }
+
+        await using var otherTransaction = await other.BeginTransactionAsync(ct);
+        await LockRowAsync(other, otherTransaction, survivor);
+
+        var locking = fixture.WithScopeAsync(async (repository, unitOfWork) =>
+        {
+            await using var transaction = await unitOfWork.BeginTransactionAsync(ct);
+            return await repository.LockCustomerAsync(Tenant, merged, ct);
+        });
+        await WaitForLockWaitAsync(fixture.ConnectionString, locking);
+        var otherLocksMerged = LockRowAsync(other, otherTransaction, merged);
+
+        var error = await Assert.ThrowsAsync<RequestConcurrencyException>(() => locking);
+        Assert.Equal("concurrency.conflict", error.Code);
+        await otherLocksMerged;
+    }
+
+    private static async Task LockRowAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid customerId)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT id FROM customers.customers WHERE id = @id FOR UPDATE", connection, transaction);
+        command.Parameters.AddWithValue("id", customerId);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
+    // Espera a que el bloqueo de la prueba esté esperando la fila del que quedó; si termina antes, falla acá y no se cuelga.
+    private static async Task WaitForLockWaitAsync(string connectionString, Task locking)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (locking.IsCompleted)
+            {
+                await locking;
+                Assert.Fail("The lock finished before waiting for the survivor.");
+            }
+
+            if (await CountAsync(
+                connectionString,
+                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%merged_into_id AS%FOR UPDATE%'") == 1)
+            {
+                return;
+            }
+
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail("The lock never waited for the survivor.");
     }
 }

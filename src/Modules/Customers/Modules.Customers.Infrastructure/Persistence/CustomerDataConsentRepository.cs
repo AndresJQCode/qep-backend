@@ -26,6 +26,16 @@ internal sealed class CustomerDataConsentRepository(CustomersDbContext dbContext
             throw new InvalidOperationException("LockCustomerAsync requires the transaction of ICustomersUnitOfWork.BeginTransactionAsync.");
         }
 
+        // Toma el cliente y después el que quedó; una fusión encadenada los toma al revés, y PostgreSQL corta el ciclo con un
+        // deadlock (40P01). Es una carrera, no un error del servidor: 412 concurrency.conflict, como las sentencias de
+        // CustomerMergeStore, que tampoco pasan por el unit of work. La transacción queda abortada y quien llama la libera.
+        Guid? lockedId = null;
+        await CustomersWriteRaces.RunAsync(async () => lockedId = await LockWithSurvivorAsync(tenantId, customerId, cancellationToken));
+        return lockedId;
+    }
+
+    private async Task<Guid?> LockWithSurvivorAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)
+    {
         var customer = await LockAsync(tenantId, customerId, cancellationToken);
         if (customer?.MergedIntoId is not { } survivorId)
         {

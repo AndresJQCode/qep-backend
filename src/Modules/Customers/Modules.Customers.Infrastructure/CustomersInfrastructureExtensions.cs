@@ -61,6 +61,7 @@ public static class CustomersInfrastructureExtensions
         services.AddScoped<ICustomerProvisioning, CustomerProvisioning>();
         // Spec 2026-10-26 D-5: el registro de consentimiento de datos, sólo de inserción.
         services.AddScoped<ICustomerDataConsentRepository, CustomerDataConsentRepository>();
+        services.AddScoped<ICustomerDataConsents, CustomerDataConsents>();
         services.AddHostedService<CustomerPhoneBackfillWorker>();
 
         return services;
