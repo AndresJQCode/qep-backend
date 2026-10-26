@@ -23,10 +23,10 @@ public sealed class UpdateCategoryValidator : AbstractValidator<UpdateCategoryCo
             .Cascade(CascadeMode.Stop)
             .NotEmpty()
             .WithErrorCode("catalog.category.name_required")
-            .WithMessage("The category name is required.")
+            .WithMessage("Ingresa un nombre para la categoría.")
             .Must(name => name.Trim().Length <= ProductCategory.NameMaxLength)
             .WithErrorCode("catalog.category.name_too_long")
-            .WithMessage($"The category name cannot exceed {ProductCategory.NameMaxLength} characters.");
+            .WithMessage($"El nombre es demasiado largo. Usa hasta {ProductCategory.NameMaxLength} caracteres.");
     }
 }
 

@@ -10,6 +10,7 @@ public sealed record CreateCategoryCommand(Guid TenantId, string Name, Guid? Par
 
 // El dominio hace cumplir las mismas reglas con un solo código; el validador existe para que el
 // 422 lleve el mapa de errores por campo. El largo se mide después de recortar, como el dominio.
+// Los mensajes van en español porque la pantalla de categorías los muestra tal cual.
 public sealed class CreateCategoryValidator : AbstractValidator<CreateCategoryCommand>
 {
     public CreateCategoryValidator()
@@ -18,10 +19,10 @@ public sealed class CreateCategoryValidator : AbstractValidator<CreateCategoryCo
             .Cascade(CascadeMode.Stop)
             .NotEmpty()
             .WithErrorCode("catalog.category.name_required")
-            .WithMessage("The category name is required.")
+            .WithMessage("Ingresa un nombre para la categoría.")
             .Must(name => name.Trim().Length <= ProductCategory.NameMaxLength)
             .WithErrorCode("catalog.category.name_too_long")
-            .WithMessage($"The category name cannot exceed {ProductCategory.NameMaxLength} characters.");
+            .WithMessage($"El nombre es demasiado largo. Usa hasta {ProductCategory.NameMaxLength} caracteres.");
     }
 }
 

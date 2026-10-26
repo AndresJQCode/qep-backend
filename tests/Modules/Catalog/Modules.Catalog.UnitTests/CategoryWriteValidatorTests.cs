@@ -45,6 +45,27 @@ public sealed class CategoryWriteValidatorTests
             .WithErrorCode("catalog.category.name_too_long");
     }
 
+    // The categories screen shows the message of the errors map as is, so it must be Spanish.
+    [Fact]
+    public void CreateAndUpdateSpeakSpanishOnTheName()
+    {
+        var create = new CreateCategoryValidator();
+        var update = new UpdateCategoryValidator();
+
+        create.TestValidate(new CreateCategoryCommand(TenantId, " ", null))
+            .ShouldHaveValidationErrorFor(command => command.Name)
+            .WithErrorMessage("Ingresa un nombre para la categoría.");
+        update.TestValidate(Update(" "))
+            .ShouldHaveValidationErrorFor(command => command.Name)
+            .WithErrorMessage("Ingresa un nombre para la categoría.");
+        create.TestValidate(new CreateCategoryCommand(TenantId, Eighty + "a", null))
+            .ShouldHaveValidationErrorFor(command => command.Name)
+            .WithErrorMessage("El nombre es demasiado largo. Usa hasta 80 caracteres.");
+        update.TestValidate(Update(Eighty + "a"))
+            .ShouldHaveValidationErrorFor(command => command.Name)
+            .WithErrorMessage("El nombre es demasiado largo. Usa hasta 80 caracteres.");
+    }
+
     [Fact]
     public void QuickAccessAcceptsAnEmptyOrFilledList()
     {
