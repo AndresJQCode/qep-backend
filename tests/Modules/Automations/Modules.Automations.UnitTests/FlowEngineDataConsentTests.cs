@@ -207,6 +207,46 @@ public sealed class FlowEngineDataConsentTests
         Assert.Null(result.State.ConsentPrompt);
     }
 
+    /// <summary>Ruling P2-R5: el procesador deriva el clientId de (corrida, StepNumber al empezar la unidad, índice del envío). La respuesta
+    /// a la verificación puede llegar en una unidad propia; si preguntar no subiera StepNumber, la unidad siguiente partiría de la misma
+    /// base que la pregunta y su reenvío reusaría el clientId, que Mensajería daría por enviado.</summary>
+    [Fact]
+    public void EachAskInItsOwnUnitStartsFromADifferentBase()
+    {
+        var pending = Start().State;
+
+        var firstAsk = Step(pending, new EngineInput.DataConsent("consent", Accepted: false));
+        var invalid = Step(firstAsk.State, Typed("hola"));
+        var secondAsk = Step(invalid.State, new EngineInput.DataConsent("consent", Accepted: false));
+
+        // Las bases de las dos unidades que preguntan, y la de la unidad que sigue a cada una.
+        Assert.Equal(pending.StepNumber + 1, firstAsk.State.StepNumber);
+        Assert.Equal(invalid.State.StepNumber + 1, secondAsk.State.StepNumber);
+        Assert.NotEqual(pending.StepNumber, invalid.State.StepNumber);
+        Assert.Equal(1, secondAsk.State.Attempts);
+    }
+
+    [Fact]
+    public void FailingWhileWaitingForgetsThePrompt()
+    {
+        var corrupt = Asked().State with { CurrentNodeId = "missing" };
+
+        var result = Step(corrupt, Typed("Acepto"));
+
+        Assert.Equal(RunStatus.Failed, result.State.Status);
+        Assert.Null(result.State.ConsentPrompt);
+        Assert.DoesNotContain(result.Effects, effect => effect is Effect.RecordDataConsent);
+    }
+
+    [Fact]
+    public void ACurrentAcceptanceWinsEvenWhenNothingCouldBeRecorded()
+    {
+        var result = Step(Start().State, new EngineInput.DataConsent("consent", Accepted: true, CanRecord: false));
+
+        Assert.Equal(new Effect.SendText("yes", "Gracias"), result.Effects[0]);
+        Assert.Contains(result.State.Trace, entry => entry is { NodeId: "consent", Outcome: FlowOutputs.Accepted });
+    }
+
     [Fact]
     public void AStaleConsentResultChangesNothing()
     {

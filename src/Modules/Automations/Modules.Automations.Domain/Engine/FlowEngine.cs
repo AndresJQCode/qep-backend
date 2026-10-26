@@ -200,6 +200,7 @@ public static class FlowEngine
         /// <summary>Termina la corrida <c>Failed</c> sin entrar en ningún bloque.</summary>
         public StepResult Fail(string nodeId, string reason)
         {
+            consentPrompt = null;
             effects.Add(new Effect.EndRun(nodeId, reason));
             status = RunStatus.Failed;
             return Result();
@@ -303,9 +304,12 @@ public static class FlowEngine
 
         /// <summary>Spec 2026-10-26 D-2: el cliente no tiene una aceptación vigente; se le pregunta con los botones fijos y se recuerda el
         /// texto que se le mostró (D-6). No pasa por <see cref="Enter"/>: el bloque ya entró al pedir <see cref="Effect.CheckDataConsent"/>, y
-        /// los intentos de una respuesta inválida anterior se conservan.</summary>
+        /// los intentos de una respuesta inválida anterior se conservan. Como todo envío del mensaje de un bloque que espera, suma
+        /// <see cref="RunState.StepNumber"/> (ruling P2-R5): la respuesta a la verificación puede llegar en una unidad propia, y sin subirlo
+        /// la unidad siguiente partiría de la misma base y su reenvío reusaría el clientId de esta pregunta.</summary>
         public StepResult Ask(DataConsentNode node)
         {
+            stepNumber++;
             var text = Text(node.Text);
             consentPrompt = new ConsentPrompt(node.Id, text, null);
             effects.Add(new Effect.SendInteractive(node.Id, new InteractiveMessage.Buttons(
@@ -374,8 +378,9 @@ public static class FlowEngine
 
         /// <summary>
         /// Entra en un bloque: lo anota, emite lo que §5.4 dice «al entrar» y devuelve la salida que toma, o <c>null</c> si la corrida se
-        /// queda en él (espera, efecto externo o final). Es el único lugar que envía el mensaje de un bloque que espera, así que reenviarlo
-        /// tras una respuesta inválida (tarea 3) es volver a entrar: también suma <see cref="RunState.StepNumber"/> (ruling P2-R5).
+        /// queda en él (espera, efecto externo o final). Envía el mensaje de todo bloque que espera salvo Política de datos, que lo manda
+        /// <see cref="Ask"/> después de verificar la aceptación. Reenviarlo tras una respuesta inválida (tarea 3) es volver a entrar, así que
+        /// también suma <see cref="RunState.StepNumber"/>, como <see cref="Ask"/> (ruling P2-R5).
         /// </summary>
         private string? Enter(FlowNode node)
         {
