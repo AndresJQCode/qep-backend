@@ -490,8 +490,9 @@ public sealed class ShopifyCityCorrectionFlowTests
     }
 
     /// <summary>Una tienda lista con un pedido «CALLI» del Valle ya importado por el webhook (sin parte de envío) y el sinónimo
-    /// CALLI → Cali escrito por SQL, como lo deja confirmarlo en la consola del operador.</summary>
-    private sealed class CalliShop : IAsyncDisposable
+    /// CALLI → Cali escrito por SQL, como lo deja confirmarlo en la consola del operador. Interna y no privada: la reusa
+    /// <c>CityCorrectionInsightsTests</c>, que necesita huellas reales de pedido y de cliente.</summary>
+    internal sealed class CalliShop : IAsyncDisposable
     {
         private readonly TestDatabase database;
 

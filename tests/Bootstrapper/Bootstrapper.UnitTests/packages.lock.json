@@ -740,7 +740,8 @@
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
           "Modules.Audit.Domain": "[1.0.0, )",
-          "Modules.Geography.Domain": "[1.0.0, )"
+          "Modules.Geography.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
         }
       },
       "modules.geography.domain": {

@@ -4,6 +4,8 @@
     <ProjectReference Include="..\Modules.Geography.Domain\Modules.Geography.Domain.csproj" />
     <!-- Audit (AuditActorType del puerto de auditoría propio, IGeographyAuditRecorder), como Shopify. -->
     <ProjectReference Include="..\..\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
+    <!-- Tenancy (IExecutionContext, IOperatorTenant y OperatorAuthorization: la segunda capa de los endpoints de operador). -->
+    <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
   </ItemGroup>
 </Project>

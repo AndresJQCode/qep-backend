@@ -8,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using Modules.Authorization.Application;
 using Modules.Automations.Application;
 using Modules.Customers.Application;
+using Modules.Geography.Application;
 using Modules.Integrations.Application;
 using Modules.Messaging.Application;
 using Modules.Pipeline.Application;
@@ -174,17 +175,41 @@ public sealed class CompositionRootTests
     /// entitlements, las 7 de POS, las tres <c>operator.*</c> y las dos <c>integrations.*</c> de los
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
-    /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec y <c>customers.customer.merge</c> del spec 2026-10-24.</summary>
+    /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24 y las dos
+    /// <c>operator.cities.*</c> del spec 2026-10-26.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheSixtyFourConstants()
+    public void PermissionDiscoveryFindsTheSixtySixConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
         // + el de plantillas (spec 2026-10-14 D-T5) + el de motivos de resolución (spec 2026-10-15 D-R8)
         // + el de horarios de atención (spec 2026-10-21 D-H8) + los dos de chatbots (spec 2026-10-21 D-C10)
         // + el del cliente de la venta de POS (spec 2026-10-14, decisión 4)
-        // + los dos de proveedores (suppliers, spec 2026-10-23) + el de fusionar clientes (spec 2026-10-24 D-F1).
-        Assert.Equal(64, PermissionConstants().Length);
+        // + los dos de proveedores (suppliers, spec 2026-10-23) + el de fusionar clientes (spec 2026-10-24 D-F1)
+        // + los dos de ciudades del operador (spec 2026-10-26 §6).
+        Assert.Equal(66, PermissionConstants().Length);
+    }
+
+    /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
+    /// el rol global <c>admin</c>; <c>OperatorPermissionFilter</c> las deja vivas sólo en el tenant operador.</summary>
+    [Fact]
+    public void OnlyTheAdminRoleCarriesTheCityOperatorPermissions()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        string[] cityPermissions = [GeographyOperatorPermissions.CitiesRead, GeographyOperatorPermissions.CitiesManage];
+
+        Assert.Equal(["operator.cities.read", "operator.cities.manage"], cityPermissions);
+        Assert.All(cityPermissions, permission =>
+        {
+            Assert.Contains(permission, catalog.PermissionsFor("admin"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == permission);
+            Assert.Equal("Operator", definition.Category);
+            Assert.Empty(definition.RequiredModules!);
+        });
     }
 
     /// <summary>Spec 2026-10-11 §6.4 y decisión 16: de núcleo (el módulo lo revisa cada handler) y de fábrica sólo en <c>admin</c>:
