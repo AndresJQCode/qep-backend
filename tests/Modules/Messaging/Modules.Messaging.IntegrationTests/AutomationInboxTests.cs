@@ -311,6 +311,21 @@ public sealed class AutomationInboxTests
     }
 
     [Fact]
+    public async Task ReadInboundCarriesTheWamid()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await PostTextAsync(f, "wamid.ABC");
+        var id = await ScalarAsync<Guid>(f.ConnectionString, "SELECT message_id FROM messaging.automation_inbox");
+
+        var inbound = await WithInboxAsync(f, inbox => inbox.ReadInboundAsync(f.Tenant.TenantId, id, Ct));
+
+        Assert.NotNull(inbound);
+        Assert.Equal("wamid.ABC", inbound.Wamid);
+    }
+
+    [Fact]
     public async Task ReadInboundReportsWhetherMediaIsStored()
     {
         await using var database = await StartDatabaseAsync();

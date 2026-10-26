@@ -9,7 +9,7 @@ public sealed record AutomationInboxItem(Guid MessageId, Guid TenantId, Guid Con
 /// <summary><c>Stored</c>: la copia a R2 ya terminó; mientras sea <c>false</c> el medio todavía no se puede servir ni reenviar.</summary>
 public sealed record InboundMediaForAutomation(string MimeType, string? FileName, bool Stored);
 
-public sealed record InboundForAutomation(Guid MessageId, MessageKind Kind, string? Text, string? ReplyId, InboundMediaForAutomation? Media, DateTimeOffset OccurredAt);
+public sealed record InboundForAutomation(Guid MessageId, MessageKind Kind, string? Text, string? ReplyId, InboundMediaForAutomation? Media, DateTimeOffset OccurredAt, string? Wamid = null);
 
 /// <summary>Spec 2026-10-21 D-M1: la cola que la ingesta del webhook llena y el worker del motor vacía. El motor no corre dentro del
 /// procesador del webhook porque éste no serializa por conversación y su reintento descarta el mismo wamid.</summary>
