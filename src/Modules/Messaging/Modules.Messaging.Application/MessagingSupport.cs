@@ -86,7 +86,9 @@ public sealed class ConversationSummaryBuilder(
             : await customers.MatchAsync(tenantId, legacyPhones, cancellationToken);
         var assignees = rows.Where(row => row.AssignedMemberId is not null).Select(row => row.AssignedMemberId!.Value).Distinct().ToArray();
         // Spec 2026-10-21: quien pausó el asistente se resuelve en la misma consulta de nombres que los asignados.
-        var memberIds = assignees.Concat(rows.Where(row => row.AutomationPausedByMemberId is not null).Select(row => row.AutomationPausedByMemberId!.Value)).Distinct().ToArray();
+        var memberIds = assignees.Concat(rows.Where(row => row.AutomationPausedByMemberId is not null).Select(row => row.AutomationPausedByMemberId!.Value))
+            // Spec 2026-10-26 §3.5: quien bloqueó, en la misma consulta.
+            .Concat(rows.Where(row => row.BlockedByMemberId is not null).Select(row => row.BlockedByMemberId!.Value)).Distinct().ToArray();
         var resolvedNames = memberIds.Length == 0
             ? new Dictionary<Guid, string>()
             : await memberNames.FindAsync(tenantId, memberIds, cancellationToken);
@@ -150,7 +152,10 @@ public sealed class ConversationSummaryBuilder(
             row.Status == ConversationStatus.Resolved && row.ResolutionReasonId is { } reasonId && reasonNames?.GetValueOrDefault(reasonId) is { } reasonName
                 ? new ResolutionReasonRefDto(reasonId, reasonName)
                 : null,
-            AutomationFrom(row, memberNames, chatbotNames));
+            AutomationFrom(row, memberNames, chatbotNames),
+            row.BlockedAt is { } blockedAt
+                ? new ConversationBlockDto(blockedAt, row.BlockedByMemberId is { } blocker ? memberNames.GetValueOrDefault(blocker) ?? MessageMapping.DeletedMemberName : null)
+                : null);
     }
 
     /// <summary><c>null</c> en <c>None</c> (D-A10). La guarda de <c>StartedAt</c> es inalcanzable por <c>CK_conversations_automation_started</c>;

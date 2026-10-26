@@ -20,6 +20,9 @@ public sealed record CustomerRefDto(Guid Id, string Name, bool IsComplete)
     public IReadOnlyList<MessagingTagRef> Tags { get; init; } = [];
 }
 
+/// <summary>Spec 2026-10-26 §3.5: <c>blockedByName</c> llega resuelto (o «Miembro eliminado»); <c>null</c> sólo si no se registró quién bloqueó.</summary>
+public sealed record ConversationBlockDto(DateTimeOffset BlockedAt, string? BlockedByName);
+
 public sealed record LastMessageDto(string Direction, string Kind, string? Preview, string Status, DateTimeOffset At);
 
 /// <summary><c>connectionName</c> llega resuelto (o «Conexión eliminada», D-M17) porque la fila de la
@@ -48,7 +51,10 @@ public sealed record ConversationSummary(
     ResolutionReasonRefDto? ResolutionReason = null,
     /// <summary>Spec 2026-10-21 D-A10 (BFF): <c>null</c> cuando la conversación no tiene asistente (<c>None</c>): la bandeja no dibuja nada,
     /// y así la fila sin asistente no obliga a la pantalla a conocer el enum para saber que no hay qué mostrar.</summary>
-    ConversationAutomationDto? Automation = null)
+    ConversationAutomationDto? Automation = null,
+    /// <summary>Spec 2026-10-26 §3.5 (BFF): <c>null</c> si el contacto no está bloqueado. Viaja como <c>null</c> explícito: el frontend distingue
+    /// «backend nuevo, sin bloqueo» de «backend viejo», que no manda la clave.</summary>
+    ConversationBlockDto? Blocked = null)
 {
     /// <summary>Spec 2026-10-24 §4.1 (BFF): los otros clientes del tenant con el número de la conversación, sin el que ella muestra, por
     /// created_at, hasta 10; sin etiquetas. Viaja siempre. Se llena en toda respuesta de una sola conversación (detalle, PUT
