@@ -35,7 +35,7 @@ internal sealed class PosProductLookup(
         }
 
         var (items, total) = await products.SearchAsync(
-            tenantId, string.IsNullOrWhiteSpace(search) ? null : search, null, null, true, categoryIds, page, pageSize, cancellationToken);
+            tenantId, string.IsNullOrWhiteSpace(search) ? null : search, null, null, true, categoryIds: categoryIds, page, pageSize, cancellationToken);
 
         // Sólo las variantes que se venden. El producto ya viene activo por el filtro de la consulta.
         var selected = items

@@ -180,6 +180,34 @@ public sealed class CategoryApiTests
     }
 
     [Fact]
+    public async Task ListForAnotherTenantIsForbiddenAndNotNotFound()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var intruder = CreateClient(factory, OtherSubjectId, OtherTenantId, CatalogPermissions.ProductRead);
+
+        var response = await intruder.GetAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/categories",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ListWithoutTheReadPermissionIsForbidden()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, CatalogPermissions.TaxRateRead);
+
+        var response = await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/categories",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
     public async Task CreateWithOnlyTheReadPermissionIsForbiddenAndPersistsNothing()
     {
         await using var database = await StartDatabaseAsync();

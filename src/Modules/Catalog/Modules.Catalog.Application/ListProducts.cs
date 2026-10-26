@@ -93,7 +93,7 @@ public sealed class ListProductsHandler(
             query.Name,
             query.Code,
             query.IsActive,
-            null,
+            categoryIds: null,
             page,
             pageSize,
             cancellationToken);

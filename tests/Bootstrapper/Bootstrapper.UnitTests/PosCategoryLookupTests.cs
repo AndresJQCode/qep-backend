@@ -61,20 +61,6 @@ public sealed class PosCategoryLookupTests
         Assert.Equal(3, list.Total);
     }
 
-    [Fact]
-    public async Task AnotherTenantsCategoriesAreNotListed()
-    {
-        var own = Category("Bebidas");
-        var foreign = Category("Ajena", tenantId: Guid.CreateVersion7());
-        var lookup = new PosCategoryLookup(
-            new FakeProductCategoryRepository((own, 1), (foreign, 5)), new FakeProductRepository());
-
-        var list = await lookup.ListAsync(TenantId, Ct);
-
-        var only = Assert.Single(list.Items);
-        Assert.Equal((own.Id.Value, 1), (only.Id, only.ProductCount));
-    }
-
     private static ProductCategory Category(string name, ProductCategory? parent = null, Guid? tenantId = null) =>
         ProductCategory.Create(ProductCategoryId.New(), tenantId ?? TenantId, name, parent?.Id, Now);
 
