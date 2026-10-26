@@ -1,3 +1,4 @@
+using Modules.Automations.Domain.Engine;
 using Modules.Automations.Domain.Flow;
 using Modules.Automations.Domain.Text;
 
@@ -81,6 +82,15 @@ public sealed class Chatbot
         Keywords = normalizedKeywords;
         RestartKeyword = restart.Length == 0 ? DefaultRestartKeyword : restart;
         MaxAttempts = maxAttempts;
+        Touch(now);
+    }
+
+    /// <summary>Spec 2026-10-25 D-2: la regla de agotamiento. Con <see cref="AttemptsExhaustedAction.Restart"/> el miembro no significa nada
+    /// y se descarta, para que la base nunca guarde un destino que nadie va a usar.</summary>
+    public void SetAttemptsExhausted(AttemptsExhaustedAction action, Guid? memberId, DateTimeOffset now)
+    {
+        ExhaustedAction = action;
+        ExhaustedMemberId = action == AttemptsExhaustedAction.Handoff ? memberId : null;
         Touch(now);
     }
 
@@ -211,6 +221,17 @@ public sealed class Chatbot
     public string RestartKeyword { get; private set; }
 
     public int MaxAttempts { get; private set; }
+
+    /// <summary>Spec 2026-10-25 D-2: qué hace el motor al agotar los intentos de un bloque sin salida de agotamiento conectada.
+    /// Un chatbot nuevo (y toda fila anterior a la columna) reinicia, que es el comportamiento de siempre.</summary>
+    public AttemptsExhaustedAction ExhaustedAction { get; private set; }
+
+    /// <summary>Spec 2026-10-25 D-2: a quién se asigna el traspaso; <c>null</c> = a la bandeja, sin asignar. Sólo tiene sentido con
+    /// <see cref="AttemptsExhaustedAction.Handoff"/>.</summary>
+    public Guid? ExhaustedMemberId { get; private set; }
+
+    /// <summary>Spec 2026-10-25 D-4: lo que el motor lee del chatbot, armado en un solo lugar para el procesador y el simulador.</summary>
+    public EngineSettings EngineSettings => new(RestartKeyword, MaxAttempts, ExhaustedAction, ExhaustedMemberId);
 
     /// <summary>El flujo del Anexo A tal como lo guardó el editor; se valida al guardar y al publicar.</summary>
     public string DraftFlowJson { get; private set; }

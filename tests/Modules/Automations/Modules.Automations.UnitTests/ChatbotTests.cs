@@ -1,4 +1,5 @@
 using Modules.Automations.Domain;
+using Modules.Automations.Domain.Engine;
 using Modules.Automations.Domain.Flow;
 
 namespace Modules.Automations.UnitTests;
@@ -12,6 +13,40 @@ public sealed class ChatbotTests
 
     private static Chatbot NewChatbot() =>
         Chatbot.Create(Tenant, "  Soporte  ", "Atiende el soporte", ChatbotTrigger.NewConversation, [], "{\"a\":1}", "{\"l\":1}", Member, T0);
+
+    [Fact]
+    public void ANewChatbotRestartsWhenAttemptsRunOut()
+    {
+        var chatbot = NewChatbot();
+
+        Assert.Equal((AttemptsExhaustedAction.Restart, (Guid?)null), (chatbot.ExhaustedAction, chatbot.ExhaustedMemberId));
+    }
+
+    [Fact]
+    public void SetAttemptsExhaustedKeepsTheMemberOnlyForHandoff()
+    {
+        var chatbot = NewChatbot();
+        var member = Guid.NewGuid();
+
+        chatbot.SetAttemptsExhausted(AttemptsExhaustedAction.Handoff, member, T0.AddMinutes(1));
+        Assert.Equal((AttemptsExhaustedAction.Handoff, (Guid?)member), (chatbot.ExhaustedAction, chatbot.ExhaustedMemberId));
+        Assert.Equal(2, chatbot.Version);
+
+        chatbot.SetAttemptsExhausted(AttemptsExhaustedAction.Restart, member, T0.AddMinutes(2));
+        Assert.Equal((AttemptsExhaustedAction.Restart, (Guid?)null), (chatbot.ExhaustedAction, chatbot.ExhaustedMemberId));
+        Assert.Equal(3, chatbot.Version);
+    }
+
+    [Fact]
+    public void TheEngineSettingsCarryTheRule()
+    {
+        var chatbot = NewChatbot();
+        var member = Guid.NewGuid();
+        chatbot.SetAttemptsExhausted(AttemptsExhaustedAction.Handoff, member, T0.AddMinutes(1));
+
+        Assert.Equal(
+            new EngineSettings(chatbot.RestartKeyword, chatbot.MaxAttempts, AttemptsExhaustedAction.Handoff, member), chatbot.EngineSettings);
+    }
 
     [Fact]
     public void CreateStartsAsDraftWithVersionOne()

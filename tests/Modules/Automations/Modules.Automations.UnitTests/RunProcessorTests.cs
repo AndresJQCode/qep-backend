@@ -247,6 +247,31 @@ public sealed class RunProcessorTests
         Assert.Equal("automations.run.target_missing", Assert.Single(bed.Runs.Added).FailureCode);
     }
 
+    /// <summary>Spec 2026-10-25 D-4 (Review Focus 1): la regla se lee del chatbot en cada entrante, no de lo que la corrida guardó al
+    /// arrancar. Una corrida que espera con dos intentos hechos y un chatbot que hoy dice «pasar a un asesor» termina traspasada.</summary>
+    [Fact]
+    public async Task AWaitingRunUsesTheRuleTheChatbotHasNow()
+    {
+        var memberId = Guid.CreateVersion7();
+        var flow = """
+            { "schema": 1, "start": { "firstNodeId": "n1" }, "variables": [],
+              "nodes": [ { "id": "n1", "kind": "openQuestion", "title": "Documento", "text": "¿Cuál es tu documento?", "saveTo": "doc",
+                "validation": { "kind": "regex", "pattern": "^[0-9]{6,10}$", "keywords": null }, "outputs": { "answered": null, "invalid": null } } ] }
+            """;
+        var bed = new Bed(
+            null, ActiveState(), flow: flow,
+            engineSettings: new EngineSettings(Chatbot.DefaultRestartKeyword, 3, AttemptsExhaustedAction.Handoff, memberId));
+        var run = ConversationRun.Start(
+            Guid.CreateVersion7(), TenantId, ConversationId, ConnectionId, ChatbotId, VersionId,
+            RunState.Initial(RunVariables.Empty()) with { Status = RunStatus.Waiting, CurrentNodeId = "n1", Attempts = 2 }, DateTimeOffset.UtcNow.AddMinutes(-1));
+        bed.Runs.Added.Add(run);
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunStatus.HandedOff, run.Status);
+        Assert.Equal(1, bed.Conversations.HandedOff);
+    }
+
     /// <summary>Fila 6 (P2-R6): la versión de la corrida viva ya no existe; no hay flujo del que sacar un bloque.</summary>
     [Fact]
     public async Task AMissingVersionSaysFlowFailedWithoutNode()
@@ -639,7 +664,8 @@ public sealed class RunProcessorTests
 
     private sealed class Bed(
         Exception? startFailure, AutomationConversationState? state = null, IClock? clock = null, Action? onLock = null, string? flow = Flow,
-        IHttpBlockExecutor? http = null, bool moduleEnabled = true, bool lockBusy = false, Exception? endFailure = null, IAutomationMedia? media = null)
+        IHttpBlockExecutor? http = null, bool moduleEnabled = true, bool lockBusy = false, Exception? endFailure = null, IAutomationMedia? media = null,
+        EngineSettings? engineSettings = null)
     {
         public RecordingInbox Inbox { get; } = new();
 
@@ -660,7 +686,7 @@ public sealed class RunProcessorTests
             var effects = new RunEffects(
                 Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), files, audit, NullLogger<RunEffects>.Instance);
             return new RunProcessor(
-                new NoUnitOfWork(onLock, lockBusy), Runs, new ServingChatbots(flow), Inbox, conversations, new TenantNames(), new Connections(), hours,
+                new NoUnitOfWork(onLock, lockBusy), Runs, new ServingChatbots(flow, engineSettings), Inbox, conversations, new TenantNames(), new Connections(), hours,
                 files, new ModuleStatus(moduleEnabled), audit, effects, clock ?? new FixedClock(), NullLogger<RunProcessor>.Instance);
         }
     }
@@ -723,7 +749,7 @@ public sealed class RunProcessorTests
     }
 
     /// <param name="flow"><c>null</c>: la versión de la corrida ya no existe (P2-R6).</param>
-    private sealed class ServingChatbots(string? flow) : IChatbotRepository
+    private sealed class ServingChatbots(string? flow, EngineSettings? settings = null) : IChatbotRepository
     {
         public Task<ServingChatbot?> FindServingByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
             Task.FromResult<ServingChatbot?>(new ServingChatbot(
@@ -732,7 +758,7 @@ public sealed class RunProcessorTests
         public Task<string?> GetVersionFlowAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken) => Task.FromResult(flow);
 
         public Task<EngineSettings?> FindEngineSettingsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken) =>
-            Task.FromResult<EngineSettings?>(new EngineSettings(Chatbot.DefaultRestartKeyword, 3));
+            Task.FromResult<EngineSettings?>(settings ?? new EngineSettings(Chatbot.DefaultRestartKeyword, 3));
 
         public Task<Chatbot?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) => throw new NotSupportedException();
 

@@ -113,6 +113,10 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
             .HasDefaultValue(Chatbot.DefaultRestartKeyword);
         chatbot.Property(value => value.MaxAttempts).HasColumnName("max_attempts").HasConversion<short>()
             .HasDefaultValue(Chatbot.DefaultMaxAttempts).HasSentinel(-1);
+        // Spec 2026-10-25 D-2: por nombre, como trigger; el centinela hace que EF escriba también el 0 del enum (Restart).
+        chatbot.Property(value => value.ExhaustedAction).HasColumnName("exhausted_action").HasConversion<string>().HasMaxLength(16)
+            .HasDefaultValue(AttemptsExhaustedAction.Restart).HasSentinel((AttemptsExhaustedAction)(-1));
+        chatbot.Property(value => value.ExhaustedMemberId).HasColumnName("exhausted_member_id");
         chatbot.Property(value => value.DraftFlowJson).HasColumnName("draft_flow").HasColumnType("jsonb");
         chatbot.Property(value => value.DraftLayoutJson).HasColumnName("draft_layout").HasColumnType("jsonb").HasDefaultValueSql("'{}'");
         chatbot.Property(value => value.DraftUpdatedAt).HasColumnName("draft_updated_at");

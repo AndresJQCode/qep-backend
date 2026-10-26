@@ -133,6 +133,18 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("draft_updated_by");
 
+                    b.Property<string>("ExhaustedAction")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Restart")
+                        .HasColumnName("exhausted_action");
+
+                    b.Property<Guid?>("ExhaustedMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("exhausted_member_id");
+
                     b.Property<string>("Keywords")
                         .IsRequired()
                         .ValueGeneratedOnAdd()

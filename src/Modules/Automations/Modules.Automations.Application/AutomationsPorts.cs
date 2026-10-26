@@ -63,7 +63,12 @@ public sealed record ChatbotSummaryRow(
 /// normalizadas por el agregado.</summary>
 public sealed record ServingChatbot(
     Guid ChatbotId, string Name, ChatbotStatus Status, ChatbotTrigger Trigger, IReadOnlyList<string> Keywords, string RestartKeyword,
-    int MaxAttempts, Guid PublishedVersionId);
+    int MaxAttempts, Guid PublishedVersionId, AttemptsExhaustedAction ExhaustedAction = AttemptsExhaustedAction.Restart,
+    Guid? ExhaustedMemberId = null)
+{
+    /// <summary>Spec 2026-10-25 D-4: lo que el motor lee del chatbot, igual que <see cref="Chatbot.EngineSettings"/>.</summary>
+    public EngineSettings EngineSettings => new(RestartKeyword, MaxAttempts, ExhaustedAction, ExhaustedMemberId);
+}
 
 /// <summary>La conexión <see cref="ConnectionId"/> la atiende el chatbot publicado <see cref="ChatbotId"/>.</summary>
 public sealed record ChatbotServingConnection(Guid ConnectionId, Guid ChatbotId, string Name);

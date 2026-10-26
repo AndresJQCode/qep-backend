@@ -332,7 +332,7 @@ public sealed partial class RunProcessor(
         await runs.AddAsync(run, cancellationToken);
         audit.Record(item.TenantId, Guid.Empty, bySystem: true, AutomationsAuditActions.RunStarted, AutomationsAuditActions.ResourceRun, run.Id, now);
 
-        var settings = new EngineSettings(chatbot.RestartKeyword, chatbot.MaxAttempts);
+        var settings = chatbot.EngineSettings;
         await effects.RunAsync(new RunUnit(run, flow, settings, BaseStepNumber: 0), new EngineInput.Start(), now, cancellationToken);
         return OutcomeOf(run, RunOutcomes.Started);
     }

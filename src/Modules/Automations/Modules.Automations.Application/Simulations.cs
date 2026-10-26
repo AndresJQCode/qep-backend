@@ -74,7 +74,10 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
                                 effect.NodeId, await businessHours.IsOpenAsync(context.TenantId, context.ConnectionId, cancellationToken));
                         break;
                     case Effect.Handoff handoff:
-                        lines.System(handoff.NodeId, "Pasaría a un asesor");
+                        // Spec 2026-10-25 D-4: el simulador dice adónde iría el traspaso, no sólo que ocurre.
+                        lines.System(
+                            handoff.NodeId,
+                            handoff.MemberId is null ? "Pasaría la conversación a la bandeja, sin asignar" : "Pasaría la conversación al miembro elegido");
                         break;
                     case Effect.Resolve resolve:
                         lines.System(resolve.NodeId, "Resolvería la conversación");
@@ -258,7 +261,7 @@ internal static class SimulationSupport
     public static SimulationContext ContextOf(Simulation simulation, AutomationConnectionRef? connection) =>
         new(simulation.TenantId, simulation.Id, connection?.Id ?? Guid.Empty, simulation.LiveHttp);
 
-    public static EngineSettings SettingsOf(Chatbot chatbot) => new(chatbot.RestartKeyword, chatbot.MaxAttempts);
+    public static EngineSettings SettingsOf(Chatbot chatbot) => chatbot.EngineSettings;
 
     public static SimulationDto ToDto(Simulation simulation)
     {
