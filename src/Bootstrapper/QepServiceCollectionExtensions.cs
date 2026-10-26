@@ -976,6 +976,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAutomationExternalApis, AutomationExternalApis>();
         // Spec 2026-10-25 D-5: los miembros que pueden responder, los mismos que ofrece «Transferir».
         services.AddScoped<IAutomationMembers, AutomationMembers>();
+        // Spec 2026-10-26 D-5, D-7 y D-10: la autorización de datos del cliente de la conversación, en Customers.
+        services.AddScoped<IAutomationDataConsents, AutomationDataConsents>();
         services.AddScoped<IAutomationBusinessHours, AutomationBusinessHours>();
         // Spec 2026-10-21 D-H2, D-H5 y fallo P2-R31: el cliente del bloque HTTP va acá y no en AddAutomationsInfrastructure porque su handler
         // primario (anti-SSRF: sin redirecciones, sin proxy, ConnectCallback que rechaza rangos internos) es de Integrations.Infrastructure.
