@@ -99,6 +99,15 @@ public sealed class ConversationAssignmentSteps(
             }
         }
     }
+
+    /// <summary>Spec 2026-10-26 §3.3, dos asesores a la vez: relee la conversación sin el tracker (la entidad cargada al empezar es
+    /// la de antes del otro request) y devuelve su resumen sólo si ya quedó bloqueada (<paramref name="blocked"/>) o desbloqueada.
+    /// <c>null</c> si no: el rechazo de Meta es de verdad.</summary>
+    public async Task<ConversationSummary?> SummaryIfBlockedAsync(Guid tenantId, Guid conversationId, bool blocked, CancellationToken cancellationToken)
+    {
+        var row = await queries.FindAsync(tenantId, conversationId, cancellationToken);
+        return row is not null && row.BlockedAt is not null == blocked ? await summaries.BuildOneAsync(tenantId, row, cancellationToken) : null;
+    }
 }
 
 public sealed class TakeConversationHandler(ConversationAssignmentSteps steps) : ICommandHandler<TakeConversationCommand, ConversationSummary>

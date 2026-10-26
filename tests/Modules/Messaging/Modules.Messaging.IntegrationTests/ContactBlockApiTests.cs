@@ -333,6 +333,44 @@ public sealed class ContactBlockApiTests
         Assert.Single(BlockRequests(f));
     }
 
+    // §3.3: dos asesores a la vez. El otro ya dejó la conversación en el estado pedido mientras Meta contestaba que no (p. ej. «ya estaba
+    // bloqueado»): la respuesta es 200 con el estado actual, sin evento ni auditoría de este request, no un error.
+    [Theory]
+    [InlineData("block")]
+    [InlineData("unblock")]
+    public async Task AMetaRefusalAfterAnotherAdvisorSettledItAnswersTheState(string action)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        string sql;
+        string answer;
+        if (action == "block")
+        {
+            var owner = await OwnerMembershipIdAsync(f.ConnectionString, f.Tenant);
+            sql = $"UPDATE messaging.conversations SET blocked_at = now(), blocked_by_member_id = '{owner}', blocked_wa_id = '{WaId}', version = version + 1";
+            answer = Failed(139100);
+        }
+        else
+        {
+            await BlockAsync(f);
+            sql = "UPDATE messaging.conversations SET blocked_at = NULL, blocked_by_member_id = NULL, blocked_wa_id = NULL, version = version + 1";
+            answer = Failed(131047);
+        }
+
+        var (events, audits) = (await BlockEventsAsync(f), await BlockAuditsAsync(f));
+        ScriptWithConcurrentWrite(f, sql, HttpStatusCode.OK, answer);
+
+        var response = await ActAsync(f, action);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var blocked = (await ReadAsync(response)).GetProperty("blocked");
+        Assert.Equal(action == "block", blocked.ValueKind != JsonValueKind.Null);
+        Assert.Single(BlockRequests(f), request => request.Method == (action == "block" ? HttpMethod.Post : HttpMethod.Delete));
+        Assert.Equal(events, await BlockEventsAsync(f));
+        Assert.Equal(audits, await BlockAuditsAsync(f));
+    }
+
     [Fact]
     public async Task TheListAndDetailCarryBlockedAsAnExplicitNull()
     {

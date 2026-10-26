@@ -32,8 +32,14 @@ public sealed class BlockContactHandler(
         // El número se fija acá: el reintento relee la conversación y su wa_id pudo cambiar, pero Meta bloqueó éste.
         var waId = conversation.WaId!;
         var result = await client.BlockUserAsync(sender, waId, cancellationToken);
-        await ContactBlockSteps.EnsureAppliedAsync(
-            ContactBlockResponse.Classify(result, ContactBlockDirection.Block), ContactBlockDirection.Block, connections, logger, command.TenantId, conversation);
+        var settled = await ContactBlockSteps.EnsureAppliedAsync(
+            ContactBlockResponse.Classify(result, ContactBlockDirection.Block), ContactBlockDirection.Block, steps, connections, logger, command.TenantId,
+            conversation, cancellationToken);
+        if (settled is not null)
+        {
+            return settled;
+        }
+
         // Meta ya bloqueó: guardarlo no depende de que el navegador siga esperando.
         return await steps.CommitWithRetryAsync(command.TenantId, conversation, loaded => loaded.Block(member, waId, now), now, CancellationToken.None);
     }
@@ -58,8 +64,14 @@ public sealed class UnblockContactHandler(
 
         var sender = await ContactBlockSteps.ResolveSenderAsync(connections, command.TenantId, conversation.ConnectionId, cancellationToken);
         var result = await client.UnblockUserAsync(sender, conversation.BlockedWaId!, cancellationToken);
-        await ContactBlockSteps.EnsureAppliedAsync(
-            ContactBlockResponse.Classify(result, ContactBlockDirection.Unblock), ContactBlockDirection.Unblock, connections, logger, command.TenantId, conversation);
+        var settled = await ContactBlockSteps.EnsureAppliedAsync(
+            ContactBlockResponse.Classify(result, ContactBlockDirection.Unblock), ContactBlockDirection.Unblock, steps, connections, logger, command.TenantId,
+            conversation, cancellationToken);
+        if (settled is not null)
+        {
+            return settled;
+        }
+
         return await steps.CommitWithRetryAsync(command.TenantId, conversation, loaded => loaded.Unblock(member, now), now, CancellationToken.None);
     }
 }
@@ -82,21 +94,25 @@ internal static partial class ContactBlockSteps
         await connections.ResolveSenderAsync(tenantId, connectionId, cancellationToken)
             ?? throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "The WhatsApp connection is paused, needs attention or was deleted.");
 
-    /// <summary>Vuelve sólo si Meta lo aplicó; cualquier otro veredicto termina el request sin tocar la conversación.</summary>
-    public static async Task EnsureAppliedAsync(
-        ContactBlockAnswer answer, ContactBlockDirection direction, IMessagingConnectionDirectory connections, ILogger logger, Guid tenantId, Conversation conversation)
+    /// <summary><c>null</c> si Meta lo aplicó y hay que guardarlo. Ante un rechazo o una respuesta sin confirmar (§3.3, dos asesores a
+    /// la vez), el resumen actual si otro request ya dejó la conversación como se pidió: 200 sin evento ni auditoría de éste. Cualquier
+    /// otro caso termina el request sin tocar la conversación. El log sale igual: es lo que Meta contestó.</summary>
+    public static async Task<ConversationSummary?> EnsureAppliedAsync(
+        ContactBlockAnswer answer, ContactBlockDirection direction, ConversationAssignmentSteps steps, IMessagingConnectionDirectory connections,
+        ILogger logger, Guid tenantId, Conversation conversation, CancellationToken cancellationToken)
     {
         switch (answer.Verdict)
         {
             case ContactBlockVerdict.Applied:
-                return;
+                return null;
 
             case ContactBlockVerdict.WindowClosed:
                 throw new MessagingDomainException(MessagingErrorCodes.BlockWindowClosed, "Meta closed the customer window.");
 
             case ContactBlockVerdict.UnblockRejected:
                 LogContactUnblockRejected(logger, tenantId, conversation.Id, answer.FbTraceId);
-                throw new MessagingDomainException(MessagingErrorCodes.UnblockRejected, "Meta rejected unblocking the contact.");
+                return await steps.SummaryIfBlockedAsync(tenantId, conversation.Id, blocked: false, cancellationToken)
+                    ?? throw new MessagingDomainException(MessagingErrorCodes.UnblockRejected, "Meta rejected unblocking the contact.");
 
             case ContactBlockVerdict.ConnectionRejected:
                 // §8.3, como un envío: la conexión pasa a NeedsAttention y la respuesta es la de una conexión que no sirve.
@@ -105,7 +121,8 @@ internal static partial class ContactBlockSteps
 
             default:
                 LogContactBlockFailed(logger, direction, tenantId, conversation.Id, answer.Code, answer.Subcode, answer.FbTraceId);
-                throw new UpstreamServiceException(MessagingErrorCodes.BlockFailed, "Meta did not confirm the change to the contact block.");
+                return await steps.SummaryIfBlockedAsync(tenantId, conversation.Id, blocked: direction == ContactBlockDirection.Block, cancellationToken)
+                    ?? throw new UpstreamServiceException(MessagingErrorCodes.BlockFailed, "Meta did not confirm the change to the contact block.");
         }
     }
 }
