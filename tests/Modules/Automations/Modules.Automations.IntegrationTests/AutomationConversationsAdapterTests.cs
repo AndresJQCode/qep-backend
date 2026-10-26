@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Automations.Application;
+using Modules.Automations.Application.Engine;
 using Modules.Messaging.Application;
 using static Modules.Automations.IntegrationTests.AutomationsApiHarness;
 
@@ -17,6 +18,9 @@ public sealed class AutomationConversationsAdapterTests
     private const string WaId = "573001234567";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    /// <summary>Spec 2026-10-24: el traspaso más simple, el de un bloque alcanzado.</summary>
+    private static readonly HandoffCause BlockCause = new(HandoffCauseKind.Block, null, "handoff", "Pasar a un asesor", null, null, null);
 
     private sealed record Fixture(QepApiFactory Factory, WebApplicationFactory<Program> Host, string ConnectionString, Guid TenantId, Guid ConversationId, RecordingNotifier Notifier);
 
@@ -109,7 +113,7 @@ public sealed class AutomationConversationsAdapterTests
         await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), "Menú", Ct));
         f.Notifier.Events.Clear();
 
-        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, Ct));
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, Ct));
 
         Assert.Equal("Paused|Handoff|true|true|true",
             await RowAsync(f, "automation_status || '|' || automation_pause_reason || '|' || (automation_paused_by_member_id IS NULL)::text || '|' || (assigned_member_id IS NULL)::text || '|' || (automation_paused_at IS NOT NULL)::text"));
@@ -120,6 +124,56 @@ public sealed class AutomationConversationsAdapterTests
             ("id", f.ConversationId.ToString()), ("t", f.TenantId)));
         // D-M5: suena a todo el tenant como el último entrante sin asignar.
         Assert.Equal([$"changed {f.ConversationId}", $"inbound {f.ConversationId} {last} -"], f.Notifier.Events);
+    }
+
+    /// <summary>Spec 2026-10-24 §5.3, caso 1 del owner: la causa queda dentro del mismo evento <c>AutomationPaused</c>, sin actor.</summary>
+    [Fact]
+    public async Task HandoffWritesTheCauseInTheEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), "Menú", Ct));
+        var cause = new HandoffCause(
+            HandoffCauseKind.SendFailed, "messaging.connection_unavailable", "handoff", "Pasar a un asesor", "Servicio Clasic", "secret_unreadable",
+            new HandoffHttpFailure("policy-lookup", "Buscar cliente por teléfono", "connection_unavailable", "secret_unreadable", null, "API de Clasic"));
+
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, cause, Ct));
+
+        Assert.Equal(
+            "SendFailed|messaging.connection_unavailable|handoff|Pasar a un asesor|Servicio Clasic|secret_unreadable|policy-lookup|Buscar cliente por teléfono|connection_unavailable|secret_unreadable|API de Clasic|false|false",
+            await ScalarAsync<string>(f.ConnectionString,
+                """
+                SELECT concat_ws('|', details->'handoff'->>'kind', details->'handoff'->>'code', details->'handoff'->>'nodeId',
+                       details->'handoff'->>'nodeTitle', details->'handoff'->>'connectionName', details->'handoff'->>'connectionReason',
+                       details->'handoff'->'http'->>'nodeId', details->'handoff'->'http'->>'nodeTitle', details->'handoff'->'http'->>'outcome',
+                       details->'handoff'->'http'->>'errorCode', details->'handoff'->'http'->>'connectionName',
+                       (details->'handoff'->'http' ? 'status')::text, (details ? 'actor')::text)
+                  FROM messaging.messages WHERE details->>'type' = 'AutomationPaused'
+                """));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE details->>'type' = 'AutomationPaused'"));
+    }
+
+    /// <summary>D-T12: un texto que no es un código no llega al hilo, aunque el motor lo pasara.</summary>
+    [Fact]
+    public async Task AnUntidyCauseIsCleanedBeforeItIsStored()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), "Menú", Ct));
+        var cause = new HandoffCause(
+            HandoffCauseKind.Block, null, "handoff", "Pasar a un asesor", null, null,
+            new HandoffHttpFailure("orders", "Crear orden", "error_status", "Ya existe una orden abierta", 409, "API de Clasic"));
+
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, cause, Ct));
+
+        Assert.Equal("false|409|error_status", await ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT concat_ws('|', (details->'handoff'->'http' ? 'errorCode')::text, details->'handoff'->'http'->>'status',
+                   details->'handoff'->'http'->>'outcome')
+              FROM messaging.messages WHERE details->>'type' = 'AutomationPaused'
+            """));
     }
 
     /// <summary>Ruling P2-R22: el cambio ya se confirmó en Mensajería; un aviso que falla no puede hacer que el motor deshaga su unidad y
@@ -135,7 +189,7 @@ public sealed class AutomationConversationsAdapterTests
 
         await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), "Menú", Ct));
         await WithAdapterAsync(f, adapter => adapter.SetStepAsync(f.TenantId, f.ConversationId, "Documento", Ct));
-        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, Ct));
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, Ct));
 
         Assert.Equal("Paused|Handoff|Documento", await RowAsync(f, "automation_status || '|' || automation_pause_reason || '|' || automation_step"));
     }
@@ -149,7 +203,7 @@ public sealed class AutomationConversationsAdapterTests
         await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), null, Ct));
         f.Notifier.Events.Clear();
 
-        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, Ct));
+        await WithAdapterAsync(f, adapter => adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, Ct));
 
         Assert.Equal("Paused", await RowAsync(f, "automation_status"));
         Assert.Equal([$"changed {f.ConversationId}"], f.Notifier.Events);
@@ -167,7 +221,7 @@ public sealed class AutomationConversationsAdapterTests
         {
             await adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), null, Ct);
             await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET version = version + 1");
-            await adapter.HandoffAsync(f.TenantId, f.ConversationId, Ct);
+            await adapter.HandoffAsync(f.TenantId, f.ConversationId, BlockCause, Ct);
         });
 
         Assert.Equal("Paused|4", await RowAsync(f, "automation_status || '|' || version"));

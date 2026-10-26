@@ -263,6 +263,10 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   «Operación»). En pruebas, `PosApiHarness.EnablePosAsync`. Y `cashier` es clave de rol de sistema
   reservada: antes de desplegar se comprueba que ningún tenant tenga un rol custom con esa clave
   (spec 2026-10-07, «Despliegue»).
+- **La cotización por Meta no usa `OutboundGuards` ni `ConversationOpener.OpenAsync`** (spec 2026-10-21). `QuotationTemplateOutbound`
+  busca la conversación por teléfono (`OpenByPhoneAsync`) y no por `customer_id`, para no caer en el hilo de otro número (D16b);
+  pasa `seen: 0` para no tocar los no leídos (D16a); y el PDF va por `id` de media, no por URL. Un cambio en el reclamo o la
+  liquidación (`IOutboundMessages`, `OutboundSettlement`) se prueba también con `QuotationTemplateOutboundTests`.
 - **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
   Los dieciocho módulos construidos son Audit, Authorization, Catalog, Companies, Customers, Geography,
   Identity, Integrations, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Suppliers y Tenancy — cada
@@ -535,6 +539,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   unidad»). No vuelvas al `pg_advisory_xact_lock` que espera.
 - **`http_calls.outcome` mide 24, no 16** (spec §4.2 dice 16; `response_too_large` ya tiene 18, migración `WidenHttpCallOutcome`).
   Un outcome nuevo más largo es otra migración.
+- **La causa de un traspaso del bot vive en el evento `AutomationPaused` (`details.handoff`), no en la corrida** (spec 2026-10-24).
+  `conversation_runs.failure_code` sólo la tiene cuando falló; un bloque «Pasar a un asesor» alcanzado deja `HandedOff` sin código. Un
+  `connection_unavailable` del bloque HTTP lleva el motivo en `ErrorCode` (`secret_unreadable`, `not_chosen`, …) y sigue sin fila en
+  `http_calls`. `IIntegrationConnections.ResolveAsync` devuelve `ConnectionResolution`: un consumidor nuevo lee `.Connection` y decide qué
+  hace con `.Unavailable`, y los códigos `snake_case` los arma sólo `ConnectionReasonCodes` (Bootstrapper). `HandoffCauseKind`
+  (Automations) y `AutomationHandoffKind` (Messaging) se cambian juntos: los amarra `HandoffCauseKindParityTests`.
 - **El simulador corre el borrador, no la versión publicada, y `Start` exige cuerpo** (`{ "liveHttp": false }`; sin cuerpo no es lo
   mismo). Con `liveHttp` un bucle de HTTP puede tardar `25 × timeoutSeconds` en un solo request. El bloque HTTP del simulador usa
   `JsonPath.SelectResponse`, el mismo mapeo del ejecutor.
@@ -550,6 +560,17 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   una API que espera un número lleva `{x.item.id}` sin comillas: `"{x.id}"` compila, pasa las pruebas con el fake y Clasic
   responde 500 (`invoiceItems[0].id` como string; verificado el 2026-10-23 en la revisión final del plan 4). En una query de
   URL sí va `{x.id}`, porque es texto.
+- **El respaldo colombiano del formato regional vive en tres copias que se cambian juntas** (spec 2026-10-23, D-R5), porque los
+  módulos no se ven entre sí: `RegionalNumberFormat`/`RegionalDateFormat` (`Modules.Tenancy.Application`),
+  `EmailRegionalFormat.Colombian` (`Modules.Notifications.Application`, que no ve Tenancy) y `QuotationPdf.LegacyNumberFormat`
+  (dominio de Quotations: el formato con el que se supone generada una fila de `quotation_pdfs` con `number_format` nulo). Cambiar
+  `TenantNumberFormats.CommaDecimal` sin la del dominio compila y regenera en silencio todos los PDF guardados de los tenants
+  colombianos en el siguiente export. Las amarran `EmailRegionalFormatTests.ColombianMatchesTheTenancyFallback` y
+  `QuotationPdfTests.ALegacyPdfWithoutFormatCountsAsCommaDecimal`. Y el historial de cambios es texto congelado: un tenant que
+  cambia de formato ve las filas viejas con el anterior, y eso no es un bug.
+- **`OrdersExportProcessor` no lee el formato del tenant, a propósito** (D-R8): la hoja del pedido la importa el ERP.
+  «Unificarlo» con el Excel de cotizaciones compila, pasa sus pruebas unitarias y rompe la importación en silencio. La amarra
+  `OrderExportApiTests.TheErpSheetIgnoresTheTenantRegionalFormat`.
 
 ## Verificación
 

@@ -189,6 +189,25 @@ public sealed class CreateQuotationHandlerTests
         Assert.Equal("quotation.quotation.freight_charge_mode_disabled", error.Code);
     }
 
+    // Spec 2026-10-23 D-R6: la fila de cada línea sale con los separadores del tenant.
+    [Fact]
+    public async Task TheLineHistoryUsesTheTenantSeparators()
+    {
+        var productId = Guid.CreateVersion7();
+        var repository = EmptyRepository();
+        var handler = Handler(
+            pricing: new StubQuotationProductPricingLookup(Product(productId, "Vela de soja", 1_000m)),
+            repository: repository,
+            tenantDirectory: StubTenantDirectory.WithNumberFormat(Modules.Tenancy.Domain.TenantNumberFormats.DotDecimal));
+
+        await handler.HandleAsync(
+            CreateCommand(billingAccount: null) with { Items = [new(productId, 1500m)] }, CancellationToken.None);
+
+        Assert.Contains(
+            repository.HistoryEntries,
+            entry => entry.EventType == QuotationHistoryEventType.Edited && entry.Details == "Agregó Vela de soja x1,500.");
+    }
+
     internal static QuotationVariantPricingRef Product(Guid id, string name, decimal price) =>
         new(id, id, TenantId, name, "SKU", true, new Dictionary<string, decimal> { ["COP"] = price }, [], null);
 
@@ -207,7 +226,8 @@ public sealed class CreateQuotationHandlerTests
         StubQuotationRepository? repository = null,
         IQuotationAuditPublisher? audit = null,
         SequentialQuotationNumberGenerator? numbers = null,
-        FixedQuotationSettingsStore? settings = null)
+        FixedQuotationSettingsStore? settings = null,
+        StubTenantDirectory? tenantDirectory = null)
     {
         settings ??= new FixedQuotationSettingsStore();
         var drafts = new QuotationDraftBuilder(
@@ -229,6 +249,7 @@ public sealed class CreateQuotationHandlerTests
             numbers ?? new SequentialQuotationNumberGenerator(),
             new DefaultNumberingFormats(),
             new StubMembershipDirectory(MembershipId),
+            tenantDirectory ?? new StubTenantDirectory(),
             new StubExecutionContext(SubjectId, TenantId),
             new FixedTenantClock(Now),
             new CreateQuotationValidator());

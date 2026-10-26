@@ -380,9 +380,18 @@ public sealed partial class Conversation
         Touch(now);
     }
 
-    /// <summary>Pausa explícita del asistente. <paramref name="actorMemberId"/> es <c>null</c> cuando la hace el sistema.</summary>
-    public ConversationEvent PauseAutomation(Guid? actorMemberId, AutomationPauseReason reason, DateTimeOffset now)
+    /// <summary>Pausa explícita del asistente. <paramref name="actorMemberId"/> es <c>null</c> cuando la hace el sistema.
+    /// <paramref name="handoff"/> (spec 2026-10-24 D-T7) es la causa de un traspaso y sólo cabe con
+    /// <c>AutomationPauseReason.Handoff</c>.</summary>
+    public ConversationEvent PauseAutomation(
+        Guid? actorMemberId, AutomationPauseReason reason, DateTimeOffset now, AutomationHandoff? handoff = null)
     {
+        // Antes de cualquier comprobación de estado: es un error de programación, no una regla de negocio, y no debe tocar nada.
+        if (handoff is not null && reason != Domain.AutomationPauseReason.Handoff)
+        {
+            throw new ArgumentException("Only a handoff pause carries a handoff cause.", nameof(handoff));
+        }
+
         EnsureOpenForAutomation();
         switch (AutomationStatus)
         {
@@ -394,7 +403,7 @@ public sealed partial class Conversation
 
         MarkPaused(actorMemberId, reason, now);
         Touch(now);
-        return new ConversationEvent(ConversationEventType.AutomationPaused, Actor: actorMemberId, PauseReason: reason);
+        return new ConversationEvent(ConversationEventType.AutomationPaused, Actor: actorMemberId, PauseReason: reason, Handoff: handoff);
     }
 
     /// <summary>Reactiva un asistente pausado. Si hay un asesor asignado se le quita la conversación primero (evento

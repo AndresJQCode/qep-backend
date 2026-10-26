@@ -23,6 +23,7 @@ public sealed class QuotationPdf
         string storageKey,
         long quotationVersion,
         Guid? logoFileId,
+        string? numberFormat,
         DateTimeOffset generatedAt)
     {
         QuotationId = quotationId;
@@ -30,6 +31,7 @@ public sealed class QuotationPdf
         StorageKey = storageKey;
         QuotationVersion = quotationVersion;
         LogoFileId = logoFileId;
+        NumberFormat = numberFormat;
         GeneratedAt = generatedAt;
     }
 
@@ -50,7 +52,17 @@ public sealed class QuotationPdf
     /// a diferencia de <see cref="QuotationVersion"/>, no tiene orden.</summary>
     public Guid? LogoFileId { get; private set; }
 
+    /// <summary>El formato numérico del tenant con el que se imprimió (<c>1.234,56</c> o <c>1,234.56</c>), o
+    /// null en las filas anteriores a la columna, que siempre salieron con el colombiano. Cambiarlo en el
+    /// tenant vence el PDF igual que el logo (spec 2026-10-23, D-R3).</summary>
+    public string? NumberFormat { get; private set; }
+
     public DateTimeOffset GeneratedAt { get; private set; }
+
+    // Es `TenantNumberFormats.CommaDecimal` de Tenancy, que este dominio no referencia: lo que se
+    // guardó antes de la columna se imprimió siempre así. Lo ata a la constante de Tenancy la prueba
+    // `ALegacyPdfWithoutFormatCountsAsCommaDecimal`.
+    private const string LegacyNumberFormat = "1.234,56";
 
     public static QuotationPdf Generate(
         QuotationId quotationId,
@@ -58,8 +70,9 @@ public sealed class QuotationPdf
         string storageKey,
         long quotationVersion,
         Guid? logoFileId,
+        string? numberFormat,
         DateTimeOffset generatedAt) =>
-        new(quotationId, tenantId, storageKey, quotationVersion, logoFileId, generatedAt);
+        new(quotationId, tenantId, storageKey, quotationVersion, logoFileId, numberFormat, generatedAt);
 
     /// <summary>
     /// La versión se compara con <c>&lt;</c> y no con <c>!=</c>: un PDF que quedara **adelante**
@@ -67,15 +80,18 @@ public sealed class QuotationPdf
     /// regenerándolo, y tratarlo como obsoleto lo haría regenerar en cada pedido, para siempre. El
     /// logo se compara por <c>!=</c> porque no tiene ese mismo orden.
     /// </summary>
-    public bool IsStaleFor(long quotationVersion, Guid? logoFileId) =>
-        QuotationVersion < quotationVersion || LogoFileId != logoFileId;
+    public bool IsStaleFor(long quotationVersion, Guid? logoFileId, string numberFormat) =>
+        QuotationVersion < quotationVersion
+        || LogoFileId != logoFileId
+        || (NumberFormat ?? LegacyNumberFormat) != numberFormat;
 
     public void Regenerate(
-        string storageKey, long quotationVersion, Guid? logoFileId, DateTimeOffset generatedAt)
+        string storageKey, long quotationVersion, Guid? logoFileId, string numberFormat, DateTimeOffset generatedAt)
     {
         StorageKey = storageKey;
         QuotationVersion = quotationVersion;
         LogoFileId = logoFileId;
+        NumberFormat = numberFormat;
         GeneratedAt = generatedAt;
     }
 }

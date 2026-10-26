@@ -106,6 +106,37 @@ public sealed class CustomerExportApiTests
         Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 16).GetString());
     }
 
+    // D-R7 (spec 2026-10-23): las fechas de texto siguen el formato de fecha del tenant, más la hora;
+    // el nombre del archivo no cambia.
+    [Fact]
+    public async Task ExportWritesDatesInTheTenantsDateFormat()
+    {
+        await using var database = await StartDatabaseAsync();
+        var storage = new CapturingExportStorage();
+        using var factory = FactoryAt(database, storage, new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero));
+        using var client = CreateManager(factory);
+        await SeedTenantAsync(factory);
+        await SetTenantDateFormatAsync(factory, "MM/dd/yyyy");
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerAsync(
+            client, city.CityId, classification.Id, "Verde Esencial S.A.S.", "900.123.456-1");
+
+        var response = await client.PostAsync(
+            ExportUrl(), content: null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<ExportResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        Assert.Equal("clientes-20261231-230000.xlsx", body.FileName);
+        Assert.NotNull(storage.Content);
+        using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
+        var sheet = workbook.Worksheets.First();
+        Assert.Equal("12/31/2026 23:00", sheet.Cell(2, 15).GetString());
+        Assert.Equal("12/31/2026 23:00", sheet.Cell(2, 16).GetString());
+    }
+
     // Spec 2026-10-10 §5.2: el export incluye los incompletos, con celdas vacías, y suma la columna
     // «Estado de la ficha» al final, después de las propias del export.
     [Fact]

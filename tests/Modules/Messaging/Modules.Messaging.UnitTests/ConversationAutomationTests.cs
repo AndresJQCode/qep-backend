@@ -109,4 +109,49 @@ public sealed class ConversationAutomationTests
         Assert.Equal(ChatbotId, conversation.AutomationChatbotId);
         Assert.Equal("Número de documento", conversation.AutomationStep);
     }
+
+    private static readonly AutomationHandoff Cause = AutomationHandoff.Create(
+        AutomationHandoffKind.Block, null, "handoff", "Pasar a un asesor", null, null,
+        new AutomationHandoffHttp("policy-lookup", "Buscar cliente por teléfono", "error_status", "http_404", 404, "API de Clasic"));
+
+    // Spec 2026-10-24 D-T7: la causa viaja en el mismo evento AutomationPaused, no en uno nuevo.
+    [Fact]
+    public void AHandoffPauseCarriesItsCauseInTheEvent()
+    {
+        var conversation = Open();
+        conversation.StartAutomation(ChatbotId, Now);
+
+        var change = conversation.PauseAutomation(null, AutomationPauseReason.Handoff, Now, Cause);
+
+        Assert.Equal(ConversationEventType.AutomationPaused, change.Type);
+        Assert.Equal(AutomationPauseReason.Handoff, change.PauseReason);
+        Assert.Equal(Cause, change.Handoff);
+        Assert.Equal(ConversationAutomationStatus.Paused, conversation.AutomationStatus);
+    }
+
+    [Fact]
+    public void ACauseWithAnotherReasonThrows()
+    {
+        var conversation = Open();
+        conversation.StartAutomation(ChatbotId, Now);
+        var version = conversation.Version;
+
+        Assert.Throws<ArgumentException>(() =>
+            conversation.PauseAutomation(Guid.CreateVersion7(), AutomationPauseReason.Manual, Now.AddMinutes(1), Cause));
+
+        Assert.Equal(ConversationAutomationStatus.Active, conversation.AutomationStatus);
+        Assert.Equal(version, conversation.Version);
+    }
+
+    [Fact]
+    public void APauseWithoutCauseStaysAsToday()
+    {
+        var conversation = Open();
+        conversation.StartAutomation(ChatbotId, Now);
+
+        var change = conversation.PauseAutomation(null, AutomationPauseReason.Handoff, Now);
+
+        Assert.Null(change.Handoff);
+        Assert.Equal(new ConversationEvent(ConversationEventType.AutomationPaused, PauseReason: AutomationPauseReason.Handoff), change);
+    }
 }

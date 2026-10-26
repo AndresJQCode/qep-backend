@@ -104,7 +104,7 @@ internal sealed class ShopifyConnectionDirectory(
             return null;
         }
 
-        var resolved = await connections.ResolveAsync(route.TenantId, route.ConnectionId, cancellationToken);
+        var resolved = (await connections.ResolveAsync(route.TenantId, route.ConnectionId, cancellationToken)).Connection;
         return resolved is not null
             && string.Equals(resolved.ProviderKey, Provider, StringComparison.Ordinal)
             && resolved.Secrets.TryGetValue(ShopifyFieldKeys.AccessToken, out var token)

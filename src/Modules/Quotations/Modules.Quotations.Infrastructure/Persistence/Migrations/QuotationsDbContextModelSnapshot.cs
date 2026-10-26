@@ -1136,6 +1136,11 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("logo_file_id");
 
+                    b.Property<string>("NumberFormat")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("number_format");
+
                     b.Property<long>("QuotationVersion")
                         .HasColumnType("bigint")
                         .HasColumnName("quotation_version");
@@ -1349,6 +1354,29 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_tenant_quotation_settings_minimum_units", "minimum_units >= 1");
                         });
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.TenantWhatsAppChannelRow", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("ChosenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("chosen_at");
+
+                    b.Property<Guid>("ChosenByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("chosen_by_member_id");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.HasKey("TenantId");
+
+                    b.ToTable("tenant_whatsapp_channels", "quotations");
                 });
 
             modelBuilder.Entity("Modules.Quotations.Domain.Carrier", b =>

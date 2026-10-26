@@ -7,6 +7,8 @@ namespace Modules.Messaging.Application;
 
 public sealed record GetConversationAutomationQuery(Guid TenantId, Guid ConversationId) : IQuery<ConversationAutomationDetailsDto>;
 
+/// <param name="FailureCode">Spec 2026-10-24 D-T8 (BFF): el código por el que falló la corrida, que el frontend traduce en «Motivo: …»;
+/// <c>null</c> si no falló.</param>
 public sealed record ConversationAutomationDetailsDto(
     Guid ChatbotId,
     string ChatbotName,
@@ -16,7 +18,8 @@ public sealed record ConversationAutomationDetailsDto(
     JsonElement Variables,
     IReadOnlyList<ConversationAutomationTraceEntry> Trace,
     DateTimeOffset StartedAt,
-    DateTimeOffset? EndedAt);
+    DateTimeOffset? EndedAt,
+    string? FailureCode);
 
 /// <summary>Spec 2026-10-21 §5.5: «Datos capturados» del asesor. Sólo <c>messaging.conversation.read</c> (no el de Automations, que el
 /// asesor no tiene, D-C10). 404 <c>messaging.conversation.not_found</c> si la conversación no es del tenant y 404
@@ -38,6 +41,7 @@ public sealed class GetConversationAutomationHandler(
             ?? throw new ResourceNotFoundException(
                 MessagingErrorCodes.AutomationNotAvailable, $"Conversation '{query.ConversationId}' has no assistant run.");
         return new ConversationAutomationDetailsDto(
-            found.ChatbotId, found.ChatbotName, found.VersionNumber, found.Status, found.StepTitle, found.Variables, found.Trace, found.StartedAt, found.EndedAt);
+            found.ChatbotId, found.ChatbotName, found.VersionNumber, found.Status, found.StepTitle, found.Variables, found.Trace, found.StartedAt, found.EndedAt,
+            found.FailureCode);
     }
 }

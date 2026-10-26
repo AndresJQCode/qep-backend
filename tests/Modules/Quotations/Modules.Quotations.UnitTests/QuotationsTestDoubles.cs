@@ -28,13 +28,84 @@ internal sealed class StubWhatsAppChannelDirectory(params WhatsAppChannel[] chan
         Task.FromResult<IReadOnlyList<WhatsAppChannel>>(channels);
 }
 
+/// <summary>La elección del canal en memoria: una sola por tenant, como la tabla. <see cref="Remembered"/> cuenta las
+/// escrituras que de verdad entraron.</summary>
+internal sealed class InMemoryWhatsAppChannelChoiceStore(Guid? saved = null) : IWhatsAppChannelChoiceStore
+{
+    public Guid? Saved { get; private set; } = saved;
+
+    public int Remembered { get; private set; }
+
+    public Task<Guid?> FindAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(Saved);
+
+    public Task<bool> RememberAsync(
+        Guid tenantId, Guid connectionId, Guid? previous, Guid chosenByMemberId, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        // Como el SQL: inserta si no hay fila, y reemplaza sólo si la guardada sigue siendo `previous`.
+        if (Saved is not null && Saved != previous)
+        {
+            return Task.FromResult(false);
+        }
+
+        Saved = connectionId;
+        Remembered++;
+        return Task.FromResult(true);
+    }
+
+    public Task ReplaceAsync(
+        Guid tenantId, Guid connectionId, Guid chosenByMemberId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        Saved = connectionId;
+        return Task.CompletedTask;
+    }
+}
+
 internal static class WhatsAppChannels
 {
     public const string OrderTemplateId = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 
-    public static WhatsAppChannel Any(Guid? connectionId = null, string? orderTemplateId = OrderTemplateId) =>
-        new(connectionId ?? Guid.CreateVersion7(), "token-de-prueba", "570000000000",
+    public static ZenviaWhatsAppChannel Any(Guid? connectionId = null, string? orderTemplateId = OrderTemplateId) =>
+        new(connectionId ?? Guid.CreateVersion7(), "Zenvia de prueba", "token-de-prueba", "570000000000",
             "d0e79149-ed61-4784-9883-d86807f46ce5", orderTemplateId);
+
+    public static MetaWhatsAppChannel Meta(Guid? connectionId = null) =>
+        new(connectionId ?? Guid.CreateVersion7(), "Meta de prueba", "573001112233", "cotizacion_qep", "es_CO");
+}
+
+/// <summary>Lo que el router le entregó a Zenvia.</summary>
+internal sealed class RecordingZenviaSender : IZenviaWhatsAppSender
+{
+    public List<(ZenviaWhatsAppChannel Channel, WhatsAppQuotationMessage Message)> Quotations { get; } = [];
+
+    public List<(ZenviaWhatsAppChannel Channel, WhatsAppOrderMessage Message)> Orders { get; } = [];
+
+    public Task SendQuotationAsync(
+        ZenviaWhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken)
+    {
+        Quotations.Add((channel, message));
+        return Task.CompletedTask;
+    }
+
+    public Task SendOrderAsync(
+        ZenviaWhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken)
+    {
+        Orders.Add((channel, message));
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>Lo que el router le entregó a Meta: el canal, el teléfono ya normalizado y el mensaje.</summary>
+internal sealed class RecordingMetaSender : IMetaWhatsAppSender
+{
+    public List<(MetaWhatsAppChannel Channel, string WaId, WhatsAppQuotationMessage Message)> Quotations { get; } = [];
+
+    public Task SendQuotationAsync(
+        MetaWhatsAppChannel channel, string waId, WhatsAppQuotationMessage message, CancellationToken cancellationToken)
+    {
+        Quotations.Add((channel, waId, message));
+        return Task.CompletedTask;
+    }
 }
 
 internal sealed class RecordingQuotationSendFailureLog : IQuotationSendFailureLog
@@ -1247,4 +1318,40 @@ internal sealed class DefaultNumberingFormats : IDocumentNumberingFormatLookup
     public Task<DocumentNumberFormat> GetAsync(
         Guid tenantId, DocumentNumberType documentType, CancellationToken cancellationToken) =>
         Task.FromResult(DocumentNumberFormat.DefaultFor(documentType));
+}
+
+/// <summary>
+/// El formato regional del tenant, mutable entre dos llamados de la misma prueba: así se simula que el
+/// tenant cambió de formato entre dos exportaciones (spec 2026-10-23, D-R3). Por defecto, el colombiano.
+/// <see cref="Regional"/> en null simula un tenant sin fila. Los demás miembros no se ejercen acá.
+/// </summary>
+internal sealed class StubTenantDirectory : ITenantDirectory
+{
+    public TenantRegionalSettings? Regional { get; set; } =
+        new("America/Bogota", "dd/MM/yyyy", "COP", TenantNumberFormats.CommaDecimal);
+
+    public static StubTenantDirectory WithNumberFormat(string numberFormat) =>
+        new() { Regional = new("America/Bogota", "dd/MM/yyyy", "COP", numberFormat) };
+
+    public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(
+        TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(Regional);
+
+    public Task<string?> GetSlugAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(null);
+
+    public Task<string?> GetDisplayNameAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(null);
+
+    public Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(null);
+
+    public Task<string?> GetDefaultCurrencyAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(null);
+
+    public Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<Guid?>(null);
+
+    public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<TenantStatus?>(null);
 }

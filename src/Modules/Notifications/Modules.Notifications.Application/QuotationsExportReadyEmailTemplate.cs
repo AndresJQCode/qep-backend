@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Net;
 
 namespace Modules.Notifications.Application;
@@ -19,16 +18,17 @@ public static class QuotationsExportReadyEmailTemplate
         string fileName,
         int rowCount,
         DateTimeOffset expiresAt,
-        TimeZoneInfo timeZone)
+        EmailRegionalFormat format)
     {
         var names = QuotationsExportKindText.Of(kind);
         var subject = $"Tu exportación de {names.Plural} está lista";
-        // En la hora del tenant del export y sin etiqueta de huso (spec 2026-09-17, punto 8b).
-        var expiry = TimeZoneInfo.ConvertTime(expiresAt, timeZone)
-            .ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture);
+        // En la hora del tenant del export y sin etiqueta de huso (spec 2026-09-17, punto 8b): es la
+        // hora que la persona ve en su reloj. El patrón de la fecha es el del tenant (spec 2026-10-23,
+        // D-R2) y se escribe con InvariantCulture: la `/` es el separador de la cultura, no un literal.
+        var expiry = format.Expiry(expiresAt);
         var rows = rowCount == 1
             ? $"1 {names.Singular}"
-            : $"{rowCount.ToString(CultureInfo.InvariantCulture)} {names.Plural}";
+            : $"{format.Count(rowCount)} {names.Plural}";
 
         // HTML con la URL escapada y texto plano con la URL cruda: mismo motivo que en
         // CustomerExportEmailTemplate (la firma de R2 se rompe con un `&` mal normalizado).

@@ -71,6 +71,28 @@ public sealed class ConversationAutomationMappingTests
         var dto = MessageMapping.ToDto(row, Guid.CreateVersion7(), new Dictionary<Guid, string>(), new Dictionary<Guid, ReplyTargetRow>());
 
         Assert.Equal(expected, dto.Event!.PauseReason);
+        Assert.Null(dto.Event.Handoff);
+    }
+
+    // Spec 2026-10-24 §5.2 y §6: la causa viaja en códigos; el kind por nombre.
+    [Fact]
+    public void AHandoffEventCarriesItsCauseInTheDto()
+    {
+        var handoff = AutomationHandoff.Create(
+            AutomationHandoffKind.Block, null, "handoff", "Pasar a un asesor", null, null,
+            new AutomationHandoffHttp("policy-lookup", "Buscar cliente por teléfono", "error_status", "http_404", 404, "API de Clasic"));
+        var details = ConversationEventJson.Serialize(
+            new ConversationEvent(ConversationEventType.AutomationPaused, PauseReason: AutomationPauseReason.Handoff, Handoff: handoff));
+        var row = new MessageRow(Guid.CreateVersion7(), Guid.CreateVersion7(), MessageDirection.System, MessageKind.Event, null, null, details,
+            MessageStatus.Delivered, null, DateTimeOffset.UnixEpoch, null, null, null, null);
+
+        var dto = MessageMapping.ToDto(row, Guid.CreateVersion7(), new Dictionary<Guid, string>(), new Dictionary<Guid, ReplyTargetRow>());
+
+        Assert.Equal(
+            new AutomationHandoffDto(
+                "Block", null, "handoff", "Pasar a un asesor", null, null,
+                new AutomationHandoffHttpDto("policy-lookup", "Buscar cliente por teléfono", "error_status", "http_404", 404, "API de Clasic")),
+            dto.Event!.Handoff);
     }
 
     [Fact]

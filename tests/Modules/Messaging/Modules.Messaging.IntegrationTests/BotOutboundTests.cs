@@ -236,16 +236,46 @@ public sealed class BotOutboundTests
         Assert.Equal(0, SendCalls(f));
     }
 
+    // Spec 2026-10-24 D-T11: el motivo y el nombre de la conexión viajan con el resultado, para el hilo del traspaso.
     [Fact]
-    public async Task AnUnavailableConnectionIsReportedWithoutCallingMeta()
+    public async Task APausedConnectionIsConnectionUnavailablePaused()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
         await ExecuteAsync(f.ConnectionString, "UPDATE integrations.connections SET status = 'Paused'");
 
-        Assert.IsType<BotSendResult.ConnectionUnavailable>(await SendAsync(f, "Hola"));
+        Assert.Equal(new BotSendResult.ConnectionUnavailable("paused", "Ventas"), await SendAsync(f, "Hola"));
         Assert.Equal(0, SendCalls(f));
+    }
+
+    /// <summary>Spec 2026-10-24, caso 1 del owner: el token no descifra (base restaurada con otra llave). Sin llamar a Meta y sin fila.</summary>
+    [Fact]
+    public async Task AnUnreadableTokenIsConnectionUnavailableWithItsReason()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ExecuteAsync(
+            f.ConnectionString,
+            "UPDATE integrations.connection_secrets SET ciphertext = set_byte(ciphertext, 20, get_byte(ciphertext, 20) # 255)");
+
+        Assert.Equal(new BotSendResult.ConnectionUnavailable("secret_unreadable", "Ventas"), await SendAsync(f, "Hola"));
+        Assert.Equal(0, SendCalls(f));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+    }
+
+    [Fact]
+    public async Task ATokenRejectedByMetaIsCredentialsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.Unauthorized, FakeMetaGraphHandler.GraphError(190));
+
+        Assert.Equal(new BotSendResult.ConnectionUnavailable("credentials_rejected", "Ventas"), await SendAsync(f, "Hola"));
+        Assert.Equal("NeedsAttention", await ScalarAsync<string>(f.ConnectionString, "SELECT status FROM integrations.connections"));
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using Modules.Automations.Application.Engine;
 using Modules.Automations.Domain;
 using Modules.Automations.Domain.Engine;
 
@@ -123,10 +124,16 @@ public interface IAutomationExternalApis
 {
     Task<IReadOnlyList<ExternalApiRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
 
-    /// <summary>D-H5: la URL base, el header y la clave de la conexión, al momento de llamar. <c>null</c> si no es del tenant, no es
-    /// <c>external-api</c>, no está <c>Active</c> o su clave no se puede leer.</summary>
-    Task<ExternalApiCredentials?> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+    /// <summary>D-H5: la URL base, el header y la clave de la conexión, al momento de llamar. Sin credenciales si no es del tenant, no es
+    /// <c>external-api</c>, no está <c>Active</c> o su clave no se puede leer; entonces trae el motivo (spec 2026-10-24 D-T5).</summary>
+    Task<ExternalApiResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }
+
+/// <summary>Spec 2026-10-24 §3.2: el resultado de resolver una conexión «API externa». Las credenciales nunca viajan con un motivo.</summary>
+/// <param name="UnavailableReason"><c>null</c> si <paramref name="Credentials"/> no es <c>null</c>; si no, un código <c>snake_case</c> de
+/// spec §3.4 (<c>not_found</c>, <c>paused</c>, <c>secret_unreadable</c>, <c>wrong_provider</c>, <c>incomplete</c>, …).</param>
+/// <param name="ConnectionName">El nombre de la conexión cuando existe (para el hilo); <c>null</c> si no existe.</param>
+public sealed record ExternalApiResolution(ExternalApiCredentials? Credentials, string? UnavailableReason, string? ConnectionName);
 
 /// <summary>D-H5: lo que el bloque HTTP necesita para llamar. La clave vive en memoria lo que dura la llamada: nunca se interpola, ni se
 /// guarda en la corrida, ni se registra, y <see cref="ToString"/> no la imprime (como <c>ResolvedConnection</c> de Integrations).</summary>
@@ -231,7 +238,7 @@ public interface IAutomationConversations
 
     /// <summary>D-M5: <c>Paused</c> con motivo <c>Handoff</c>, sin asesor, con evento en el hilo, auditoría de sistema y aviso a todo el
     /// tenant como un entrante sin asignar.</summary>
-    Task HandoffAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+    Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, CancellationToken cancellationToken);
 
     /// <summary>D-M5: resuelta con el motivo (si sigue activo en el tenant), con evento <c>Resolved</c> sin actor y auditoría de sistema.</summary>
     Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken);
@@ -242,7 +249,8 @@ public interface IAutomationConversations
 }
 
 /// <summary>Cómo terminó un envío del bot (D-I4). <see cref="NotAutomated"/>: la conversación ya no es del bot (resuelta, con asesor o
-/// sin asistente activo). <see cref="Rejected"/> lleva el código de Mensajería.</summary>
+/// sin asistente activo). <see cref="Rejected"/> lleva el código de Mensajería y, cuando la conexión de WhatsApp no se pudo usar, su motivo
+/// y su nombre (spec 2026-10-24 §3.3).</summary>
 public abstract record BotSendOutcome
 {
     public sealed record Sent(Guid MessageId) : BotSendOutcome;
@@ -251,7 +259,7 @@ public abstract record BotSendOutcome
 
     public sealed record WindowClosed : BotSendOutcome;
 
-    public sealed record Rejected(string Code) : BotSendOutcome;
+    public sealed record Rejected(string Code, string? ConnectionReason = null, string? ConnectionName = null) : BotSendOutcome;
 }
 
 /// <summary>Spec 2026-10-21 §5.3 y D-I4: los envíos del bot (adaptador en Bootstrapper sobre <c>IBotOutbound</c>). El

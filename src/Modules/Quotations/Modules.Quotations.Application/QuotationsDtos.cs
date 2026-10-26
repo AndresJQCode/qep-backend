@@ -413,10 +413,15 @@ public sealed record SaveQuotationRequest(
 /// <b>El cuerpo entero es opcional</b>: el frontend manda <c>POST .../send</c> sin nada cuando no
 /// hay a quien elegir. Ver <c>SendWorksWithoutABody</c> — un cuerpo requerido aca rompio el envio
 /// con 500.
+///
+/// <c>ConnectionId</c> (spec 2026-10-21 §4.2) es la conexión de WhatsApp por la que sale, y sólo hace falta cuando el
+/// tenant tiene varias disponibles y todavía no eligió: esa primera elección se guarda con el envío. Con una elección
+/// ya guardada, mandar otra es <c>channel_already_set</c>; el cambio se hace desde Configuración.
 /// </summary>
 public sealed record SendQuotationRequest(
     Guid? PdfFileId = null,
-    string? Recipient = null);
+    string? Recipient = null,
+    Guid? ConnectionId = null);
 
 /// <summary>El cliente tal como lo muestra la pantalla de la cotización, con su libreta de
 /// direcciones. Viaja acá para que el detalle y el editor no pidan la ficha completa a

@@ -44,6 +44,7 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
     public CustomerExportFile Build(
         IReadOnlyList<CustomerDto> customers,
         TenantCalendar calendar,
+        string dateTimePattern,
         CancellationToken cancellationToken)
     {
         using var workbook = new XLWorkbook();
@@ -57,7 +58,7 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         for (var index = 0; index < customers.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            WriteRow(sheet, index + 2, customers[index], calendar);
+            WriteRow(sheet, index + 2, customers[index], calendar, dateTimePattern);
         }
 
         sheet.SheetView.FreezeRows(1);
@@ -79,9 +80,10 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
     // Cada valor va en la columna de su cabecera, en el orden de `Columns`. Una cabecera sin valor
     // es un error de programacion (alguien sumo una columna a la importacion y no al export): falla
     // aca y no deja un archivo con las columnas corridas.
-    private static void WriteRow(IXLWorksheet sheet, int excelRow, CustomerDto customer, TenantCalendar calendar)
+    private static void WriteRow(
+        IXLWorksheet sheet, int excelRow, CustomerDto customer, TenantCalendar calendar, string dateTimePattern)
     {
-        var values = RowValues(customer, calendar);
+        var values = RowValues(customer, calendar, dateTimePattern);
         for (var column = 0; column < Columns.Count; column++)
         {
             sheet.Cell(excelRow, column + 1).Value = values.TryGetValue(Columns[column], out var value)
@@ -93,7 +95,8 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
     // Los textos de las columnas compartidas son los que el importador espera leer: el nombre de la
     // clasificacion y del departamento/ciudad, no sus ids. Un incompleto deja vacio lo que no tiene
     // (spec 2026-10-10 §5.2).
-    private static Dictionary<string, string> RowValues(CustomerDto customer, TenantCalendar calendar) => new(StringComparer.Ordinal)
+    private static Dictionary<string, string> RowValues(
+        CustomerDto customer, TenantCalendar calendar, string dateTimePattern) => new(StringComparer.Ordinal)
     {
         [CustomerImportColumns.Cuc] = customer.Cuc ?? string.Empty,
         [CustomerImportColumns.Name] = customer.Name,
@@ -118,9 +121,10 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         [ActiveColumn] = customer.IsActive ? "Si" : "No",
         // Como texto y no como fecha de Excel: una celda de fecha se muestra según la configuración
         // regional de quien abre el archivo, y ahí 03/04 deja de ser una fecha sola. En la hora del
-        // tenant, al minuto y sin offset (spec 2026-09-17, punto 8a).
-        [CreatedAtColumn] = calendar.ToLocal(customer.CreatedAt).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
-        [UpdatedAtColumn] = calendar.ToLocal(customer.UpdatedAt).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
+        // tenant, al minuto y sin offset (spec 2026-09-17, punto 8a), y con el formato de fecha del
+        // tenant (spec 2026-10-23, D-R7).
+        [CreatedAtColumn] = calendar.ToLocal(customer.CreatedAt).ToString(dateTimePattern, CultureInfo.InvariantCulture),
+        [UpdatedAtColumn] = calendar.ToLocal(customer.UpdatedAt).ToString(dateTimePattern, CultureInfo.InvariantCulture),
         [CompletenessColumn] = customer.IsComplete ? "Completa" : "Incompleta",
     };
 

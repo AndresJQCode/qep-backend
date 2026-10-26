@@ -22,11 +22,13 @@ public static class QuotationPdfDocumentMapper
     private const string LocationSeparator = ", ";
 
     /// <summary>El <paramref name="calendar"/> es el del tenant de la cotización: la fecha de emisión
-    /// se imprime en su día, no en el de UTC (spec 2026-09-17, punto 7).</summary>
+    /// se imprime en su día, no en el de UTC (spec 2026-09-17, punto 7). El <paramref name="numberFormat"/>
+    /// es el del tenant y sólo decide los separadores (spec 2026-10-23, D-R1).</summary>
     public static QuotationPdfDocument From(
-        QuotationResponse quotation, TenantCalendar calendar, QuotationPdfLogo? logo)
+        QuotationResponse quotation, TenantCalendar calendar, QuotationPdfLogo? logo, string? numberFormat = null)
     {
         var currency = Currencies.Get(quotation.Currency);
+        var (thousands, decimals) = RegionalNumberFormat.Separators(numberFormat);
         return new(
             quotation.QuotationNumber,
             DateOnly.FromDateTime(calendar.ToLocal(quotation.CreatedAt).DateTime),
@@ -60,7 +62,9 @@ public static class QuotationPdfDocumentMapper
             quotation.Shipping.FreightTaxPercentage,
             quotation.FreightSubtotal,
             quotation.FreightTaxAmount,
-            quotation.Shipping.CashOnDelivery);
+            quotation.Shipping.CashOnDelivery,
+            ThousandsSeparator: thousands,
+            DecimalSeparator: decimals);
     }
 
     /// <summary>
@@ -73,12 +77,13 @@ public static class QuotationPdfDocumentMapper
     /// no vence, y la plantilla omite el renglón con <see cref="QuotationPdfKind.Order"/>.
     /// </summary>
     public static QuotationPdfDocument FromOrder(
-        OrderDetailResponse order, TenantCalendar calendar, QuotationPdfLogo? logo)
+        OrderDetailResponse order, TenantCalendar calendar, QuotationPdfLogo? logo, string? numberFormat = null)
     {
         ArgumentNullException.ThrowIfNull(order);
         ArgumentNullException.ThrowIfNull(calendar);
         var header = order.Order;
         var currency = Currencies.Get(header.Currency);
+        var (thousands, decimals) = RegionalNumberFormat.Separators(numberFormat);
         return new(
             header.OrderNumber,
             DateOnly.FromDateTime(calendar.ToLocal(header.CreatedAt).DateTime),
@@ -115,7 +120,9 @@ public static class QuotationPdfDocumentMapper
             header.FreightSubtotal,
             header.FreightTaxAmount,
             header.Shipping.CashOnDelivery,
-            QuotationPdfKind.Order);
+            QuotationPdfKind.Order,
+            thousands,
+            decimals);
     }
 
     /// <summary>

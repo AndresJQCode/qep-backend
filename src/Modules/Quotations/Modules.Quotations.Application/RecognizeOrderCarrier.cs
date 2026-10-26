@@ -41,6 +41,7 @@ public sealed class RecognizeOrderCarrierHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IMembershipDirectory membershipDirectory,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<RecognizeOrderCarrierCommand> validator)
@@ -100,6 +101,10 @@ public sealed class RecognizeOrderCarrierHandler(
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
+        // Lee el formato del tenant aunque hoy este handler sólo cambie la transportadora:
+        // ShippingChanged lo pide, y un formato colombiano fijo imprimiría mal, en silencio, el día
+        // que este handler toque el valor del flete.
+        var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
         var now = clock.UtcNow;
 
         var before = order.ShippingDetails;
@@ -108,7 +113,7 @@ public sealed class RecognizeOrderCarrierHandler(
         {
             order.SetShipping(after, updatedBy, now);
             // PartiesChanged y la misma acción de auditoría que la edición del envío (SaveOrderEditsHandler).
-            if (OrderChangeSummary.ShippingChanged(before, order.ShippingDetails) is { } summary)
+            if (OrderChangeSummary.ShippingChanged(before, order.ShippingDetails, format) is { } summary)
             {
                 orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
                     OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PartiesChanged, updatedBy, summary, now));

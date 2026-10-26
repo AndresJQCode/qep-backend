@@ -110,10 +110,22 @@ public sealed record EventCustomerRefDto(Guid Id, string Name);
 /// <c>CustomerChanged</c> Previous y Target viajan null (Actor sí: es la membresía que hizo el cambio). Por qué no se reusan
 /// Previous/Target: son MemberRefDto y el parser del frontend exige memberId en ellos —uno sin memberId lanza y rompe el hilo
 /// entero—, y MemberIdsOf los resuelve como membresías. Con campos aparte, un frontend viejo ignora los nuevos y dibuja
-/// CustomerChanged como evento desconocido, sin romperse.</summary>
+/// CustomerChanged como evento desconocido, sin romperse. <c>handoff</c> sólo en un <c>AutomationPaused</c> con
+/// <c>pauseReason = Handoff</c> (spec 2026-10-24 §6); ausente en eventos viejos.</summary>
 public sealed record MessageEventDto(
     string Type, MemberRefDto? Actor, MemberRefDto? Target, MemberRefDto? Previous, ResolutionReasonRefDto? Reason = null, string? PauseReason = null,
-    EventCustomerRefDto? TargetCustomer = null, EventCustomerRefDto? PreviousCustomer = null);
+    EventCustomerRefDto? TargetCustomer = null, EventCustomerRefDto? PreviousCustomer = null, AutomationHandoffDto? Handoff = null);
+
+/// <summary>Spec 2026-10-24 (BFF): la causa del traspaso, en códigos; el texto lo arma el frontend, que es dueño del diccionario
+/// (D-T3). <c>Kind</c> viaja por nombre (<c>Block</c>, <c>InvalidReply</c>, <c>SendFailed</c>, <c>FlowFailed</c>): uno desconocido
+/// lo pinta con el texto genérico. Ningún campo trae texto de una API externa: sólo títulos de bloques y nombres de conexiones.</summary>
+public sealed record AutomationHandoffDto(
+    string Kind, string? Code, string? NodeId, string? NodeTitle, string? ConnectionName, string? ConnectionReason,
+    AutomationHandoffHttpDto? Http);
+
+/// <summary>Spec 2026-10-24 §6: el bloque HTTP fallido que arrancó el paso del traspaso. <c>Status</c> sólo si la API respondió.</summary>
+public sealed record AutomationHandoffHttpDto(
+    string? NodeId, string? NodeTitle, string? Outcome, string? ErrorCode, int? Status, string? ConnectionName);
 
 /// <param name="UnsupportedReason">Sólo en un <c>Unsupported</c> cuyo error de Meta tiene texto (<c>131060</c>, <c>131051</c>);
 /// si no, <c>null</c> y la burbuja dibuja la etiqueta del kind. BFF: viaja en español, como <c>failureReason</c>, porque

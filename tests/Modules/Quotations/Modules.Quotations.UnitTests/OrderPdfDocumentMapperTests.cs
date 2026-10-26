@@ -18,6 +18,19 @@ public sealed class OrderPdfDocumentMapperTests
     private static QuotationPdfDocument Map(OrderDetailResponse detail, QuotationPdfLogo? logo = null) =>
         QuotationPdfDocumentMapper.FromOrder(detail, Calendar, logo);
 
+    // Spec 2026-10-23 D-R1: igual que en la cotización, los separadores salen del formato del tenant.
+    [Theory]
+    [InlineData("1.234,56", ".", ",")]
+    [InlineData("1,234.56", ",", ".")]
+    [InlineData(null, ".", ",")]
+    [InlineData("x", ".", ",")]
+    public void MapsTheSeparatorsOfTheTenantNumberFormat(string? numberFormat, string thousands, string decimals)
+    {
+        var document = QuotationPdfDocumentMapper.FromOrder(Detail(), Calendar, logo: null, numberFormat);
+
+        Assert.Equal((thousands, decimals), (document.ThousandsSeparator, document.DecimalSeparator));
+    }
+
     [Fact]
     public void AnOrderIsPrintedAsAnOrderWithoutValidity()
     {

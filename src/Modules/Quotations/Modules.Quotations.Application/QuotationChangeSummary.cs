@@ -1,4 +1,3 @@
-using System.Globalization;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
@@ -33,12 +32,12 @@ public static class QuotationChangeSummary
             ? $"Cotización creada en {currency}."
             : $"Cotización creada para {clientName}, en {currency}.");
 
-    public static string ItemAdded(string productName, decimal quantity) =>
-        Trim($"Agregó {productName} x{Number(quantity)}.");
+    public static string ItemAdded(string productName, decimal quantity, HistoryFormat format) =>
+        Trim($"Agregó {productName} x{format.Number(quantity)}.");
 
     public static string ItemQuantityChanged(
-        string productName, decimal from, decimal to) =>
-        Trim($"Cambió la cantidad de {productName}: {Number(from)} → {Number(to)}.");
+        string productName, decimal from, decimal to, HistoryFormat format) =>
+        Trim($"Cambió la cantidad de {productName}: {format.Number(from)} → {format.Number(to)}.");
 
     public static string ItemRemoved(string productName) =>
         Trim($"Quitó {productName}.");
@@ -86,8 +85,8 @@ public static class QuotationChangeSummary
     /// escala anterior no le dice nada a quien lee el historial, y la entrada previa ya esta
     /// ahi arriba.
     /// </summary>
-    public static string GlobalScaleFloorChanged(int? floor) => floor is { } value
-        ? $"Aplicó el descuento global de la escala desde {value} unidades."
+    public static string GlobalScaleFloorChanged(int? floor, HistoryFormat format) => floor is { } value
+        ? $"Aplicó el descuento global de la escala desde {format.Number(value)} unidades."
         : "Quitó el descuento global de escala.";
 
     /// <summary>
@@ -115,7 +114,7 @@ public static class QuotationChangeSummary
     /// historial en ruido.
     /// </summary>
     public static string? HeaderChanged(
-        QuotationHeaderSnapshot before, QuotationHeaderSnapshot after)
+        QuotationHeaderSnapshot before, QuotationHeaderSnapshot after, HistoryFormat format)
     {
         var changes = new List<string>();
 
@@ -123,9 +122,9 @@ public static class QuotationChangeSummary
         {
             // "vigencia (sin vigencia)" se leia como un error de redaccion. Borrarla es un gesto
             // propio y se dice como tal.
-            changes.Add(after.ValidUntil is null
+            changes.Add(after.ValidUntil is not { } validUntil
                 ? "quitó la vigencia"
-                : $"vigencia ({Date(after.ValidUntil)})");
+                : $"vigencia ({format.Date(validUntil)})");
         }
 
         if (before.PaymentMethod != after.PaymentMethod)
@@ -154,7 +153,7 @@ public static class QuotationChangeSummary
         if (before.GlobalScaleFloor != after.GlobalScaleFloor)
         {
             changes.Add(after.GlobalScaleFloor is { } floor
-                ? $"descuento global (escala desde {floor} unidades)"
+                ? $"descuento global (escala desde {format.Number(floor)} unidades)"
                 : "quitó el descuento global");
         }
 
@@ -205,7 +204,7 @@ public static class QuotationChangeSummary
         // sería ruido.
         if (!after.IsStorePickup)
         {
-            AppendFreight(changes, before.Freight, after.Freight);
+            AppendFreight(changes, before.Freight, after.Freight, format);
         }
 
         if (before.BillingAccount != after.BillingAccount)
@@ -231,7 +230,8 @@ public static class QuotationChangeSummary
     // noticia, como la cantidad de una línea; cambiar a gratis o quitar el modo ya lleva el valor a 0 y no
     // se repite.
     // Interno porque el historial del pedido cuenta el mismo cambio con los mismos textos (OrderChangeSummary).
-    internal static void AppendFreight(List<string> changes, ShippingDetails before, ShippingDetails after)
+    internal static void AppendFreight(
+        List<string> changes, ShippingDetails before, ShippingDetails after, HistoryFormat format)
     {
         if (before.CarrierId != after.CarrierId)
         {
@@ -252,7 +252,7 @@ public static class QuotationChangeSummary
         {
             if (after.FreightAmount != 0)
             {
-                changes.Add($"valor del envío ({Number(after.FreightAmount)})");
+                changes.Add($"valor del envío ({format.Number(after.FreightAmount)})");
             }
             else if (!modeChanged)
             {
@@ -295,16 +295,6 @@ public static class QuotationChangeSummary
         account.AccountNumber.Length <= 4
             ? $"{account.BankName} {account.Currency}"
             : $"{account.BankName} ···{account.AccountNumber[^4..]} {account.Currency}";
-
-    private static string Date(DateOnly? value) =>
-        value?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
-
-    // Sin ceros a la derecha: "x3" y no "x3,00". La cantidad es decimal porque hay productos que
-    // se venden fraccionados, pero la mayoría son enteros y el historial se lee mejor así.
-    private static string Number(decimal value) =>
-        value == decimal.Truncate(value)
-            ? decimal.Truncate(value).ToString(CultureInfo.InvariantCulture)
-            : value.ToString("0.##", CultureInfo.InvariantCulture);
 
     private static string Trim(string summary) =>
         summary.Length <= MaxLength ? summary : summary[..(MaxLength - 1)] + "…";

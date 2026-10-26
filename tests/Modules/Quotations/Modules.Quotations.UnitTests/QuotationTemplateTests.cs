@@ -215,6 +215,73 @@ public sealed partial class QuotationTemplateTests
         Assert.DoesNotContain("renglon(\"Emitida\"", source, StringComparison.Ordinal);
     }
 
+    // Spec 2026-10-23 D-R1: los separadores del tenant viajan en `data`; sin tocarlos, los colombianos.
+    [Fact]
+    public async Task ThePayloadCarriesTheSeparators()
+    {
+        var (_, dotDecimal, _) = await CapturedRequestAsync(
+            Complete() with { ThousandsSeparator = ",", DecimalSeparator = "." });
+        var (_, defaults, _) = await CapturedRequestAsync(Minimal());
+
+        Assert.Equal(",", dotDecimal.GetProperty("thousandsSeparator").GetString());
+        Assert.Equal(".", dotDecimal.GetProperty("decimalSeparator").GetString());
+        Assert.Equal(".", defaults.GetProperty("thousandsSeparator").GetString());
+        Assert.Equal(",", defaults.GetProperty("decimalSeparator").GetString());
+    }
+
+    // Los ayudantes de importe no llevan separadores escritos a mano: salen del payload.
+    [Fact]
+    public async Task TheAmountHelpersUseTheTenantSeparators()
+    {
+        var (source, _, _) = await CapturedRequestAsync(Minimal());
+        var markup = StripComments(source);
+
+        Assert.Contains("partes.join(data.thousandsSeparator)", markup, StringComparison.Ordinal);
+        Assert.Contains("data.decimalSeparator", markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("partes.join(\".\")", markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("\",\" +", markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("\",0\" +", markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("porcentaje(", markup, StringComparison.Ordinal);
+        // La fecha sigue escrita en español: no depende del formato numérico.
+        Assert.Contains("fecha(data.issuedOn)", markup, StringComparison.Ordinal);
+        Assert.Contains("#let meses", markup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheTemplateCompilesWithADotDecimalDocument() =>
+        await AssertCompilesAsync(Complete() with { ThousandsSeparator = ",", DecimalSeparator = "." });
+
+    [Fact]
+    public async Task TheTemplateCompilesWithADotDecimalMinimalDocument() =>
+        await AssertCompilesAsync(Minimal() with { ThousandsSeparator = ",", DecimalSeparator = "." });
+
+    // Typst evalúa las ramas de cantidad() de forma perezosa: con cantidades enteras nunca entra
+    // a las que usan el separador decimal, y un error ahí sólo aparecería en producción como un 422.
+    // 12.5 y 1234.5 ejercen la rama de décimas, 0.05 la de centésimas sueltas y 3.75 la general.
+    [Fact]
+    public async Task TheTemplateCompilesFractionalQuantitiesWithADotDecimalDocument() =>
+        await AssertCompilesAsync(WithFractionalQuantities(Complete()) with
+        {
+            ThousandsSeparator = ",",
+            DecimalSeparator = ".",
+        });
+
+    [Fact]
+    public async Task TheTemplateCompilesFractionalQuantitiesWithTheColombianDefaults() =>
+        await AssertCompilesAsync(WithFractionalQuantities(Complete()));
+
+    private static QuotationPdfDocument WithFractionalQuantities(QuotationPdfDocument document) =>
+        document with
+        {
+            Items =
+            [
+                new QuotationPdfLine("Cable por metro", 12.5m, 35900m, 0m, 35900m, 448750m),
+                new QuotationPdfLine("Tornillo suelto", 0.05m, 114700m, 0m, 114700m, 5735m),
+                new QuotationPdfLine("Resina a granel", 1234.5m, 1000m, 0m, 1000m, 1234500m),
+                new QuotationPdfLine("Lámina", 3.75m, 2000m, 0m, 2000m, 7500m),
+            ],
+        };
+
     private static int Count(string text, string value)
     {
         var count = 0;

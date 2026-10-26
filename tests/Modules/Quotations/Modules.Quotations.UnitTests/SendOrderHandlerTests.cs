@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.UnitTests;
 
@@ -261,6 +262,40 @@ public sealed class SendOrderHandlerTests
         Assert.Equal(channel.ConnectionId, harness.Sender.Channel?.ConnectionId);
     }
 
+    // Spec 2026-10-21 D12: los pedidos salen sólo por Zenvia; una conexión de Meta no cuenta como canal.
+    [Fact]
+    public async Task OrderIgnoresMetaChannels()
+    {
+        var zenvia = WhatsAppChannels.Any();
+        var harness = NewHarness(channels: [WhatsAppChannels.Meta(), zenvia]);
+
+        await harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken);
+
+        Assert.Equal(zenvia.ConnectionId, harness.Sender.Channel?.ConnectionId);
+
+        var onlyMeta = NewHarness(channels: [WhatsAppChannels.Meta()]);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            onlyMeta.Handler.HandleAsync(NewCommand(onlyMeta), TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.whatsapp.no_channel", error.Code);
+        Assert.Null(onlyMeta.Sender.SentOrder);
+    }
+
+    [Fact]
+    public async Task TheOrderMessageCarriesTheStorageKeyTheMemberAndTheCustomer()
+    {
+        var harness = NewHarness();
+
+        await harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken);
+
+        var sent = harness.Sender.SentOrder;
+        Assert.NotNull(sent);
+        Assert.NotNull(sent.DocumentStorageKey);
+        Assert.Equal(AdvisorId.Value, sent.SentByMemberId);
+        Assert.Equal(ClientId, sent.CustomerId);
+    }
+
     [Fact]
     public async Task NoChannelIsRejected()
     {
@@ -312,6 +347,28 @@ public sealed class SendOrderHandlerTests
             harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken));
     }
 
+    // El PDF del pedido imprime con los separadores del tenant (spec 2026-10-23, D-R3).
+    [Fact]
+    public async Task TheOrderDocumentUsesTheTenantSeparators()
+    {
+        var harness = NewHarness(tenantDirectory: StubTenantDirectory.WithNumberFormat(TenantNumberFormats.DotDecimal));
+
+        await harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken);
+
+        Assert.Equal(",", harness.Renderer.Last!.ThousandsSeparator);
+        Assert.Equal(".", harness.Renderer.Last.DecimalSeparator);
+    }
+
+    [Fact]
+    public async Task TheOrderMessageCarriesTheTenantNumberFormat()
+    {
+        var harness = NewHarness(tenantDirectory: StubTenantDirectory.WithNumberFormat(TenantNumberFormats.DotDecimal));
+
+        await harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken);
+
+        Assert.Equal(TenantNumberFormats.DotDecimal, harness.Sender.SentOrder!.NumberFormat);
+    }
+
     private sealed record Harness(
         SendOrderHandler Handler,
         Order Order,
@@ -329,8 +386,10 @@ public sealed class SendOrderHandlerTests
         Exception? whatsAppFailure = null,
         IExecutionContext? executionContext = null,
         WhatsAppChannel[]? channels = null,
-        IMembershipDirectory? membership = null)
+        IMembershipDirectory? membership = null,
+        StubTenantDirectory? tenantDirectory = null)
     {
+        var tenant = tenantDirectory ?? new StubTenantDirectory();
         var order = OrderBuilders.Pending(
             TenantId, AdvisorId, Now.AddDays(-1), clientId: ClientId,
             parties: billing is null
@@ -368,11 +427,14 @@ public sealed class SendOrderHandlerTests
                 new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
                 new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
                 new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>())),
-            new OrderPdfProvider(renderer, storage, new FixedTenantClock(Now), new StubQuotationLogoLookup()),
+            new OrderPdfProvider(
+                renderer, storage, new FixedTenantClock(Now), new StubQuotationLogoLookup(),
+                tenant),
             storage,
             customers,
             whatsAppFailure is null ? sender : new FailingWhatsAppSender(whatsAppFailure),
             new StubWhatsAppChannelDirectory(channels ?? [WhatsAppChannels.Any()]),
+            tenant,
             membership ?? new StubMembershipDirectory(AdvisorId.Value),
             executionContext ?? new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now));

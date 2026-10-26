@@ -107,6 +107,180 @@ public sealed class RunProcessorTests
         Assert.Equal([AutomationsAuditActions.RunStarted, AutomationsAuditActions.RunFailed], bed.Audit.Actions);
     }
 
+    // ---- Spec 2026-10-24 §4.1: una causa por cada camino a HandoffAsync. ----
+
+    /// <summary>Fila 5 (P2-R40): el bloque que pidió la reentrada 26; el paso empezó con un HTTP que salió bien, así que sin <c>Http</c>.</summary>
+    [Fact]
+    public async Task TheReentryCapSaysFlowFailedLoopDetected()
+    {
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "n2" }, "variables": [],
+              "nodes": [
+                { "id": "n2", "kind": "http", "title": "Consultar", "connectionId": "11111111-1111-1111-1111-111111111111", "method": "GET", "path": "/status", "mapping": [], "outputs": { "ok": "n2", "error": null } }
+              ] }
+            """;
+        var bed = new Bed(null, flow: flow, http: new RecordingHttpBlocks(new HttpCallResult(true, 200, RunVariables.Empty(), HttpCallOutcomes.Ok, null)));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new HandoffCause(HandoffCauseKind.FlowFailed, "automations.run.loop_detected", "n2", "Consultar", null, null, null),
+            Assert.Single(bed.Conversations.Causes));
+        Assert.Equal("automations.run.loop_detected", Assert.Single(bed.Runs.Added).FailureCode);
+    }
+
+    private const string HandoffAfterHttpFlow = """
+        { "schema": 1, "start": { "firstNodeId": "policy-lookup" }, "variables": [],
+          "nodes": [
+            { "id": "policy-lookup", "kind": "http", "title": "Buscar cliente por teléfono", "connectionId": "11111111-1111-1111-1111-111111111111", "method": "GET", "path": "/customers", "mapping": [], "outputs": { "ok": null, "error": "handoff" } },
+            { "id": "handoff", "kind": "handoff", "title": "Pasar a un asesor", "text": "Te paso con un asesor.", "outputs": {} }
+          ] }
+        """;
+
+    /// <summary>Fila 1: el flujo llegó al bloque de traspaso a propósito; sin HTTP ni código.</summary>
+    [Fact]
+    public async Task AHandoffBlockReachedOnPurposeSaysBlock()
+    {
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "n1" }, "variables": [],
+              "nodes": [
+                { "id": "n1", "kind": "message", "title": "Hola", "text": "Hola", "outputs": { "next": "n2" } },
+                { "id": "n2", "kind": "handoff", "title": "Pasar a un asesor", "text": null, "outputs": {} }
+              ] }
+            """;
+        var bed = new Bed(null, flow: flow);
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new HandoffCause(HandoffCauseKind.Block, null, "n2", "Pasar a un asesor", null, null, null), Assert.Single(bed.Conversations.Causes));
+        var run = Assert.Single(bed.Runs.Added);
+        Assert.Equal((RunStatus.HandedOff, (string?)null), (run.Status, run.FailureCode));
+    }
+
+    /// <summary>Fila 1 con HTTP (caso 2 del owner): el paso empezó con el 404 del bloque HTTP.</summary>
+    [Fact]
+    public async Task AHandoffBlockAfterAFailedHttpNamesTheHttpBlock()
+    {
+        var bed = new Bed(null, flow: HandoffAfterHttpFlow, http: new RecordingHttpBlocks(
+            new HttpCallResult(false, 404, RunVariables.Empty(), HttpCallOutcomes.ErrorStatus, "http_404", "API de Clasic")));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new HandoffCause(
+                HandoffCauseKind.Block, null, "handoff", "Pasar a un asesor", null, null,
+                new HandoffHttpFailure("policy-lookup", "Buscar cliente por teléfono", "error_status", "http_404", 404, "API de Clasic")),
+            Assert.Single(bed.Conversations.Causes));
+        Assert.Equal(["Te paso con un asesor."], bed.Messenger.Texts);
+    }
+
+    /// <summary>Fila 2: Botones con <c>fallback = handoff</c> y una respuesta que no es ninguna opción.</summary>
+    [Fact]
+    public async Task AnInvalidReplyWithHandoffFallbackSaysInvalidReply()
+    {
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "b" }, "variables": [],
+              "nodes": [
+                { "id": "b", "kind": "buttons", "title": "¿Cómo seguimos?", "text": "¿Qué prefieres?", "buttons": [ { "id": "si", "label": "Sí" } ],
+                  "saveTo": null, "fallback": "handoff", "outputs": { "si": null, "other": null } }
+              ] }
+            """;
+        var bed = new Bed(null, ActiveState(), flow: flow);
+        bed.Runs.Added.Add(WaitingRun(DateTimeOffset.UtcNow.AddMinutes(-1), nodeId: "b"));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new HandoffCause(HandoffCauseKind.InvalidReply, null, "b", "¿Cómo seguimos?", null, null, null), Assert.Single(bed.Conversations.Causes));
+    }
+
+    /// <summary>Fila 3 (caso 1 del owner): la clave de la API y el token de WhatsApp ilegibles. El texto del traspaso no sale y la causa
+    /// lleva las dos conexiones.</summary>
+    [Fact]
+    public async Task ARejectedSendSaysSendFailedWithTheConnectionReason()
+    {
+        var bed = new Bed(null, flow: HandoffAfterHttpFlow, http: new RecordingHttpBlocks(
+            new HttpCallResult(false, null, RunVariables.Empty(), HttpCallOutcomes.ConnectionUnavailable, "secret_unreadable", "API de Clasic")));
+        bed.Messenger.Reply = _ => new BotSendOutcome.Rejected("messaging.connection_unavailable", "secret_unreadable", "Servicio Clasic");
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new HandoffCause(
+                HandoffCauseKind.SendFailed, "messaging.connection_unavailable", "handoff", "Pasar a un asesor", "Servicio Clasic", "secret_unreadable",
+                new HandoffHttpFailure("policy-lookup", "Buscar cliente por teléfono", "connection_unavailable", "secret_unreadable", null, "API de Clasic")),
+            Assert.Single(bed.Conversations.Causes));
+        var run = Assert.Single(bed.Runs.Added);
+        Assert.Equal((RunStatus.Failed, "messaging.connection_unavailable"), (run.Status, run.FailureCode));
+    }
+
+    /// <summary>D-T2: un traspaso por falla no le escribe al cliente. Sólo el intento que falló; nada después del traspaso.</summary>
+    [Fact]
+    public async Task AFailureHandsOffWithoutSendingAnything()
+    {
+        var bed = new Bed(null, flow: HandoffAfterHttpFlow, http: new RecordingHttpBlocks(
+            new HttpCallResult(false, null, RunVariables.Empty(), HttpCallOutcomes.ConnectionUnavailable, "secret_unreadable", "API de Clasic")));
+        bed.Messenger.Reply = _ => new BotSendOutcome.Rejected("messaging.connection_unavailable", "secret_unreadable", "Servicio Clasic");
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(["Te paso con un asesor."], bed.Messenger.Texts);
+        Assert.Single(bed.Messenger.Sent);
+        Assert.Equal(1, bed.Conversations.HandedOff);
+    }
+
+    /// <summary>Fila 5 (P2-R14): una salida apunta a un bloque que no existe en la versión.</summary>
+    [Fact]
+    public async Task AnEndRunTargetMissingSaysFlowFailed()
+    {
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "n1" }, "variables": [],
+              "nodes": [ { "id": "n1", "kind": "message", "title": "Hola", "text": "Hola", "outputs": { "next": "nadie" } } ] }
+            """;
+        var bed = new Bed(null, flow: flow);
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new HandoffCause(HandoffCauseKind.FlowFailed, "automations.run.target_missing", "n1", "Hola", null, null, null),
+            Assert.Single(bed.Conversations.Causes));
+        Assert.Equal("automations.run.target_missing", Assert.Single(bed.Runs.Added).FailureCode);
+    }
+
+    /// <summary>Fila 6 (P2-R6): la versión de la corrida viva ya no existe; no hay flujo del que sacar un bloque.</summary>
+    [Fact]
+    public async Task AMissingVersionSaysFlowFailedWithoutNode()
+    {
+        var bed = new Bed(null, ActiveState(), flow: null);
+        var run = WaitingRun(DateTimeOffset.UtcNow.AddMinutes(-1));
+        bed.Runs.Added.Add(run);
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new HandoffCause(HandoffCauseKind.FlowFailed, "automations.run.version_missing", null, null, null, null, null),
+            Assert.Single(bed.Conversations.Causes));
+        Assert.Equal((RunStatus.Failed, "automations.run.version_missing"), (run.Status, run.FailureCode));
+    }
+
+    /// <summary>Fila 7: una corrida <c>Running</c> en un bloque que no pide efecto externo (sólo con una versión corrupta).</summary>
+    [Fact]
+    public async Task ARunningRunWithoutPendingEffectSaysTargetMissing()
+    {
+        var bed = new Bed(null, ActiveState());
+        var run = ConversationRun.Start(
+            Guid.CreateVersion7(), TenantId, ConversationId, ConnectionId, ChatbotId, VersionId,
+            RunState.Initial(RunVariables.Empty()) with { Status = RunStatus.Running, CurrentNodeId = "n1" }, DateTimeOffset.UtcNow.AddMinutes(-1));
+        bed.Runs.Added.Add(run);
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new HandoffCause(HandoffCauseKind.FlowFailed, "automations.run.target_missing", "n1", "Hola", null, null, null),
+            Assert.Single(bed.Conversations.Causes));
+        Assert.Equal((RunStatus.Failed, "automations.run.target_missing"), (run.Status, run.FailureCode));
+    }
+
     /// <summary>D-H4: un fallo de la API sale por <c>error</c> sin mezclar nada de lo que el ejecutor haya devuelto.</summary>
     [Fact]
     public async Task AFailedHttpBlockTakesTheErrorOutputWithoutMerging()
@@ -464,7 +638,7 @@ public sealed class RunProcessorTests
     private sealed class TestDomainException() : DomainException("messaging.automation.not_available", "Ya no es del bot.");
 
     private sealed class Bed(
-        Exception? startFailure, AutomationConversationState? state = null, IClock? clock = null, Action? onLock = null, string flow = Flow,
+        Exception? startFailure, AutomationConversationState? state = null, IClock? clock = null, Action? onLock = null, string? flow = Flow,
         IHttpBlockExecutor? http = null, bool moduleEnabled = true, bool lockBusy = false, Exception? endFailure = null, IAutomationMedia? media = null)
     {
         public RecordingInbox Inbox { get; } = new();
@@ -548,13 +722,14 @@ public sealed class RunProcessorTests
         }
     }
 
-    private sealed class ServingChatbots(string flow) : IChatbotRepository
+    /// <param name="flow"><c>null</c>: la versión de la corrida ya no existe (P2-R6).</param>
+    private sealed class ServingChatbots(string? flow) : IChatbotRepository
     {
         public Task<ServingChatbot?> FindServingByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
             Task.FromResult<ServingChatbot?>(new ServingChatbot(
                 ChatbotId, "Servicio", ChatbotStatus.Active, ChatbotTrigger.NewConversation, [], Chatbot.DefaultRestartKeyword, 3, VersionId));
 
-        public Task<string?> GetVersionFlowAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken) => Task.FromResult<string?>(flow);
+        public Task<string?> GetVersionFlowAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken) => Task.FromResult(flow);
 
         public Task<EngineSettings?> FindEngineSettingsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken) =>
             Task.FromResult<EngineSettings?>(new EngineSettings(Chatbot.DefaultRestartKeyword, 3));
@@ -609,6 +784,9 @@ public sealed class RunProcessorTests
 
         public int HandedOff { get; private set; }
 
+        /// <summary>Spec 2026-10-24: la causa de cada traspaso, en orden.</summary>
+        public List<HandoffCause> Causes { get; } = [];
+
         public int Started { get; private set; }
 
         public int Reads { get; private set; }
@@ -630,9 +808,10 @@ public sealed class RunProcessorTests
 
         public Task SetChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken) => Task.CompletedTask;
 
-        public Task HandoffAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+        public Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, CancellationToken cancellationToken)
         {
             HandedOff++;
+            Causes.Add(cause);
             return Task.CompletedTask;
         }
 
@@ -656,11 +835,14 @@ public sealed class RunProcessorTests
 
         public List<string> Texts { get; } = [];
 
+        /// <summary>Cómo responde Mensajería a cada texto; sin respuesta, lo da por enviado.</summary>
+        public Func<string, BotSendOutcome>? Reply { get; set; }
+
         public Task<BotSendOutcome> SendTextAsync(Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, string text, CancellationToken cancellationToken)
         {
             Sent.Add(clientId);
             Texts.Add(text);
-            return Task.FromResult<BotSendOutcome>(new BotSendOutcome.Sent(Guid.CreateVersion7()));
+            return Task.FromResult(Reply?.Invoke(text) ?? new BotSendOutcome.Sent(Guid.CreateVersion7()));
         }
 
         public Task<BotSendOutcome> SendInteractiveAsync(

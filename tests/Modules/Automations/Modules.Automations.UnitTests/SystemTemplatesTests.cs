@@ -83,6 +83,16 @@ public sealed partial class SystemTemplatesTests
         Assert.Equal("usa el horario de la conexión", Catalog.Find("outside-hours")!.Requirement);
     }
 
+    // Spec 2026-10-24 P-2 (decisión del owner): en «Fuera de horario» el cliente no recibe «Te paso con un asesor.»; la conversación
+    // sigue natural y el asesor la toma. Sólo esa plantilla: la de bienvenida conserva su texto.
+    [Fact]
+    public void TheOutsideHoursHandoffDoesNotTellTheCustomer()
+    {
+        var handoff = Assert.Single(FlowJson.Parse(Catalog.Find("outside-hours")!.FlowJson).Nodes.OfType<HandoffNode>());
+
+        Assert.Null(handoff.Text);
+    }
+
     [GeneratedRegex(@"\{param\.(?<key>[a-zA-Z0-9_]+)\}", RegexOptions.CultureInvariant)]
     private static partial Regex ParamToken();
 }

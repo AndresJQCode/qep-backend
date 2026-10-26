@@ -216,7 +216,7 @@ public sealed class ProviderEnablementApiTests
 
         using var scope = factory.Services.CreateScope();
         var connections = scope.ServiceProvider.GetRequiredService<IIntegrationConnections>();
-        Assert.Null(await connections.ResolveAsync(tenant.TenantId, created.Id, Ct));
+        Assert.Null((await connections.ResolveAsync(tenant.TenantId, created.Id, Ct)).Connection);
         Assert.Empty(await connections.ListActiveAsync(tenant.TenantId, "zenvia", Ct));
         // ListByProviderAsync no filtra por visibilidad ni por habilitación: la pantalla del consumidor nombra lo que existe.
         Assert.Equal([created.Id], (await connections.ListByProviderAsync(tenant.TenantId, "zenvia", Ct)).Select(listing => listing.Id));

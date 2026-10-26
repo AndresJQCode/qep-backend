@@ -31,7 +31,7 @@ public sealed class ConsumerPortsApiTests
             var connections = scope.ServiceProvider.GetRequiredService<IIntegrationConnections>();
             Assert.Equal([connection.Id], (await connections.ListActiveAsync(owner.TenantId, "zenvia", Ct)).Select(summary => summary.Id));
             Assert.Empty(await connections.ListActiveAsync(other.TenantId, "zenvia", Ct));
-            Assert.Null(await connections.ResolveAsync(other.TenantId, connection.Id, Ct));
+            Assert.Null((await connections.ResolveAsync(other.TenantId, connection.Id, Ct)).Connection);
 
             await scope.ServiceProvider.GetRequiredService<IConnectionHealthReporter>()
                 .ReportCredentialsRejectedAsync(other.TenantId, connection.Id, "credentials_rejected", Ct);
@@ -67,11 +67,13 @@ public sealed class ConsumerPortsApiTests
         var resolved = await scope.ServiceProvider.GetRequiredService<IIntegrationConnections>()
             .ResolveAsync(tenant.TenantId, created.Id, Ct);
 
-        Assert.NotNull(resolved);
-        Assert.Equal("external-api", resolved.ProviderKey);
-        Assert.Equal("https://api-clasic.qcode.co", resolved.Fields["baseUrl"]);
-        Assert.Equal("X-Token", resolved.Fields["authHeader"]);
-        Assert.Equal(SentinelExternalApiKey, resolved.Secrets["apiKey"]);
+        Assert.NotNull(resolved.Connection);
+        Assert.Equal(created.Name, resolved.Name);
+        var connection = resolved.Connection;
+        Assert.Equal("external-api", connection.ProviderKey);
+        Assert.Equal("https://api-clasic.qcode.co", connection.Fields["baseUrl"]);
+        Assert.Equal("X-Token", connection.Fields["authHeader"]);
+        Assert.Equal(SentinelExternalApiKey, connection.Secrets["apiKey"]);
         var listed = await scope.ServiceProvider.GetRequiredService<IIntegrationConnections>()
             .ListByProviderAsync(tenant.TenantId, "external-api", Ct);
         Assert.Equal([created.Id], listed.Select(item => item.Id));
@@ -108,13 +110,13 @@ public sealed class ConsumerPortsApiTests
         {
             var connections = scope.ServiceProvider.GetRequiredService<IIntegrationConnections>();
 
-            var resolved = await connections.ResolveAsync(tenant.TenantId, active.Id, Ct);
+            var resolved = (await connections.ResolveAsync(tenant.TenantId, active.Id, Ct)).Connection;
             Assert.NotNull(resolved);
             Assert.Equal(SentinelApiToken, resolved.Secrets["apiToken"]);
             Assert.Equal(FromNumber, resolved.Fields["fromNumber"]);
-            Assert.Null(await connections.ResolveAsync(tenant.TenantId, paused.Id, Ct));
-            Assert.Null(await connections.ResolveAsync(tenant.TenantId, rejected.Id, Ct));
-            Assert.Null(await connections.ResolveAsync(Guid.CreateVersion7(), active.Id, Ct));
+            Assert.Null((await connections.ResolveAsync(tenant.TenantId, paused.Id, Ct)).Connection);
+            Assert.Null((await connections.ResolveAsync(tenant.TenantId, rejected.Id, Ct)).Connection);
+            Assert.Null((await connections.ResolveAsync(Guid.CreateVersion7(), active.Id, Ct)).Connection);
             Assert.Equal([active.Id], (await connections.ListActiveAsync(tenant.TenantId, "zenvia", Ct)).Select(summary => summary.Id));
         }
 
@@ -130,8 +132,8 @@ public sealed class ConsumerPortsApiTests
         await SetModuleStatusAsync(connectionString, tenant.TenantId, "quotations", "inactive");
         using (var scope = factory.Services.CreateScope())
         {
-            Assert.Null(await scope.ServiceProvider.GetRequiredService<IIntegrationConnections>()
-                .ResolveAsync(tenant.TenantId, active.Id, Ct));
+            Assert.Null((await scope.ServiceProvider.GetRequiredService<IIntegrationConnections>()
+                .ResolveAsync(tenant.TenantId, active.Id, Ct)).Connection);
         }
     }
 }

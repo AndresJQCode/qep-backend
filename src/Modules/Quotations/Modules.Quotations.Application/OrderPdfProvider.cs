@@ -1,5 +1,6 @@
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -25,7 +26,8 @@ public sealed class OrderPdfProvider(
     IQuotationPdfRenderer renderer,
     IQuotationPdfStorage storage,
     ITenantClock tenantClock,
-    IQuotationLogoLookup logoLookup)
+    IQuotationLogoLookup logoLookup,
+    ITenantDirectory tenantDirectory)
     : IOrderPdfProvider
 {
     public async Task<string> RenderAndSaveAsync(
@@ -34,6 +36,7 @@ public sealed class OrderPdfProvider(
         // La emisión se imprime en el día del tenant (spec 2026-09-17, punto 7), como en la cotización.
         var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
         var logo = await logoLookup.FindAsync(tenantId, cancellationToken);
+        var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(tenantId), cancellationToken);
         var logoContent = logo is null ? null : await logoLookup.ReadAsync(logo, cancellationToken);
         // Un logo que no se pudo leer no frena el envío: el documento sale sin imagen en el membrete,
         // igual que el de la cotización.
@@ -42,7 +45,7 @@ public sealed class OrderPdfProvider(
             : new QuotationPdfLogo("logo" + logo.Extension, logoContent);
 
         var content = await renderer.RenderAsync(
-            QuotationPdfDocumentMapper.FromOrder(detail, calendar, pdfLogo), cancellationToken);
+            QuotationPdfDocumentMapper.FromOrder(detail, calendar, pdfLogo, regional?.NumberFormat), cancellationToken);
         return await storage.SaveOrderAsync(tenantId, orderId, content, cancellationToken);
     }
 }

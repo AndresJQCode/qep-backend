@@ -17,8 +17,12 @@ public abstract record EngineInput
     /// encola <c>automation_inbox</c>, §5.1); <see cref="ReplyId"/> es el id del botón o de la fila que el cliente tocó.</summary>
     public sealed record CustomerMessage(string Kind, string? Text, string? ReplyId, AttachmentInput? Attachment) : EngineInput;
 
-    /// <summary><see cref="Mapped"/> son las variables que escribe el mapeo del bloque (D-H4); el motor sólo las mezcla si <see cref="Ok"/>.</summary>
-    public sealed record HttpResult(string NodeId, bool Ok, int? Status, RunVariables Mapped, string? ErrorCode) : EngineInput;
+    /// <summary><see cref="Mapped"/> son las variables que escribe el mapeo del bloque (D-H4); el motor sólo las mezcla si <see cref="Ok"/>.
+    /// <see cref="Outcome"/> y <see cref="ConnectionName"/> (spec 2026-10-24 §4.2) el motor no los lee, como tampoco <see cref="Status"/> ni
+    /// <see cref="ErrorCode"/>: viajan para que el bucle de efectos explique un traspaso que vino de este resultado.</summary>
+    public sealed record HttpResult(
+        string NodeId, bool Ok, int? Status, RunVariables Mapped, string? ErrorCode, string? Outcome = null, string? ConnectionName = null)
+        : EngineInput;
 
     public sealed record BusinessHours(string NodeId, bool IsOpen) : EngineInput;
 }

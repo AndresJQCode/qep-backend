@@ -60,6 +60,8 @@ public static class QuotationsInfrastructureExtensions
         // The tenant's minimum purchase (spec 2026-10-08, D7): read by the recalculation and the
         // response composer, written by PUT /quotations/settings, all on the request's DbContext.
         services.AddScoped<IQuotationSettingsStore, QuotationSettingsStore>();
+        // La conexión de WhatsApp que el tenant eligió (spec 2026-10-21 D5–D10): la lee y la guarda el envío.
+        services.AddScoped<IWhatsAppChannelChoiceStore, WhatsAppChannelChoiceStore>();
         // Las transportadoras del tenant (spec 2026-10-17 §4).
         services.AddScoped<ICarrierRepository, CarrierRepository>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
@@ -97,17 +99,23 @@ public static class QuotationsInfrastructureExtensions
                 sp.GetRequiredService<IOptions<QuotationsOptions>>()));
 
     /// <summary>
-    /// Siempre Zenvia, sin cuenta propia: el token, el número y las plantillas llegan en cada envío
+    /// Zenvia sin cuenta propia: el token, el número y las plantillas llegan en cada envío
     /// como el canal del tenant (plan 2026-10-21). No hay sender de log ni cuenta global: sin canal el
     /// envío responde `quotation.whatsapp.no_channel`, y las pruebas registran dobles sólo en su host
-    /// (spec 2026-10-21 D18).
+    /// (spec 2026-10-21 D18). El puerto de Meta (<see cref="IMetaWhatsAppSender"/>) lo registra Bootstrapper.
     /// </summary>
-    private static void AddWhatsAppSender(IServiceCollection services) =>
+    private static void AddWhatsAppSender(IServiceCollection services)
+    {
         // `new HttpClient()` directo, sin `IHttpClientFactory` — mismo criterio que
         // `InfobipEmailChannel` en Notifications, el único otro cliente HTTP saliente del backend.
-        services.AddSingleton<IWhatsAppSender>(sp =>
+        services.AddSingleton<IZenviaWhatsAppSender>(sp =>
             new ZenviaWhatsAppSender(
                 new HttpClient(),
                 sp.GetRequiredService<IOptions<QuotationsOptions>>(),
                 sp.GetRequiredService<ILogger<ZenviaWhatsAppSender>>()));
+
+        // El Strategy por proveedor (spec 2026-10-21 D17). Scoped: el puerto de Meta cruza a Mensajería y usa el
+        // DbContext del request.
+        services.AddScoped<IWhatsAppSender, WhatsAppSenderRouter>();
+    }
 }

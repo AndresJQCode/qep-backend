@@ -183,6 +183,7 @@ app.MapQuotationEndpoints();
 app.MapOrderEndpoints();
 app.MapOrdersExportLayoutEndpoints();
 app.MapQuotationSettingsEndpoints();
+app.MapWhatsAppChannelEndpoints();
 app.MapCarrierEndpoints();
 app.MapReportingEndpoints();
 app.MapPlatformEndpoints();

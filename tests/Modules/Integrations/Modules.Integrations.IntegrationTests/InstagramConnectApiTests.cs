@@ -302,7 +302,7 @@ public sealed class InstagramConnectApiTests
         Assert.Contains($"access_token={SentinelLongToken}", refresh.Uri.Query, StringComparison.Ordinal);
         await using (var scope = factory.Services.CreateAsyncScope())
         {
-            var resolved = await scope.ServiceProvider.GetRequiredService<IIntegrationConnections>().ResolveAsync(tenant.TenantId, created.Id, Ct);
+            var resolved = (await scope.ServiceProvider.GetRequiredService<IIntegrationConnections>().ResolveAsync(tenant.TenantId, created.Id, Ct)).Connection;
             Assert.Equal(SentinelRefreshedToken, resolved!.Secrets["accessToken"]);
             Assert.True(DateTimeOffset.Parse(resolved.Fields["tokenExpiresAt"], null, System.Globalization.DateTimeStyles.RoundtripKind) > DateTimeOffset.UtcNow.AddDays(59));
         }

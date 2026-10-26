@@ -25,23 +25,34 @@ internal sealed class MessagingConnectionDirectory(
     public async Task<IReadOnlyList<MessagingRoute>> FindByAccountAsync(string wabaId, CancellationToken cancellationToken) =>
         (await routes.FindByAccountAsync(Provider, wabaId, cancellationToken)).Select(ToRoute).ToArray();
 
-    public async Task<MessagingSender?> ResolveSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    public async Task<MessagingSender?> ResolveSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        (await ResolveSenderWithReasonAsync(tenantId, connectionId, cancellationToken)).Sender;
+
+    /// <summary>Spec 2026-10-24 D-T11: el motivo de Integrations como código (<see cref="ConnectionReasonCodes"/>); otro proveedor es
+    /// <c>wrong_provider</c> y sin número o sin token, <c>incomplete</c>.</summary>
+    public async Task<MessagingSenderResolution> ResolveSenderWithReasonAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
     {
-        var resolved = await connections.ResolveAsync(tenantId, connectionId, cancellationToken);
-        if (resolved is null || !string.Equals(resolved.ProviderKey, Provider, StringComparison.Ordinal))
+        var resolution = await connections.ResolveAsync(tenantId, connectionId, cancellationToken);
+        if (resolution.Connection is not { } resolved)
         {
-            return null;
+            return new MessagingSenderResolution(
+                null, ConnectionReasonCodes.Of(resolution.Unavailable ?? ConnectionUnavailableReason.NotFound), resolution.Name);
+        }
+
+        if (!string.Equals(resolved.ProviderKey, Provider, StringComparison.Ordinal))
+        {
+            return new MessagingSenderResolution(null, ConnectionReasonCodes.WrongProvider, resolved.Name);
         }
 
         return resolved.Fields.TryGetValue(WhatsAppCloudFieldKeys.PhoneNumberId, out var phoneNumberId)
             && resolved.Secrets.TryGetValue(WhatsAppCloudFieldKeys.AccessToken, out var token)
-                ? new MessagingSender(phoneNumberId, token)
-                : null;
+                ? new MessagingSenderResolution(new MessagingSender(phoneNumberId, token), null, resolved.Name)
+                : new MessagingSenderResolution(null, ConnectionReasonCodes.Incomplete, resolved.Name);
     }
 
     public async Task<InstagramSender?> ResolveInstagramSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
     {
-        var resolved = await connections.ResolveAsync(tenantId, connectionId, cancellationToken);
+        var resolved = (await connections.ResolveAsync(tenantId, connectionId, cancellationToken)).Connection;
         if (resolved is null || !string.Equals(resolved.ProviderKey, InstagramProvider, StringComparison.Ordinal))
         {
             return null;
@@ -67,7 +78,7 @@ internal sealed class MessagingConnectionDirectory(
 
     public async Task<MessagingTemplateSource?> ResolveTemplateSourceAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
     {
-        var resolved = await connections.ResolveAsync(tenantId, connectionId, cancellationToken);
+        var resolved = (await connections.ResolveAsync(tenantId, connectionId, cancellationToken)).Connection;
         if (resolved is null || !string.Equals(resolved.ProviderKey, Provider, StringComparison.Ordinal))
         {
             return null;
@@ -87,7 +98,7 @@ internal sealed class MessagingConnectionDirectory(
         var result = new List<MessagingConnectionDto>();
         foreach (var summary in (await connections.ListActiveAsync(tenantId, Provider, cancellationToken)).OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase))
         {
-            if (await connections.ResolveAsync(tenantId, summary.Id, cancellationToken) is { } resolved)
+            if ((await connections.ResolveAsync(tenantId, summary.Id, cancellationToken)).Connection is { } resolved)
             {
                 result.Add(new MessagingConnectionDto(
                     summary.Id, summary.Name, resolved.Fields.GetValueOrDefault(WhatsAppCloudFieldKeys.DisplayPhoneNumber)));
@@ -96,7 +107,7 @@ internal sealed class MessagingConnectionDirectory(
 
         foreach (var summary in (await connections.ListActiveAsync(tenantId, InstagramProvider, cancellationToken)).OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase))
         {
-            if (await connections.ResolveAsync(tenantId, summary.Id, cancellationToken) is { } resolved)
+            if ((await connections.ResolveAsync(tenantId, summary.Id, cancellationToken)).Connection is { } resolved)
             {
                 result.Add(new MessagingConnectionDto(
                     summary.Id, summary.Name, null, nameof(ConversationChannel.Instagram), resolved.Fields.GetValueOrDefault(InstagramFieldKeys.Username)));
