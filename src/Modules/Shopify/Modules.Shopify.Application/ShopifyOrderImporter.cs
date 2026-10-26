@@ -391,7 +391,7 @@ public sealed class ShopifyOrderImporter(
                 bornIncomplete,
                 departmentId,
                 cityText,
-                RawAddress(snapshot.ShippingAddress!),
+                ShopifyUnresolvedCitySample.Of(snapshot.ShippingAddress!),
                 Blank(snapshot.ShippingAddress!.ProvinceCode),
                 PartyCityOnly: !draft.IsStorePickup && ShippingPartyFields(snapshot) is not null,
                 CustomerCityOnly: creation is { CityBlocked: true },
@@ -459,7 +459,8 @@ public sealed class ShopifyOrderImporter(
         return string.Join('\n', parts);
     }
 
-    /// <summary>La dirección cruda de la línea de las notas, sin el rótulo: es también la muestra de la bandeja (§4.2).</summary>
+    /// <summary>La dirección cruda de la línea de las notas, sin el rótulo. No es la muestra de la bandeja: esa no lleva nombre ni
+    /// teléfono (<see cref="ShopifyUnresolvedCitySample"/>).</summary>
     private static string RawAddress(ShopifyAddress address) =>
         string.Join(", ", new[]
             {

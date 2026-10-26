@@ -381,7 +381,9 @@ public sealed class ShopifyImportFlowTests
                 JOIN shopify.orders m ON m.id = o.source_ref
                 JOIN customers.customers c ON c.id = o.customer_id AND c.tenant_id = o.tenant_id
                 """));
-        Assert.Contains("CALLI", await flow.ScalarAsync("SELECT sample_address FROM geography.unresolved_cities"), StringComparison.Ordinal);
+        Assert.Equal(
+            "Calle 10 # 43-20, Apto 301, CALLI, Valle del Cauca, CO",
+            await flow.ScalarAsync("SELECT sample_address FROM geography.unresolved_cities"));
         Assert.Contains("Dirección de envío de Shopify: ", await flow.ScalarAsync("SELECT notes FROM quotations.orders"), StringComparison.Ordinal);
     }
 

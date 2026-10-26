@@ -214,7 +214,8 @@ public interface IShopifyGeographyLookup
 /// <see cref="CustomerId"/> es el cliente que <b>esta</b> importación creó incompleto, o <c>null</c> (desvío S4);
 /// <see cref="CustomerCityOnly"/> dice que la ciudad era lo único que le faltaba para nacer completo, y
 /// <see cref="PartyCityOnly"/>, que lo único que le faltaba a la parte de envío (con correo, desvío S10). <see cref="SampleAddress"/>
-/// es la dirección cruda, como va a las notas del pedido.
+/// es la dirección sin nombre ni teléfono del comprador (<see cref="ShopifyUnresolvedCitySample"/>): la ve un operador de otro
+/// tenant.
 /// </summary>
 public sealed record ShopifyUnresolvedCityReport(
     Guid TenantId,

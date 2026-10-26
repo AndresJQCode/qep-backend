@@ -361,10 +361,29 @@ public sealed class ShopifyImportResultTests
         Assert.Equal(
             new ShopifyUnresolvedCityReport(
                 TenantId, row.Id, orderId, customerId, ValleId, "CALLI",
-                "Laura Gómez, Cra 5 # 10-20, CALLI, Valle del Cauca, CO, +573001112233", "VAC",
+                "Cra 5 # 10-20, CALLI, Valle del Cauca, CO", "VAC",
                 PartyCityOnly: true, CustomerCityOnly: true, Now),
             Assert.Single(world.UnresolvedCities.Reports));
         Assert.Equal(ShopifyImportState.Imported, row.ImportState);
+    }
+
+    // La muestra se ve en la consola del operador, que cruza tenants: lleva sólo la dirección, nunca el nombre ni el teléfono del
+    // comprador (las notas del pedido sí, porque son del tenant). Las partes en blanco se saltan.
+    [Fact]
+    public async Task TheSampleAddressLeavesOutTheBuyerNameAndPhone()
+    {
+        var world = WorldWithValle();
+        var address = Calli with { Address2 = " Apto 301 ", Province = "  " };
+        var snapshot = Order(address: address, shippingLines: [Line(19_000m)]);
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        var sample = Assert.Single(world.UnresolvedCities.Reports).SampleAddress;
+        Assert.Equal("Cra 5 # 10-20, Apto 301, CALLI, CO", sample);
+        Assert.Equal(sample, ShopifyUnresolvedCitySample.Of(address));
+        Assert.DoesNotContain("Laura", sample, StringComparison.Ordinal);
+        Assert.DoesNotContain("3001112233", sample, StringComparison.Ordinal);
+        Assert.Contains("Laura Gómez", Assert.Single(world.Writer.Creates).Draft.Notes, StringComparison.Ordinal);
     }
 
     // Sin teléfono la parte de envío tampoco nacería con la ciudad: igual entra a la bandeja, pero no es «sólo la ciudad». Y sin
