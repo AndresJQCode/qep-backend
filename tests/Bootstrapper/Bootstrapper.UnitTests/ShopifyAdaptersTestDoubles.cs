@@ -421,6 +421,9 @@ internal sealed class NamedCities(params City[] cities) : ICityRepository
     public Task<City?> FindByNameAsync(DepartmentId departmentId, string name, CancellationToken cancellationToken) =>
         Task.FromResult(cities.FirstOrDefault(city => city.DepartmentId == departmentId && city.Name == name));
 
+    public async Task<CityNameMatch?> MatchByNameAsync(DepartmentId departmentId, string name, CancellationToken cancellationToken) =>
+        await FindByNameAsync(departmentId, name, cancellationToken) is { } city ? new CityNameMatch(city, SynonymId: null) : null;
+
     public Task<IReadOnlyList<City>> ListByDepartmentAsync(DepartmentId departmentId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 

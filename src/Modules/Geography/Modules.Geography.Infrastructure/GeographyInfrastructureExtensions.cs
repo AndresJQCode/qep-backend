@@ -26,6 +26,9 @@ public static class GeographyInfrastructureExtensions
 
         services.AddScoped<IDepartmentRepository, DepartmentRepository>();
         services.AddScoped<ICityRepository, CityRepository>();
+        services.AddScoped<ICitySynonymRepository, CitySynonymRepository>();
+        services.AddScoped<IGeographyUnitOfWork, GeographyUnitOfWork>();
+        services.AddScoped<IGeographyAuditRecorder, GeographyAuditRecorder>();
         services.AddScoped<GeographySeeder>();
 
         return services;

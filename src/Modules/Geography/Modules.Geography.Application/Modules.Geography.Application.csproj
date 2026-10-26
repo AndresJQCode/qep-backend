@@ -2,6 +2,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Modules.Geography.Domain\Modules.Geography.Domain.csproj" />
+    <!-- Audit (AuditActorType del puerto de auditoría propio, IGeographyAuditRecorder), como Shopify. -->
+    <ProjectReference Include="..\..\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
   </ItemGroup>
 </Project>

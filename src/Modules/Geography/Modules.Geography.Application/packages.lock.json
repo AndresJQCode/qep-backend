@@ -11,6 +11,12 @@
       "buildingblocks.domain": {
         "type": "Project"
       },
+      "modules.audit.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
       "modules.geography.domain": {
         "type": "Project",
         "dependencies": {

@@ -19,7 +19,8 @@ public sealed class UnresolvedCityOccurrence
 
     public string Source { get; private set; } = string.Empty;
 
-    public string SourceRef { get; private set; } = string.Empty;
+    /// <summary>El id de la fila de origen (en Shopify, la de <c>shopify.orders</c>).</summary>
+    public Guid SourceRef { get; private set; }
 
     public Guid OrderId { get; private set; }
 

@@ -2,7 +2,10 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using ClosedXML.Excel;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
+using Modules.Geography.Infrastructure.Persistence;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
 namespace Modules.Customers.IntegrationTests;
@@ -891,5 +894,61 @@ public sealed class CustomerStatusAndImportApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    // D-C8 (spec 2026-10-26): la importación por Excel resuelve la ciudad con el mismo emparejamiento que Shopify,
+    // así que un sinónimo confirmado también vale acá. El sinónimo va por SQL: la pantalla del operador es de otro slice.
+    [Fact]
+    public async Task ImportMatchesACitySynonym()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var classification = await CreateClassificationAsync(manager);
+        Guid caliId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var geography = scope.ServiceProvider.GetRequiredService<GeographyDbContext>();
+            var cali = await geography.Cities.SingleAsync(
+                city => city.DivipolaCode == "76001", TestContext.Current.CancellationToken);
+            caliId = cali.Id.Value;
+            var operatorId = Guid.Parse("01900000-0000-7000-8000-0000000000aa");
+            var now = DateTimeOffset.UtcNow;
+            await geography.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                INSERT INTO geography.city_synonyms
+                    (id, department_id, normalized_text, display_text, city_id, created_by, created_at, updated_by, updated_at, version)
+                VALUES ({Guid.CreateVersion7()}, {cali.DepartmentId.Value}, 'CALLI', 'Calli', {caliId},
+                        {operatorId}, {now}, {operatorId}, {now}, 1)
+                """,
+                TestContext.Current.CancellationToken);
+        }
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Verde Esencial S.A.S.",
+                    IdentificationType: "NIT",
+                    IdentificationNumber: "900.111.111-1",
+                    Department: "Valle del Cauca",
+                    City: "Calli",
+                    Classification: classification.Name,
+                    WithRetention: "No")
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Empty(result.Errors);
+        Assert.Equal(1, result.ImportedCount);
+        var page = await ListAsync(client, string.Empty);
+        var customer = Assert.Single(page.Items);
+        Assert.Equal(caliId, customer.City?.Id);
     }
 }
