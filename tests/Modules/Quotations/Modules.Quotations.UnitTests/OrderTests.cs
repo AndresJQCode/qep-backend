@@ -1280,12 +1280,28 @@ public sealed class OrderTests
     [Fact]
     public void AttachExternalShippingOverAnotherPartyIsShippingPartyPresent()
     {
-        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty(CityB)));
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty() with { Phone = "3009998877" }));
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(1)));
 
         Assert.Equal("order.order.shipping_party_present", error.Code);
+    }
+
+    // Spec 2026-10-26 §4.4 y desvío S1 (un pedido no edita sus partes): la misma parte en otra ciudad la puso un intento anterior
+    // del mismo trabajo, con la ciudad que el sinónimo tenía entonces. Es la misma escritura: no la toca, y el consumidor guarda
+    // la ciudad que quedó (y la recorrige si el sinónimo ya apunta a otra).
+    [Fact]
+    public void AttachExternalShippingOverOurPartyInAnotherCityIsANoOp()
+    {
+        var order = NewShopifyOrder();
+        order.AttachExternalShipping(ShippingParty(CityB), RawAddressPrefix, Now.AddHours(1));
+
+        var changed = order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(2));
+
+        Assert.False(changed);
+        Assert.Equal(2, order.Version);
+        Assert.Equal(ShippingParty(CityB), order.Shipping!.ToDetails());
     }
 
     // Review Focus 3: sólo se agrega la parte mientras el pedido está pendiente.
@@ -1355,6 +1371,21 @@ public sealed class OrderTests
     // Spec 2026-10-26 §4.6: el trabajo que recorrige puede caer después de que Quotations guardó y antes de que Shopify
     // actualizara su huella. Al reintentar manda la huella vieja y encuentra la parte ya en la ciudad nueva: es el mismo cambio,
     // no una edición de otra persona.
+    // Lo mismo con una ciudad que no es ni la esperada ni la de destino: un intento anterior la llevó a la que el sinónimo tenía
+    // entonces. No la toca; el consumidor guarda la que quedó y su paso 5 siembra la recorrección.
+    [Fact]
+    public void CorrectExternalShippingCityOfOurPartyInAThirdCityIsANoOp()
+    {
+        var cityC = Guid.CreateVersion7();
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty(cityC)));
+
+        var changed = order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, Now.AddHours(1));
+
+        Assert.False(changed);
+        Assert.Equal(1, order.Version);
+        Assert.Equal(ShippingParty(cityC), order.Shipping!.ToDetails());
+    }
+
     [Fact]
     public void CorrectExternalShippingCityRetriedAfterItWasAppliedIsANoOp()
     {

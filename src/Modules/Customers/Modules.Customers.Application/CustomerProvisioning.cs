@@ -164,9 +164,11 @@ public sealed class CustomerProvisioning(
             return new(ExternalCustomerCityOutcomeKind.NotFound, null, null);
         }
 
-        if (customer.IsComplete && customer.CityId == data.CityId && customer.Version == expectedVersion + 1)
+        // Un reintento: un intento anterior lo completó con estos datos y cayó antes de que Shopify guardara. La ciudad puede ser
+        // otra (el sinónimo cambió entre intentos), así que no se compara: vuelve la que quedó, y Shopify la recorrige.
+        if (customer.IsComplete && customer.Version == expectedVersion + 1 && WasCompletedWith(customer, data))
         {
-            return new(ExternalCustomerCityOutcomeKind.AlreadyApplied, customer.Version, null);
+            return new(ExternalCustomerCityOutcomeKind.AlreadyApplied, customer.Version, null, customer.CityId);
         }
 
         if (IneligibleReason(customer, expectedVersion, mustBeComplete: false) is { } reason)
@@ -208,7 +210,7 @@ public sealed class CustomerProvisioning(
             return new(ExternalCustomerCityOutcomeKind.NotCompletable, null, exception.Code);
         }
 
-        return new(ExternalCustomerCityOutcomeKind.Applied, customer.Version, null);
+        return new(ExternalCustomerCityOutcomeKind.Applied, customer.Version, null, customer.CityId);
     }
 
     public async Task<ExternalCustomerCityOutcome> CorrectCityAsync(
@@ -220,9 +222,12 @@ public sealed class CustomerProvisioning(
             return new(ExternalCustomerCityOutcomeKind.NotFound, null, null);
         }
 
-        if (customer.IsComplete && customer.CityId == cityId && customer.Version == expectedVersion + 1)
+        // Un reintento: un intento anterior ya lo sacó de la ciudad anterior (a ésta, o a la que el sinónimo tenía entonces) y
+        // cayó antes de que Shopify guardara. Vuelve la ciudad que quedó. Lo único que no distingue es una persona que le cambió
+        // la ciudad exactamente una vez en esa ventana; fuera de ella, cualquier edición sube la versión otra vez.
+        if (customer.IsComplete && customer.Version == expectedVersion + 1 && customer.CityId != previousCityId)
         {
-            return new(ExternalCustomerCityOutcomeKind.AlreadyApplied, customer.Version, null);
+            return new(ExternalCustomerCityOutcomeKind.AlreadyApplied, customer.Version, null, customer.CityId);
         }
 
         if (IneligibleReason(customer, expectedVersion, mustBeComplete: true) is { } reason)
@@ -241,8 +246,17 @@ public sealed class CustomerProvisioning(
 
         // Sin auditoría acá: la corrección de ciudad la audita Shopify una sola vez (IShopifyAuditRecorder).
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return new(ExternalCustomerCityOutcomeKind.Applied, customer.Version, null);
+        return new(ExternalCustomerCityOutcomeKind.Applied, customer.Version, null, customer.CityId);
     }
+
+    // Lo que la venta trajo y no es la ciudad: el documento, la clasificación y el país. Una persona que completó la ficha con
+    // otro documento no es un reintento nuestro.
+    private static bool WasCompletedWith(Customer customer, CompleteCustomerData data) =>
+        IdentificationTypeParser.SupportedWireValues.Contains(data.IdentificationType.Trim(), StringComparer.OrdinalIgnoreCase)
+        && customer.IdentificationType == IdentificationTypeParser.Parse(data.IdentificationType)
+        && string.Equals(customer.IdentificationNumber, data.IdentificationNumber.Trim(), StringComparison.Ordinal)
+        && customer.ClassificationId?.Value == data.ClassificationId
+        && string.Equals(customer.Country, data.Country.Trim(), StringComparison.OrdinalIgnoreCase);
 
     public async Task<ProvisionedCustomer> CreateIncompleteAsync(
         Guid tenantId, string? name, string? phone, string? email, string? country, CancellationToken cancellationToken)

@@ -184,9 +184,12 @@ internal sealed class FakeCityCorrectionRepository(FakeShopifyDatabase database)
     public void Add(ShopifyCityCorrection correction) => database.PendingCityCorrections.Add(correction);
 
     // Como la consulta de EF: sólo lo guardado, de todos los tenants, en orden de id.
-    public Task<IReadOnlyList<ShopifyCityCorrection>> ListBySynonymAsync(Guid synonymId, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<ShopifyCityCorrection>>(
+    public Task<IReadOnlyList<ShopifyCityCorrection>> ListBySynonymAsync(Guid synonymId, CancellationToken cancellationToken)
+    {
+        database.Log.Add($"list:{synonymId}");
+        return Task.FromResult<IReadOnlyList<ShopifyCityCorrection>>(
             [.. database.CityCorrections.Where(correction => correction.SynonymId == synonymId).OrderBy(correction => correction.Id)]);
+    }
 }
 
 /// <summary>Los trabajos de corrección (spec 2026-10-26 D-C6) en la «base»: lo agregado queda pendiente hasta el guardado de
@@ -197,6 +200,15 @@ internal sealed class FakeCityCorrectionJobRepository(FakeShopifyDatabase databa
         Task.FromResult(database.CityCorrectionJobs.Concat(database.PendingCityCorrectionJobs).FirstOrDefault(job => job.Id == id));
 
     public void Add(ShopifyCityCorrectionJob job) => database.PendingCityCorrectionJobs.Add(job);
+
+    public Task<bool> LockIfPendingAsync(Guid id, CancellationToken cancellationToken)
+    {
+        database.Log.Add($"job-lock:{id}");
+        return Task.FromResult(
+            !database.CityCorrectionJobsFinishedElsewhere.Contains(id)
+            && database.CityCorrectionJobs.Concat(database.PendingCityCorrectionJobs)
+                .Any(job => job.Id == id && job.Status == ShopifyCityCorrectionJobStatus.Pending));
+    }
 }
 
 /// <summary>Transportadoras por título exacto y la tasa del envío del tenant; anota qué se le preguntó. La normalización del

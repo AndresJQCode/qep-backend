@@ -252,7 +252,7 @@ public sealed class CustomerProvisioningTests
         var outcome = await bed.Provisioning.CompleteExternalSaleAsync(
             Tenant, customer.Id.Value, 1, Buyer() with { CityId = ValleCityId }, TestContext.Current.CancellationToken);
 
-        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, 2, null), outcome);
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, 2, null, ValleCityId), outcome);
         Assert.Equal(["classification", "city", "cuc"], bed.Calls);
         // prefijo de la clasificación + departamento de Cali (76) + consecutivo
         Assert.Equal("CLI76000007", customer.Cuc);
@@ -280,11 +280,46 @@ public sealed class CustomerProvisioningTests
         var second = await bed.Provisioning.CompleteExternalSaleAsync(Tenant, customer.Id.Value, 1, data, TestContext.Current.CancellationToken);
 
         Assert.Equal(ExternalCustomerCityOutcomeKind.Applied, first.Kind);
-        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null), second);
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null, CityId), second);
         // El segundo intento no gasta otro número del consecutivo ni audita otra vez.
         Assert.Equal(calls, bed.Calls.Count);
         Assert.Single(bed.Audit.ByIntegration);
         Assert.Equal(2, customer.Version);
+    }
+
+    // Spec 2026-10-26: el intento anterior completó al cliente con la ciudad que el sinónimo tenía entonces y cayó antes de que
+    // Shopify guardara; el reintento manda la ciudad nueva. Es la misma escritura (versión siguiente, mismos datos salvo la ciudad):
+    // AlreadyApplied con la ciudad que quedó guardada, para que Shopify la guarde en su huella y la recorrija.
+    [Fact]
+    public async Task CompleteExternalSaleRetriedWithAnotherCityIsAlreadyAppliedWithTheWrittenCity()
+    {
+        var customer = NewIncomplete();
+        var bed = NewBed(customer);
+        await bed.Provisioning.CompleteExternalSaleAsync(Tenant, customer.Id.Value, 1, Buyer(), TestContext.Current.CancellationToken);
+        var calls = bed.Calls.Count;
+
+        var retried = await bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, customer.Id.Value, 1, Buyer() with { CityId = ValleCityId }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null, CityId), retried);
+        Assert.Equal(CityId, customer.CityId);
+        Assert.Equal(calls, bed.Calls.Count);
+        Assert.Single(bed.Audit.ByIntegration);
+    }
+
+    // Una persona lo completó con otro documento justo después de la importación (versión 2): no es nuestra escritura.
+    [Fact]
+    public async Task CompleteExternalSaleOfACustomerCompletedWithOtherDataIsNotEligible()
+    {
+        var customer = NewIncomplete();
+        var bed = NewBed(customer);
+        await bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, customer.Id.Value, 1, Buyer() with { IdentificationNumber = "9988776655" }, TestContext.Current.CancellationToken);
+
+        var outcome = await bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, customer.Id.Value, 1, Buyer(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotEligible, null, ExternalCustomerCityReasons.Complete), outcome);
     }
 
     [Fact]
@@ -462,7 +497,7 @@ public sealed class CustomerProvisioningTests
         var outcome = await bed.Provisioning.CorrectCityAsync(
             Tenant, customer.Id.Value, 1, CityId, ValleCityId, TestContext.Current.CancellationToken);
 
-        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, 2, null), outcome);
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, 2, null, ValleCityId), outcome);
         Assert.Equal(ValleCityId, customer.CityId);
         Assert.Equal(ValleCityId, Assert.Single(customer.Addresses).CityId);
         Assert.Equal("CLI08000001", customer.Cuc);
@@ -482,7 +517,25 @@ public sealed class CustomerProvisioningTests
         var second = await bed.Provisioning.CorrectCityAsync(
             Tenant, customer.Id.Value, 1, CityId, ValleCityId, TestContext.Current.CancellationToken);
 
-        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null), second);
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null, ValleCityId), second);
+        AssertUntouched(customer, 2, updatedAt, bed);
+    }
+
+    // El intento anterior lo llevó a la ciudad que el sinónimo tenía entonces; el reintento pide otra. Es la misma escritura
+    // (versión siguiente, la ciudad ya no es la anterior): AlreadyApplied con la ciudad que quedó, sin tocar nada.
+    [Fact]
+    public async Task CorrectCityRetriedWithAnotherCityIsAlreadyAppliedWithTheWrittenCity()
+    {
+        var customer = NewComplete();
+        var bed = NewBed(customer);
+        await bed.Provisioning.CorrectCityAsync(Tenant, customer.Id.Value, 1, CityId, ValleCityId, TestContext.Current.CancellationToken);
+        var updatedAt = customer.UpdatedAt;
+
+        var retried = await bed.Provisioning.CorrectCityAsync(
+            Tenant, customer.Id.Value, 1, CityId, Guid.NewGuid(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null, ValleCityId), retried);
+        Assert.Equal(ValleCityId, customer.CityId);
         AssertUntouched(customer, 2, updatedAt, bed);
     }
 

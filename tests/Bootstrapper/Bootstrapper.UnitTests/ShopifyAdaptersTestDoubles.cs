@@ -331,7 +331,7 @@ internal sealed class FakeCustomerProvisioning : ICustomerProvisioning
     {
         ExternalCompletes.Add((tenantId, customerId, expectedVersion, data));
         return Task.FromResult(
-            OnExternalCity?.Invoke() ?? new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, expectedVersion + 1, null));
+            OnExternalCity?.Invoke() ?? new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, expectedVersion + 1, null, data.CityId));
     }
 
     public Task<ExternalCustomerCityOutcome> CorrectCityAsync(
@@ -339,7 +339,7 @@ internal sealed class FakeCustomerProvisioning : ICustomerProvisioning
     {
         CityCorrections.Add((tenantId, customerId, expectedVersion, previousCityId, cityId));
         return Task.FromResult(
-            OnExternalCity?.Invoke() ?? new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, expectedVersion + 1, null));
+            OnExternalCity?.Invoke() ?? new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, expectedVersion + 1, null, cityId));
     }
 }
 

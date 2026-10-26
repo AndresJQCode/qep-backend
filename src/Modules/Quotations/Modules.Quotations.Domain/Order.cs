@@ -969,7 +969,9 @@ public sealed class Order
 
     /// <summary>
     /// Spec 2026-10-26 §4.4: agrega la parte de envío que Shopify no pudo completar al crear el pedido (la ciudad
-    /// no se reconocía). <c>true</c> si la agregó; <c>false</c> si ya estaba esa misma parte (un reintento).
+    /// no se reconocía). <c>true</c> si la agregó; <c>false</c> si ya estaba esa misma parte, en esa ciudad o en otra (un
+    /// reintento: como un pedido no edita sus partes, desvío S1, la misma parte en otra ciudad la puso un intento anterior con
+    /// la ciudad que el sinónimo tenía entonces; el consumidor lee la que quedó en <see cref="Shipping"/>).
     /// Quita de las notas toda línea que empiece por <paramref name="notesLinePrefix"/> (ordinal): la dirección en
     /// crudo que se anotó mientras no había parte. Sólo pedidos externos pendientes, sin recogida en tienda y sin
     /// otra parte de envío; la parte debe quedar completa. No recalcula totales.
@@ -994,7 +996,7 @@ public sealed class Order
         var candidate = OrderParty.Create(Id, QuotationPartyRole.Shipping, shipping);
         if (Shipping is { } current)
         {
-            return current.ToDetails() == candidate.ToDetails()
+            return SameExceptCity(current.ToDetails(), candidate.ToDetails())
                 ? false
                 : throw new QuotationsDomainException(
                     ExternalOrderErrors.ShippingPartyPresent, "The order already has another shipping party.");
@@ -1017,24 +1019,25 @@ public sealed class Order
 
     /// <summary>
     /// Spec 2026-10-26 §4.6: cambia sólo el departamento y la ciudad de la parte de envío, y sólo si sigue siendo
-    /// la que se guardó (<paramref name="expected"/>): si alguien la tocó, lanza <c>order.order.shipping_party_changed</c>.
-    /// <c>true</c> si cambió; <c>false</c> si ya estaba en esa ciudad, también si la parte es <paramref name="expected"/> ya
-    /// llevada a ella (un reintento: el consumidor cayó antes de actualizar su huella).
+    /// la que se guardó (<paramref name="expected"/>) salvo la ciudad: si alguien tocó otro campo, lanza
+    /// <c>order.order.shipping_party_changed</c>. <c>true</c> si cambió; <c>false</c> si la parte ya no está en la ciudad de
+    /// <paramref name="expected"/> (un reintento: la llevó un intento anterior, a ésta o a la que el sinónimo tenía entonces, y el
+    /// consumidor cayó antes de actualizar su huella; lee la que quedó en <see cref="Shipping"/>).
     /// </summary>
     public bool CorrectExternalShippingCity(
         QuotationPartyDetails expected, Guid departmentId, Guid cityId, DateTimeOffset occurredAt)
     {
         ArgumentNullException.ThrowIfNull(expected);
         EnsurePending("The shipping city can only be corrected while the order is pending.");
-        if (Shipping is { } corrected && corrected.ToDetails() == expected with { DepartmentId = departmentId, CityId = cityId })
-        {
-            return false;
-        }
-
-        if (Shipping is not { } party || party.ToDetails() != expected)
+        if (Shipping is not { } party || !SameExceptCity(party.ToDetails(), expected))
         {
             throw new QuotationsDomainException(
                 ExternalOrderErrors.ShippingPartyChanged, "The shipping party is no longer the one the platform sent.");
+        }
+
+        if (party.ToDetails() != expected || (party.DepartmentId == departmentId && party.CityId == cityId))
+        {
+            return false;
         }
 
         party.Apply(party.ToDetails() with { DepartmentId = departmentId, CityId = cityId });
@@ -1065,6 +1068,11 @@ public sealed class Order
     }
 
     private bool IsExternal => Source is not OrderSource.Quotation and not OrderSource.Manual;
+
+    // Spec 2026-10-26 y desvío S1: un pedido no edita sus partes, así que una parte de envío igual salvo el departamento y la
+    // ciudad es la que puso la plataforma (en otra ciudad del mismo sinónimo), no una de otra persona.
+    private static bool SameExceptCity(QuotationPartyDetails party, QuotationPartyDetails other) =>
+        party with { DepartmentId = other.DepartmentId, CityId = other.CityId } == other;
 
     private void EnsurePending(string message)
     {

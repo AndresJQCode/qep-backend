@@ -213,7 +213,7 @@ public sealed class ShopifyCityCorrectionProcessorTests
     {
         var world = new CorrectionWorld();
         world.Synonyms.Point(SynonymId, ValleId, CaliId);
-        world.Writer.OnComplete = _ => new ShopifyCityWriteResult(ShopifyCityWriteKind.Applied, null, 2, null);
+        world.Writer.OnComplete = _ => new ShopifyCityWriteResult(ShopifyCityWriteKind.Applied, null, 2, null, CaliId);
         var job = world.Seed(world.ResolveCustomer());
 
         await world.ProcessAsync(job);
@@ -293,7 +293,84 @@ public sealed class ShopifyCityCorrectionProcessorTests
             (TenantId, SynonymId, ShopifyCityCorrectionTarget.Order, OrderId, (Guid?)correction.Id, Guid.Empty, (Guid?)null, ShopifyCityCorrectionJobStatus.Pending),
             (recorrect.TenantId, recorrect.SynonymId, recorrect.Target, recorrect.TargetId, recorrect.CorrectionId, recorrect.OperatorSubjectId, recorrect.SourceMessageId, recorrect.Status));
         Assert.Equal(ShopifyCityCorrectionJobStatus.Applied, job.Status);
-        Assert.Equal(2, world.Shop.UnitOfWork.Saves);
+        Assert.Equal(1, world.Shop.UnitOfWork.Saves);
+    }
+
+    // Un intento anterior escribió en Quotations con la ciudad que el sinónimo tenía entonces (CALIMA) y cayó; el sinónimo ya apunta
+    // a CALI. Quotations responde AlreadyApplied con la parte como quedó: la huella guarda CALIMA, la ciudad que de verdad se
+    // escribió, y la recorrección que se siembra en el mismo guardado la lleva a CALI.
+    [Fact]
+    public async Task AnOrderAlreadyAppliedInTheOldCityKeepsTheWrittenCityAndSeedsARecorrection()
+    {
+        var world = new CorrectionWorld();
+        world.Synonyms.Point(SynonymId, ValleId, CaliId);
+        world.Writer.OnAttach = _ => new ShopifyCityWriteResult(ShopifyCityWriteKind.AlreadyApplied, PartyIn(CalimaId), null, null);
+        var job = world.Seed(world.ResolveOrder());
+
+        await world.ProcessAsync(job);
+
+        var correction = Assert.Single(world.Shop.Database.CityCorrections);
+        Assert.Equal(PartyIn(CalimaId), correction.Party);
+        Assert.Equal(CalimaId, AuditFields(Assert.Single(world.Shop.Database.Audit).Fields).CityId);
+        var recorrect = Assert.Single(world.Shop.Database.CityCorrectionJobs, other => other.Kind == ShopifyCityCorrectionJobKind.Recorrect);
+        Assert.Equal(correction.Id, recorrect.CorrectionId);
+        Assert.Equal(1, world.Shop.UnitOfWork.Saves);
+    }
+
+    // Lo mismo con un cliente: Customers devuelve la ciudad que quedó guardada, y ésa es la huella.
+    [Fact]
+    public async Task ACustomerAlreadyAppliedInTheOldCityKeepsTheWrittenCityAndSeedsARecorrection()
+    {
+        var world = new CorrectionWorld();
+        world.Synonyms.Point(SynonymId, ValleId, CaliId);
+        world.Writer.OnComplete = _ => new ShopifyCityWriteResult(ShopifyCityWriteKind.AlreadyApplied, null, 2, null, CalimaId);
+        var job = world.Seed(world.ResolveCustomer());
+
+        await world.ProcessAsync(job);
+
+        var correction = Assert.Single(world.Shop.Database.CityCorrections);
+        Assert.Equal((CalimaId, (long?)2), (correction.CityId, correction.CustomerVersion));
+        Assert.Equal(
+            correction.Id,
+            Assert.Single(world.Shop.Database.CityCorrectionJobs, other => other.Kind == ShopifyCityCorrectionJobKind.Recorrect).CorrectionId);
+    }
+
+    // Un solo guardado, en una transacción: primero el candado de la fila del trabajo (otra réplica con el lease vencido espera
+    // ahí), después el del sinónimo, que comparte con el evento corrected, y con él tomado se relee la ciudad.
+    [Fact]
+    public async Task TheAppliedJobIsSavedOnceUnderTheJobAndSynonymLocks()
+    {
+        var world = new CorrectionWorld();
+        world.Synonyms.Point(SynonymId, ValleId, CaliId);
+        world.Synonyms.Log = world.Shop.Database.Log;
+        var job = world.Seed(world.ResolveOrder());
+
+        await world.ProcessAsync(job);
+
+        Assert.Equal(
+            ["begin", $"job-lock:{job.Id}", "synonym-read", $"synonym-lock:{SynonymId}", "synonym-read", "save", "commit"],
+            world.Shop.Database.Log);
+    }
+
+    // Dos réplicas con el mismo trabajo (el lease venció mientras la primera seguía): la segunda encuentra la fila ya terminada y
+    // no deja otra huella, otra auditoría ni otro guardado.
+    [Fact]
+    public async Task AJobAlreadyFinishedByAnotherReplicaWritesNothing()
+    {
+        var world = new CorrectionWorld();
+        world.Synonyms.Point(SynonymId, ValleId, CaliId);
+        var correction = ShopifyCityCorrection.ForOrder(
+            TenantId, SynonymId, ShopifyCityCorrectionOrigin.Correction, OrderId, world.Mirror.Id, PartyIn(CalimaId), Now.AddDays(-1));
+        world.Shop.Database.CityCorrections.Add(correction);
+        var job = world.Seed(ShopifyCityCorrectionJob.Recorrect(correction, OperatorId, MessageId, Now));
+        world.Shop.Database.CityCorrectionJobsFinishedElsewhere.Add(job.Id);
+
+        await world.ProcessAsync(job);
+
+        Assert.Equal(0, world.Writer.Calls);
+        Assert.Equal((PartyIn(CalimaId), (Guid?)null), (correction.Party, correction.PreviousCityId));
+        Assert.Empty(world.Shop.Database.Audit);
+        Assert.Equal(0, world.Shop.UnitOfWork.Saves);
     }
 
     // Cada rechazo de Quotations o Customers termina el trabajo con su motivo, sin huella ni auditoría. Lo que el espejo no trae
@@ -420,11 +497,17 @@ internal sealed class FakeCitySynonymLookup : IShopifyCitySynonymLookup
 {
     private readonly Dictionary<Guid, ShopifyCitySynonymRef> synonyms = [];
 
+    /// <summary>Si se da, cada lectura deja <c>synonym-read</c> en él (el registro de la «base»).</summary>
+    public List<string>? Log { get; set; }
+
     public void Point(Guid synonymId, Guid departmentId, Guid cityId, bool isDeleted = false) =>
         synonyms[synonymId] = new ShopifyCitySynonymRef(synonymId, departmentId, cityId, isDeleted);
 
-    public Task<ShopifyCitySynonymRef?> FindAsync(Guid synonymId, CancellationToken cancellationToken) =>
-        Task.FromResult(synonyms.GetValueOrDefault(synonymId));
+    public Task<ShopifyCitySynonymRef?> FindAsync(Guid synonymId, CancellationToken cancellationToken)
+    {
+        Log?.Add("synonym-read");
+        return Task.FromResult(synonyms.GetValueOrDefault(synonymId));
+    }
 }
 
 /// <summary>El puerto hacia Quotations y Customers: anota cada llamada y, sin otra instrucción, responde como un éxito (la parte
@@ -473,7 +556,8 @@ internal sealed class FakeCityCorrectionWriter : IShopifyCityCorrectionWriter
     {
         Calls++;
         Completed.Add((tenantId, customerId, expectedVersion, data));
-        return Task.FromResult(OnComplete?.Invoke(data) ?? new ShopifyCityWriteResult(ShopifyCityWriteKind.Applied, null, expectedVersion + 1, null));
+        return Task.FromResult(
+            OnComplete?.Invoke(data) ?? new ShopifyCityWriteResult(ShopifyCityWriteKind.Applied, null, expectedVersion + 1, null, data.CityId));
     }
 
     public Task<ShopifyCityWriteResult> CorrectCustomerCityAsync(
@@ -481,6 +565,6 @@ internal sealed class FakeCityCorrectionWriter : IShopifyCityCorrectionWriter
     {
         Calls++;
         CustomerCities.Add((tenantId, customerId, expectedVersion, previousCityId, cityId));
-        return Task.FromResult(new ShopifyCityWriteResult(ShopifyCityWriteKind.Applied, null, expectedVersion + 1, null));
+        return Task.FromResult(new ShopifyCityWriteResult(ShopifyCityWriteKind.Applied, null, expectedVersion + 1, null, cityId));
     }
 }

@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Shopify.Application;
 using Npgsql;
 
@@ -47,8 +48,33 @@ internal sealed class ShopifyUnitOfWork(ShopifyDbContext dbContext) : IShopifyUn
 
     public void DiscardPendingChanges() => dbContext.ChangeTracker.Clear();
 
+    public async Task<IShopifyTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        new ShopifyTransaction(await dbContext.Database.BeginTransactionAsync(cancellationToken));
+
+    public Task LockCitySynonymAsync(Guid synonymId, CancellationToken cancellationToken)
+    {
+        // Fuera de una transacción el candado se soltaría al terminar la sentencia y no serializaría nada.
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("LockCitySynonymAsync requires an open transaction (BeginTransactionAsync).");
+        }
+
+        // El mismo texto que 'shopify.city-synonym:' || synonym_id::text en SQL (un Guid se formatea como el uuid de Postgres): un
+        // candado tomado desde SQL crudo con esa expresión es el mismo candado.
+        var key = $"shopify.city-synonym:{synonymId}";
+        return dbContext.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock(hashtextextended({key}, 0))", cancellationToken);
+    }
+
     private static bool IsUniqueViolation(DbUpdateException exception, string constraintName) =>
         exception.InnerException is PostgresException postgres
         && postgres.SqlState == PostgresErrorCodes.UniqueViolation
         && string.Equals(postgres.ConstraintName, constraintName, StringComparison.Ordinal);
+
+    private sealed class ShopifyTransaction(IDbContextTransaction transaction) : IShopifyTransaction
+    {
+        public Task CommitAsync(CancellationToken cancellationToken) => transaction.CommitAsync(cancellationToken);
+
+        // Disponer sin commit hace rollback, y el rollback es lo que suelta los candados.
+        public ValueTask DisposeAsync() => transaction.DisposeAsync();
+    }
 }

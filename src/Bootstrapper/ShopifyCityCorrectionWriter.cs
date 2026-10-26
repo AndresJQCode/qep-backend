@@ -67,7 +67,8 @@ internal sealed class ShopifyCityCorrectionWriter(IServiceScopeFactory scopes) :
         return FromCustomer(outcome);
     }
 
-    // La huella sólo viaja con un éxito: es la parte como quedó guardada, que es contra lo que la próxima recorrección compara. Un
+    // La huella sólo viaja con un éxito: es la parte como quedó guardada (en un reintento, quizá en la ciudad que el sinónimo tenía
+    // antes), que es contra lo que la próxima recorrección compara. Un
     // pedido que no es de una plataforma (order.order.source_invalid) es, para Shopify, un pedido que no encuentra.
     private static ShopifyCityWriteResult FromOrder(ExternalShippingOutcome outcome) => outcome.Kind switch
     {
@@ -86,8 +87,9 @@ internal sealed class ShopifyCityCorrectionWriter(IServiceScopeFactory scopes) :
 
     private static ShopifyCityWriteResult FromCustomer(ExternalCustomerCityOutcome outcome) => outcome.Kind switch
     {
-        ExternalCustomerCityOutcomeKind.Applied => new(ShopifyCityWriteKind.Applied, null, outcome.Version, null),
-        ExternalCustomerCityOutcomeKind.AlreadyApplied => new(ShopifyCityWriteKind.AlreadyApplied, null, outcome.Version, null),
+        ExternalCustomerCityOutcomeKind.Applied => new(ShopifyCityWriteKind.Applied, null, outcome.Version, null, outcome.CityId),
+        ExternalCustomerCityOutcomeKind.AlreadyApplied =>
+            new(ShopifyCityWriteKind.AlreadyApplied, null, outcome.Version, null, outcome.CityId),
         ExternalCustomerCityOutcomeKind.NotFound => Refused(ShopifyCityWriteKind.NotFound),
         ExternalCustomerCityOutcomeKind.NotEligible => Refused(ShopifyCityWriteKind.NotEligible, outcome.Reason),
         ExternalCustomerCityOutcomeKind.NotCompletable => Refused(ShopifyCityWriteKind.NotCompletable, outcome.Reason),

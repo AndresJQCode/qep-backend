@@ -1,8 +1,9 @@
 namespace Modules.Customers.Application;
 
 /// <summary>Spec de ciudades 2026-10-26 §4.6: qué pasó con el cliente de una venta externa cuando Shopify le pidió
-/// completarlo o corregirle la ciudad. <c>Applied</c> y <c>AlreadyApplied</c> llevan la versión que quedó;
-/// <c>NotEligible</c> y <c>NotCompletable</c> llevan el motivo.</summary>
+/// completarlo o corregirle la ciudad. <c>Applied</c> y <c>AlreadyApplied</c> llevan la versión y la ciudad que quedaron
+/// guardadas (con <c>AlreadyApplied</c>, la que escribió un intento anterior, que puede no ser la que se pidió ahora: Shopify
+/// guarda ésa en su huella); <c>NotEligible</c> y <c>NotCompletable</c> llevan el motivo.</summary>
 public enum ExternalCustomerCityOutcomeKind
 {
     Applied,
@@ -16,7 +17,8 @@ public enum ExternalCustomerCityOutcomeKind
     NotCompletable,
 }
 
-public sealed record ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind Kind, long? Version, string? Reason);
+public sealed record ExternalCustomerCityOutcome(
+    ExternalCustomerCityOutcomeKind Kind, long? Version, string? Reason, Guid? CityId = null);
 
 /// <summary>Los motivos de <see cref="ExternalCustomerCityOutcomeKind.NotEligible"/>.</summary>
 public static class ExternalCustomerCityReasons

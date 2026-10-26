@@ -862,8 +862,9 @@ public sealed class ShopifyAdaptersTests
         var (customerId, previousCityId, cityId) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
         var cases = new (ExternalCustomerCityOutcome Outcome, ShopifyCityWriteResult Expected)[]
         {
-            (new(ExternalCustomerCityOutcomeKind.Applied, 2, null), new(ShopifyCityWriteKind.Applied, null, 2, null)),
-            (new(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null), new(ShopifyCityWriteKind.AlreadyApplied, null, 2, null)),
+            (new(ExternalCustomerCityOutcomeKind.Applied, 2, null, cityId), new(ShopifyCityWriteKind.Applied, null, 2, null, cityId)),
+            // La ciudad que quedó guardada, aunque no sea la que se pidió (un reintento después de que el sinónimo cambió).
+            (new(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null, previousCityId), new(ShopifyCityWriteKind.AlreadyApplied, null, 2, null, previousCityId)),
             (new(ExternalCustomerCityOutcomeKind.NotFound, null, null), new(ShopifyCityWriteKind.NotFound, null, null, null)),
             (new(ExternalCustomerCityOutcomeKind.NotEligible, null, ExternalCustomerCityReasons.Edited), new(ShopifyCityWriteKind.NotEligible, null, null, "edited")),
             (new(ExternalCustomerCityOutcomeKind.NotCompletable, null, "validation.failed"), new(ShopifyCityWriteKind.NotCompletable, null, null, "validation.failed")),

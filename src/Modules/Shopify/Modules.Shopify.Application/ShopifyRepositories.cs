@@ -85,6 +85,11 @@ public interface IShopifyCityCorrectionJobRepository
     Task<ShopifyCityCorrectionJob?> FindAsync(Guid id, CancellationToken cancellationToken);
 
     void Add(ShopifyCityCorrectionJob job);
+
+    /// <summary>Toma la fila del trabajo (<c>FOR UPDATE</c>) dentro de la transacción abierta y dice si sigue <c>Pending</c>. Con
+    /// el lease vencido, otra réplica puede reclamar un trabajo que todavía corre: su reclamo espera esta fila, y al soltarla ve el
+    /// trabajo terminado. Si aun así llegan dos al mismo, el segundo encuentra <c>false</c> y no escribe nada.</summary>
+    Task<bool> LockIfPendingAsync(Guid id, CancellationToken cancellationToken);
 }
 
 /// <summary>

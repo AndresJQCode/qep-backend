@@ -525,11 +525,31 @@ public sealed class ExternalOrderServiceTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var setup = await ArrangeAsync(factory);
         using var _ = setup.Client;
-        var order = await CreateAsync(factory, Draft(setup, "#3012", parties: PartiesRequest(Party(CityB))));
+        var other = Party() with { Phone = "3009998877" };
+        var order = await CreateAsync(factory, Draft(setup, "#3012", parties: PartiesRequest(other)));
 
         var outcome = await AttachAsync(factory, setup, order.OrderId, Party());
 
-        Assert.Equal((ExternalShippingOutcomeKind.ShippingPresent, Party(CityB)), (outcome.Kind, outcome.Party));
+        Assert.Equal((ExternalShippingOutcomeKind.ShippingPresent, other), (outcome.Kind, outcome.Party));
+        Assert.Equal(("3009998877", (Guid?)CityA, (string?)null), await ReadShippingAsync(database, order.OrderId));
+    }
+
+    // Desvío S1: un pedido no edita sus partes, así que la misma parte en otra ciudad la puso un intento anterior del trabajo con
+    // la ciudad que el sinónimo tenía entonces. Es AlreadyApplied, y la parte vuelve como quedó guardada: el trabajo guarda esa
+    // ciudad en su huella, no la que mandó.
+    [Fact]
+    public async Task AttachShippingRetriedWithAnotherCityReturnsThePartyAsPersisted()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#3016", notes: $"{RawAddressPrefix} Cra 5"));
+        await AttachAsync(factory, setup, order.OrderId, Party(CityB));
+
+        var retried = await AttachAsync(factory, setup, order.OrderId, Party());
+
+        Assert.Equal((ExternalShippingOutcomeKind.AlreadyApplied, Party(CityB)), (retried.Kind, retried.Party));
         Assert.Equal(("3001112233", (Guid?)CityB, (string?)null), await ReadShippingAsync(database, order.OrderId));
     }
 

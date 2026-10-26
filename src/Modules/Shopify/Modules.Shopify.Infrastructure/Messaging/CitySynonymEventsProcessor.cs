@@ -41,8 +41,12 @@ internal sealed partial class CitySynonymEventsProcessor(IServiceScopeFactory sc
     public Task ProcessBatchAsync(CancellationToken cancellationToken) =>
         Claims.ProcessBatchAsync(ProcessAsync, LogFailure, cancellationToken);
 
+    // En una transacción: el evento corrected lista las huellas bajo el candado del sinónimo, y el candado tiene que durar hasta
+    // que los trabajos sembrados se guarden (si no, una huella escrita entre la lista y el guardado quedaría sin recorregir).
     private async Task ProcessAsync(ShopifyClaimedMessage message, CancellationToken cancellationToken)
     {
+        var unitOfWork = message.Services.GetRequiredService<IShopifyUnitOfWork>();
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         var applier = message.Services.GetRequiredService<ShopifyCitySynonymEventApplier>();
         var record = message.Record;
         var readable = true;
@@ -65,7 +69,8 @@ internal sealed partial class CitySynonymEventsProcessor(IServiceScopeFactory sc
         }
 
         await Claims.MarkProcessedAsync(message, cancellationToken);
-        await message.Services.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     // Sin intento (null) falló el reclamo mismo: no se contó nada y el mensaje vuelve en el tick siguiente.

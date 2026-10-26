@@ -517,11 +517,13 @@ public enum ShopifyCityWriteKind
     NotCompletable,
 }
 
-/// <summary><see cref="Party"/> es la parte de envío como quedó guardada, con un éxito de pedido: es la huella. <see cref="CustomerVersion"/>
-/// es la versión del cliente después del cambio, con un éxito de cliente (desvío S7). <see cref="Detail"/> es el motivo de
-/// Quotations o Customers (el estado del pedido, <c>edited</c>, <c>validation.failed</c>…), para el log.</summary>
+/// <summary><see cref="Party"/> es la parte de envío como quedó guardada, con un éxito de pedido: es la huella.
+/// <see cref="CustomerVersion"/> y <see cref="CustomerCityId"/> son la versión y la ciudad del cliente como quedaron, con un
+/// éxito de cliente (desvío S7). Con <c>AlreadyApplied</c> la ciudad, en los dos casos, es la que escribió un intento anterior y
+/// puede no ser la que se pidió: la huella guarda ésa, y el paso 5 la recorrige. <see cref="Detail"/> es el motivo de Quotations
+/// o Customers (el estado del pedido, <c>edited</c>, <c>validation.failed</c>…), para el log.</summary>
 public sealed record ShopifyCityWriteResult(
-    ShopifyCityWriteKind Kind, ShopifyShippingFingerprint? Party, long? CustomerVersion, string? Detail);
+    ShopifyCityWriteKind Kind, ShopifyShippingFingerprint? Party, long? CustomerVersion, string? Detail, Guid? CustomerCityId = null);
 
 /// <summary>
 /// Spec 2026-10-26 §4.4 y §4.6: lo que el trabajo de corrección escribe en Quotations y en Customers. Adaptador en Bootstrapper sobre

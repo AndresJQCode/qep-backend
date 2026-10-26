@@ -38,11 +38,11 @@ internal sealed partial class ShopifyCityCorrectionWorker(
     [LoggerMessage(Level = LogLevel.Error, Message = "Shopify city correction tick failed.")]
     private static partial void LogTickFailed(ILogger logger, Exception exception);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Shopify city correction job {JobId} failed on attempt {Attempt}; it is retried when its lease expires.")]
-    private static partial void LogAttemptFailed(ILogger logger, Exception exception, Guid jobId, int attempt);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Shopify city correction job {JobId} failed on attempt {Attempt} of {MaxAttempts}; it is retried in {Lease}.")]
+    private static partial void LogAttemptFailed(ILogger logger, Exception exception, Guid jobId, int attempt, int maxAttempts, TimeSpan lease);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Shopify city correction job {JobId} gave up after {Attempt} attempts: {Reason}.")]
-    private static partial void LogGaveUp(ILogger logger, Guid jobId, int attempt, string reason);
+    [LoggerMessage(Level = LogLevel.Error, Message = "Shopify city correction job {JobId} failed on its last attempt ({Attempt}) and is closed as Failed: {Reason}.")]
+    private static partial void LogGaveUp(ILogger logger, Exception exception, Guid jobId, int attempt, string reason);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -112,14 +112,18 @@ internal sealed partial class ShopifyCityCorrectionWorker(
             }
             catch (Exception exception)
             {
-                // El reclamo queda vivo: vuelve al vencer el lease.
-                LogAttemptFailed(logger, exception, id, attempt);
-                if (attempt >= MaxAttempts)
+                if (attempt < MaxAttempts)
                 {
-                    LogGaveUp(logger, id, attempt, exception.GetType().Name);
-                    await queue.MarkFailedAsync(
-                        id, clock.UtcNow, Truncate($"{exception.GetType().Name}: {exception.Message}"), cancellationToken);
+                    // El reclamo queda vivo: vuelve al vencer el lease de este intento.
+                    LogAttemptFailed(logger, exception, id, attempt, MaxAttempts, Leases[attempt - 1]);
+                    continue;
                 }
+
+                // La causa de fondo y no la que la envuelve: un DbUpdateException dice poco, su PostgresException dice qué pasó.
+                var cause = exception.GetBaseException();
+                var lastError = Truncate($"{cause.GetType().Name}: {cause.Message}");
+                LogGaveUp(logger, exception, id, attempt, lastError);
+                await queue.MarkFailedAsync(id, clock.UtcNow, lastError, cancellationToken);
             }
         }
 

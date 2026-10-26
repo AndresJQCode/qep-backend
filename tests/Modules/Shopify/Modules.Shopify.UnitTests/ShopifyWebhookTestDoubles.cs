@@ -110,6 +110,12 @@ internal sealed class FakeShopifyDatabase
     public List<ShopifyCityCorrectionJob> PendingCityCorrectionJobs { get; } = [];
 
     public List<ShopifyCityCorrectionJob> CityCorrectionJobs { get; } = [];
+
+    /// <summary>Los trabajos que otra réplica ya terminó: <c>LockIfPendingAsync</c> los ve no pendientes.</summary>
+    public HashSet<Guid> CityCorrectionJobsFinishedElsewhere { get; } = [];
+
+    /// <summary>El orden de lo que pasó en la «base» (transacción, candados, guardados), para las pruebas que lo exigen.</summary>
+    public List<string> Log { get; } = [];
 }
 
 internal sealed class FakeStoreRepository(FakeShopifyDatabase database) : IShopifyStoreRepository
@@ -237,9 +243,12 @@ internal sealed class FakeUnitOfWork(FakeShopifyDatabase database) : IShopifyUni
 
     public Func<int, Task>? BeforeSave { get; set; }
 
+    public List<Guid> SynonymLocks { get; } = [];
+
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
         Saves++;
+        database.Log.Add("save");
         if (BeforeSave is { } hook)
         {
             await hook(Saves);
@@ -260,6 +269,20 @@ internal sealed class FakeUnitOfWork(FakeShopifyDatabase database) : IShopifyUni
         return written;
     }
 
+    /// <summary>La «base» confirma en cada guardado; la transacción sólo deja su rastro en el registro.</summary>
+    public Task<IShopifyTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
+    {
+        database.Log.Add("begin");
+        return Task.FromResult<IShopifyTransaction>(new FakeTransaction(database));
+    }
+
+    public Task LockCitySynonymAsync(Guid synonymId, CancellationToken cancellationToken)
+    {
+        SynonymLocks.Add(synonymId);
+        database.Log.Add($"synonym-lock:{synonymId}");
+        return Task.CompletedTask;
+    }
+
     public void DiscardPendingChanges()
     {
         Discards++;
@@ -269,6 +292,17 @@ internal sealed class FakeUnitOfWork(FakeShopifyDatabase database) : IShopifyUni
         database.PendingCityCorrections.Clear();
         database.PendingCityCorrectionJobs.Clear();
     }
+}
+
+internal sealed class FakeTransaction(FakeShopifyDatabase database) : IShopifyTransaction
+{
+    public Task CommitAsync(CancellationToken cancellationToken)
+    {
+        database.Log.Add("commit");
+        return Task.CompletedTask;
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
 
 /// <summary>La cola del worker en memoria: <see cref="Processed"/> es lo que el worker cerró y con qué.</summary>

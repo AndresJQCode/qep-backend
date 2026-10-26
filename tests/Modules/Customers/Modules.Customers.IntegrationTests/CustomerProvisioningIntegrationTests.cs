@@ -159,9 +159,14 @@ public sealed class CustomerProvisioningIntegrationTests
             provisioning.CompleteExternalSaleAsync(Tenant, incomplete.Id, incomplete.Version, data, TestContext.Current.CancellationToken));
         var again = await InScopeAsync<ExternalCustomerCityOutcome, ICustomerProvisioning>(factory, provisioning =>
             provisioning.CompleteExternalSaleAsync(Tenant, incomplete.Id, incomplete.Version, data, TestContext.Current.CancellationToken));
+        // El reintento de un trabajo cuyo sinónimo cambió de ciudad entre intentos: la misma escritura, con la ciudad que quedó.
+        var movedSynonym = await InScopeAsync<ExternalCustomerCityOutcome, ICustomerProvisioning>(factory, provisioning =>
+            provisioning.CompleteExternalSaleAsync(
+                Tenant, incomplete.Id, incomplete.Version, data with { CityId = Guid.NewGuid() }, TestContext.Current.CancellationToken));
 
-        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, 2, null), completed);
-        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null), again);
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, 2, null, city.CityId), completed);
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null, city.CityId), again);
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.AlreadyApplied, 2, null, city.CityId), movedSynonym);
         Assert.Equal(
             $"Complete|CLI{city.DepartmentDivipolaCode}000001|Cc|1020304050|{city.CityId}|2|1|{city.CityId}|true",
             await ScalarAsync(database.GetConnectionString(),
@@ -190,7 +195,7 @@ public sealed class CustomerProvisioningIntegrationTests
         var corrected = await InScopeAsync<ExternalCustomerCityOutcome, ICustomerProvisioning>(factory, provisioning =>
             provisioning.CorrectCityAsync(Tenant, existing.Id, 1, cities[0].CityId, cities[1].CityId, TestContext.Current.CancellationToken));
 
-        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, 2, null), corrected);
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.Applied, 2, null, cities[1].CityId), corrected);
         Assert.Equal($"{cities[1].CityId}|2|1|{cities[1].CityId}",
             await ScalarAsync(database.GetConnectionString(),
                 "SELECT city_id || '|' || version || '|' || "

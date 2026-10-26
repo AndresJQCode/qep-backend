@@ -47,6 +47,21 @@ internal sealed class ShopifyCityCorrectionJobRepository(ShopifyDbContext dbCont
         dbContext.CityCorrectionJobs.SingleOrDefaultAsync(job => job.Id == id, cancellationToken);
 
     public void Add(ShopifyCityCorrectionJob job) => dbContext.CityCorrectionJobs.Add(job);
+
+    public async Task<bool> LockIfPendingAsync(Guid id, CancellationToken cancellationToken)
+    {
+        // Fuera de una transacción el FOR UPDATE se soltaría al terminar la sentencia y no frenaría a la otra réplica.
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("LockIfPendingAsync requires an open transaction (BeginTransactionAsync).");
+        }
+
+        var rows = await dbContext.Database.SqlQuery<StatusRow>(
+            $"""SELECT status AS "Status" FROM shopify.city_correction_jobs WHERE id = {id} FOR UPDATE""").ToListAsync(cancellationToken);
+        return rows is [{ Status: nameof(ShopifyCityCorrectionJobStatus.Pending) }];
+    }
+
+    private sealed record StatusRow(string Status);
 }
 
 /// <summary>

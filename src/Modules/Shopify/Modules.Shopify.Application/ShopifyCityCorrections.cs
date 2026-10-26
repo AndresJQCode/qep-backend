@@ -59,7 +59,7 @@ public sealed record CitySynonymCorrectedFact(
 /// el procesador guarda con el inbox en el mismo SaveChanges, así que un mensaje procesado nunca queda sin sus trabajos.
 /// </summary>
 public sealed class ShopifyCitySynonymEventApplier(
-    IShopifyCityCorrectionJobRepository jobs, IShopifyCityCorrectionRepository corrections, IClock clock)
+    IShopifyCityCorrectionJobRepository jobs, IShopifyCityCorrectionRepository corrections, IShopifyUnitOfWork unitOfWork, IClock clock)
 {
     /// <summary>El <c>source</c> con que Shopify reporta sus ocurrencias a Geography.</summary>
     public const string ShopifySource = "shopify";
@@ -97,10 +97,13 @@ public sealed class ShopifyCitySynonymEventApplier(
     }
 
     /// <summary>§4.6 y O8: un <c>Recorrect</c> por cada huella del sinónimo, de los dos orígenes y de todos los tenants, salvo las
-    /// que ya están en la ciudad nueva. Si la persona editó algo después, lo decide el worker al correr (<c>shipping_changed</c>).</summary>
+    /// que ya están en la ciudad nueva. Si la persona editó algo después, lo decide el worker al correr (<c>shipping_changed</c>).
+    /// Lista bajo el candado del sinónimo (<see cref="IShopifyUnitOfWork.LockCitySynonymAsync"/>), que el llamador abre en una
+    /// transacción que dura hasta su guardado: una huella que el worker escribe a la vez no se pierde.</summary>
     public async Task ApplyCorrectedAsync(Guid messageId, CitySynonymCorrectedFact fact, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(fact);
+        await unitOfWork.LockCitySynonymAsync(fact.SynonymId, cancellationToken);
         var now = clock.UtcNow;
         foreach (var correction in await corrections.ListBySynonymAsync(fact.SynonymId, cancellationToken))
         {
@@ -144,20 +147,25 @@ public sealed class ShopifyCitySynonymEventApplier(
 
 /// <summary>
 /// Spec 2026-10-26 §4.4, §4.6 y D-C6: corrige el pedido o el cliente de un trabajo de <c>shopify.city_correction_jobs</c>. Lo llama
-/// el worker después de reclamarlo, en un scope propio por trabajo.
+/// el worker después de reclamarlo, en un scope propio por trabajo, y todo corre en una transacción de Shopify.
 /// <list type="number">
+/// <item>Toma la fila del trabajo (<see cref="IShopifyCityCorrectionJobRepository.LockIfPendingAsync"/>): si otra réplica ya lo
+/// terminó (el lease venció mientras corría), no escribe nada.</item>
 /// <item>Lee el sinónimo al correr: uno borrado (o que ya no existe) termina <c>synonym_deleted</c> sin escribir nada (O6), y la
-/// ciudad que se escribe es la <b>actual</b> del sinónimo, no la del evento que sembró el trabajo.</item>
+/// ciudad que se pide es la <b>actual</b> del sinónimo, no la del evento que sembró el trabajo.</item>
 /// <item>Lo que ya hizo otro trabajo no se repite: un <c>Resolve</c> cuyo pedido o cliente ya tiene la huella de este sinónimo (el
 /// importador siembra sin mensaje, así que un pedido reimportado puede sembrar otro) y un <c>Recorrect</c> cuya huella ya está en
 /// la ciudad del sinónimo terminan <c>Skipped</c> sin llamar a Quotations ni a Customers.</item>
 /// <item>Escribe por <see cref="IShopifyCityCorrectionWriter"/>, que confirma en su propio scope. Con éxito, también con
-/// <c>AlreadyApplied</c> (un intento anterior escribió y cayó antes de guardar acá), deja la huella, la auditoría y el trabajo
-/// <c>Applied</c> en un solo guardado. Cualquier rechazo termina <c>Skipped</c> con su motivo, sin huella ni auditoría.</item>
-/// <item>Después de guardar relee el sinónimo: si el operador le cambió la ciudad mientras esto corría, el evento <c>corrected</c>
-/// pudo listar las huellas antes de que existiera ésta, así que el <c>Recorrect</c> se siembra acá.</item>
+/// <c>AlreadyApplied</c> (un intento anterior escribió y cayó antes de guardar acá), la huella guarda la ciudad que de verdad quedó
+/// escrita, que en un reintento puede ser la que el sinónimo tenía antes. Cualquier rechazo termina <c>Skipped</c> con su motivo,
+/// sin huella ni auditoría.</item>
+/// <item>Con éxito, bajo el candado del sinónimo (<see cref="IShopifyUnitOfWork.LockCitySynonymAsync"/>, el mismo que toma el evento
+/// <c>corrected</c> antes de listar las huellas) relee el sinónimo y guarda en un solo guardado la huella, la auditoría, el trabajo
+/// <c>Applied</c> y, si la ciudad del sinónimo ya no es la escrita, el <c>Recorrect</c> de esa huella. Así ninguna huella queda en
+/// la ciudad vieja: o el evento la lista, o esta relectura ve la ciudad nueva.</item>
 /// </list>
-/// Lo que lanza (concurrencia, base, red, un payload ilegible) sale tal cual: el trabajo no se guarda y el worker lo reintenta.
+/// Lo que lanza (concurrencia, base, red, un payload ilegible) sale tal cual: la transacción se deshace y el worker lo reintenta.
 /// </summary>
 public sealed class ShopifyCityCorrectionProcessor(
     IShopifyCitySynonymLookup synonyms,
@@ -180,27 +188,35 @@ public sealed class ShopifyCityCorrectionProcessor(
     public async Task ProcessAsync(ShopifyCityCorrectionJob job, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(job);
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        if (!await jobs.LockIfPendingAsync(job.Id, cancellationToken))
+        {
+            return;
+        }
+
         var synonym = await synonyms.FindAsync(job.SynonymId, cancellationToken);
         if (synonym is not { IsDeleted: false })
         {
-            await SkipAsync(job, ShopifyCityCorrectionSkipReasons.SynonymDeleted, cancellationToken);
+            await SkipAsync(job, ShopifyCityCorrectionSkipReasons.SynonymDeleted, transaction, cancellationToken);
             return;
         }
 
         var existing = await ExistingCorrectionAsync(job, cancellationToken);
         if (existing is not null && (job.Kind == ShopifyCityCorrectionJobKind.Resolve || existing.CityId == synonym.CityId))
         {
-            await SkipAsync(job, AlreadyDoneReason(job.Target), cancellationToken);
+            await SkipAsync(job, AlreadyDoneReason(job.Target), transaction, cancellationToken);
             return;
         }
 
         var (result, preconditionFailed) = await WriteAsync(job, synonym, existing, cancellationToken);
         if (result is not { Kind: ShopifyCityWriteKind.Applied or ShopifyCityWriteKind.AlreadyApplied })
         {
-            await SkipAsync(job, preconditionFailed ?? SkipReasonFor(result!.Kind, job.Target), cancellationToken);
+            await SkipAsync(job, preconditionFailed ?? SkipReasonFor(result!.Kind, job.Target), transaction, cancellationToken);
             return;
         }
 
+        await unitOfWork.LockCitySynonymAsync(job.SynonymId, cancellationToken);
+        var current = await synonyms.FindAsync(job.SynonymId, cancellationToken);
         var now = clock.UtcNow;
         var previousCityId = existing?.CityId;
         var correction = RecordCorrection(job, synonym, existing, result, now);
@@ -224,9 +240,14 @@ public sealed class ShopifyCityCorrectionProcessor(
                 Json),
             now);
         job.MarkApplied(now);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        if (current is { IsDeleted: false } && current.CityId != correction.CityId)
+        {
+            // Sin operador ni mensaje: acá no se sabe quién corrigió, sólo que la ciudad ya no es la escrita.
+            jobs.Add(ShopifyCityCorrectionJob.Recorrect(correction, Guid.Empty, sourceMessageId: null, now));
+        }
 
-        await SeedRecorrectionIfMovedAsync(correction, cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     // Un Resolve busca si ya hay huella de este sinónimo en su destino; un Recorrect lee la suya. La huella no se borra nunca (ni
@@ -292,8 +313,8 @@ public sealed class ShopifyCityCorrectionProcessor(
             job.TenantId, job.TargetId, IncompleteCustomerVersion, data, cancellationToken), null);
     }
 
-    // La huella sale de lo que devolvió el escritor (la parte como la guardó Quotations, la versión que dejó Customers), nunca de
-    // lo que se le mandó. Un Recorrect actualiza la suya y conserva el origen: lo que casó al importarse sigue siendo de la
+    // La huella sale de lo que devolvió el escritor (la parte como la guardó Quotations, la versión y la ciudad que dejó
+    // Customers), nunca de lo que se le mandó: en un reintento la ciudad escrita puede ser la que el sinónimo tenía antes. Un Recorrect actualiza la suya y conserva el origen: lo que casó al importarse sigue siendo de la
     // importación.
     private ShopifyCityCorrection RecordCorrection(
         ShopifyCityCorrectionJob job,
@@ -311,7 +332,8 @@ public sealed class ShopifyCityCorrectionProcessor(
             }
             else
             {
-                existing.Recorrected(synonym.CityId, result.CustomerVersion ?? throw MissingFingerprint(job), now);
+                existing.Recorrected(
+                    result.CustomerCityId ?? throw MissingFingerprint(job), result.CustomerVersion ?? throw MissingFingerprint(job), now);
             }
 
             return existing;
@@ -333,28 +355,19 @@ public sealed class ShopifyCityCorrectionProcessor(
                 job.TargetId,
                 job.MirrorOrderId,
                 synonym.DepartmentId,
-                synonym.CityId,
+                result.CustomerCityId ?? throw MissingFingerprint(job),
                 result.CustomerVersion ?? throw MissingFingerprint(job),
                 now);
         corrections.Add(correction);
         return correction;
     }
 
-    private async Task SeedRecorrectionIfMovedAsync(ShopifyCityCorrection correction, CancellationToken cancellationToken)
-    {
-        var current = await synonyms.FindAsync(correction.SynonymId, cancellationToken);
-        if (current is { IsDeleted: false } && current.CityId != correction.CityId)
-        {
-            // Sin operador ni mensaje: acá no se sabe quién corrigió, sólo que la ciudad ya no es ésta.
-            jobs.Add(ShopifyCityCorrectionJob.Recorrect(correction, Guid.Empty, sourceMessageId: null, clock.UtcNow));
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-        }
-    }
-
-    private async Task SkipAsync(ShopifyCityCorrectionJob job, string reason, CancellationToken cancellationToken)
+    private async Task SkipAsync(
+        ShopifyCityCorrectionJob job, string reason, IShopifyTransaction transaction, CancellationToken cancellationToken)
     {
         job.MarkSkipped(reason, clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     // Lo que otro trabajo ya escribió: la parte de envío del pedido ya está puesta; el cliente ya no es el incompleto de la

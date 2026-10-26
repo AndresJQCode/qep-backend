@@ -26,7 +26,8 @@ public sealed class ShopifyCitySynonymEventApplierTests
     {
         var database = new FakeShopifyDatabase();
         var applier = new ShopifyCitySynonymEventApplier(
-            new FakeCityCorrectionJobRepository(database), new FakeCityCorrectionRepository(database), new FakeClock(Now));
+            new FakeCityCorrectionJobRepository(database), new FakeCityCorrectionRepository(database), new FakeUnitOfWork(database),
+            new FakeClock(Now));
         return (applier, database);
     }
 
@@ -147,6 +148,19 @@ public sealed class ShopifyCitySynonymEventApplierTests
         await applier.ApplyCorrectedAsync(MessageId, new CitySynonymCorrectedFact(SynonymId, ValleId, CaliId, CalimaId, OperatorId, OperatorTenantId), Ct);
 
         Assert.Equal(atCali.Id, Assert.Single(database.PendingCityCorrectionJobs).CorrectionId);
+    }
+
+    // El trabajo que corrige escribe su huella bajo el candado del sinónimo y, con él tomado, relee la ciudad. Listar las huellas
+    // bajo el mismo candado es lo que impide que una huella guardada a la vez quede sin recorregir: o el trabajo guardó antes y
+    // la lista la ve, o el trabajo relee después y ve la ciudad nueva.
+    [Fact]
+    public async Task ACorrectedEventListsTheCorrectionsUnderTheSynonymLock()
+    {
+        var (applier, database) = NewApplier();
+
+        await applier.ApplyCorrectedAsync(MessageId, new CitySynonymCorrectedFact(SynonymId, ValleId, CaliId, CalimaId, OperatorId, OperatorTenantId), Ct);
+
+        Assert.Equal([$"synonym-lock:{SynonymId}", $"list:{SynonymId}"], database.Log);
     }
 
     private static ShopifyCityCorrection OrderCorrection(Guid tenantId, ShopifyCityCorrectionOrigin origin, Guid cityId) =>
