@@ -122,19 +122,19 @@
   - `QuotationTemplateDefinition.ParametersFor(string fullName, string orderNumber, string total, string validUntil) : IReadOnlyList<TemplateParameter>`, en el orden de `Variables`.
   - `QuotationTemplateDefinition.Render(IReadOnlyList<TemplateParameter> parameters) : string`: el cuerpo con las variables sustituidas, una línea en blanco y `Footer`. Mismo formato que `TemplateCatalog.Render`.
 
-- [ ] **Step 1: Escribir las pruebas que fallan**
+- [x] **Step 1: Escribir las pruebas que fallan**
   - `WhatsAppCloudClientTemplatesTests.ADocumentHeaderTravelsAsTheFirstComponent`: `TemplateSend("qep_cotizacion_v2", "es", Named: true, [fullname…], HeaderDocument: new("media.out", "Cotizacion-COT-1.pdf"))`. En el cuerpo enviado, `template.components[0]` es `{type:"header", parameters:[{type:"document", document:{id:"media.out", filename:"Cotizacion-COT-1.pdf"}}]}` y `components[1].type == "body"`, con los `parameter_name` en orden.
   - `WhatsAppCloudClientTemplatesTests.WithoutAHeaderDocumentTheFirstComponentIsTheBody`: regresión del camino de la bandeja y las campañas.
   - `QuotationTemplateDefinitionTests.ParametersFollowTheVariablesOrder`: las claves son `["fullname","order_number","total","valid_until"]`.
   - `QuotationTemplateDefinitionTests.RenderFillsTheFourVariablesAndAppendsTheFooter`: con `("Juan Perez","COT-000123","$ 2.450.000","30 de septiembre de 2026")` da `"¡Hola, Juan Perez! Adjuntamos la cotización *COT-000123* por *$ 2.450.000*, vigente hasta el *30 de septiembre de 2026*.\n\nEste mensaje fue generado automáticamente."`.
-- [ ] **Step 2: RED.**
+- [x] **Step 2: RED.**
   ```powershell
   dotnet test tests/Modules/Messaging/Modules.Messaging.UnitTests --filter "FullyQualifiedName~WhatsAppCloudClientTemplatesTests|FullyQualifiedName~QuotationTemplateDefinitionTests"
   ```
   Falla por compilación: `TemplateHeaderDocument`, `ParametersFor` y `Render` no existen.
-- [ ] **Step 3: Implementar** las tres piezas. `Render` reusa `TemplateCatalog.Placeholder()` (internal, mismo ensamblado).
-- [ ] **Step 4: GREEN.** El mismo comando, más `dotnet test tests/Modules/Messaging/Modules.Messaging.UnitTests --filter "FullyQualifiedName~Template"` (campañas y bandeja siguen verdes).
-- [ ] **Step 5: Commit.** `feat(messaging): plantilla con encabezado de documento por id de media (spec 2026-10-21 D16c)`
+- [x] **Step 3: Implementar** las tres piezas. `Render` reusa `TemplateCatalog.Placeholder()` (internal, mismo ensamblado).
+- [x] **Step 4: GREEN.** El mismo comando, más `dotnet test tests/Modules/Messaging/Modules.Messaging.UnitTests --filter "FullyQualifiedName~Template"` (campañas y bandeja siguen verdes).
+- [x] **Step 5: Commit.** `feat(messaging): plantilla con encabezado de documento por id de media (spec 2026-10-21 D16c)`
 
 ### Task 2: Messaging envía la plantilla de cotización sin las guardas de la bandeja
 
@@ -189,7 +189,7 @@ Orden de `QuotationTemplateOutbound.SendAsync` (las dependencias son las de `Bot
 8. `new OutboundSettlement(…).SettleAsync(…, metaMediaId: mediaId, afterRollback: borrar el objeto si la fila es nueva, seen: 0)`. Un `MessagingDomainException` `ConnectionUnavailable` se traduce a `ConnectionUnavailable(BotOutbound.CredentialsRejected)`; cualquier otro, a `Failed(exception.Code)`.
 9. `Sent(claim.MessageId, conversationId)`.
 
-- [ ] **Step 1: Escribir las pruebas que fallan** (integración; conexión sembrada con `SeedWhatsAppConnectionAsync(…, "111", "222")`; Meta responde `/111/media` → `{"id":"media.out"}` y `/111/messages` → `wamid.q`)
+- [x] **Step 1: Escribir las pruebas que fallan** (integración; conexión sembrada con `SeedWhatsAppConnectionAsync(…, "111", "222")`; Meta responde `/111/media` → `{"id":"media.out"}` y `/111/messages` → `wamid.q`)
   - `SendsTheTemplateWithItsDocumentIntoANewOpenUnassignedConversation`. Sin conversación previa: `Sent`. Hay una conversación `Open` con `assigned_member_id IS NULL`, `wa_id = '573001234567'`, `user_id IS NULL` y `customer_id` = el enviado. El mensaje tiene `sent_by_member_id` = el miembro, `details->>'name' = 'qep_cotizacion_v2'` y `text` igual a `Render`. Su `message_media` tiene `mime_type = 'application/pdf'`, `file_name = 'Cotizacion-COT-1.pdf'`, `meta_media_id = 'media.out'`, `storage_key = 'messaging/{tenant}/{messageId}'` y `stored_at` no nulo, y el bucket guarda los bytes. A Meta le llega primero `/111/media` y después `/111/messages`, con el header de documento y `to = "573001234567"`.
   - `UsesTheExistingConversationOfThatPhone`. Con un entrante previo de `573001234567` (webhook): devuelve ese `ConversationId` y no hay una segunda conversación.
   - `AResolvedConversationAssignedToOtherKeepsItsStateAssignmentAndUnread` (Review Focus 4). Se siembra la conversación `Resolved`, asignada a otro miembro y con `unread_count = 2`. Después del envío siguen `Resolved`, el mismo asignado y `unread_count = 2`, y `version` no cambió.
@@ -199,21 +199,21 @@ Orden de `QuotationTemplateOutbound.SendAsync` (las dependencias son las de `Bot
   - `MetaRejectingTheTemplateLeavesAFailedMessageWithItsDocument` (Review Focus 5). `/111/messages` responde 400 con `error.code = 132015`. El resultado es `Failed`, el mensaje queda con `status` Failed y su `message_media` sigue con el objeto en el bucket.
   - `AFailedUploadToMetaSendsNothingAndLeavesNoRow`. `/111/media` responde 500: `Failed("messaging.media.upload_failed")` (el valor de `MessagingErrorCodes.MediaUploadFailed`), sin filas y sin `/111/messages`.
   - `AnInvalidValueIsRejectedBeforeAnyCall`. `FullName = "Juan\nPerez"`: `Failed(MessagingErrorCodes.MessageRejected)`, sin conversación y sin llamadas a Meta.
-- [ ] **Step 2: RED.**
+- [x] **Step 2: RED.**
   ```powershell
   $env:Seed__Enabled = "false"
   dotnet test tests/Modules/Messaging/Modules.Messaging.IntegrationTests --filter "FullyQualifiedName~QuotationTemplateOutboundTests"
   ```
   Falla por compilación: `IQuotationTemplateOutbound` no existe.
-- [ ] **Step 3: Implementar** `OpenByPhoneAsync`, `QuotationTemplateOutbound` y el registro, siguiendo los nueve pasos de arriba. El `<summary>` de la clase cita D16a y explica por qué no usa `OutboundGuards`.
-- [ ] **Step 4: GREEN.** El mismo comando, más:
+- [x] **Step 3: Implementar** `OpenByPhoneAsync`, `QuotationTemplateOutbound` y el registro, siguiendo los nueve pasos de arriba. El `<summary>` de la clase cita D16a y explica por qué no usa `OutboundGuards`.
+- [x] **Step 4: GREEN.** El mismo comando, más:
   ```powershell
   $env:Seed__Enabled = "false"
   dotnet test tests/Modules/Messaging/Modules.Messaging.IntegrationTests --filter "FullyQualifiedName~StartConversationApiTests|FullyQualifiedName~BotOutboundTests|FullyQualifiedName~InboundBsuidTests"
   dotnet test tests/Modules/Messaging/Modules.Messaging.UnitTests
   dotnet test tests/ArchitectureTests --filter "FullyQualifiedName~MessagingLayerTests"
   ```
-- [ ] **Step 5: Commit.** `feat(messaging): envío de la plantilla de cotización al hilo del número, sin guardas de la bandeja (spec 2026-10-21 D16, D16a, D16b, D16c)`
+- [x] **Step 5: Commit.** `feat(messaging): envío de la plantilla de cotización al hilo del número, sin guardas de la bandeja (spec 2026-10-21 D16, D16a, D16b, D16c)`
 
 ### Task 3: El canal de Quotations con dos proveedores y el Strategy de envío
 
@@ -278,7 +278,7 @@ public static class WhatsAppPhone { public static string? Normalize(string? phon
 
 - Consumes: nada de otras tareas. `IMetaWhatsAppSender` no tiene adaptador hasta la Task 4, así que en esta tarea **sólo se corren las unitarias** (el host de integración no resolvería el router).
 
-- [ ] **Step 1: Escribir las pruebas que fallan** (dobles nuevos en `QuotationsTestDoubles.cs`: `RecordingZenviaSender` y `RecordingMetaSender`, que guardan canal, teléfono y mensaje)
+- [x] **Step 1: Escribir las pruebas que fallan** (dobles nuevos en `QuotationsTestDoubles.cs`: `RecordingZenviaSender` y `RecordingMetaSender`, que guardan canal, teléfono y mensaje)
   - `WhatsAppSenderRouterTests.AZenviaChannelGoesToZenvia` / `AMetaChannelGoesToMetaWithTheNormalizedPhone`: con `ToPhone = "300 123 4567"`, Meta recibe `waId = "573001234567"`.
   - `WhatsAppSenderRouterTests.AQuotationWithoutPhoneIsRecipientMissingOnEitherProvider` (theory Zenvia/Meta): `quotation.whatsapp.recipient_missing`, y ningún sender recibió nada.
   - `WhatsAppSenderRouterTests.AnOrderOnAMetaChannelIsAProgrammingError`: `InvalidOperationException`.
@@ -290,20 +290,20 @@ public static class WhatsAppPhone { public static string? Normalize(string? phon
   - `SendQuotationHandlerTests.ABillingRecipientCarriesNoCustomerId`.
   - `SendOrderHandlerTests.OrderIgnoresMetaChannels`: con Meta + un Zenvia sale por Zenvia; con sólo Meta da `order.whatsapp.no_channel`.
   - `WhatsAppChannelTests.ChannelToStringHidesTheToken`: se adapta a `ZenviaWhatsAppChannel`.
-- [ ] **Step 2: RED.**
+- [x] **Step 2: RED.**
   ```powershell
   dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~WhatsApp|FullyQualifiedName~SendQuotationHandlerTests|FullyQualifiedName~SendOrderHandlerTests|FullyQualifiedName~ZenviaWhatsAppSenderTests"
   ```
   Falla por compilación.
-- [ ] **Step 3: Implementar** los tipos, el router, los helpers, el filtro de `ForOrder`, los cambios de los handlers y el registro, y hacer el barrido.
-- [ ] **Step 4: GREEN.**
+- [x] **Step 3: Implementar** los tipos, el router, los helpers, el filtro de `ForOrder`, los cambios de los handlers y el registro, y hacer el barrido.
+- [x] **Step 4: GREEN.**
   ```powershell
   dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests
   dotnet build tests/Modules/Reporting/Modules.Reporting.IntegrationTests
   dotnet test tests/ArchitectureTests --filter "FullyQualifiedName~QuotationsLayerTests"
   ```
   `ZenviaWhatsAppSenderTests` sigue verde sin cambiar las cifras esperadas: el payload de Zenvia no cambia.
-- [ ] **Step 5: Commit.** `feat(quotations): canal de Meta o Zenvia y envío por Strategy de proveedor (spec 2026-10-21 D17, §4.3)`
+- [x] **Step 5: Commit.** `feat(quotations): canal de Meta o Zenvia y envío por Strategy de proveedor (spec 2026-10-21 D17, §4.3)`
 
 ### Task 4: Adaptadores en Bootstrapper: canales de Meta y envío por Mensajería
 
@@ -317,7 +317,7 @@ public static class WhatsAppPhone { public static string? Normalize(string? phon
 - Consumes: `IQuotationTemplateOutbound`, `QuotationTemplateSend`, `QuotationTemplateSendResult` (Task 2); `MetaWhatsAppChannel`, `IMetaWhatsAppSender`, `WhatsAppTemplateValues` y `WhatsAppChannelProviders` (Task 3); `IObjectStorage.DownloadAsync(string key, CancellationToken)` (Storage).
 - Produces: el sender arma `QuotationTemplateSend` con `TemplateName`/`TemplateLanguage` del canal, `WaId` del router, `RecipientName = message.FullName`, `Total = WhatsAppTemplateValues.Total(…)`, `ValidUntil = WhatsAppTemplateValues.ValidUntil(…)`, `Document = await storage.DownloadAsync(message.DocumentStorageKey!)` y `DocumentFileName = WhatsAppTemplateValues.DocumentFileName(message.OrderNumber)`. Si el resultado no es `Sent`, lanza `QuotationsDomainException("quotation.whatsapp.send_failed", "Meta did not accept the quotation ({code o motivo}).")`.
 
-- [ ] **Step 1: Escribir las pruebas que fallan**
+- [x] **Step 1: Escribir las pruebas que fallan**
   - `QuotationsWhatsAppChannelDirectoryTests.MapsAMetaConnectionWithAnApprovedQuotationTemplate`: con `qep_cotizacion_v2`/`es`, el canal lleva esos valores, el nombre de la conexión y `displayPhoneNumber`.
   - `SkipsAMetaConnectionWithoutAnApprovedTemplate` (`FindApprovedAsync` devuelve `null`) y `SkipsAMetaConnectionThatDoesNotResolve`.
   - `ListsMetaFirstThenZenvia`.
@@ -326,12 +326,12 @@ public static class WhatsAppPhone { public static string? Normalize(string? phon
   - `QuotationsMetaWhatsAppSenderTests.SendsThePrivatePdfBytesTheTemplateAndTheFormattedValues`: el doble de `IQuotationTemplateOutbound` registra el `QuotationTemplateSend` y se comparan uno por uno los campos de *Produces*. Los bytes son los del doble de `IObjectStorage` para esa clave.
   - `QuotationsMetaWhatsAppSenderTests.AnythingButSentIsSendFailed` (theory con `ConnectionUnavailable("credentials_rejected")` y `Failed("messaging.message.rejected")`): `QuotationsDomainException` con `Code == "quotation.whatsapp.send_failed"` (Review Focus 5).
   - `WhatsAppChannelProvidersParityTests.TheQuotationsKeysAreTheIntegrationsKeys`: `WhatsAppChannelProviders.Meta == IntegrationProviders.WhatsAppCloud.Key` y lo mismo con Zenvia.
-- [ ] **Step 2: RED.**
+- [x] **Step 2: RED.**
   ```powershell
   dotnet test tests/Bootstrapper/Bootstrapper.UnitTests --filter "FullyQualifiedName~QuotationsWhatsAppChannelDirectoryTests|FullyQualifiedName~QuotationsMetaWhatsAppSenderTests|FullyQualifiedName~WhatsAppChannelProvidersParityTests"
   ```
-- [ ] **Step 3: Implementar** el directorio, el sender y el registro.
-- [ ] **Step 4: GREEN.**
+- [x] **Step 3: Implementar** el directorio, el sender y el registro.
+- [x] **Step 4: GREEN.**
   ```powershell
   dotnet test tests/Bootstrapper/Bootstrapper.UnitTests
   $env:Seed__Enabled = "false"
@@ -339,7 +339,7 @@ public static class WhatsAppPhone { public static string? Normalize(string? phon
   dotnet test tests/ArchitectureTests --filter "FullyQualifiedName~QuotationsLayerTests|FullyQualifiedName~MessagingLayerTests|FullyQualifiedName~IntegrationsLayerTests"
   ```
   Las de integración de Quotations vuelven a estar verdes: el host resuelve el router.
-- [ ] **Step 5: Commit.** `feat(bootstrapper): canales de Meta con plantilla aprobada y envío de la cotización por Mensajería (spec 2026-10-21 §4.1, D16)`
+- [x] **Step 5: Commit.** `feat(bootstrapper): canales de Meta con plantilla aprobada y envío de la cotización por Mensajería (spec 2026-10-21 §4.1, D16)`
 
 ### Task 5: La elección del canal, guardada y usada en el envío
 
@@ -385,7 +385,7 @@ Reglas de `Resolve`, en orden (prefijo `quotation.whatsapp.`):
 El SQL de `RememberAsync` (`ExecuteSqlAsync`, dentro de la transacción del llamador):
 `INSERT INTO quotations.tenant_whatsapp_channels (tenant_id, connection_id, chosen_at, chosen_by_member_id) VALUES (…) ON CONFLICT (tenant_id) DO UPDATE SET connection_id = EXCLUDED.connection_id, chosen_at = EXCLUDED.chosen_at, chosen_by_member_id = EXCLUDED.chosen_by_member_id WHERE quotations.tenant_whatsapp_channels.connection_id = {previous}`. Con `previous = null`, una fila existente no se toca. Devuelve `true` si escribió una fila.
 
-- [ ] **Step 1: Escribir las pruebas que fallan**
+- [x] **Step 1: Escribir las pruebas que fallan**
   - `WhatsAppChannelSelectionTests` (unitarias, una por regla): `NoChannelIsNoChannel`, `AValidChoiceIsUsed`, `AValidChoiceAcceptsItsOwnId`, `AValidChoiceRejectsAnotherId` (`channel_already_set`), `TheOnlyChannelIsUsedWithoutRemembering`, `TheOnlyChannelWithAnotherIdIsUnavailable`, `SeveralWithoutChoiceRequireAConnectionId`, `SeveralWithAnUnknownIdIsUnavailable`, `SeveralWithAnAvailableIdIsRemembered` (`Remember`, `PreviousChoice == null`) y `AStaleChoiceIsTreatedAsNone` (`saved` fuera de la lista y dos disponibles: sin id da `channel_required`; con id, `PreviousChoice == saved`).
   - `SendQuotationHandlerTests.ARejectedChoiceTouchesNothing` (theory con `channel_already_set` y `channel_unavailable`): el renderer no se llamó, el log de fallas está vacío y la cotización sigue `Draft`.
   - `WhatsAppChannelApiTests.TheFirstChoiceIsSavedWithTheSendAndTheNextSendDoesNotAsk` (criterio 2): con Meta + Zenvia, enviar sin `connectionId` da 422 `channel_required`. Enviar con `connectionId = Meta` da 200, y el sender registró el canal Meta. Otra cotización, enviada por **otro miembro** sin `connectionId`, da 200 por Meta.
@@ -395,20 +395,20 @@ El SQL de `RememberAsync` (`ExecuteSqlAsync`, dentro de la transacción del llam
   - `WhatsAppChannelApiTests.AStaleChoiceWithOneOtherUsesItWithoutSaving` (Review Focus 1): se elige A, el doble queda sólo con B y el envío sale por B. Se vuelve a agregar A y el siguiente envío sale por A: la fila no se reescribió.
   - `WhatsAppChannelApiTests.AFailedSendDoesNotRememberTheChoice` (Review Focus 5): con `factory.WhatsAppSender.Failure` puesto, enviar con `connectionId = Meta` da 422. Se quita la falla y enviar sin id da `channel_required`.
   - `WhatsAppChannelChoiceStoreTests.RememberDoesNotOverwriteAChoiceMadeMeanwhile` (Review Focus 2; integración, el store se resuelve de un scope del host): `Remember(A, previous: null)` da `true` y `Remember(B, previous: null)` da `false`. `Find` devuelve A. Después `Remember(B, previous: A)` da `true` y `Find` devuelve B.
-- [ ] **Step 2: RED.**
+- [x] **Step 2: RED.**
   ```powershell
   dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~WhatsAppChannelSelectionTests|FullyQualifiedName~SendQuotationHandlerTests"
   $env:Seed__Enabled = "false"
   dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --filter "FullyQualifiedName~WhatsAppChannelApiTests|FullyQualifiedName~WhatsAppChannelChoiceStoreTests"
   ```
-- [ ] **Step 3: Implementar** el store, la entidad, la migración, `Resolve`, el handler, el request y el endpoint. Revisa que la migración cree sólo `quotations.tenant_whatsapp_channels`.
-- [ ] **Step 4: GREEN.** Los mismos comandos, más:
+- [x] **Step 3: Implementar** el store, la entidad, la migración, `Resolve`, el handler, el request y el endpoint. Revisa que la migración cree sólo `quotations.tenant_whatsapp_channels`.
+- [x] **Step 4: GREEN.** Los mismos comandos, más:
   ```powershell
   $env:Seed__Enabled = "false"
   dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --filter "FullyQualifiedName~QuotationSendVoidApiTests|FullyQualifiedName~OrderSendApiTests|FullyQualifiedName~Migration"
   dotnet test tests/Modules/Reporting/Modules.Reporting.IntegrationTests --filter "FullyQualifiedName~OrdersReport"
   ```
-- [ ] **Step 5: Commit.** `feat(quotations): la elección del canal de WhatsApp se guarda al enviar y la usan los envíos siguientes (spec 2026-10-21 D5–D10, §4.2)`
+- [x] **Step 5: Commit.** `feat(quotations): la elección del canal de WhatsApp se guarda al enviar y la usan los envíos siguientes (spec 2026-10-21 D5–D10, §4.2)`
 
 ### Task 6: `GET /quotations/whatsapp-channels` y `PUT /quotations/whatsapp-channel`
 
@@ -433,9 +433,9 @@ public sealed class ChooseWhatsAppChannelValidator : AbstractValidator<ChooseWha
 public sealed record ChooseWhatsAppChannelRequest(Guid? ConnectionId);
 ```
 
-Reglas: `SelectedConnectionId` va sólo si la elección está entre los disponibles, y `NeedsChoice = Channels.Count > 1 && SelectedConnectionId is null`. `GET`: `RequireAuthorization(QuotationsPermissions.QuotationManage)`, y el handler revalida con `QuotationsAuthorization.EnsureAuthorized` y `TenantModuleGuard` (`quotations`). `PUT`: `TenancyPermissions.SettingsUpdate`, en este orden: autorizar, módulo, validador, disponible (si no, `quotation.whatsapp.channel_unavailable`), `ReplaceAsync` con el miembro de `QuotationAdvisorResolver` y auditoría `quotations.whatsapp_channel.chosen`. Responde el mismo `WhatsAppChannelsDto`, que el formulario repinta.
+Reglas: `SelectedConnectionId` va sólo si la elección está entre los disponibles, y `NeedsChoice = Channels.Count > 1 && SelectedConnectionId is null`. `GET`: se lee con `quotations.quotation.manage` o `tenancy.settings.update` (DP-F1, decisión del owner 2026-10-25; política `QuotationsPolicies.WhatsAppChannelsRead`), y el handler revalida con `QuotationsAuthorization.EnsureAuthorizedAny` y `TenantModuleGuard` (`quotations`). `PUT`: `TenancyPermissions.SettingsUpdate`, en este orden: autorizar, módulo, validador, disponible (si no, `quotation.whatsapp.channel_unavailable`), `ReplaceAsync` con el miembro de `QuotationAdvisorResolver` y auditoría `quotations.whatsapp_channel.chosen`. Responde el mismo `WhatsAppChannelsDto`, que el formulario repinta.
 
-- [ ] **Step 1: Escribir las pruebas que fallan**
+- [x] **Step 1: Escribir las pruebas que fallan**
   - `ChannelsListsTheAvailableOnesAndTheValidChoice`: Meta + Zenvia, con Meta elegido. Viajan los dos en orden, con `provider` `whatsapp-cloud`/`zenvia`, `name` y `phone`, más `selectedConnectionId = Meta` y `needsChoice = false`.
   - `NeedsChoiceWithSeveralAndNoChoice` (`true`), `OneChannelNeverNeedsChoice` (`false`, `selectedConnectionId = null`) y `NoChannelsIsAnEmptyList` (`channels = []`, `needsChoice = false`).
   - `AStaleChoiceIsNotReported`: `selectedConnectionId = null` y `needsChoice = true`.
@@ -444,15 +444,15 @@ Reglas: `SelectedConnectionId` va sólo si la elección está entre los disponib
   - `PutWithAnUnavailableConnectionIs422ChannelUnavailable`.
   - `PutWithoutConnectionIdIs422WithTheFieldError`: `validation.failed` con `errors.connectionId`.
   - `PutRequiresSettingsUpdate` (criterio 3): un asesor con `quotations.quotation.manage` y sin `tenancy.settings.update` recibe 403. Ese mismo asesor sí hace la primera elección desde el envío.
-- [ ] **Step 2: RED.**
+- [x] **Step 2: RED.**
   ```powershell
   $env:Seed__Enabled = "false"
   dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --filter "FullyQualifiedName~WhatsAppChannelApiTests"
   ```
   Falla con 404, porque las rutas no existen.
-- [ ] **Step 3: Implementar** handlers, endpoints y mapeo.
-- [ ] **Step 4: GREEN.** El mismo comando, más `dotnet test tests/ArchitectureTests --filter "FullyQualifiedName~Quotations"`.
-- [ ] **Step 5: Commit.** `feat(quotations): canales de WhatsApp del tenant y su elección desde Configuración (spec 2026-10-21 §4.4, §5.2)`
+- [x] **Step 3: Implementar** handlers, endpoints y mapeo.
+- [x] **Step 4: GREEN.** El mismo comando, más `dotnet test tests/ArchitectureTests --filter "FullyQualifiedName~Quotations"`.
+- [x] **Step 5: Commit.** `feat(quotations): canales de WhatsApp del tenant y su elección desde Configuración (spec 2026-10-21 §4.4, §5.2)`
 
 ### Task 7: Documentación y corrida combinada
 
@@ -465,7 +465,7 @@ Reglas: `SelectedConnectionId` va sólo si la elección está entre los disponib
 - Modify: `CLAUDE.md`, con una entrada nueva en Gotchas: «La cotización por Meta no usa `OutboundGuards` ni `ConversationOpener.OpenAsync`». `QuotationTemplateOutbound` busca por teléfono (`OpenByPhoneAsync`) y no por `customer_id`, para no caer en el hilo de otro número (D16b). Pasa `seen: 0` para no tocar no leídos (D16a). Y el PDF va por `id` de media, no por URL. Un cambio en el reclamo o la liquidación (`IOutboundMessages`, `OutboundSettlement`) se prueba también con `QuotationTemplateOutboundTests`.
 - Verificación transversal: `rg -n "ForQuotation\(" src tests` no devuelve nada, y `rg -n "new WhatsAppChannel\(" src tests` tampoco.
 
-- [ ] **Step 1: Corrida combinada, una sola vez**
+- [x] **Step 1: Corrida combinada, una sola vez**
   ```powershell
   $env:Seed__Enabled = "false"
   dotnet build
@@ -478,8 +478,8 @@ Reglas: `SelectedConnectionId` va sólo si la elección está entre los disponib
   dotnet test tests/ArchitectureTests
   ```
   Compara las fallas **por nombre** contra la base de `develop` (memoria del proyecto: hay fallas previas conocidas). No se acepta ninguna nueva.
-- [ ] **Step 2: Escribir la documentación** de arriba.
-- [ ] **Step 3: Commit.** `docs: envío de cotizaciones por Meta y elección del canal (spec 2026-10-21 §7)`
+- [x] **Step 2: Escribir la documentación** de arriba.
+- [x] **Step 3: Commit.** `docs: envío de cotizaciones por Meta y elección del canal (spec 2026-10-21 §7)`
 
 ## Cierre
 
@@ -492,7 +492,7 @@ Reglas: `SelectedConnectionId` va sólo si la elección está entre los disponib
 
 Todas las rutas van bajo `/api/v1/tenants/{tenantId}`. Los errores son ProblemDetails con `code` y `traceId`. Un 422 de validación trae además `errors`.
 
-**`GET /quotations/whatsapp-channels`.** Permiso `quotations.quotation.manage` y módulo `quotations`.
+**`GET /quotations/whatsapp-channels`.** Permiso `quotations.quotation.manage` o `tenancy.settings.update` (DP-F1), y módulo `quotations`.
 ```json
 {
   "channels": [
@@ -525,3 +525,10 @@ Fallas del envío, también 422, con la cotización en borrador y `SendFailed` e
 **`POST /orders/{id}/send` no cambia.** Sólo sale por Zenvia: `order.whatsapp.no_channel` (también con Meta solo), `order.whatsapp.channel_required` y `order.whatsapp.not_configured`. No recibe `connectionId` (DP-1, DP-2).
 
 **Mensajería.** La cotización enviada por Meta aparece en el hilo de ese número como un mensaje `kind: "Template"`, con `text` (cuerpo y pie ya armados), `template` (nombre e idioma) y `media` con la forma de un documento saliente: `url` `/api/v1/tenants/{tenantId}/messaging/media/{messageId}`, `mimeType: "application/pdf"` y `fileName: "Cotizacion-{número}.pdf"`. Puede quedar `Failed`. `sentBy` es quien envió la cotización.
+
+## Desvíos encontrados al ejecutar
+
+- **Task 2:** un token rechazado (190/133010) en la subida del PDF a Meta ahora reporta la conexión y devuelve ConnectionUnavailable (ruling del controlador; refleja SendMediaMessageHandler).
+- **Task 4:** WhatsAppQuotationMessage ganó Guid? TenantId = null: el adaptador de Meta no tenía de dónde sacar el tenant.
+- **Task 6:** DP-F1 (decisión del owner, 2026-10-25): GET /quotations/whatsapp-channels se lee con quotations.quotation.manage o 	enancy.settings.update (política QuotationsPolicies.WhatsAppChannelsRead, QuotationsAuthorization.EnsureAuthorizedAny).
+- **Decisión 15:** sin semilla (owner): el canal del único tenant con Zenvia lo configura el owner a mano al publicar a main.
