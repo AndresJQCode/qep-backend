@@ -179,6 +179,8 @@ app.MapCustomerEndpoints();
 app.MapClientClassificationEndpoints();
 app.MapCustomerEngagementEndpoints();
 app.MapGeographyEndpoints();
+// Spec 2026-10-26 §6: la consola de ciudades sin resolver y sinónimos del operador.
+app.MapCityOperatorEndpoints();
 app.MapQuotationEndpoints();
 app.MapOrderEndpoints();
 app.MapOrdersExportLayoutEndpoints();

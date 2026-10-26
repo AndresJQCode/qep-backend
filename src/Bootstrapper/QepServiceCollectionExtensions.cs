@@ -451,6 +451,11 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ListCitiesQuery, IReadOnlyList<CityDto>>,
             ListCitiesHandler>();
+        // Spec 2026-10-26 §6: las lecturas de la consola de ciudades del operador. La política exige el permiso y el handler
+        // revalida con OperatorAuthorization; el validador entra con AddValidatorsFromAssemblyContaining de abajo.
+        services.AddScoped<IQueryHandler<GetCitySummaryQuery, CitySummaryDto>, GetCitySummaryHandler>();
+        services.AddScoped<IQueryHandler<ListUnresolvedCitiesQuery, UnresolvedCityPageDto>, ListUnresolvedCitiesHandler>();
+        services.AddScoped<IQueryHandler<GetUnresolvedCityQuery, UnresolvedCityDetailDto>, GetUnresolvedCityHandler>();
         // Quotations, fase 1 (borrador: crear, agregar/editar/quitar lineas, editar encabezado).
         // Los seis van aca por la misma razon que el resto: el dispatcher resuelve por registro
         // explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla recien en
@@ -842,6 +847,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
         services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateConnectionValidator>();
+        services.AddValidatorsFromAssemblyContaining<ListUnresolvedCitiesValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);

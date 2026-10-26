@@ -77,4 +77,70 @@ internal sealed class UnresolvedCityRepository(GeographyDbContext dbContext) : I
             """).ToListAsync(cancellationToken);
         return owners.Count == 0 ? null : new UnresolvedCityId(owners[0]);
     }
+
+    public Task<UnresolvedCity?> FindAsync(UnresolvedCityId id, CancellationToken cancellationToken) =>
+        dbContext.UnresolvedCities.SingleOrDefaultAsync(row => row.Id == id, cancellationToken);
+
+    public async Task<(IReadOnlyList<UnresolvedCityRow> Rows, int Total)> ListAsync(
+        UnresolvedCityStatus status,
+        DepartmentId? departmentId,
+        string? normalizedSearch,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var query = dbContext.UnresolvedCities.AsNoTracking().Where(row => row.Status == status);
+        if (departmentId is { } department)
+        {
+            query = query.Where(row => row.DepartmentId == department);
+        }
+
+        // Contains se traduce a strpos, así que un % o un _ del buscador son texto y no comodines.
+        if (!string.IsNullOrEmpty(normalizedSearch))
+        {
+            query = query.Where(row => row.NormalizedText.Contains(normalizedSearch));
+        }
+
+        var total = await query.CountAsync(cancellationToken);
+        var rows = await query
+            .OrderByDescending(row => row.LastSeenAt)
+            .ThenByDescending(row => row.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(row => new
+            {
+                City = row,
+                OrderCount = dbContext.UnresolvedCityOccurrences.Count(occurrence => occurrence.UnresolvedCityId == row.Id),
+                TenantCount = dbContext.UnresolvedCityOccurrences
+                    .Where(occurrence => occurrence.UnresolvedCityId == row.Id)
+                    .Select(occurrence => occurrence.TenantId)
+                    .Distinct()
+                    .Count(),
+            })
+            .ToListAsync(cancellationToken);
+        return (rows.Select(row => new UnresolvedCityRow(row.City, row.OrderCount, row.TenantCount)).ToList(), total);
+    }
+
+    public async Task<IReadOnlyList<UnresolvedCityOccurrence>> ListOccurrencesAsync(
+        UnresolvedCityId id, CancellationToken cancellationToken) =>
+        await dbContext.UnresolvedCityOccurrences
+            .AsNoTracking()
+            .Where(occurrence => occurrence.UnresolvedCityId == id)
+            .OrderBy(occurrence => occurrence.SeenAt)
+            .ThenBy(occurrence => occurrence.Id)
+            .ToListAsync(cancellationToken);
+
+    public async Task<CitySummaryCounts> CountAsync(CancellationToken cancellationToken)
+    {
+        var pending = await dbContext.UnresolvedCities.CountAsync(
+            row => row.Status == UnresolvedCityStatus.Pending, cancellationToken);
+        var discarded = await dbContext.UnresolvedCities.CountAsync(
+            row => row.Status == UnresolvedCityStatus.Discarded, cancellationToken);
+        var synonyms = await dbContext.CitySynonyms.CountAsync(synonym => synonym.DeletedAt == null, cancellationToken);
+        var waiting = await dbContext.UnresolvedCityOccurrences.CountAsync(
+            occurrence => dbContext.UnresolvedCities.Any(row =>
+                row.Id == occurrence.UnresolvedCityId && row.Status == UnresolvedCityStatus.Pending),
+            cancellationToken);
+        return new CitySummaryCounts(pending, discarded, synonyms, waiting);
+    }
 }
