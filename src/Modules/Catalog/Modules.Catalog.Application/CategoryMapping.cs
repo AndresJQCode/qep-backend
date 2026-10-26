@@ -14,5 +14,6 @@ internal static class CategoryMapping
         productCount,
         category.Version,
         category.CreatedAt,
-        category.UpdatedAt);
+        category.UpdatedAt,
+        category.PosQuickAccessPosition);
 }

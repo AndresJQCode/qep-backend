@@ -398,6 +398,11 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .IsConcurrencyToken();
         category.Property(value => value.CreatedAt).HasColumnName("created_at");
         category.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // Quick access of the register (spec 2026-10-26-categorias-pos-acceso-rapido D-4): a column
+        // here and not a POS table, because POS has no settings table and the aggregate is Catalog's.
+        // No unique index on (tenant_id, position): EF writes a reorder row by row, and a swap
+        // would trip a non-deferrable index halfway. Contiguity is ProductCategoryQuickAccess's job.
+        category.Property(value => value.PosQuickAccessPosition).HasColumnName("pos_quick_access_position");
         category.HasIndex(value => value.TenantId).HasDatabaseName("IX_product_categories_tenant");
         category.HasIndex(value => value.ParentId).HasDatabaseName("IX_product_categories_parent");
         // El índice único (tenant_id, parent_id, lower(name)) NULLS NOT DISTINCT no se modela acá:

@@ -21,6 +21,7 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
     private const string ProductTaxRateForeignKey = "FK_products_tax_rates_tax_rate_id";
     private const string CategoryNameIndex = "IX_product_categories_tenant_parent_name";
     private const string ProductCategoryForeignKey = "FK_products_product_categories_category_id";
+    private const string CategoryParentForeignKey = "FK_product_categories_product_categories_parent_id";
     private const string OptionNameIndex = "IX_option_definitions_tenant_name";
     private const string ProductOptionForeignKey =
         "FK_product_options_option_definitions_option_definition_id";
@@ -170,6 +171,27 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
                 "catalog.product.tax_rate_not_found",
                 "The tax rate was not found in this tenant.");
         }
+        // La misma FK con la causa opuesta, como la de la tasa: borrando una categoría a la que alguien
+        // le asignó un producto entre la verificación de DeleteCategoryHandler y el commit. Va antes
+        // que la rama de abajo por ser la más específica.
+        catch (DbUpdateException exception)
+            when (IsProductCategoryViolation(exception) && IsDeletingACategory())
+        {
+            throw CategoryInUse.HasProducts();
+        }
+        // La FK de la jerarquía, también con dos causas: borrar una padre a la que le acaban de colgar
+        // una hija, o colgar (crear o mover) una hija de una padre que acaban de borrar.
+        catch (DbUpdateException exception)
+            when (IsCategoryParentViolation(exception) && IsDeletingACategory())
+        {
+            throw CategoryInUse.HasChildren();
+        }
+        catch (DbUpdateException exception) when (IsCategoryParentViolation(exception))
+        {
+            throw new CatalogDomainException(
+                "catalog.category.parent_not_found",
+                "The parent category does not exist.");
+        }
         // Un producto que apunta a una categoría que no existe: la carrera entre la verificación
         // del handler y el commit, o un borrado por SQL. Rama propia, nunca un `or` con la de la
         // tasa: son dos FK y cada una devuelve su código.
@@ -240,6 +262,19 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
             postgres.ConstraintName,
             ProductCategoryForeignKey,
             StringComparison.Ordinal);
+
+    private static bool IsCategoryParentViolation(DbUpdateException exception) =>
+        exception.InnerException is PostgresException postgres &&
+        IsForeignKeyOrRestrictViolation(postgres) &&
+        string.Equals(
+            postgres.ConstraintName,
+            CategoryParentForeignKey,
+            StringComparison.Ordinal);
+
+    // Por el ChangeTracker, como IsDeletingAnOptionOrValue: la entrada que EF adjunta a la excepción
+    // depende de qué sentencia del lote falló.
+    private bool IsDeletingACategory() =>
+        dbContext.ChangeTracker.Entries<ProductCategory>().Any(entry => entry.State == EntityState.Deleted);
 
     // El estado sigue siendo Deleted cuando SaveChanges falla: EF sólo lo pasa a Detached después
     // de un commit exitoso. Si eso cambiara, esta rama dejaría de entrar y el caso volvería a

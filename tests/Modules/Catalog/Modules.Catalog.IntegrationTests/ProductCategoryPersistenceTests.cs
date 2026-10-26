@@ -130,6 +130,111 @@ public sealed class ProductCategoryPersistenceTests
         Assert.Equal("catalog.product.category_not_found", error.Code);
     }
 
+    // The column round-trips and ListForUpdateAsync tracks: the positions set on its entities are
+    // what SaveChanges writes, without touching the version (spec D-5).
+    [Fact]
+    public async Task QuickAccessPositionsAreSavedThroughTheTrackedListWithoutBumpingTheVersion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+
+        var drinks = await SaveCategoryAsync(factory, Tenant, "Bebidas", null);
+        var shoes = await SaveCategoryAsync(factory, Tenant, "Calzado", null);
+        var foreign = await SaveCategoryAsync(factory, OtherTenant, "Ajena", null);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var repository = scope.ServiceProvider.GetRequiredService<IProductCategoryRepository>();
+            var tracked = await repository.ListForUpdateAsync(Tenant, TestContext.Current.CancellationToken);
+            Assert.DoesNotContain(tracked, category => category.Id == foreign.Id);
+            ProductCategoryQuickAccess.Replace(tracked, [shoes.Id, drinks.Id]);
+            await scope.ServiceProvider.GetRequiredService<ICatalogUnitOfWork>()
+                .SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var readScope = factory.Services.CreateAsyncScope();
+        var tree = await readScope.ServiceProvider.GetRequiredService<IProductCategoryRepository>()
+            .ListTreeAsync(Tenant, TestContext.Current.CancellationToken);
+        Assert.Equal(
+            [("Bebidas", (int?)2, 1L), ("Calzado", 1, 1L)],
+            tree.Select(category => (category.Name, category.PosQuickAccessPosition, category.Version)));
+    }
+
+    [Fact]
+    public async Task CountProductsAsyncCountsDirectActiveAndInactiveProductsOfTheTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+
+        var drinks = await SaveCategoryAsync(factory, Tenant, "Bebidas", null);
+        var sodas = await SaveCategoryAsync(factory, Tenant, "Gaseosas", drinks.Id);
+        await SaveProductAsync(factory, NewProduct("X-1", drinks.Id));
+        var inactive = NewProduct("X-2", drinks.Id);
+        inactive.Deactivate(Now);
+        await SaveProductAsync(factory, inactive);
+        await SaveProductAsync(factory, NewProduct("X-3", sodas.Id));
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IProductCategoryRepository>();
+
+        Assert.Equal(2, await repository.CountProductsAsync(Tenant, drinks.Id, TestContext.Current.CancellationToken));
+        Assert.Equal(1, await repository.CountProductsAsync(Tenant, sodas.Id, TestContext.Current.CancellationToken));
+        Assert.Equal(0, await repository.CountProductsAsync(OtherTenant, drinks.Id, TestContext.Current.CancellationToken));
+    }
+
+    // The race DeleteCategoryHandler cannot close: a product assigned between its check and the
+    // commit. The RESTRICT FK stops it and the unit of work answers the handler's own code, not 500
+    // and not the opposite cause (catalog.product.category_not_found).
+    [Fact]
+    public async Task DeletingACategoryThatAProductUsesIsHasProductsOnSave()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+
+        var drinks = await SaveCategoryAsync(factory, Tenant, "Bebidas", null);
+        await SaveProductAsync(factory, NewProduct("X-1", drinks.Id));
+
+        var error = await Assert.ThrowsAsync<CatalogDomainException>(
+            () => RemoveCategoryAsync(factory, drinks.Id));
+        Assert.Equal("catalog.category.has_products", error.Code);
+    }
+
+    [Fact]
+    public async Task DeletingAParentThatHasAChildIsHasChildrenOnSave()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+
+        var drinks = await SaveCategoryAsync(factory, Tenant, "Bebidas", null);
+        await SaveCategoryAsync(factory, Tenant, "Gaseosas", drinks.Id);
+
+        var error = await Assert.ThrowsAsync<CatalogDomainException>(
+            () => RemoveCategoryAsync(factory, drinks.Id));
+        Assert.Equal("catalog.category.has_children", error.Code);
+    }
+
+    // The other side of the hierarchy FK: hanging a child from a parent deleted meanwhile.
+    [Fact]
+    public async Task SavingAChildOfAMissingParentIsParentNotFound()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+
+        var error = await Assert.ThrowsAsync<CatalogDomainException>(
+            () => SaveCategoryAsync(factory, Tenant, "Huérfana", ProductCategoryId.New()));
+        Assert.Equal("catalog.category.parent_not_found", error.Code);
+    }
+
+    private static async Task RemoveCategoryAsync(QepApiFactory factory, ProductCategoryId categoryId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IProductCategoryRepository>();
+        var tracked = await repository.ListForUpdateAsync(Tenant, TestContext.Current.CancellationToken);
+        repository.Remove(tracked.Single(category => category.Id == categoryId));
+        await scope.ServiceProvider.GetRequiredService<ICatalogUnitOfWork>()
+            .SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
     private static Product NewProduct(string code, ProductCategoryId categoryId) =>
         Product.Create(
             ProductId.New(),

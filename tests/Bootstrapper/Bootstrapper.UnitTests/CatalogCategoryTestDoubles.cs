@@ -32,7 +32,17 @@ internal sealed class FakeProductCategoryRepository(params (ProductCategory Cate
     public Task<ProductCategory?> FindAsync(Guid tenantId, ProductCategoryId categoryId, CancellationToken cancellationToken) =>
         Task.FromResult(OfTenant(tenantId).FirstOrDefault(category => category.Id == categoryId));
 
+    public Task<IReadOnlyList<ProductCategory>> ListForUpdateAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<int> CountProductsAsync(
+        Guid tenantId, ProductCategoryId categoryId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    // Nobody writes through the POS adapter: a call here is a bug in the code under test.
     public void Add(ProductCategory category) => throw new NotSupportedException();
+
+    public void Remove(ProductCategory category) => throw new NotSupportedException();
 
     private List<ProductCategory> OfTenant(Guid tenantId) =>
         rows.Select(row => row.Category)

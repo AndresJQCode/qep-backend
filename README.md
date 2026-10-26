@@ -818,7 +818,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles`, `profile` por membership   | `advisorship.invite` / `.read` / `.manage`                                            |
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET` (`includeVariants`), `POST`, `export`, `price-scales/copy`, y por producto `GET`, `PUT` (`expectedVersion`), `activate`, `deactivate` (ver [Catálogo](#catálogo-opciones-variantes-y-galería)) | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/catalog/options`       | `GET`, `POST`, y por opción `PUT`, `DELETE`                                                 | `catalog.product.read` / `.manage`                                                           |
-| `/api/v1/tenants/{tenantId}/catalog/categories`    | `GET`, `POST`                                                                               | `catalog.product.read` / `.manage`                                                           |
+| `/api/v1/tenants/{tenantId}/catalog/categories`    | `GET`, `POST`; por categoría `PUT` y `DELETE` (`If-Match`); `PUT pos-quick-access`           | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 | `/api/v1/tenants/{tenantId}/customers`             | `identification-matches` (`GET`) y `anomalies` (`GET`); el resto del módulo está en sus secciones (ver [Clientes: documento repetido](#clientes-documento-repetido-coincidencias-y-anomalías)) | `customers.customer.read` |
 | `/api/v1/tenants/{tenantId}/customers/{customerId}` | `merge-preview` (`GET`) y `merge` (`POST`, `If-Match`); ver [Clientes: fusión](#clientes-fusión) | `customers.customer.merge` |
@@ -1287,6 +1287,18 @@ El nombre (máx. 80) es único entre hermanas sin distinguir mayúsculas, tambi�
 `catalog.product.category_not_found`. `GET /catalog/categories` trae el `productCount` de cada una: sólo los
 productos directos, activos e inactivos.
 
+Spec 2026-10-26-categorias-pos-acceso-rapido. `PUT /catalog/categories/{id}` (`{ name, parentId }`) renombra y/o
+mueve con todo su subárbol, y `DELETE /catalog/categories/{id}` (204) borra; los dos exigen `If-Match` con la
+`version` (428 `precondition.if_match_required` sin él, 412 `concurrency.conflict` si es vieja) y responden 404
+`catalog.category.not_found`. Mover debajo de sí misma o de una descendiente es 422 `catalog.category.cycle`, y
+`catalog.category.too_deep` mira la hoja más honda del subárbol movido. Borrar una con productos (activos o no)
+o con hijas es 422 `catalog.category.has_products` / `catalog.category.has_children`: se mueven primero. Las FK
+`RESTRICT` siguen como última red, y `CatalogUnitOfWork` traduce su carrera a los mismos códigos.
+`PUT /catalog/categories/pos-quick-access` (`{ categoryIds }`, sin `If-Match`) reemplaza la lista ordenada de chips
+de la caja: el índice es la posición (`posQuickAccessPosition`, 1..N contiguas; `null` sin fijar), un id repetido
+es 422 `catalog.category.quick_access_duplicate` y uno desconocido o ajeno 422 `catalog.category.not_found`; responde
+la lista completa. Fijar no sube la `version` de la categoría. Borrar una fijada la saca y recompacta las demás.
+
 Spec 2026-10-20 (`docs/superpowers/specs/2026-10-20-variantes-de-producto-design.md`). Un producto tiene
 hasta **3 opciones** (Talla, Color…) y hasta **2.048 variantes**, una por combinación de valores, como
 Shopify. El código, el código de barras, los precios, las escalas y los empaques son de **cada variante**;
@@ -1643,7 +1655,7 @@ el spec del slice; esta tabla es el inventario.
 | `GET /sessions`                    | `pos.sale.read`        | Lista paginada de sesiones de caja                                               |
 | `GET /sessions/{sessionId}`        | `pos.sale.read`        | Detalle y arqueo de una sesión                                                   |
 | `GET /products`                    | `pos.sale.create`      | Búsqueda paginada por nombre, `Code` o código de barras: productos con sus variantes vendibles; `categoryId` filtra por esa categoría y sus descendientes (un id ajeno o desconocido da página vacía) |
-| `GET /categories`                  | `pos.sale.create`      | Categorías con el conteo de productos activos acumulado, incluidas las de 0, y `total` de activos del tenant con o sin categoría |
+| `GET /categories`                  | `pos.sale.create`      | Categorías con el conteo de productos activos acumulado, incluidas las de 0, `quickAccessPosition` (chips de acceso rápido, `null` sin fijar; la lista sigue por nombre) y `total` de activos del tenant con o sin categoría |
 | `GET /products/by-code`            | `pos.sale.create`      | El escáner: la variante por código de barras exacto y, si ninguna lo tiene, por su `Code` |
 | `POST /sales/preview`              | `pos.sale.create`      | Calcula totales de un carrito sin guardar nada; cada línea es una variante (`variantId`) |
 | `POST /sales`                      | `pos.sale.create`      | Crea la venta, con una línea por variante; idempotente por el `id` del cliente (201 la primera vez, 200 al repetir); `customerId` opcional |
