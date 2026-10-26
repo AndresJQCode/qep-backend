@@ -118,10 +118,11 @@ public sealed record MessageEventDto(
 
 /// <summary>Spec 2026-10-24 (BFF): la causa del traspaso, en códigos; el texto lo arma el frontend, que es dueño del diccionario
 /// (D-T3). <c>Kind</c> viaja por nombre (<c>Block</c>, <c>InvalidReply</c>, <c>SendFailed</c>, <c>FlowFailed</c>): uno desconocido
-/// lo pinta con el texto genérico. Ningún campo trae texto de una API externa: sólo títulos de bloques y nombres de conexiones.</summary>
+/// lo pinta con el texto genérico. <c>AssignedTo</c> (spec 2026-10-25 D-8): a quién quedó asignada la conversación; <c>null</c> = sin asignar.
+/// Ningún campo trae texto de una API externa: sólo títulos de bloques y nombres de conexiones.</summary>
 public sealed record AutomationHandoffDto(
     string Kind, string? Code, string? NodeId, string? NodeTitle, string? ConnectionName, string? ConnectionReason,
-    AutomationHandoffHttpDto? Http);
+    AutomationHandoffHttpDto? Http, MemberRefDto? AssignedTo = null);
 
 /// <summary>Spec 2026-10-24 §6: el bloque HTTP fallido que arrancó el paso del traspaso. <c>Status</c> sólo si la API respondió.</summary>
 public sealed record AutomationHandoffHttpDto(
