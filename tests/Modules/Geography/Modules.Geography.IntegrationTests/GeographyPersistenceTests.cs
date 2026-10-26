@@ -110,6 +110,59 @@ public sealed class GeographyPersistenceTests
         Assert.Equal([id.Value.ToString()], resourceIds);
     }
 
+    // Fuera de una transacción pg_advisory_xact_lock se soltaría al terminar la sentencia: no serializaría nada.
+    [Fact]
+    public async Task LockCityTextRequiresAnOpenTransaction()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var warmUpClient = factory.CreateClient();
+        await using var scope = factory.Services.CreateAsyncScope();
+        var department = await DepartmentAsync(scope.ServiceProvider.GetRequiredService<GeographyDbContext>());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            scope.ServiceProvider.GetRequiredService<IGeographyUnitOfWork>()
+                .LockCityTextAsync(department.Id, "CALLI", TestContext.Current.CancellationToken));
+    }
+
+    // Dentro de la transacción el candado se toma y se sostiene hasta que ella termina: otra conexión no lo consigue
+    // mientras tanto, y sí apenas se suelta. El mismo texto en otro departamento es otro candado.
+    [Fact]
+    public async Task LockCityTextHoldsTheLockUntilTheTransactionEnds()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var warmUpClient = factory.CreateClient();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var probe = factory.Services.CreateAsyncScope();
+        var probeContext = probe.ServiceProvider.GetRequiredService<GeographyDbContext>();
+        var valle = await DepartmentAsync(probeContext);
+        var antioquia = await probeContext.Departments.SingleAsync(value => value.DivipolaCode == "05", cancellationToken);
+
+        await using (var holder = factory.Services.CreateAsyncScope())
+        {
+            var unitOfWork = holder.ServiceProvider.GetRequiredService<IGeographyUnitOfWork>();
+            await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+            await unitOfWork.LockCityTextAsync(valle.Id, "CALLI", cancellationToken);
+
+            Assert.False(await TryLockAsync(probeContext, valle.Id, "CALLI"));
+            Assert.True(await TryLockAsync(probeContext, antioquia.Id, "CALLI"));
+        }
+
+        Assert.True(await TryLockAsync(probeContext, valle.Id, "CALLI"));
+    }
+
+    // La misma llave que GeographyUnitOfWork.LockCityTextAsync, desde SQL: department_id::text || ':' || normalized_text.
+    private static async Task<bool> TryLockAsync(GeographyDbContext dbContext, DepartmentId departmentId, string normalizedText)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        return await dbContext.Database
+            .SqlQuery<bool>($"""
+                SELECT pg_try_advisory_xact_lock(hashtextextended({departmentId.Value}::text || ':' || {normalizedText}, 0)) AS "Value"
+                """)
+            .SingleAsync(TestContext.Current.CancellationToken);
+    }
+
     private static async Task<CitySynonymId> AddSynonymAsync(QepApiFactory factory, string text, Guid? auditTenantId = null)
     {
         await using var scope = factory.Services.CreateAsyncScope();

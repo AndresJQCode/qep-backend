@@ -100,11 +100,19 @@ public sealed class UnresolvedCityTests
     public void CreateTruncatesWithoutThrowing()
     {
         var city = UnresolvedCity.Create(
-            UnresolvedCityId.New(), DepartmentId.New(), new string('x', 200), new string('y', 700), null, Seen);
+            UnresolvedCityId.New(), DepartmentId.New(), new string('x', 200), new string('y', 700), "CO-VAC-EXTRA", Seen);
 
         Assert.Equal(120, city.CityText.Length);
         Assert.Equal(120, city.NormalizedText.Length);
         Assert.Equal(600, city.SampleAddress.Length);
+        Assert.Equal("CO-VAC-EXT", city.ProvinceCode);
+    }
+
+    [Fact]
+    public void CreateKeepsAMissingProvinceCode()
+    {
+        var city = UnresolvedCity.Create(UnresolvedCityId.New(), DepartmentId.New(), "Calli", "Calle 1", null, Seen);
+
         Assert.Null(city.ProvinceCode);
     }
 }

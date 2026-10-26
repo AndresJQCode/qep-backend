@@ -21,7 +21,11 @@ public enum UnresolvedCityStatus
 /// </summary>
 public sealed class UnresolvedCity
 {
-    private const int SampleAddressMaxLength = 600;
+    /// <summary>Ancho de <c>sample_address</c>.</summary>
+    public const int SampleAddressMaxLength = 600;
+
+    /// <summary>Ancho de <c>province_code</c>.</summary>
+    public const int ProvinceCodeMaxLength = 10;
 
     private UnresolvedCity()
     {
@@ -51,7 +55,8 @@ public sealed class UnresolvedCity
 
     public long Version { get; private set; }
 
-    /// <summary>Recorta el texto y la dirección sin lanzar: el pedido ya entró y esto es sólo una huella.</summary>
+    /// <summary>Recorta el texto, la dirección y el código de provincia sin lanzar: el pedido ya entró y esto es sólo una
+    /// huella.</summary>
     public static UnresolvedCity Create(
         UnresolvedCityId id,
         DepartmentId departmentId,
@@ -68,7 +73,7 @@ public sealed class UnresolvedCity
             NormalizedText = Truncate(normalized, Domain.CityText.MaxLength),
             CityText = Truncate(cityText.Trim(), Domain.CityText.MaxLength),
             SampleAddress = Truncate(sampleAddress, SampleAddressMaxLength),
-            ProvinceCode = provinceCode,
+            ProvinceCode = provinceCode is null ? null : Truncate(provinceCode, ProvinceCodeMaxLength),
             Status = UnresolvedCityStatus.Pending,
             FirstSeenAt = seenAt,
             LastSeenAt = seenAt,

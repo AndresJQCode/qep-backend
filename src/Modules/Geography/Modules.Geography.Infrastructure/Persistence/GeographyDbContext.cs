@@ -27,8 +27,6 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
     public const string OccurrenceSourceRefIndex = "IX_unresolved_city_occurrences_source_ref";
 
     private const int StatusMaxLength = 16;
-    private const int SampleAddressMaxLength = 600;
-    private const int ProvinceCodeMaxLength = 10;
     private const int SourceMaxLength = 32;
 
     // Conversor del tipo no anulable: EF lo aplica a UnresolvedCity.SynonymId sin pasarle nunca un null (como
@@ -188,10 +186,10 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
             .HasMaxLength(CityText.MaxLength);
         unresolved.Property(value => value.SampleAddress)
             .HasColumnName("sample_address")
-            .HasMaxLength(SampleAddressMaxLength);
+            .HasMaxLength(UnresolvedCity.SampleAddressMaxLength);
         unresolved.Property(value => value.ProvinceCode)
             .HasColumnName("province_code")
-            .HasMaxLength(ProvinceCodeMaxLength);
+            .HasMaxLength(UnresolvedCity.ProvinceCodeMaxLength);
         // Texto y no el entero por defecto, como el estado de una cotización: el CHECK y el filtro del índice lo nombran.
         unresolved.Property(value => value.Status)
             .HasColumnName("status")
