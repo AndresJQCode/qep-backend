@@ -799,8 +799,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<GetDealOwnersQuery, IReadOnlyList<DealOwnerDto>>, GetDealOwnersHandler>();
         // Pipeline (spec 2026-10-13 §6): el tablero.
         services.AddScoped<IQueryHandler<GetBoardQuery, PipelineBoardDto>, GetBoardHandler>();
-        // Pipeline (spec 2026-10-13 §5.1): triage.
-        services.AddScoped<IQueryHandler<ListTriageQuery, TriageListDto>, ListTriageHandler>();
+        // Pipeline (spec 2026-10-13 §5.1): la decisión de triage.
         services.AddScoped<ICommandHandler<DecideTriageCommand, TriageResultDto>, DecideTriageHandler>();
         // Pipeline (spec 2026-10-13 D36): el resumen de negocios de la ficha del cliente.
         services.AddScoped<IQueryHandler<GetCustomerDealsSummaryQuery, CustomerDealsSummaryDto>, GetCustomerDealsSummaryHandler>();

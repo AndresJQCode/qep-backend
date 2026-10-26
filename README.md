@@ -649,7 +649,7 @@ fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un m
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
 `catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations` y `suppliers`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
-`companies`, `shopify` exige `orders` y `automations` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; último de la lista, sin dependencias) tampoco viene con el signup y se prende igual. Sin `messaging`, el triage de `pipeline` queda vacío; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`companies`, `shopify` exige `orders` y `automations` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; último de la lista, sin dependencias) tampoco viene con el signup y se prende igual. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
@@ -2965,7 +2965,6 @@ cuando se prende un módulo, así que no hay otro lugar donde engancharse.
 | `POST` | `/deals/{dealId}/quotations/{quotationId}/link\|primary` | `pipeline.deal.manage` |
 | `GET` | `/owners` | `pipeline.deal.manage` |
 | `GET` | `/customers/{customerId}/summary?conversationId=` | `pipeline.deal.read` |
-| `GET` | `/triage` | `pipeline.deal.read` |
 | `POST` | `/triage/{conversationId}` (`create` \| `dismiss`) | `pipeline.deal.manage` |
 | `GET`/`PUT` | `/settings/stages`, `/settings/loss-reasons`, `/settings/dismiss-reasons` | `pipeline.deal.read` / `pipeline.settings.manage` |
 
@@ -2979,8 +2978,8 @@ válido» sigue en el backend. Un miembro activo sin nombre ni correo se lista c
 omitirlo, y si ninguna membresía califica la respuesta es `[]` con 200. Exige `pipeline.deal.manage`; con cualquier
 403 el frontend oculta el selector.
 El tablero trae todas las columnas, sumas por moneda, como máximo 200 tarjetas por columna con el conteo real, y
-`Ganado`/`Perdido` sólo de los últimos 30 días. El triage trae como máximo 200 conversaciones con el conteo
-real. Cada decisión de triage guarda el último entrante contra el que se tomó: con el índice único
+`Ganado`/`Perdido` sólo de los últimos 30 días. No hay lista de pendientes de triage: el estado de una conversación
+lo da el bloque `triage` del resumen del cliente. Cada decisión de triage guarda el último entrante contra el que se tomó: con el índice único
 `IX_triage_decisions_conversation_inbound`, si dos asesores deciden a la vez uno recibe
 `pipeline.triage.already_decided` y queda un solo negocio. Un mensaje nuevo del cliente permite decidir otra vez.
 

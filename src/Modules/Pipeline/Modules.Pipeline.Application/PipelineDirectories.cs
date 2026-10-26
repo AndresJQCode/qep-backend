@@ -3,10 +3,6 @@ namespace Modules.Pipeline.Application;
 /// <summary>Spec 2026-10-13 §5.3: una conversación de Messaging como la ve Pipeline.</summary>
 public sealed record PipelineConversation(Guid Id, Guid? CustomerId, bool IsOpen, DateTimeOffset? LastInboundAt, DateTimeOffset? LastMessageAt);
 
-/// <summary>D37: a lo sumo el tope pedido en <see cref="Items"/>, y en <see cref="Count"/> el total real, para que el contador de la
-/// bandeja diga la verdad aunque la lista se corte.</summary>
-public sealed record PipelineConversationPage(int Count, IReadOnlyList<PipelineConversation> Items);
-
 /// <summary>§5.2 y D21: el último mensaje de las conversaciones del cliente (entrante o saliente) y cuáles son.</summary>
 public sealed record PipelineCustomerActivity(Guid CustomerId, DateTimeOffset? LastMessageAt, IReadOnlyList<Guid> ConversationIds);
 
@@ -19,11 +15,6 @@ public sealed record PipelineCustomerRef(Guid Id, string Name, bool IsComplete);
 /// </summary>
 public interface IPipelineConversationDirectory
 {
-    /// <summary>§5.1, D35 y D37: las pendientes de triage —abiertas, <b>con</b> cliente, sin negocio abierto del cliente y sin una
-    /// decisión tomada contra su último entrante—, el entrante más reciente primero y las que no tienen entrante al final (P13). A
-    /// lo sumo <paramref name="limit"/>, con el total real: el tope lo aplica la consulta, no la memoria (P16).</summary>
-    Task<PipelineConversationPage> ListOpenAsync(Guid tenantId, int limit, CancellationToken cancellationToken);
-
     /// <summary>Por cliente, todas sus conversaciones (abiertas o no), la de actividad más reciente primero, y su último mensaje.</summary>
     Task<IReadOnlyDictionary<Guid, PipelineCustomerActivity>> FindActivityAsync(
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
