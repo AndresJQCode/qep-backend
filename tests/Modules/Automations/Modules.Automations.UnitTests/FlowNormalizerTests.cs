@@ -40,6 +40,36 @@ public sealed class FlowNormalizerTests
         Assert.Equal(outputs, kept.Outputs);
     }
 
+    // Spec 2026-10-26 repetir R-1, R-2: «rejected» sólo existe con rejectedOutput y el miembro sólo con repeat o handoff.
+    [Theory]
+    [InlineData("repeat", false)]
+    [InlineData("handoff", false)]
+    [InlineData("rejectedOutput", true)]
+    public void ADataConsentWithoutTheRejectedOutputDropsIt(string onReject, bool kept)
+    {
+        var outputs = new Dictionary<string, string?> { ["accepted"] = "n2", ["rejected"] = "n9" };
+
+        var result = FlowNormalizer.Normalize(Flow(new DataConsentNode("d1", "Política", outputs, "t", onReject)));
+
+        var consent = Assert.IsType<DataConsentNode>(Assert.Single(result.Nodes));
+        Assert.Equal(kept, consent.Outputs.ContainsKey("rejected"));
+        Assert.Equal("n2", consent.Outputs["accepted"]);
+    }
+
+    [Theory]
+    [InlineData("repeat", true)]
+    [InlineData("handoff", true)]
+    [InlineData("rejectedOutput", false)]
+    public void TheRejectMemberOnlyStaysWhenItHandsOff(string onReject, bool kept)
+    {
+        var consent = new DataConsentNode("d1", "Política", new Dictionary<string, string?>(), "t", onReject, 4, Ana);
+
+        var result = Assert.IsType<DataConsentNode>(Assert.Single(FlowNormalizer.Normalize(Flow(consent)).Nodes));
+
+        Assert.Equal(kept ? Ana : (Guid?)null, result.OnRejectMemberId);
+        Assert.Equal(4, result.MaxAsks);
+    }
+
     [Theory]
     [InlineData("repeat", false)]
     [InlineData("otherOutput", false)]

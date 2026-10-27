@@ -288,6 +288,9 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
                 break;
             case DataConsentNode consent:
                 writer.WriteString("text", consent.Text);
+                writer.WriteString("onReject", consent.OnReject);
+                writer.WriteNumber("maxAsks", consent.MaxAsks);
+                WriteGuid(writer, "onRejectMemberId", consent.OnRejectMemberId);
                 break;
             case ResolveNode resolve:
                 writer.WriteString("text", resolve.Text);
@@ -353,7 +356,12 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
             FlowNodeKinds.Http => ReadHttp(element, id, title, outputs, where),
             FlowNodeKinds.Handoff => new HandoffNode(
                 id, title, outputs, JsonFields.OptionalString(element, "text", where), JsonFields.OptionalGuid(element, "memberId", where)),
-            FlowNodeKinds.DataConsent => new DataConsentNode(id, title, outputs, JsonFields.Text(element, "text", where)),
+            FlowNodeKinds.DataConsent => new DataConsentNode(
+                id, title, outputs, JsonFields.Text(element, "text", where),
+                // Un bloque guardado antes de R-1 no trae las tres claves y se lee como hoy: sale por «No acepto».
+                JsonFields.OptionalOneOf(element, "onReject", where, DataConsentRejectActions.All) ?? DataConsentRejectActions.RejectedOutput,
+                JsonFields.OptionalInt(element, "maxAsks", where) ?? DataConsentAsks.Default,
+                JsonFields.OptionalGuid(element, "onRejectMemberId", where)),
             FlowNodeKinds.Resolve => new ResolveNode(
                 id, title, outputs, JsonFields.OptionalString(element, "text", where), JsonFields.OptionalGuid(element, "reasonId", where)),
             _ => throw new ArgumentOutOfRangeException(nameof(element), kind, "Tipo de bloque sin lectura definida."),
@@ -624,6 +632,15 @@ internal static class JsonFields
     {
         var value = RequiredString(element, name, where);
         return allowed.Contains(value)
+            ? value
+            : throw Malformed($"«{name}» {JsonFields.Of(where)} vale «{value}», que no es ninguno de: {string.Join(", ", allowed.Order(StringComparer.Ordinal))}.");
+    }
+
+    /// <summary>Como <see cref="RequiredOneOf"/>, pero <c>null</c> si falta o es <c>null</c>.</summary>
+    public static string? OptionalOneOf(JsonElement element, string name, string where, IReadOnlySet<string> allowed)
+    {
+        var value = OptionalString(element, name, where);
+        return value is null || allowed.Contains(value)
             ? value
             : throw Malformed($"«{name}» {JsonFields.Of(where)} vale «{value}», que no es ninguno de: {string.Join(", ", allowed.Order(StringComparer.Ordinal))}.");
     }
