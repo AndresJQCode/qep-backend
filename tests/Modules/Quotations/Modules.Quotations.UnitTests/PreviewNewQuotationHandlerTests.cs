@@ -150,6 +150,7 @@ public sealed class PreviewNewQuotationHandlerTests
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
             pricing ?? new StubQuotationProductPricingLookup(),
             settings,
+            new FixedTenantPriceRounding(),
             new ShippingResolver(new StubCarrierRepository(), new StubQuotationTaxRateLookup(null), settings),
             new FixedTenantDefaultCurrency());
     }

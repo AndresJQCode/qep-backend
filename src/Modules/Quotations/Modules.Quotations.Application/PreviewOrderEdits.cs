@@ -31,6 +31,7 @@ public sealed class PreviewOrderEditsHandler(
     IQuotationRepository quotationRepository,
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
+    ITenantPriceRounding priceRounding,
     IQuotationCustomerLookup customerLookup,
     ShippingResolver shippingResolver,
     IMembershipDirectory membershipDirectory,
@@ -116,7 +117,7 @@ public sealed class PreviewOrderEditsHandler(
         }
 
         await OrderPricingRecalculation.ApplyAsync(
-            pricingLookup, settingsStore, query.TenantId, order, now, cancellationToken);
+            pricingLookup, settingsStore, priceRounding, query.TenantId, order, now, cancellationToken);
         order.RecalculatePaymentStatus(now);
 
         var quotationNumber = order.QuotationId is { } quotationId

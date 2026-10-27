@@ -18,6 +18,57 @@ public sealed class ExternalOrderServiceTests
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
+    // Spec 2026-10-27 §4, decisión del owner: un pedido de una integración se precia con el valor por defecto de su
+    // moneda aunque el tenant haya configurado otra regla.
+    [Fact]
+    public async Task AShopifyOrderIgnoresTheTenantRule()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, TenancyPermissions.SettingsUpdate]);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(
+            client, tenantId, prices: new Dictionary<string, decimal> { ["COP"] = 50_000m, ["USD"] = 13.19m });
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId, currency: "USD");
+        var advisorId = await OwnerMembershipIdAsync(factory, tenantId, ownerUserId);
+        (await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/settings/price-rounding",
+            new
+            {
+                currencies = new[]
+                {
+                    new { currency = "COP", decimals = 0, mode = "Nearest" },
+                    new { currency = "USD", decimals = 2, mode = "Up" },
+                    new { currency = "EUR", decimals = 2, mode = "Nearest" },
+                },
+            },
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
+        ExternalOrderResult result;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
+            result = await writer.CreateAsync(
+                new ExternalOrderDraft(
+                    tenantId, OrderSource.Shopify, "#1002", customerId, advisorId, "shopify_payments",
+                    "Shopify #1002", null,
+                    new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
+                    [new ExternalOrderLine(productId, productId, 10m, 13.19m, 15m, 0)],
+                    OrderPaymentStatus.FullPaymentReceived,
+                    DateTimeOffset.UtcNow),
+                TestContext.Current.CancellationToken);
+        }
+
+        // Al más cercano: 13,19 × 0,85 = 11,2115 → 11,21 → 112,10. Con la regla del tenant (2, Up) serían 112,20.
+        Assert.Equal(112.10m, result.Total);
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(tenantId)}/{result.OrderId}", TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        Assert.Equal(11.21m, detail.Items.Single().DiscountedUnitPrice);
+    }
+
     [Fact]
     public async Task CreatesAnOrderForAnIncompleteCustomerAndPublishesOrderCreated()
     {

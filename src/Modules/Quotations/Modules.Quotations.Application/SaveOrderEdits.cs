@@ -38,6 +38,7 @@ public sealed class SaveOrderEditsHandler(
     IQuotationAuditPublisher auditPublisher,
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
+    ITenantPriceRounding priceRounding,
     IQuotationProductLookup productLookup,
     IQuotationCustomerLookup customerLookup,
     IQuotationFileLookup fileLookup,
@@ -307,7 +308,7 @@ public sealed class SaveOrderEditsHandler(
             // Antes de mirar el total: las líneas que cambiaron mueven el tramo de las que agrupan
             // con ellas, y el detal o el piso cambian todos los descuentos.
             await OrderPricingRecalculation.ApplyAsync(
-                pricingLookup, settingsStore, command.TenantId, order, now, cancellationToken);
+                pricingLookup, settingsStore, priceRounding, command.TenantId, order, now, cancellationToken);
             order.RecalculatePaymentStatus(now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }

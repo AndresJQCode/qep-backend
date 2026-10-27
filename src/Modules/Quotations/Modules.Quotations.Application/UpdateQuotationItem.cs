@@ -25,6 +25,7 @@ public sealed class UpdateQuotationItemHandler(
     IQuotationAuditPublisher auditPublisher,
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
+    ITenantPriceRounding priceRounding,
     IQuotationCustomerLookup customerLookup,
     IMembershipDirectory membershipDirectory,
     ITenantDirectory tenantDirectory,
@@ -107,7 +108,7 @@ public sealed class UpdateQuotationItemHandler(
         // que agrupan con ella, y con eso el total. El descuento que trajo UpdateQuantity es
         // provisional.
         await QuotationPricingRecalculation.ApplyAsync(
-            pricingLookup, settingsStore, command.TenantId, quotation, now, cancellationToken);
+            pricingLookup, settingsStore, priceRounding, command.TenantId, quotation, now, cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
 

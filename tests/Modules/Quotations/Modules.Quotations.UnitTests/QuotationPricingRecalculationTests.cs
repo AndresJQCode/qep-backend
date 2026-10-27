@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Pricing;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
@@ -95,6 +96,7 @@ public sealed class QuotationPricingRecalculationTests
                 Product(productA, 10_000m, null, Tiers()),
                 Product(productB, 10_000m, null, Tiers())),
             new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -129,6 +131,7 @@ public sealed class QuotationPricingRecalculationTests
                 new QuotationVariantPricingRef(
                     sizeL, shirt, TenantId, "Camiseta – L", "CAM-L", true, PricesOf(10_000m, null), [], 19)),
             new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -149,6 +152,7 @@ public sealed class QuotationPricingRecalculationTests
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 10_000m, null, FlatTier())),
             new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -169,6 +173,7 @@ public sealed class QuotationPricingRecalculationTests
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 1_000m, null, FlatTier())),
             new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -190,6 +195,7 @@ public sealed class QuotationPricingRecalculationTests
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 300_000m, null, FlatTier())),
             new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -213,6 +219,7 @@ public sealed class QuotationPricingRecalculationTests
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 260_000m, null, FlatTier())),
             new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -234,6 +241,7 @@ public sealed class QuotationPricingRecalculationTests
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, null, 150m, FlatTier())),
             new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -254,6 +262,7 @@ public sealed class QuotationPricingRecalculationTests
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, null, 50m, FlatTier())),
             new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -281,6 +290,7 @@ public sealed class QuotationPricingRecalculationTests
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 10_000m, null, Tiers())),
             new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -308,7 +318,7 @@ public sealed class QuotationPricingRecalculationTests
         var lookup = new StubPricingLookup(Product(product, 10_000m, null, Tiers()));
 
         await QuotationPricingRecalculation.ApplyAsync(
-            lookup, new FixedQuotationSettingsStore(), TenantId, quotation, Now, CancellationToken.None);
+            lookup, new FixedQuotationSettingsStore(), new FixedTenantPriceRounding(), TenantId, quotation, Now, CancellationToken.None);
 
         Assert.Equal(0, lookup.ManyCalls);
     }
@@ -321,7 +331,7 @@ public sealed class QuotationPricingRecalculationTests
         var lookup = new StubPricingLookup();
 
         await QuotationPricingRecalculation.ApplyAsync(
-            lookup, new FixedQuotationSettingsStore(), TenantId, quotation, Now, CancellationToken.None);
+            lookup, new FixedQuotationSettingsStore(), new FixedTenantPriceRounding(), TenantId, quotation, Now, CancellationToken.None);
 
         Assert.Equal(0, lookup.ManyCalls);
     }
@@ -341,6 +351,7 @@ public sealed class QuotationPricingRecalculationTests
                 new Dictionary<string, decimal> { ["EUR"] = 1_000_000m }, FlatTier(), 19)),
             new FixedQuotationSettingsStore(QuotationSettings.Create(
                 6, new Dictionary<string, decimal> { ["COP"] = 500_000m })),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -349,6 +360,113 @@ public sealed class QuotationPricingRecalculationTests
         Assert.Equal(0m, DiscountOf(quotation, item));
         Assert.Equal(2_000_000m, quotation.Total);
     }
+
+    // Spec 2026-10-27 §4: la pasada baja la regla vigente del tenant a la cotización antes de preciar. Tramo plano
+    // al 15 %: 13,19 → unitario 11,22 con (2, Up), línea 112,20.
+    [Fact]
+    public async Task TheRecalculationAppliesTheTenantRule()
+    {
+        var productId = Guid.CreateVersion7();
+        var quotation = NewQuotation("USD");
+        var item = AddItem(quotation, productId, 10m, 13.19m);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(Product(productId, null, 13.19m, [new(1, 999, 15m, QuotationPriceScaleRestriction.Multiple, 1, [], false)])),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(("USD", new PriceRounding(2, PriceRoundingMode.Up))),
+            TenantId,
+            quotation,
+            Now,
+            CancellationToken.None);
+
+        Assert.Equal(new PriceRounding(2, PriceRoundingMode.Up), quotation.PriceRounding);
+        Assert.Equal(112.20m, quotation.Items.Single(line => line.Id == item).Subtotal);
+    }
+
+    // La regla se baja antes de cualquier salida temprana: una cotización detal también la guarda.
+    [Fact]
+    public async Task ARetailQuotationAlsoTakesTheTenantRule()
+    {
+        var productId = Guid.CreateVersion7();
+        var quotation = NewQuotation("USD");
+        AddItem(quotation, productId, 10m, 13.19m);
+        quotation.SetIsRetail(true, AdvisorId, Now);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(("USD", new PriceRounding(2, PriceRoundingMode.Up))),
+            TenantId,
+            quotation,
+            Now,
+            CancellationToken.None);
+
+        Assert.Equal(new PriceRounding(2, PriceRoundingMode.Up), quotation.PriceRounding);
+    }
+
+    // Cambiar de cuenta y de moneda deja la regla de la moneda vieja sin guardar; la pasada toma la de la nueva.
+    [Fact]
+    public async Task ChangingCurrencyTakesTheRuleOfTheNewCurrency()
+    {
+        var productId = Guid.CreateVersion7();
+        var quotation = NewQuotation();
+        AddItem(quotation, productId, 10m, 13.19m);
+        ChangeBillingCurrency(quotation, productId, "USD", 13.19m);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(Product(productId, 13_190m, 13.19m, [])),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(
+                ("COP", new PriceRounding(0, PriceRoundingMode.Nearest)),
+                ("USD", new PriceRounding(2, PriceRoundingMode.Up))),
+            TenantId,
+            quotation,
+            Now,
+            CancellationToken.None);
+
+        Assert.Equal(("USD", new PriceRounding(2, PriceRoundingMode.Up)), (quotation.Currency, quotation.PriceRounding));
+    }
+
+    // La inversa: la regla (2, Up) era de USD; al pasar a COP no sobrevive, y la pasada deja la de COP.
+    [Fact]
+    public async Task ASavedUsdRuleDoesNotSurviveSwitchingToPesos()
+    {
+        var productId = Guid.CreateVersion7();
+        var quotation = NewQuotation("USD");
+        AddItem(quotation, productId, 10m, 13.19m);
+        quotation.UsePriceRounding(new PriceRounding(2, PriceRoundingMode.Up), Now);
+        ChangeBillingCurrency(quotation, productId, "COP", 13_190m);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(Product(productId, 13_190m, 13.19m, [])),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
+            TenantId,
+            quotation,
+            Now,
+            CancellationToken.None);
+
+        Assert.Equal(("COP", new PriceRounding(0, PriceRoundingMode.Nearest)), (quotation.Currency, quotation.PriceRounding));
+    }
+
+    private static void ChangeBillingCurrency(Quotation quotation, Guid variantId, string currency, decimal unitPrice) =>
+        quotation.UpdateDetails(
+            validUntil: new DateOnly(2026, 10, 31),
+            paymentMethod: "Transferencia bancaria",
+            notes: null,
+            QuotationParties.Empty,
+            new QuotationBillingAccount
+            {
+                CompanyId = Guid.CreateVersion7(),
+                BankName = "Bancolombia",
+                AccountNumber = "12345678",
+                Currency = currency
+            },
+            new Dictionary<Guid, QuotationItemPricing> { [variantId] = new(unitPrice, 0m, 19) },
+            isRetail: false,
+            globalScaleFloor: null,
+            AdvisorId,
+            Now);
 
     private sealed class StubPricingLookup(params QuotationVariantPricingRef[] products)
         : IQuotationProductPricingLookup
@@ -397,6 +515,7 @@ public sealed class QuotationPricingRecalculationTests
                 new(20, 200, 10m, QuotationPriceScaleRestriction.Multiple, 1, [], false)
             ])),
             new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -427,6 +546,7 @@ public sealed class QuotationPricingRecalculationTests
                 new(1000, 5000, 12m, QuotationPriceScaleRestriction.Multiple, 1, [], false)
             ])),
             new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
