@@ -312,4 +312,365 @@ public sealed class FlowEngineDataConsentTests
         Assert.Empty(whileWaiting.Effects);
         Assert.Same(waiting, whileWaiting.State);
     }
+
+    // Spec 2026-10-26 repetir R-3, R-4 y R-4b: «Si no acepta» en el motor.
+
+    private static readonly Guid OtherMember = Guid.Parse("66666666-6666-6666-6666-666666666666");
+    private static readonly Guid FirstPrompt = Guid.Parse("77777777-7777-7777-7777-777777777777");
+    private static readonly Guid SecondPrompt = Guid.Parse("88888888-8888-8888-8888-888888888888");
+
+    private static FlowDefinition FlowWith(DataConsentNode consent) => new(
+        FlowDefinition.CurrentSchema, new FlowStart("consent"), [],
+        [
+            consent,
+            new MessageNode("yes", "Mensaje yes", Out((FlowOutputs.Next, null)), "Gracias", null),
+            new MessageNode("no", "Mensaje no", Out((FlowOutputs.Next, null)), "Entendido", null),
+        ]);
+
+    private static FlowDefinition Repeating(int maxAsks, Guid? member = null) => FlowWith(new DataConsentNode(
+        "consent", "Política de datos", Out((FlowOutputs.Accepted, "yes")), ConsentText, DataConsentRejectActions.Repeat, maxAsks, member));
+
+    private static FlowDefinition HandingOff(Guid? member = null) => FlowWith(new DataConsentNode(
+        "consent", "Política de datos", Out((FlowOutputs.Accepted, "yes")), ConsentText, DataConsentRejectActions.Handoff,
+        OnRejectMemberId: member));
+
+    private static StepResult Step(FlowDefinition flow, RunState state, EngineInput input, EngineSettings? settings = null) =>
+        FlowEngine.Step(flow, settings ?? Settings, state, input, Now);
+
+    private static StepResult Asked(FlowDefinition flow, EngineSettings? settings = null)
+    {
+        var pending = Step(flow, RunState.Initial(Laura()), new EngineInput.Start(), settings);
+        return Step(flow, pending.State, new EngineInput.DataConsent("consent", Accepted: false), settings);
+    }
+
+    private static EngineInput.CustomerMessage NotAccepted() => Tapped(FlowOutputs.Rejected, DataConsentButtons.RejectLabel);
+
+    private static void AssertButtons(Effect effect)
+    {
+        var send = Assert.IsType<Effect.SendInteractive>(effect);
+        Assert.Equal("consent", send.NodeId);
+        var buttons = Assert.IsType<InteractiveMessage.Buttons>(send.Message);
+        Assert.Equal(ShownToLaura, buttons.Body);
+        Assert.Equal<(string, string)>([("accepted", "Acepto"), ("rejected", "No acepto")], buttons.Items);
+    }
+
+    private static void AssertHandedOff(StepResult result)
+    {
+        Assert.Equal(RunStatus.HandedOff, result.State.Status);
+        Assert.Equal(new TraceEntry(Now, "consent", FlowNodeKinds.DataConsent, TraceOutcomes.HandedOff), result.State.Trace[^1]);
+        Assert.Null(result.State.ConsentPrompt);
+    }
+
+    /// <summary>Respuestas inválidas hasta agotar los intentos, volviendo a preguntar entre una y otra como hace el procesador.</summary>
+    private static (StepResult Result, List<Effect> Effects) ExhaustAttempts(FlowDefinition flow, EngineSettings settings)
+    {
+        var result = Asked(flow, settings);
+        var effects = new List<Effect>();
+        for (var reply = 0; reply < settings.MaxAttempts; reply++)
+        {
+            result = Step(flow, result.State, Typed("hola"), settings);
+            effects.AddRange(result.Effects);
+            if (result.State.Status == RunStatus.Running)
+            {
+                result = Step(flow, result.State, new EngineInput.DataConsent("consent", Accepted: false), settings);
+                effects.AddRange(result.Effects);
+            }
+        }
+
+        return (result, effects);
+    }
+
+    [Fact]
+    public void RepeatingAsksAgainAfterARejectionAndRecordsIt()
+    {
+        var flow = Repeating(maxAsks: 3);
+        var waiting = Asked(flow).State with { ConsentPrompt = new ConsentPrompt("consent", "Texto enviado", PromptId) };
+
+        var result = Step(flow, waiting, NotAccepted());
+
+        Assert.Equal(3, result.Effects.Count);
+        Assert.Equal(new Effect.RecordDataConsent("consent", DataConsentDecision.Rejected, "Texto enviado", PromptId), result.Effects[0]);
+        AssertButtons(result.Effects[1]);
+        Assert.Equal(new Effect.WaitForCustomer("consent", "Política de datos"), result.Effects[2]);
+        Assert.Equal(RunStatus.Waiting, result.State.Status);
+        Assert.Equal("consent", result.State.CurrentNodeId);
+        Assert.Equal(1, result.State.ConsentRejections);
+        Assert.Equal(new ConsentPrompt("consent", ShownToLaura, null), result.State.ConsentPrompt);
+        Assert.Equal(waiting.StepNumber + 1, result.State.StepNumber);
+        Assert.DoesNotContain(result.State.Trace, entry => entry.Outcome is FlowOutputs.Rejected or FlowOutputs.Accepted);
+    }
+
+    [Fact]
+    public void ReachingTheCapHandsOffWithTheBlockDestination()
+    {
+        var flow = Repeating(maxAsks: 3, Member);
+        var result = Asked(flow);
+        var rounds = new List<StepResult>();
+        for (var rejection = 0; rejection < 3; rejection++)
+        {
+            result = Step(flow, result.State, NotAccepted());
+            rounds.Add(result);
+        }
+
+        Assert.All(rounds, round => Assert.Equal(DataConsentDecision.Rejected, Recorded(round).Decision));
+        AssertButtons(rounds[0].Effects[1]);
+        AssertButtons(rounds[1].Effects[1]);
+        Assert.Equal<Effect>(
+            [
+                new Effect.RecordDataConsent("consent", DataConsentDecision.Rejected, ShownToLaura, null),
+                new Effect.Handoff("consent", "data_consent_rejected", Member),
+            ],
+            result.Effects);
+        AssertHandedOff(result);
+        Assert.Equal(3, result.State.ConsentRejections);
+        Assert.Equal("data_consent_rejected", HandoffReasons.DataConsentRejected);
+    }
+
+    [Fact]
+    public void ACapOfOneHandsOffOnTheFirstRejection()
+    {
+        var flow = Repeating(maxAsks: 1);
+
+        var result = Step(flow, Asked(flow).State, NotAccepted());
+
+        Assert.Equal<Effect>(
+            [
+                new Effect.RecordDataConsent("consent", DataConsentDecision.Rejected, ShownToLaura, null),
+                new Effect.Handoff("consent", "data_consent_rejected", null),
+            ],
+            result.Effects);
+        AssertHandedOff(result);
+    }
+
+    [Fact]
+    public void HandingOffModeHandsOffOnTheFirstRejection()
+    {
+        var flow = HandingOff(Member);
+
+        var result = Step(flow, Asked(flow).State, NotAccepted());
+
+        Assert.Equal<Effect>(
+            [
+                new Effect.RecordDataConsent("consent", DataConsentDecision.Rejected, ShownToLaura, null),
+                new Effect.Handoff("consent", "data_consent_rejected", Member),
+            ],
+            result.Effects);
+        AssertHandedOff(result);
+        Assert.Equal(0, result.State.ConsentRejections);
+    }
+
+    /// <summary>R-4: las respuestas inválidas no cuentan para el tope de «No acepto», ni al revés.</summary>
+    [Fact]
+    public void InvalidRepliesAndRejectionsCountApart()
+    {
+        var flow = Repeating(maxAsks: 2);
+        var settings = new EngineSettings("reiniciar", 3);
+
+        var firstInvalid = Step(flow, Asked(flow, settings).State, Typed("hola"), settings);
+        Assert.Equal(1, firstInvalid.State.Attempts);
+        Assert.Equal(0, firstInvalid.State.ConsentRejections);
+
+        var askedAgain = Step(flow, firstInvalid.State, new EngineInput.DataConsent("consent", Accepted: false), settings);
+        var firstRejection = Step(flow, askedAgain.State, NotAccepted(), settings);
+        Assert.Equal(1, firstRejection.State.Attempts);
+        Assert.Equal(1, firstRejection.State.ConsentRejections);
+        Assert.Equal(RunStatus.Waiting, firstRejection.State.Status);
+        AssertButtons(firstRejection.Effects[1]);
+
+        var secondInvalid = Step(flow, firstRejection.State, Typed("hola"), settings);
+        Assert.Equal(2, secondInvalid.State.Attempts);
+        Assert.Equal(1, secondInvalid.State.ConsentRejections);
+
+        var askedOnceMore = Step(flow, secondInvalid.State, new EngineInput.DataConsent("consent", Accepted: false), settings);
+        var secondRejection = Step(flow, askedOnceMore.State, NotAccepted(), settings);
+        Assert.Equal(new Effect.Handoff("consent", "data_consent_rejected", null), secondRejection.Effects[^1]);
+        AssertHandedOff(secondRejection);
+    }
+
+    /// <summary>R-4: en «repeat» y «handoff» no hay «rejected»; al agotar los intentos pasa a la bandeja con el destino del bloque, sin
+    /// registrar nada, y la regla de agotamiento del chatbot no se lee.</summary>
+    [Fact]
+    public void ExhaustedAttemptsHandOffWithTheBlockDestination()
+    {
+        FlowDefinition[] flows = [Repeating(maxAsks: 3, Member), HandingOff(Member)];
+        EngineSettings[] rules =
+        [
+            new("reiniciar", 3, AttemptsExhaustedAction.Restart),
+            new("reiniciar", 3, AttemptsExhaustedAction.Handoff, OtherMember),
+        ];
+
+        foreach (var flow in flows)
+        {
+            foreach (var settings in rules)
+            {
+                var (result, effects) = ExhaustAttempts(flow, settings);
+
+                Assert.Equal<Effect>(
+                    [new Effect.DataConsentUnanswered("consent"), new Effect.Handoff("consent", "attempts_exhausted", Member)],
+                    result.Effects);
+                Assert.DoesNotContain(effects, effect => effect is Effect.RecordDataConsent);
+                Assert.DoesNotContain(result.State.Trace, entry => entry.Outcome == TraceOutcomes.Restart);
+                AssertHandedOff(result);
+            }
+        }
+    }
+
+    [Fact]
+    public void ExhaustedAttemptsInRejectedOutputLeaveAsToday()
+    {
+        var flow = FlowWith(new DataConsentNode(
+            "consent", "Política de datos", Out((FlowOutputs.Accepted, "yes"), (FlowOutputs.Rejected, "no")), ConsentText,
+            DataConsentRejectActions.RejectedOutput, OnRejectMemberId: Member));
+        var settings = new EngineSettings("reiniciar", 3, AttemptsExhaustedAction.Handoff, OtherMember);
+
+        var (result, effects) = ExhaustAttempts(flow, settings);
+
+        Assert.Equal(new Effect.DataConsentUnanswered("consent"), result.Effects[0]);
+        Assert.Equal(new Effect.SendText("no", "Entendido"), result.Effects[1]);
+        Assert.DoesNotContain(effects, effect => effect is Effect.RecordDataConsent or Effect.Handoff);
+        Assert.Contains(result.State.Trace, entry => entry is { NodeId: "consent", Outcome: FlowOutputs.Rejected });
+    }
+
+    /// <summary>R-4b: sin «rejected» salir por ella terminaría la corrida con el bot callado; pasa a la bandeja con el destino del bloque.</summary>
+    [Fact]
+    public void AnUnrecordableCustomerHandsOffWithoutAsking()
+    {
+        foreach (var flow in new[] { Repeating(maxAsks: 3, Member), HandingOff(Member) })
+        {
+            var pending = Step(flow, RunState.Initial(Laura()), new EngineInput.Start());
+
+            var result = Step(flow, pending.State, new EngineInput.DataConsent("consent", Accepted: false, CanRecord: false));
+
+            Assert.Equal<Effect>([new Effect.Handoff("consent", "data_consent_unavailable", Member)], result.Effects);
+            AssertHandedOff(result);
+        }
+
+        Assert.Equal("data_consent_unavailable", HandoffReasons.DataConsentUnavailable);
+
+        var today = Step(Start().State, new EngineInput.DataConsent("consent", Accepted: false, CanRecord: false));
+        Assert.Equal<Effect>([new Effect.SendText("no", "Entendido"), new Effect.EndRun("no", EndReasons.OutputUnconnected)], today.Effects);
+    }
+
+    [Fact]
+    public void ACurrentAcceptanceStillLeavesByAccepted()
+    {
+        foreach (var flow in new[] { Repeating(maxAsks: 3), HandingOff() })
+        {
+            var pending = Step(flow, RunState.Initial(Laura()), new EngineInput.Start());
+
+            var result = Step(flow, pending.State, new EngineInput.DataConsent("consent", Accepted: true));
+
+            Assert.Equal(new Effect.SendText("yes", "Gracias"), result.Effects[0]);
+            Assert.DoesNotContain(result.Effects, effect => effect is Effect.SendInteractive or Effect.RecordDataConsent or Effect.Handoff);
+            Assert.Contains(result.State.Trace, entry => entry is { NodeId: "consent", Outcome: FlowOutputs.Accepted });
+        }
+    }
+
+    /// <summary>Contrato: un bloque publicado o sin normalizar puede traer «rejected» conectada con «repeat»; nadie la sigue.</summary>
+    [Fact]
+    public void ARepeatBlockNeverFollowsAHiddenRejected()
+    {
+        var flow = FlowWith(new DataConsentNode(
+            "consent", "Política de datos", Out((FlowOutputs.Accepted, "yes"), (FlowOutputs.Rejected, "no")), ConsentText,
+            DataConsentRejectActions.Repeat, 3));
+        var result = Asked(flow);
+        var effects = new List<Effect>();
+        for (var rejection = 0; rejection < 3; rejection++)
+        {
+            result = Step(flow, result.State, NotAccepted());
+            effects.AddRange(result.Effects);
+        }
+
+        Assert.DoesNotContain(effects, effect => effect is Effect.SendText { NodeId: "no" });
+        Assert.DoesNotContain(result.State.Trace, entry => entry.NodeId == "no" || entry.Outcome == FlowOutputs.Rejected);
+        Assert.Equal(3, effects.Count(effect => effect is Effect.RecordDataConsent));
+        Assert.Equal(new Effect.Handoff("consent", "data_consent_rejected", null), result.Effects[^1]);
+    }
+
+    /// <summary>R-1: un bloque guardado antes del modo es «rejectedOutput» y sale por «rejected» como antes.</summary>
+    [Fact]
+    public void AnOldBlockLeavesByRejectedAsBefore()
+    {
+        var old = new DataConsentNode(
+            "consent", "Política de datos", Out((FlowOutputs.Accepted, "yes"), (FlowOutputs.Rejected, "no")), ConsentText);
+        var flow = FlowWith(old);
+
+        var result = Step(flow, Asked(flow).State, NotAccepted());
+
+        Assert.Equal(DataConsentRejectActions.RejectedOutput, old.OnReject);
+        Assert.Equal(new Effect.RecordDataConsent("consent", DataConsentDecision.Rejected, ShownToLaura, null), result.Effects[0]);
+        Assert.Equal(new Effect.SendText("no", "Entendido"), result.Effects[1]);
+        Assert.Contains(result.State.Trace, entry => entry is { NodeId: "consent", Outcome: FlowOutputs.Rejected });
+        Assert.Equal(0, result.State.ConsentRejections);
+    }
+
+    /// <summary>Final review F1 con el modo: tras repetir, el «No acepto» de la pregunta anterior cita otro mensaje; no es una respuesta
+    /// a la vigente, así que no registra ni suma al tope, y cuenta como intento.</summary>
+    [Fact]
+    public void ATapOnThePreviousPromptAfterARepeatIsNotARejection()
+    {
+        var flow = Repeating(maxAsks: 3);
+        var waiting = Asked(flow).State with
+        {
+            ConsentPrompt = new ConsentPrompt("consent", ShownToLaura, SecondPrompt),
+            ConsentRejections = 1,
+        };
+
+        var result = Step(flow, waiting, Tapped(FlowOutputs.Rejected, "No acepto", quoting: FirstPrompt));
+
+        Assert.Equal<Effect>([new Effect.CheckDataConsent("consent")], result.Effects);
+        Assert.Equal(1, result.State.Attempts);
+        Assert.Equal(1, result.State.ConsentRejections);
+    }
+
+    [Fact]
+    public void TheRestartKeywordStartsTheCountAgain()
+    {
+        var flow = Repeating(maxAsks: 3);
+        var waiting = Asked(flow).State with { ConsentRejections = 2 };
+
+        var result = Step(flow, waiting, Typed("reiniciar"));
+
+        Assert.Equal<Effect>([new Effect.CheckDataConsent("consent")], result.Effects);
+        Assert.Equal(0, result.State.ConsentRejections);
+    }
+
+    [Fact]
+    public void EnteringTheBlockFromAnotherStartsTheCountAgain()
+    {
+        var flow = new FlowDefinition(
+            FlowDefinition.CurrentSchema, new FlowStart("pick"), [],
+            [
+                new ButtonsNode(
+                    "pick", "Elegir", Out(("go", "consent")), "¿Seguimos?", [new FlowButton("go", "Seguir")], null, InteractiveFallbacks.Repeat),
+                .. Repeating(maxAsks: 3).Nodes,
+            ]);
+        var waiting = Step(flow, RunState.Initial(Laura()), new EngineInput.Start()).State with { ConsentRejections = 2 };
+        Assert.Equal("pick", waiting.CurrentNodeId);
+
+        var result = Step(flow, waiting, Tapped("go", "Seguir"));
+
+        Assert.Equal<Effect>([new Effect.CheckDataConsent("consent")], result.Effects);
+        Assert.Equal("consent", result.State.CurrentNodeId);
+        Assert.Equal(0, result.State.ConsentRejections);
+    }
+
+    /// <summary>Fija que aceptar después de rechazar sale por <c>accepted</c> y deja el contador en 0 (pasó a la primera).</summary>
+    [Fact]
+    public void AnAcceptanceAfterRejectionsLeavesByAcceptedAndResetsTheCount()
+    {
+        var flow = Repeating(maxAsks: 3);
+        var waiting = Asked(flow).State with
+        {
+            ConsentRejections = 1,
+            ConsentPrompt = new ConsentPrompt("consent", "Texto enviado", PromptId),
+        };
+
+        var result = Step(flow, waiting, Tapped(FlowOutputs.Accepted, "Acepto"));
+
+        Assert.Equal(new Effect.RecordDataConsent("consent", DataConsentDecision.Accepted, "Texto enviado", PromptId), result.Effects[0]);
+        Assert.Contains(result.State.Trace, entry => entry is { NodeId: "consent", Outcome: FlowOutputs.Accepted });
+        Assert.Equal(0, result.State.ConsentRejections);
+        Assert.Null(result.State.ConsentPrompt);
+    }
 }

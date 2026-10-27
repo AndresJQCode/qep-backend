@@ -50,6 +50,25 @@ public sealed class ConversationRunTests
     }
 
     [Fact]
+    public void TheConsentRejectionsSurviveApplyAndToState()
+    {
+        var run = NewRun(RunState.Initial(RunVariables.Empty()));
+
+        run.Apply(RunState.Initial(RunVariables.Empty()) with { ConsentRejections = 2 }, Now);
+
+        Assert.Equal(2, run.ConsentRejections);
+        Assert.Equal(2, run.ToState().ConsentRejections);
+    }
+
+    [Fact]
+    public void ANewRunStartsWithoutRejections()
+    {
+        var run = NewRun(RunState.Initial(RunVariables.Empty()));
+
+        Assert.Equal(0, run.ToState().ConsentRejections);
+    }
+
+    [Fact]
     public void ApplyATerminalStateSetsEndedAt()
     {
         var run = NewRun(RunState.Initial(RunVariables.Empty()));

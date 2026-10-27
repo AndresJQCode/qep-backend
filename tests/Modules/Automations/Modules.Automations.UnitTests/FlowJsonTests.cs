@@ -259,6 +259,68 @@ public sealed class FlowJsonTests
         Assert.Equal(string.Empty, Assert.IsType<DataConsentNode>(flow.Nodes[0]).Text);
     }
 
+    // Spec 2026-10-26 repetir R-1, R-2: el modo, el tope y el destino de «Si no acepta» viajan en el bloque.
+    private const string DataConsentRepeatJson = """
+        {
+          "schema": 1,
+          "start": { "firstNodeId": "n7" },
+          "variables": [],
+          "nodes": [
+            { "id": "n7", "kind": "dataConsent", "title": "Política de datos", "text": "Lee https://empresa.co/datos y dinos si aceptas.",
+              "onReject": "repeat", "maxAsks": 3, "onRejectMemberId": null, "outputs": { "accepted": "n8" } },
+            { "id": "n8", "kind": "resolve", "title": "Fin", "text": null, "reasonId": null }
+          ]
+        }
+        """;
+
+    [Fact]
+    public void ADataConsentWithItsRejectSettingsRoundTrips()
+    {
+        var flow = FlowJson.Parse(DataConsentRepeatJson);
+        var consent = Assert.IsType<DataConsentNode>(flow.Nodes[0]);
+
+        Assert.Equal(("repeat", 3, (Guid?)null), (consent.OnReject, consent.MaxAsks, consent.OnRejectMemberId));
+
+        var serialized = FlowJson.Serialize(flow);
+        var again = Assert.IsType<DataConsentNode>(FlowJson.Parse(serialized).Nodes[0]);
+        Assert.Equal((consent.OnReject, consent.MaxAsks, consent.OnRejectMemberId), (again.OnReject, again.MaxAsks, again.OnRejectMemberId));
+        Assert.Equal(consent.Outputs, again.Outputs);
+        var written = Assert.IsType<JsonObject>(JsonNode.Parse(serialized)!["nodes"]![0]);
+        Assert.Equal("repeat", written["onReject"]!.GetValue<string>());
+        Assert.Equal(3, written["maxAsks"]!.GetValue<int>());
+        Assert.True(written.ContainsKey("onRejectMemberId"));
+        Assert.Null(written["onRejectMemberId"]);
+    }
+
+    // Review Focus 2: un bloque guardado antes de R-1 se lee como hoy, saliendo por «No acepto».
+    [Fact]
+    public void AnOldDataConsentReadsAsRejectedOutput()
+    {
+        var consent = Assert.IsType<DataConsentNode>(FlowJson.Parse(DataConsentJson).Nodes[0]);
+
+        Assert.Equal(("rejectedOutput", 3, (Guid?)null), (consent.OnReject, consent.MaxAsks, consent.OnRejectMemberId));
+        Assert.Equal("n9", consent.Outputs["rejected"]);
+    }
+
+    [Fact]
+    public void AnUnknownRejectActionIsMalformed()
+    {
+        var exception = Assert.Throws<FlowFormatException>(() => FlowJson.Parse(DataConsentRepeatJson.Replace("\"onReject\": \"repeat\"", "\"onReject\": \"ask\"")));
+
+        Assert.Equal("flow.malformed", exception.Code);
+    }
+
+    [Theory]
+    [InlineData("rejectedOutput", new[] { "accepted", "rejected" })]
+    [InlineData("repeat", new[] { "accepted" })]
+    [InlineData("handoff", new[] { "accepted" })]
+    public void OutputsOfADataConsentDependOnTheRejectAction(string onReject, string[] expected)
+    {
+        var node = new DataConsentNode("n7", "Política", new Dictionary<string, string?>(), "t", onReject);
+
+        Assert.Equal(expected, FlowNodeKinds.OutputsOf(node));
+    }
+
     [Fact]
     public void OutputsOfADataConsentAreAcceptedAndRejected()
     {

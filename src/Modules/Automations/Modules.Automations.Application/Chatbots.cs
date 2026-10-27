@@ -946,6 +946,7 @@ public sealed class ImportChatbotHandler(
                 HandoffNode handoff => handoff with { MemberId = Keep(handoff.MemberId) },
                 ButtonsNode buttons => buttons with { FallbackMemberId = Keep(buttons.FallbackMemberId) },
                 ListNode list => list with { FallbackMemberId = Keep(list.FallbackMemberId) },
+                DataConsentNode consent => consent with { OnRejectMemberId = Keep(consent.OnRejectMemberId) },
                 _ => node,
             })],
         };

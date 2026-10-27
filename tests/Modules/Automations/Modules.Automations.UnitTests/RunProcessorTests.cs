@@ -873,6 +873,101 @@ public sealed class RunProcessorTests
         Assert.Equal(RunStatus.Waiting, run.Status);
     }
 
+    /// <summary>Spec 2026-10-26 repetir: Política de datos con un modo de «No acepto» y su miembro (sin salida <c>rejected</c>).</summary>
+    private static string ConsentModeFlow(string onReject, Guid member) => $$"""
+        { "schema": 1, "start": { "firstNodeId": "consent" }, "variables": [],
+          "nodes": [
+            { "id": "consent", "kind": "dataConsent", "title": "Política de datos", "text": "Lee https://e.co/d y dinos si aceptas.",
+              "onReject": "{{onReject}}", "maxAsks": 1, "onRejectMemberId": "{{member}}", "outputs": { "accepted": "ok" } },
+            { "id": "ok", "kind": "message", "title": "Gracias", "text": "Gracias por aceptar.", "outputs": { "next": null } }
+          ] }
+        """;
+
+    /// <summary>Spec 2026-10-26 repetir R-4c: el «No acepto» al tope de <c>repeat</c> registra la fila y traspasa con la causa de la
+    /// política de datos y el miembro del bloque.</summary>
+    [Fact]
+    public async Task ARejectionAtTheCapHandsOffWithTheConsentCause()
+    {
+        var member = Guid.CreateVersion7();
+        var bed = new Bed(
+            null, ActiveState(), flow: ConsentModeFlow("repeat", member), dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted));
+        var run = ConsentRun(new ConsentPrompt("consent", "Texto", Guid.CreateVersion7()));
+        bed.Runs.Added.Add(run);
+        bed.Inbox.Messages[Item.MessageId] = Tapped(Item.MessageId, "rejected");
+        int? handoffsBeforeRecord = null;
+        bed.DataConsents.OnRecord = () => handoffsBeforeRecord = bed.Conversations.Handoffs.Count;
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(DataConsentDecision.Rejected, Assert.Single(bed.DataConsents.Records).Decision);
+        Assert.Equal(0, handoffsBeforeRecord);
+        Assert.Equal(
+            [(new HandoffCause(HandoffCauseKind.DataConsentRejected, null, "consent", "Política de datos", null, null, null), (Guid?)member)],
+            bed.Conversations.Handoffs);
+        Assert.Equal(RunStatus.HandedOff, run.Status);
+        Assert.Contains((AutomationsAuditActions.RunHandedOff, true), bed.Audit.Entries);
+        Assert.Equal("automations.run.handed_off", AutomationsAuditActions.RunHandedOff);
+    }
+
+    /// <summary>Spec 2026-10-26 repetir R-4b: sin cliente al que registrarle la respuesta, <c>handoff</c> traspasa con la causa
+    /// «no disponible» y el miembro del bloque, y queda la auditoría de sistema.</summary>
+    [Fact]
+    public async Task AnUnrecordableCustomerHandsOffWithTheUnavailableCause()
+    {
+        var member = Guid.CreateVersion7();
+        var bed = new Bed(
+            null, flow: ConsentModeFlow("handoff", member), dataConsents: new RecordingDataConsents(DataConsentCheck.Unavailable));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            [(new HandoffCause(HandoffCauseKind.DataConsentUnavailable, null, "consent", "Política de datos", null, null, null), (Guid?)member)],
+            bed.Conversations.Handoffs);
+        Assert.Contains((AutomationsAuditActions.DataConsentUnavailable, true), bed.Audit.Entries);
+        Assert.Contains((AutomationsAuditActions.RunHandedOff, true), bed.Audit.Entries);
+        Assert.Empty(bed.DataConsents.Records);
+    }
+
+    /// <summary>Spec 2026-10-26 repetir R-4: agotar las respuestas inválidas de una Política de datos en <c>repeat</c> traspasa como
+    /// intentos agotados con el miembro del bloque, aunque la regla del chatbot sea reiniciar.</summary>
+    [Fact]
+    public async Task ExhaustedConsentHandsOffAsAttemptsExhausted()
+    {
+        var member = Guid.CreateVersion7();
+        var bed = new Bed(
+            null, ActiveState(), flow: ConsentModeFlow("repeat", member), dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted),
+            engineSettings: new EngineSettings(Chatbot.DefaultRestartKeyword, 3, AttemptsExhaustedAction.Restart));
+        bed.Runs.Added.Add(ConsentRun(new ConsentPrompt("consent", "Texto", Guid.CreateVersion7())));
+
+        for (var reply = 0; reply < 3; reply++)
+        {
+            await bed.Processor().ProcessAsync(Item with { MessageId = Guid.CreateVersion7() }, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(
+            [(new HandoffCause(HandoffCauseKind.AttemptsExhausted, null, "consent", "Política de datos", null, null, null), (Guid?)member)],
+            bed.Conversations.Handoffs);
+        Assert.Contains((AutomationsAuditActions.DataConsentUnanswered, true), bed.Audit.Entries);
+    }
+
+    /// <summary>Spec 2026-10-26 repetir R-3: un «No acepto» que no se pudo registrar falla la corrida y no traspasa con la causa de la
+    /// política de datos.</summary>
+    [Fact]
+    public async Task ARecordThatFailsDoesNotHandOff()
+    {
+        var bed = new Bed(
+            null, ActiveState(), flow: ConsentModeFlow("handoff", Guid.CreateVersion7()),
+            dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted, records: false));
+        var run = ConsentRun(new ConsentPrompt("consent", "Texto", Guid.CreateVersion7()));
+        bed.Runs.Added.Add(run);
+        bed.Inbox.Messages[Item.MessageId] = Tapped(Item.MessageId, "rejected");
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal((RunStatus.Failed, "automations.run.data_consent_unrecorded"), (run.Status, run.FailureCode));
+        Assert.DoesNotContain(bed.Conversations.Handoffs, handoff => handoff.Cause.Kind == HandoffCauseKind.DataConsentRejected);
+    }
+
     private static ConversationRun ConsentRun(ConsentPrompt prompt) =>
         ConversationRun.Start(
             Guid.CreateVersion7(), TenantId, ConversationId, ConnectionId, ChatbotId, VersionId,

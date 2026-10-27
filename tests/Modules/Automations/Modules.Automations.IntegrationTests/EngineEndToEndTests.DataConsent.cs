@@ -146,6 +146,77 @@ public sealed partial class EngineEndToEndTests
             "SELECT chatbot_version_number || '|' || shown_text FROM customers.data_consents"));
     }
 
+    private const string RepeatFlowJson = """
+        {
+          "schema": 1,
+          "start": { "firstNodeId": "n1" },
+          "variables": [],
+          "nodes": [
+            { "id": "n1", "kind": "dataConsent", "title": "Política de datos", "text": "Hola {nombre}, lee https://e.co/d y acepta.", "onReject": "repeat", "maxAsks": 2, "onRejectMemberId": null, "outputs": { "accepted": "n2" } },
+            { "id": "n2", "kind": "message", "title": "Gracias", "text": "Gracias.", "outputs": { "next": "n3" } },
+            { "id": "n3", "kind": "resolve", "title": "Listo" }
+          ]
+        }
+        """;
+
+    /// <summary>Spec 2026-10-26 repetir R-3 y R-4: con <c>maxAsks: 2</c> el primer «No acepto» vuelve a preguntar y el segundo pasa a la
+    /// bandeja, y cada uno deja su fila <c>Rejected</c> con la pregunta que contestó. Es la prueba de que el contador sobrevive entre dos
+    /// unidades del motor por el camino real (cargar la corrida, avanzar, guardar).</summary>
+    [Fact]
+    public async Task RejectingTwiceRecordsTwoRowsAndHandsOff()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database, flowJson: RepeatFlowJson);
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        var first = await LastBotMessageAsync(f);
+
+        await TapAsync(f, "w2", "rejected", "No acepto");
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal([$"[button] {ConsentPromptSent}", $"[button] {ConsentPromptSent}"], f.Meta.Sends());
+        var second = await LastBotMessageAsync(f);
+        Assert.NotEqual(first.Id, second.Id);
+
+        await TapAsync(f, "w3", "rejected", "No acepto", quotedWamid: second.Wamid);
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal(2L, await ConsentRowsAsync(f));
+        Assert.Equal($"Rejected|w2|{first.Id}", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT event || '|' || reply_wamid || '|' || prompt_message_id FROM customers.data_consents WHERE reply_wamid = 'w2'"));
+        Assert.Equal($"Rejected|w3|{second.Id}", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT event || '|' || reply_wamid || '|' || prompt_message_id FROM customers.data_consents WHERE reply_wamid = 'w3'"));
+        Assert.Equal("Open|Paused|Handoff|", await ConversationAsync(f,
+            "status || '|' || automation_status || '|' || automation_pause_reason || '|' || coalesce(assigned_member_id::text, '')"));
+        Assert.Equal("DataConsentRejected|Política de datos", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT details->'handoff'->>'kind' || '|' || (details->'handoff'->>'nodeTitle') FROM messaging.messages WHERE details->>'type' = 'AutomationPaused'"));
+        Assert.Equal(2, f.Meta.Sends().Count);
+    }
+
+    /// <summary>Review Focus 1: tras repetir, WhatsApp deja tocar el botón de la primera pregunta. Ese toque cita una pregunta que ya no
+    /// es la vigente: no es la respuesta a la segunda, no deja fila y se vuelve a preguntar (intento inválido).</summary>
+    [Fact]
+    public async Task ATapOnTheFirstPromptAfterARepeatRecordsNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database, flowJson: RepeatFlowJson);
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        var first = await LastBotMessageAsync(f);
+        await TapAsync(f, "w2", "rejected", "No acepto");
+        await DrainAutomationsAsync(f.Host);
+        Assert.Equal(1L, await ConsentRowsAsync(f));
+
+        await TapAsync(f, "w3", "rejected", "No acepto", quotedWamid: first.Wamid);
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal(1L, await ConsentRowsAsync(f));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM customers.data_consents WHERE reply_wamid = 'w2'"));
+        Assert.Equal(3, f.Meta.Sends().Count);
+        Assert.Equal($"[button] {ConsentPromptSent}", f.Meta.Sends()[^1]);
+        Assert.Equal("Open|Active", await ConversationAsync(f, "status || '|' || automation_status"));
+    }
+
     [Fact]
     public async Task ExhaustedConsentFollowsRejectedWithoutARow()
     {

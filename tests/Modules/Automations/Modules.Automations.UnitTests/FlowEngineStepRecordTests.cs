@@ -167,6 +167,68 @@ public sealed class FlowEngineStepRecordTests
         Assert.Equal([0], record.SendIndexes);
     }
 
+    // Spec 2026-10-26 repetir R-3, R-4 y R-4b: los caminos de «Si no acepta» anotan como sus equivalentes (reenvío y traspaso).
+
+    private static FlowDefinition ConsentFlow(string onReject, int maxAsks = DataConsentAsks.Default) =>
+        Flow("dc", new DataConsentNode("dc", "Política", Out((FlowOutputs.Accepted, null)), "Acepta", onReject, maxAsks));
+
+    private static EngineInput.CustomerMessage NotAccepted() =>
+        new("Interactive", DataConsentButtons.RejectLabel, FlowOutputs.Rejected, null);
+
+    private static StepResult ConsentAsked(FlowDefinition flow, EngineSettings settings) =>
+        FlowEngine.Step(flow, settings, Start(flow).State, new EngineInput.DataConsent("dc", Accepted: false), Now);
+
+    [Fact]
+    public void ARepeatedConsentQuestionIsAnEntryWithoutOrigin()
+    {
+        var flow = ConsentFlow(DataConsentRejectActions.Repeat, maxAsks: 2);
+        var asked = ConsentAsked(flow, Settings);
+
+        var again = Next(flow, asked, NotAccepted());
+
+        var record = Assert.Single(again.Steps);
+        AssertRecord(record, 3, StepSeqs.Entry, "dc", "dataConsent", "waiting", null, null);
+        Assert.IsType<Effect.RecordDataConsent>(again.Effects[0]);
+        Assert.Equal([1], record.SendIndexes);
+    }
+
+    [Fact]
+    public void ARejectionAtTheCapExitsTheBlockWithTheHandedOffOutcome()
+    {
+        var flow = ConsentFlow(DataConsentRejectActions.Repeat, maxAsks: 1);
+        var asked = ConsentAsked(flow, Settings);
+
+        var handedOff = Next(flow, asked, NotAccepted());
+
+        var record = Assert.Single(handedOff.Steps);
+        AssertRecord(record, 2, StepSeqs.Exit, "dc", "dataConsent", TraceOutcomes.HandedOff, null, null);
+        Assert.Empty(record.SendIndexes);
+    }
+
+    [Fact]
+    public void ExhaustedConsentAttemptsWithoutRejectedExitTheBlockWithTheHandedOffOutcome()
+    {
+        var settings = new EngineSettings("reiniciar", 1);
+        var flow = ConsentFlow(DataConsentRejectActions.Handoff);
+        var asked = ConsentAsked(flow, settings);
+
+        var handedOff = FlowEngine.Step(flow, settings, asked.State, Typed("hola"), Now);
+
+        var record = Assert.Single(handedOff.Steps);
+        AssertRecord(record, 2, StepSeqs.Exit, "dc", "dataConsent", TraceOutcomes.HandedOff, null, null);
+    }
+
+    [Fact]
+    public void AnUnrecordableConsentWithoutRejectedExitsTheBlockWithTheHandedOffOutcome()
+    {
+        var flow = ConsentFlow(DataConsentRejectActions.Repeat);
+
+        var handedOff = Next(flow, Start(flow), new EngineInput.DataConsent("dc", Accepted: false, CanRecord: false));
+
+        var record = Assert.Single(handedOff.Steps);
+        AssertRecord(record, 1, StepSeqs.Exit, "dc", "dataConsent", TraceOutcomes.HandedOff, null, null);
+    }
+
     [Fact]
     public void ARecordedWalkKeepsTheTraceUnchanged()
     {

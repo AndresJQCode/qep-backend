@@ -86,13 +86,17 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
                                 : "Registraría que el cliente no aceptó la política de datos.");
                         break;
                     case Effect.DataConsentUnanswered unanswered:
-                        lines.System(unanswered.NodeId, "Seguiría por «No acepto» sin registrar nada: se agotaron los intentos.");
+                        // Spec 2026-10-26 repetir R-6: sólo con «rejectedOutput» el bloque sigue por «No acepto»; en los otros dos modos traspasa.
+                        lines.System(
+                            unanswered.NodeId,
+                            flow.Nodes.OfType<DataConsentNode>().FirstOrDefault(node => node.Id == unanswered.NodeId)?.OnReject
+                                == DataConsentRejectActions.RejectedOutput
+                                ? "Seguiría por «No acepto» sin registrar nada: se agotaron los intentos."
+                                : "No registraría nada: se agotaron los intentos.");
                         break;
                     case Effect.Handoff handoff:
                         // Spec 2026-10-25 D-4: el simulador dice adónde iría el traspaso, no sólo que ocurre.
-                        lines.System(
-                            handoff.NodeId,
-                            handoff.MemberId is null ? "Pasaría la conversación a la bandeja, sin asignar" : "Pasaría la conversación al miembro elegido");
+                        lines.System(handoff.NodeId, HandoffText(handoff, state.ConsentRejections));
                         break;
                     case Effect.Resolve resolve:
                         lines.System(resolve.NodeId, "Resolvería la conversación");
@@ -107,6 +111,19 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
         }
 
         return (state, lines.All);
+    }
+
+    /// <summary>Spec 2026-10-26 repetir R-6: el destino de hoy y, si el traspaso es por «No acepto», cuántas veces no aceptó. El motor no
+    /// pone a cero el contador al traspasar, así que <paramref name="rejections"/> es el de la corrida.</summary>
+    private static string HandoffText(Effect.Handoff handoff, int rejections)
+    {
+        var destination = handoff.MemberId is null ? "Pasaría la conversación a la bandeja, sin asignar" : "Pasaría la conversación al miembro elegido";
+        if (handoff.Reason != HandoffReasons.DataConsentRejected)
+        {
+            return destination;
+        }
+
+        return rejections >= 2 ? $"{destination}: no aceptó {rejections} veces." : $"{destination}: no aceptó la política de datos.";
     }
 
     /// <summary>

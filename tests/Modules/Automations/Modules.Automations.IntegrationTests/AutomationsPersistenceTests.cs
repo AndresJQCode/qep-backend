@@ -148,6 +148,53 @@ public sealed class AutomationsPersistenceTests
     }
 
     [Fact]
+    public async Task ARunSavedBeforeTheCounterReadsZero()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var conversationId = Guid.CreateVersion7();
+        // Una fila de antes de la columna: el INSERT no la nombra y la base le pone el default.
+        await using (var connection = new Npgsql.NpgsqlConnection(database.GetConnectionString()))
+        {
+            await connection.OpenAsync(Ct);
+            await using var command = new Npgsql.NpgsqlCommand(
+                """
+                INSERT INTO automations.conversation_runs (id, tenant_id, conversation_id, connection_id, chatbot_id, chatbot_version_id, status, started_at, updated_at)
+                VALUES (@id, @tenant, @conversation, @connection, @chatbot, @version, 'Waiting', now(), now())
+                """,
+                connection);
+            command.Parameters.AddWithValue("id", Guid.CreateVersion7());
+            command.Parameters.AddWithValue("tenant", tenantId);
+            command.Parameters.AddWithValue("conversation", conversationId);
+            command.Parameters.AddWithValue("connection", Guid.CreateVersion7());
+            command.Parameters.AddWithValue("chatbot", Guid.CreateVersion7());
+            command.Parameters.AddWithValue("version", Guid.CreateVersion7());
+            await command.ExecuteNonQueryAsync(Ct);
+        }
+
+        using (var old = factory.Services.CreateScope())
+        {
+            var read = await old.ServiceProvider.GetRequiredService<IConversationRunRepository>().FindLatestAsync(tenantId, conversationId, Ct);
+
+            Assert.NotNull(read);
+            Assert.Equal(0, read.ConsentRejections);
+
+            // FindLatestAsync lee sin seguimiento: se reengancha la fila para que el guardado la escriba.
+            read.Apply(read.ToState() with { ConsentRejections = 2 }, Now);
+            old.ServiceProvider.GetRequiredService<AutomationsDbContext>().Runs.Update(read);
+            await old.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var reader = factory.Services.CreateScope();
+        var saved = await reader.ServiceProvider.GetRequiredService<IConversationRunRepository>().FindLatestAsync(tenantId, conversationId, Ct);
+
+        Assert.NotNull(saved);
+        Assert.Equal(2, saved.ConsentRejections);
+        Assert.Equal(2, saved.ToState().ConsentRejections);
+    }
+
+    [Fact]
     public async Task TodayCountsRunsStartedTodayOnly()
     {
         await using var database = await StartDatabaseAsync();

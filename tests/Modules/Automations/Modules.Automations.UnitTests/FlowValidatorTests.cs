@@ -707,6 +707,88 @@ public sealed class FlowValidatorTests
         Assert.DoesNotContain(FlowValidator.Validate(flow, Ctx()), i => i.Code == "node.unreachable");
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(6)]
+    public void ARepeatCapOutsideOneToFiveIsAnError(int maxAsks)
+    {
+        var issue = Single(FlowValidator.Validate(Flow(ConsentOn("repeat", maxAsks), End()), Ctx()), "data_consent.max_asks_invalid");
+
+        Assert.Equal(FlowIssueSeverity.Error, issue.Severity);
+        Assert.Equal("n1", issue.NodeId);
+        Assert.Equal($"«Preguntar hasta» de «Política de datos» es {maxAsks}: tiene que estar entre 1 y 5.", issue.Message);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(5)]
+    public void ARepeatCapInsideOneToFiveIsFine(int maxAsks) =>
+        Assert.DoesNotContain(FlowValidator.Validate(Flow(ConsentOn("repeat", maxAsks), End()), Ctx()), i => i.Code == "data_consent.max_asks_invalid");
+
+    [Theory]
+    [InlineData("rejectedOutput")]
+    [InlineData("handoff")]
+    public void TheCapIsOnlyCheckedWhenItRepeats(string onReject) =>
+        Assert.DoesNotContain(FlowValidator.Validate(Flow(ConsentOn(onReject, 9), End()), Ctx()), i => i.Code == "data_consent.max_asks_invalid");
+
+    [Theory]
+    [InlineData("repeat")]
+    [InlineData("handoff")]
+    public void ARejectMemberWhoCannotReplyIsAnError(string onReject)
+    {
+        var issue = Single(FlowValidator.Validate(Flow(ConsentOn(onReject, member: Guid.CreateVersion7()), End()), Ctx()), "handoff.member_invalid");
+
+        Assert.Equal(FlowIssueSeverity.Error, issue.Severity);
+        Assert.Equal("n1", issue.NodeId);
+        Assert.Equal(
+            "«Si no acepta» de «Política de datos» asigna la conversación a alguien que ya no puede responder conversaciones: elige otro miembro o déjala sin asignar.",
+            issue.Message);
+    }
+
+    [Theory]
+    [InlineData("repeat")]
+    [InlineData("handoff")]
+    public void ARejectMemberWhoCanReplyOrNoMemberIsFine(string onReject)
+    {
+        var member = Guid.CreateVersion7();
+
+        Assert.DoesNotContain(FlowValidator.Validate(Flow(ConsentOn(onReject, member: member), End()), Ctx(members: member)), i => i.Code == "handoff.member_invalid");
+        Assert.DoesNotContain(FlowValidator.Validate(Flow(ConsentOn(onReject), End()), Ctx()), i => i.Code == "handoff.member_invalid");
+    }
+
+    [Fact]
+    public void AnOrphanRejectMemberIsIgnoredWhenItExitsByRejected() =>
+        Assert.DoesNotContain(
+            FlowValidator.Validate(Flow(ConsentOn("rejectedOutput", member: Guid.CreateVersion7()), End()), Ctx()), i => i.Code == "handoff.member_invalid");
+
+    [Theory]
+    [InlineData("repeat")]
+    [InlineData("handoff")]
+    public void RejectedIsNotRequiredWhenItDoesNotExit(string onReject) =>
+        Assert.DoesNotContain(FlowValidator.Validate(Flow(ConsentOn(onReject, rejected: null), End()), Ctx()), i => i.Code == "node.output_unconnected");
+
+    [Fact]
+    public void RejectedIsRequiredWhenItExits()
+    {
+        var issue = Single(FlowValidator.Validate(Flow(ConsentOn("rejectedOutput", rejected: null), End()), Ctx()), "node.output_unconnected");
+
+        Assert.Equal("La salida «No acepto» de «Política de datos» no está conectada.", issue.Message);
+    }
+
+    // Una `rejected` que quedó en el borrador sin normalizar no abre camino ni se valida cuando el bloque no sale por ahí.
+    [Fact]
+    public void ABlockBehindAHiddenRejectedIsUnreachable()
+    {
+        var hidden = new HandoffNode("n9", "Oculto", Out(), null);
+        var issues = FlowValidator.Validate(Flow(ConsentOn("repeat", rejected: "n9"), End(), hidden), Ctx());
+
+        Assert.Equal("n9", Single(issues, "node.unreachable").NodeId);
+        Assert.DoesNotContain(FlowValidator.Validate(Flow(ConsentOn("repeat", rejected: "nope"), End()), Ctx()), i => i.Code == "node.unknown_target");
+    }
+
+    private static DataConsentNode ConsentOn(string onReject, int maxAsks = 3, Guid? member = null, string? rejected = "end") =>
+        new("n1", "Política de datos", Out(("accepted", "end"), ("rejected", rejected)), "Lee https://empresa.co/datos", onReject, maxAsks, member);
+
     private static DataConsentNode Consent(string text = "Lee https://empresa.co/datos", string? accepted = "end", string? rejected = "end") =>
         new("n1", "Política de datos", Out(("accepted", accepted), ("rejected", rejected)), text);
 

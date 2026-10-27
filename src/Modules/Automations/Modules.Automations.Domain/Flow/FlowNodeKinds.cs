@@ -37,7 +37,7 @@ public static class FlowNodeKinds
         ButtonsNode buttons => [.. buttons.Buttons.Select(button => button.Id), .. OtherOutput(buttons.Fallback)],
         ListNode list => ListOutputs(list),
         AttachmentNode => [FlowOutputs.Received, FlowOutputs.Invalid],
-        DataConsentNode => [FlowOutputs.Accepted, FlowOutputs.Rejected],
+        DataConsentNode consent => [FlowOutputs.Accepted, .. RejectedOutput(consent.OnReject)],
         HandoffNode or ResolveNode => [],
         _ => throw new ArgumentOutOfRangeException(nameof(node), node.Kind, "Bloque sin salidas definidas."),
     };
@@ -48,6 +48,11 @@ public static class FlowNodeKinds
     /// <summary><c>other</c> existe sólo con <c>fallback = otherOutput</c> (spec 2026-10-25 D-3): con <c>repeat</c> o <c>handoff</c> el
     /// canvas no la dibuja y nadie debe seguirla.</summary>
     private static string[] OtherOutput(string fallback) => fallback == InteractiveFallbacks.OtherOutput ? [FlowOutputs.Other] : [];
+
+    /// <summary><c>rejected</c> existe sólo con <c>onReject = rejectedOutput</c> (spec 2026-10-26 repetir R-1): con <c>repeat</c> o
+    /// <c>handoff</c> «No acepto» no sale por ninguna salida y nadie debe seguir una conexión vieja.</summary>
+    private static string[] RejectedOutput(string onReject) =>
+        onReject == DataConsentRejectActions.RejectedOutput ? [FlowOutputs.Rejected] : [];
 
     private static List<string> ListOutputs(ListNode list)
     {

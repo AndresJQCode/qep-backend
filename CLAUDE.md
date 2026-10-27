@@ -1,4 +1,4 @@
-﻿# `qep-backend` — reglas del repositorio
+# `qep-backend` — reglas del repositorio
 
 Monolito modular .NET 10. Este archivo es **prescriptivo**: reglas, precedentes y gotchas
 que **no** se deducen leyendo el código. Lo descriptivo —qué existe, cómo se corre, los
@@ -588,6 +588,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `replied_to_message_id`. **Deploy y rollback:** el kind `dataConsent` es sólo hacia adelante —un backend viejo no lee un flujo
   publicado que lo tenga— y el `Down` de `AddCustomerDataConsents` borra la prueba legal: nunca se corre. El rollback es revertir el
   código y dejar la tabla.
+- **«Política de datos» tiene tres modos para «No acepto»** (spec 2026-10-26 repetir): `onReject` = `repeat` | `rejectedOutput` (default de todo bloque viejo) | `handoff`. `rejected` existe sólo con `rejectedOutput`: `OutputsOf` la omite y `FlowNormalizer` la quita. En `repeat`, el contador es `RunState.ConsentRejections` (columna `conversation_runs.consent_rejections`), no `Attempts` ni `ConsentPrompt`: vuelve a 0 en `Go`, `Leave` y `Restart`, nunca en `Resend`. En los dos modos sin `rejected`, todo camino que hoy saldría por ella (intentos agotados, cliente sin registrar) traspasa con `onRejectMemberId`, sin leer la regla de agotamiento del chatbot. Los modos son sólo hacia adelante: tras un rollback del backend, el motor viejo sigue la `rejected` ya quitada como `null` y termina con `EndRun(OutputUnconnected)` ante «No acepto» o el agotamiento, así que toda versión publicada en `repeat` o `handoff` hay que republicarla en `rejectedOutput`.
 - **El sinónimo de una ciudad casa después de los dos nombres, y confirmar uno igual a una ciudad real es 422** (spec 2026-10-26).
   `CityRepository.MatchByNameAsync` compara el nombre, luego el oficial del DANE y sólo si ninguno casa busca el sinónimo vivo:
   una fila de sinónimo con el texto de una ciudad real —sólo llega por SQL— nunca le gana. `resolve` e `impact` lo rechazan con

@@ -220,6 +220,23 @@ public static partial class FlowValidator
                         $"El texto de «{node.Title}» no tiene un enlace a tu política de datos."));
                 }
 
+                if (consent.OnReject == DataConsentRejectActions.Repeat
+                    && consent.MaxAsks is < DataConsentAsks.Min or > DataConsentAsks.Max)
+                {
+                    issues.Add(Error(
+                        FlowIssueCodes.DataConsentMaxAsksInvalid, node.Id,
+                        $"«Preguntar hasta» de «{node.Title}» es {consent.MaxAsks}: tiene que estar entre {DataConsentAsks.Min} y {DataConsentAsks.Max}."));
+                }
+
+                // Con rejectedOutput un miembro huérfano de un borrador sin normalizar lo ignora el motor, como en Botones y Lista.
+                if (consent.OnReject is DataConsentRejectActions.Repeat or DataConsentRejectActions.Handoff
+                    && consent.OnRejectMemberId is { } rejectMember && !context.HandoffMembers.Contains(rejectMember))
+                {
+                    issues.Add(Error(
+                        FlowIssueCodes.HandoffMemberInvalid, node.Id,
+                        $"«Si no acepta» de «{node.Title}» asigna la conversación a alguien que ya no puede responder conversaciones: elige otro miembro o déjala sin asignar."));
+                }
+
                 break;
             case ListNode list:
                 CheckList(list, context, issues);

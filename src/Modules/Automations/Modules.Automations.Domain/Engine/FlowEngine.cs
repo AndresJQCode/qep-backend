@@ -143,7 +143,8 @@ public static class FlowEngine
             : Unchanged(state);
 
     /// <summary>Spec 2026-10-26 D-2 y D-7: con una aceptación vigente sale por <c>accepted</c> sin preguntar; sin cliente al que registrarle
-    /// la respuesta, por <c>rejected</c>; si no, pregunta y espera.</summary>
+    /// la respuesta, por <c>rejected</c>; si no, pregunta y espera. Spec 2026-10-26 repetir R-4b: en <c>repeat</c> y <c>handoff</c> no hay
+    /// <c>rejected</c>, y seguirla terminaría la corrida con el bot callado; sin cliente pasa a la bandeja con el destino del bloque.</summary>
     private static StepResult OnDataConsent(FlowDefinition flow, RunState state, EngineInput.DataConsent consent, DateTimeOffset now)
     {
         if (PendingAt<DataConsentNode>(flow, state, consent.NodeId) is not { } node)
@@ -157,7 +158,14 @@ public static class FlowEngine
             return walk.Leave(node, FlowOutputs.Accepted);
         }
 
-        return consent.CanRecord ? walk.Ask(node) : walk.Leave(node, FlowOutputs.Rejected);
+        if (consent.CanRecord)
+        {
+            return walk.Ask(node);
+        }
+
+        return node.OnReject == DataConsentRejectActions.RejectedOutput
+            ? walk.Leave(node, FlowOutputs.Rejected)
+            : walk.HandOff(node, HandoffReasons.DataConsentUnavailable, node.OnRejectMemberId);
     }
 
     /// <summary>
@@ -199,6 +207,11 @@ public static class FlowEngine
         // D-6: la pregunta de Política de datos que espera respuesta. Sólo Ask la pone; salir, reiniciar o entrar en un bloque la borra.
         private ConsentPrompt? consentPrompt;
 
+        // Spec 2026-10-26 repetir R-3: los «No acepto» al bloque Política de datos en que espera la corrida. Sólo Consent lo sube; entrar
+        // en un bloque (Go), salir (Leave) y reiniciar lo ponen en cero. Reenviar la pregunta no, y pasar a la bandeja tampoco: el
+        // simulador lee cuántas veces no aceptó.
+        private int consentRejections;
+
         public Walk(FlowDefinition flow, RunState state, DateTimeOffset now)
         {
             foreach (var node in flow.Nodes)
@@ -215,6 +228,7 @@ public static class FlowEngine
             initialNodeId = state.CurrentNodeId;
             attempts = state.Attempts;
             consentPrompt = state.ConsentPrompt;
+            consentRejections = state.ConsentRejections;
             this.now = now;
         }
 
@@ -264,9 +278,7 @@ public static class FlowEngine
 
             if (fallback == InteractiveFallbacks.Handoff)
             {
-                effects.Add(new Effect.Handoff(node.Id, HandoffReasons.InvalidReply, fallbackMemberId));
-                _ = Stop(node, RunStatus.HandedOff, TraceOutcomes.HandedOff);
-                return Result();
+                return HandOff(node, HandoffReasons.InvalidReply, fallbackMemberId);
             }
 
             // D-3: «other» existe sólo con «otherOutput»; con «repeat» el JSON puede traerla conectada y nadie la sigue.
@@ -282,11 +294,15 @@ public static class FlowEngine
                 return Resend(node);
             }
 
-            // Spec 2026-10-26 D-4: Política de datos sin respuesta no pasa a un asesor ni reinicia: sale por «rejected» sin registrar nada.
-            if (node is DataConsentNode)
+            // Spec 2026-10-26 D-4: Política de datos sin respuesta no reinicia ni registra nada: sale por «rejected». Spec 2026-10-26
+            // repetir R-4: en «repeat» y «handoff» esa salida no existe; pasa a la bandeja con el destino del bloque, y la regla de
+            // agotamiento del chatbot no se lee (manda el bloque).
+            if (node is DataConsentNode consent)
             {
                 effects.Add(new Effect.DataConsentUnanswered(node.Id));
-                return Leave(node, FlowOutputs.Rejected);
+                return consent.OnReject == DataConsentRejectActions.RejectedOutput
+                    ? Leave(node, FlowOutputs.Rejected)
+                    : HandOff(node, HandoffReasons.AttemptsExhausted, consent.OnRejectMemberId);
             }
 
             // D-2: sólo Pregunta abierta y Pedir adjunto tienen salida de agotamiento («invalid»); conectada, gana a la regla del chatbot.
@@ -295,14 +311,19 @@ public static class FlowEngine
                 return Leave(node, FlowOutputs.Invalid);
             }
 
-            if (settings.ExhaustedAction == AttemptsExhaustedAction.Handoff)
-            {
-                effects.Add(new Effect.Handoff(node.Id, HandoffReasons.AttemptsExhausted, settings.ExhaustedMemberId));
-                _ = Stop(node, RunStatus.HandedOff, TraceOutcomes.HandedOff);
-                return Result();
-            }
+            return settings.ExhaustedAction == AttemptsExhaustedAction.Handoff
+                ? HandOff(node, HandoffReasons.AttemptsExhausted, settings.ExhaustedMemberId)
+                : Restart(node);
+        }
 
-            return Restart(node);
+        /// <summary>Pasa la conversación a la bandeja desde el bloque en que la corrida espera, con <paramref name="memberId"/> de destino
+        /// (<c>null</c> = sin asignar). La corrida termina <c>HandedOff</c>.</summary>
+        public StepResult HandOff(FlowNode node, string reason, Guid? memberId)
+        {
+            consentPrompt = null;
+            effects.Add(new Effect.Handoff(node.Id, reason, memberId));
+            _ = Stop(node, RunStatus.HandedOff, TraceOutcomes.HandedOff);
+            return Result();
         }
 
         /// <summary>
@@ -315,6 +336,7 @@ public static class FlowEngine
             variables = variables.FixedOnly();
             attempts = 0;
             consentPrompt = null;
+            consentRejections = 0;
             Record(node, TraceOutcomes.Restart, reset: true);
             entered.Clear();
             return Go(firstNodeId, StartNodeId, FlowOutputs.Next);
@@ -329,6 +351,7 @@ public static class FlowEngine
         public StepResult Leave(FlowNode node, string output)
         {
             consentPrompt = null;
+            consentRejections = 0;
             Record(node, output);
             return Go(node.Outputs.GetValueOrDefault(output), node.Id, output);
         }
@@ -352,7 +375,10 @@ public static class FlowEngine
         }
 
         /// <summary>Spec 2026-10-26 D-6: registra la respuesta con el texto que se le mostró al cliente, no con la plantilla interpolada de
-        /// nuevo. Sin pregunta recordada de este bloque (una corrida guardada antes de recordarla) se interpola ahora.</summary>
+        /// nuevo. Sin pregunta recordada de este bloque (una corrida guardada antes de recordarla) se interpola ahora.
+        /// Spec 2026-10-26 repetir R-3: todo «No acepto» deja su fila; después, en <c>handoff</c> pasa a la bandeja, y en <c>repeat</c>
+        /// vuelve a preguntar mientras la persona no haya visto la pregunta <see cref="DataConsentNode.MaxAsks"/> veces, y si no pasa a la
+        /// bandeja. En esos dos modos nunca se sigue <c>rejected</c>, aunque el JSON la traiga conectada.</summary>
         public StepResult Consent(DataConsentNode node, string output)
         {
             var (shownText, promptMessageId) = consentPrompt is { } prompt && prompt.NodeId == node.Id
@@ -360,7 +386,19 @@ public static class FlowEngine
                 : (Text(node.Text), (Guid?)null);
             var decision = output == FlowOutputs.Accepted ? DataConsentDecision.Accepted : DataConsentDecision.Rejected;
             effects.Add(new Effect.RecordDataConsent(node.Id, decision, shownText, promptMessageId));
-            return Leave(node, output);
+            if (decision == DataConsentDecision.Accepted || node.OnReject == DataConsentRejectActions.RejectedOutput)
+            {
+                return Leave(node, output);
+            }
+
+            if (node.OnReject == DataConsentRejectActions.Repeat && ++consentRejections < node.MaxAsks)
+            {
+                // Por Ask y no por Resend: el cliente acaba de no aceptar, así que no hay aceptación vigente que consultar. Ask suma
+                // StepNumber (ruling P2-R5) y no toca los intentos, que son de las respuestas inválidas (R-4).
+                return Ask(node);
+            }
+
+            return HandOff(node, HandoffReasons.DataConsentRejected, node.OnRejectMemberId);
         }
 
         /// <summary>Entra en <paramref name="targetId"/> y en los que siguen hasta un bloque que espera o un final.</summary>
@@ -397,8 +435,9 @@ public static class FlowEngine
                     return Result();
                 }
 
-                // Los intentos son del bloque que espera: un bloque nuevo empieza de cero (D-M7).
+                // Los intentos son del bloque que espera: un bloque nuevo empieza de cero (D-M7), y también los «No acepto» (repetir R-3).
                 attempts = 0;
+                consentRejections = 0;
                 if (Enter(node, fromNodeId, fromOutput) is not { } output)
                 {
                     return Result();
@@ -513,7 +552,7 @@ public static class FlowEngine
         }
 
         private StepResult Result() =>
-            new(new RunState(status, currentNodeId, stepNumber, attempts, variables, [.. trace], consentPrompt), [.. effects])
+            new(new RunState(status, currentNodeId, stepNumber, attempts, variables, [.. trace], consentPrompt, consentRejections), [.. effects])
             {
                 Steps = [.. records],
             };
