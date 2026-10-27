@@ -580,7 +580,7 @@ public sealed class ClasicFlowEndToEndTests
         Assert.DoesNotContain("document=10203", f.Logs.AllText, StringComparison.Ordinal);
         Assert.DoesNotContain($"phone={WaId}", f.Logs.AllText, StringComparison.Ordinal);
         Assert.DoesNotContain(BaseUrl, f.Logs.AllText, StringComparison.Ordinal);
-        foreach (var table in new[] { "automations.http_calls", "audit.entries", "automations.conversation_runs", "platform.request_failures" })
+        foreach (var table in new[] { "automations.http_calls", "audit.entries", "automations.conversation_runs", "platform.request_failures", "automations.run_units" })
         {
             var rows = await TextAsync(f, $"SELECT coalesce(string_agg(row_to_json(t)::text, E'\\n'), '') FROM {table} AS t");
             Assert.DoesNotContain(ApiKey, rows, StringComparison.Ordinal);
