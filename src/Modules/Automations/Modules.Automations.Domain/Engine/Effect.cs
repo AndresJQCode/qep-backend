@@ -41,8 +41,8 @@ public abstract record Effect(string NodeId)
     public sealed record RecordDataConsent(string NodeId, DataConsentDecision Decision, string ShownText, Guid? PromptMessageId)
         : Effect(NodeId);
 
-    /// <summary>Spec 2026-10-26 D-4: se agotaron los intentos sin una respuesta válida. No se registra nada y el bloque sale por
-    /// <c>rejected</c>.</summary>
+    /// <summary>Spec 2026-10-26 D-4: se agotaron los intentos sin una respuesta válida. No se registra nada; el bloque sale por
+    /// <c>rejected</c> sólo en <c>rejectedOutput</c>; en <c>repeat</c> y <c>handoff</c> sigue un <c>Handoff</c> (spec 2026-10-26 repetir R-4).</summary>
     public sealed record DataConsentUnanswered(string NodeId) : Effect(NodeId);
 }
 

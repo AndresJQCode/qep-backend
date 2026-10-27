@@ -654,4 +654,23 @@ public sealed class FlowEngineDataConsentTests
         Assert.Equal("consent", result.State.CurrentNodeId);
         Assert.Equal(0, result.State.ConsentRejections);
     }
+
+    /// <summary>Fija que aceptar después de rechazar sale por <c>accepted</c> y deja el contador en 0 (pasó a la primera).</summary>
+    [Fact]
+    public void AnAcceptanceAfterRejectionsLeavesByAcceptedAndResetsTheCount()
+    {
+        var flow = Repeating(maxAsks: 3);
+        var waiting = Asked(flow).State with
+        {
+            ConsentRejections = 1,
+            ConsentPrompt = new ConsentPrompt("consent", "Texto enviado", PromptId),
+        };
+
+        var result = Step(flow, waiting, Tapped(FlowOutputs.Accepted, "Acepto"));
+
+        Assert.Equal(new Effect.RecordDataConsent("consent", DataConsentDecision.Accepted, "Texto enviado", PromptId), result.Effects[0]);
+        Assert.Contains(result.State.Trace, entry => entry is { NodeId: "consent", Outcome: FlowOutputs.Accepted });
+        Assert.Equal(0, result.State.ConsentRejections);
+        Assert.Null(result.State.ConsentPrompt);
+    }
 }

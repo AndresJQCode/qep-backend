@@ -172,7 +172,7 @@ public static class InteractiveFallbacks
 /// <summary>Spec 2026-10-26 repetir R-1: qué hace el bloque Política de datos ante «No acepto».</summary>
 public static class DataConsentRejectActions
 {
-    /// <summary>Vuelve a mostrar la pregunta hasta agotar <see cref="DataConsentAsks.Max"/> y entonces pasa a la bandeja.</summary>
+    /// <summary>Vuelve a mostrar la pregunta hasta agotar <see cref="DataConsentNode.MaxAsks"/> y entonces pasa a la bandeja.</summary>
     public const string Repeat = "repeat";
 
     /// <summary>Sale por <c>rejected</c>: lo que hacía el bloque antes del modo, y lo que significa un bloque guardado sin él.</summary>
