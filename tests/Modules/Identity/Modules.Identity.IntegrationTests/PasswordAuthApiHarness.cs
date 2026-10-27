@@ -255,6 +255,62 @@ internal static class PasswordAuthApiHarness
         return rows;
     }
 
+    // Lo que la prueba lee del cuerpo de /auth/session y /auth/me (SessionResponse).
+    public sealed record SessionTenantPayload(Guid TenantId, string DisplayName);
+
+    public sealed record SessionPayload(
+        Guid UserId,
+        string? Email,
+        IReadOnlyList<SessionTenantPayload> ActiveTenants);
+
+    public static Task<HttpResponseMessage> VerifyAsync(HttpClient client, string token) =>
+        PostJsonAsync(client, "/api/v1/auth/email/verify", new { token });
+
+    // El único lugar donde una prueba puede leer un token crudo: la base guarda sólo el hash.
+    public static async Task<string> LatestOutboxTokenAsync(
+        string connectionString,
+        string eventName,
+        Guid userId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT payload->>'token'
+            FROM platform.outbox_messages
+            WHERE event_name = @event AND payload->>'userId' = @userId
+            ORDER BY occurred_at DESC
+            LIMIT 1
+            """,
+            connection);
+        command.Parameters.AddWithValue("event", eventName);
+        command.Parameters.AddWithValue("userId", userId.ToString());
+        var value = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        return value as string
+            ?? throw new InvalidOperationException($"No {eventName} outbox row for user {userId}.");
+    }
+
+    public sealed record RegisteredOwner(Guid UserId, Guid TenantId);
+
+    // Registra, toma el token de la outbox y lo verifica: deja al cliente con la cookie de sesión.
+    public static async Task<RegisteredOwner> RegisterAndVerifyAsync(
+        HttpClient client,
+        string connectionString,
+        string email,
+        string password)
+    {
+        var registered = await RegisterAsync(client, email, password, NewSlug());
+        Assert.Equal(System.Net.HttpStatusCode.Accepted, registered.StatusCode);
+        var userId = await FindUserIdAsync(connectionString, email);
+        var token = await LatestOutboxTokenAsync(
+            connectionString, IdentityIntegrationEvents.EmailVerificationRequested, userId);
+        var verified = await VerifyAsync(client, token);
+        Assert.Equal(System.Net.HttpStatusCode.OK, verified.StatusCode);
+        var session = await verified.Content.ReadFromJsonAsync<SessionPayload>(
+            TestContext.Current.CancellationToken);
+        return new RegisteredOwner(userId, Assert.Single(session!.ActiveTenants).TenantId);
+    }
+
     public static async Task<Guid> FindUserIdAsync(string connectionString, string email)
     {
         var value = await ScalarAsync(

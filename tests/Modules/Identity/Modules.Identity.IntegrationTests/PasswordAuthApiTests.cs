@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -333,6 +334,102 @@ public sealed class PasswordAuthApiTests
 
         Assert.Equal("identity.user.email_taken", exception.Code);
         Assert.Empty(loser.ChangeTracker.Entries());
+    }
+
+    [Fact]
+    public async Task RegisterThenVerifyFromTheCapturedMailOpensASession()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        var channel = new RecordingEmailChannel();
+        await using var factory = new PasswordAuthApiFactory(cs, channel);
+        using var client = CreateClient(factory);
+        var ct = TestContext.Current.CancellationToken;
+        var email = NewEmail();
+
+        await RegisterAsync(client, email, Pw, NewSlug());
+        var userId = await FindUserIdAsync(cs, email);
+        await WaitUntilAsync(() => Task.FromResult(channel.Sent.Count == 1), TimeSpan.FromSeconds(30)); // el worker sondea cada 15 s
+        var token = System.Text.RegularExpressions.Regex.Match(
+            Assert.Single(channel.Sent).TextBody, @"verify-email\?token=([A-Za-z0-9_-]+)").Groups[1].Value;
+
+        var response = await VerifyAsync(client, token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(
+            response.Headers.GetValues("Set-Cookie"),
+            c => c.StartsWith("qep_session=", StringComparison.Ordinal));
+        var me = await client.GetFromJsonAsync<SessionPayload>("/api/v1/auth/me", ct);
+        Assert.Single(me!.ActiveTenants);
+        Assert.Equal(1, await CountAuditAsync(cs, userId, "identity.email.verified"));
+        Assert.NotNull(await EmailVerifiedAtAsync(cs, userId));
+    }
+
+    [Fact]
+    public async Task VerifyWithAnUnknownExpiredOrUsedTokenReturnsTheSame422()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+        var expiredEmail = NewEmail();
+        var usedEmail = NewEmail();
+
+        await RegisterAsync(client, expiredEmail, Pw, NewSlug());
+        await RegisterAsync(client, usedEmail, Pw, NewSlug());
+        var expiredUser = await FindUserIdAsync(cs, expiredEmail);
+        var usedUser = await FindUserIdAsync(cs, usedEmail);
+        var expiredToken = await LatestOutboxTokenAsync(
+            cs, IdentityIntegrationEvents.EmailVerificationRequested, expiredUser);
+        var usedToken = await LatestOutboxTokenAsync(
+            cs, IdentityIntegrationEvents.EmailVerificationRequested, usedUser);
+        await using (var connection = new Npgsql.NpgsqlConnection(cs))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var expire = new Npgsql.NpgsqlCommand(
+                "UPDATE identity.email_tokens SET expires_at = now() - interval '1 minute' WHERE user_id = @expiredUser",
+                connection);
+            expire.Parameters.AddWithValue("expiredUser", expiredUser);
+            await expire.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(HttpStatusCode.OK, (await VerifyAsync(client, usedToken)).StatusCode);
+
+        var unknown = await VerifyAsync(client, "nope");
+        var expired = await VerifyAsync(client, expiredToken);
+        var used = await VerifyAsync(client, usedToken); // segundo uso
+
+        Assert.All(
+            new[] { unknown, expired, used },
+            r => Assert.Equal(HttpStatusCode.UnprocessableEntity, r.StatusCode));
+        var problems = new[] { await ProblemAsync(unknown), await ProblemAsync(expired), await ProblemAsync(used) };
+        Assert.All(problems, p => Assert.Equal("identity.email_token.invalid", p.Code));
+        Assert.Single(problems.Select(p => (p.Title, p.Detail)).Distinct());
+    }
+
+    // Review Focus 3
+    [Fact]
+    public async Task ConcurrentVerifyWithTheSameTokenOpensExactlyOneSession()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var registrar = CreateClient(factory);
+        using var clientA = CreateClient(factory);
+        using var clientB = CreateClient(factory);
+        var email = NewEmail();
+
+        await RegisterAsync(registrar, email, Pw, NewSlug());
+        var userId = await FindUserIdAsync(cs, email);
+        var token = await LatestOutboxTokenAsync(
+            cs, IdentityIntegrationEvents.EmailVerificationRequested, userId);
+
+        var responses = await Task.WhenAll(VerifyAsync(clientA, token), VerifyAsync(clientB, token));
+
+        Assert.Equal(
+            [HttpStatusCode.OK, HttpStatusCode.UnprocessableEntity],
+            responses.Select(r => r.StatusCode).Order());
+        Assert.Equal(1, await CountRowsAsync(cs, "identity.sessions", userId));
     }
 
     // Decora el servicio real saltando el chequeo previo; el registro del tenant sigue siendo el real.

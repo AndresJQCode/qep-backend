@@ -23,7 +23,47 @@ public static class PasswordAuthEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        endpoints.MapPost("/api/v1/auth/email/verify", VerifyEmailAsync)
+            .AllowAnonymous()
+            .WithTags("Authentication")
+            .Accepts<VerifyEmailRequest>("application/json")
+            .Produces<SessionResponse>()
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
+    }
+
+    // Un token inválido, vencido o usado sale como el mismo 422 identity.email_token.invalid. El
+    // token crudo no se registra en ningún lado.
+    private static async Task<IResult> VerifyEmailAsync(
+        HttpContext httpContext,
+        IEmailVerification emailVerification,
+        SessionEstablisher establisher,
+        CancellationToken cancellationToken)
+    {
+        VerifyEmailRequest? request = null;
+        try
+        {
+            if (httpContext.Request.HasJsonContentType())
+            {
+                request = await httpContext.Request.ReadFromJsonAsync<VerifyEmailRequest>(cancellationToken);
+            }
+        }
+        catch (JsonException)
+        {
+            request = null;
+        }
+
+        if (request is null)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "The request body is missing or malformed.");
+        }
+
+        // Un JSON con token null es un token que no existe: el mismo 422 que cualquier otro.
+        var user = await emailVerification.VerifyAsync(request.Token ?? string.Empty, cancellationToken);
+        return await establisher.EstablishAsync(httpContext, user.UserId, user.Email, cancellationToken);
     }
 
     // Orden fijo, y cada paso depende del anterior para no delatar si el email existe:
@@ -141,3 +181,5 @@ public sealed record RegisterTenantWithPasswordRequest(
     string? DefaultCulture = null,
     string? TimeZone = null,
     string? DateFormat = null);
+
+public sealed record VerifyEmailRequest(string Token);
