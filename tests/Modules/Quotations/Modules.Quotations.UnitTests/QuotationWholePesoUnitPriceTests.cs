@@ -27,7 +27,7 @@ public sealed class QuotationWholePesoUnitPriceTests
 
         var item = quotation.Items.Single();
 
-        Assert.Equal(23_335m, item.DiscountedUnitPrice);
+        Assert.Equal(23_335m, item.DiscountedUnitPriceUnder(quotation.PriceRounding));
         Assert.Equal(2_333_500m, quotation.Total);
     }
 
@@ -42,7 +42,7 @@ public sealed class QuotationWholePesoUnitPriceTests
 
         var item = quotation.Items.Single();
 
-        Assert.Equal(23_335m, item.DiscountedUnitPrice);
+        Assert.Equal(23_335m, item.DiscountedUnitPriceUnder(quotation.PriceRounding));
         Assert.Equal(19_609.24m, item.DiscountedUnitPriceWithoutTax);
         Assert.Equal(1_166_500m, item.DiscountAmount);
         Assert.Equal(2_333_500m, quotation.Total);
@@ -55,7 +55,7 @@ public sealed class QuotationWholePesoUnitPriceTests
         var quotation = NewQuotation("COP");
         AddItem(quotation, quantity: 2m, unitPrice: 1_001m, discountPercentage: 50m, taxPercentage: 19);
 
-        Assert.Equal(501m, quotation.Items.Single().DiscountedUnitPrice);
+        Assert.Equal(501m, quotation.Items.Single().DiscountedUnitPriceUnder(quotation.PriceRounding));
         Assert.Equal(1_002m, quotation.Total);
     }
 
@@ -69,7 +69,7 @@ public sealed class QuotationWholePesoUnitPriceTests
 
         var item = quotation.Items.Single();
 
-        Assert.Equal(23_335m, item.DiscountedUnitPrice);
+        Assert.Equal(23_335m, item.DiscountedUnitPriceUnder(quotation.PriceRounding));
         Assert.Equal(0m, item.DiscountAmount);
         Assert.Equal(2_333_500m, quotation.Total);
     }
@@ -89,7 +89,7 @@ public sealed class QuotationWholePesoUnitPriceTests
             },
             Now);
 
-        Assert.Equal(23_335m, item.DiscountedUnitPrice);
+        Assert.Equal(23_335m, item.DiscountedUnitPriceUnder(quotation.PriceRounding));
         Assert.Equal(2_333_500m, quotation.Total);
     }
 

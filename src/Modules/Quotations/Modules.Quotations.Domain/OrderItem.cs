@@ -26,6 +26,7 @@ public sealed class OrderItem
         int taxPercentage,
         int position,
         string currency,
+        PriceRounding rounding,
         DateTimeOffset occurredAt)
     {
         Id = id;
@@ -35,7 +36,7 @@ public sealed class OrderItem
         Position = position;
         CreatedAt = occurredAt;
         UpdatedAt = occurredAt;
-        Apply(quantity, unitPrice, discountPercentage, taxPercentage, currency, occurredAt);
+        Apply(quantity, unitPrice, discountPercentage, taxPercentage, currency, rounding, occurredAt);
     }
 
     public OrderItemId Id { get; private set; }
@@ -75,8 +76,10 @@ public sealed class OrderItem
 
     public DateTimeOffset UpdatedAt { get; private set; }
 
-    public decimal DiscountedUnitPrice =>
-        Quantity > 0 ? Round((Round(Quantity * UnitPrice) - DiscountAmount) / Quantity) : 0m;
+    /// <summary>El unitario de la fórmula con la regla del documento (<see cref="Order.PriceRounding"/>),
+    /// la misma con que se cobró la línea. Derivado, no persistido.</summary>
+    public decimal DiscountedUnitPriceUnder(PriceRounding rounding) =>
+        Quantity > 0 ? VatIncludedLine.ChargedUnitPrice(UnitPrice, DiscountPercentage, rounding) : 0m;
 
     public decimal DiscountedUnitPriceWithoutTax => Quantity > 0 ? Round(Subtotal / Quantity) : 0m;
 
@@ -96,8 +99,9 @@ public sealed class OrderItem
         int taxPercentage,
         int position,
         string currency,
+        PriceRounding rounding,
         DateTimeOffset occurredAt) =>
-        new(id, orderId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, position, currency, occurredAt);
+        new(id, orderId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, position, currency, rounding, occurredAt);
 
     internal void CaptureProduct(QuotationProductSnapshot product)
     {
@@ -115,17 +119,19 @@ public sealed class OrderItem
         decimal discountPercentage,
         int taxPercentage,
         string currency,
+        PriceRounding rounding,
         DateTimeOffset occurredAt) =>
-        Apply(quantity, UnitPrice, discountPercentage, taxPercentage, currency, occurredAt);
+        Apply(quantity, UnitPrice, discountPercentage, taxPercentage, currency, rounding, occurredAt);
 
     internal void ApplyDiscount(
         decimal discountPercentage,
         QuotationDiscountOrigin origin,
         string currency,
+        PriceRounding rounding,
         DateTimeOffset occurredAt)
     {
         DiscountOrigin = origin;
-        Apply(Quantity, UnitPrice, discountPercentage, TaxPercentage, currency, occurredAt);
+        Apply(Quantity, UnitPrice, discountPercentage, TaxPercentage, currency, rounding, occurredAt);
     }
 
     private void Apply(
@@ -134,6 +140,7 @@ public sealed class OrderItem
         decimal discountPercentage,
         int taxPercentage,
         string currency,
+        PriceRounding rounding,
         DateTimeOffset occurredAt)
     {
         if (quantity <= 0)
@@ -166,7 +173,7 @@ public sealed class OrderItem
 
         // Mismas dos reglas que QuotationItem.Apply: pesos enteros en COP y sin IVA discriminado
         // fuera de COP.
-        unitPrice = VatIncludedLine.ChargedListPrice(unitPrice, PriceRounding.LegacyFor(currency));
+        unitPrice = VatIncludedLine.ChargedListPrice(unitPrice, rounding);
         if (!QuotationItem.ItemizesTaxIn(currency))
         {
             taxPercentage = 0;
@@ -176,7 +183,7 @@ public sealed class OrderItem
         UnitPrice = unitPrice;
         DiscountPercentage = discountPercentage;
         TaxPercentage = taxPercentage;
-        var amounts = VatIncludedLine.Compute(quantity, unitPrice, discountPercentage, taxPercentage, PriceRounding.LegacyFor(currency));
+        var amounts = VatIncludedLine.Compute(quantity, unitPrice, discountPercentage, taxPercentage, rounding);
         DiscountAmount = amounts.DiscountAmount;
         TaxAmount = amounts.TaxAmount;
         Subtotal = amounts.Subtotal;

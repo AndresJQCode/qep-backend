@@ -29,7 +29,7 @@ public sealed class QuotationUsdTaxNotItemizedTests
         Assert.Equal(0m, item.TaxAmount);
         Assert.Equal(2_340.00m, item.Subtotal);
         Assert.Equal(123.00m, item.DiscountAmount);
-        Assert.Equal(23.40m, item.DiscountedUnitPrice);
+        Assert.Equal(23.40m, item.DiscountedUnitPriceUnder(quotation.PriceRounding));
         Assert.Equal(23.40m, item.DiscountedUnitPriceWithoutTax);
         Assert.Equal(24.63m, item.UnitPriceWithoutTax);
     }

@@ -26,6 +26,7 @@ public sealed class QuotationItem
         int taxPercentage,
         int position,
         string currency,
+        PriceRounding rounding,
         DateTimeOffset occurredAt)
     {
         Id = id;
@@ -35,7 +36,7 @@ public sealed class QuotationItem
         Position = position;
         CreatedAt = occurredAt;
         UpdatedAt = occurredAt;
-        Apply(quantity, unitPrice, discountPercentage, taxPercentage, currency, occurredAt);
+        Apply(quantity, unitPrice, discountPercentage, taxPercentage, currency, rounding, occurredAt);
     }
 
     public QuotationItemId Id { get; private set; }
@@ -111,16 +112,15 @@ public sealed class QuotationItem
     /// Lo que cuesta cada unidad ya con el descuento aplicado, IVA adentro — la misma unidad que
     /// <see cref="UnitPrice"/>, no la de <see cref="Subtotal"/>.
     ///
-    /// Derivado, no persistido: sale de los tres campos que sí se guardan, así que no hay columna
-    /// ni migración y una línea vieja lo reporta igual. Se calcula desde el total de la línea y
-    /// no como <c>UnitPrice × (1 − %)</c>: <see cref="DiscountAmount"/> se redondea sobre el
-    /// bruto, y restarlo es lo único que reconstruye exactamente lo que se cobra. Mismo criterio
-    /// que ya usaba <c>QuotationPdfDocumentMapper</c> para imprimirlo, que ahora lo lee de acá.
-    /// La cantidad es siempre mayor que cero por invariante de <see cref="Apply"/>; el guardia
-    /// cubre la entidad a medio materializar, no al agregado.
+    /// Es el unitario de la fórmula (spec 2026-10-27): el precio de lista con el descuento, redondeado
+    /// con la regla del documento, que es la que ya cobró la línea. Por eso la regla llega por
+    /// parámetro: la línea no la guarda, la guarda el encabezado (<see cref="Quotation.PriceRounding"/>).
+    /// Derivado, no persistido: sin columna ni migración. La cantidad es siempre mayor que cero por
+    /// invariante de <see cref="Apply"/>; el guardia cubre la entidad a medio materializar, no al
+    /// agregado.
     /// </summary>
-    public decimal DiscountedUnitPrice =>
-        Quantity > 0 ? Round((Round(Quantity * UnitPrice) - DiscountAmount) / Quantity) : 0m;
+    public decimal DiscountedUnitPriceUnder(PriceRounding rounding) =>
+        Quantity > 0 ? VatIncludedLine.ChargedUnitPrice(UnitPrice, DiscountPercentage, rounding) : 0m;
 
     /// <summary>
     /// El precio unitario neto: con el descuento ya aplicado y sin el IVA que trae adentro. Es lo
@@ -132,7 +132,7 @@ public sealed class QuotationItem
     /// guardado en la línea—, así que <c>Quantity × DiscountedUnitPriceWithoutTax</c> reconstruye la
     /// misma base sobre la que se calcularon <see cref="TaxAmount"/> y los totales, salvo el
     /// redondeo a dos decimales por unidad. Derivado, no persistido, igual que sus vecinos; el
-    /// guardia de la cantidad es el mismo de <see cref="DiscountedUnitPrice"/>.
+    /// guardia de la cantidad es el mismo de <see cref="DiscountedUnitPriceUnder"/>.
     /// </summary>
     public decimal DiscountedUnitPriceWithoutTax => Quantity > 0 ? Round(Subtotal / Quantity) : 0m;
 
@@ -142,7 +142,7 @@ public sealed class QuotationItem
     /// de cualquier descuento. Lo pide el Excel de pedidos ("Valor Unit sin IVA", 2026-09-24); el
     /// neto, con descuento, es <see cref="DiscountedUnitPriceWithoutTax"/>.
     ///
-    /// Derivado, no persistido, igual que <see cref="DiscountedUnitPrice"/>: sin columna ni
+    /// Derivado, no persistido, igual que <see cref="DiscountedUnitPriceUnder"/>: sin columna ni
     /// migración, y una línea vieja lo reporta igual. Misma familia de fórmula que
     /// <see cref="TaxAmount"/> (<c>× tasa / (100 + tasa)</c>, no <c>× tasa / 100</c>), así que
     /// <c>UnitPrice − UnitPriceWithoutTax</c> es el IVA contenido por unidad. Con tasa 0 es igual a
@@ -169,8 +169,9 @@ public sealed class QuotationItem
         int taxPercentage,
         int position,
         string currency,
+        PriceRounding rounding,
         DateTimeOffset occurredAt) =>
-        new(id, quotationId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, position, currency, occurredAt);
+        new(id, quotationId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, position, currency, rounding, occurredAt);
 
     /// <summary>
     /// Congela código y nombre si la línea todavía no los tiene. Nunca los pisa: lo que el cliente
@@ -193,8 +194,9 @@ public sealed class QuotationItem
         decimal discountPercentage,
         int taxPercentage,
         string currency,
+        PriceRounding rounding,
         DateTimeOffset occurredAt) =>
-        Apply(quantity, UnitPrice, discountPercentage, taxPercentage, currency, occurredAt);
+        Apply(quantity, UnitPrice, discountPercentage, taxPercentage, currency, rounding, occurredAt);
 
     /// <summary>Cambia sólo el descuento y rehace los importes de la línea, conservando cantidad,
     /// precio y tasa. Lo usa el recálculo global de la cotización
@@ -205,10 +207,11 @@ public sealed class QuotationItem
         decimal discountPercentage,
         QuotationDiscountOrigin origin,
         string currency,
+        PriceRounding rounding,
         DateTimeOffset occurredAt)
     {
         DiscountOrigin = origin;
-        Apply(Quantity, UnitPrice, discountPercentage, TaxPercentage, currency, occurredAt);
+        Apply(Quantity, UnitPrice, discountPercentage, TaxPercentage, currency, rounding, occurredAt);
     }
 
     /// <summary>Vuelve a nacer con el precio del producto en otra moneda, sin tocar la
@@ -216,13 +219,14 @@ public sealed class QuotationItem
     /// tasa se resuelven contra el catálogo junto con el precio, y conservar los viejos
     /// mezclaría dos monedas dentro de una misma línea.</summary>
     internal void Reprice(
-        QuotationItemPricing pricing, string currency, DateTimeOffset occurredAt) =>
+        QuotationItemPricing pricing, string currency, PriceRounding rounding, DateTimeOffset occurredAt) =>
         Apply(
             Quantity,
             pricing.UnitPrice,
             pricing.DiscountPercentage,
             pricing.TaxPercentage,
             currency,
+            rounding,
             occurredAt);
 
     private void Apply(
@@ -231,6 +235,7 @@ public sealed class QuotationItem
         decimal discountPercentage,
         int taxPercentage,
         string currency,
+        PriceRounding rounding,
         DateTimeOffset occurredAt)
     {
         if (quantity <= 0)
@@ -263,7 +268,7 @@ public sealed class QuotationItem
 
         // En COP el precio con IVA se cobra en pesos enteros, el de lista y el ya descontado
         // (hotfix 2026-10-14): la regla y su motivo viven en VatIncludedLine, compartida con POS.
-        unitPrice = VatIncludedLine.ChargedListPrice(unitPrice, PriceRounding.LegacyFor(currency));
+        unitPrice = VatIncludedLine.ChargedListPrice(unitPrice, rounding);
 
         // Fuera de COP el IVA no se discrimina (hotfix 2026-10-14; en main era solo USD, develop
         // ya maneja cualquier moneda del catalogo). El precio se cobra completo, como si trajera
@@ -286,7 +291,7 @@ public sealed class QuotationItem
         // centavo lo mismo que una cotización detal. Las validaciones y los códigos
         // quotation.item.* siguen aquí.
         var amounts = VatIncludedLine.Compute(
-            quantity, unitPrice, discountPercentage, taxPercentage, PriceRounding.LegacyFor(currency));
+            quantity, unitPrice, discountPercentage, taxPercentage, rounding);
         DiscountAmount = amounts.DiscountAmount;
         TaxAmount = amounts.TaxAmount;
         Subtotal = amounts.Subtotal;

@@ -398,6 +398,15 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("version");
 
+                    b.Property<short?>("_priceRoundingDecimals")
+                        .HasColumnType("smallint")
+                        .HasColumnName("price_rounding_decimals");
+
+                    b.Property<string>("_priceRoundingMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("price_rounding_mode");
+
                     b.HasKey("Id");
 
                     b.HasIndex("QuotationId")
@@ -911,6 +920,15 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("bigint")
                         .HasColumnName("version");
+
+                    b.Property<short?>("_priceRoundingDecimals")
+                        .HasColumnType("smallint")
+                        .HasColumnName("price_rounding_decimals");
+
+                    b.Property<string>("_priceRoundingMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("price_rounding_mode");
 
                     b.HasKey("Id");
 

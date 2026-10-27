@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Pricing;
+
 namespace Modules.Quotations.Domain;
 
 /// <summary>
@@ -38,6 +40,11 @@ public sealed class Order
     private readonly List<OrderPaymentProof> _paymentProofs = [];
     private readonly List<OrderItem> _items = [];
     private readonly List<OrderParty> _parties = [];
+
+    // La regla con que se preció el documento (spec 2026-10-27 §4). Nulas en un documento anterior a la
+    // regla: se leen con la de siempre de su moneda (D4). EF las materializa por el campo.
+    private int? _priceRoundingDecimals;
+    private PriceRoundingMode? _priceRoundingMode;
 
     private Order()
     {
@@ -128,6 +135,40 @@ public sealed class Order
     public MemberId AdvisorId { get; private set; }
 
     public string Currency { get; private set; }
+
+    /// <summary>La regla de redondeo con la que se preció este documento. Cambiar la regla del tenant
+    /// después no la mueve: sólo la cambia <see cref="UsePriceRounding"/>, que corre dentro del
+    /// recálculo de una edición. Con cualquiera de las dos columnas nula (un documento anterior a la
+    /// regla) es la de siempre de su moneda.</summary>
+    public PriceRounding PriceRounding =>
+        _priceRoundingDecimals is { } decimals && _priceRoundingMode is { } mode
+            ? new PriceRounding(decimals, mode)
+            : PriceRounding.LegacyFor(Currency);
+
+    /// <summary>
+    /// Guarda la regla de redondeo y rehace <b>todas</b> las líneas con su cantidad, precio, descuento,
+    /// origen y tasa actuales. Si es igual a la vigente no hace nada.
+    ///
+    /// **No es una edición.** No toca <see cref="Version"/> ni <c>Updated*</c>, mismo contrato que
+    /// <c>ApplyGroupDiscounts</c>, y no exige un estado editable: la llama sólo el recálculo, que ya
+    /// corre dentro de una edición.
+    /// </summary>
+    public void UsePriceRounding(PriceRounding rounding, DateTimeOffset occurredAt)
+    {
+        if (rounding == PriceRounding)
+        {
+            return;
+        }
+
+        _priceRoundingDecimals = rounding.Decimals;
+        _priceRoundingMode = rounding.Mode;
+        foreach (var item in _items)
+        {
+            item.ApplyDiscount(item.DiscountPercentage, item.DiscountOrigin, Currency, rounding, occurredAt);
+        }
+
+        RecalculateTotals();
+    }
 
     /// <summary>Null sólo en un cálculo previo (<see cref="Preview"/>): la pantalla de «Nuevo pedido» precia
     /// la línea antes de que se elija la empresa que factura. Un pedido guardado siempre la tiene:
@@ -303,13 +344,16 @@ public sealed class Order
         // Copia tal cual, incluida la tasa: la cotización ya validó el envío al fijarlo, y el pedido nace con
         // sus mismos totales.
         order.AssignShipping(quotation.ShippingDetails);
+        // La regla de la cotización, antes de copiar las líneas: el pedido tiene los mismos centavos.
+        order._priceRoundingDecimals = quotation.PriceRounding.Decimals;
+        order._priceRoundingMode = quotation.PriceRounding.Mode;
         order.EnsureCashOnDeliveryIsPending(proofs);
         foreach (var item in quotation.Items.OrderBy(item => item.Position))
         {
             var copy = OrderItem.Create(
                 OrderItemId.New(), order.Id, item.VariantId, item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage,
-                item.TaxPercentage, order._items.Count + 1, order.Currency, occurredAt);
-            copy.ApplyDiscount(item.DiscountPercentage, item.DiscountOrigin, order.Currency, occurredAt);
+                item.TaxPercentage, order._items.Count + 1, order.Currency, order.PriceRounding, occurredAt);
+            copy.ApplyDiscount(item.DiscountPercentage, item.DiscountOrigin, order.Currency, order.PriceRounding, occurredAt);
             if (item.ProductCode is not null)
             {
                 copy.CaptureProduct(new QuotationProductSnapshot(item.ProductCode, item.ProductName ?? string.Empty));
@@ -613,10 +657,10 @@ public sealed class Order
 
         var item = OrderItem.Create(
             itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
-            _items.Count + 1, Currency, occurredAt);
+            _items.Count + 1, Currency, PriceRounding, occurredAt);
         if (origin != QuotationDiscountOrigin.Own)
         {
-            item.ApplyDiscount(discountPercentage, origin, Currency, occurredAt);
+            item.ApplyDiscount(discountPercentage, origin, Currency, PriceRounding, occurredAt);
         }
 
         if (product is not null)
@@ -636,7 +680,7 @@ public sealed class Order
         DateTimeOffset occurredAt)
     {
         EnsurePending("Products can only be edited while the order is pending.");
-        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, occurredAt);
+        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, PriceRounding, occurredAt);
         Touch(updatedBy, occurredAt);
     }
 
@@ -728,7 +772,7 @@ public sealed class Order
         {
             if (discounts.TryGetValue(item.Id, out var discount))
             {
-                item.ApplyDiscount(discount.Percentage, discount.Origin, Currency, occurredAt);
+                item.ApplyDiscount(discount.Percentage, discount.Origin, Currency, PriceRounding, occurredAt);
             }
         }
 
@@ -1172,7 +1216,7 @@ public sealed class Order
     {
         var totals = DocumentTotals.Compute(
             _items.Select(item => item.Amounts),
-            FreightAmounts.For(FreightChargeMode, FreightAmount, FreightTaxPercentage, Currency),
+            FreightAmounts.For(FreightChargeMode, FreightAmount, FreightTaxPercentage, Currency, PriceRounding),
             AppliesVatSurplus,
             AppliesRetention);
         Subtotal = totals.Subtotal;
