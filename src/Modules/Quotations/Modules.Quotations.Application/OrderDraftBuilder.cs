@@ -59,6 +59,8 @@ public sealed class OrderDraftBuilder(
             OrderId.New(), input.TenantId, orderNumber, header, parties, account,
             shipping, lines,
             input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now);
+        await BillingPersonTypeRequirement.EnsureForOrderAsync(
+            tenantDirectory, input.TenantId, order, cancellationToken);
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, input.TenantId, order, now, cancellationToken);
         return order;
