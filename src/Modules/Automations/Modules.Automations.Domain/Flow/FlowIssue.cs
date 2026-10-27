@@ -50,6 +50,10 @@ public static class FlowIssueCodes
 
     /// <summary>Aviso, nunca error: el texto de Política de datos sin <c>http://</c> ni <c>https://</c> no lleva a la política (spec 2026-10-26 D-3).</summary>
     public const string DataConsentNoLink = "data_consent.no_link";
+
+    /// <summary>Error: «Preguntar hasta» de Política de datos con <c>repeat</c> fuera de <see cref="DataConsentAsks.Min"/>..<see cref="DataConsentAsks.Max"/>
+    /// (spec 2026-10-26 repetir R-5). Con otra acción el tope no cuenta y no se revisa.</summary>
+    public const string DataConsentMaxAsksInvalid = "data_consent.max_asks_invalid";
     public const string HttpConnectionMissing = "http.connection_missing";
     public const string HttpConnectionPaused = "http.connection_paused";
     public const string HttpBodyNotJson = "http.body_not_json";

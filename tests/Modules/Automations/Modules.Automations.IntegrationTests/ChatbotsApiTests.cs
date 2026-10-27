@@ -843,6 +843,41 @@ public sealed class ChatbotsApiTests
         Assert.False(nodes["b2"].GetProperty("outputs").TryGetProperty("other", out var otherOutput) && otherOutput.ValueKind == JsonValueKind.String);
     }
 
+    // Spec 2026-10-26 repetir R-5: el destino de «Si no acepta» también se suelta al importar, y la acción y el tope se conservan.
+    [Fact]
+    public async Task ImportDropsARejectMemberWhoCannotReplyHere()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+        var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/export", Ct))!;
+        var stranger = Guid.CreateVersion7();
+        var flow = $$"""
+            {
+              "schema": 1,
+              "start": { "firstNodeId": "c1" },
+              "variables": [],
+              "nodes": [
+                { "id": "c1", "kind": "dataConsent", "title": "Política de datos", "text": "Lee https://empresa.co/datos",
+                  "onReject": "handoff", "maxAsks": 4, "onRejectMemberId": "{{stranger}}", "outputs": { "accepted": "h1" } },
+                { "id": "h1", "kind": "handoff", "title": "Asesor", "text": null, "memberId": null, "outputs": {} }
+              ]
+            }
+            """;
+        var file = export with { Flow = JsonDocument.Parse(flow).RootElement };
+
+        var response = await setup.Client.PostAsJsonAsync(
+            $"{ChatbotsUrl(setup.Tenant.TenantId)}/import", new ImportChatbotRequest("Importado", file, null), Ct);
+
+        var imported = await ReadCreatedAsync(response);
+        var consent = imported.Draft.Flow.GetProperty("nodes").EnumerateArray().Single(node => node.GetProperty("id").GetString() == "c1");
+        Assert.Equal(("handoff", 4), (consent.GetProperty("onReject").GetString(), consent.GetProperty("maxAsks").GetInt32()));
+        Assert.False(consent.TryGetProperty("onRejectMemberId", out var member) && member.ValueKind == JsonValueKind.String);
+    }
+
     // Un miembro que sí puede responder aquí se conserva al importar.
     [Fact]
     public async Task ImportKeepsAMemberWhoCanReplyHere()
