@@ -237,6 +237,12 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("owner_membership_id");
 
+                    b.Property<string>("PersonTypeRequirement")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("person_type_requirement");
+
                     b.Property<string>("Slug")
                         .IsRequired()
                         .HasMaxLength(63)

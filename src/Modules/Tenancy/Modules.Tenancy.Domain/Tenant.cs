@@ -67,6 +67,14 @@ public sealed class Tenant
     public string Country { get; private set; } = "CO";
 
     /// <summary>
+    /// Cuándo exige el tenant el tipo de persona (spec 2026-10-26). Es lo **guardado**: sólo manda
+    /// si <see cref="Country"/> es <c>CO</c>; quien lo consulta pasa por
+    /// <see cref="PersonTypeRequirementPolicy.Effective"/>. Arranca en <c>Never</c> y la migración
+    /// rellena con lo mismo.
+    /// </summary>
+    public PersonTypeRequirement PersonTypeRequirement { get; private set; } = PersonTypeRequirement.Never;
+
+    /// <summary>
     /// El archivo del logo en Storage, o null sin logo. La URL pública **no** se guarda acá: se
     /// arma al leer con <see cref="LogoPublicKey"/> y la base pública configurada (decisión 3 del
     /// spec 2026-09-19) — igual que <c>FileResourceDto.PublicUrl</c>. `Tenant` no conoce
@@ -134,6 +142,7 @@ public sealed class Tenant
         string defaultCurrency,
         string numberFormat,
         string country,
+        PersonTypeRequirement personTypeRequirement,
         DateTimeOffset occurredAt)
     {
         EnsureActive();
@@ -154,6 +163,11 @@ public sealed class Tenant
         TrackChange(nameof(DefaultCurrency), DefaultCurrency, validatedCurrency, changedFields);
         TrackChange(nameof(NumberFormat), NumberFormat, validatedNumberFormat, changedFields);
         TrackChange(nameof(Country), Country, validatedCountry, changedFields);
+        TrackChange(
+            nameof(PersonTypeRequirement),
+            PersonTypeRequirement.ToString(),
+            personTypeRequirement.ToString(),
+            changedFields);
 
         if (changedFields.Count == 0)
         {
@@ -167,6 +181,7 @@ public sealed class Tenant
         DefaultCurrency = validatedCurrency;
         NumberFormat = validatedNumberFormat;
         Country = validatedCountry;
+        PersonTypeRequirement = personTypeRequirement;
         Version++;
         UpdatedAt = occurredAt;
         _domainEvents.Add(new TenantSettingsUpdatedDomainEvent(
