@@ -567,6 +567,10 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(512)")
                         .HasColumnName("path");
 
+                    b.Property<int?>("ResponseBytes")
+                        .HasColumnType("integer")
+                        .HasColumnName("response_bytes");
+
                     b.Property<Guid?>("RunId")
                         .HasColumnType("uuid")
                         .HasColumnName("run_id");
@@ -579,6 +583,10 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("status_code");
 
+                    b.Property<int?>("StepNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("step_number");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
@@ -589,6 +597,79 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
                         .IsDescending(false, true);
 
                     b.ToTable("http_calls", "automations");
+                });
+
+            modelBuilder.Entity("Modules.Automations.Infrastructure.Persistence.RunUnitRecord", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("BaseStep")
+                        .HasColumnType("integer")
+                        .HasColumnName("base_step");
+
+                    b.Property<string>("ClosedReason")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("closed_reason");
+
+                    b.Property<string>("ClosedStatus")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("closed_status");
+
+                    b.Property<DateTimeOffset>("EndedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ended_at");
+
+                    b.Property<Guid?>("InboundMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("inbound_message_id");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("outcome");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("run_id");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("StepsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("steps")
+                        .HasDefaultValueSql("'[]'");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Trigger")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("trigger");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "RunId", "InboundMessageId" }, "IX_run_units_run_inbound")
+                        .IsUnique()
+                        .HasFilter("inbound_message_id IS NOT NULL");
+
+                    b.HasIndex(new[] { "TenantId", "RunId", "BaseStep" }, "IX_run_units_tenant_run");
+
+                    b.ToTable("run_units", "automations");
                 });
 
             modelBuilder.Entity("Modules.Automations.Domain.ChatbotConnection", b =>

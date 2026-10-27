@@ -34,6 +34,7 @@ public static class AutomationsInfrastructureExtensions
         services.AddScoped<IConversationRunQueries, ConversationRunQueries>();
         services.AddScoped<IConversationRunRepository, ConversationRunRepository>();
         services.AddScoped<ISimulationRepository, SimulationRepository>();
+        services.AddScoped<IRunUnitRepository, RunUnitRepository>();
         services.AddScoped<IAutomationsUnitOfWork, AutomationsUnitOfWork>();
         // Auditoría atómica: la entrada viaja en el mismo SaveChanges del cambio (ADR 0019).
         services.AddScoped<IAutomationsAuditRecorder, AutomationsAuditRecorder>();
