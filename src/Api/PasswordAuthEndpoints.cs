@@ -13,11 +13,12 @@ public static class PasswordAuthEndpoints
 {
     public static IEndpointRouteBuilder MapPasswordAuthEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        // Sin .Accepts<T>(): esa metadata hace que el router conteste 415 a un Content-Type que no es
-        // JSON, y el contrato es el mismo 400 que un cuerpo mal formado (el handler lo decide).
+        // .Accepts<T>() hace que el router conteste 415 a un Content-Type que no es JSON (nunca un 500);
+        // el 400 queda para un cuerpo JSON mal formado o ausente, que decide el handler.
         endpoints.MapPost("/api/v1/auth/password/register-tenant", RegisterTenantAsync)
             .AllowAnonymous()
             .WithTags("Authentication")
+            .Accepts<RegisterTenantWithPasswordRequest>("application/json")
             .Produces(StatusCodes.Status202Accepted)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);

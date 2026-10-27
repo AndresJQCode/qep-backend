@@ -267,9 +267,12 @@ public sealed class PasswordAuthApiTests
     }
 
     [Theory]
-    [InlineData("text/plain", "not json")]
-    [InlineData("application/json", "{ not json")]
-    public async Task RegisterWithANonJsonOrMalformedBodyReturns400(string contentType, string body)
+    [InlineData("text/plain", "not json", HttpStatusCode.UnsupportedMediaType)]
+    [InlineData("application/json", "{ not json", HttpStatusCode.BadRequest)]
+    public async Task RegisterWithANonJsonContentTypeReturns415AndAMalformedBodyReturns400(
+        string contentType,
+        string body,
+        HttpStatusCode expected)
     {
         await using var database = await StartDatabaseAsync();
         var cs = database.GetConnectionString();
@@ -283,7 +286,7 @@ public sealed class PasswordAuthApiTests
 
         var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(expected, response.StatusCode);
     }
 
     [Theory]
