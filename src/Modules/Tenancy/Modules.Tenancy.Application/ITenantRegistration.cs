@@ -1,3 +1,5 @@
+using Modules.Tenancy.Domain;
+
 namespace Modules.Tenancy.Application;
 
 public sealed record TenantRegistrationData(
@@ -20,4 +22,11 @@ public interface ITenantRegistration
         TenantRegistrationData data,
         string correlationId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Valida el formato de los datos y que el slug esté libre, sin escribir nada. Corre antes de
+    /// cualquier rama por usuario, para que un 422 por slug tomado no delate si un email existe.
+    /// </summary>
+    /// <exception cref="TenantDomainException">tenancy.slug.invalid, tenancy.settings.*.invalid o tenancy.slug.taken.</exception>
+    Task EnsureRegistrableAsync(TenantRegistrationData data, CancellationToken cancellationToken);
 }

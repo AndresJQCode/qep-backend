@@ -351,4 +351,11 @@ public sealed class TenantTests
 
         Assert.False(tenant.IsOwner(MembershipId.New()));
     }
+
+    [Theory]
+    [InlineData("a", "Acme", "tenancy.slug.invalid")]
+    [InlineData("acme", "x", "tenancy.settings.display_name.invalid")]
+    public void EnsureValidRegistrationThrowsTheSameCodesAsCreate(string slug, string name, string code)
+        => Assert.Equal(code, Assert.Throws<TenantDomainException>(() =>
+            Tenant.EnsureValidRegistration(slug, name, "es-CO", "America/Bogota", "dd/MM/yyyy")).Code);
 }
