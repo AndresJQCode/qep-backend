@@ -35,6 +35,7 @@ public sealed class CustomerMergePlanTests
             businessName,
             new CustomerAddressDetails { Name = "Principal", Address = "Calle 10 # 45-12", CityId = CityId },
             new CustomerIdentification { Type = IdentificationType.Nit, Number = number },
+            null,
             new CustomerContactInfo
             {
                 Phone = phone,

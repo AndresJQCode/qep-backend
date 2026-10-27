@@ -142,6 +142,8 @@ public sealed class CustomerProvisioning(
             command.BusinessName,
             parts.Address,
             parts.Identification,
+            // Una venta externa no trae tipo de persona (spec 2026-10-26).
+            null,
             parts.Contact,
             parts.Commercial,
             now,
@@ -221,8 +223,8 @@ public sealed class CustomerProvisioning(
 
         var now = clock.UtcNow;
         customer.Complete(
-            parts.Cuc, command.Name, command.BusinessName, parts.Address, parts.Identification, parts.Contact, parts.Commercial,
-            now, phoneNormalizer);
+            parts.Cuc, command.Name, command.BusinessName, parts.Address, parts.Identification,
+            customer.PersonType, parts.Contact, parts.Commercial, now, phoneNormalizer);
         auditPublisher.PublishByIntegration(tenantId, CustomerAuditActions.Completed, customer.Id.ToString(), Success, now);
         try
         {

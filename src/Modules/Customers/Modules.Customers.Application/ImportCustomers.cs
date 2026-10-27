@@ -575,6 +575,8 @@ public sealed class ImportCustomersHandler(
                     candidate.Name,
                     candidate.BusinessName,
                     new CustomerIdentification { Type = candidate.Type, Number = candidate.Number },
+                    // La planilla no trae tipo de persona: reimportar no borra el que ya tenía (spec 2026-10-26).
+                    customer.PersonType,
                     // La importacion masiva es **solo colombiana**: sus columnas son Departamento y
                     // Ciudad, resueltas contra DIVIPOLA por FindCityByNameAsync, y la plantilla
                     // valida la ciudad con una lista cerrada que depende del departamento elegido.
@@ -622,6 +624,8 @@ public sealed class ImportCustomersHandler(
                     Phone = candidate.Phone
                 },
                 new CustomerIdentification { Type = candidate.Type, Number = candidate.Number },
+                // La planilla no trae tipo de persona (spec 2026-10-26).
+                null,
                 // Solo colombiana, por lo mismo que la rama de actualizacion de arriba.
                 new CustomerContactInfo
                 {

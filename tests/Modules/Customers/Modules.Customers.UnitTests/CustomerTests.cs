@@ -108,6 +108,7 @@ public sealed class CustomerTests
                 }
                 : null,
             identification ?? Identification(),
+            null,
             contact ?? ValidContact(cityId),
             commercial ?? Commercial(),
             Now);
@@ -261,6 +262,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
+            null,
             ValidContact() with { Phone = "  " },
             Commercial(),
             ClassificationPrefix,
@@ -280,6 +282,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
+            null,
             ValidContact() with { Email = "" },
             Commercial(),
             ClassificationPrefix,
@@ -384,6 +387,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
+            null,
             ValidContact(OtherCityId) with { Address = "Carrera 7 # 71-21" },
             Commercial(),
             ClassificationPrefix,
@@ -549,6 +553,7 @@ public sealed class CustomerTests
             "Verde Esencial",
             businessName: null,
             Identification(),
+            null,
             ForeignContact(),
             Commercial(),
             ClassificationPrefix,
@@ -568,6 +573,7 @@ public sealed class CustomerTests
             "Verde Esencial",
             businessName: null,
             Identification(),
+            null,
             ValidContact(OtherCityId),
             Commercial(),
             ClassificationPrefix,
@@ -589,6 +595,7 @@ public sealed class CustomerTests
             "Nombre nuevo",
             businessName: null,
             Identification(),
+            null,
             ValidContact() with { Country = "COL" },
             Commercial(),
             ClassificationPrefix,
@@ -612,6 +619,7 @@ public sealed class CustomerTests
             "Nombre nuevo",
             businessName: null,
             Identification(),
+            null,
             ValidContact(Guid.Empty),
             Commercial(),
             ClassificationPrefix,
@@ -673,6 +681,7 @@ public sealed class CustomerTests
             "Verde Esencial S.A.S.",
             businessName: null,
             Identification(),
+            null,
             ValidContact() with { Phone = "604 444 5566", Email = "Ventas@Verde.CO" },
             Commercial(),
             ClassificationPrefix,
@@ -694,6 +703,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
+            null,
             ValidContact(),
             Commercial(classificationId: newClassificationId),
             "MAY",
@@ -725,6 +735,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
+            null,
             ValidContact(),
             Commercial() with { ClassificationId = null },
             classificationPrefix: null,
@@ -747,6 +758,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
+            null,
             ValidContact(),
             Commercial(classificationId: newClassificationId),
             "MAY",
@@ -767,6 +779,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
+            null,
             ValidContact(),
             Commercial(classificationId: new ClientClassificationId(Guid.CreateVersion7())),
             classificationPrefix: null,
@@ -787,6 +800,7 @@ public sealed class CustomerTests
             "Otro Nombre",
             businessName: null,
             Identification(number: "830-9"),
+            null,
             ValidContact(),
             Commercial(),
             ClassificationPrefix,
@@ -809,6 +823,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
+            null,
             ValidContact(),
             Commercial(classificationId: newClassificationId),
             "MAY",
@@ -839,6 +854,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
+            null,
             ValidContact(),
             Commercial(),
             "OTRO",
@@ -861,6 +877,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
+            null,
             ValidContact(),
             Commercial(),
             prefix,
@@ -879,6 +896,7 @@ public sealed class CustomerTests
             "Otro",
             businessName: null,
             Identification(number: "830-9"),
+            null,
             ValidContact(),
             Commercial(),
             ClassificationPrefix,
@@ -902,6 +920,7 @@ public sealed class CustomerTests
             "Nombre nuevo",
             businessName: null,
             Identification(number: "   "),
+            null,
             ValidContact(),
             Commercial(),
             ClassificationPrefix,
@@ -921,6 +940,7 @@ public sealed class CustomerTests
             "Otro",
             businessName: null,
             Identification(),
+            null,
             ValidContact(),
             Commercial(),
             ClassificationPrefix,
@@ -969,6 +989,7 @@ public sealed class CustomerTests
             "Otro",
             businessName: null,
             Identification(),
+            null,
             ValidContact(),
             Commercial(),
             ClassificationPrefix,
@@ -1066,7 +1087,7 @@ public sealed class CustomerTests
             null, Now, new StubPhoneNormalizer());
 
         customer.Complete(
-            "CLI08000142", "Laura Gómez", null, null, Identification(), ValidContact(), Commercial(), Now.AddMinutes(1));
+            "CLI08000142", "Laura Gómez", null, null, Identification(), null, ValidContact(), Commercial(), Now.AddMinutes(1));
 
         Assert.True(customer.IsComplete);
         Assert.Equal(IdentificationType.Nit, customer.IdentificationType);
@@ -1078,18 +1099,18 @@ public sealed class CustomerTests
     public void PhoneE164IsComputedOnCreateAndUpdateWithTheNormalizer()
     {
         var customer = Customer.Create(
-            CustomerId.New(), TenantId, "MED-0001", "Verde", null, null, Identification(), ValidContact(), Commercial(), Now,
+            CustomerId.New(), TenantId, "MED-0001", "Verde", null, null, Identification(), null, ValidContact(), Commercial(), Now,
             phoneNormalizer: new StubPhoneNormalizer());
 
         Assert.Equal("+573109352187", customer.PhoneE164);
 
         customer.Update(
-            "Verde", null, Identification(), ValidContact() with { Phone = "301 000 0000" }, Commercial(), ClassificationPrefix, Now,
+            "Verde", null, Identification(), null, ValidContact() with { Phone = "301 000 0000" }, Commercial(), ClassificationPrefix, Now,
             phoneNormalizer: new StubPhoneNormalizer());
         Assert.Equal("+573010000000", customer.PhoneE164);
 
         var without = Customer.Create(
-            CustomerId.New(), TenantId, "MED-0002", "Sin", null, null, Identification(number: "1"), ValidContact(), Commercial(), Now);
+            CustomerId.New(), TenantId, "MED-0002", "Sin", null, null, Identification(number: "1"), null, ValidContact(), Commercial(), Now);
         Assert.Null(without.PhoneE164);
         Assert.True(without.RecomputePhoneE164(new StubPhoneNormalizer()));
         Assert.Equal("+573109352187", without.PhoneE164);
@@ -1160,9 +1181,9 @@ public sealed class CustomerTests
 
         Action action = write switch
         {
-            "Update" => () => merged.Update("Nuevo", null, Identification(), ValidContact(), Commercial(), ClassificationPrefix, Now),
+            "Update" => () => merged.Update("Nuevo", null, Identification(), null, ValidContact(), Commercial(), ClassificationPrefix, Now),
             "Complete" => () => merged.Complete(
-                "CLI08000002", "Laura", null, null, Identification(IdentificationType.Cc, "1020"), ValidContact(), Commercial(), Now),
+                "CLI08000002", "Laura", null, null, Identification(IdentificationType.Cc, "1020"), null, ValidContact(), Commercial(), Now),
             "Activate" => () => merged.Activate(Now),
             "Deactivate" => () => merged.Deactivate(Now),
             "AddAddress" => () => merged.AddAddress(Warehouse(), false, Now),

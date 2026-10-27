@@ -111,6 +111,8 @@ public sealed class UpdateCustomerHandler(
                     },
                 CustomerMapping.ToIdentification(
                     command.IdentificationType, command.IdentificationNumber),
+                // Task 2 lo conecta al request (spec 2026-10-26).
+                null,
                 new CustomerContactInfo
                 {
                     Phone = command.Phone,
@@ -153,6 +155,8 @@ public sealed class UpdateCustomerHandler(
             command.BusinessName,
             CustomerMapping.ToIdentification(
                 command.IdentificationType, command.IdentificationNumber),
+            // Task 2 lo conecta al request (spec 2026-10-26).
+            null,
             new CustomerContactInfo
             {
                 Phone = command.Phone,

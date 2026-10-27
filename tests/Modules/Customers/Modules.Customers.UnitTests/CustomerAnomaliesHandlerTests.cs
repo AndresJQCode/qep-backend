@@ -20,6 +20,7 @@ public sealed class CustomerAnomaliesHandlerTests
         Customer.Create(
             CustomerId.New(), TenantId, $"MED-{Guid.NewGuid():N}"[..12], name, null, null,
             new CustomerIdentification { Type = IdentificationType.Nit, Number = "92-1396892" },
+            null,
             new CustomerContactInfo
             {
                 Phone = "304 354 9660",

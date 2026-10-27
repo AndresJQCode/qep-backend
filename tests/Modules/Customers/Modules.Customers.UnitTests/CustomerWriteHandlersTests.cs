@@ -30,6 +30,7 @@ public sealed class CustomerWriteHandlersTests
         Customer.Create(
             CustomerId.New(), Tenant, "CLI08000001", "Verde Esencial", null, null,
             new CustomerIdentification { Type = IdentificationType.Nit, Number = "900123456" },
+            null,
             new CustomerContactInfo { Phone = "3000000000", Email = "v@verde.co", Address = "Calle 1", Country = "CO", CityId = CityId },
             new CustomerCommercialInfo { ClassificationId = Classification.Id },
             Now,

@@ -13,4 +13,10 @@ public static class CustomersErrorCodes
     public const string ClassificationNotFound = "customers.customer.classification_not_found";
     public const string CityNotFound = "customers.customer.city_not_found";
     public const string IdentificationTaken = "customers.customer.identification_taken";
+
+    /// <summary>Spec 2026-10-26: una jurídica colombiana se identifica con NIT.</summary>
+    public const string PersonTypeRequiresNit = "customers.customer.person_type_requires_nit";
+
+    /// <summary>Spec 2026-10-26: el tenant exige el tipo de persona y el cliente no lo trae.</summary>
+    public const string PersonTypeRequired = "customers.customer.person_type_required";
 }
