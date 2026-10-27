@@ -1,6 +1,12 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Identity.Application;
+using Modules.Identity.Domain;
+using Modules.Identity.Infrastructure.Persistence;
+using Modules.Tenancy.Application;
 using static Modules.Identity.IntegrationTests.PasswordAuthApiHarness;
 
 namespace Modules.Identity.IntegrationTests;
@@ -224,5 +230,119 @@ public sealed class PasswordAuthApiTests
         Assert.Equal(1, await CountTokensWithHashAsync(cs, EmailTokenCodec.Hash(token)));
         Assert.DoesNotContain(Pw, payload.RootElement.GetRawText());
         Assert.DoesNotContain(email, payload.RootElement.GetRawText());
+    }
+
+    [Fact]
+    public async Task ASlugRaceLoserLeavesNoUserBehindAndCanRegisterAgainWithAFreshSlug()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+        // Salta el chequeo previo del slug: el request llega a RegisterOwnerTenantAsync con un slug que
+        // ya existe, que es exactamente lo que ve el perdedor de una carrera.
+        await using var racing = factory.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+            services.AddScoped<ITenantRegistration>(provider =>
+                new SkipEnsureRegistration(
+                    ActivatorUtilities.CreateInstance<TenantRegistrationService>(provider)))));
+        using var racingClient = racing.CreateClient(
+            new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
+        var takenSlug = NewSlug();
+        var loserEmail = NewEmail();
+        await RegisterAsync(client, NewEmail(), Pw, takenSlug);
+
+        var lost = await RegisterAsync(racingClient, loserEmail, Pw, takenSlug);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, lost.StatusCode);
+        Assert.Equal("tenancy.slug.taken", (await ProblemAsync(lost)).Code);
+        Assert.Equal(0, await CountUsersWithEmailAsync(cs, loserEmail));
+
+        var freshSlug = NewSlug();
+        var retry = await RegisterAsync(client, loserEmail, Pw, freshSlug);
+
+        Assert.Equal(HttpStatusCode.Accepted, retry.StatusCode);
+        Assert.Equal(1, await CountTenantsWithSlugAsync(cs, freshSlug));
+        var userId = await FindUserIdAsync(cs, loserEmail);
+        Assert.Single(await ReadOutboxAsync(cs, IdentityIntegrationEvents.EmailVerificationRequested, userId));
+    }
+
+    [Theory]
+    [InlineData("text/plain", "not json")]
+    [InlineData("application/json", "{ not json")]
+    public async Task RegisterWithANonJsonOrMalformedBodyReturns400(string contentType, string body)
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/password/register-tenant")
+        {
+            Content = new StringContent(body, Encoding.UTF8, contentType),
+        };
+        request.Headers.Add("X-Qep-Client", "web");
+
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(null, "Acme", "tenancy.slug.invalid")]
+    [InlineData("a-valid-slug-1", null, "tenancy.settings.display_name.invalid")]
+    public async Task RegisterWithANullSlugOrDisplayNameReturns422AndCreatesNoUser(
+        string? slug,
+        string? displayName,
+        string expectedCode)
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+        var email = NewEmail();
+
+        var response = await PostJsonAsync(
+            client,
+            "/api/v1/auth/password/register-tenant",
+            new { email, password = Pw, displayName, slug });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(expectedCode, (await ProblemAsync(response)).Code);
+        Assert.Equal(0, await CountUsersWithEmailAsync(cs, email));
+    }
+
+    [Fact]
+    public async Task TheUnitOfWorkTranslatesARealEmailUniqueViolationAndClearsTheTracker()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        _ = factory.Services; // levanta el host, que aplica las migraciones
+        var email = NewEmail();
+        var now = DateTimeOffset.UtcNow;
+        await using var winner = NewIdentityContext(cs);
+        await using var loser = NewIdentityContext(cs);
+        winner.Users.Add(User.CreateInvited(UserId.New(), email, now));
+        loser.Users.Add(User.CreateInvited(UserId.New(), email, now));
+        await new IdentityUnitOfWork(winner).SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var exception = await Assert.ThrowsAsync<IdentityDomainException>(() =>
+            new IdentityUnitOfWork(loser).SaveChangesAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal("identity.user.email_taken", exception.Code);
+        Assert.Empty(loser.ChangeTracker.Entries());
+    }
+
+    // Decora el servicio real saltando el chequeo previo; el registro del tenant sigue siendo el real.
+    private sealed class SkipEnsureRegistration(ITenantRegistration inner) : ITenantRegistration
+    {
+        public Task<Guid> RegisterOwnerTenantAsync(
+            Guid ownerUserId,
+            TenantRegistrationData data,
+            string correlationId,
+            CancellationToken cancellationToken) =>
+            inner.RegisterOwnerTenantAsync(ownerUserId, data, correlationId, cancellationToken);
+
+        public Task EnsureRegistrableAsync(TenantRegistrationData data, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
     }
 }

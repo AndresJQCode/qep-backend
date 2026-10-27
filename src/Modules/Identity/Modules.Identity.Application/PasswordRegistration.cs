@@ -58,6 +58,14 @@ public interface IPasswordRegistration
         string correlationId,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Compensa un registro cuyo tenant no se pudo crear: borra al usuario que ESTE request creó
+    /// (la credencial y los tokens caen por cascada). Sin esto el email quedaría tomado para siempre
+    /// y nunca tendría tenant. Quien llama sólo lo invoca con el id que devolvió
+    /// <see cref="ProvisionOwnerAsync"/> como creado, nunca con el de un usuario preexistente.
+    /// </summary>
+    Task DiscardCreatedUserAsync(Guid userId, CancellationToken cancellationToken);
+
     /// <summary>Emite el token de verificación y encola <see cref="IdentityIntegrationEvents.EmailVerificationRequested"/>.</summary>
     Task RequestEmailVerificationAsync(
         Guid userId,
@@ -128,6 +136,18 @@ public sealed class PasswordRegistrationService(
         }
 
         return new PasswordRegistrationOutcome(user.Id.Value);
+    }
+
+    public async Task DiscardCreatedUserAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = await userRepository.FindByIdAsync(userId, cancellationToken);
+        if (user is null)
+        {
+            return;
+        }
+
+        userRepository.Remove(user);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
     public async Task RequestEmailVerificationAsync(

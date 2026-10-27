@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Modules.Identity.Application;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Api;
 
@@ -12,10 +13,11 @@ public static class PasswordAuthEndpoints
 {
     public static IEndpointRouteBuilder MapPasswordAuthEndpoints(this IEndpointRouteBuilder endpoints)
     {
+        // Sin .Accepts<T>(): esa metadata hace que el router conteste 415 a un Content-Type que no es
+        // JSON, y el contrato es el mismo 400 que un cuerpo mal formado (el handler lo decide).
         endpoints.MapPost("/api/v1/auth/password/register-tenant", RegisterTenantAsync)
             .AllowAnonymous()
             .WithTags("Authentication")
-            .Accepts<RegisterTenantWithPasswordRequest>("application/json")
             .Produces(StatusCodes.Status202Accepted)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -41,11 +43,15 @@ public static class PasswordAuthEndpoints
             return RegistrationEndpoints.SignupDisabledProblem();
         }
 
-        RegisterTenantWithPasswordRequest? request;
+        RegisterTenantWithPasswordRequest? request = null;
         try
         {
-            request = await httpContext.Request.ReadFromJsonAsync<RegisterTenantWithPasswordRequest>(
-                cancellationToken);
+            // Sin Content-Type JSON, ReadFromJsonAsync tira InvalidOperationException (un 500).
+            if (httpContext.Request.HasJsonContentType())
+            {
+                request = await httpContext.Request.ReadFromJsonAsync<RegisterTenantWithPasswordRequest>(
+                    cancellationToken);
+            }
         }
         catch (JsonException)
         {
@@ -60,6 +66,19 @@ public static class PasswordAuthEndpoints
         }
 
         await passwordRegistration.ValidateAsync(request.Email, request.Password, cancellationToken);
+
+        // Un JSON con null en estos campos llegaría al dominio como NullReferenceException (500).
+        if (request.Slug is null)
+        {
+            throw new TenantDomainException("tenancy.slug.invalid", "Tenant slug is required.");
+        }
+
+        if (request.DisplayName is null)
+        {
+            throw new TenantDomainException(
+                "tenancy.settings.display_name.invalid",
+                "Display name is required.");
+        }
 
         await tenantRegistration.EnsureRegistrableAsync(
             RegistrationEndpoints.ToRegistrationData(
@@ -82,16 +101,27 @@ public static class PasswordAuthEndpoints
         }
 
         var ownerUserId = outcome.CreatedUserId!.Value;
-        await tenantRegistration.RegisterOwnerTenantAsync(
-            ownerUserId,
-            RegistrationEndpoints.ToRegistrationData(
-                request.DisplayName,
-                request.Slug,
-                request.DefaultCulture,
-                request.TimeZone,
-                request.DateFormat),
-            correlationId,
-            cancellationToken);
+        try
+        {
+            await tenantRegistration.RegisterOwnerTenantAsync(
+                ownerUserId,
+                RegistrationEndpoints.ToRegistrationData(
+                    request.DisplayName,
+                    request.Slug,
+                    request.DefaultCulture,
+                    request.TimeZone,
+                    request.DateFormat),
+                correlationId,
+                cancellationToken);
+        }
+        catch (TenantDomainException exception) when (exception.Code == "tenancy.slug.taken")
+        {
+            // Perdió la carrera por el slug entre el chequeo y el insert. El usuario lo creó este
+            // request, así que se borra: si quedara, ese email tomaría para siempre el camino de
+            // «cuenta existente» y nunca tendría tenant. El 422 sale igual que el del chequeo previo.
+            await passwordRegistration.DiscardCreatedUserAsync(ownerUserId, CancellationToken.None);
+            throw;
+        }
 
         await passwordRegistration.RequestEmailVerificationAsync(
             ownerUserId,

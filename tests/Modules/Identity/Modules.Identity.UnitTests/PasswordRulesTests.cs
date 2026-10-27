@@ -24,6 +24,11 @@ public sealed class PasswordRulesTests
         Assert.Equal("identity.password.invalid", error.ErrorCode);
     }
 
+    // Ruling (NIST, sin reglas de composición): diez espacios cumplen el largo y se aceptan.
+    [Fact]
+    public void AWhitespaceOnlyPasswordOfTenCharactersIsAccepted()
+        => Assert.True(new NewPasswordValidator().Validate(new NewPasswordInput(new string(' ', 10))).IsValid);
+
     [Theory]
     [InlineData(10)]
     [InlineData(128)]
