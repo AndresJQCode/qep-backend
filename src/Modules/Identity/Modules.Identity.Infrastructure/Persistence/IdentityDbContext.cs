@@ -53,6 +53,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             .HasMaxLength(20);
         user.Property(value => value.CreatedAt).HasColumnName("created_at");
         user.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        user.Property(value => value.EmailVerifiedAt).HasColumnName("email_verified_at");
 
         user.HasMany(value => value.ProviderLinks)
             .WithOne()
