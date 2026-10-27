@@ -163,6 +163,7 @@ app.MapVersionEndpoint();
 app.MapAuthSessionEndpoints();
 app.MapAuthPreferenceEndpoints();
 app.MapRegistrationEndpoints();
+app.MapPasswordAuthEndpoints();
 app.MapAuthorizationCatalogEndpoints();
 app.MapTenantModulesEndpoints();
 app.MapRoleEndpoints();

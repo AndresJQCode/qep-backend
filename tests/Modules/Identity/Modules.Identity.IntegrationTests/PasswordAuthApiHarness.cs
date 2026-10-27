@@ -5,6 +5,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -188,6 +189,129 @@ internal static class PasswordAuthApiHarness
     public static string NewEmail() => $"user-{Guid.NewGuid():N}@example.com";
 
     public static string NewSlug() => $"t-{Guid.NewGuid():N}"[..20];
+
+    public static Task<HttpResponseMessage> RegisterAsync(
+        HttpClient client,
+        string email,
+        string password,
+        string slug) =>
+        PostJsonAsync(
+            client,
+            "/api/v1/auth/password/register-tenant",
+            new { email, password, displayName = "Acme", slug });
+
+    public sealed record ProblemPayload(
+        string? Code,
+        string? Title,
+        string? Detail,
+        Dictionary<string, string[]>? Errors);
+
+    // `code` y `errors` son extensiones de primer nivel del ProblemDetails.
+    public static async Task<ProblemPayload> ProblemAsync(HttpResponseMessage response)
+    {
+        using var document = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var root = document.RootElement;
+        string? Text(string name) =>
+            root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
+        Dictionary<string, string[]>? errors = null;
+        if (root.TryGetProperty("errors", out var errorsElement) && errorsElement.ValueKind == JsonValueKind.Object)
+        {
+            errors = errorsElement.EnumerateObject().ToDictionary(
+                property => property.Name,
+                property => property.Value.EnumerateArray().Select(item => item.GetString()!).ToArray());
+        }
+
+        return new ProblemPayload(Text("code"), Text("title"), Text("detail"), errors);
+    }
+
+    // `payload::text` de cada fila del evento para ese usuario, en orden de occurred_at.
+    public static async Task<IReadOnlyList<string>> ReadOutboxAsync(
+        string connectionString,
+        string eventName,
+        Guid userId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT payload::text
+            FROM platform.outbox_messages
+            WHERE event_name = @event AND payload->>'userId' = @userId
+            ORDER BY occurred_at
+            """,
+            connection);
+        command.Parameters.AddWithValue("event", eventName);
+        command.Parameters.AddWithValue("userId", userId.ToString());
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        var rows = new List<string>();
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            rows.Add(reader.GetString(0));
+        }
+
+        return rows;
+    }
+
+    public static async Task<Guid> FindUserIdAsync(string connectionString, string email)
+    {
+        var value = await ScalarAsync(
+            connectionString,
+            "SELECT id FROM identity.users WHERE email = @value",
+            User.NormalizeEmail(email));
+        return value is Guid id ? id : throw new InvalidOperationException($"No user with email {email}.");
+    }
+
+    public static async Task<long> CountTenantsWithSlugAsync(string connectionString, string slug) =>
+        (long)(await ScalarAsync(connectionString, "SELECT COUNT(*) FROM tenancy.tenants WHERE slug = @value", slug))!;
+
+    public static async Task<long> CountAuditAsync(string connectionString, Guid resourceId, string action)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT COUNT(*) FROM audit.entries WHERE resource_id = @id AND action = @action", connection);
+        command.Parameters.AddWithValue("id", resourceId.ToString());
+        command.Parameters.AddWithValue("action", action);
+        return (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
+    }
+
+    public static async Task<string?> CredentialHashAsync(string connectionString, Guid userId) =>
+        await ScalarAsync(
+            connectionString,
+            "SELECT hash FROM identity.password_credentials WHERE user_id = @value",
+            userId) as string;
+
+    public static async Task<long> CountUsersWithEmailAsync(string connectionString, string email) =>
+        (long)(await ScalarAsync(
+            connectionString,
+            "SELECT COUNT(*) FROM identity.users WHERE email = @value",
+            User.NormalizeEmail(email)))!;
+
+    public static async Task<long> CountOutboxAsync(string connectionString, string eventName) =>
+        (long)(await ScalarAsync(
+            connectionString,
+            "SELECT COUNT(*) FROM platform.outbox_messages WHERE event_name = @value",
+            eventName))!;
+
+    public static async Task<long> CountTokensWithHashAsync(string connectionString, string tokenHash) =>
+        (long)(await ScalarAsync(
+            connectionString,
+            "SELECT COUNT(*) FROM identity.email_tokens WHERE token_hash = @value",
+            tokenHash))!;
+
+    // Una sola consulta con un parámetro `@value`; el SQL es siempre una constante de la prueba.
+    private static async Task<object?> ScalarAsync(string connectionString, string sql, object value)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("value", value);
+        var result = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        return result is DBNull ? null : result;
+    }
 
     public sealed record OutboxRow(string PayloadText, string CorrelationId, DateTimeOffset? ProcessedAt);
 

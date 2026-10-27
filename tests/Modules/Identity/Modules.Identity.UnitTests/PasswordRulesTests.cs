@@ -15,6 +15,16 @@ public sealed class PasswordRulesTests
     }
 
     [Theory]
+    [InlineData("")]
+    [InlineData("short")]
+    public void EveryPasswordFailureIsASingleErrorCarryingTheInvalidCode(string password)
+    {
+        var error = Assert.Single(new NewPasswordValidator().Validate(new NewPasswordInput(password)).Errors);
+
+        Assert.Equal("identity.password.invalid", error.ErrorCode);
+    }
+
+    [Theory]
     [InlineData(10)]
     [InlineData(128)]
     public void APasswordOfTenOr128CharactersWithoutCompositionPasses(int length)

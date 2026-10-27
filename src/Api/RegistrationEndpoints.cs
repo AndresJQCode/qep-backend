@@ -58,9 +58,7 @@ public static class RegistrationEndpoints
     {
         if (!IsEnabled(configuration))
         {
-            return Results.Problem(
-                statusCode: StatusCodes.Status403Forbidden,
-                title: "Public tenant registration is disabled.");
+            return SignupDisabledProblem();
         }
 
         var user = httpContext.User;
@@ -98,12 +96,12 @@ public static class RegistrationEndpoints
 
         var tenantId = await tenantRegistration.RegisterOwnerTenantAsync(
             ownerUserId,
-            new TenantRegistrationData(
+            ToRegistrationData(
                 request.DisplayName,
                 request.Slug,
-                string.IsNullOrWhiteSpace(request.DefaultCulture) ? DefaultCulture : request.DefaultCulture,
-                string.IsNullOrWhiteSpace(request.TimeZone) ? DefaultTimeZone : request.TimeZone,
-                string.IsNullOrWhiteSpace(request.DateFormat) ? DefaultDateFormat : request.DateFormat),
+                request.DefaultCulture,
+                request.TimeZone,
+                request.DateFormat),
             httpContext.TraceIdentifier,
             cancellationToken);
 
@@ -128,8 +126,27 @@ public static class RegistrationEndpoints
     private const string DefaultTimeZone = "America/Bogota";
     private const string DefaultDateFormat = "dd/MM/yyyy";
 
-    private static bool IsEnabled(IConfiguration configuration) =>
+    internal static bool IsEnabled(IConfiguration configuration) =>
         configuration.GetValue<bool>(FlagKey);
+
+    // El mismo 403 en los dos registros públicos: un cliente no distingue por cuál entró.
+    internal static IResult SignupDisabledProblem() =>
+        Results.Problem(
+            statusCode: StatusCodes.Status403Forbidden,
+            title: "Public tenant registration is disabled.");
+
+    internal static TenantRegistrationData ToRegistrationData(
+        string displayName,
+        string slug,
+        string? culture,
+        string? timeZone,
+        string? dateFormat) =>
+        new(
+            displayName,
+            slug,
+            string.IsNullOrWhiteSpace(culture) ? DefaultCulture : culture,
+            string.IsNullOrWhiteSpace(timeZone) ? DefaultTimeZone : timeZone,
+            string.IsNullOrWhiteSpace(dateFormat) ? DefaultDateFormat : dateFormat);
 }
 
 public sealed record RegistrationPolicyResponse(bool PublicTenantSignupEnabled);
