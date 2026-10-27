@@ -122,6 +122,38 @@ public sealed class FlowEngineStepRecordTests
     }
 
     [Fact]
+    public void AHandoffFallbackExitsTheBlockWithTheHandedOffOutcomeAndNoOrigin()
+    {
+        var buttons = new ButtonsNode(
+            "b", "Motivo", Out(("tech", null), ("sales", null), (FlowOutputs.Other, null)), "¿En qué te ayudamos?",
+            [new FlowButton("tech", "Servicio técnico"), new FlowButton("sales", "Ventas")], "motivo", InteractiveFallbacks.Handoff);
+        var flow = Flow("b", buttons);
+        var waiting = Start(flow);
+
+        var handedOff = Next(flow, waiting, Typed("otra cosa"));
+
+        var record = Assert.Single(handedOff.Steps);
+        AssertRecord(record, 1, StepSeqs.Exit, "b", "buttons", TraceOutcomes.HandedOff, null, null);
+        Assert.Empty(record.SendIndexes);
+    }
+
+    [Fact]
+    public void ExhaustedAttemptsLeavingByInvalidExitTheBlockThenEnterTheNextWithItsOrigin()
+    {
+        var question = new OpenQuestionNode(
+            "q", "Documento", Out((FlowOutputs.Answered, null), (FlowOutputs.Invalid, "m")), "¿Cuál es tu documento?", "doc",
+            new QuestionValidation(QuestionValidationKinds.Digits, null, null), 1);
+        var flow = Flow("q", question, Message("m", "Sigamos"));
+        var waiting = Start(flow);
+
+        var left = Next(flow, waiting, Typed("abc"));
+
+        Assert.Equal(2, left.Steps.Count);
+        AssertRecord(left.Steps[0], 1, StepSeqs.Exit, "q", "openQuestion", FlowOutputs.Invalid, null, null);
+        AssertRecord(left.Steps[1], 2, StepSeqs.Entry, "m", "message", "next", "q", FlowOutputs.Invalid);
+    }
+
+    [Fact]
     public void TheConsentQuestionIsAnEntryOfItsOwnStep()
     {
         var flow = Flow("dc", new DataConsentNode("dc", "Política", Out((FlowOutputs.Accepted, null), (FlowOutputs.Rejected, null)), "Acepta"));

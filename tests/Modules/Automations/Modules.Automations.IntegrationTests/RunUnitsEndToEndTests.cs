@@ -40,7 +40,7 @@ public sealed class RunUnitsEndToEndTests
 
     private static readonly byte[] InvoiceBytes = Encoding.UTF8.GetBytes("factura de compra de Clasic");
 
-    private sealed record Fixture(QepApiFactory Factory, WebApplicationFactory<Program> Host, string ConnectionString, HttpClient Anonymous)
+    private sealed record Fixture(QepApiFactory Factory, WebApplicationFactory<Program> Host, string ConnectionString, HttpClient Anonymous, FakeMediaStore Media)
         : IDisposable
     {
         public void Dispose()
@@ -54,8 +54,9 @@ public sealed class RunUnitsEndToEndTests
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString);
+        var media = new FakeMediaStore();
         var host = factory.WithWebHostBuilder(builder =>
-            builder.ConfigureTestServices(services => services.AddSingleton<IMessagingMediaStore>(new FakeMediaStore())));
+            builder.ConfigureTestServices(services => services.AddSingleton<IMessagingMediaStore>(media)));
         var tenant = await RegisterTenantAsync(host);
         await EnableAutomationsAsync(connectionString, tenant.TenantId);
         var whatsApp = await SeedWhatsAppConnectionAsync(host, tenant.TenantId, "Servicio Clasic", PhoneNumberId, "322");
@@ -98,7 +99,7 @@ public sealed class RunUnitsEndToEndTests
                 {"messaging_product":"whatsapp","contacts":[{"input":"{{WaId}}","wa_id":"{{WaId}}"}],"messages":[{"id":"wamid.{{number}}"}]}
                 """);
         });
-        return new Fixture(factory, host, connectionString, host.CreateClient());
+        return new Fixture(factory, host, connectionString, host.CreateClient(), media);
     }
 
     private static long Timestamp(string wamid) =>
@@ -187,8 +188,9 @@ public sealed class RunUnitsEndToEndTests
                     WHERE m.conversation_id = r.conversation_id AND m.client_id = (sd ->> 'clientId')::uuid)
             """));
 
-        // Cada llamada HTTP trae el paso del bloque que la hizo, distinto por llamada (aunque el flujo pasara dos veces por un bloque,
-        // el paso sube), y ese paso es el de un step kind = http de alguna fila.
+        // Cada llamada HTTP trae el paso del bloque que la hizo, distinto por llamada (cada visita a un bloque HTTP
+        // es un paso nuevo), y ese paso es el de un step kind = http de alguna fila. Clasic no revisita ningún bloque HTTP: lo que se prueba
+        // es la unicidad y la correspondencia entre la llamada y su paso, no el caso de la revisita.
         var calls = await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.http_calls");
         Assert.Equal(6L, calls);
         Assert.Equal(calls, await CountAsync(f.ConnectionString, "SELECT count(DISTINCT step_number) FROM automations.http_calls WHERE step_number IS NOT NULL"));
@@ -226,6 +228,8 @@ public sealed class RunUnitsEndToEndTests
         await DrainMediaAsync(f.Host);
         await DrainAutomationsAsync(f.Host);
 
+        // Control positivo: sin al menos una URL firmada generada, las ausencias de abajo no probarían nada.
+        Assert.True(f.Media.DownloadUrlsCreated > 0);
         // Control positivo: el registro sí llegó a Clasic, así que el bloque que usa la factura corrió.
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.http_calls WHERE method = 'POST' AND path LIKE '%new-customer'"));
         Assert.True(await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.run_units") >= 10);
@@ -268,7 +272,7 @@ public sealed class RunUnitsEndToEndTests
     }
 
     /// <summary>R2 de mentira, como el de <c>MediaApiTests</c> de Mensajería: la copia del adjunto escribe acá y el bloque HTTP lee de acá.</summary>
-    private sealed class FakeMediaStore : IMessagingMediaStore
+    internal sealed class FakeMediaStore : IMessagingMediaStore
     {
         private readonly ConcurrentDictionary<string, (byte[] Bytes, string ContentType)> objects = new(StringComparer.Ordinal);
 
@@ -290,7 +294,14 @@ public sealed class RunUnitsEndToEndTests
             return Task.CompletedTask;
         }
 
-        public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken) =>
-            Task.FromResult(new Uri($"https://r2.test/{key}?signed=1", UriKind.Absolute));
+        private int downloadUrlsCreated;
+
+        public int DownloadUrlsCreated => Volatile.Read(ref downloadUrlsCreated);
+
+        public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref downloadUrlsCreated);
+            return Task.FromResult(new Uri($"https://r2.test/{key}?signed=1", UriKind.Absolute));
+        }
     }
 }
