@@ -14,7 +14,8 @@
 
 ## Antes de empezar
 
-- Rama: `git branch --show-current` en `qep-backend`. Si dice `main`, frenar y preguntar. El trabajo va en `feature/password-auth`, abierta desde `develop` (`git switch -c feature/password-auth develop`). Ese chequeo se repite antes de cada commit.
+- Rama: el trabajo va en `feature/registro-con-contrasena`, abierta desde `develop`, en el worktree `qep-backend-worktrees/registro-con-contrasena`. `git branch --show-current` tiene que decir `feature/registro-con-contrasena`; si dice `main` u otra, frenar y preguntar. Ese chequeo se repite antes de cada commit.
+- Los commits van con Conventional Commits y **sin** atribución de IA ni `Co-Authored-By`.
 - Si `Api.exe` está corriendo, `dotnet build`, `dotnet test` y `dotnet ef` fallan por archivo bloqueado: `Stop-Process -Name Api -ErrorAction SilentlyContinue`.
 - Las pruebas de integración necesitan Docker y tardan minutos (cada clase levanta su Postgres).
 - Toda línea de comando de este plan es PowerShell: nada de `&&`; una línea por comando.
@@ -26,7 +27,7 @@
 
 - Contraseña: mínimo **10** caracteres, máximo **128**, sin reglas de composición (NIST 800-63B).
 - Hash: `Microsoft.AspNetCore.Identity.PasswordHasher<User>` detrás de `IPasswordHasher` (Application) implementado en Infrastructure; no se instala ASP.NET Core Identity completo. `SuccessRehashNeeded` → re-hash al iniciar sesión.
-- Validación de contraseña con FluentValidation: código `validation.failed` con `errors.password`.
+- Validación de contraseña con FluentValidation: código `validation.failed` con `errors.Password` (y `errors.Email` para el email). La clave es el `PropertyName` de FluentValidation en PascalCase, porque `ApiExceptionHandler.cs:66` agrupa por `PropertyName`; ningún validador usa `OverridePropertyName` (D10).
 - Token de email: 32 bytes aleatorios, base64url en el link; en la base sólo el SHA-256 (`token_hash` único).
 - Vigencia del token `verify`: **24 h**. Vigencia del token `reset`: **1 h**. Un solo uso (`used_at`).
 - Emitir un token nuevo de un propósito invalida los anteriores no usados del mismo usuario y propósito.
@@ -55,14 +56,16 @@
 | # | Decisión | Por qué |
 | --- | --- | --- |
 | D1 | Las acciones de auditoría llevan el prefijo del módulo: `identity.password.registered`, `identity.email.verified`, `identity.password.login.succeeded`, `identity.password.login.failed`, `identity.password.reset.requested`, `identity.password.reset.completed`. | Convención vigente: `identity.session.issued` (`SessionService.cs:41`), `identity.user.deleted` (`OrphanUserCleanupTests.cs:72`). |
-| D2 | En el registro con contraseña, `displayName`, `slug`, cultura, zona y formato de fecha siguen saliendo como **códigos de dominio** (`tenancy.slug.invalid`, `tenancy.settings.display_name.invalid`, …), no como `errors.*`. Sólo `email` y `password` van por FluentValidation (`errors.email`, `errors.password`). | `/auth/register-tenant` no tiene validador hoy; esas reglas viven en `Tenant.ValidateSlug`/`ValidateDisplayName` (`Tenant.cs:310-335`). Para no enumerar, el chequeo de dominio corre **antes** de ramificar por email (Task 8). |
+| D2 | En el registro con contraseña, `displayName`, `slug`, cultura, zona y formato de fecha siguen saliendo como **códigos de dominio** (`tenancy.slug.invalid`, `tenancy.settings.display_name.invalid`, …), no como `errors.*`. Sólo `email` y `password` van por FluentValidation (`errors.Email`, `errors.Password`, D10). | `/auth/register-tenant` no tiene validador hoy; esas reglas viven en `Tenant.ValidateSlug`/`ValidateDisplayName` (`Tenant.cs:310-335`). Para no enumerar, el chequeo de dominio corre **antes** de ramificar por email (Task 8). |
 | D3 | Invitación inexistente → 404 `tenancy.invitation.not_found`; vencida → 422 `tenancy.membership.invitation_expired`; aceptada u otro estado → 422 `tenancy.membership.not_invited`. | El spec pide «el mismo error que el `GET`», pero el `GET` sólo falla con token desconocido; con vencida o aceptada responde 200 y `status` (`InvitationEndpoints.cs:42-55`, `InvitationApiTests.cs:122-125`). Los dos 422 son los de `Membership.Accept` (`Membership.cs:250-262`). |
 | D4 | Identity escribe en `platform.outbox_messages` extendiendo su `OutboxRecord` (hoy proyección de sólo lectura) con `correlation_id`, `attempts` y `payload` como `jsonb`. | Dos entidades en la misma tabla sin relación de PK no las acepta EF; `correlation_id` y `attempts` son `NOT NULL` (`20260705161840_InitialPlatform.cs:54-57`). |
 | D5 | Event names: `identity.email-verification-requested.v1`, `identity.password-reset-requested.v1`, `identity.existing-account-notice.v1`, en `IdentityIntegrationEvents` (Identity.Application, que Notifications.Infrastructure ya referencia). Payloads: `{ userId, token }` y `{ userId }`. | Formato de `OutboxWriter.cs` de Tenancy (`tenancy.membership-invited.v1`). El destinatario sale de `IUserDirectory`, como hoy. |
 | D6 | El consumo de un token es una sentencia atómica (`UPDATE … WHERE used_at IS NULL AND expires_at > now RETURNING user_id`) que commitea sola, antes del resto de la unidad de trabajo. | Cierra la carrera de reuso. Si lo que sigue falla, el token queda quemado: es la dirección segura (se pide otro). |
-| D7 | `OwnerProvisioningService.ProvisionOwnerAsync` recibe `emailVerified` y devuelve `ProviderLinkOutcome` (`Denied("email_not_verified")`); `RegistrationEndpoints` traduce `IsDenied` al mismo `Problem` 403 de hoy. | Spec: la comprobación pasa al servicio; el 403 y su `detail` no cambian (`RegistrationEndpoints.cs:81-87`). |
+| D7 | `OwnerProvisioningService.ProvisionOwnerAsync` recibe `string? email` y `emailVerified` y devuelve `ProviderLinkOutcome` (`Denied("email_not_verified")`); `RegistrationEndpoints` traduce `IsDenied` al mismo `Problem` 403 de hoy. | Spec: la comprobación pasa al servicio; el 403 y su `detail` no cambian (`RegistrationEndpoints.cs:81-87`). |
 | D8 | `hasPassword` sale de un puerto nuevo `IPasswordCredentials`, no de `IUserDirectory`. | `IUserDirectory` tiene dobles en pruebas de Tenancy y Bootstrapper (`MembershipHandlerTestDoubles.cs`, `TenancyTestDoubles.cs`); sumarle un método rompe esos proyectos. |
 | D9 | La precomprobación de slug es `ITenantRegistration.EnsureRegistrableAsync` con un puerto nuevo `ITenantSlugAvailability`, no un método en `ITenantRepository`. | `ITenantRepository` tiene cuatro dobles de prueba (`InMemoryTenantRepository`, `RecordingTenantRepository`, `TenantRepo`, `StepsTenantRepository`). |
+| D10 | Las claves de `errors` son `Password` y `Email` (PascalCase), no `password`/`email` como dice el spec (l.75). Ningún validador usa `OverridePropertyName`. | `ApiExceptionHandler.cs:66` agrupa por `error.PropertyName`, que FluentValidation llena con el nombre de la propiedad del record. El frontend lee esas claves. |
+| D11 | Un `email` vacío o ausente en el token de Google sigue dando el 403 `email_not_verified` de hoy: el servicio niega `string.IsNullOrWhiteSpace(email) \|\| !emailVerified`. | Hoy lo niega `RegistrationEndpoints.cs:79-86` antes de llamar al servicio; sin esto, el email vacío llegaría a `User.NormalizeEmail` y saldría 422 `identity.email.invalid`. |
 
 Riesgos residuales aceptados (el spec los deja así; anotar en el ledger al cerrar):
 - El camino «email nuevo» del registro crea usuario y tenant; el de «email existente» sólo encola un mail. El hash corre en los dos, pero el resto del tiempo difiere.
@@ -94,13 +97,16 @@ Riesgos residuales aceptados (el spec los deja así; anotar en el ledger al cerr
 | `src/Modules/Identity/Modules.Identity.Application/IIdentityOutbox.cs`, `IdentityIntegrationEvents.cs` | outbox de Identity, nombres y payloads |
 | `src/Modules/Identity/Modules.Identity.Application/VerifiedProviderLinker.cs` | **la** regla «vincular borra la contraseña sin verificar» |
 | `src/Modules/Identity/Modules.Identity.Application/PasswordRegistration.cs`, `EmailVerification.cs`, `PasswordLogin.cs`, `PasswordReset.cs`, `PasswordCredentials.cs` | casos de uso |
+| `src/Modules/Identity/Modules.Identity.Application/PasswordCredentialVerifier.cs` | **la** verificación de contraseña con re-hash, compartida por login y aceptación de invitación |
 | `src/Modules/Identity/Modules.Identity.Infrastructure/Persistence/*` | repos, hasher, outbox writer, mapeos, migraciones |
+| `src/Modules/Identity/Modules.Identity.Infrastructure/Persistence/IdentityUnitOfWork.cs` | traduce la violación de `IX_users_email` (Task 10) |
 | `src/Modules/Notifications/...` | `TenantId` nullable, `AppBaseUrl`, plantillas, `AccountLinks`, tres workers |
 | `src/Modules/Tenancy/...` | `Tenant.EnsureValidRegistration`, `ITenantSlugAvailability`, `EnsureRegistrableAsync`, `InvitationAcceptability` |
 | `src/Api/SessionEstablisher.cs` | aceptar invitadas + emitir sesión + cookie + cuerpo |
 | `src/Api/PasswordAuthEndpoints.cs` | los cinco endpoints de `/auth/password/*` y `/auth/email/verify` |
 | `src/Api/InvitationEndpoints.cs`, `RateLimiterPolicies.cs`, `Program.cs` | `hasPassword`, `accept-with-password`, política `Credentials` |
-| `tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiHarness.cs` | fábrica real-auth sobre https, canal de correo grabador, helpers de SQL |
+| `tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiHarness.cs` | fábrica real-auth sobre https, canal de correo grabador, helpers de SQL y HTTP. Cada task declara, en su bloque «Produces (test)», los helpers que agrega; ninguna prueba usa uno que no esté declarado en esa task o en una anterior. |
+| `tests/Modules/Identity/Modules.Identity.UnitTests/IdentityApplicationTestDoubles.cs` | dobles de los puertos de Identity.Application, con el mismo criterio de declaración |
 
 ---
 
@@ -115,7 +121,10 @@ Riesgos residuales aceptados (el spec los deja así; anotar en el ledger al cerr
 
 **Interfaces:**
 - Produces: `public DateTimeOffset? User.EmailVerifiedAt { get; private set; }`; `public void User.MarkEmailVerified(DateTimeOffset occurredAt)` (idempotente: no pisa una fecha ya puesta, no toca `UpdatedAt` la segunda vez).
-- Produces (test): `internal static class PasswordAuthApiHarness` con `StartDatabaseAsync()` (copia de `RealAuthenticationApiTests.StartDatabaseAsync`, `postgres:18-alpine`) e `IdentityDbContext NewIdentityContext(string connectionString)` (mismas opciones que `IdentityDbContextFactory`).
+- Produces (test), en `internal static class PasswordAuthApiHarness` (las pruebas lo importan con `using static`):
+  - `Task<PostgreSqlContainer> StartDatabaseAsync()` — copia de `RealAuthenticationApiTests.StartDatabaseAsync`, `postgres:18-alpine`.
+  - `IdentityDbContext NewIdentityContext(string connectionString)` — mismas opciones que `IdentityDbContextFactory`.
+  - `Task<DateTimeOffset?> EmailVerifiedAtAsync(string connectionString, Guid userId)` — `email_verified_at` de `identity.users`.
 
 - [ ] **Step 1: Escribir las pruebas que fallan**
 
@@ -149,8 +158,8 @@ public async Task EmailVerifiedAtIsBackfilledFromTheFirstProviderLink()
     // migrar hasta PreviousMigration; insertar por SQL:
     //   usuario A con dos provider_links (linked_at t1 < t2), usuario B sin vínculos
     // migrar al final
-    Assert.Equal(t1, await EmailVerifiedAtAsync(connection, userA));
-    Assert.Null(await EmailVerifiedAtAsync(connection, userB));
+    Assert.Equal(t1, await EmailVerifiedAtAsync(cs, userA));
+    Assert.Null(await EmailVerifiedAtAsync(cs, userB));
 }
 ```
 
@@ -210,7 +219,7 @@ git commit -m "feat(identity): track verified email with backfill from provider 
 - Modify: `src/Bootstrapper/QepServiceCollectionExtensions.cs` (junto a la línea 880: `services.AddValidatorsFromAssemblyContaining<NewPasswordValidator>();`)
 - Create: migración `AddPasswordCredentials`
 - Modify: `tests/Modules/Identity/Modules.Identity.UnitTests/Modules.Identity.UnitTests.csproj` (referencia a `Modules.Identity.Application`)
-- Test: `tests/Modules/Identity/Modules.Identity.UnitTests/PasswordCredentialTests.cs`, `PasswordRulesTests.cs`; `tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordHasherTests.cs`, `IdentityPersistenceTests.cs`; `tests/ArchitectureTests/ArchitectureTests/IdentityLayerTests.cs`
+- Test: `tests/Modules/Identity/Modules.Identity.UnitTests/PasswordCredentialTests.cs`, `PasswordRulesTests.cs`; `tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordHasherTests.cs`, `IdentityPersistenceTests.cs` (nuevo), `PasswordAuthApiHarness.cs` (`CountRowsAsync`); `tests/ArchitectureTests/ArchitectureTests/IdentityLayerTests.cs`
 - Todos los `packages.lock.json` que cambie `dotnet restore --force-evaluate`.
 
 **Interfaces:**
@@ -247,10 +256,12 @@ git commit -m "feat(identity): track verified email with backfill from provider 
       public static IRuleBuilderOptions<T, string> QepPassword<T>(this IRuleBuilder<T, string> rule); // NotEmpty + Length(10,128), código identity.password.invalid
   }
   public sealed record NewPasswordInput(string Password);
-  public sealed class NewPasswordValidator : AbstractValidator<NewPasswordInput>; // RuleFor(Password).QepPassword().OverridePropertyName("password")
+  public sealed class NewPasswordValidator : AbstractValidator<NewPasswordInput>; // RuleFor(x => x.Password).QepPassword(); sin OverridePropertyName: la clave es "Password" (D10)
   ```
 - Produces (Infrastructure): `internal sealed class AspNetCorePasswordHasher : IPasswordHasher` sobre un `PasswordHasher<User>` estático (opciones por defecto, V3); el hash ficticio se calcula una vez (`Lazy<string>`) desde 16 bytes aleatorios. `internal sealed class PasswordCredentialRepository(IdentityDbContext)`.
 - Tabla: `identity.password_credentials` — `user_id` PK y FK a `identity.users(id)` `ON DELETE CASCADE`, `hash text`, `updated_at timestamptz`.
+- Produces (test), en `PasswordAuthApiHarness`:
+  - `Task<long> CountRowsAsync(string connectionString, string table, Guid userId)` — `SELECT COUNT(*) FROM {table} WHERE user_id = @id`; `table` es siempre una constante de la prueba.
 
 - [ ] **Step 1: Escribir las pruebas que fallan**
 
@@ -275,7 +286,7 @@ git commit -m "feat(identity): track verified email with backfill from provider 
 public void APasswordOutsideTenTo128CharactersFailsOnThePasswordField(int length)
 {
     var result = new NewPasswordValidator().Validate(new NewPasswordInput(new string('a', length)));
-    Assert.Equal("password", Assert.Single(result.Errors).PropertyName);
+    Assert.Equal("Password", Assert.Single(result.Errors).PropertyName);
 }
 
 [Theory, InlineData(10), InlineData(128)]
@@ -312,7 +323,7 @@ public async Task APasswordCredentialRoundTripsAndIsDeletedWithItsUser()
 {
     // guardar User.CreateInvited + PasswordCredential.Create, releer en un contexto nuevo (Hash igual),
     // borrar el usuario con IUserRepository.Remove + SaveChanges
-    Assert.Equal(0, await CountAsync(connection, "identity.password_credentials", userId));
+    Assert.Equal(0, await CountRowsAsync(cs, "identity.password_credentials", userId));
 }
 ```
 
@@ -377,7 +388,7 @@ git commit -m "feat(identity): add password credentials behind an application ha
 - Create: `src/Modules/Identity/Modules.Identity.Infrastructure/Persistence/EmailTokenRepository.cs`
 - Modify: `IdentityDbContext.cs` (`ConfigureEmailToken`), `IdentityInfrastructureExtensions.cs`, `IUserRepository.cs` (comentario de `Remove`: credencial y tokens caen por cascada)
 - Create: migración `AddEmailTokens`
-- Test: `tests/Modules/Identity/Modules.Identity.UnitTests/EmailTokenTests.cs`, `EmailTokenIssuerTests.cs`, `IdentityApplicationTestDoubles.cs`; `tests/Modules/Identity/Modules.Identity.IntegrationTests/IdentityPersistenceTests.cs`, `OrphanUserCleanupTests.cs`
+- Test: `tests/Modules/Identity/Modules.Identity.UnitTests/EmailTokenTests.cs`, `EmailTokenIssuerTests.cs`, `IdentityApplicationTestDoubles.cs` (nuevo); `tests/Modules/Identity/Modules.Identity.IntegrationTests/IdentityPersistenceTests.cs`, `OrphanUserCleanupTests.cs`, `PasswordAuthApiHarness.cs` (`NewTokenRepository`)
 
 **Interfaces:**
 - Produces (Domain):
@@ -413,9 +424,18 @@ git commit -m "feat(identity): add password credentials behind an application ha
   ```sql
   UPDATE identity.email_tokens SET used_at = {now}
   WHERE token_hash = {hash} AND purpose = {purpose} AND used_at IS NULL AND expires_at > {now}
-  RETURNING user_id
+  RETURNING user_id AS "Value"
   ```
+  - La columna escalar se llama `"Value"`: es el nombre que EF espera en `SqlQuery<T>` de un tipo escalar.
+  - Se materializa con `ToListAsync` y se toma `SingleOrDefault()` en memoria. **Nada de `FirstOrDefaultAsync`** ni otra composición: EF envuelve el SQL en una subconsulta y Postgres rechaza `UPDATE … RETURNING` como subconsulta.
+  - `purpose` se pasa como el string en minúscula que guarda la columna (`"verify"` / `"reset"`, la misma conversión del mapeo), nunca el enum.
 - Tabla `identity.email_tokens`: `id` PK, `user_id` FK a `users` cascade, `purpose varchar(10)` (`verify` | `reset`, conversión explícita a minúscula), `token_hash varchar(64)` único (`IX_email_tokens_token_hash`), `expires_at`, `used_at null`, `created_at`; índice `(user_id, purpose, used_at)`.
+- Produces (test), en `IdentityApplicationTestDoubles.cs` (nuevo):
+  - `sealed class FakeEmailTokenRepository : IEmailTokenRepository` — `List<EmailToken> Added`; `List<(Guid UserId, EmailTokenPurpose? Purpose)> Invalidations`; `TryConsumeAsync` devuelve `null`.
+  - `sealed class FixedClock(DateTimeOffset now) : IClock`.
+- Produces (test), en `PasswordAuthApiHarness`:
+  - `EmailTokenRepository NewTokenRepository(string connectionString)` — el repositorio real sobre un `NewIdentityContext` propio, para que cada consumo vaya en su contexto.
+- Las pruebas de `IdentityPersistenceTests` y `OrphanUserCleanupTests` usan `CountRowsAsync` del harness (Task 2): `OrphanUserCleanupTests` no tiene uno propio.
 
 - [ ] **Step 1: Escribir las pruebas que fallan**
 
@@ -453,16 +473,29 @@ public void IssueSetsTheExpiryByPurpose(EmailTokenPurpose purpose, int hours)
 ```
 
 ```csharp
-// IdentityPersistenceTests.cs
-[Fact] public async Task TryConsumeSucceedsOnceThenReturnsNull()      // 1.ª → userId, 2.ª → null
-[Fact] public async Task TryConsumeRejectsAnExpiredTokenAndTheWrongPurpose() // null en los dos casos
+// IdentityPersistenceTests.cs — sembrado común: User.CreateInvited + EmailToken.Issue(…, tokenHash: EmailTokenCodec.Hash("raw-1"), issuedAt: Now)
+// guardados con NewIdentityContext(cs); cada consumo con un EmailTokenRepository sobre un contexto nuevo.
+[Fact] public async Task TryConsumeSucceedsOnceThenReturnsNull()
+{
+    var first = await NewTokenRepository(cs).TryConsumeAsync(EmailTokenCodec.Hash("raw-1"), EmailTokenPurpose.Verify, Now.AddMinutes(1), ct);
+    var second = await NewTokenRepository(cs).TryConsumeAsync(EmailTokenCodec.Hash("raw-1"), EmailTokenPurpose.Verify, Now.AddMinutes(2), ct);
+    Assert.Equal(userId, first);
+    Assert.Null(second);
+}
+
+[Fact] public async Task TryConsumeRejectsAnExpiredTokenAndTheWrongPurpose()
+{
+    // token Verify sembrado en Now: vence en Now + 24 h
+    Assert.Null(await NewTokenRepository(cs).TryConsumeAsync(EmailTokenCodec.Hash("raw-1"), EmailTokenPurpose.Reset, Now.AddMinutes(1), ct));
+    Assert.Null(await NewTokenRepository(cs).TryConsumeAsync(EmailTokenCodec.Hash("raw-1"), EmailTokenPurpose.Verify, Now.AddHours(24), ct));
+}
 
 // OrphanUserCleanupTests.cs — mismo flujo que RemovingTheOnlyMembershipDeletesTheUserAndItsSessions
 [Fact] public async Task RemovingTheOnlyMembershipAlsoDeletesTheCredentialAndEmailTokens()
 {
     // sembrar por SQL una fila en password_credentials y una en email_tokens para member.UserId
-    Assert.Equal(0, await CountRowsAsync(connection, "identity.password_credentials", member.UserId));
-    Assert.Equal(0, await CountRowsAsync(connection, "identity.email_tokens", member.UserId));
+    Assert.Equal(0, await CountRowsAsync(connectionString, "identity.password_credentials", member.UserId));
+    Assert.Equal(0, await CountRowsAsync(connectionString, "identity.email_tokens", member.UserId));
 }
 ```
 
@@ -504,7 +537,7 @@ git commit -m "feat(identity): add single-use hashed email tokens"
 - Create: `src/Modules/Identity/Modules.Identity.Infrastructure/Persistence/IdentityOutboxWriter.cs`
 - Modify: `src/Modules/Identity/Modules.Identity.Infrastructure/Persistence/IdentityInboxMessage.cs` (`OutboxRecord` + `CorrelationId`, `Attempts`), `IdentityDbContext.cs` (`ConfigureOutboxProjection`: `correlation_id`, `attempts`, `payload` con `HasColumnType("jsonb")`), `IdentityInfrastructureExtensions.cs`
 - Create: migración `IdentityOutboxWriteProjection` (se espera **vacía** en DDL: la tabla es `ExcludeFromMigrations`; sólo cambia el snapshot. Si sale con DDL, algo está mal)
-- Test: `tests/Modules/Identity/Modules.Identity.IntegrationTests/IdentityPersistenceTests.cs`
+- Test: `tests/Modules/Identity/Modules.Identity.IntegrationTests/IdentityPersistenceTests.cs`, `PasswordAuthApiHarness.cs` (fábrica y helpers de abajo)
 
 **Interfaces:**
 - Produces:
@@ -520,6 +553,11 @@ git commit -m "feat(identity): add single-use hashed email tokens"
   public interface IIdentityOutbox { void Add(string eventName, object payload, string correlationId, DateTimeOffset occurredAt); } // no guarda
   ```
   `IdentityOutboxWriter` serializa con `JsonSerializerDefaults.Web` (camelCase), `Id = Guid.CreateVersion7()`, `Attempts = 0`, `CorrelationId` recortado a 100.
+- Produces (test), en `PasswordAuthApiHarness` — la fábrica nace acá porque esta es la primera prueba que necesita un host (scope de DI y el `OutboxProcessor` corriendo):
+  - `sealed class PasswordAuthApiFactory(string connectionString, IEmailChannel? emailChannel = null, bool signupEnabled = true) : WebApplicationFactory<Program>` — copia deliberada de `RealAuthenticationApiTests.QepApiFactory` (entorno `IntegrationTests`, `Authentication:TestSigningKey`, `Authentication:Audience`, `Notifications:EmailProvider=log`, `Registration:PublicTenantSignupEnabled = signupEnabled`); no quita ningún hosted service; con canal: `services.RemoveAll<IEmailChannel>(); services.AddSingleton(emailChannel);`.
+  - `Task WaitUntilAsync(Func<Task<bool>> condition, TimeSpan? timeout = null)` — sondea cada 200 ms hasta la condición o el plazo (30 s por defecto) y falla con `Assert.Fail` al vencer; copia de `SessionRevocationTests.WaitUntilAsync` con plazo parametrizable.
+  - `sealed record OutboxRow(string PayloadText, string CorrelationId, DateTimeOffset? ProcessedAt)`.
+  - `Task<OutboxRow?> ReadOutboxRowAsync(string connectionString, string eventName)` — la fila más reciente (por `occurred_at`) de `platform.outbox_messages` con ese `event_name`, `payload::text`.
 
 - [ ] **Step 1: Escribir la prueba que falla**
 
@@ -527,12 +565,21 @@ git commit -m "feat(identity): add single-use hashed email tokens"
 [Fact]
 public async Task AnIdentityOutboxRowIsWrittenWithTheUnitOfWorkAndProcessedByThePlatform()
 {
-    // scope: IIdentityOutbox.Add(IdentityIntegrationEvents.ExistingAccountNotice, new ExistingAccountNoticePayload(userId), "corr", now)
-    //        + IIdentityUnitOfWork.SaveChangesAsync
-    var row = await ReadOutboxAsync(connection, IdentityIntegrationEvents.ExistingAccountNotice);
-    Assert.Equal($$"""{"userId": "{{userId}}"}""", row.PayloadText);  // jsonb normaliza el espaciado así
+    await using var database = await StartDatabaseAsync();
+    var cs = database.GetConnectionString();
+    using var factory = new PasswordAuthApiFactory(cs);
+    // userId: un User.CreateInvited guardado antes con NewIdentityContext(cs)
+    using (var scope = factory.Services.CreateScope())
+    {
+        scope.ServiceProvider.GetRequiredService<IIdentityOutbox>().Add(
+            IdentityIntegrationEvents.ExistingAccountNotice, new ExistingAccountNoticePayload(userId), "corr", DateTimeOffset.UtcNow);
+        await scope.ServiceProvider.GetRequiredService<IIdentityUnitOfWork>().SaveChangesAsync(ct);
+    }
+    var row = await ReadOutboxRowAsync(cs, IdentityIntegrationEvents.ExistingAccountNotice);
+    Assert.Equal($$"""{"userId": "{{userId}}"}""", row!.PayloadText);  // jsonb normaliza el espaciado así
     Assert.Equal("corr", row.CorrelationId);
-    await WaitUntilAsync(async () => (await ReadOutboxAsync(connection, ...)).ProcessedAt is not null); // OutboxProcessor de Tenancy: sin handlers, lo marca procesado
+    // OutboxProcessor de Tenancy: sin handlers, lo marca procesado
+    await WaitUntilAsync(async () => (await ReadOutboxRowAsync(cs, IdentityIntegrationEvents.ExistingAccountNotice))!.ProcessedAt is not null);
 }
 ```
 
@@ -556,7 +603,7 @@ dotnet ef migrations add IdentityOutboxWriteProjection --project src/Modules/Ide
 - [ ] **Step 6: Commit**
 
 ```powershell
-git add src/Modules/Identity/ tests/Modules/Identity/Modules.Identity.IntegrationTests/IdentityPersistenceTests.cs
+git add src/Modules/Identity/ tests/Modules/Identity/Modules.Identity.IntegrationTests/IdentityPersistenceTests.cs tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiHarness.cs
 git commit -m "feat(identity): write integration events to the platform outbox"
 ```
 
@@ -582,9 +629,22 @@ git commit -m "feat(identity): write integration events to the platform outbox"
   }
   public sealed class VerifiedProviderLinker(IPasswordCredentialRepository credentials, IEmailTokenRepository tokens, IClock clock) : IVerifiedProviderLinker;
   ```
-- Modifies: `IOwnerProvisioning.ProvisionOwnerAsync(string provider, string subject, string email, bool emailVerified, CancellationToken)` → `Task<ProviderLinkOutcome>`; `!emailVerified` → `Denied("email_not_verified")` sin tocar nada.
+- Modifies: `IOwnerProvisioning.ProvisionOwnerAsync(string provider, string subject, string? email, bool emailVerified, CancellationToken)` → `Task<ProviderLinkOutcome>`; `string.IsNullOrWhiteSpace(email) || !emailVerified` → `Denied("email_not_verified")` sin tocar nada (D11: el 403 de hoy para un email vacío se mantiene). `RegistrationEndpoints` deja de chequear email y `email_verified` por su cuenta y pasa los dos tal cual llegan en el token.
 - `ProviderLinkingService` y `OwnerProvisioningService` llaman `IVerifiedProviderLinker.LinkAsync` en lugar de `user.LinkProvider` directo.
-- Produces (test): `PasswordAuthApiFactory(string connectionString, IEmailChannel? emailChannel = null, bool signupEnabled = true)` — copia deliberada de `RealAuthenticationApiTests.QepApiFactory` (entorno `IntegrationTests`, `Authentication:TestSigningKey`, `Authentication:Audience`, `Notifications:EmailProvider=log`, `Registration:PublicTenantSignupEnabled`), y si hay canal: `services.RemoveAll<IEmailChannel>(); services.AddSingleton(emailChannel);`. Helpers: `CreateClient` (https, ver `RealAuthenticationApiTests.cs:784-800`), `IssueGoogleIdToken`, `PostJsonAsync(client, path, body)` (agrega `X-Qep-Client: web`), `SeedUnverifiedPasswordUserAsync(factory, email, password)` (scope: `User.CreateInvited` + `Activate` + credencial con `IPasswordHasher` + un token `verify`), `CountRowsAsync`, `RecordingEmailChannel` (copia de `NotificationsDeliveryHarness.cs:226-248`). Nota en el harness: TestServer no tiene `RemoteIpAddress`, así que toda prueba comparte la partición `unknown` del limitador: **máximo 10 requests por endpoint y por prueba**.
+- Produces (test), en `IdentityApplicationTestDoubles.cs`:
+  - `sealed class FakePasswordCredentialRepository : IPasswordCredentialRepository` — `List<PasswordCredential> Stored` (lo que devuelve `FindByUserAsync`), `List<PasswordCredential> Added`, `List<PasswordCredential> Removed`.
+  - `sealed class FakeUserRepository : IUserRepository` — `List<User> Stored` (búsquedas por email, proveedor e id), `List<User> Added`.
+  - `sealed class CountingIdentityUnitOfWork : IIdentityUnitOfWork` — `int Saves`.
+- Produces (test), en `PasswordAuthApiHarness` (la fábrica es de la Task 4):
+  - `HttpClient CreateClient(PasswordAuthApiFactory factory)` — `BaseAddress = https://localhost`, como `RealAuthenticationApiTests.cs:784-800` (sin https la cookie `Secure` no viaja).
+  - `string IssueGoogleIdToken(string subject, string email, bool emailVerified)` — id token firmado con `TestSigningKey`, copia del de `RealAuthenticationApiTests`.
+  - `Task<HttpResponseMessage> PostJsonAsync(HttpClient client, string path, object body)` — POST JSON con `X-Qep-Client: web`.
+  - `Task<HttpResponseMessage> PostWithGoogleAsync(HttpClient client, string path, string idToken, object? body = null)` — lo mismo con `Authorization: Bearer {idToken}`; sin `body` manda `{}`.
+  - `Task<Guid> SeedUnverifiedPasswordUserAsync(PasswordAuthApiFactory factory, string email, string password)` — en un scope: `User.CreateInvited` + `Activate` + credencial con `IPasswordHasher` + un token `verify` con `IEmailTokenIssuer`, y `IIdentityUnitOfWork.SaveChangesAsync` (el emisor no guarda). Devuelve el `userId`.
+  - `Task<long> CountUnusedTokensAsync(string connectionString, Guid userId)` — filas de `identity.email_tokens` del usuario con `used_at IS NULL`.
+  - `string NewEmail()` — `$"user-{Guid.NewGuid():N}@example.com"`; `string NewSlug()` — `$"t-{Guid.NewGuid():N}"[..20]`.
+  - `sealed class RecordingEmailChannel : IEmailChannel` — copia de `NotificationsDeliveryHarness.cs:226-248` (`IReadOnlyCollection<EmailMessage> Sent`).
+  - Nota en el harness: TestServer no tiene `RemoteIpAddress`, así que toda prueba comparte la partición `unknown` del limitador: **máximo 10 requests por endpoint y por prueba**, y cada prueba crea su propia fábrica (como `RealAuthenticationApiTests`), nunca una fixture de clase.
 
 - [ ] **Step 1: Escribir las pruebas que fallan**
 
@@ -606,30 +666,48 @@ git commit -m "feat(identity): write integration events to the platform outbox"
     Assert.Empty(tokens.Invalidations);
 }
 
-[Fact] public async Task OwnerProvisioningDeniesAnUnverifiedEmailWithoutCreatingAUser()
+[Theory]
+[InlineData("a@x.com", false)]
+[InlineData("   ", true)]
+[InlineData(null, true)]
+public async Task OwnerProvisioningDeniesAMissingOrUnverifiedEmailWithoutCreatingAUser(string? email, bool emailVerified)
 {
-    var outcome = await provisioning.ProvisionOwnerAsync("google", "sub-1", "a@x.com", emailVerified: false, default);
+    var outcome = await provisioning.ProvisionOwnerAsync("google", "sub-1", email, emailVerified, default);
     Assert.Equal("email_not_verified", outcome.DenialReason);
     Assert.Empty(users.Added);
+    Assert.Equal(0, unitOfWork.Saves);
 }
 ```
 
 ```csharp
-// GoogleLinkingClearsPasswordTests.cs — «El ataque»
+// GoogleLinkingClearsPasswordTests.cs — «El ataque». Cada prueba: StartDatabaseAsync, cs, factory = new PasswordAuthApiFactory(cs), client = CreateClient(factory), email = NewEmail().
 [Fact] public async Task GoogleLoginOnAnUnverifiedPasswordUserDeletesTheCredentialAndBurnsTokens()
 {
     var userId = await SeedUnverifiedPasswordUserAsync(factory, email, "attacker-password");
     var response = await PostWithGoogleAsync(client, "/api/v1/auth/session", IssueGoogleIdToken("victim-sub", email, true));
     Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-    Assert.Equal(0, await CountRowsAsync(connection, "identity.password_credentials", userId));
-    Assert.Equal(0, await CountUnusedTokensAsync(connection, userId));
-    Assert.NotNull(await EmailVerifiedAtAsync(connection, userId));
+    Assert.Equal(0, await CountRowsAsync(cs, "identity.password_credentials", userId));
+    Assert.Equal(0, await CountUnusedTokensAsync(cs, userId));
+    Assert.NotNull(await EmailVerifiedAtAsync(cs, userId));
 }
 
 [Fact] public async Task GoogleRegistrationOnAnUnverifiedPasswordUserDeletesTheCredentialAndBurnsTokens()
 {
-    // mismo sembrado; POST /api/v1/auth/register-tenant con el bearer de Google → 201
-    // mismas tres aserciones
+    var userId = await SeedUnverifiedPasswordUserAsync(factory, email, "attacker-password");
+    var response = await PostWithGoogleAsync(client, "/api/v1/auth/register-tenant", IssueGoogleIdToken("victim-sub", email, true),
+        new { displayName = "Acme", slug = NewSlug() });
+    Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    Assert.Equal(0, await CountRowsAsync(cs, "identity.password_credentials", userId));
+    Assert.Equal(0, await CountUnusedTokensAsync(cs, userId));
+    Assert.NotNull(await EmailVerifiedAtAsync(cs, userId));
+}
+
+[Fact] public async Task GoogleRegistrationWithoutAnEmailClaimIsStillTheSame403()
+{
+    var response = await PostWithGoogleAsync(client, "/api/v1/auth/register-tenant", IssueGoogleIdToken("sub-1", "", true),
+        new { displayName = "Acme", slug = NewSlug() });
+    Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    Assert.Equal("email_not_verified", (await response.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("detail").GetString());
 }
 ```
 
@@ -639,7 +717,7 @@ git commit -m "feat(identity): write integration events to the platform outbox"
 dotnet test tests/Modules/Identity/Modules.Identity.UnitTests --filter "FullyQualifiedName~VerifiedProviderLinkerTests"
 dotnet test tests/Modules/Identity/Modules.Identity.IntegrationTests --filter "FullyQualifiedName~GoogleLinkingClearsPasswordTests"
 ```
-Esperado: unidad no compila (`VerifiedProviderLinker`); integración, una vez que compile el harness, falla con `Assert.Equal() Failure: Expected: 0 Actual: 1` en `password_credentials`.
+Esperado: unidad no compila (`VerifiedProviderLinker`); integración, una vez que compile el harness, falla con `Assert.Equal() Failure: Expected: 0 Actual: 1` en `password_credentials`. `GoogleRegistrationWithoutAnEmailClaimIsStillTheSame403` ya pasa hoy: es la guarda de D11 y tiene que seguir verde después del Step 3.
 
 - [ ] **Step 3: Implementar** con las firmas de arriba.
 
@@ -687,14 +765,14 @@ git commit -m "fix(identity): drop an unverified password when a provider is lin
 // NotificationsOptionsValidatorTests.cs
 [Theory, InlineData(""), InlineData("/login"), InlineData("ftp://qep.qcode.co")]
 public void AnInvalidAppBaseUrlFails(string value)
-    => Assert.Contains("Notifications:AppBaseUrl must be an absolute URL.", Validate(new NotificationsOptions { AppBaseUrl = value }).Failures!);
+    => Assert.Contains("Notifications:AppBaseUrl must be an absolute URL.",
+        ValidatorFor(Environments.Development).Validate(null, new NotificationsOptions { AppBaseUrl = value }).Failures!);
 
 // OutboxDeliveryWorkerTests.cs (integración)
 [Fact] public async Task ATenantlessNotificationNeverMatchesATenantFilter()
 {
     // insertar con NotificationsDbContext una Notification con tenant null y otra con tenantId
     Assert.Single(await context.Notifications.Where(n => n.TenantId == tenantId).ToListAsync());
-    Assert.DoesNotContain(await context.Notifications.Where(n => n.TenantId == tenantId).ToListAsync(), n => n.TenantId is null);
 }
 ```
 
@@ -734,7 +812,8 @@ git commit -m "feat(notifications): allow tenantless emails and add the app base
 - Create: `src/Modules/Notifications/Modules.Notifications.Application/AccountLinks.cs`, `EmailVerificationEmailTemplate.cs`, `PasswordResetEmailTemplate.cs`, `ExistingAccountEmailTemplate.cs`
 - Create: `src/Modules/Notifications/Modules.Notifications.Infrastructure/Messaging/EmailVerificationDeliveryWorker.cs`, `PasswordResetDeliveryWorker.cs`, `ExistingAccountDeliveryWorker.cs`
 - Modify: `src/Modules/Notifications/Modules.Notifications.Infrastructure/NotificationsInfrastructureExtensions.cs` (tres `AddHostedService`)
-- Test: `tests/Modules/Notifications/Modules.Notifications.UnitTests/AccountEmailTemplatesTests.cs`; `tests/Modules/Notifications/Modules.Notifications.IntegrationTests/AccountEmailDeliveryTests.cs`, `NotificationsDeliveryHarness.cs` (helper `TenantIdOfAsync(connectionString, recipientId, templateRef)`)
+- Test: `tests/Modules/Notifications/Modules.Notifications.UnitTests/AccountEmailTemplatesTests.cs`; `tests/Modules/Notifications/Modules.Notifications.IntegrationTests/AccountEmailDeliveryTests.cs`, `NotificationsDeliveryHarness.cs` (helper `Task<Guid?> TenantIdOfAsync(string connectionString, Guid recipientId, string templateRef)` — `tenant_id` de la notificación de ese destinatario y plantilla)
+- Modify (test): `tests/Modules/Notifications/Modules.Notifications.IntegrationTests/DeliveryWorkersHarnessTests.cs` — `TheSwitchPutsTheSixWorkersBack` pasa a `TheSwitchPutsTheNineWorkersBack` y afirma `9`: `IsDeliveryWorker` cuenta toda subclase de `OutboxDeliveryWorker`, y esta task suma tres.
 
 **Interfaces:**
 - Produces:
@@ -796,8 +875,39 @@ git commit -m "feat(notifications): allow tenantless emails and add the app base
     Assert.Null(await TenantIdOfAsync(cs, ownerUserId, EmailVerificationEmailTemplate.TemplateRef));
     Assert.Contains("http://localhost:3002/verify-email?token=tok_1", Assert.Single(channel.Sent).TextBody);
 }
-[Fact] public async Task AResetEventSendsTheResetLink()            // mismo esquema
-[Fact] public async Task AnExistingAccountEventSendsLoginAndForgotLinks() // payload {"userId":…}
+
+[Fact] public async Task AResetEventSendsTheResetLink()
+{
+    var (_, ownerUserId, _) = await RegisterOwnerAsync(factory);
+    await InsertOutboxAsync(cs, IdentityIntegrationEvents.PasswordResetRequested, $$"""{"userId":"{{ownerUserId}}","token":"tok_2"}""");
+    var row = await WaitForNotificationAsync(cs, ownerUserId, PasswordResetEmailTemplate.TemplateRef);
+    Assert.Equal("Sent", row!.Status);
+    Assert.Null(await TenantIdOfAsync(cs, ownerUserId, PasswordResetEmailTemplate.TemplateRef));
+    var mail = Assert.Single(channel.Sent);
+    Assert.Equal("Restablece tu contraseña", mail.Subject);
+    Assert.Contains("http://localhost:3002/reset-password?token=tok_2", mail.TextBody);
+}
+
+[Fact] public async Task AnExistingAccountEventSendsLoginAndForgotLinks()
+{
+    var (_, ownerUserId, _) = await RegisterOwnerAsync(factory);
+    await InsertOutboxAsync(cs, IdentityIntegrationEvents.ExistingAccountNotice, $$"""{"userId":"{{ownerUserId}}"}""");
+    var row = await WaitForNotificationAsync(cs, ownerUserId, ExistingAccountEmailTemplate.TemplateRef);
+    Assert.Equal("Sent", row!.Status);
+    Assert.Null(await TenantIdOfAsync(cs, ownerUserId, ExistingAccountEmailTemplate.TemplateRef));
+    var mail = Assert.Single(channel.Sent);
+    Assert.Equal("Ya tienes una cuenta", mail.Subject);
+    Assert.Contains("http://localhost:3002/login", mail.TextBody);
+    Assert.Contains("http://localhost:3002/forgot-password", mail.TextBody);
+}
+```
+
+```csharp
+// DeliveryWorkersHarnessTests.cs — renombrada; mismo arrange (StartDatabaseAsync + NotificationsApiFactory(cs, runDeliveryWorkers: true))
+[Fact] public async Task TheSwitchPutsTheNineWorkersBack()
+{
+    Assert.Equal(9, factory.Services.GetServices<IHostedService>().Count(service => IsDeliveryWorker(service.GetType())));
+}
 ```
 
 - [ ] **Step 2: Correr y ver FAIL**
@@ -813,13 +923,13 @@ Esperado: no compila (`AccountLinks` no existe).
 
 ```powershell
 dotnet test tests/Modules/Notifications/Modules.Notifications.UnitTests --filter "FullyQualifiedName~AccountEmailTemplatesTests"
-dotnet test tests/Modules/Notifications/Modules.Notifications.IntegrationTests --filter "FullyQualifiedName~AccountEmailDeliveryTests"
+dotnet test tests/Modules/Notifications/Modules.Notifications.IntegrationTests --filter "FullyQualifiedName~AccountEmailDeliveryTests|FullyQualifiedName~DeliveryWorkersHarnessTests"
 ```
 
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add src/Modules/Notifications/ tests/Modules/Notifications/
+git add src/Modules/Notifications/ tests/Modules/Notifications/Modules.Notifications.UnitTests/AccountEmailTemplatesTests.cs tests/Modules/Notifications/Modules.Notifications.IntegrationTests/AccountEmailDeliveryTests.cs tests/Modules/Notifications/Modules.Notifications.IntegrationTests/NotificationsDeliveryHarness.cs tests/Modules/Notifications/Modules.Notifications.IntegrationTests/DeliveryWorkersHarnessTests.cs
 git commit -m "feat(notifications): deliver verification, reset and existing-account emails"
 ```
 
@@ -833,7 +943,11 @@ git commit -m "feat(notifications): deliver verification, reset and existing-acc
 - Modify: `src/Modules/Tenancy/Modules.Tenancy.Application/ITenantRegistration.cs`, `TenantRegistrationService.cs`
 - Create: `src/Modules/Tenancy/Modules.Tenancy.Infrastructure/Persistence/TenantSlugAvailability.cs`
 - Modify: `src/Modules/Tenancy/Modules.Tenancy.Infrastructure/TenancyInfrastructureExtensions.cs`
-- Test: `tests/Modules/Tenancy/Modules.Tenancy.UnitTests/TenantTests.cs`, `TenantRegistrationServiceTests.cs` (`NewService` suma el doble de `ITenantSlugAvailability`)
+- Test: `tests/Modules/Tenancy/Modules.Tenancy.UnitTests/TenantTests.cs`, `TenantRegistrationServiceTests.cs`. En esa clase ya existen el campo estático `Data` y `NewService(steps, modules, defaults)` (`TenantRegistrationServiceTests.cs:12, 67`); no se pisan:
+  - `NewService(List<string> steps, RecordingTenantModuleRepository modules, ITenantModuleDefaults defaults, ITenantSlugAvailability? slugAvailability = null)` — el parámetro nuevo es opcional (por defecto un `RecordingSlugAvailability` sin slugs tomados), así las pruebas de hoy no cambian.
+  - `sealed class RecordingSlugAvailability(params string[] takenSlugs) : ITenantSlugAvailability` — `List<string> Asked`; `IsTakenAsync` registra el slug y responde si está en `takenSlugs`.
+  - `static (TenantRegistrationService Service, RecordingSlugAvailability Availability) NewSlugService(params string[] takenSlugs)` — `NewService([], new RecordingTenantModuleRepository([]), new FixedDefaults([]), availability)`.
+  - `static TenantRegistrationData DataWithSlug(string slug)` — `Data with { Slug = slug }`.
 
 **Interfaces:**
 - Produces:
@@ -860,12 +974,18 @@ public void EnsureValidRegistrationThrowsTheSameCodesAsCreate(string slug, strin
 
 // TenantRegistrationServiceTests.cs
 [Fact] public async Task EnsureRegistrableThrowsSlugTakenWhenTheSlugExists()
-    => Assert.Equal("tenancy.slug.taken", (await Assert.ThrowsAsync<TenantDomainException>(() =>
-        NewService(takenSlugs: ["acme"]).EnsureRegistrableAsync(Data("  ACME "), default))).Code);
+{
+    var (service, availability) = NewSlugService("acme");
+    var error = await Assert.ThrowsAsync<TenantDomainException>(() => service.EnsureRegistrableAsync(DataWithSlug("  ACME "), default));
+    Assert.Equal("tenancy.slug.taken", error.Code);
+    Assert.Equal(["acme"], availability.Asked); // pregunta con el slug normalizado
+}
 
 [Fact] public async Task EnsureRegistrableValidatesBeforeAskingForTheSlug()
 {
-    await Assert.ThrowsAsync<TenantDomainException>(() => service.EnsureRegistrableAsync(Data("a"), default));
+    var (service, availability) = NewSlugService();
+    var error = await Assert.ThrowsAsync<TenantDomainException>(() => service.EnsureRegistrableAsync(DataWithSlug("a"), default));
+    Assert.Equal("tenancy.slug.invalid", error.Code);
     Assert.Empty(availability.Asked);
 }
 ```
@@ -936,14 +1056,15 @@ git commit -m "refactor(api): extract session establishment from the session end
 - Create: `src/Modules/Identity/Modules.Identity.Application/PasswordRegistration.cs`
 - Create: `src/Api/PasswordAuthEndpoints.cs`
 - Modify: `src/Api/RegistrationEndpoints.cs` (`internal static TenantRegistrationData ToRegistrationData(string displayName, string slug, string? culture, string? timeZone, string? dateFormat)` y `internal static bool IsEnabled` / título del 403 compartidos), `src/Api/Program.cs` (`app.MapPasswordAuthEndpoints();` tras `MapRegistrationEndpoints`)
-- Modify: `IdentityInfrastructureExtensions.cs`, `src/Bootstrapper/QepServiceCollectionExtensions.cs` (validador entra con el `AddValidatorsFromAssemblyContaining<NewPasswordValidator>` de la Task 2)
-- Test: `tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs`, `PasswordAuthApiHarness.cs` (helpers `RegisterAsync`, `ReadOutboxAsync(cs, eventName, userId)`, `FindUserIdAsync(cs, email)`, `NewEmail`, `NewSlug`)
+- Modify: `src/Modules/Identity/Modules.Identity.Infrastructure/IdentityInfrastructureExtensions.cs` (el validador no necesita registro: lo levanta el `AddValidatorsFromAssemblyContaining<NewPasswordValidator>` de la Task 2, que escanea todo Identity.Application)
+- Modify: `src/Modules/Identity/Modules.Identity.Infrastructure/Persistence/IdentityUnitOfWork.cs` (traduce `IX_users_email`, ver Step 3)
+- Test: `tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs`, `PasswordAuthApiHarness.cs` (helpers de abajo)
 
 **Interfaces:**
 - Produces (Identity.Application):
   ```csharp
   public sealed record PasswordRegistrationInput(string Email, string Password);
-  public sealed class PasswordRegistrationValidator : AbstractValidator<PasswordRegistrationInput>; // errors.email (identity.email.invalid, vía User.NormalizeEmail), errors.password (QepPassword)
+  public sealed class PasswordRegistrationValidator : AbstractValidator<PasswordRegistrationInput>; // errors.Email (identity.email.invalid, vía User.NormalizeEmail), errors.Password (QepPassword); sin OverridePropertyName (D10)
   public sealed record PasswordRegistrationOutcome(Guid? CreatedUserId) { public bool IsExistingAccount => CreatedUserId is null; }
   public interface IPasswordRegistration
   {
@@ -960,11 +1081,27 @@ git commit -m "refactor(api): extract session establishment from the session end
   public sealed record RegisterTenantWithPasswordRequest(string Email, string Password, string DisplayName, string Slug,
       string? DefaultCulture = null, string? TimeZone = null, string? DateFormat = null);
   ```
-  Orden del handler: flag → `ValidateAsync` → `EnsureRegistrableAsync` → `ProvisionOwnerAsync` → (nuevo) `RegisterOwnerTenantAsync` → `RequestEmailVerificationAsync` → `Results.Accepted(uri: null, value: new { })`. El mail de verificación sale **después** del tenant: el perdedor de una carrera por el slug no recibe mail (Review Focus 1). Endpoint `.AllowAnonymous()`, `.WithTags("Authentication")`, `.Produces(202)`, `.ProducesProblem(403)`, `.ProducesProblem(422)`.
+  Orden del handler: flag → `ValidateAsync` → `EnsureRegistrableAsync` → `ProvisionOwnerAsync` → (nuevo) `RegisterOwnerTenantAsync` → `RequestEmailVerificationAsync` → `Results.Accepted(uri: null, value: new { })`. El mail de verificación sale **después** del tenant: el perdedor de una carrera por el slug no recibe mail (Review Focus 1). Endpoint `.AllowAnonymous()`, `.WithTags("Authentication")`, `.Produces(202)`, `.ProducesProblem(403)`, `.ProducesProblem(422)`. Flag apagado → el mismo `Problem` 403 que `/auth/register-tenant` (`RegistrationEndpoints.cs:61-63`, title `Public tenant registration is disabled.`), antes de leer el cuerpo.
+- Modifies (Infrastructure): `IdentityUnitOfWork.SaveChangesAsync` atrapa `DbUpdateException` con `PostgresException { SqlState: "23505", ConstraintName: "IX_users_email" }` —por **nombre de índice**, como `TenancyUnitOfWork` con `IX_tenants_slug`—, llama `dbContext.ChangeTracker.Clear()` (como `CustomersUnitOfWork` con el BSUID: sin eso el `User` perdedor queda `Added` y el siguiente `SaveChanges` del scope lo reintenta) y tira `IdentityDomainException("identity.user.email_taken", "Another user already uses that email.")`. Cualquier otro 23505 sigue sin traducir.
+- Produces (test), en `PasswordAuthApiHarness`:
+  - `Task<HttpResponseMessage> RegisterAsync(HttpClient client, string email, string password, string slug)` — `POST /api/v1/auth/password/register-tenant` con `displayName = "Acme"`, vía `PostJsonAsync`.
+  - `Task<IReadOnlyList<string>> ReadOutboxAsync(string connectionString, string eventName, Guid userId)` — `payload::text` de cada fila con ese evento y `payload->>'userId' = userId`, en orden de `occurred_at`. (Distinta de `ReadOutboxRowAsync` de la Task 4.)
+  - `Task<Guid> FindUserIdAsync(string connectionString, string email)` — `id` de `identity.users` por email normalizado; falla si no existe.
+  - `Task<long> CountTenantsWithSlugAsync(string connectionString, string slug)`.
+  - `Task<long> CountAuditAsync(string connectionString, Guid resourceId, string action)` — `audit.entries` por `resource_id` y `action`, como `OrphanUserCleanupTests.CountAuditAsync`.
+  - `Task<string?> CredentialHashAsync(string connectionString, Guid userId)` — `hash` de `identity.password_credentials`.
+  - `Task<long> CountUsersWithEmailAsync(string connectionString, string email)`.
+  - `Task<long> CountOutboxAsync(string connectionString, string eventName)`.
+  - `Task<long> CountTokensWithHashAsync(string connectionString, string tokenHash)`.
+  - `sealed record ProblemPayload(string? Code, string? Title, string? Detail, Dictionary<string, string[]>? Errors)`; `Task<ProblemPayload> ProblemAsync(HttpResponseMessage response)` — lee el ProblemDetails (`code` y `errors` son extensiones de primer nivel).
 
 - [ ] **Step 1: Escribir las pruebas que fallan**
 
 ```csharp
+// Cada prueba: StartDatabaseAsync, cs, factory = new PasswordAuthApiFactory(cs), client = CreateClient(factory),
+// email = NewEmail(), slug/slug1/slug2/takenSlug = NewSlug(), pw = oldPassword = "correct horse battery",
+// newPassword = "a brand new long password", ct = TestContext.Current.CancellationToken.
+// Estas convenciones valen para todas las pruebas de PasswordAuthApiTests de las Tasks 10–14 y 17.
 [Fact] public async Task RegisterWithANewEmailCreatesTheTenantAndQueuesOneVerificationMail()
 {
     var response = await RegisterAsync(client, email, "correct horse battery", slug);
@@ -981,6 +1118,7 @@ git commit -m "refactor(api): extract session establishment from the session end
 [Fact] public async Task RegisterWithAnExistingEmailCreatesNothingAndQueuesTheExistingAccountMail()
 {
     await RegisterAsync(client, email, "correct horse battery", slug1);
+    var userId = await FindUserIdAsync(cs, email);
     var hashBefore = await CredentialHashAsync(cs, userId);
     var second = await RegisterAsync(client, "  " + email.ToUpperInvariant(), "another long password", slug2);
     Assert.Equal(HttpStatusCode.Accepted, second.StatusCode);
@@ -988,11 +1126,15 @@ git commit -m "refactor(api): extract session establishment from the session end
     Assert.Equal(0, await CountTenantsWithSlugAsync(cs, slug2));
     Assert.Equal(hashBefore, await CredentialHashAsync(cs, userId));
     Assert.Single(await ReadOutboxAsync(cs, IdentityIntegrationEvents.ExistingAccountNotice, userId));
+    Assert.Single(await ReadOutboxAsync(cs, IdentityIntegrationEvents.EmailVerificationRequested, userId)); // sólo el del primer registro
 }
 
 [Fact] public async Task RegisterWithATakenSlugReturnsTheSame422ForNewAndExistingEmails()
 {
-    // slug tomado por un registro previo; uno con email nuevo y otro con el email ya registrado
+    await RegisterAsync(client, email, pw, takenSlug);
+    var withNewEmail = await RegisterAsync(client, NewEmail(), pw, takenSlug);
+    var withExistingEmail = await RegisterAsync(client, email, pw, takenSlug);
+    Assert.Equal(HttpStatusCode.UnprocessableEntity, withNewEmail.StatusCode);
     Assert.Equal("tenancy.slug.taken", (await ProblemAsync(withNewEmail)).Code);
     Assert.Equal("tenancy.slug.taken", (await ProblemAsync(withExistingEmail)).Code);
     Assert.Equal(withNewEmail.StatusCode, withExistingEmail.StatusCode);
@@ -1000,7 +1142,9 @@ git commit -m "refactor(api): extract session establishment from the session end
 
 [Fact] public async Task RegisterValidatesThePasswordBeforeTheSlug()
 {
+    await RegisterAsync(client, email, pw, takenSlug);
     var response = await RegisterAsync(client, NewEmail(), "short", takenSlug);
+    Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     var problem = await ProblemAsync(response);
     Assert.Equal("validation.failed", problem.Code);
     // ApiExceptionHandler.cs:66 agrupa por PropertyName de FluentValidation: llega "Password", no "password".
@@ -1013,9 +1157,21 @@ git commit -m "refactor(api): extract session establishment from the session end
     var responses = await Task.WhenAll(RegisterAsync(client, email, pw, slug1), RegisterAsync(client, email, pw, slug2));
     Assert.All(responses, r => Assert.Equal(HttpStatusCode.Accepted, r.StatusCode));
     Assert.Equal(1, await CountUsersWithEmailAsync(cs, email));
+    var userId = await FindUserIdAsync(cs, email);
+    // el perdedor siguió el camino de email existente: un aviso, un solo tenant
+    Assert.Single(await ReadOutboxAsync(cs, IdentityIntegrationEvents.ExistingAccountNotice, userId));
+    Assert.Equal(1, await CountTenantsWithSlugAsync(cs, slug1) + await CountTenantsWithSlugAsync(cs, slug2));
 }
 
-[Fact] public async Task RegisterIsForbiddenWhenSignupIsDisabled() // factory signupEnabled: false → 403, mismo title que /auth/register-tenant
+[Fact] public async Task RegisterIsForbiddenWhenSignupIsDisabled()
+{
+    using var disabled = new PasswordAuthApiFactory(cs, signupEnabled: false);
+    var response = await RegisterAsync(CreateClient(disabled), email, pw, slug);
+    Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    Assert.Equal("Public tenant registration is disabled.", (await ProblemAsync(response)).Title);
+    Assert.Equal(0, await CountUsersWithEmailAsync(cs, email));
+    Assert.Equal(0, await CountTenantsWithSlugAsync(cs, slug));
+}
 
 // Review Focus 1
 [Fact] public async Task ConcurrentRegistrationsWithTheSameSlugCreateOneTenantAndQueueOneVerificationMail()
@@ -1030,6 +1186,8 @@ git commit -m "refactor(api): extract session establishment from the session end
 // Review Focus 5
 [Fact] public async Task TheVerificationOutboxPayloadCarriesOnlyTheUserIdAndTheToken()
 {
+    await RegisterAsync(client, email, "correct horse battery", slug);
+    var userId = await FindUserIdAsync(cs, email);
     var payload = JsonDocument.Parse(Assert.Single(await ReadOutboxAsync(cs, IdentityIntegrationEvents.EmailVerificationRequested, userId)));
     Assert.Equal(["token", "userId"], payload.RootElement.EnumerateObject().Select(p => p.Name).Order());
     var token = payload.RootElement.GetProperty("token").GetString()!;
@@ -1046,14 +1204,14 @@ dotnet test tests/Modules/Identity/Modules.Identity.IntegrationTests --filter "F
 ```
 Esperado: `Assert.Equal() Failure: Expected: Accepted Actual: NotFound` (la ruta no existe) o no compila por `IdentityIntegrationEvents`/`EmailTokenCodec` si faltan usings.
 
-- [ ] **Step 3: Implementar** con las firmas y el orden de arriba. La carrera por el mismo email nuevo: `ProvisionOwnerAsync` traduce la violación de `IX_users_email` (en Infrastructure, discriminando por nombre de índice como `TenancyUnitOfWork`) a `IsExistingAccount`: el perdedor sigue el camino de «email existente» (mail de cuenta existente, 202, sin tenant).
+- [ ] **Step 3: Implementar** con las firmas y el orden de arriba. La carrera por el mismo email nuevo: `IdentityUnitOfWork` traduce la violación de `IX_users_email` a `IdentityDomainException("identity.user.email_taken")` después de limpiar el change tracker (ver Interfaces). `ProvisionOwnerAsync` atrapa **sólo** ese código y, en el mismo scope: vuelve a `FindByEmailAsync` para leer al ganador, encola `ExistingAccountNotice` con el `userId` del ganador, guarda y devuelve `IsExistingAccount`. El perdedor sigue el camino de «email existente» (mail de cuenta existente, 202, sin tenant).
 
 - [ ] **Step 4: Correr y ver PASS** (mismo comando).
 
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add src/Modules/Identity/Modules.Identity.Application/PasswordRegistration.cs src/Modules/Identity/Modules.Identity.Infrastructure/IdentityInfrastructureExtensions.cs src/Api/PasswordAuthEndpoints.cs src/Api/RegistrationEndpoints.cs src/Api/Program.cs tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiHarness.cs
+git add src/Modules/Identity/Modules.Identity.Application/PasswordRegistration.cs src/Modules/Identity/Modules.Identity.Infrastructure/IdentityInfrastructureExtensions.cs src/Modules/Identity/Modules.Identity.Infrastructure/Persistence/IdentityUnitOfWork.cs src/Api/PasswordAuthEndpoints.cs src/Api/RegistrationEndpoints.cs src/Api/Program.cs tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiHarness.cs
 git commit -m "feat(auth): register a tenant with email and password"
 ```
 
@@ -1064,9 +1222,14 @@ git commit -m "feat(auth): register a tenant with email and password"
 **Files:**
 - Create: `src/Modules/Identity/Modules.Identity.Application/EmailVerification.cs`
 - Modify: `src/Api/PasswordAuthEndpoints.cs`, `IdentityInfrastructureExtensions.cs`
-- Test: `tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs`
+- Test: `tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs`, `PasswordAuthApiHarness.cs` (helpers de abajo)
 
 **Interfaces:**
+- Produces (test), en `PasswordAuthApiHarness`:
+  - `sealed record SessionTenantPayload(Guid TenantId, string DisplayName)`; `sealed record SessionPayload(Guid UserId, string? Email, IReadOnlyList<SessionTenantPayload> ActiveTenants)` — lo que la prueba lee del cuerpo de `/auth/session` y `/auth/me` (`SessionResponse` de `AuthSessionEndpoints.cs:257`).
+  - `Task<HttpResponseMessage> VerifyAsync(HttpClient client, string token)` — `POST /api/v1/auth/email/verify` con `{ token }`.
+  - `Task<string> LatestOutboxTokenAsync(string connectionString, string eventName, Guid userId)` — `payload->>'token'` de la fila más reciente de ese evento y usuario (el único lugar donde la prueba puede leer un token crudo: la base guarda el hash).
+  - `sealed record RegisteredOwner(Guid UserId, Guid TenantId)`; `Task<RegisteredOwner> RegisterAndVerifyAsync(HttpClient client, string connectionString, string email, string password)` — `RegisterAsync` con `NewSlug()`, `LatestOutboxTokenAsync(EmailVerificationRequested)`, `VerifyAsync`; afirma 202 y 200, deja al cliente con la cookie de sesión y devuelve el usuario y el único tenant activo del cuerpo del verify.
 - Produces:
   ```csharp
   public sealed record AuthenticatedUser(Guid UserId, string Email);
@@ -1085,9 +1248,14 @@ git commit -m "feat(auth): register a tenant with email and password"
 ```csharp
 [Fact] public async Task RegisterThenVerifyFromTheCapturedMailOpensASession()
 {
-    // factory con RecordingEmailChannel; registrar; esperar el mail (WaitUntilAsync, plazo 30 s: el worker sondea cada 15 s)
+    var channel = new RecordingEmailChannel();
+    using var factory = new PasswordAuthApiFactory(cs, channel);
+    var client = CreateClient(factory);
+    await RegisterAsync(client, email, pw, slug);
+    var userId = await FindUserIdAsync(cs, email);
+    await WaitUntilAsync(() => Task.FromResult(channel.Sent.Count == 1), TimeSpan.FromSeconds(30)); // el worker sondea cada 15 s
     var token = Regex.Match(Assert.Single(channel.Sent).TextBody, @"verify-email\?token=([A-Za-z0-9_-]+)").Groups[1].Value;
-    var response = await PostJsonAsync(client, "/api/v1/auth/email/verify", new { token });
+    var response = await VerifyAsync(client, token);
     Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     Assert.Contains(response.Headers.GetValues("Set-Cookie"), c => c.StartsWith("qep_session=", StringComparison.Ordinal));
     var me = await client.GetFromJsonAsync<SessionPayload>("/api/v1/auth/me", ct);
@@ -1097,14 +1265,23 @@ git commit -m "feat(auth): register a tenant with email and password"
 
 [Fact] public async Task VerifyWithAnUnknownExpiredOrUsedTokenReturnsTheSame422()
 {
-    // unknown: "nope"; expired: UPDATE identity.email_tokens SET expires_at = now() - interval '1 minute'; used: el mismo token dos veces
-    Assert.All(new[] { unknown, expired, used }, p => Assert.Equal("identity.email_token.invalid", p.Code));
+    // dos registros: el token del primero se vence por SQL
+    //   (UPDATE identity.email_tokens SET expires_at = now() - interval '1 minute' WHERE user_id = @expiredUser);
+    // el del segundo se usa una vez (200) y se repite
+    var unknown = await VerifyAsync(client, "nope");
+    var expired = await VerifyAsync(client, expiredToken);
+    var used = await VerifyAsync(client, usedToken); // segundo uso
+    Assert.All(new[] { unknown, expired, used }, r => Assert.Equal(HttpStatusCode.UnprocessableEntity, r.StatusCode));
+    var problems = new[] { await ProblemAsync(unknown), await ProblemAsync(expired), await ProblemAsync(used) };
+    Assert.All(problems, p => Assert.Equal("identity.email_token.invalid", p.Code));
+    Assert.Single(problems.Select(p => (p.Title, p.Detail)).Distinct());
 }
 
 // Review Focus 3
 [Fact] public async Task ConcurrentVerifyWithTheSameTokenOpensExactlyOneSession()
 {
-    var responses = await Task.WhenAll(Verify(clientA, token), Verify(clientB, token));
+    // registrar; token = LatestOutboxTokenAsync(cs, EmailVerificationRequested, userId); clientA y clientB = CreateClient(factory)
+    var responses = await Task.WhenAll(VerifyAsync(clientA, token), VerifyAsync(clientB, token));
     Assert.Equal([HttpStatusCode.OK, HttpStatusCode.UnprocessableEntity], responses.Select(r => r.StatusCode).Order());
     Assert.Equal(1, await CountRowsAsync(cs, "identity.sessions", userId));
 }
@@ -1122,7 +1299,7 @@ Esperado: `Expected: OK Actual: NotFound`.
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add src/Modules/Identity/Modules.Identity.Application/EmailVerification.cs src/Modules/Identity/Modules.Identity.Infrastructure/IdentityInfrastructureExtensions.cs src/Api/PasswordAuthEndpoints.cs tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs
+git add src/Modules/Identity/Modules.Identity.Application/EmailVerification.cs src/Modules/Identity/Modules.Identity.Infrastructure/IdentityInfrastructureExtensions.cs src/Api/PasswordAuthEndpoints.cs tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiHarness.cs
 git commit -m "feat(auth): verify the email and open the first session"
 ```
 
@@ -1131,33 +1308,71 @@ git commit -m "feat(auth): verify the email and open the first session"
 ### Task 12: `POST /auth/password/login`
 
 **Files:**
-- Create: `src/Modules/Identity/Modules.Identity.Application/PasswordLogin.cs`
-- Modify: `src/Api/PasswordAuthEndpoints.cs`, `IdentityInfrastructureExtensions.cs`
-- Test: `tests/Modules/Identity/Modules.Identity.UnitTests/PasswordLoginServiceTests.cs`, `IdentityApplicationTestDoubles.cs`; `tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs`
+- Create: `src/Modules/Identity/Modules.Identity.Application/PasswordLogin.cs`, `PasswordCredentialVerifier.cs`
+- Modify: `src/Api/PasswordAuthEndpoints.cs`, `src/Modules/Identity/Modules.Identity.Infrastructure/IdentityInfrastructureExtensions.cs`
+- Test: `tests/Modules/Identity/Modules.Identity.UnitTests/PasswordLoginServiceTests.cs`, `PasswordCredentialVerifierTests.cs`, `IdentityApplicationTestDoubles.cs`; `tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs`, `PasswordAuthApiHarness.cs` (helpers de abajo)
 
 **Interfaces:**
+- Produces — **el único lugar** con la regla «verificar y re-hashear si el hasher lo pide»; lo usan el login (esta task) y la aceptación de invitación (Task 15):
+  ```csharp
+  public sealed class PasswordCredentialVerifier(IPasswordHasher hasher, IClock clock)
+  {
+      // Siempre llama hasher.Verify(credential?.Hash, password): con null corre contra el ficticio.
+      // SuccessRehashNeeded ⇒ credential.Replace(hasher.Hash(password), clock.UtcNow). No guarda.
+      // true sólo con credencial y Success / SuccessRehashNeeded.
+      public bool Verify(PasswordCredential? credential, string password);
+  }
+  ```
+  DI scoped. No es interfaz: las pruebas de unidad lo construyen real sobre `FakePasswordHasher`.
 - Produces:
   ```csharp
   public sealed record PasswordLoginInput(string Email, string Password);
   public sealed class PasswordLoginValidator : AbstractValidator<PasswordLoginInput>; // NotEmpty en los dos (sin reglas de largo: no se enumera nada)
   public interface IPasswordLogin { Task<AuthenticatedUser> LoginAsync(string email, string password, string correlationId, CancellationToken cancellationToken); }
-  public sealed class PasswordLoginService(IUserRepository users, IPasswordCredentialRepository credentials, IPasswordHasher hasher,
+  public sealed class PasswordLoginService(IUserRepository users, IPasswordCredentialRepository credentials, PasswordCredentialVerifier verifier,
       IEmailTokenIssuer tokens, IIdentityOutbox outbox, IIdentityAuditRecorder audit, IIdentityUnitOfWork unitOfWork,
       IValidator<PasswordLoginInput> validator, IClock clock) : IPasswordLogin;
   public sealed record PasswordLoginRequest(string Email, string Password);
   ```
+- Produces (test), en `IdentityApplicationTestDoubles.cs`:
+  - `sealed class FakePasswordHasher : IPasswordHasher` — `List<string?> VerifiedHashes`; `PasswordVerificationOutcome NextOutcome` (por defecto `Success`) que devuelve `Verify` salvo con hash `null` (siempre `Failed`); `Hash` devuelve `"rehashed"`.
+  - `sealed class FakeEmailTokenIssuer : IEmailTokenIssuer` — `List<(Guid UserId, EmailTokenPurpose Purpose)> Issued`; devuelve `"raw-token"`.
+  - `sealed class RecordingIdentityOutbox : IIdentityOutbox` — `List<(string EventName, object Payload)> Added`.
+  - `sealed class RecordingIdentityAuditRecorder : IIdentityAuditRecorder` — `List<(Guid ActorId, string Action, string ResourceId, AuditActorType ActorType)> Entries`.
+- Produces (test), en `PasswordAuthApiHarness`:
+  - `Task<HttpResponseMessage> LoginAsync(HttpClient client, string email, string password)` — `POST /api/v1/auth/password/login`.
+  - `Task<(HttpStatusCode Status, string? Code, string? Title, string? Detail)> ShapeAsync(HttpResponseMessage response)` — lo comparable de un error (sin `traceId`).
+  - `Task<long> CountAuditByResourceAsync(string connectionString, string action, string resourceId)`.
+  - `Task<long> CountAuditContainingAsync(string connectionString, string text)` — filas de `audit.entries` cuyo `row_to_json(e)::text` contiene `text`.
 - Reglas (en este orden):
   1. Validar; `User.NormalizeEmail` (si tira, se trata como inexistente).
-  2. Buscar usuario y credencial; **siempre** `hasher.Verify(credential?.Hash, password)` (con `null` corre contra el ficticio).
-  3. `Failed` o sin usuario/credencial → audita `identity.password.login.failed` (actor = usuario si existe; si no, `Guid.Empty`, `AuditActorType.System`, `resourceId = "unknown"`), guarda, tira `RequestUnauthorizedException("identity.credentials.invalid", "Invalid credentials.")`.
-  4. `SuccessRehashNeeded` → `credential.Replace(hasher.Hash(password), now)`.
+  2. Buscar usuario y credencial; **siempre** `verifier.Verify(credential, password)` (sin credencial corre contra el ficticio).
+  3. `false` o sin usuario → audita `identity.password.login.failed` (actor = usuario si existe; si no, `Guid.Empty`, `AuditActorType.System`, `resourceId = "unknown"`), guarda, tira `RequestUnauthorizedException("identity.credentials.invalid", "Invalid credentials.")`.
+  4. El re-hash ya lo hizo `PasswordCredentialVerifier`; se guarda junto con lo que siga.
   5. `EmailVerifiedAt is null` → reemite `verify` + `EmailVerificationRequested`, guarda, tira `RequestForbiddenException("identity.email.not_verified", "The email is not verified.")`.
   6. `Activate`, audita `identity.password.login.succeeded`, guarda, devuelve. El endpoint sigue con `SessionEstablisher.EstablishAsync` (acepta `Invited` y audita `identity.session.issued` como hoy).
 
 - [ ] **Step 1: Escribir las pruebas que fallan**
 
 ```csharp
-// PasswordLoginServiceTests.cs
+// PasswordCredentialVerifierTests.cs
+[Fact] public void ARehashRequestReplacesTheHash()
+{
+    hasher.NextOutcome = PasswordVerificationOutcome.SuccessRehashNeeded;
+    var credential = PasswordCredential.Create(UserId.New(), "old", Now);
+    Assert.True(new PasswordCredentialVerifier(hasher, new FixedClock(Now)).Verify(credential, "pw"));
+    Assert.Equal("rehashed", credential.Hash);
+}
+
+[Fact] public void AMissingCredentialRunsAgainstTheDummyAndFails()
+{
+    Assert.False(new PasswordCredentialVerifier(hasher, new FixedClock(Now)).Verify(null, "pw"));
+    Assert.Equal([(string?)null], hasher.VerifiedHashes);
+}
+
+// PasswordLoginServiceTests.cs — service = PasswordLoginService sobre FakeUserRepository, FakePasswordCredentialRepository,
+// new PasswordCredentialVerifier(hasher, clock), FakeEmailTokenIssuer, RecordingIdentityOutbox, RecordingIdentityAuditRecorder,
+// CountingIdentityUnitOfWork, new PasswordLoginValidator(), FixedClock. Sembrado: usuario verificado con `credential` (hash "h").
 [Fact] public async Task AnUnknownEmailStillRunsTheHasherAgainstTheDummy()
 {
     await Assert.ThrowsAsync<RequestUnauthorizedException>(() => service.LoginAsync("nobody@x.com", "whatever pw", "c", default));
@@ -1169,6 +1384,7 @@ git commit -m "feat(auth): verify the email and open the first session"
     hasher.NextOutcome = PasswordVerificationOutcome.SuccessRehashNeeded;
     await service.LoginAsync(email, pw, "c", default);
     Assert.Equal("rehashed", credential.Hash);
+    Assert.Equal(1, unitOfWork.Saves);
 }
 ```
 
@@ -1176,31 +1392,54 @@ git commit -m "feat(auth): verify the email and open the first session"
 // PasswordAuthApiTests.cs
 [Fact] public async Task LoginBeforeVerifyingReturns403AndReissuesTheVerifyToken()
 {
+    await RegisterAsync(client, email, pw, slug);
+    var userId = await FindUserIdAsync(cs, email);
+    var firstToken = await LatestOutboxTokenAsync(cs, IdentityIntegrationEvents.EmailVerificationRequested, userId);
     var response = await LoginAsync(client, email, pw);
     Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     Assert.Equal("identity.email.not_verified", (await ProblemAsync(response)).Code);
     Assert.Equal(2, (await ReadOutboxAsync(cs, IdentityIntegrationEvents.EmailVerificationRequested, userId)).Count);
-    Assert.Equal(HttpStatusCode.UnprocessableEntity, (await Verify(client, firstToken)).StatusCode); // el anterior quedó invalidado
+    Assert.Equal(HttpStatusCode.UnprocessableEntity, (await VerifyAsync(client, firstToken)).StatusCode); // el anterior quedó invalidado
 }
 
 [Fact] public async Task AWrongPasswordAnUnknownEmailAndAGoogleOnlyUserGetTheSame401()
 {
-    // las tres respuestas: 401, code identity.credentials.invalid, mismo title y mismo detail
-    Assert.Equal(Shape(wrongPassword), Shape(unknownEmail));
-    Assert.Equal(Shape(wrongPassword), Shape(googleOnly));
+    await RegisterAndVerifyAsync(client, cs, email, pw);
+    var googleEmail = NewEmail();
+    await PostWithGoogleAsync(CreateClient(factory), "/api/v1/auth/register-tenant", IssueGoogleIdToken("g-sub", googleEmail, true),
+        new { displayName = "Acme", slug = NewSlug() });
+    var wrongPassword = await LoginAsync(client, email, "not the right password");
+    var unknownEmail = await LoginAsync(client, NewEmail(), pw);
+    var googleOnly = await LoginAsync(client, googleEmail, pw);
+    var expected = await ShapeAsync(wrongPassword);
+    Assert.Equal(HttpStatusCode.Unauthorized, expected.Status);
+    Assert.Equal("identity.credentials.invalid", expected.Code);
+    Assert.Equal(expected, await ShapeAsync(unknownEmail));
+    Assert.Equal(expected, await ShapeAsync(googleOnly));
 }
 
-[Fact] public async Task LoginAfterVerifyingOpensASessionAndIsAudited() // 200, cookie, /auth/me 200, audit login.succeeded
+[Fact] public async Task LoginAfterVerifyingOpensASessionAndIsAudited()
+{
+    var userId = (await RegisterAndVerifyAsync(CreateClient(factory), cs, email, pw)).UserId;
+    var response = await LoginAsync(client, email, pw); // cliente nuevo, sin cookie
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    Assert.Contains(response.Headers.GetValues("Set-Cookie"), c => c.StartsWith("qep_session=", StringComparison.Ordinal));
+    Assert.Equal(userId, (await response.Content.ReadFromJsonAsync<SessionPayload>(ct))!.UserId);
+    Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/v1/auth/me", ct)).StatusCode);
+    Assert.Equal(1, await CountAuditAsync(cs, userId, "identity.password.login.succeeded"));
+}
 
 // Review Focus 2
 [Fact] public async Task LoginNormalizesEmailCaseAndWhitespace()
 {
-    // registrar y verificar "ana-{guid}@example.com"
+    await RegisterAndVerifyAsync(CreateClient(factory), cs, email, pw);
     Assert.Equal(HttpStatusCode.OK, (await LoginAsync(client, "  " + email.ToUpperInvariant() + " ", pw)).StatusCode);
 }
 
 [Fact] public async Task AFailedLoginForAnUnknownEmailIsAuditedWithoutTheEmail()
 {
+    var unknownEmail = NewEmail();
+    Assert.Equal(HttpStatusCode.Unauthorized, (await LoginAsync(client, unknownEmail, pw)).StatusCode);
     Assert.Equal(1, await CountAuditByResourceAsync(cs, "identity.password.login.failed", "unknown"));
     Assert.Equal(0, await CountAuditContainingAsync(cs, unknownEmail));
 }
@@ -1209,17 +1448,17 @@ git commit -m "feat(auth): verify the email and open the first session"
 - [ ] **Step 2: Correr y ver FAIL**
 
 ```powershell
-dotnet test tests/Modules/Identity/Modules.Identity.UnitTests --filter "FullyQualifiedName~PasswordLoginServiceTests"
+dotnet test tests/Modules/Identity/Modules.Identity.UnitTests --filter "FullyQualifiedName~PasswordLoginServiceTests|FullyQualifiedName~PasswordCredentialVerifierTests"
 dotnet test tests/Modules/Identity/Modules.Identity.IntegrationTests --filter "FullyQualifiedName~PasswordAuthApiTests.Login|FullyQualifiedName~PasswordAuthApiTests.AWrongPassword|FullyQualifiedName~PasswordAuthApiTests.AFailedLogin"
 ```
-Esperado: unidad no compila (`PasswordLoginService`); integración `Expected: Forbidden Actual: NotFound`.
+Esperado: unidad no compila (`PasswordLoginService`, `PasswordCredentialVerifier`); integración `Expected: Forbidden Actual: NotFound`.
 
 - [ ] **Step 3: Implementar.**
 - [ ] **Step 4: Correr y ver PASS** (mismos comandos).
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add src/Modules/Identity/Modules.Identity.Application/PasswordLogin.cs src/Modules/Identity/Modules.Identity.Infrastructure/IdentityInfrastructureExtensions.cs src/Api/PasswordAuthEndpoints.cs tests/Modules/Identity/
+git add src/Modules/Identity/Modules.Identity.Application/PasswordLogin.cs src/Modules/Identity/Modules.Identity.Application/PasswordCredentialVerifier.cs src/Modules/Identity/Modules.Identity.Infrastructure/IdentityInfrastructureExtensions.cs src/Api/PasswordAuthEndpoints.cs tests/Modules/Identity/
 git commit -m "feat(auth): sign in with email and password"
 ```
 
@@ -1229,14 +1468,20 @@ git commit -m "feat(auth): sign in with email and password"
 
 **Files:**
 - Create: `src/Modules/Identity/Modules.Identity.Application/PasswordReset.cs`
-- Modify: `src/Api/PasswordAuthEndpoints.cs`, `IdentityInfrastructureExtensions.cs`
-- Test: `tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs`
+- Modify: `src/Api/PasswordAuthEndpoints.cs`, `src/Modules/Identity/Modules.Identity.Infrastructure/IdentityInfrastructureExtensions.cs`
+- Test: `tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs`, `PasswordAuthApiHarness.cs` (helpers de abajo)
 
 **Interfaces:**
+- Produces (test), en `PasswordAuthApiHarness`:
+  - `Task<HttpResponseMessage> ForgotAsync(HttpClient client, string email)` — `POST /api/v1/auth/password/forgot`.
+  - `Task<HttpResponseMessage> ResetAsync(HttpClient client, string token, string password)` — `POST /api/v1/auth/password/reset`.
+  - `Task<string?> MembershipStateAsync(string connectionString, Guid tenantId, Guid userId)` — `state` de `tenancy.memberships`.
+  - `Task<string?> UserStatusAsync(string connectionString, Guid userId)` — `status` de `identity.users`.
+  - `sealed record InvitedMember(Guid MembershipId, Guid UserId, string Token)`; `Task<InvitedMember> InviteAsync(HttpClient ownerClient, string connectionString, Guid tenantId, string email)` — `POST /api/v1/tenants/{tenantId}/memberships` con `X-Tenant-Id`, `X-Qep-Client` y el cuerpo de `OrphanUserCleanupTests.SendInviteAsync`; el token crudo sale del payload de `tenancy.membership-invited.v1` de esa membresía, como en `InvitationApiTests.cs:340-360`. Lo reusa la Task 15.
 - Produces:
   ```csharp
   public sealed record PasswordResetInput(string Token, string Password);
-  public sealed class PasswordResetValidator : AbstractValidator<PasswordResetInput>; // Token NotEmpty; Password QepPassword → errors.password
+  public sealed class PasswordResetValidator : AbstractValidator<PasswordResetInput>; // Token NotEmpty; Password QepPassword → errors.Password (D10)
   public interface IPasswordReset
   {
       // NormalizeEmail (inválido ⇒ no hace nada); usuario inexistente ⇒ no hace nada.
@@ -1264,13 +1509,19 @@ git commit -m "feat(auth): sign in with email and password"
 // Review Focus 2
 [Fact] public async Task ForgotNormalizesTheEmail()
 {
-    await ForgotAsync(client, "  " + email.ToUpperInvariant() + " ");
+    var userId = (await RegisterAndVerifyAsync(CreateClient(factory), cs, email, pw)).UserId;
+    Assert.Equal(HttpStatusCode.Accepted, (await ForgotAsync(client, "  " + email.ToUpperInvariant() + " ")).StatusCode);
     Assert.Single(await ReadOutboxAsync(cs, IdentityIntegrationEvents.PasswordResetRequested, userId));
 }
 
 [Fact] public async Task ResetRevokesEarlierSessionsAndOnlyTheNewPasswordLogsIn()
 {
-    // registrar + verificar con clientA (sesión viva); forgot; token del outbox; reset → 204
+    var clientA = CreateClient(factory);
+    var clientB = CreateClient(factory);
+    var userId = (await RegisterAndVerifyAsync(clientA, cs, email, oldPassword)).UserId; // clientA con sesión viva
+    await ForgotAsync(clientB, email);
+    var token = await LatestOutboxTokenAsync(cs, IdentityIntegrationEvents.PasswordResetRequested, userId);
+    Assert.Equal(HttpStatusCode.NoContent, (await ResetAsync(clientB, token, newPassword)).StatusCode);
     Assert.Equal(HttpStatusCode.Unauthorized, (await clientA.GetAsync("/api/v1/auth/me", ct)).StatusCode);
     Assert.Equal(HttpStatusCode.Unauthorized, (await LoginAsync(clientB, email, oldPassword)).StatusCode);
     Assert.Equal(HttpStatusCode.OK, (await LoginAsync(clientB, email, newPassword)).StatusCode);
@@ -1279,18 +1530,40 @@ git commit -m "feat(auth): sign in with email and password"
 
 [Fact] public async Task ResetWithAShortPasswordFailsValidationAndKeepsTheToken()
 {
-    Assert.True((await ProblemAsync(await ResetAsync(client, token, "short"))).Errors!.ContainsKey("password"));
+    var userId = (await RegisterAndVerifyAsync(CreateClient(factory), cs, email, pw)).UserId;
+    await ForgotAsync(client, email);
+    var token = await LatestOutboxTokenAsync(cs, IdentityIntegrationEvents.PasswordResetRequested, userId);
+    var shortReset = await ResetAsync(client, token, "short");
+    Assert.Equal(HttpStatusCode.UnprocessableEntity, shortReset.StatusCode);
+    var problem = await ProblemAsync(shortReset);
+    Assert.Equal("validation.failed", problem.Code);
+    Assert.True(problem.Errors!.ContainsKey("Password"));
     Assert.Equal(HttpStatusCode.NoContent, (await ResetAsync(client, token, "a long enough password")).StatusCode);
 }
 
-[Fact] public async Task ResetVerifiesAnUnverifiedEmail() // registrar sin verificar; forgot; reset; login → 200 (no 403)
+[Fact] public async Task ResetVerifiesAnUnverifiedEmail()
+{
+    await RegisterAsync(client, email, pw, slug); // sin verificar
+    var userId = await FindUserIdAsync(cs, email);
+    await ForgotAsync(client, email);
+    var token = await LatestOutboxTokenAsync(cs, IdentityIntegrationEvents.PasswordResetRequested, userId);
+    Assert.Equal(HttpStatusCode.NoContent, (await ResetAsync(client, token, newPassword)).StatusCode);
+    Assert.NotNull(await EmailVerifiedAtAsync(cs, userId));
+    Assert.Equal(HttpStatusCode.OK, (await LoginAsync(client, email, newPassword)).StatusCode); // no 403
+}
 
 [Fact] public async Task AnInvitedUserCreatesAPasswordAndEndsActive()
 {
-    // dueño registra+verifica; invita a I (POST /api/v1/tenants/{id}/memberships, X-Tenant-Id + X-Qep-Client);
-    // forgot(I) → reset → login(I) → 200
-    Assert.Equal("Active", await MembershipStateAsync(cs, tenantId, invitedUserId));
-    Assert.Equal("Active", await UserStatusAsync(cs, invitedUserId));
+    var ownerClient = CreateClient(factory);
+    var owner = await RegisterAndVerifyAsync(ownerClient, cs, NewEmail(), pw);
+    var invitedEmail = NewEmail();
+    var invited = await InviteAsync(ownerClient, cs, owner.TenantId, invitedEmail);
+    await ForgotAsync(client, invitedEmail);
+    var token = await LatestOutboxTokenAsync(cs, IdentityIntegrationEvents.PasswordResetRequested, invited.UserId);
+    Assert.Equal(HttpStatusCode.NoContent, (await ResetAsync(client, token, newPassword)).StatusCode);
+    Assert.Equal(HttpStatusCode.OK, (await LoginAsync(client, invitedEmail, newPassword)).StatusCode);
+    Assert.Equal("Active", await MembershipStateAsync(cs, owner.TenantId, invited.UserId));
+    Assert.Equal("Active", await UserStatusAsync(cs, invited.UserId));
 }
 ```
 
@@ -1306,7 +1579,7 @@ Esperado: `Expected: Accepted Actual: NotFound`.
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add src/Modules/Identity/Modules.Identity.Application/PasswordReset.cs src/Modules/Identity/Modules.Identity.Infrastructure/IdentityInfrastructureExtensions.cs src/Api/PasswordAuthEndpoints.cs tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs
+git add src/Modules/Identity/Modules.Identity.Application/PasswordReset.cs src/Modules/Identity/Modules.Identity.Infrastructure/IdentityInfrastructureExtensions.cs src/Api/PasswordAuthEndpoints.cs tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiHarness.cs
 git commit -m "feat(auth): recover or create a password by email"
 ```
 
@@ -1361,17 +1634,25 @@ git commit -m "feat(api): rate limit credential endpoints per ip and endpoint"
 **Files:**
 - Create: `src/Modules/Identity/Modules.Identity.Application/PasswordCredentials.cs`
 - Create: `src/Modules/Tenancy/Modules.Tenancy.Application/InvitationAcceptability.cs`
-- Modify: `src/Api/InvitationEndpoints.cs`, `IdentityInfrastructureExtensions.cs`
-- Test: `tests/Modules/Tenancy/Modules.Tenancy.UnitTests/InvitationServiceTests.cs`; `tests/Modules/Identity/Modules.Identity.IntegrationTests/InvitationPasswordApiTests.cs`
+- Modify: `src/Api/InvitationEndpoints.cs`, `src/Modules/Identity/Modules.Identity.Infrastructure/IdentityInfrastructureExtensions.cs`
+- Test: `tests/Modules/Tenancy/Modules.Tenancy.UnitTests/InvitationServiceTests.cs`; `tests/Modules/Identity/Modules.Identity.IntegrationTests/InvitationPasswordApiTests.cs`, `PasswordAuthApiHarness.cs` (helpers de abajo)
 
 **Interfaces:**
+- Produces (test):
+  - En `InvitationServiceTests`: `static InvitationDto Dto(MembershipViewState state)` — un `InvitationDto` válido con ese estado y el resto fijo.
+  - En `PasswordAuthApiHarness`: `sealed record InvitationPayload(Guid TenantId, string TenantName, string Email, string Status, bool HasPassword)`; `Task<InvitationPayload> GetInvitationAsync(HttpClient client, string token)` — `GET /api/v1/invitations/{token}`, afirma 200; `Task<HttpResponseMessage> AcceptWithPasswordAsync(HttpClient client, string token, string password)` — `POST /api/v1/invitations/{token}/accept-with-password` vía `PostJsonAsync`.
+  - Arrange común de `InvitationPasswordApiTests`: fábrica y `cs` como en `PasswordAuthApiTests`; `owner = RegisterAndVerifyAsync(ownerClient, …)`; `invited = InviteAsync(ownerClient, cs, owner.TenantId, NewEmail())`; `token = invited.Token`, `tenantId = owner.TenantId`, `invitedUserId = invited.UserId`; `anon` y `other` = `CreateClient(factory)` sin sesión.
 - Produces:
   ```csharp
   // Identity.Application
+  public sealed class PasswordCredentialsService(IUserRepository users, IPasswordCredentialRepository credentials, IPasswordHasher hasher,
+      PasswordCredentialVerifier verifier, IIdentityUnitOfWork unitOfWork, IValidator<NewPasswordInput> validator, IClock clock) : IPasswordCredentials;
   public interface IPasswordCredentials
   {
       Task<bool> HasPasswordAsync(Guid userId, CancellationToken cancellationToken);
-      // Sin credencial: valida (NewPasswordValidator) y la crea. Con credencial: Verify; Failed ⇒ RequestUnauthorizedException("identity.credentials.invalid"); nunca Replace (salvo rehash).
+      // Sin credencial: valida (NewPasswordValidator, errors.Password) y la crea con hasher.Hash.
+      // Con credencial: PasswordCredentialVerifier.Verify (Task 12; el re-hash vive ahí y no se repite acá);
+      //   false ⇒ RequestUnauthorizedException("identity.credentials.invalid"); nunca Replace fuera del re-hash.
       // En los dos: MarkEmailVerified, Activate, guarda. Devuelve el usuario.
       Task<AuthenticatedUser> AcceptInvitationAsync(Guid userId, string password, CancellationToken cancellationToken);
   }
@@ -1413,7 +1694,7 @@ public void EnsurePendingRejectsAnythingButPending(MembershipViewState state, st
 
 [Fact] public async Task AnInvitedUserWithAPasswordAcceptsOnlyWithTheRightOne()
 {
-    // sembrar credencial (forgot+reset de la Task 13) antes de aceptar
+    // sembrar credencial antes de aceptar: ForgotAsync(invitado) → LatestOutboxTokenAsync(PasswordResetRequested) → ResetAsync(rightPassword)
     var hashBefore = await CredentialHashAsync(cs, invitedUserId);
     var wrong = await AcceptWithPasswordAsync(anon, token, "the wrong long password");
     Assert.Equal(HttpStatusCode.Unauthorized, wrong.StatusCode);
@@ -1424,12 +1705,25 @@ public void EnsurePendingRejectsAnythingButPending(MembershipViewState state, st
 
 [Fact] public async Task AnExpiredInvitationIs422AndAnUnknownTokenIs404()
 {
-    // UPDATE tenancy.memberships SET expires_at = now() - interval '1 minute' WHERE id = @id
+    // UPDATE tenancy.memberships SET expires_at = now() - interval '1 minute' WHERE id = @id (invited.MembershipId)
+    var expired = await AcceptWithPasswordAsync(anon, token, "a long enough password");
+    var unknown = await AcceptWithPasswordAsync(anon, "no-such-token", "a long enough password");
+    Assert.Equal(HttpStatusCode.UnprocessableEntity, expired.StatusCode);
     Assert.Equal("tenancy.membership.invitation_expired", (await ProblemAsync(expired)).Code);
+    Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
     Assert.Equal("tenancy.invitation.not_found", (await ProblemAsync(unknown)).Code);
 }
 
-[Fact] public async Task AShortPasswordOnAcceptFailsValidation() // errors.password; membership sigue Invited
+[Fact] public async Task AShortPasswordOnAcceptFailsValidation()
+{
+    var response = await AcceptWithPasswordAsync(anon, token, "short");
+    Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+    var problem = await ProblemAsync(response);
+    Assert.Equal("validation.failed", problem.Code);
+    Assert.True(problem.Errors!.ContainsKey("Password"));
+    Assert.Equal("Invited", await MembershipStateAsync(cs, tenantId, invitedUserId));
+    Assert.Equal(0, await CountRowsAsync(cs, "identity.password_credentials", invitedUserId));
+}
 ```
 
 - [ ] **Step 2: Correr y ver FAIL**
@@ -1445,7 +1739,7 @@ Esperado: no compila (`InvitationAcceptability`, `HasPassword`).
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add src/Modules/Identity/Modules.Identity.Application/PasswordCredentials.cs src/Modules/Identity/Modules.Identity.Infrastructure/IdentityInfrastructureExtensions.cs src/Modules/Tenancy/Modules.Tenancy.Application/InvitationAcceptability.cs src/Api/InvitationEndpoints.cs tests/Modules/Tenancy/Modules.Tenancy.UnitTests/InvitationServiceTests.cs tests/Modules/Identity/Modules.Identity.IntegrationTests/InvitationPasswordApiTests.cs
+git add src/Modules/Identity/Modules.Identity.Application/PasswordCredentials.cs src/Modules/Identity/Modules.Identity.Infrastructure/IdentityInfrastructureExtensions.cs src/Modules/Tenancy/Modules.Tenancy.Application/InvitationAcceptability.cs src/Api/InvitationEndpoints.cs tests/Modules/Tenancy/Modules.Tenancy.UnitTests/InvitationServiceTests.cs tests/Modules/Identity/Modules.Identity.IntegrationTests/InvitationPasswordApiTests.cs tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiHarness.cs
 git commit -m "feat(auth): accept an invitation by creating or entering a password"
 ```
 
@@ -1498,7 +1792,12 @@ git commit -m "feat(notifications): invitation email offers google or a password
 ### Task 17: Guarda final — sin secretos en auditoría ni logs
 
 **Files:**
-- Test: `tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs`
+- Test: `tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs`, `PasswordAuthApiHarness.cs` (helpers de abajo)
+
+**Interfaces:**
+- Produces (test), en `PasswordAuthApiHarness`:
+  - `Task<string> AllAuditTextAsync(string connectionString)` — `SELECT coalesce(string_agg(row_to_json(e)::text, ''), '') FROM audit.entries e`.
+  - `Task<string> AllNotificationTextAsync(string connectionString)` — lo mismo sobre `notifications.notifications`.
 
 Prueba de cierre del tercer anti-objetivo. Pasa si las tareas anteriores respetaron el contrato; si da RED, el defecto está en la tarea que escribió esa fila y se arregla ahí.
 
@@ -1507,8 +1806,11 @@ Prueba de cierre del tercer anti-objetivo. Pasa si las tareas anteriores respeta
 ```csharp
 [Fact] public async Task NoAuditEntryOrNotificationCarriesAPasswordOrAToken()
 {
-    // flujo completo: register → verify → login → forgot → reset → login
-    var audit = await AllAuditTextAsync(cs);          // SELECT string_agg(row_to_json(e)::text, '') FROM audit.entries e
+    // flujo completo con una fábrica con RecordingEmailChannel (para que los workers escriban notifications):
+    //   RegisterAsync → verifyToken = LatestOutboxTokenAsync(EmailVerificationRequested) → VerifyAsync → LoginAsync(oldPassword)
+    //   → ForgotAsync → resetToken = LatestOutboxTokenAsync(PasswordResetRequested) → ResetAsync(newPassword) → LoginAsync(newPassword)
+    //   y WaitUntilAsync hasta que channel.Sent tenga los dos mails.
+    var audit = await AllAuditTextAsync(cs);
     var notifications = await AllNotificationTextAsync(cs);
     foreach (var secret in new[] { oldPassword, newPassword, verifyToken, resetToken })
     {
@@ -1539,7 +1841,7 @@ dotnet test tests/Bootstrapper/Bootstrapper.UnitTests
 - [ ] **Step 4: Commit**
 
 ```powershell
-git add tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs
+git add tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiTests.cs tests/Modules/Identity/Modules.Identity.IntegrationTests/PasswordAuthApiHarness.cs
 git commit -m "test(auth): guard audit and notifications against leaked secrets"
 ```
 
