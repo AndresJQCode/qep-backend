@@ -623,6 +623,193 @@ public sealed class OrderEditsApiTests
         Assert.Equal("order.order.not_pending", (await ReadProblemAsync(response)).Code);
     }
 
+    // Spec 2026-10-26, «Editar pedido» cambia la facturación. El tenant de prueba es colombiano, así que la
+    // regla NIT de la jurídica aplica.
+    private static async Task<OrderBillingEditRequest> BillingEditAsync(
+        HttpClient client,
+        string name = "Otra S.A.S.",
+        string personType = "Juridica",
+        string identificationType = "NIT",
+        bool withRetention = true)
+    {
+        var home = (await EnsureCityIdsInTwoDepartmentsAsync(client)).First;
+        return new OrderBillingEditRequest(
+            new QuotationPartyRequest(
+                name, "900123456", "3001234567", "otra@correo.co", "Calle 1 # 2-3", home.DepartmentId, home.CityId,
+                PersonType: personType, IdentificationType: identificationType),
+            BillingWithRetention: withRetention,
+            BillingVatSurplus: false);
+    }
+
+    [Fact]
+    public async Task EditingTheBillingPartySavesItWithPersonTypeAndRecalculates()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        Assert.Equal(0m, order.RetentionAmount);
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 1m)], null, null, Billing: await BillingEditAsync(client)));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var saved = await ReadDetailAsync(response);
+        var party = Assert.Single(saved.Order.Parties, candidate => candidate.Role == "Billing");
+        Assert.Equal(("Otra S.A.S.", "Juridica", "NIT"), (party.Name, party.PersonType, party.IdentificationType));
+        Assert.True(saved.Order.RetentionAmount > 0m);
+        Assert.Equal(order.Version + 1, saved.Order.Version);
+        var fetched = await GetDetailAsync(client, tenantId, order.Id);
+        Assert.Equal(saved.Order.RetentionAmount, fetched.Order.RetentionAmount);
+    }
+
+    // Cubre IX_order_parties_order_role: la segunda edición modifica la fila, no la borra y la vuelve a crear.
+    [Fact]
+    public async Task EditingAnExistingBillingRowKeepsASingleRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var items = new[] { new OrderEditItemRequest(productId, 1m) };
+
+        var first = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest(items, null, null, Billing: await BillingEditAsync(client)));
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        var firstDetail = await ReadDetailAsync(first);
+        var second = await PutEditsAsync(
+            client, tenantId, order.Id, firstDetail.Order.Version,
+            new SaveOrderEditsRequest(items, null, null, Billing: await BillingEditAsync(client, name: "Tercera S.A.S.")));
+
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var detail = await GetDetailAsync(client, tenantId, order.Id);
+        var party = Assert.Single(detail.Order.Parties, candidate => candidate.Role == "Billing");
+        Assert.Equal("Tercera S.A.S.", party.Name);
+    }
+
+    [Fact]
+    public async Task AnAbsentBillingLeavesItUntouched()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var items = new[] { new OrderEditItemRequest(productId, 1m) };
+        var withBilling = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest(items, null, null, Billing: await BillingEditAsync(client)));
+        var billed = await ReadDetailAsync(withBilling);
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, billed.Order.Version,
+            new SaveOrderEditsRequest(items, null, "Una nota"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var detail = await ReadDetailAsync(response);
+        var party = Assert.Single(detail.Order.Parties, candidate => candidate.Role == "Billing");
+        Assert.Equal("Otra S.A.S.", party.Name);
+        Assert.Equal(billed.Order.RetentionAmount, detail.Order.RetentionAmount);
+    }
+
+    [Fact]
+    public async Task JuridicaWithCcIsA422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 1m)], null, null,
+                Billing: await BillingEditAsync(client, identificationType: "CC")));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("quotations.party.person_type_requires_nit", (await ReadProblemAsync(response)).Code);
+    }
+
+    [Fact]
+    public async Task AnApprovedOrderCannotChangeItsBilling()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var approve = await client.PostAsync(
+            $"{OrderByIdUrl(tenantId, order.Id)}/approve", null, TestContext.Current.CancellationToken);
+        approve.EnsureSuccessStatusCode();
+        var approved = await approve.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(approved);
+
+        var response = await PutEditsAsync(
+            client, tenantId, approved.Id, approved.Version,
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 1m)], null, null, Billing: await BillingEditAsync(client)));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("order.order.not_pending", (await ReadProblemAsync(response)).Code);
+    }
+
+    // Decisión del pre-vuelo: el preview aplica el bloque billing antes de recalcular, así que la retención que
+    // muestra es la que el guardado dejaría; y no persiste nada.
+    [Fact]
+    public async Task PreviewAppliesTheBillingBlockWithoutPersistingIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var items = new[] { new OrderEditItemRequest(productId, 1m) };
+        var billing = await BillingEditAsync(client);
+
+        var preview = await client.PostAsJsonAsync(
+            $"{OrderByIdUrl(tenantId, order.Id)}/preview",
+            new SaveOrderEditsRequest(items, null, null, Billing: billing),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+        var previewed = await ReadDetailAsync(preview);
+        var saved = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version, new SaveOrderEditsRequest(items, null, null, Billing: billing));
+
+        Assert.True(previewed.Order.RetentionAmount > 0m);
+        Assert.Equal(order.Version, previewed.Order.Version);
+        Assert.Equal(
+            (await ReadDetailAsync(saved)).Order.RetentionAmount, previewed.Order.RetentionAmount);
+    }
+
+    // Para el caso de «sin persistir»: antes del guardado el pedido sigue sin fila ni retención.
+    [Fact]
+    public async Task PreviewWithBillingLeavesTheStoredOrderWithoutTheRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+
+        var preview = await client.PostAsJsonAsync(
+            $"{OrderByIdUrl(tenantId, order.Id)}/preview",
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 1m)], null, null, Billing: await BillingEditAsync(client)),
+            TestContext.Current.CancellationToken);
+        preview.EnsureSuccessStatusCode();
+
+        var fetched = await GetDetailAsync(client, tenantId, order.Id);
+        Assert.DoesNotContain(fetched.Order.Parties, candidate => candidate.Role == "Billing");
+        Assert.Equal(0m, fetched.Order.RetentionAmount);
+        Assert.Equal(order.Version, fetched.Order.Version);
+    }
+
     /// <summary>Una cotización enviada con un producto de 100.000 COP sin impuesto, convertida con el
     /// pago pendiente y sin comprobantes: el total es 100.000 y el estado de pago lo decide cada
     /// prueba. Con <paramref name="withRetention"/> el cliente practica retención en la fuente y el

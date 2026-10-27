@@ -157,7 +157,7 @@ internal static class QuotationMapping
                 request.BillingWithRetention,
                 request.BillingVatSurplus);
 
-    private static QuotationPartyDetails? ToDomain(this QuotationPartyRequest? request) =>
+    internal static QuotationPartyDetails? ToDomain(this QuotationPartyRequest? request) =>
         request is null
             ? null
             : new QuotationPartyDetails

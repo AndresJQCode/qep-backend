@@ -403,7 +403,7 @@ public static class OrderEndpoints
         var detail = await dispatcher.SendAsync(
             new SaveOrderEditsCommand(
                 tenantId, orderId, expectedVersion, items, proofs, request.Notes, request.GlobalScaleFloor,
-                request.IsRetail, request.Shipping),
+                request.IsRetail, request.Shipping, request.Billing),
             cancellationToken);
         httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
@@ -421,7 +421,7 @@ public static class OrderEndpoints
         var detail = await dispatcher.QueryAsync(
             new PreviewOrderEditsQuery(
                 tenantId, orderId, items, proofs, request.Notes, request.GlobalScaleFloor, request.IsRetail,
-                request.Shipping),
+                request.Shipping, request.Billing),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }

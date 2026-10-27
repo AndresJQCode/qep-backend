@@ -15,12 +15,13 @@ public sealed record PreviewOrderEditsQuery(
     string? Notes,
     int? GlobalScaleFloor,
     bool IsRetail,
-    ShippingRequest? Shipping = null) : IQuery<OrderDetailDto>, IOrderEdits;
+    ShippingRequest? Shipping = null,
+    OrderBillingEditRequest? Billing = null) : IQuery<OrderDetailDto>, IOrderEdits;
 
 public sealed class PreviewOrderEditsValidator : OrderEditsValidator<PreviewOrderEditsQuery>
 {
     public PreviewOrderEditsValidator()
-        : base(requireFileIds: false)
+        : base(requireFileIds: false, requireBillingIdentification: false)
     {
     }
 }
@@ -99,6 +100,11 @@ public sealed class PreviewOrderEditsHandler(
         {
             order.SetGlobalScaleFloor(query.GlobalScaleFloor, updatedBy, now);
         }
+
+        // Mismo orden que el guardado: la facturación mueve la retención y el excedente de IVA, así que va antes
+        // de recalcular. Sin la regla NIT por país: el preview no la aplica mientras la persona teclea.
+        OrderBillingEdits.Apply(
+            order, query.Billing, tenantCountry: null, enforceFiscalRules: false, updatedBy, now);
 
         // Mismo orden que el guardado: el envío antes de recalcular el estado de pago.
         var shipping = await shippingResolver.ResolveAsync(
