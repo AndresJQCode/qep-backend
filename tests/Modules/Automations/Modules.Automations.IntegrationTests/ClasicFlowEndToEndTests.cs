@@ -307,7 +307,19 @@ public sealed class ClasicFlowEndToEndTests
             """
             SELECT count(*) FROM information_schema.columns
              WHERE table_schema = 'automations' AND table_name = 'http_calls'
-               AND (column_name LIKE '%body%' OR column_name LIKE '%header%' OR column_name LIKE '%response%' OR column_name LIKE '%query%')
+               AND (column_name LIKE '%body%' OR column_name LIKE '%header%' OR column_name LIKE '%query%')
+            """));
+        // El guardián dice que ninguna columna guarda un cuerpo. response_bytes es un conteo (spec 2026-10-25 D-E3); RC-B1b suma
+        // response_object a esta lista. Cualquier otra columna «response» es un cuerpo nuevo y rompe la prueba.
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            """
+            SELECT count(*) FROM information_schema.columns
+             WHERE table_schema = 'automations' AND table_name = 'http_calls' AND column_name LIKE '%response%'
+            """));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            """
+            SELECT count(*) FROM information_schema.columns
+             WHERE table_schema = 'automations' AND table_name = 'http_calls' AND column_name = 'response_bytes'
             """));
     }
 
