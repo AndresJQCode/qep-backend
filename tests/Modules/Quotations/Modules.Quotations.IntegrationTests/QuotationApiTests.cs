@@ -161,6 +161,45 @@ public sealed class QuotationApiTests
         Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Parties.Billing.IdentificationType", out _));
     }
 
+    // Spec 2026-10-26: con OnCustomerSave una fila de facturación sin tipo de persona no se envía. La cotización se
+    // crea con el ajuste en Never (si no, crear ya la frenaría) y el ajuste se prende después.
+    [Fact]
+    public async Task SendingWithOnCustomerSaveAndABillingRowWithoutPersonTypeIsA422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var quotation = await CreateQuotationAsync(
+            client, tenantId, clientId,
+            parties: new QuotationPartiesRequest(
+                new QuotationPartyRequest(
+                    "Sede administrativa", "1020304050", null, null, null, null, null,
+                    IdentificationType: "CC"),
+                null));
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var tenancy = scope.ServiceProvider
+                .GetRequiredService<Modules.Tenancy.Infrastructure.Persistence.TenancyDbContext>();
+            await tenancy.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE tenancy.tenants SET person_type_requirement = 'OnCustomerSave' WHERE id = {tenantId}",
+                TestContext.Current.CancellationToken);
+        }
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
+            new SendQuotationRequest(),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var body = System.Text.Json.JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("quotation.billing.person_type_required", body.RootElement.GetProperty("code").GetString());
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Parties.Billing.PersonType", out _));
+    }
+
     [Fact]
     public async Task TheClientBlockCarriesCountryPersonTypeAndIdentificationType()
     {

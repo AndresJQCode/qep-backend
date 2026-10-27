@@ -95,6 +95,8 @@ public sealed class SaveQuotationHandler(
         quotation.EnsureBillingIdentified();
         var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(command.TenantId), cancellationToken);
         BillingPartyFiscalRules.EnsureConsistent(quotation.Billing?.ToDetails(), regional?.Country);
+        await BillingPersonTypeRequirement.EnsureForQuotationAsync(
+            tenantDirectory, command.TenantId, quotation, cancellationToken);
 
         var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
         // Guardar sin cambiar el encabezado no deja fila: una lista de "editó" vacíos esconde las

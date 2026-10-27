@@ -100,6 +100,8 @@ public sealed class CreateQuotationHandler(
         quotation.EnsureBillingIdentified();
         var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(command.TenantId), cancellationToken);
         BillingPartyFiscalRules.EnsureConsistent(quotation.Billing?.ToDetails(), regional?.Country);
+        await BillingPersonTypeRequirement.EnsureForQuotationAsync(
+            tenantDirectory, command.TenantId, quotation, cancellationToken);
         var historyFormat = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
 
         repository.Add(quotation);

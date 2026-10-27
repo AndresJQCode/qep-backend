@@ -65,6 +65,10 @@ public sealed class SendQuotationHandler(
         // un envío que falló, es un envío que nunca empezó, y anotarlo en el registro de fallas lo
         // llenaría de ruido que no se arregla mirando una traza.
         quotation.EnsureSendable();
+        // Con OnCustomerSave, la fila de facturación sin tipo de persona no sale (spec 2026-10-26). Fuera del try,
+        // igual que EnsureSendable: es un envío que nunca empezó.
+        await BillingPersonTypeRequirement.EnsureForQuotationAsync(
+            tenantDirectory, command.TenantId, quotation, cancellationToken);
 
         // Por dónde sale, con el mismo criterio: sin canal, o con varios sin elegir, el envío nunca empezó
         // (plan 2026-10-21), y una elección que no corresponde (otra conexión cuando el tenant ya tiene una, o una que no
