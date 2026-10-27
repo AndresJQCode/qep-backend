@@ -40,7 +40,8 @@ public sealed class UpdateCustomerHandler(
     IExecutionContext executionContext,
     IClock clock,
     IValidator<UpdateCustomerCommand> validator,
-    IPhoneNumberNormalizer phoneNormalizer)
+    IPhoneNumberNormalizer phoneNormalizer,
+    ITenantDirectory tenantDirectory)
     : ICommandHandler<UpdateCustomerCommand, CustomerDto>
 {
     public async Task<CustomerDto> HandleAsync(
@@ -51,6 +52,8 @@ public sealed class UpdateCustomerHandler(
         CustomersAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+        await CustomerPersonTypeRequirement.EnsureSatisfiedAsync(
+            tenantDirectory, command.TenantId, command.Country, command.PersonType, cancellationToken);
 
         var customer = await repository.FindAsync(
             command.TenantId,

@@ -1078,4 +1078,28 @@ public sealed class CustomerWriteApiTests
         Assert.Contains("customers.customer.person_type_requires_nit", text);
         Assert.Contains("IdentificationType", await ValidationFieldsAsync(response));
     }
+
+    // Spec 2026-10-26, Tarea 8: el ajuste del tenant (en base) llega hasta el 422 del POST, con el mapa por campo.
+    [Fact]
+    public async Task OnCustomerSaveIsA422OnPersonType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SetTenantPersonTypeRequirementAsync(factory, "OnCustomerSave");
+
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewCustomerBody(city.CityId, classification.Id),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("customers.customer.person_type_required", text);
+        Assert.Contains("PersonType", await ValidationFieldsAsync(response));
+    }
 }

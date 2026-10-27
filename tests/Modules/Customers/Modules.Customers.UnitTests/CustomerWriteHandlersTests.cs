@@ -1,5 +1,6 @@
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
+using Modules.Tenancy.Domain;
 using static Modules.Customers.UnitTests.CustomerWriteDoubles;
 
 namespace Modules.Customers.UnitTests;
@@ -39,13 +40,17 @@ public sealed class CustomerWriteHandlersTests
     private static Customer IncompleteCustomer() =>
         Customer.CreateIncomplete(CustomerId.New(), Tenant, "Alguien", "3000000001", "CO", "bsuid-" + Guid.NewGuid().ToString("N"), Now, new PlusNormalizer());
 
-    private static CreateCustomerHandler NewCreate(FakeCustomerRepository customers, UnitOfWork unitOfWork) =>
+    private static CreateCustomerHandler NewCreate(
+        FakeCustomerRepository customers, UnitOfWork unitOfWork, TenantDirectory? tenant = null, List<string>? calls = null) =>
         new(customers, new Classifications([]), new EngagementTestBed.FakeTags(), new Geography([]), unitOfWork, new RecordingAudit(),
-            new Cucs([]), Manager, new FixedClock(), new CreateCustomerValidator(), new PlusNormalizer());
+            new Cucs(calls ?? []), Manager, new FixedClock(), new CreateCustomerValidator(), new PlusNormalizer(),
+            tenant ?? new TenantDirectory());
 
-    private static UpdateCustomerHandler NewUpdate(FakeCustomerRepository customers, UnitOfWork unitOfWork) =>
+    private static UpdateCustomerHandler NewUpdate(
+        FakeCustomerRepository customers, UnitOfWork unitOfWork, TenantDirectory? tenant = null, List<string>? calls = null) =>
         new(customers, new Classifications([]), new EngagementTestBed.FakeTags(), new Geography([]), unitOfWork, new RecordingAudit(),
-            new Cucs([]), Manager, new FixedClock(), new UpdateCustomerValidator(), new PlusNormalizer());
+            new Cucs(calls ?? []), Manager, new FixedClock(), new UpdateCustomerValidator(), new PlusNormalizer(),
+            tenant ?? new TenantDirectory());
 
     private static CreateCustomerCommand CreateCommand() =>
         new(Tenant, "Laura Pérez", null, "CC", "1020304050", "310 935 2187", "laura@verde.co", "Calle 10 # 45-12", "CO", CityId,
@@ -193,5 +198,109 @@ public sealed class CustomerWriteHandlersTests
             NewCreate(new FakeCustomerRepository(), new UnitOfWork()).HandleAsync(command, TestContext.Current.CancellationToken));
 
         Assert.Contains(failure.Errors, error => error.PropertyName == "PersonType");
+    }
+
+    // Spec 2026-10-26, Tarea 8: con OnCustomerSave el tipo de persona es obligatorio al guardar un cliente colombiano de un
+    // tenant colombiano. El doble de geografia no resuelve la libreta, asi que las pruebas que guardan miran la entidad.
+    private static TenantDirectory OnSave(string tenantCountry = "CO") =>
+        TenantDirectory.With(tenantCountry, PersonTypeRequirement.OnCustomerSave);
+
+    private static async Task SaveIgnoringTheResponseAsync(Func<Task> save)
+    {
+        try
+        {
+            await save();
+        }
+        catch (NotSupportedException)
+        {
+            // El doble de geografia no implementa FindCitiesAsync; es posterior al SaveChanges.
+        }
+    }
+
+    [Fact]
+    public async Task OnCustomerSaveRejectsAColombianCreateWithoutPersonType()
+    {
+        var customers = new FakeCustomerRepository();
+        var calls = new List<string>();
+
+        var failure = await Assert.ThrowsAsync<CustomersDomainException>(() =>
+            NewCreate(customers, new UnitOfWork(), OnSave(), calls).HandleAsync(CreateCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Equal(CustomersErrorCodes.PersonTypeRequired, failure.Code);
+        Assert.Equal(["PersonType"], failure.FieldErrors.Keys);
+        Assert.Empty(customers.Added);
+        Assert.DoesNotContain("cuc", calls);
+    }
+
+    [Fact]
+    public async Task OnCustomerSaveRejectsAnUpdateAndACompletionWithoutPersonType()
+    {
+        var complete = CompleteCustomer();
+        var incomplete = IncompleteCustomer();
+        var customers = new FakeCustomerRepository();
+        customers.Known.Add(complete);
+        customers.Known.Add(incomplete);
+        var calls = new List<string>();
+
+        foreach (var target in new[] { complete, incomplete })
+        {
+            var failure = await Assert.ThrowsAsync<CustomersDomainException>(() =>
+                NewUpdate(customers, new UnitOfWork(), OnSave(), calls).HandleAsync(UpdateCommand(target), TestContext.Current.CancellationToken));
+
+            Assert.Equal(CustomersErrorCodes.PersonTypeRequired, failure.Code);
+            Assert.Equal(["PersonType"], failure.FieldErrors.Keys);
+        }
+
+        // El incompleto sigue incompleto y no quemo un numero del consecutivo.
+        Assert.False(incomplete.IsComplete);
+        Assert.DoesNotContain("cuc", calls);
+    }
+
+    [Fact]
+    public async Task OnCustomerSaveAcceptsAPersonType()
+    {
+        var customers = new FakeCustomerRepository();
+        var command = CreateCommand() with { IdentificationType = "NIT", IdentificationNumber = "900123456", PersonType = "Juridica" };
+
+        await SaveIgnoringTheResponseAsync(() =>
+            NewCreate(customers, new UnitOfWork(), OnSave()).HandleAsync(command, TestContext.Current.CancellationToken));
+
+        Assert.Equal(PersonType.Juridica, Assert.Single(customers.Added).PersonType);
+    }
+
+    [Theory]
+    [InlineData(PersonTypeRequirement.Never)]
+    [InlineData(PersonTypeRequirement.OnOrderApproval)]
+    public async Task NeverAndOnOrderApprovalDoNotRequireIt(PersonTypeRequirement requirement)
+    {
+        var customers = new FakeCustomerRepository();
+
+        await SaveIgnoringTheResponseAsync(() =>
+            NewCreate(customers, new UnitOfWork(), TenantDirectory.With("CO", requirement)).HandleAsync(CreateCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Null(Assert.Single(customers.Added).PersonType);
+    }
+
+    [Fact]
+    public async Task AForeignCustomerOfAColombianTenantSavesWithoutPersonType()
+    {
+        var customers = new FakeCustomerRepository();
+        var command = CreateCommand() with { Country = "ES", CityId = null, CityName = "Madrid" };
+
+        await SaveIgnoringTheResponseAsync(() =>
+            NewCreate(customers, new UnitOfWork(), OnSave()).HandleAsync(command, TestContext.Current.CancellationToken));
+
+        Assert.Null(Assert.Single(customers.Added).PersonType);
+    }
+
+    [Fact]
+    public async Task ANonColombianTenantWithOnCustomerSaveCreatesWithoutPersonType()
+    {
+        var customers = new FakeCustomerRepository();
+
+        await SaveIgnoringTheResponseAsync(() =>
+            NewCreate(customers, new UnitOfWork(), OnSave("ES")).HandleAsync(CreateCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Null(Assert.Single(customers.Added).PersonType);
     }
 }

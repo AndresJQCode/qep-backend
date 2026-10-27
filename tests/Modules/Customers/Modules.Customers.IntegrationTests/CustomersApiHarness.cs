@@ -100,6 +100,18 @@ internal static class CustomersApiHarness
             TestContext.Current.CancellationToken);
     }
 
+    // Spec 2026-10-26: fija el requisito de tipo de persona del tenant sembrado. Va después de SeedTenantAsync.
+    public static async Task SetTenantPersonTypeRequirementAsync(
+        QepApiFactory factory, string requirement, string tenantId = TenantId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var id = Guid.Parse(tenantId);
+        await tenancy.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE tenancy.tenants SET person_type_requirement = {requirement} WHERE id = {id}",
+            TestContext.Current.CancellationToken);
+    }
+
     // El stub de desarrollo concede solo los defaults de tenancy cuando X-Permissions no esta
     // (DevelopmentAuthenticationHandler.ResolvePermissions), asi que un permiso de customers hay
     // que pedirlo explicitamente. Pasarlo por prueba mantiene cada 403 atribuible: sin esto, una

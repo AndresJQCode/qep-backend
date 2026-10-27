@@ -39,7 +39,8 @@ public sealed class CreateCustomerHandler(
     IExecutionContext executionContext,
     IClock clock,
     IValidator<CreateCustomerCommand> validator,
-    IPhoneNumberNormalizer phoneNormalizer)
+    IPhoneNumberNormalizer phoneNormalizer,
+    ITenantDirectory tenantDirectory)
     : ICommandHandler<CreateCustomerCommand, CustomerDto>
 {
     public async Task<CustomerDto> HandleAsync(
@@ -54,6 +55,8 @@ public sealed class CreateCustomerHandler(
         CustomersAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+        await CustomerPersonTypeRequirement.EnsureSatisfiedAsync(
+            tenantDirectory, command.TenantId, command.Country, command.PersonType, cancellationToken);
 
         // La clasificacion y la ciudad se resuelven **antes** de pedir el CUC: hacen falta su
         // prefijo (si trae clasificacion) y su codigo de departamento para armarlo, no son un pre-chequeo de integridad
