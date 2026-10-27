@@ -18,6 +18,7 @@ using Modules.Storage.Infrastructure.Persistence;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
 using Testcontainers.PostgreSql;
+using static Modules.Identity.IntegrationTests.PasswordAuthApiHarness;
 
 namespace Modules.Identity.IntegrationTests;
 
@@ -68,6 +69,39 @@ public sealed class OrphanUserCleanupTests
         Assert.Equal(1, await CountAuditAsync(connection, member.UserId, "identity.user.deleted"));
     }
 
+    [Fact]
+    public async Task RemovingTheOnlyMembershipAlsoDeletesTheCredentialAndEmailTokens()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var member = await InviteAsync(ownerClient, tenantId, NewEmail());
+        await ActivateMembershipAsync(connectionString, member.Id);
+        await ExecuteAsync(
+            connectionString,
+            "INSERT INTO identity.password_credentials (user_id, hash, updated_at) VALUES (@userId, 'h', now())",
+            ("userId", member.UserId));
+        await ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO identity.email_tokens (id, user_id, purpose, token_hash, expires_at, created_at)
+            VALUES (@id, @userId, 'verify', @tokenHash, now() + interval '1 day', now())
+            """,
+            ("id", Guid.CreateVersion7()),
+            ("userId", member.UserId),
+            ("tokenHash", Guid.NewGuid().ToString("N")));
+
+        var removal = await RemoveAsync(ownerClient, tenantId, member.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () => await CountUsersAsync(connection, member.UserId) == 0);
+
+        Assert.Equal(0, await CountRowsAsync(connectionString, "identity.password_credentials", member.UserId));
+        Assert.Equal(0, await CountRowsAsync(connectionString, "identity.email_tokens", member.UserId));
+    }
     /// <summary>
     /// Spec 2026-10-02: cuando el usuario se borra por no tener historia, su membresía quitada se
     /// borra con él y su código de asesor queda libre. Antes la fila quedaba apuntando a un usuario

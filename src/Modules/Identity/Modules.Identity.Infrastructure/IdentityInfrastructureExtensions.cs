@@ -26,6 +26,8 @@ public static class IdentityInfrastructureExtensions
                     "identity")));
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IPasswordCredentialRepository, PasswordCredentialRepository>();
+        services.AddScoped<IEmailTokenRepository, EmailTokenRepository>();
+        services.AddScoped<IEmailTokenIssuer, EmailTokenIssuer>();
         // Sin estado por request: el hash ficticio se calcula una vez por proceso.
         services.AddSingleton<IPasswordHasher, AspNetCorePasswordHasher>();
         services.AddScoped<IIdentityUnitOfWork, IdentityUnitOfWork>();

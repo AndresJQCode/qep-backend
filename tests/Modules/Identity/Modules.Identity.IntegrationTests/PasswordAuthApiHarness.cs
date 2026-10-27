@@ -31,6 +31,11 @@ internal static class PasswordAuthApiHarness
                 npgsql => npgsql.MigrationsHistoryTable("__ef_migrations_history", "identity"))
             .Options);
 
+    // Cada consumo de token va en su propio contexto, como en producción: TryConsumeAsync no
+    // comparte la unidad de trabajo de nadie.
+    public static EmailTokenRepository NewTokenRepository(string connectionString) =>
+        new(NewIdentityContext(connectionString));
+
     public static async Task<DateTimeOffset?> EmailVerifiedAtAsync(string connectionString, Guid userId)
     {
         await using var connection = new NpgsqlConnection(connectionString);

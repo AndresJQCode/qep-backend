@@ -16,6 +16,8 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
 
     public DbSet<PasswordCredential> PasswordCredentials => Set<PasswordCredential>();
 
+    public DbSet<EmailToken> EmailTokens => Set<EmailToken>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     internal DbSet<IdentityInboxMessage> Inbox => Set<IdentityInboxMessage>();
@@ -28,6 +30,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
         ConfigureProviderLink(modelBuilder);
         ConfigureSession(modelBuilder);
         ConfigurePasswordCredential(modelBuilder);
+        ConfigureEmailToken(modelBuilder);
         ConfigureUserPreference(modelBuilder);
         // audit.entries es propiedad del módulo Audit; acá se mapea como proyección de
         // escritura ExcludeFromMigrations para que las auditorías de emisión/revocación de sesión
@@ -117,6 +120,39 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
         credential.HasOne<User>()
             .WithOne()
             .HasForeignKey<PasswordCredential>(value => value.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureEmailToken(ModelBuilder modelBuilder)
+    {
+        var token = modelBuilder.Entity<EmailToken>();
+        token.ToTable("email_tokens", "identity");
+        token.HasKey(value => value.Id);
+        token.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new EmailTokenId(value))
+            .ValueGeneratedNever();
+        token.Property(value => value.UserId)
+            .HasColumnName("user_id")
+            .HasConversion(id => id.Value, value => new UserId(value));
+        // Minúscula explícita: TryConsumeAsync filtra por este texto en SQL crudo.
+        token.Property(value => value.Purpose)
+            .HasColumnName("purpose")
+            .HasConversion(
+                purpose => EmailTokenRepository.PurposeToColumn(purpose),
+                value => EmailTokenRepository.PurposeFromColumn(value))
+            .HasMaxLength(10);
+        token.Property(value => value.TokenHash)
+            .HasColumnName("token_hash")
+            .HasMaxLength(64);
+        token.HasIndex(value => value.TokenHash).IsUnique();
+        token.Property(value => value.ExpiresAt).HasColumnName("expires_at");
+        token.Property(value => value.UsedAt).HasColumnName("used_at");
+        token.Property(value => value.CreatedAt).HasColumnName("created_at");
+        token.HasIndex(value => new { value.UserId, value.Purpose, value.UsedAt });
+        token.HasOne<User>()
+            .WithMany()
+            .HasForeignKey(value => value.UserId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 
