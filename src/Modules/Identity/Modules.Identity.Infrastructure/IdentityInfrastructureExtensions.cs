@@ -31,6 +31,7 @@ public static class IdentityInfrastructureExtensions
         // Sin estado por request: el hash ficticio se calcula una vez por proceso.
         services.AddSingleton<IPasswordHasher, AspNetCorePasswordHasher>();
         services.AddScoped<IIdentityUnitOfWork, IdentityUnitOfWork>();
+        services.AddScoped<IIdentityOutbox, IdentityOutboxWriter>();
         services.AddScoped<IIdentityProvisioning, IdentityProvisioningService>();
         services.AddScoped<IProviderLinking, ProviderLinkingService>();
         services.AddScoped<IOwnerProvisioning, OwnerProvisioningService>();

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Identity.Application;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
@@ -129,5 +130,42 @@ public sealed class IdentityPersistenceTests
         await new EmailTokenRepository(invalidating).InvalidateUnusedAsync(
             userId, purpose, TokenNow, TestContext.Current.CancellationToken);
         await invalidating.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task AnIdentityOutboxRowIsWrittenWithTheUnitOfWorkAndProcessedByThePlatform()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        using var factory = new PasswordAuthApiFactory(cs);
+        // Fuerza el arranque del host, que migra la base.
+        _ = factory.Services;
+
+        var user = User.CreateInvited(UserId.New(), "outbox@example.com", DateTimeOffset.UtcNow);
+        await using (var writing = NewIdentityContext(cs))
+        {
+            new UserRepository(writing).Add(user);
+            await writing.SaveChangesAsync(cancellationToken);
+        }
+
+        var userId = user.Id.Value;
+        using (var scope = factory.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IIdentityOutbox>().Add(
+                IdentityIntegrationEvents.ExistingAccountNotice,
+                new ExistingAccountNoticePayload(userId),
+                "corr",
+                DateTimeOffset.UtcNow);
+            await scope.ServiceProvider.GetRequiredService<IIdentityUnitOfWork>()
+                .SaveChangesAsync(cancellationToken);
+        }
+
+        var row = await ReadOutboxRowAsync(cs, IdentityIntegrationEvents.ExistingAccountNotice);
+        Assert.Equal($$"""{"userId": "{{userId}}"}""", row!.PayloadText);
+        Assert.Equal("corr", row.CorrelationId);
+        // OutboxProcessor de Tenancy: sin handlers, lo marca procesado.
+        await WaitUntilAsync(async () =>
+            (await ReadOutboxRowAsync(cs, IdentityIntegrationEvents.ExistingAccountNotice))!.ProcessedAt is not null);
     }
 }

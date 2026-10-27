@@ -225,13 +225,16 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
     {
-        // Vista de sólo lectura sobre el Outbox de plataforma, propiedad del módulo productor.
+        // Proyección del Outbox de plataforma (propiedad de Tenancy): se lee y se escribe, pero la
+        // tabla no se migra desde acá. Las columnas NOT NULL salen de InitialPlatform.
         var outbox = modelBuilder.Entity<OutboxRecord>();
         outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
         outbox.HasKey(value => value.Id);
         outbox.Property(value => value.Id).HasColumnName("id");
-        outbox.Property(value => value.EventName).HasColumnName("event_name");
-        outbox.Property(value => value.PayloadJson).HasColumnName("payload");
+        outbox.Property(value => value.EventName).HasColumnName("event_name").HasMaxLength(200);
+        outbox.Property(value => value.PayloadJson).HasColumnName("payload").HasColumnType("jsonb");
+        outbox.Property(value => value.CorrelationId).HasColumnName("correlation_id").HasMaxLength(100);
         outbox.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        outbox.Property(value => value.Attempts).HasColumnName("attempts");
     }
 }
