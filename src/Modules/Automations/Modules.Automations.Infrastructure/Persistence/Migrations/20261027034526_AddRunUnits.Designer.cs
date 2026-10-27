@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Modules.Automations.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AutomationsDbContext))]
-    [Migration("20261027033320_AddRunUnits")]
+    [Migration("20261027034526_AddRunUnits")]
     partial class AddRunUnits
     {
         /// <inheritdoc />
@@ -669,6 +669,8 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "RunId", "InboundMessageId" }, "IX_run_units_run_inbound")
                         .IsUnique()
                         .HasFilter("inbound_message_id IS NOT NULL");
+
+                    b.HasIndex(new[] { "StartedAt" }, "IX_run_units_started_at");
 
                     b.HasIndex(new[] { "TenantId", "RunId", "BaseStep" }, "IX_run_units_tenant_run");
 

@@ -32,9 +32,8 @@ internal sealed class RunUnitRepository(AutomationsDbContext context) : IRunUnit
                 unit.StepsJson, unit.ClosedStatus, unit.ClosedReason))
             .ToListAsync(cancellationToken);
 
-    // Como HttpCallLog.PurgeBeforeAsync: por la llave primaria, todos los tenants a la vez. Se filtra por started_at: la tabla s√≥lo
-    // guarda la ventana de 3 d√≠as (D-E7), as√≠ que un seq scan de un lote es barato y no se agrega otro √≠ndice a una tabla de escritura
-    // caliente.
+    // Como HttpCallLog.PurgeBeforeAsync: por la llave primaria, todos los tenants a la vez. La selecciÛn del lote recorre
+    // IX_run_units_started_at: sin Èl, cada barrido sin filas vencidas leerÌa toda la tabla de una base compartida.
     public async Task<int> PurgeBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batch);

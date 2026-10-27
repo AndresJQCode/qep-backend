@@ -41,6 +41,10 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
     /// con entrante: los cierres del barrido no lo tienen.</summary>
     public const string RunUnitInboundIndex = "IX_run_units_run_inbound";
 
+    /// <summary>Spec 2026-10-25 D-E7: la purga de 3 días filtra por <c>started_at</c> en cada barrido; sin este índice el último lote de
+    /// cada pasada recorre toda la tabla de una base compartida.</summary>
+    public const string RunUnitStartedIndex = "IX_run_units_started_at";
+
     public const string RunUnitInboundFilter = "inbound_message_id IS NOT NULL";
 
     public const string LiveRunFilter = "status IN ('Running','Waiting')";
@@ -276,6 +280,7 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
         // Sin FK a conversation_runs: la purga de 3 días borra unidades sin tocar la corrida, y la corrida no se purga nunca.
         unit.HasIndex(value => new { value.RunId, value.InboundMessageId }, RunUnitInboundIndex).IsUnique().HasFilter(RunUnitInboundFilter);
         unit.HasIndex(value => new { value.TenantId, value.RunId, value.BaseStep }, "IX_run_units_tenant_run");
+        unit.HasIndex(value => value.StartedAt, RunUnitStartedIndex);
     }
 
     private static void ConfigureSimulation(ModelBuilder modelBuilder)

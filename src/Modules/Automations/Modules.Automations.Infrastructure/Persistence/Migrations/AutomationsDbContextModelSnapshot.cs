@@ -667,6 +667,8 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("inbound_message_id IS NOT NULL");
 
+                    b.HasIndex(new[] { "StartedAt" }, "IX_run_units_started_at");
+
                     b.HasIndex(new[] { "TenantId", "RunId", "BaseStep" }, "IX_run_units_tenant_run");
 
                     b.ToTable("run_units", "automations");

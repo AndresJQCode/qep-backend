@@ -132,10 +132,12 @@ public sealed class RunUnitsPersistenceTests
             factory,
             Unit(tenantId, run.Id, Guid.CreateVersion7(), now.AddDays(-4), baseStep: 0),
             Unit(tenantId, run.Id, Guid.CreateVersion7(), now.AddDays(-2), baseStep: 5));
+        var traceBefore = await ScalarAsync<string>(connectionString, "SELECT trace::text FROM automations.conversation_runs");
 
         await SweepAutomationsAsync(factory, now);
 
         Assert.Equal(5, await ScalarAsync<int>(connectionString, "SELECT base_step FROM automations.run_units"));
         Assert.Equal(1L, await CountAsync(connectionString, "SELECT count(*) FROM automations.conversation_runs"));
+        Assert.Equal(traceBefore, await ScalarAsync<string>(connectionString, "SELECT trace::text FROM automations.conversation_runs"));
     }
 }

@@ -59,6 +59,12 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
                 filter: "inbound_message_id IS NOT NULL");
 
             migrationBuilder.CreateIndex(
+                name: "IX_run_units_started_at",
+                schema: "automations",
+                table: "run_units",
+                column: "started_at");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_run_units_tenant_run",
                 schema: "automations",
                 table: "run_units",
