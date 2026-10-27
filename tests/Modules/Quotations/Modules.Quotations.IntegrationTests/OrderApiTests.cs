@@ -1848,6 +1848,59 @@ public sealed class OrderApiTests
 
     // La conversión responde el detalle (spec 2026-10-15 §8) y el resto de las acciones, el pedido:
     // este ayudante lee las dos formas.
+    // Spec 2026-10-26: convertir copia la parte de facturación con su tipo de persona y de documento.
+    [Fact]
+    public async Task ConvertedOrderCarriesTheBillingPartyFiscalTypes()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var home = (await EnsureCityIdsInTwoDepartmentsAsync(client)).First;
+        var billing = new QuotationPartyRequest(
+            "Otra persona", "1020304050", "3001234567", "otra@correo.co", "Calle 1 # 2-3", home.DepartmentId, home.CityId,
+            PersonType: "Natural", IdentificationType: "CE");
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenantId, clientId, productId,
+            parties: new QuotationPartiesRequest(billing, null, BillingWithRetention: false, BillingVatSurplus: false));
+
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var order = await ReadOrderAsync(response);
+        var party = Assert.Single(order.Parties, candidate => candidate.Role == "Billing");
+        Assert.Equal(("Natural", "CE"), (party.PersonType, party.IdentificationType));
+    }
+
+    [Fact]
+    public async Task TheOrderClientBlockCarriesCountryPersonTypeAndIdentificationType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId, personType: "Juridica");
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var converted = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken);
+        var order = await ReadOrderAsync(converted);
+
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            OrderByIdUrl(tenantId, order.Id), TestContext.Current.CancellationToken);
+
+        Assert.NotNull(detail?.Client);
+        Assert.Equal(("CO", "Juridica", "NIT"),
+            (detail.Client.Country, detail.Client.PersonType, detail.Client.IdentificationType));
+    }
+
     private static async Task<OrderResponse> ReadOrderAsync(HttpResponseMessage response)
     {
         response.EnsureSuccessStatusCode();

@@ -112,6 +112,46 @@ public sealed class QuotationBillingIdentificationContractTests
         Assert.Equal(ErrorKey, error.PropertyName);
     }
 
+    // Spec 2026-10-26: el tipo de documento se exige donde se exige el número, y con su propio campo.
+    [Fact]
+    public void ABillingRowWithANameRequiresTheIdentificationType()
+    {
+        var result = new SaveQuotationValidator().Validate(SaveCommand(
+            new QuotationPartiesRequest(Party("Sede administrativa", "1020304050", identificationType: null), null)));
+
+        var error = Assert.Single(result.Errors);
+        Assert.Equal("Parties.Billing.IdentificationType", error.PropertyName);
+    }
+
+    [Fact]
+    public void ThePreviewDoesNotRequireIt()
+    {
+        var result = new PreviewQuotationValidator().Validate(Preview(
+            new QuotationPartiesRequest(Party("Sede administrativa", "1020304050", identificationType: null), null)));
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void AnUnknownIdentificationTypeIsRejected()
+    {
+        var result = new SaveQuotationValidator().Validate(SaveCommand(
+            new QuotationPartiesRequest(Party("Sede administrativa", "1020304050", identificationType: "RUT"), null)));
+
+        var error = Assert.Single(result.Errors);
+        Assert.Equal("Parties.Billing.IdentificationType", error.PropertyName);
+    }
+
+    [Fact]
+    public void AnUnknownPersonTypeIsRejected()
+    {
+        var result = new SaveQuotationValidator().Validate(SaveCommand(
+            new QuotationPartiesRequest(Party("Sede administrativa", "1020304050", personType: "Mixta"), null)));
+
+        var error = Assert.Single(result.Errors);
+        Assert.Equal("Parties.Billing.PersonType", error.PropertyName);
+    }
+
     // Sin nombre propio la factura sigue saliendo al cliente: no hay a quién pedirle el número.
     [Fact]
     public void ABillingPartyWithoutANameDoesNotNeedAnIdentification()
@@ -133,8 +173,11 @@ public sealed class QuotationBillingIdentificationContractTests
         Assert.True(result.IsValid);
     }
 
-    private static QuotationPartyRequest Party(string? name, string? identificationNumber) =>
-        new(name, identificationNumber, null, null, null, null, null);
+    // Por defecto con tipo de documento: los casos de esta clase miran el número, y sin tipo cada uno
+    // sumaría un segundo error (el del tipo) que no es lo que ejercen.
+    private static QuotationPartyRequest Party(
+        string? name, string? identificationNumber, string? identificationType = "NIT", string? personType = null) =>
+        new(name, identificationNumber, null, null, null, null, null, personType, identificationType);
 
     private static CreateQuotationCommand CreateCommand(QuotationPartiesRequest parties) =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), null, null, null, parties, null);

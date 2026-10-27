@@ -318,6 +318,16 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         party.Property(value => value.IdentificationNumber)
             .HasColumnName("identification_number")
             .HasMaxLength(QuotationPartyDetails.IdentificationNumberMaxLength);
+        // Nullable también en la base: la fila sin tipo es la de antes de la columna, y se lee igual
+        // (spec 2026-10-26, sin backfill). Guardados como texto para que el valor se lea en la base.
+        party.Property(value => value.PersonType)
+            .HasColumnName("person_type")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        party.Property(value => value.IdentificationType)
+            .HasColumnName("identification_type")
+            .HasConversion<string>()
+            .HasMaxLength(16);
         party.Property(value => value.Phone)
             .HasColumnName("phone")
             .HasMaxLength(QuotationPartyDetails.PhoneMaxLength);
@@ -705,6 +715,16 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         party.Property(value => value.IdentificationNumber)
             .HasColumnName("identification_number")
             .HasMaxLength(QuotationPartyDetails.IdentificationNumberMaxLength);
+        // Nullable también en la base: la fila sin tipo es la de antes de la columna, y se lee igual
+        // (spec 2026-10-26, sin backfill). Guardados como texto para que el valor se lea en la base.
+        party.Property(value => value.PersonType)
+            .HasColumnName("person_type")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        party.Property(value => value.IdentificationType)
+            .HasColumnName("identification_type")
+            .HasConversion<string>()
+            .HasMaxLength(16);
         party.Property(value => value.Phone)
             .HasColumnName("phone")
             .HasMaxLength(QuotationPartyDetails.PhoneMaxLength);

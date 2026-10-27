@@ -143,7 +143,10 @@ public sealed class QuotationResponseComposer(
                         address.DepartmentId,
                         address.DepartmentName,
                         address.IsPrincipal))
-                    .ToArray());
+                    .ToArray(),
+                customer.Country,
+                customer.PersonType,
+                customer.IdentificationType);
 
     // La variante puede no existir más (se borró): la línea conserva lo que la cotización
     // congeló —cantidad, precio, descuento— y el nombre queda vacío, que es lo único que este lado
@@ -265,7 +268,9 @@ public sealed class QuotationResponseComposer(
         party.Email,
         party.Address,
         party.DepartmentId,
-        party.CityId);
+        party.CityId,
+        party.PersonType,
+        party.IdentificationType);
 
     // Mismos literales que Catalog pone en PriceScaleResponse.Restriction: el diccionario lo
     // tiene el frontend y tiene que ser uno solo para los dos módulos. Null también igual que

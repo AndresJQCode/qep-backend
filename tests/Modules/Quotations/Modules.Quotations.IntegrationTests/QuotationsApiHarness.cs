@@ -333,7 +333,8 @@ internal static class QuotationsApiHarness
         Guid tenantId,
         string? identificationNumber = null,
         bool withRetention = false,
-        bool vatSurplus = false)
+        bool vatSurplus = false,
+        string? personType = null)
     {
         var cityId = await EnsureCityIdAsync(client);
         var classificationId = await CreateClassificationAsync(client, tenantId);
@@ -353,6 +354,8 @@ internal static class QuotationsApiHarness
                 // recurso entero. CO porque el cityId de arriba es DIVIPOLA, que solo describe
                 // Colombia: con otro pais la regla pediria cityName y no cityId.
                 country = "CO",
+                // Spec 2026-10-26: la ficha del cliente trae el tipo de persona; null es «sin clasificar».
+                personType,
                 cityId,
                 classificationId,
                 withRetention,
