@@ -139,4 +139,59 @@ public sealed class CustomerWriteHandlersTests
 
         Assert.Equal(0, customers.IdentificationLookups);
     }
+
+    // Spec 2026-10-26: el doble de geografia no resuelve la libreta, asi que la respuesta no se puede armar y estas pruebas
+    // miran la entidad que el handler dejo guardada, no el DTO.
+    [Fact]
+    public async Task CreatePassesThePersonTypeToTheCustomer()
+    {
+        var customers = new FakeCustomerRepository();
+        var command = CreateCommand() with { IdentificationType = "NIT", IdentificationNumber = "900123456", PersonType = "Juridica" };
+
+        try
+        {
+            await NewCreate(customers, new UnitOfWork()).HandleAsync(command, TestContext.Current.CancellationToken);
+        }
+        catch (NotSupportedException)
+        {
+            // El doble de geografia no implementa FindCitiesAsync; es posterior al SaveChanges.
+        }
+
+        Assert.Equal(PersonType.Juridica, Assert.Single(customers.Added).PersonType);
+    }
+
+    [Fact]
+    public async Task UpdateWithoutPersonTypeClearsIt()
+    {
+        var customers = new FakeCustomerRepository();
+        var target = CompleteCustomer();
+        customers.Known.Add(target);
+        target.Update(
+            target.Name, null, new CustomerIdentification { Type = IdentificationType.Nit, Number = "900123456" }, PersonType.Juridica,
+            new CustomerContactInfo { Phone = "3000000000", Email = "v@verde.co", Address = "Calle 1", Country = "CO", CityId = CityId },
+            new CustomerCommercialInfo { ClassificationId = Classification.Id }, null, Now, new PlusNormalizer());
+        Assert.Equal(PersonType.Juridica, target.PersonType);
+
+        try
+        {
+            await NewUpdate(customers, new UnitOfWork()).HandleAsync(UpdateCommand(target), TestContext.Current.CancellationToken);
+        }
+        catch (NotSupportedException)
+        {
+            // Posterior al SaveChanges.
+        }
+
+        Assert.Null(target.PersonType);
+    }
+
+    [Fact]
+    public async Task AnUnknownPersonTypeIsAValidationError()
+    {
+        var command = CreateCommand() with { PersonType = "Empresa" };
+
+        var failure = await Assert.ThrowsAsync<FluentValidation.ValidationException>(() =>
+            NewCreate(new FakeCustomerRepository(), new UnitOfWork()).HandleAsync(command, TestContext.Current.CancellationToken));
+
+        Assert.Contains(failure.Errors, error => error.PropertyName == "PersonType");
+    }
 }

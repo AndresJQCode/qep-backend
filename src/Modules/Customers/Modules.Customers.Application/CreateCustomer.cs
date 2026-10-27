@@ -19,7 +19,8 @@ public sealed record CreateCustomerCommand(
     string? CityName,
     Guid? ClassificationId,
     bool WithRetention,
-    bool VatSurplus) : ICommand<CustomerDto>, ICustomerWriteCommand;
+    bool VatSurplus,
+    string? PersonType = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Las reglas viven en CustomerWriteRules y se incluyen, no se copian. Ver el hallazgo `D` alla.
 public sealed class CreateCustomerValidator : AbstractValidator<CreateCustomerCommand>
@@ -112,8 +113,7 @@ public sealed class CreateCustomerHandler(
                 },
             CustomerMapping.ToIdentification(
                 command.IdentificationType, command.IdentificationNumber),
-            // Task 2 lo conecta al request (spec 2026-10-26).
-            null,
+            PersonTypeParser.ParseOptional(command.PersonType),
             new CustomerContactInfo
             {
                 Phone = command.Phone,

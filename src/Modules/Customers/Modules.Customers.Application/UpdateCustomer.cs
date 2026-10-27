@@ -20,7 +20,8 @@ public sealed record UpdateCustomerCommand(
     string? CityName,
     Guid? ClassificationId,
     bool WithRetention,
-    bool VatSurplus) : ICommand<CustomerDto>, ICustomerWriteCommand;
+    bool VatSurplus,
+    string? PersonType = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Mismas reglas que el POST, por inclusion y no por copia. Ver CustomerWriteRules.
 public sealed class UpdateCustomerValidator : AbstractValidator<UpdateCustomerCommand>
@@ -111,8 +112,7 @@ public sealed class UpdateCustomerHandler(
                     },
                 CustomerMapping.ToIdentification(
                     command.IdentificationType, command.IdentificationNumber),
-                // Task 2 lo conecta al request (spec 2026-10-26).
-                null,
+                PersonTypeParser.ParseOptional(command.PersonType),
                 new CustomerContactInfo
                 {
                     Phone = command.Phone,
@@ -155,8 +155,8 @@ public sealed class UpdateCustomerHandler(
             command.BusinessName,
             CustomerMapping.ToIdentification(
                 command.IdentificationType, command.IdentificationNumber),
-            // Task 2 lo conecta al request (spec 2026-10-26).
-            null,
+            // El PUT reemplaza el recurso entero: sin personType, el tipo se borra (spec 2026-10-26).
+            PersonTypeParser.ParseOptional(command.PersonType),
             new CustomerContactInfo
             {
                 Phone = command.Phone,

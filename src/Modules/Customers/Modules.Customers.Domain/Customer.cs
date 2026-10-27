@@ -1110,8 +1110,8 @@ public sealed class Customer
     private static void EnsurePersonTypeMatches(
         PersonType? personType, IdentificationType identificationType, string country)
     {
-        if (personType != PersonType.Juridica
-            || identificationType == IdentificationType.Nit
+        if (personType != Domain.PersonType.Juridica
+            || identificationType == Domain.IdentificationType.Nit
             || !string.Equals(country, ColombiaCountryCode, StringComparison.OrdinalIgnoreCase))
         {
             return;
