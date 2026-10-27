@@ -40,4 +40,26 @@ public sealed class HttpBlockCallLogTests
             await ScalarAsync<string>(connectionString, $"SELECT outcome FROM automations.http_calls WHERE run_id = '{runId}'"));
         Assert.Equal(512, await ScalarAsync<int>(connectionString, $"SELECT length(path) FROM automations.http_calls WHERE run_id = '{runId}'"));
     }
+
+    /// <summary>Spec 2026-10-25 D-E3: <c>step_number</c> y <c>response_bytes</c> llegan a la fila.</summary>
+    [Fact]
+    public async Task TheColumnsArePersisted()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var runId = Guid.CreateVersion7();
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IHttpCallLog>().RecordAsync(
+                new HttpCallEntry(
+                    Guid.CreateVersion7(), runId, null, "http1", Guid.CreateVersion7(), "GET", "/customers", 200, 42,
+                    HttpCallOutcomes.Ok, null, DateTimeOffset.UtcNow, StepNumber: 7, ResponseBytes: 321),
+                Ct);
+        }
+
+        var connectionString = database.GetConnectionString();
+        Assert.Equal(7, await ScalarAsync<int>(connectionString, $"SELECT step_number FROM automations.http_calls WHERE run_id = '{runId}'"));
+        Assert.Equal(321, await ScalarAsync<int>(connectionString, $"SELECT response_bytes FROM automations.http_calls WHERE run_id = '{runId}'"));
+    }
 }
