@@ -42,6 +42,7 @@ public sealed class OrdersExportProcessorTests
     {
         Name = name,
         IdentificationNumber = "901555444-1",
+        IdentificationType = PartyIdentificationType.Nit,
         Phone = "6015550000",
         Email = "facturas@ejemplo.co",
         Address = "Cra 7 # 1-2",

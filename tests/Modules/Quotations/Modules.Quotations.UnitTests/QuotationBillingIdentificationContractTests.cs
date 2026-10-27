@@ -36,7 +36,7 @@ public sealed class QuotationBillingIdentificationContractTests
             QuotationId.New(), Guid.CreateVersion7(), "QUO-2026-0001", Guid.CreateVersion7(),
             new MemberId(Guid.CreateVersion7()), new DateOnly(2026, 10, 30), null, null,
             new QuotationParties(
-                new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" },
+                new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050", IdentificationType = PartyIdentificationType.Nit },
                 Shipping: null),
             null, "COP", false, false, new MemberId(Guid.CreateVersion7()), DateTimeOffset.UtcNow);
 

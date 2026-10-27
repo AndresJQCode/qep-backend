@@ -481,7 +481,7 @@ public sealed class Order
 
         if (Billing is { } named
             && !string.IsNullOrWhiteSpace(named.Name)
-            && string.IsNullOrWhiteSpace(named.IdentificationNumber))
+            && (string.IsNullOrWhiteSpace(named.IdentificationNumber) || named.IdentificationType is null))
         {
             throw new QuotationsDomainException(
                 "order.billing.identification_required",

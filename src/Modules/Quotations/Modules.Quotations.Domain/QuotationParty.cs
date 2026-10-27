@@ -50,6 +50,12 @@ public sealed class QuotationParty
     /// pedido (<see cref="Quotation.EnsureConvertibleToOrder"/>).</summary>
     public string? IdentificationNumber { get; private set; }
 
+    /// <summary>Natural o jurídica; siempre null en la parte de entrega (spec 2026-10-26).</summary>
+    public PartyPersonType? PersonType { get; private set; }
+
+    /// <summary>Tipo del <see cref="IdentificationNumber"/>; siempre null en la parte de entrega.</summary>
+    public PartyIdentificationType? IdentificationType { get; private set; }
+
     public string? Phone { get; private set; }
 
     public string? Email { get; private set; }
@@ -92,6 +98,8 @@ public sealed class QuotationParty
     {
         Name = Name,
         IdentificationNumber = IdentificationNumber,
+        PersonType = PersonType,
+        IdentificationType = IdentificationType,
         Phone = Phone,
         Email = Email,
         Address = Address,
@@ -103,9 +111,11 @@ public sealed class QuotationParty
     {
         var normalized = (Role == QuotationPartyRole.Billing
             ? details
-            : details with { IdentificationNumber = null }).Normalized();
+            : details with { IdentificationNumber = null, PersonType = null, IdentificationType = null }).Normalized();
         Name = normalized.Name;
         IdentificationNumber = normalized.IdentificationNumber;
+        PersonType = normalized.PersonType;
+        IdentificationType = normalized.IdentificationType;
         Phone = normalized.Phone;
         Email = normalized.Email;
         Address = normalized.Address;
