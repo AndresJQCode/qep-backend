@@ -25,7 +25,7 @@ public static class FlowEngine
 
         return input switch
         {
-            EngineInput.Start => new Walk(flow, state, now).Go(flow.Start.FirstNodeId, StartNodeId),
+            EngineInput.Start => new Walk(flow, state, now).Go(flow.Start.FirstNodeId, StartNodeId, FlowOutputs.Next),
             EngineInput.HttpResult result => OnHttpResult(flow, state, result, now),
             EngineInput.BusinessHours hours => OnBusinessHours(flow, state, hours, now),
             EngineInput.DataConsent consent => OnDataConsent(flow, state, consent, now),
@@ -179,6 +179,11 @@ public static class FlowEngine
         private readonly HashSet<string> entered = new(StringComparer.Ordinal);
         private readonly List<Effect> effects = [];
         private readonly List<TraceEntry> trace;
+        private readonly List<StepRecord> records = [];
+        private readonly List<StepWrite> pendingWrites = [];
+        private readonly List<int> pendingSends = [];
+        private readonly int initialStep;
+        private readonly string? initialNodeId;
         private readonly string? firstNodeId;
         private readonly DateTimeOffset now;
         private RunVariables variables;
@@ -186,6 +191,10 @@ public static class FlowEngine
         private string? currentNodeId;
         private int stepNumber;
         private int attempts;
+
+        // Plan D-P2: la arista por la que se entró al bloque que se está anotando; Enter la fija y Ask y el reenvío no tienen.
+        private string? originNodeId;
+        private string? originOutput;
 
         // D-6: la pregunta de Política de datos que espera respuesta. Sólo Ask la pone; salir, reiniciar o entrar en un bloque la borra.
         private ConsentPrompt? consentPrompt;
@@ -202,6 +211,8 @@ public static class FlowEngine
             variables = state.Variables.Clone();
             currentNodeId = state.CurrentNodeId;
             stepNumber = state.StepNumber;
+            initialStep = state.StepNumber;
+            initialNodeId = state.CurrentNodeId;
             attempts = state.Attempts;
             consentPrompt = state.ConsentPrompt;
             this.now = now;
@@ -212,6 +223,7 @@ public static class FlowEngine
             foreach (var (name, value) in mapped.Snapshot())
             {
                 variables.Set(name, value);
+                pendingWrites.Add(new StepWrite(name, value?.DeepClone()));
             }
         }
 
@@ -230,6 +242,7 @@ public static class FlowEngine
             if (!string.IsNullOrWhiteSpace(name) && value is not null)
             {
                 variables.Set(name, value);
+                pendingWrites.Add(new StepWrite(name, value.DeepClone()));
             }
         }
 
@@ -302,22 +315,22 @@ public static class FlowEngine
             variables = variables.FixedOnly();
             attempts = 0;
             consentPrompt = null;
-            Record(node, TraceOutcomes.Restart);
+            Record(node, TraceOutcomes.Restart, reset: true);
             entered.Clear();
-            return Go(firstNodeId, StartNodeId);
+            return Go(firstNodeId, StartNodeId, FlowOutputs.Next);
         }
 
         /// <summary>Reenvía el mensaje del bloque que espera entrando otra vez por <see cref="Enter"/> (suma StepNumber, ruling P2-R5) y sin
         /// pasar por <see cref="Go"/>, que pondría los intentos en cero. Una Lista que al reentrar sale sola (<c>tooMany</c>) sigue desde ahí.</summary>
         private StepResult Resend(FlowNode node) =>
-            Enter(node) is { } output ? Go(node.Outputs.GetValueOrDefault(output), node.Id) : Result();
+            Enter(node, null, null) is { } output ? Go(node.Outputs.GetValueOrDefault(output), node.Id, output) : Result();
 
         /// <summary>Sale de <paramref name="node"/> (donde la corrida estaba parada) por <paramref name="output"/> y sigue el recorrido.</summary>
         public StepResult Leave(FlowNode node, string output)
         {
             consentPrompt = null;
             Record(node, output);
-            return Go(node.Outputs.GetValueOrDefault(output), node.Id);
+            return Go(node.Outputs.GetValueOrDefault(output), node.Id, output);
         }
 
         /// <summary>Spec 2026-10-26 D-2: el cliente no tiene una aceptación vigente; se le pregunta con los botones fijos y se recuerda el
@@ -330,7 +343,9 @@ public static class FlowEngine
             stepNumber++;
             var text = Text(node.Text);
             consentPrompt = new ConsentPrompt(node.Id, text, null);
-            effects.Add(new Effect.SendInteractive(node.Id, new InteractiveMessage.Buttons(
+            originNodeId = null;
+            originOutput = null;
+            AddSend(new Effect.SendInteractive(node.Id, new InteractiveMessage.Buttons(
                 text, [.. DataConsentButtons.All.Select(button => (button.Id, button.Label))])));
             _ = Wait(node);
             return Result();
@@ -349,7 +364,7 @@ public static class FlowEngine
         }
 
         /// <summary>Entra en <paramref name="targetId"/> y en los que siguen hasta un bloque que espera o un final.</summary>
-        public StepResult Go(string? targetId, string fromNodeId)
+        public StepResult Go(string? targetId, string fromNodeId, string fromOutput)
         {
             while (true)
             {
@@ -384,13 +399,14 @@ public static class FlowEngine
 
                 // Los intentos son del bloque que espera: un bloque nuevo empieza de cero (D-M7).
                 attempts = 0;
-                if (Enter(node) is not { } output)
+                if (Enter(node, fromNodeId, fromOutput) is not { } output)
                 {
                     return Result();
                 }
 
                 targetId = node.Outputs.GetValueOrDefault(output);
                 fromNodeId = node.Id;
+                fromOutput = output;
             }
         }
 
@@ -400,9 +416,11 @@ public static class FlowEngine
         /// <see cref="Ask"/> después de verificar la aceptación. Reenviarlo tras una respuesta inválida (tarea 3) es volver a entrar, así que
         /// también suma <see cref="RunState.StepNumber"/>, como <see cref="Ask"/> (ruling P2-R5).
         /// </summary>
-        private string? Enter(FlowNode node)
+        private string? Enter(FlowNode node, string? fromNodeId, string? fromOutput)
         {
             stepNumber++;
+            originNodeId = fromNodeId;
+            originOutput = fromOutput;
             currentNodeId = node.Id;
             consentPrompt = null;
             switch (node)
@@ -438,11 +456,11 @@ public static class FlowEngine
                         return Took(node, FlowOutputs.TooMany);
                     }
 
-                    effects.Add(new Effect.SendInteractive(node.Id, new InteractiveMessage.List(
+                    AddSend(new Effect.SendInteractive(node.Id, new InteractiveMessage.List(
                         Text(list.Text), list.ButtonLabel, [.. rows.Select(row => (row.Id, row.Title, row.Description))])));
                     return Wait(node);
                 case OpenQuestionNode or ButtonsNode or AttachmentNode:
-                    effects.Add(Prompt(node));
+                    AddSend(Prompt(node));
                     return Wait(node);
                 default:
                     throw new ArgumentOutOfRangeException(nameof(node), node.Kind, "Bloque sin semántica en el motor.");
@@ -468,9 +486,24 @@ public static class FlowEngine
             return null;
         }
 
-        private void Record(FlowNode node, string outcome)
+        /// <summary>Un envío al cliente: anota su posición en los efectos para el registro del bloque que lo produjo.</summary>
+        private void AddSend(Effect effect)
+        {
+            pendingSends.Add(effects.Count);
+            effects.Add(effect);
+        }
+
+        private void Record(FlowNode node, string outcome, bool reset = false)
         {
             trace.Add(new TraceEntry(now, node.Id, node.Kind, outcome));
+
+            // Plan D-P1: salir del bloque en que la corrida estaba parada ocurre antes de entrar a ningún otro, así que aún no subió el paso.
+            var exit = stepNumber == initialStep && initialNodeId is not null;
+            records.Add(new StepRecord(
+                stepNumber, exit ? StepSeqs.Exit : StepSeqs.Entry, node.Id, node.Kind, outcome, [.. pendingWrites], [.. pendingSends], reset,
+                exit ? null : originNodeId, exit ? null : originOutput));
+            pendingWrites.Clear();
+            pendingSends.Clear();
 
             // while y no if: un trace guardado con más de 200 entradas (de antes del tope) también se recorta.
             while (trace.Count > RunState.TraceMax)
@@ -480,7 +513,10 @@ public static class FlowEngine
         }
 
         private StepResult Result() =>
-            new(new RunState(status, currentNodeId, stepNumber, attempts, variables, [.. trace], consentPrompt), [.. effects]);
+            new(new RunState(status, currentNodeId, stepNumber, attempts, variables, [.. trace], consentPrompt), [.. effects])
+            {
+                Steps = [.. records],
+            };
 
         private string Text(string template) => TemplateText.Interpolate(template, variables);
 
@@ -490,7 +526,7 @@ public static class FlowEngine
         {
             if (message.UrlButton is { } button)
             {
-                effects.Add(new Effect.SendInteractive(
+                AddSend(new Effect.SendInteractive(
                     message.Id, new InteractiveMessage.CtaUrl(Text(message.Text), Text(button.Label), Text(button.Url))));
             }
             else
@@ -510,7 +546,7 @@ public static class FlowEngine
             var text = Text(template);
             if (!string.IsNullOrWhiteSpace(text))
             {
-                effects.Add(new Effect.SendText(nodeId, text));
+                AddSend(new Effect.SendText(nodeId, text));
             }
         }
 
