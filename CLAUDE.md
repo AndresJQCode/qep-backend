@@ -613,6 +613,20 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **`run_units` se escribe en el mismo `SaveChanges` de la unidad y vive 3 días (`RunDetailRetentionDays`); armarla nunca lanza
   (`RunUnitWriter`).** Un camino nuevo que cierre una corrida fuera del motor llama `WriteClosed`, o la vista no explica por qué
   terminó.
+- **ImageSharp sigue en 3.1.12 con sus avisos suprimidos, y subirla exige una licencia de Six Labors** (2026-10-07,
+  ampliado el 2026-10-27 con GHSA-v76p-62qx-wwq2). Un `NU1903` nuevo de `SixLabors.ImageSharp` rompe el restore, el build y
+  el `docker build` por `TreatWarningsAsErrors`, y no es culpa de la rama en curso. Las versiones corregidas (3.2.0 y 4.x)
+  traen en `build/SixLabors.ImageSharp.targets` el target `SixLabors_ValidateLicense`, que corre antes de `CoreCompile` y en
+  `Release` —el Docker— falla sin `SixLaborsLicenseKey` ni `sixlabors.lic`; en `Debug` sólo avisa, así que en local no se ve.
+  Mientras no haya clave, cada aviso nuevo se analiza: se suprime en `Directory.Build.props` **sólo** si su vector queda fuera
+  de las `Configuration` restringidas (`ImageSharpConfiguration` de Storage: JPEG, PNG, WebP; `ImageSharpMessagingImageCompressor`:
+  JPEG, PNG) y se documenta ahí el porqué. Un aviso en el decodificador de JPEG, PNG o WebP no se suprime: obliga al upgrade.
+  **Para el upgrade:** pedir la licencia Community (gratis por debajo de USD 1M de facturación anual; la condición la confirma
+  el owner) en https://licensing.sixlabors.com/; guardar la clave como secreto en `Backend-prod` y pasarla al `docker build`
+  como build-arg hacia la propiedad `SixLaborsLicenseKey`, nunca commiteada (un `sixlabors.lic` en el repo es la clave en
+  claro); subir la versión en `Directory.Packages.props` con `dotnet restore --force-evaluate` de los lock files; quitar los
+  `NuGetAuditSuppress` y su comentario; y verificar con un build `Release` local con la clave puesta. La 4.x es salto de mayor:
+  revisar la API en Storage y en `ImageSharpMessagingImageCompressor`.
 
 ## Verificación
 
