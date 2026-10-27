@@ -610,6 +610,9 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   no publica nada ni deshace lo ya corregido, y por eso `IShopifyCitySynonymLookup` devuelve también los borrados: filtrarlos
   haría que el trabajo no supiera por qué saltó. Lo amarran `CitySynonymEndToEndTests.DeletingWhileJobsArePendingSkipsThem` y
   `ShopifyCityCorrectionProcessorTests`.
+- **`run_units` se escribe en el mismo `SaveChanges` de la unidad y vive 3 días (`RunDetailRetentionDays`); armarla nunca lanza
+  (`RunUnitWriter`).** Un camino nuevo que cierre una corrida fuera del motor llama `WriteClosed`, o la vista no explica por qué
+  terminó.
 
 ## Verificación
 

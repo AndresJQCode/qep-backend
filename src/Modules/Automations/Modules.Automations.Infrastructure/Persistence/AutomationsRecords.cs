@@ -32,4 +32,39 @@ internal sealed class HttpCallRecord
     public string? ErrorCode { get; set; }
 
     public DateTimeOffset CalledAt { get; set; }
+
+    /// <summary>Spec 2026-10-25 D-E3: la visita del bloque (el <c>StepNumber</c> en que corrió). NULL en las filas de antes.</summary>
+    public int? StepNumber { get; set; }
+
+    /// <summary>Spec 2026-10-25 §6.1: bytes del cuerpo leído bajo el tope. NULL si no se leyó (timeout, red, demasiado grande).</summary>
+    public int? ResponseBytes { get; set; }
+}
+
+/// <summary>Spec 2026-10-25 D-E5: una unidad del procesador (un entrante, un recorrido, un guardado). Se escribe en la misma
+/// transacción que la corrida y se purga a los 3 días (D-E7) sin tocar <c>conversation_runs</c>.</summary>
+internal sealed class RunUnitRecord
+{
+    public long Id { get; set; }
+
+    public Guid TenantId { get; set; }
+
+    public Guid RunId { get; set; }
+
+    public int BaseStep { get; set; }
+
+    public string Trigger { get; set; } = string.Empty;
+
+    public Guid? InboundMessageId { get; set; }
+
+    public string Outcome { get; set; } = string.Empty;
+
+    public DateTimeOffset StartedAt { get; set; }
+
+    public DateTimeOffset EndedAt { get; set; }
+
+    public string StepsJson { get; set; } = "[]";
+
+    public string? ClosedStatus { get; set; }
+
+    public string? ClosedReason { get; set; }
 }

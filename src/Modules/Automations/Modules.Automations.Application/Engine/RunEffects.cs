@@ -8,8 +8,9 @@ using Modules.Automations.Domain.Flow;
 namespace Modules.Automations.Application.Engine;
 
 /// <summary>Una corrida dentro de una unidad del procesador. <see cref="BaseStepNumber"/> es el <c>StepNumber</c> guardado al empezar la
-/// unidad (0 en una corrida nueva): la base de los clientIds de P2-R5.</summary>
-public sealed record RunUnit(ConversationRun Run, FlowDefinition Flow, EngineSettings Settings, int BaseStepNumber);
+/// unidad (0 en una corrida nueva): la base de los clientIds de P2-R5. <see cref="Log"/> (spec 2026-10-25 D-E5) junta los pasos de la unidad
+/// para su fila de <c>run_units</c>; sin él no se registra nada.</summary>
+public sealed record RunUnit(ConversationRun Run, FlowDefinition Flow, EngineSettings Settings, int BaseStepNumber, RunUnitLog? Log = null);
 
 /// <summary>
 /// Spec 2026-10-21 §5.2 paso 5, D-M5 y D-M14: el bucle de efectos que <see cref="RunProcessor"/> delega. Ejecuta en orden lo que pide
@@ -66,15 +67,19 @@ public sealed partial class RunEffects(
             // es consecuencia de la entrada que lo arrancó. Si fue un HTTP fallido, la causa lo nombra.
             var http = FailedHttpOf(unit.Flow, next);
             var step = FlowEngine.Step(unit.Flow, unit.Settings, state, next, now);
+            unit.Log?.Record(step, next);
             state = step.State;
             next = null;
-            foreach (var effect in step.Effects)
+            for (var i = 0; i < step.Effects.Count; i++)
             {
+                var effect = step.Effects[i];
                 switch (effect)
                 {
                     case Effect.SendText or Effect.SendInteractive:
                         var clientId = DeterministicClientId.For(run.Id, unit.BaseStepNumber, sends++);
                         var outcome = await SendAsync(run, effect, clientId, cancellationToken);
+                        // D-E5: el clientId que Mensajería recibió, también si no salió (la fila cuenta lo que se intentó).
+                        unit.Log?.Sent(i, clientId, null);
                         if (outcome is not BotSendOutcome.Sent sent)
                         {
                             await StopAsync(run, state, outcome, effect, TitleOf(unit.Flow, effect.NodeId), http, now, cancellationToken);
@@ -114,7 +119,7 @@ public sealed partial class RunEffects(
                             state = await RefreshAttachmentsAsync(run, state, attachments, cancellationToken);
                         }
 
-                        next = await ExternalAsync(run, effect, state.Variables, cancellationToken);
+                        next = await ExternalAsync(run, effect, state.Variables, state.StepNumber, cancellationToken);
                         break;
                     case Effect.RecordDataConsent record:
                         // D-5: la respuesta se registra antes de seguir con el bloque siguiente; sin registro, la corrida no sigue.
@@ -188,9 +193,9 @@ public sealed partial class RunEffects(
 
         return unit.Flow.Nodes.FirstOrDefault(node => node.Id == unit.Run.CurrentNodeId) switch
         {
-            HttpNode http => await ExternalAsync(unit.Run, new Effect.CallHttp(http.Id, http), unit.Run.ToState().Variables, cancellationToken),
-            BusinessHoursNode hours => await ExternalAsync(unit.Run, new Effect.CheckBusinessHours(hours.Id), unit.Run.ToState().Variables, cancellationToken),
-            DataConsentNode consent => await ExternalAsync(unit.Run, new Effect.CheckDataConsent(consent.Id), unit.Run.ToState().Variables, cancellationToken),
+            HttpNode http => await ExternalAsync(unit.Run, new Effect.CallHttp(http.Id, http), unit.Run.ToState().Variables, unit.Run.StepNumber, cancellationToken),
+            BusinessHoursNode hours => await ExternalAsync(unit.Run, new Effect.CheckBusinessHours(hours.Id), unit.Run.ToState().Variables, unit.Run.StepNumber, cancellationToken),
+            DataConsentNode consent => await ExternalAsync(unit.Run, new Effect.CheckDataConsent(consent.Id), unit.Run.ToState().Variables, unit.Run.StepNumber, cancellationToken),
             _ => null,
         };
     }
@@ -305,12 +310,13 @@ public sealed partial class RunEffects(
         }
     }
 
-    private async Task<EngineInput> ExternalAsync(ConversationRun run, Effect effect, RunVariables variables, CancellationToken cancellationToken) =>
+    private async Task<EngineInput> ExternalAsync(
+        ConversationRun run, Effect effect, RunVariables variables, int stepNumber, CancellationToken cancellationToken) =>
         effect switch
         {
             Effect.CheckBusinessHours hours => new EngineInput.BusinessHours(
                 hours.NodeId, await businessHours.IsOpenAsync(run.TenantId, run.ConnectionId, cancellationToken)),
-            Effect.CallHttp http => await CallHttpAsync(run, http, variables, cancellationToken),
+            Effect.CallHttp http => await CallHttpAsync(run, http, variables, stepNumber, cancellationToken),
             Effect.CheckDataConsent consent => await CheckDataConsentAsync(run, consent, cancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(effect), effect.GetType().Name, "No es un efecto externo."),
         };
@@ -320,9 +326,10 @@ public sealed partial class RunEffects(
     /// esta unidad se deshaga) y devuelve cualquier fallo de la API como resultado, nunca como excepción (P2-R33a): un throw desharía la
     /// unidad y el reintento de la fila volvería a llamar a la API. El motor sólo mezcla <see cref="HttpCallResult.Mapped"/> si salió bien.
     /// </summary>
-    private async Task<EngineInput> CallHttpAsync(ConversationRun run, Effect.CallHttp http, RunVariables variables, CancellationToken cancellationToken)
+    private async Task<EngineInput> CallHttpAsync(
+        ConversationRun run, Effect.CallHttp http, RunVariables variables, int stepNumber, CancellationToken cancellationToken)
     {
-        var result = await httpBlocks.ExecuteAsync(new HttpCallContext(run.TenantId, run.Id, null, http.NodeId), http.Node, variables, cancellationToken);
+        var result = await httpBlocks.ExecuteAsync(new HttpCallContext(run.TenantId, run.Id, null, http.NodeId, stepNumber), http.Node, variables, cancellationToken);
         // Spec 2026-10-24 §4.2: el outcome y el nombre de la conexión no los lee el motor; viajan para explicar un traspaso.
         return new EngineInput.HttpResult(http.NodeId, result.Ok, result.Status, result.Mapped, result.ErrorCode, result.Outcome, result.ConnectionName);
     }

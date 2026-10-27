@@ -78,4 +78,9 @@ public static class EndReasons
     public const string TargetMissing = "target_missing";
 }
 
-public sealed record StepResult(RunState State, IReadOnlyList<Effect> Effects);
+public sealed record StepResult(RunState State, IReadOnlyList<Effect> Effects)
+{
+    /// <summary>Spec 2026-10-25 D-E5: un registro por bloque visitado en este paso. Es propiedad y no parámetro para que la igualdad de
+    /// los resultados que comparan las pruebas no cambie.</summary>
+    public IReadOnlyList<StepRecord> Steps { get; init; } = [];
+}
