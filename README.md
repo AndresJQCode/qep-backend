@@ -163,6 +163,44 @@ variable estándar `OTEL_EXPORTER_OTLP_ENDPOINT` (leída directamente por el
 exportador OTLP), junto con `OTEL_SERVICE_NAME` y, opcionalmente,
 `OTEL_RESOURCE_ATTRIBUTES` para `service.namespace`/`service.instance.id`.
 
+### R2: regla de ciclo de vida de las respuestas HTTP de chatbots
+
+**Configuración obligatoria fuera del código, antes de desplegar RC-B1b** (captura de respuestas del bloque HTTP,
+spec [`2026-10-25-chatbot-reproduccion-de-corridas-design.md`](docs/superpowers/specs/2026-10-25-chatbot-reproduccion-de-corridas-design.md)
+§ «Ciclo de vida de R2»). El cuerpo de cada respuesta se guarda en R2 bajo
+`automations/http-responses/{tenantId}/{responseId}.json.gz` y **nada en el código lo borra**: la regla de ciclo de
+vida es la única retención. Sin ella los cuerpos se acumulan sin límite y el backend responde
+`automations.http_response.expired` a los 3 días aunque el objeto siga ahí.
+
+**Va sólo en el bucket privado**, el de `Storage:R2:Bucket` (`STORAGE_R2_BUCKET` del grupo `Backend-prod`,
+`k8s/prod-configMap.yaml:77`). El bucket público (`Storage:R2:PublicBucket`) no recibe nunca estos cuerpos (traen datos
+de clientes y se sirven sólo por `GET …/response`, con tenant y permiso) y no lleva esta regla. Se repite en cada
+ambiente que tenga su propio bucket privado y despliegue RC-B1b.
+
+El bucket privado guarda también los adjuntos de Mensajería, el staging y los comprobantes de pago: **una regla sin
+prefijo los borraría a los 3 días**. El prefijo lleva la barra final.
+
+Panel de Cloudflare: R2 → el bucket privado → Settings → Object lifecycle rules → Add rule.
+
+| Campo | Valor |
+| --- | --- |
+| Nombre | `automations-http-responses-3d` |
+| Prefijo | `automations/http-responses/` |
+| Acción | Delete objects, 3 días después de creado |
+
+Nada más marcado. Alternativa por CLI, en PowerShell (wrangler pide su propio login; no se usa ninguna credencial de
+`qep-backend-secret`). Confirma la sintaxis con `--help`, porque wrangler la cambió entre versiones:
+
+```powershell
+npx wrangler r2 bucket lifecycle add --help
+npx wrangler r2 bucket lifecycle add <bucket-privado> automations-http-responses-3d automations/http-responses/ --expire-days 3
+npx wrangler r2 bucket lifecycle list <bucket-privado>
+```
+
+`list` tiene que mostrar una sola regla nueva, con ese prefijo. La ventana de 3 días es fija en el código
+(plan D-P8, `HttpResponseObjects.Window`, que llega con RC-B1b): si la regla cambia de días, el backend y el bucket
+dejan de coincidir.
+
 ### Secretos de usuario
 
 Las credenciales de proveedores externos son **secretos por ambiente**: nunca se
