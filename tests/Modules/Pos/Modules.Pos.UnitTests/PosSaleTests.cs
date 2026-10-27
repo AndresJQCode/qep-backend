@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Pricing;
 using System.Globalization;
 using Modules.Pos.Domain;
 using static Modules.Pos.UnitTests.PosFixtures;
@@ -18,6 +19,23 @@ public sealed class PosSaleTests
         var sale = Sale(session);
 
         Assert.Equal("USD", sale.Currency);
+    }
+
+    // Spec 2026-10-27: en dólares, con la regla (2, Up), el unitario descontado sube al centavo y la línea sale de ahí.
+    [Fact]
+    public void ASaleInDollarsRoundsTheUnitUp()
+    {
+        var rule = new PriceRounding(2, PriceRoundingMode.Up);
+        var item = Guid.CreateVersion7();
+
+        var sale = PosSale.Create(
+            PosSaleId.New(), Fingerprint, OpenSession(currency: "USD"),
+            [new PosSaleLineInput(item, item, "KIT-1", "Kit", 10m, 13.19m, 15m, 0)],
+            [Card(112.20m)], Now, rounding: rule);
+
+        Assert.Equal(112.20m, sale.Total);
+        Assert.Equal(19.70m, sale.DiscountAmount);
+        Assert.Equal(rule, sale.PriceRounding);
     }
 
     // Fix 2026-10-14: POS cobra igual que la cotización en COP — el unitario descontado en pesos

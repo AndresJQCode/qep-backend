@@ -58,7 +58,7 @@ public sealed class PosSaleLine
     /// <summary>Derivado y no persistido, como el precio con descuento de Quotations.</summary>
     public decimal LineTotal => Subtotal + TaxAmount;
 
-    internal static PosSaleLine Create(PosSaleId saleId, int position, PosSaleLineInput input, string currency)
+    internal static PosSaleLine Create(PosSaleId saleId, int position, PosSaleLineInput input, PriceRounding rounding)
     {
         if (input.Quantity <= 0 || input.Quantity > PosLimits.MaxQuantity || !PosLimits.HasValidScale(input.Quantity))
         {
@@ -79,9 +79,9 @@ public sealed class PosSaleLine
         ArgumentOutOfRangeException.ThrowIfNegative(input.TaxPercentage);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(input.TaxPercentage, 100);
 
-        // La moneda de la caja: en COP se cobra igual que la cotización, unitario en pesos enteros.
+        // La regla con que se cobra esta venta: la misma fórmula de la cotización (spec 2026-10-27 §1).
         var amounts = VatIncludedLine.Compute(
-            input.Quantity, input.UnitPrice, input.DiscountPercentage, input.TaxPercentage, PriceRounding.LegacyFor(currency));
+            input.Quantity, input.UnitPrice, input.DiscountPercentage, input.TaxPercentage, rounding);
 
         return new PosSaleLine
         {
@@ -93,7 +93,7 @@ public sealed class PosSaleLine
             ProductCode = input.ProductCode,
             ProductName = SnapshotText.Fit(input.ProductName, ProductNameMaxLength),
             Quantity = input.Quantity,
-            UnitPrice = VatIncludedLine.ChargedListPrice(input.UnitPrice, PriceRounding.LegacyFor(currency)),
+            UnitPrice = VatIncludedLine.ChargedListPrice(input.UnitPrice, rounding),
             DiscountPercentage = input.DiscountPercentage,
             TaxPercentage = input.TaxPercentage,
             DiscountAmount = amounts.DiscountAmount,

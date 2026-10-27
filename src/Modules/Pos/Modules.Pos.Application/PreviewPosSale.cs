@@ -34,6 +34,7 @@ public sealed class PreviewPosSaleHandler(
     ICashSessionRepository sessions,
     IMembershipDirectory membershipDirectory,
     ITenantDefaultCurrency tenantDefaultCurrency,
+    ITenantPriceRounding priceRounding,
     IExecutionContext executionContext,
     IValidator<PreviewPosSaleCommand> validator)
     : ICommandHandler<PreviewPosSaleCommand, PosPreviewResponse>
@@ -57,7 +58,9 @@ public sealed class PreviewPosSaleHandler(
 
         var currency = await PosSellingCurrency.ResolveAsync(
             sessions, membershipDirectory, tenantDefaultCurrency, executionContext, command.TenantId, cancellationToken);
-        var lines = command.Lines.Select(line => ToLine(line, found, currency)).ToArray();
+        // La regla se lee en cada vista previa: la que cobra la venta es la vigente al cobrar (spec 2026-10-27 D8).
+        var rounding = await priceRounding.GetAsync(command.TenantId, currency, cancellationToken);
+        var lines = command.Lines.Select(line => ToLine(line, found, currency, rounding)).ToArray();
         var sellable = lines.Where(line => line.Sellable).ToArray();
         var subtotal = VatIncludedLine.Round(sellable.Sum(line => line.Subtotal));
         var tax = VatIncludedLine.Round(sellable.Sum(line => line.TaxAmount));
@@ -73,7 +76,8 @@ public sealed class PreviewPosSaleHandler(
     }
 
     private static PosPreviewLineResponse ToLine(
-        PosPreviewLineRequest line, IReadOnlyDictionary<Guid, PosProductRef> found, string currency)
+        PosPreviewLineRequest line, IReadOnlyDictionary<Guid, PosProductRef> found, string currency,
+        PriceRounding rounding)
     {
         if (!found.TryGetValue(line.VariantId, out var product))
         {
@@ -92,10 +96,10 @@ public sealed class PreviewPosSaleHandler(
         }
 
         var amounts = VatIncludedLine.Compute(
-            line.Quantity, price!.Value, line.DiscountPercentage, product.TaxPercentage, PriceRounding.LegacyFor(currency));
+            line.Quantity, price!.Value, line.DiscountPercentage, product.TaxPercentage, rounding);
         return new PosPreviewLineResponse(
             line.VariantId, product.ProductId, product.Code, product.Name, line.Quantity,
-            VatIncludedLine.ChargedListPrice(price.Value, PriceRounding.LegacyFor(currency)), product.TaxPercentage,
+            VatIncludedLine.ChargedListPrice(price.Value, rounding), product.TaxPercentage,
             line.DiscountPercentage, amounts.DiscountAmount, amounts.TaxAmount, amounts.Subtotal, amounts.LineTotal,
             true, null);
     }

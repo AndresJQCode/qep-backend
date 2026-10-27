@@ -11,6 +11,11 @@ public sealed class PosSale
     private readonly List<PosSaleLine> _lines = [];
     private readonly List<PosPayment> _payments = [];
 
+    // La regla con que se cobró la venta (spec 2026-10-27 §4). Nulas en una venta anterior a la regla: se
+    // leen con la de siempre de su moneda. EF las materializa por el campo.
+    private int? _priceRoundingDecimals;
+    private PriceRoundingMode? _priceRoundingMode;
+
     private PosSale()
     {
         RequestFingerprint = string.Empty;
@@ -43,6 +48,14 @@ public sealed class PosSale
 
     /// <summary>Copiada de la caja, nunca leída en vivo: una caja no mezcla monedas.</summary>
     public string Currency { get; private set; } = "COP";
+
+    /// <summary>La regla de redondeo con la que se cobró esta venta. Cambiar la del tenant después no la
+    /// mueve. Con cualquiera de las dos columnas nula (una venta anterior a la regla) es la de siempre de
+    /// su moneda.</summary>
+    public PriceRounding PriceRounding =>
+        _priceRoundingDecimals is { } decimals && _priceRoundingMode is { } mode
+            ? new PriceRounding(decimals, mode)
+            : PriceRounding.LegacyFor(Currency);
 
     public IReadOnlyList<PosSaleLine> Lines => _lines;
 
@@ -79,7 +92,8 @@ public sealed class PosSale
         IReadOnlyList<PosSaleLineInput> lines,
         IReadOnlyList<PosPaymentInput> payments,
         DateTimeOffset at,
-        PosSaleCustomer? customer = null)
+        PosSaleCustomer? customer = null,
+        PriceRounding? rounding = null)
     {
         if (lines.Count == 0)
         {
@@ -91,7 +105,9 @@ public sealed class PosSale
             throw new PosDomainException("pos.sale.too_many_lines", "A sale cannot have more than 200 lines.");
         }
 
-        var builtLines = lines.Select((line, index) => PosSaleLine.Create(id, index + 1, line, session.Currency)).ToList();
+        // Null sólo en pruebas viejas: la de siempre de la moneda de la caja.
+        var rule = rounding ?? PriceRounding.LegacyFor(session.Currency);
+        var builtLines = lines.Select((line, index) => PosSaleLine.Create(id, index + 1, line, rule)).ToList();
 
         // Idéntico a Quotation.RecalculateTotals sin excedente ni retención.
         var subtotal = VatIncludedLine.Round(builtLines.Sum(line => line.Subtotal));
@@ -123,6 +139,8 @@ public sealed class PosSale
             Status = PosSaleStatus.Completed,
             CreatedAt = at,
         };
+        sale._priceRoundingDecimals = rule.Decimals;
+        sale._priceRoundingMode = rule.Mode;
         sale._lines.AddRange(builtLines);
         sale._payments.AddRange(builtPayments);
         return sale;

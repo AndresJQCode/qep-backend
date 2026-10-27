@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Pricing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Modules.Pos.Domain;
@@ -107,6 +108,16 @@ public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbCon
         sale.Property(value => value.CustomerIdentificationType).HasColumnName("customer_identification_type").HasMaxLength(10);
         sale.Property(value => value.CustomerIdentificationNumber).HasColumnName("customer_identification_number").HasMaxLength(32);
         sale.Property(value => value.Currency).HasColumnName("currency").HasMaxLength(3).IsRequired();
+        // La regla de redondeo con que se cobró la venta (spec 2026-10-27 §4): dos columnas nulas, que EF lee
+        // y escribe por el campo. Nulas = venta anterior a la regla. El modo viaja por nombre.
+        sale.Ignore(value => value.PriceRounding);
+        sale.Property<int?>("_priceRoundingDecimals")
+            .HasColumnName("price_rounding_decimals")
+            .HasColumnType("smallint");
+        sale.Property<PriceRoundingMode?>("_priceRoundingMode")
+            .HasColumnName("price_rounding_mode")
+            .HasConversion<string>()
+            .HasMaxLength(16);
         sale.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
         sale.Property(value => value.TaxAmount).HasColumnName("tax_amount").HasPrecision(14, 2);
         sale.Property(value => value.DiscountAmount).HasColumnName("discount_amount").HasPrecision(14, 2);
