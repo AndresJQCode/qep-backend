@@ -1,4 +1,4 @@
-﻿# `qep-backend` — reglas del repositorio
+# `qep-backend` — reglas del repositorio
 
 Monolito modular .NET 10. Este archivo es **prescriptivo**: reglas, precedentes y gotchas
 que **no** se deducen leyendo el código. Lo descriptivo —qué existe, cómo se corre, los
@@ -589,6 +589,31 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   publicado que lo tenga— y el `Down` de `AddCustomerDataConsents` borra la prueba legal: nunca se corre. El rollback es revertir el
   código y dejar la tabla.
 - **«Política de datos» tiene tres modos para «No acepto»** (spec 2026-10-26 repetir): `onReject` = `repeat` | `rejectedOutput` (default de todo bloque viejo) | `handoff`. `rejected` existe sólo con `rejectedOutput`: `OutputsOf` la omite y `FlowNormalizer` la quita. En `repeat`, el contador es `RunState.ConsentRejections` (columna `conversation_runs.consent_rejections`), no `Attempts` ni `ConsentPrompt`: vuelve a 0 en `Go`, `Leave` y `Restart`, nunca en `Resend`. En los dos modos sin `rejected`, todo camino que hoy saldría por ella (intentos agotados, cliente sin registrar) traspasa con `onRejectMemberId`, sin leer la regla de agotamiento del chatbot. Los modos son sólo hacia adelante: tras un rollback del backend, el motor viejo sigue la `rejected` ya quitada como `null` y termina con `EndRun(OutputUnconnected)` ante «No acepto» o el agotamiento, así que toda versión publicada en `repeat` o `handoff` hay que republicarla en `rejectedOutput`.
+- **El sinónimo de una ciudad casa después de los dos nombres, y confirmar uno igual a una ciudad real es 422** (spec 2026-10-26).
+  `CityRepository.MatchByNameAsync` compara el nombre, luego el oficial del DANE y sólo si ninguno casa busca el sinónimo vivo:
+  una fila de sinónimo con el texto de una ciudad real —sólo llega por SQL— nunca le gana. `resolve` e `impact` lo rechazan con
+  `geography.synonym.matches_city`. Si inviertes el orden, el sinónimo le quita el pedido a una ciudad legítima sin error. Lo
+  amarran `ARealCityNameWinsOverASynonymWithTheSameText` y `CityOperatorApiTests`.
+- **`CityCorrectionInsights` lee `quotations`, `customers`, `shopify`, `tenancy` e `identity` por nombre.** Es SQL crudo en
+  Bootstrapper que alimenta los impactos y los contadores de la consola de ciudades. Renombrar una columna de cualquiera de esas
+  tablas compila y deja respondiendo 500 (`42703`) a los dos `impact`, a `GET synonyms` y `GET unresolved/{id}`, y a `resolve`,
+  `PUT synonyms/{id}` y `retry` **después** de confirmar su escritura (la respuesta lee los contadores): el cambio queda hecho
+  aunque el cliente vea el 500. El recorrido (`POST backfill`) no lee este adaptador. Lo amarra `CityCorrectionInsightsTests`
+  (en el proyecto de Shopify, que es el que sabe armar pedidos, clientes y huellas reales): una tabla o columna nueva que lea el
+  adaptador entra ahí.
+- **El payload de `geography.city_synonym.*` es contrato con Shopify y vive literal en dos pruebas.** `GeographyEventPublisher`
+  lo escribe y `CitySynonymEventPayloads` lo lee por nombre: renombrar un campo compila, pasa las pruebas de cada lado por
+  separado y deja el mensaje marcado como procesado sin trabajos sembrados. Se cambia en los dos lados y en las dos pruebas con el
+  mismo literal, `GeographyEventPublisherTests` y `CitySynonymEventPayloadsTests`.
+- **Un trabajo de corrección de ciudad aplica la ciudad *actual* del sinónimo, y uno borrado salta lo pendiente.**
+  `ShopifyCityCorrectionProcessor` relee el sinónimo al procesar: si el operador lo corrigió entre el evento y el trabajo manda la
+  ciudad nueva, y si lo borró, el trabajo termina `Skipped` con `synonym_deleted` y el pedido queda como estaba. Por eso borrar
+  no publica nada ni deshace lo ya corregido, y por eso `IShopifyCitySynonymLookup` devuelve también los borrados: filtrarlos
+  haría que el trabajo no supiera por qué saltó. Lo amarran `CitySynonymEndToEndTests.DeletingWhileJobsArePendingSkipsThem` y
+  `ShopifyCityCorrectionProcessorTests`.
+- **`run_units` se escribe en el mismo `SaveChanges` de la unidad y vive 3 días (`RunDetailRetentionDays`); armarla nunca lanza
+  (`RunUnitWriter`).** Un camino nuevo que cierre una corrida fuera del motor llama `WriteClosed`, o la vista no explica por qué
+  terminó.
 
 ## Verificación
 

@@ -11,7 +11,7 @@ public sealed class AutomationsSchemaTests
     private static readonly string[] ExpectedTables =
     [
         "__ef_migrations_history", "chatbot_connections", "chatbot_templates", "chatbot_versions", "chatbots", "conversation_runs",
-        "http_calls", "simulations",
+        "http_calls", "run_units", "simulations",
     ];
 
     private static readonly string[] ExpectedChecks =
@@ -24,6 +24,7 @@ public sealed class AutomationsSchemaTests
     [
         "IX_chatbots_tenant_name", "IX_chatbot_connections_active", "IX_chatbot_templates_tenant_name", "IX_conversation_runs_live",
         "IX_conversation_runs_tenant_chatbot_started", "IX_http_calls_tenant_called",
+        "IX_run_units_run_inbound", "IX_run_units_tenant_run", "IX_run_units_started_at",
     ];
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -82,6 +83,27 @@ public sealed class AutomationsSchemaTests
 
         Assert.EndsWith("(tenant_id, conversation_id, started_at DESC)", latest, StringComparison.Ordinal);
         Assert.Contains("(updated_at) WHERE ((status)::text = 'Waiting'::text)", waiting, StringComparison.Ordinal);
+    }
+
+    // Spec 2026-10-25 §6.1: run_units con su unicidad por entrante (parcial) y el índice de lectura por corrida.
+    [Fact]
+    public async Task RunUnitsHasItsTwoIndexes()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+
+        var inbound = await ScalarAsync<string>(connectionString,
+            "SELECT indexdef FROM pg_indexes WHERE schemaname = 'automations' AND indexname = 'IX_run_units_run_inbound'");
+        var byRun = await ScalarAsync<string>(connectionString,
+            "SELECT indexdef FROM pg_indexes WHERE schemaname = 'automations' AND indexname = 'IX_run_units_tenant_run'");
+        var byStart = await ScalarAsync<string>(connectionString,
+            "SELECT indexdef FROM pg_indexes WHERE schemaname = 'automations' AND indexname = 'IX_run_units_started_at'");
+
+        Assert.Contains("UNIQUE", inbound, StringComparison.Ordinal);
+        Assert.Contains("(run_id, inbound_message_id) WHERE (inbound_message_id IS NOT NULL)", inbound, StringComparison.Ordinal);
+        Assert.EndsWith("(tenant_id, run_id, base_step)", byRun, StringComparison.Ordinal);
+        // La purga de 3 días filtra por started_at en cada barrido.
+        Assert.EndsWith("USING btree (started_at)", byStart, StringComparison.Ordinal);
     }
 
     // Spec 2026-10-25 D-2: la regla de agotamiento sólo admite los dos valores y sólo Handoff lleva miembro.

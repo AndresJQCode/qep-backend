@@ -461,3 +461,50 @@ public static class AutomationsAuditActions
     /// <summary>No está en la lista de §4.6: el barrido de D-M13 termina corridas sin una persona y la auditoría es la única huella.</summary>
     public const string RunAbandoned = "automations.run.abandoned";
 }
+
+/// <summary>Spec 2026-10-25 D-E5: el registro de una unidad del procesador. <c>StepsJson</c> es el arreglo de pasos ya serializado
+/// (D-E8 acota su tamaño antes de llegar acá). <c>ClosedStatus</c> y <c>ClosedReason</c> sólo van en las unidades <c>Closed</c> (D-E14).</summary>
+public sealed record RunUnitEntry(
+    Guid TenantId,
+    Guid RunId,
+    int BaseStep,
+    string Trigger,
+    Guid? InboundMessageId,
+    string Outcome,
+    DateTimeOffset StartedAt,
+    DateTimeOffset EndedAt,
+    string StepsJson,
+    string? ClosedStatus,
+    string? ClosedReason);
+
+public interface IRunUnitRepository
+{
+    /// <summary>Sólo agrega al contexto del scope: la fila viaja en el <c>SaveChanges</c> de la unidad, así que si la unidad se deshace
+    /// la fila se va con ella (D-E5).</summary>
+    void Add(RunUnitEntry entry);
+
+    /// <summary>Las unidades de una corrida por <c>(base_step, started_at, id)</c>.</summary>
+    Task<IReadOnlyList<RunUnitEntry>> ListAsync(Guid tenantId, Guid runId, CancellationToken cancellationToken);
+
+    /// <summary>D-E7: borra hasta <paramref name="batch"/> unidades iniciadas antes de <paramref name="cutoff"/>, de todos los tenants, y
+    /// devuelve cuántas. El barrido la llama lote por lote hasta que uno sale incompleto.</summary>
+    Task<int> PurgeBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-10-25 D-P4: qué disparó la unidad.</summary>
+public static class RunUnitTriggers
+{
+    public const string Start = "Start";
+    public const string CustomerMessage = "CustomerMessage";
+    public const string Resume = "Resume";
+    public const string Closed = "Closed";
+}
+
+/// <summary>Spec 2026-10-25 D-E14: por qué una corrida terminó sin que el motor la cerrara.</summary>
+public static class RunCloseReasons
+{
+    public const string HumanTookOver = "human_took_over";
+    public const string ModuleDisabled = "module_disabled";
+    public const string Abandoned = "abandoned";
+    public const string RestartedWithNewVersion = "restarted_new_version";
+}

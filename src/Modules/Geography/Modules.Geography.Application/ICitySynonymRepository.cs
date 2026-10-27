@@ -14,4 +14,20 @@ public interface ICitySynonymRepository
     Task<CitySynonym?> FindActiveAsync(DepartmentId departmentId, string normalizedText, CancellationToken cancellationToken);
 
     void Add(CitySynonym synonym);
+
+    /// <summary>Vuelve a leer de la base un sinónimo ya seguido: corregir y borrar lo leen para saber qué candado tomar y lo
+    /// releen con el candado tomado, porque una consulta con seguimiento devuelve la instancia ya cargada sin refrescarla.</summary>
+    Task RefreshAsync(CitySynonym synonym, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Una página de sinónimos vivos (los borrados no se listan), por <c>updated_at</c> descendente y luego <c>id</c> descendente.
+    /// <paramref name="normalizedSearch"/> (ya de <see cref="CityText.Normalize"/>) se busca dentro del texto normalizado del
+    /// sinónimo o del nombre de su ciudad (el que se muestra o el oficial). <c>Total</c> cuenta todo el filtro. Sin seguimiento.
+    /// </summary>
+    Task<(IReadOnlyList<CitySynonym> Items, int Total)> ListAsync(
+        DepartmentId? departmentId,
+        string? normalizedSearch,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
 }

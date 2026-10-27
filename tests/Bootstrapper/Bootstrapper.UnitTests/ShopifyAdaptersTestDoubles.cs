@@ -123,6 +123,15 @@ internal sealed class FakeExternalOrderWriter : IExternalOrderWriter
         return Task.FromResult(ByExternalKey.GetValueOrDefault((tenantId, source, externalKey)));
     }
 
+    /// <summary>Lo que lee el recorrido de la historia previa, por pedido; el que no está no existe (<c>null</c>).</summary>
+    public Dictionary<(Guid TenantId, Guid OrderId), ExternalShippingState> ShippingStates { get; } = [];
+
+    public Task<ExternalShippingState?> FindShippingStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult(ShippingStates.TryGetValue((tenantId, orderId), out var state) ? state : null);
+    }
+
     public Func<ExternalShippingParty, ExternalShippingOutcome>? OnAttach { get; init; }
 
     public Func<ExternalShippingParty, ExternalShippingOutcome>? OnCorrect { get; init; }
@@ -364,6 +373,12 @@ internal sealed class FakeCitySynonymRepository(params CitySynonym[] synonyms) :
         throw new NotSupportedException();
 
     public void Add(CitySynonym synonym) => throw new NotSupportedException();
+
+    public Task RefreshAsync(CitySynonym synonym, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<(IReadOnlyList<CitySynonym> Items, int Total)> ListAsync(
+        DepartmentId? departmentId, string? normalizedSearch, int page, int pageSize, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 /// <summary>Una tienda Shopify enlazada en el estado que pide la prueba, con su ruta y el módulo prendido o no. El

@@ -37,6 +37,16 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
     /// arranques.</summary>
     public const string LiveRunIndex = "IX_conversation_runs_live";
 
+    /// <summary>Spec 2026-10-25 §6.1: un entrante, una unidad confirmada (P2-R24), único por <c>(run_id, inbound_message_id)</c> sólo
+    /// con entrante: los cierres del barrido no lo tienen.</summary>
+    public const string RunUnitInboundIndex = "IX_run_units_run_inbound";
+
+    /// <summary>Spec 2026-10-25 D-E7: la purga de 3 días filtra por <c>started_at</c> en cada barrido; sin este índice el último lote de
+    /// cada pasada recorre toda la tabla de una base compartida.</summary>
+    public const string RunUnitStartedIndex = "IX_run_units_started_at";
+
+    public const string RunUnitInboundFilter = "inbound_message_id IS NOT NULL";
+
     public const string LiveRunFilter = "status IN ('Running','Waiting')";
 
     public const string StatusCheck = "status IN ('Draft','Active','Paused')";
@@ -68,6 +78,8 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
 
     internal DbSet<HttpCallRecord> HttpCalls => Set<HttpCallRecord>();
 
+    internal DbSet<RunUnitRecord> RunUnits => Set<RunUnitRecord>();
+
     public DbSet<Simulation> Simulations => Set<Simulation>();
 
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
@@ -80,6 +92,7 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
         ConfigureTemplate(modelBuilder);
         ConfigureRun(modelBuilder);
         ConfigureHttpCall(modelBuilder);
+        ConfigureRunUnit(modelBuilder);
         ConfigureSimulation(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
     }
@@ -243,7 +256,32 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
         call.Property(value => value.Outcome).HasColumnName("outcome").HasMaxLength(24);
         call.Property(value => value.ErrorCode).HasColumnName("error_code").HasMaxLength(64);
         call.Property(value => value.CalledAt).HasColumnName("called_at");
+        call.Property(value => value.StepNumber).HasColumnName("step_number");
+        call.Property(value => value.ResponseBytes).HasColumnName("response_bytes");
         call.HasIndex(value => new { value.TenantId, value.CalledAt }, "IX_http_calls_tenant_called").IsDescending(false, true);
+    }
+
+    private static void ConfigureRunUnit(ModelBuilder modelBuilder)
+    {
+        var unit = modelBuilder.Entity<RunUnitRecord>();
+        unit.ToTable("run_units", Schema);
+        unit.HasKey(value => value.Id);
+        unit.Property(value => value.Id).HasColumnName("id").UseIdentityAlwaysColumn();
+        unit.Property(value => value.TenantId).HasColumnName("tenant_id");
+        unit.Property(value => value.RunId).HasColumnName("run_id");
+        unit.Property(value => value.BaseStep).HasColumnName("base_step");
+        unit.Property(value => value.Trigger).HasColumnName("trigger").HasMaxLength(16);
+        unit.Property(value => value.InboundMessageId).HasColumnName("inbound_message_id");
+        unit.Property(value => value.Outcome).HasColumnName("outcome").HasMaxLength(24);
+        unit.Property(value => value.StartedAt).HasColumnName("started_at");
+        unit.Property(value => value.EndedAt).HasColumnName("ended_at");
+        unit.Property(value => value.StepsJson).HasColumnName("steps").HasColumnType("jsonb").HasDefaultValueSql("'[]'");
+        unit.Property(value => value.ClosedStatus).HasColumnName("closed_status").HasMaxLength(16);
+        unit.Property(value => value.ClosedReason).HasColumnName("closed_reason").HasMaxLength(64);
+        // Sin FK a conversation_runs: la purga de 3 días borra unidades sin tocar la corrida, y la corrida no se purga nunca.
+        unit.HasIndex(value => new { value.RunId, value.InboundMessageId }, RunUnitInboundIndex).IsUnique().HasFilter(RunUnitInboundFilter);
+        unit.HasIndex(value => new { value.TenantId, value.RunId, value.BaseStep }, "IX_run_units_tenant_run");
+        unit.HasIndex(value => value.StartedAt, RunUnitStartedIndex);
     }
 
     private static void ConfigureSimulation(ModelBuilder modelBuilder)

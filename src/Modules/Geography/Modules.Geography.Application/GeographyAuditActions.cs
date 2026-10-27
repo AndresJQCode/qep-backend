@@ -16,4 +16,5 @@ public static class GeographyAuditActions
 
     public const string SynonymResourceType = "city_synonym";
     public const string UnresolvedCityResourceType = "unresolved_city";
+    public const string BackfillResourceType = "city_backfill";
 }

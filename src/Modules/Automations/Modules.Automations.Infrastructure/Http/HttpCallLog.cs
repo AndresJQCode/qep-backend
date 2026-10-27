@@ -35,6 +35,8 @@ internal sealed class HttpCallLog(IServiceScopeFactory scopeFactory) : IHttpCall
             Outcome = entry.Outcome,
             ErrorCode = entry.ErrorCode is null ? null : Fit(entry.ErrorCode, ErrorCodeMaxLength),
             CalledAt = entry.CalledAt,
+            StepNumber = entry.StepNumber,
+            ResponseBytes = entry.ResponseBytes,
         });
         await context.SaveChangesAsync(cancellationToken);
     }

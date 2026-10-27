@@ -120,6 +120,10 @@ internal sealed class CityOperatorDoubles(TenantId operatorTenant)
             UnresolvedCityId id, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<UnresolvedCityOccurrence>>([]);
 
+        public Task<IReadOnlyList<UnresolvedCityOccurrence>> ListOccurrencesBySynonymAsync(
+            CitySynonymId synonymId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<UnresolvedCityOccurrence>>([]);
+
         public Task<CitySummaryCounts> CountAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new CitySummaryCounts(0, 0, 0, 0));
 

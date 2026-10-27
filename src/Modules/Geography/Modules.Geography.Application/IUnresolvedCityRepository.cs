@@ -39,6 +39,11 @@ public interface IUnresolvedCityRepository
     /// <summary>Todas las ocurrencias de la fila, sin seguimiento.</summary>
     Task<IReadOnlyList<UnresolvedCityOccurrence>> ListOccurrencesAsync(UnresolvedCityId id, CancellationToken cancellationToken);
 
+    /// <summary>Las ocurrencias de la fila que el sinónimo resolvió (<c>unresolved_cities.synonym_id</c>), sin seguimiento: lo que
+    /// el impacto de corregir compara contra las huellas. Un sinónimo que no confirmó ninguna fila no tiene ninguna.</summary>
+    Task<IReadOnlyList<UnresolvedCityOccurrence>> ListOccurrencesBySynonymAsync(
+        CitySynonymId synonymId, CancellationToken cancellationToken);
+
     /// <summary>Los conteos del resumen: filas <c>Pending</c> y <c>Discarded</c>, sinónimos vivos y ocurrencias de filas
     /// <c>Pending</c>.</summary>
     Task<CitySummaryCounts> CountAsync(CancellationToken cancellationToken);

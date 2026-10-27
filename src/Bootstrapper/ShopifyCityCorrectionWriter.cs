@@ -78,6 +78,24 @@ internal sealed class ShopifyCityCorrectionWriter(IServiceScopeFactory scopes) :
         return FromCustomer(outcome);
     }
 
+    // Sólo lee. La marca de la dirección cruda es la que dejó el importador: una línea de las notas que empieza por el rótulo,
+    // con la misma comparación (ordinal, línea por línea) con que Quotations la quita al poner la parte de envío.
+    public async Task<ShopifyOrderCityState?> ReadOrderCityStateAsync(
+        Guid tenantId, Guid orderId, CancellationToken cancellationToken)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        var state = await scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>()
+            .FindShippingStateAsync(tenantId, orderId, cancellationToken);
+        return state is null
+            ? null
+            : new ShopifyOrderCityState(
+                state.Status.ToString(),
+                state.IsStorePickup,
+                state.Shipping is not null,
+                (state.Notes ?? string.Empty).Split('\n').Any(
+                    line => line.StartsWith(ShopifyOrderImporter.RawAddressLabel, StringComparison.Ordinal)));
+    }
+
     // La huella sólo viaja con un éxito: es la parte como quedó guardada (en un reintento, quizá en la ciudad que el sinónimo tenía
     // antes), que es contra lo que la próxima recorrección compara. Un
     // pedido que no es de una plataforma (order.order.source_invalid) es, para Shopify, un pedido que no encuentra.

@@ -478,6 +478,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<UnresolvedCityTriage>();
         services.AddScoped<ICommandHandler<DiscardUnresolvedCityCommand, UnresolvedCityListItemDto>, DiscardUnresolvedCityHandler>();
         services.AddScoped<ICommandHandler<RestoreUnresolvedCityCommand, UnresolvedCityListItemDto>, RestoreUnresolvedCityHandler>();
+        // Los sinónimos: la lista, el impacto de corregir (que no escribe), corregir, borrar y reintentar; y el recorrido de la
+        // historia previa. Sin el registro de uno, su ruta responde 500.
+        services.AddScoped<IQueryHandler<ListCitySynonymsQuery, CitySynonymPageDto>, ListCitySynonymsHandler>();
+        services.AddScoped<IQueryHandler<PreviewSynonymCorrectionImpactQuery, CorrectImpactDto>, PreviewSynonymCorrectionImpactHandler>();
+        services.AddScoped<ICommandHandler<CorrectCitySynonymCommand, CitySynonymDto>, CorrectCitySynonymHandler>();
+        services.AddScoped<ICommandHandler<DeleteCitySynonymCommand, bool>, DeleteCitySynonymHandler>();
+        services.AddScoped<ICommandHandler<RetryCitySynonymCorrectionsCommand, CitySynonymDto>, RetryCitySynonymCorrectionsHandler>();
+        services.AddScoped<ICommandHandler<RunCityBackfillCommand, CityBackfillResultDto>, RunCityBackfillHandler>();
         // Quotations, fase 1 (borrador: crear, agregar/editar/quitar lineas, editar encabezado).
         // Los seis van aca por la misma razon que el resto: el dispatcher resuelve por registro
         // explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla recien en
@@ -964,6 +972,11 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-10-26 D-C3b: lo que la consola de ciudades lee de pedidos, clientes, huellas, tenants y usuarios, que
         // Geography no referencia. Scoped como el GeographyDbContext sobre el que corre.
         services.AddScoped<ICityCorrectionInsights, CityCorrectionInsights>();
+        // Lo que la consola le hace a lo de Shopify: reintentar los trabajos fallidos de un sinónimo y recorrer la historia previa
+        // (D-C12, S6). Los dos puertos son de Geography y Geography no referencia Shopify.
+        services.AddScoped<ICityCorrectionJobs, CityCorrectionJobsAdapter>();
+        services.AddScoped<ShopifyUnresolvedCityBackfill>();
+        services.AddScoped<IHistoricalCityBackfill, HistoricalCityBackfillAdapter>();
         // §5.3: el cron de la conciliación, cada Shopify:Reconcile:IntervalMinutes.
         services.AddShopifyReconcileWorker();
 
@@ -1027,6 +1040,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAutomationTenantNames, AutomationTenantNames>();
         // Spec 2026-10-21 §5.2: una unidad del motor por fila del inbox, en el scope que abre AutomationInboxWorker.
         services.AddScoped<RunEffects>();
+        // Spec 2026-10-25 D-E5: el parámetro es opcional en RunProcessor; sin este registro el contenedor lo arma sin registro de unidades
+        // y nada se pone rojo. CompositionRootTests lo amarra.
+        services.AddScoped<RunUnitWriter>();
         services.AddScoped<RunProcessor>();
         // Spec 2026-10-21 §8: el simulador usa el mismo ejecutor HTTP y el mismo puerto de horario que el motor.
         services.AddScoped<SimulationRunner>();

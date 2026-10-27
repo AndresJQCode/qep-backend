@@ -160,12 +160,12 @@ public sealed partial class HttpBlockExecutor(
 
         // P2-R46: la duración de http_calls es la de la llamada; la espera del adjunto (hasta 20 s) no cuenta.
         call = call with { SentAt = Stopwatch.GetTimestamp() };
-        var result = await SendAsync(node, credentials, request.Method, url, content, cancellationToken);
+        var sent = await SendAsync(node, credentials, request.Method, url, content, cancellationToken);
         // P2-R33a: la llamada ya salió. Un apagado justo ahora no puede perder la fila: el reintento volvería a llamar sin rastro de la primera.
-        return await FinishAsync(call, result, CancellationToken.None);
+        return await FinishAsync(call, sent.Result, CancellationToken.None, sent.Body?.Length);
     }
 
-    private async Task<HttpCallResult> SendAsync(
+    private async Task<Sent> SendAsync(
         HttpNode node, ExternalApiCredentials credentials, string method, Uri url, HttpContent? content, CancellationToken cancellationToken)
     {
         using var message = new HttpRequestMessage(new HttpMethod(method), url) { Content = content };
@@ -182,33 +182,34 @@ public sealed partial class HttpBlockExecutor(
             // Un status que no cumple no necesita el cuerpo: de él no se guarda nada.
             if (!IsOk(node.OkWhen, status))
             {
-                return Failure(HttpCallOutcomes.ErrorStatus, status, $"http_{status}");
+                return new Sent(Failure(HttpCallOutcomes.ErrorStatus, status, $"http_{status}"));
             }
 
             if (await ReadCappedAsync(response.Content, timeout.Token) is not { } body)
             {
-                return Failure(HttpCallOutcomes.ResponseTooLarge, status, HttpCallOutcomes.ResponseTooLarge);
+                return new Sent(Failure(HttpCallOutcomes.ResponseTooLarge, status, HttpCallOutcomes.ResponseTooLarge));
             }
 
-            return Map(node.Mapping, status, body);
+            return new Sent(Map(node.Mapping, status, body), body);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             // El timeout del bloque (o el del cliente), no una cancelación de quien llama: ésa se propaga.
-            return Failure(HttpCallOutcomes.Timeout, answered, HttpCallOutcomes.Timeout);
+            return new Sent(Failure(HttpCallOutcomes.Timeout, answered, HttpCallOutcomes.Timeout));
         }
         catch (HttpRequestException exception)
         {
             // D-H2: ConnectCallback rechazó lo que resolvió el host. Es la URL, no la red.
-            return urlPolicy.RejectionIn(exception) is { } reason
-                ? Failure(HttpCallOutcomes.UrlRejected, null, reason)
-                : Failure(HttpCallOutcomes.Network, answered, HttpCallOutcomes.Network);
+            return new Sent(
+                urlPolicy.RejectionIn(exception) is { } reason
+                    ? Failure(HttpCallOutcomes.UrlRejected, null, reason)
+                    : Failure(HttpCallOutcomes.Network, answered, HttpCallOutcomes.Network));
         }
         catch (IOException)
         {
             // Revisión de la tarea 11: con ResponseHeadersRead, un corte a mitad del cuerpo llega como HttpIOException (IOException, no
             // HttpRequestException). La API ya recibió el request: lanzar desharía la unidad y el reintento la volvería a llamar.
-            return Failure(HttpCallOutcomes.Network, answered, HttpCallOutcomes.Network);
+            return new Sent(Failure(HttpCallOutcomes.Network, answered, HttpCallOutcomes.Network));
         }
     }
 
@@ -421,7 +422,8 @@ public sealed partial class HttpBlockExecutor(
         return new HttpCallResult(false, null, RunVariables.Empty(), HttpCallOutcomes.ConnectionUnavailable, reason, connectionName);
     }
 
-    private async Task<HttpCallResult> FinishAsync(Call call, HttpCallResult result, CancellationToken cancellationToken)
+    private async Task<HttpCallResult> FinishAsync(
+        Call call, HttpCallResult result, CancellationToken cancellationToken, int? responseBytes = null)
     {
         // Sin llamada (url rechazada, adjunto que no llegó, cuerpo que no se armó) no hay duración que medir.
         var durationMs = call.SentAt is { } sentAt ? (int)Math.Min(int.MaxValue, Stopwatch.GetElapsedTime(sentAt).TotalMilliseconds) : 0;
@@ -439,7 +441,7 @@ public sealed partial class HttpBlockExecutor(
             await callLog.RecordAsync(
                 new HttpCallEntry(
                     call.Context.TenantId, call.Context.RunId, call.Context.SimulationId, call.Context.NodeId, call.ConnectionId, call.Method,
-                    call.Path, result.Status, durationMs, result.Outcome, result.ErrorCode, call.CalledAt),
+                    call.Path, result.Status, durationMs, result.Outcome, result.ErrorCode, call.CalledAt, call.Context.StepNumber, responseBytes),
                 cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -456,6 +458,10 @@ public sealed partial class HttpBlockExecutor(
     /// <see cref="ConnectionName"/> viaja con el resultado (spec 2026-10-24 §3.2), no a la fila.</summary>
     private sealed record Call(
         HttpCallContext Context, Guid ConnectionId, string? ConnectionName, string Method, string Path, DateTimeOffset CalledAt, long? SentAt = null);
+
+    /// <summary>Lo que dejó la llamada: el resultado del bloque y el cuerpo leído (D-E3: de él sólo se guarda el largo en <c>response_bytes</c>);
+    /// <see cref="Body"/> es <c>null</c> si no se leyó ninguno.</summary>
+    private sealed record Sent(HttpCallResult Result, byte[]? Body = null);
 
     /// <summary>Los reintentos de espera del adjunto que le quedan al bloque (D-H8 con el desvío: 4 × 5 s en total).</summary>
     private sealed class MediaWait

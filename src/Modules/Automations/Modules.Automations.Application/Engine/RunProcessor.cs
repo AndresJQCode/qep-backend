@@ -13,7 +13,8 @@ namespace Modules.Automations.Application.Engine;
 /// conversación (arrancar, traspasar, resolver, terminar) los confirma Mensajería por su lado en el momento (Task 5), así que un
 /// reintento de la fila puede encontrarlos ya hechos y lo tiene en cuenta: la corrida nueva usa el id que deriva del entrante y los
 /// envíos el mismo clientId (P2-R5). Los efectos del motor los ejecuta <see cref="RunEffects"/>. El barrido de abandonadas (D-M13) también pasa por acá, con el
-/// mismo orden de locks.
+/// mismo orden de locks. Spec 2026-10-25 D-E5 y D-E14: cada unidad deja su fila de <c>run_units</c> con <see cref="RunUnitWriter"/>, antes del
+/// único guardado; es opcional (sin él no se registra nada) para que quien arma el procesador a mano no tenga que conocerlo.
 /// </summary>
 public sealed partial class RunProcessor(
     IAutomationsUnitOfWork unitOfWork,
@@ -29,7 +30,8 @@ public sealed partial class RunProcessor(
     IAutomationsAuditRecorder audit,
     RunEffects effects,
     IClock clock,
-    ILogger<RunProcessor> logger)
+    ILogger<RunProcessor> logger,
+    RunUnitWriter? recorder = null)
 {
     /// <summary>D-M4: la ingesta sube la versión de la conversación por SQL; el choque se resuelve volviendo a intentar enseguida.</summary>
     private static readonly TimeSpan ConcurrencyRetryDelay = TimeSpan.FromSeconds(2);
@@ -131,6 +133,7 @@ public sealed partial class RunProcessor(
         {
             run.Finish(RunStatus.Interrupted, null, now);
             run.MarkInbound(item.MessageId);
+            recorder?.WriteClosed(run, item.MessageId, RunCloseReasons.HumanTookOver, now);
             run = null;
             interrupted = true;
         }
@@ -154,6 +157,7 @@ public sealed partial class RunProcessor(
         {
             run.Finish(RunStatus.Interrupted, null, now);
             run.MarkInbound(item.MessageId);
+            recorder?.WriteClosed(run, item.MessageId, RunCloseReasons.ModuleDisabled, now);
         }
 
         if (conversation?.AutomationStatus == AutomationStates.Active)
@@ -209,6 +213,7 @@ public sealed partial class RunProcessor(
         if (conversation is null || HumanTookOver(conversation, run))
         {
             run.Finish(RunStatus.Interrupted, null, now);
+            recorder?.WriteClosed(run, null, RunCloseReasons.HumanTookOver, now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             return true;
         }
@@ -224,6 +229,7 @@ public sealed partial class RunProcessor(
         }
 
         run.Finish(RunStatus.Abandoned, null, now);
+        recorder?.WriteClosed(run, null, RunCloseReasons.Abandoned, now);
         audit.Record(run.TenantId, Guid.Empty, bySystem: true, AutomationsAuditActions.RunAbandoned, AutomationsAuditActions.ResourceRun, run.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return true;
@@ -333,8 +339,11 @@ public sealed partial class RunProcessor(
         audit.Record(item.TenantId, Guid.Empty, bySystem: true, AutomationsAuditActions.RunStarted, AutomationsAuditActions.ResourceRun, run.Id, now);
 
         var settings = chatbot.EngineSettings;
-        await effects.RunAsync(new RunUnit(run, flow, settings, BaseStepNumber: 0), new EngineInput.Start(), now, cancellationToken);
-        return OutcomeOf(run, RunOutcomes.Started);
+        var log = recorder is null ? null : new RunUnitLog();
+        await effects.RunAsync(new RunUnit(run, flow, settings, BaseStepNumber: 0, log), new EngineInput.Start(), now, cancellationToken);
+        var outcome = OutcomeOf(run, RunOutcomes.Started);
+        recorder?.Write(run, 0, RunUnitTriggers.Start, item.MessageId, outcome, now, log, AttachmentVariablesOf(flow));
+        return outcome;
     }
 
     /// <summary>§5.2 paso 4: la corrida viva sigue con la versión con que empezó (D-C1), salvo la palabra de reinicio con una versión más
@@ -343,22 +352,28 @@ public sealed partial class RunProcessor(
         InboundQueueItem item, AutomationConversationState conversation, ConversationRun run, DateTimeOffset now, CancellationToken cancellationToken)
     {
         run.MarkInbound(item.MessageId);
+        // Plan D-P4: una corrida Waiting recibe la respuesta; una Running vuelve a pedir el efecto externo en que murió su unidad.
+        var trigger = run.Status == RunStatus.Waiting ? RunUnitTriggers.CustomerMessage : RunUnitTriggers.Resume;
+        var baseStep = run.StepNumber;
         // Ruling P2-R6: un chatbot borrado mientras la corrida esperaba (la carrera del plan 1) se lleva sus versiones.
         var flow = await LoadFlowAsync(item.TenantId, run.ChatbotVersionId, cancellationToken);
         var settings = await chatbots.FindEngineSettingsAsync(item.TenantId, run.ChatbotId, cancellationToken);
         if (flow is null || settings is null)
         {
             await effects.FailAsync(run, run.ToState(), HandoffCause.FlowFailed(AutomationsRunFailures.VersionMissing, null, null), now, cancellationToken);
-            return OutcomeOf(run, RunOutcomes.Advanced);
+            return Recorded(OutcomeOf(run, RunOutcomes.Advanced), null, new HashSet<string>());
         }
 
-        var unit = new RunUnit(run, flow, settings, run.StepNumber);
+        var log = recorder is null ? null : new RunUnitLog();
+        var unit = new RunUnit(run, flow, settings, baseStep, log);
+        var attachments = AttachmentVariablesOf(flow);
 
         EngineInput input;
         if (run.Status == RunStatus.Waiting)
         {
             if (await inbox.ReadAsync(item.TenantId, item.MessageId, cancellationToken) is not { } inbound)
             {
+                // Sin fila a propósito: la corrida no se movió.
                 return null;
             }
 
@@ -382,11 +397,18 @@ public sealed partial class RunProcessor(
                 run, run.ToState(),
                 HandoffCause.FlowFailed(AutomationsRunFailures.Of(EndReasons.TargetMissing), run.CurrentNodeId, RunEffects.TitleOf(flow, run.CurrentNodeId)),
                 now, cancellationToken);
-            return OutcomeOf(run, RunOutcomes.Advanced);
+            return Recorded(OutcomeOf(run, RunOutcomes.Advanced), null, attachments);
         }
 
         await effects.RunAsync(unit, input, now, cancellationToken);
-        return OutcomeOf(run, RunOutcomes.Advanced);
+        return Recorded(OutcomeOf(run, RunOutcomes.Advanced), log, attachments);
+
+        // D-E5: también la unidad que falló sin entrar al motor deja su fila (sin pasos), para que la vista diga por qué terminó.
+        string Recorded(string outcome, RunUnitLog? steps, IReadOnlySet<string> attachmentVariables)
+        {
+            recorder?.Write(run, baseStep, trigger, item.MessageId, outcome, now, steps, attachmentVariables);
+            return outcome;
+        }
     }
 
     /// <summary>
@@ -409,6 +431,8 @@ public sealed partial class RunProcessor(
         }
 
         run.Finish(RunStatus.Completed, null, now);
+        // D-E14: la corrida vieja y la nueva tienen cada una su fila con el mismo entrante (la llave única es por corrida).
+        recorder?.WriteClosed(run, item.MessageId, RunCloseReasons.RestartedWithNewVersion, now);
         audit.Record(item.TenantId, Guid.Empty, bySystem: true, AutomationsAuditActions.RunCompleted, AutomationsAuditActions.ResourceRun, run.Id, now);
         return await StartRunAsync(item, conversation, chatbot, flow, now, cancellationToken);
     }
@@ -423,7 +447,7 @@ public sealed partial class RunProcessor(
     {
         if (inbound.Attachment is not { } attachment)
         {
-            return new EngineInput.CustomerMessage(inbound.Kind, inbound.Text, inbound.ReplyId, null, inbound.ReplyToMessageId);
+            return new EngineInput.CustomerMessage(inbound.Kind, inbound.Text, inbound.ReplyId, null, inbound.ReplyToMessageId, inbound.MessageId);
         }
 
         string? url = null;
@@ -436,7 +460,7 @@ public sealed partial class RunProcessor(
 
         return new EngineInput.CustomerMessage(
             inbound.Kind, inbound.Text, inbound.ReplyId, new AttachmentInput(inbound.MessageId, attachment.FileName, attachment.MimeType, attachment.Stored, url),
-            inbound.ReplyToMessageId);
+            inbound.ReplyToMessageId, inbound.MessageId);
     }
 
     /// <summary><c>null</c> si la versión no existe o no se puede leer (una guardada corrupta): como en P2-R13/R14, lanzar reintentaría la
@@ -458,6 +482,10 @@ public sealed partial class RunProcessor(
             return null;
         }
     }
+
+    /// <summary>P2-R43 y D-E8: las variables de un Pedir adjunto, cuya url firmada no se guarda en la fila (como en <c>RunEffects.RunAsync</c>).</summary>
+    private static HashSet<string> AttachmentVariablesOf(FlowDefinition flow) =>
+        flow.Nodes.OfType<AttachmentNode>().Select(node => node.SaveTo).ToHashSet(StringComparer.Ordinal);
 
     private static string OutcomeOf(ConversationRun run, string whenLive) => run.Status switch
     {

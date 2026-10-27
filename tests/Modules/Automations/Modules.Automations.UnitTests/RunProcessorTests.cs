@@ -70,7 +70,7 @@ public sealed class RunProcessorTests
         Assert.Equal(RunOutcomes.Ended, outcome);
         Assert.Equal([DeterministicClientId.For(run.Id, 0, 0), DeterministicClientId.For(run.Id, 0, 1)], bed.Messenger.Sent);
         var (context, variables) = Assert.Single(http.Calls);
-        Assert.Equal(new HttpCallContext(TenantId, run.Id, null, "n2"), context);
+        Assert.Equal(new HttpCallContext(TenantId, run.Id, null, "n2", StepNumber: 2), context);
         Assert.Equal("Laura", variables.TextOf("nombre"));
         Assert.Equal("Laura", run.ToState().Variables.TextOf("cliente.firstName"));
     }

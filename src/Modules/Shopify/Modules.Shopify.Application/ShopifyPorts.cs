@@ -526,6 +526,14 @@ public sealed record ShopifyCityWriteResult(
     ShopifyCityWriteKind Kind, ShopifyShippingFingerprint? Party, long? CustomerVersion, string? Detail, Guid? CustomerCityId = null);
 
 /// <summary>
+/// Spec 2026-10-26 D-C12: lo que el recorrido de la historia previa lee de un pedido ya importado. <see cref="Status"/> es el
+/// nombre del enum de Quotations (<c>Pending</c>, <c>Approved</c>…). <see cref="NotesHaveRawAddress"/>: alguna línea de las notas
+/// empieza por <see cref="ShopifyOrderImporter.RawAddressLabel"/>, que es la marca de que la dirección no quedó como parte de
+/// envío (la importación la deja mientras no hay parte, y poner la parte la quita).
+/// </summary>
+public sealed record ShopifyOrderCityState(string Status, bool IsStorePickup, bool HasShippingParty, bool NotesHaveRawAddress);
+
+/// <summary>
 /// Spec 2026-10-26 §4.4 y §4.6: lo que el trabajo de corrección escribe en Quotations y en Customers. Adaptador en Bootstrapper sobre
 /// <c>IExternalOrderWriter</c> e <c>ICustomerProvisioning</c>, <b>un scope propio por llamada</b> (como <c>ShopifyOrderWriter</c>): cada
 /// llamada confirma lo suyo y no se suma a la unidad de trabajo de Shopify. Las razones por las que no se puede vuelven en el
@@ -563,4 +571,8 @@ public interface IShopifyCityCorrectionWriter
         Guid cityId,
         IReadOnlyCollection<Guid> requestedCityIds,
         CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-26 D-C12: el estado del pedido para el recorrido de la historia previa, o <c>null</c> si ya no existe
+    /// en ese tenant. Sólo lee.</summary>
+    Task<ShopifyOrderCityState?> ReadOrderCityStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
 }

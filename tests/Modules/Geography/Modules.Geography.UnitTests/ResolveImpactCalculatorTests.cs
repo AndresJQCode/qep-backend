@@ -16,9 +16,9 @@ public sealed class ResolveImpactCalculatorTests
     {
         var occurrences = new[]
         {
-            Occurrences.Of(TenantA, partyCityOnly: true),
-            Occurrences.Of(TenantA, partyCityOnly: true),
-            Occurrences.Of(TenantB, partyCityOnly: true),
+            ResolveImpactOccurrences.Of(TenantA, partyCityOnly: true),
+            ResolveImpactOccurrences.Of(TenantA, partyCityOnly: true),
+            ResolveImpactOccurrences.Of(TenantB, partyCityOnly: true),
         };
         var orders = occurrences.Select(occurrence => Order(occurrence, "Pending", hasShipping: false)).ToList();
 
@@ -35,7 +35,7 @@ public sealed class ResolveImpactCalculatorTests
     [Fact]
     public void PendingWithoutShippingMissingDataIsMissingData()
     {
-        var occurrence = Occurrences.Of(TenantA, partyCityOnly: false);
+        var occurrence = ResolveImpactOccurrences.Of(TenantA, partyCityOnly: false);
 
         var impact = ResolveImpactCalculator.Compute(
             Cali, [occurrence], [Order(occurrence, "Pending", hasShipping: false)], [], Names);
@@ -47,7 +47,7 @@ public sealed class ResolveImpactCalculatorTests
     [Fact]
     public void PendingWithShippingIsWithShipping()
     {
-        var occurrence = Occurrences.Of(TenantB, partyCityOnly: true);
+        var occurrence = ResolveImpactOccurrences.Of(TenantB, partyCityOnly: true);
 
         var impact = ResolveImpactCalculator.Compute(
             Cali, [occurrence], [Order(occurrence, "Pending", hasShipping: true)], [], Names);
@@ -59,9 +59,9 @@ public sealed class ResolveImpactCalculatorTests
     [Fact]
     public void NotPendingIsListedWithTenantNumberAndStatus()
     {
-        var approved = Occurrences.Of(TenantA, partyCityOnly: true);
-        var cancelled = Occurrences.Of(TenantB, partyCityOnly: true);
-        var gone = Occurrences.Of(TenantB, partyCityOnly: true);
+        var approved = ResolveImpactOccurrences.Of(TenantA, partyCityOnly: true);
+        var cancelled = ResolveImpactOccurrences.Of(TenantB, partyCityOnly: true);
+        var gone = ResolveImpactOccurrences.Of(TenantB, partyCityOnly: true);
 
         var impact = ResolveImpactCalculator.Compute(
             Cali,
@@ -81,29 +81,54 @@ public sealed class ResolveImpactCalculatorTests
     }
 
     [Fact]
-    public void CityOnlyIncompleteVersionOneIsToCompleteAndTheRestStayIncomplete()
+    public void AStorePickupOrderIsInNoOrderGroup()
     {
-        var toComplete = Occurrences.Of(TenantA, partyCityOnly: true, customerId: Guid.CreateVersion7(), customerCityOnly: true);
-        var missingMore = Occurrences.Of(TenantA, partyCityOnly: true, customerId: Guid.CreateVersion7(), customerCityOnly: false);
-        var edited = Occurrences.Of(TenantB, partyCityOnly: true, customerId: Guid.CreateVersion7(), customerCityOnly: true);
-        var merged = Occurrences.Of(TenantB, partyCityOnly: true, customerId: Guid.CreateVersion7(), customerCityOnly: true);
-        var alreadyComplete = Occurrences.Of(TenantB, partyCityOnly: true, customerId: Guid.CreateVersion7(), customerCityOnly: true);
-        CustomerInsight Customer(UnresolvedCityOccurrence occurrence, bool complete = false, bool isMerged = false, long version = 1) =>
-            new(occurrence.TenantId, occurrence.CustomerId!.Value, complete, isMerged, IsActive: true, version);
+        // Nunca recibe parte de envío (P10): ni «a corregir», ni «faltan datos», ni «no se toca» aunque ya no esté Pending.
+        var pending = ResolveImpactOccurrences.Of(TenantA, partyCityOnly: false);
+        var approved = ResolveImpactOccurrences.Of(TenantB, partyCityOnly: false);
 
         var impact = ResolveImpactCalculator.Compute(
             Cali,
-            [toComplete, missingMore, edited, merged, alreadyComplete],
+            [pending, approved],
+            [Order(pending, "Pending", hasShipping: false, storePickup: true), Order(approved, "Approved", hasShipping: false, storePickup: true)],
+            [],
+            Names);
+
+        Assert.Equal(0, impact.OrdersToFix.Count);
+        Assert.Equal(0, impact.OrdersMissingData.Count);
+        Assert.Equal(0, impact.OrdersWithShipping.Count);
+        Assert.Equal(0, impact.OrdersNotPending.Count);
+    }
+
+    [Fact]
+    public void CityOnlyIncompleteVersionOneIsToCompleteAndOnlyTheOnesMissingMoreStayIncomplete()
+    {
+        var toComplete = ResolveImpactOccurrences.Of(TenantA, partyCityOnly: true, customerId: Guid.CreateVersion7(), customerCityOnly: true);
+        var missingMore = ResolveImpactOccurrences.Of(TenantA, partyCityOnly: true, customerId: Guid.CreateVersion7(), customerCityOnly: false);
+        var missingMoreAndEdited = ResolveImpactOccurrences.Of(TenantB, partyCityOnly: true, customerId: Guid.CreateVersion7(), customerCityOnly: false);
+        var edited = ResolveImpactOccurrences.Of(TenantB, partyCityOnly: true, customerId: Guid.CreateVersion7(), customerCityOnly: true);
+        var merged = ResolveImpactOccurrences.Of(TenantB, partyCityOnly: true, customerId: Guid.CreateVersion7(), customerCityOnly: true);
+        var inactive = ResolveImpactOccurrences.Of(TenantB, partyCityOnly: true, customerId: Guid.CreateVersion7(), customerCityOnly: true);
+        var alreadyComplete = ResolveImpactOccurrences.Of(TenantB, partyCityOnly: true, customerId: Guid.CreateVersion7(), customerCityOnly: true);
+        CustomerInsight Customer(
+            UnresolvedCityOccurrence occurrence, bool complete = false, bool isMerged = false, bool isActive = true, long version = 1) =>
+            new(occurrence.TenantId, occurrence.CustomerId!.Value, complete, isMerged, isActive, version);
+
+        var impact = ResolveImpactCalculator.Compute(
+            Cali,
+            [toComplete, missingMore, missingMoreAndEdited, edited, merged, inactive, alreadyComplete],
             [],
             [
-                Customer(toComplete), Customer(missingMore), Customer(edited, version: 2), Customer(merged, isMerged: true),
-                Customer(alreadyComplete, complete: true, version: 2),
+                Customer(toComplete), Customer(missingMore), Customer(missingMoreAndEdited, version: 2), Customer(edited, version: 2),
+                Customer(merged, isMerged: true), Customer(inactive, isActive: false), Customer(alreadyComplete, complete: true, version: 2),
             ],
             Names);
 
         Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantA, "Ritual", 1)]), impact.CustomersToComplete);
+        // Sólo los que la importación creó incompletos y les falta algo más que la ciudad, editados o no. El editado, el
+        // fusionado y el inactivo que sólo necesitaban la ciudad no están en ningún grupo.
         Assert.Equal(
-            new ImpactCountDto(3, [new ImpactTenantCountDto(TenantB, "Lulo", 2), new ImpactTenantCountDto(TenantA, "Ritual", 1)]),
+            new ImpactCountDto(2, [new ImpactTenantCountDto(TenantB, "Lulo", 1), new ImpactTenantCountDto(TenantA, "Ritual", 1)]),
             impact.CustomersStayIncomplete);
     }
 
@@ -127,13 +152,14 @@ public sealed class ResolveImpactCalculatorTests
         Assert.Empty(impact.OrdersNotPending.Orders);
     }
 
-    private static OrderInsight Order(UnresolvedCityOccurrence occurrence, string status, bool hasShipping, string number = "PED-1") =>
-        new(occurrence.TenantId, occurrence.OrderId, number, status, hasShipping, IsStorePickup: false);
+    private static OrderInsight Order(
+        UnresolvedCityOccurrence occurrence, string status, bool hasShipping, string number = "PED-1", bool storePickup = false) =>
+        new(occurrence.TenantId, occurrence.OrderId, number, status, hasShipping, storePickup);
 }
 
 /// <summary><see cref="UnresolvedCityOccurrence"/> no tiene constructor público (la escribe el SQL del reporte, SC-03): las pruebas
-/// puras la arman por reflexión.</summary>
-internal static class Occurrences
+/// puras de los cálculos de impacto (confirmar y corregir) la arman por reflexión.</summary>
+internal static class ResolveImpactOccurrences
 {
     public static UnresolvedCityOccurrence Of(
         Guid tenantId, bool partyCityOnly, Guid? customerId = null, bool customerCityOnly = false)
