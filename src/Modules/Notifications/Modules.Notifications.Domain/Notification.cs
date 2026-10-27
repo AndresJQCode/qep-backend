@@ -15,7 +15,7 @@ public sealed class Notification
 
     private Notification(
         NotificationId id,
-        Guid tenantId,
+        Guid? tenantId,
         Guid recipientId,
         string recipientAddress,
         NotificationChannel channel,
@@ -34,7 +34,7 @@ public sealed class Notification
 
     public NotificationId Id { get; private set; }
 
-    public Guid TenantId { get; private set; }
+    public Guid? TenantId { get; private set; }
 
     public Guid RecipientId { get; private set; }
 
@@ -53,7 +53,7 @@ public sealed class Notification
     public string? FailureReason { get; private set; }
 
     public static Notification CreateEmail(
-        Guid tenantId,
+        Guid? tenantId,
         Guid recipientId,
         string recipientAddress,
         string templateRef,

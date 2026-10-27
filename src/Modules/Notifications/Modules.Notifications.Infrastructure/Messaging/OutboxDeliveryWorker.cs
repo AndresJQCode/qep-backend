@@ -176,7 +176,7 @@ internal abstract partial class OutboxDeliveryWorker(
     /// era el mismo bloque copiado en cada uno.
     /// </summary>
     protected static async Task<(Notification Notification, string? Email)> ResolveRecipientAsync(
-        DeliveryContext context, Guid tenantId, Guid subjectId, string templateRef, CancellationToken stoppingToken)
+        DeliveryContext context, Guid? tenantId, Guid subjectId, string templateRef, CancellationToken stoppingToken)
     {
         var email = await context.UserDirectory.GetEmailAsync(subjectId, stoppingToken);
         var notification = Notification.CreateEmail(

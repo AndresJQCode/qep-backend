@@ -24,6 +24,11 @@ public sealed class NotificationTests
     }
 
     [Fact]
+    public void CreateEmailAcceptsANullTenant()
+        => Assert.Null(Notification.CreateEmail(
+            null, Guid.NewGuid(), "a@x.com", "identity.password-reset.v1", Now).TenantId);
+
+    [Fact]
     public void MarkSentAndMarkFailedTransition()
     {
         var notification = Notification.CreateEmail(
