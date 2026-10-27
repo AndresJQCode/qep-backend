@@ -257,6 +257,85 @@ public sealed class SimulationRunnerTests
         Assert.Contains(transcript, entry => entry is { From: "bot", Text: "Entendido" });
     }
 
+    private static FlowDefinition ConsentFlowWith(string onReject, int maxAsks = 3, Guid? member = null) => FlowJson.Parse($$"""
+        { "schema": 1, "start": { "firstNodeId": "consent" }, "variables": [],
+          "nodes": [
+            { "id": "consent", "kind": "dataConsent", "title": "Política de datos", "text": "Lee https://e.co/d",
+              "onReject": "{{onReject}}", "maxAsks": {{maxAsks}}, "onRejectMemberId": {{(member is null ? "null" : $"\"{member}\"")}},
+              "outputs": { "accepted": "yes" } },
+            { "id": "yes", "kind": "message", "title": "Gracias", "text": "Gracias", "outputs": { "next": null } }
+          ] }
+        """);
+
+    private static async Task<(RunState State, IReadOnlyList<TranscriptEntry> Transcript)> SendAsync(
+        FlowDefinition flow, RunState state, string text, string? replyId = null) =>
+        await Runner(new RecordingHttpBlocks(null)).RunAsync(
+            flow, Settings, state, new EngineInput.CustomerMessage(replyId is null ? "Text" : "Interactive", text, replyId, null), Context(), Ct);
+
+    private static async Task<RunState> StartAsync(FlowDefinition flow) =>
+        (await Runner(new RecordingHttpBlocks(null)).RunAsync(flow, Settings, Initial(), new EngineInput.Start(), Context(), Ct)).State;
+
+    [Fact]
+    public async Task RepeatingShowsEachRejectionAndTheQuestionAgain()
+    {
+        var flow = ConsentFlowWith("repeat");
+        var asked = await StartAsync(flow);
+
+        var (state, transcript) = await SendAsync(flow, asked, "No acepto", "rejected");
+
+        Assert.Equal("Registraría que el cliente no aceptó la política de datos.", Assert.Single(transcript, entry => entry.From == "system").Text);
+        var question = Assert.Single(transcript, entry => entry.From == "bot");
+        Assert.Equal<(string, string)>([("accepted", "Acepto"), ("rejected", "No acepto")], question.Buttons!.Select(button => (button.Id, button.Title)));
+        Assert.Equal(RunStatus.Waiting, state.Status);
+    }
+
+    [Theory]
+    [InlineData(false, "Pasaría la conversación a la bandeja, sin asignar: no aceptó 3 veces.")]
+    [InlineData(true, "Pasaría la conversación al miembro elegido: no aceptó 3 veces.")]
+    public async Task ReachingTheCapSaysWhereItWouldGo(bool withMember, string expected)
+    {
+        var flow = ConsentFlowWith("repeat", 3, withMember ? Guid.CreateVersion7() : null);
+        var state = await StartAsync(flow);
+        IReadOnlyList<TranscriptEntry> transcript = [];
+        for (var i = 0; i < 3; i++)
+        {
+            (state, transcript) = await SendAsync(flow, state, "No acepto", "rejected");
+        }
+
+        Assert.Equal(expected, transcript.Last(entry => entry.From == "system").Text);
+        Assert.NotEqual(RunStatus.Waiting, state.Status);
+        Assert.NotEqual(RunStatus.Running, state.Status);
+    }
+
+    [Theory]
+    [InlineData("handoff", 3)]
+    [InlineData("repeat", 1)]
+    public async Task HandingOffOnTheFirstRejectionSaysItDidNotAccept(string onReject, int maxAsks)
+    {
+        var flow = ConsentFlowWith(onReject, maxAsks);
+        var asked = await StartAsync(flow);
+
+        var (_, transcript) = await SendAsync(flow, asked, "No acepto", "rejected");
+
+        Assert.Equal("Pasaría la conversación a la bandeja, sin asignar: no aceptó la política de datos.", transcript.Last(entry => entry.From == "system").Text);
+    }
+
+    [Fact]
+    public async Task ExhaustingWithoutRejectedSaysItRecordsNothingAndHandsOff()
+    {
+        var flow = ConsentFlowWith("repeat");
+        var state = await StartAsync(flow);
+        IReadOnlyList<TranscriptEntry> transcript = [];
+        for (var i = 0; i < 3; i++)
+        {
+            (state, transcript) = await SendAsync(flow, state, "hola");
+        }
+
+        Assert.Equal(
+            ["No registraría nada: se agotaron los intentos.", "Pasaría la conversación a la bandeja, sin asignar"],
+            transcript.Where(entry => entry.From == "system").Select(entry => entry.Text));
+    }
+
     private static SimulationRunner Runner(IHttpBlockExecutor http) => new(http, new ClosedHours(), new FixedClock());
 
     private sealed class RecordingHttpBlocks(HttpCallResult? result) : IHttpBlockExecutor
