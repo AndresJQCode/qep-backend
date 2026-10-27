@@ -261,6 +261,52 @@ public sealed class ProductExportApiTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    /// <summary>
+    /// El `search` del export es el mismo de la caja de búsqueda del listado: nombre del producto,
+    /// código o código de barras de alguna variante, con los comodines de LIKE escapados. Se
+    /// exporta lo que se está viendo en la grilla, y la grilla filtra con esa caja.
+    /// </summary>
+    [Fact]
+    public async Task ExportFiltersBySearchLikeTheList()
+    {
+        await using var database = await StartDatabaseAsync();
+        var storage = new CapturingExportStorage();
+        using var factory = new QepApiFactory(database.GetConnectionString(), storage);
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await SeedTenantAsync(factory);
+
+        await CreateProductAsync(client, "VS-001", "Vela de soja", []);
+        await CreateProductAsync(client, "DIF-002", "Difusor de madera", [], barcode: "7700000000123");
+        await CreateProductAsync(client, "JAB-003", "Jabon artesanal", []);
+
+        async Task<string[]> ExportedCodesAsync(string query)
+        {
+            var response = await client.PostAsync(
+                $"{ExportUrl()}?{query}", content: null, TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            Assert.NotNull(storage.Content);
+            using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
+            var sheet = workbook.Worksheets.First();
+            return Enumerable.Range(2, sheet.LastRowUsed()!.RowNumber() - 1)
+                .Select(row => sheet.Cell(row, 1).GetString())
+                .ToArray();
+        }
+
+        // Por nombre, sin distinguir mayúsculas.
+        Assert.Equal(["VS-001"], await ExportedCodesAsync("search=vela"));
+        // Por código de variante.
+        Assert.Equal(["JAB-003"], await ExportedCodesAsync("search=jab-0"));
+        // Por código de barras de variante.
+        Assert.Equal(["DIF-002"], await ExportedCodesAsync("search=0000000123"));
+        // Combinado con `code` por AND, igual que el listado.
+        Assert.Equal(["DIF-002"], await ExportedCodesAsync("search=d&code=DIF"));
+
+        // `_` es literal, no un comodín: ningún producto lo contiene, así que no hay qué exportar.
+        var wildcard = await client.PostAsync(
+            $"{ExportUrl()}?search=_", content: null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, wildcard.StatusCode);
+    }
+
     // Un tenant sin productos no produce un Excel de una sola fila de cabeceras ni un correo con
     // un archivo vacio: falla legible, mismo criterio que el export de clientes.
     [Fact]
@@ -320,14 +366,15 @@ public sealed class ProductExportApiTests
     }
 
     private static async Task CreateProductAsync(
-        HttpClient client, string code, string name, object[] scales)
+        HttpClient client, string code, string name, object[] scales, string? barcode = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
             ProductBodies.Create(
                 name,
                 code,
-                new { prices = new Dictionary<string, decimal> { ["COP"] = BaseCop }, scales }),
+                new { prices = new Dictionary<string, decimal> { ["COP"] = BaseCop }, scales },
+                barcode: barcode),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
     }

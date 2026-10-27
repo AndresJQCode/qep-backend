@@ -99,12 +99,13 @@ public static class ProductEndpoints
         Guid tenantId,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
+        string? search = null,
         string? name = null,
         string? code = null,
         bool? isActive = null)
     {
         var result = await dispatcher.SendAsync(
-            new ExportProductsCommand(tenantId, name, code, isActive), cancellationToken);
+            new ExportProductsCommand(tenantId, search, name, code, isActive), cancellationToken);
 
         // 202 y no 200: lo que se acepto es la exportacion. El archivo se sube durante el
         // request pero el correo lo manda el worker despues, asi que la respuesta no trae el

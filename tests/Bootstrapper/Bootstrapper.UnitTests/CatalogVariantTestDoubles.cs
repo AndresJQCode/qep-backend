@@ -55,7 +55,7 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
     }
 
     public Task<IReadOnlyList<Product>> ListForExportAsync(
-        Guid tenantId, string? name, string? code, bool? isActive, int skip, int take,
+        Guid tenantId, string? search, string? name, string? code, bool? isActive, int skip, int take,
         CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<IReadOnlyList<Product>> FindVariantsByIdsForUpdateAsync(

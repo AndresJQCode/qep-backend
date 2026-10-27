@@ -35,6 +35,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
 
     public async Task<IReadOnlyList<Product>> ListForExportAsync(
         Guid tenantId,
+        string? search,
         string? name,
         string? code,
         bool? isActive,
@@ -60,19 +61,8 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             query = query.Where(product => product.IsActive == isActive);
         }
 
-        var namePattern = LikePattern(name);
-        if (namePattern is not null)
-        {
-            query = query.Where(product =>
-                EF.Functions.ILike(product.Name, namePattern, LikeEscapeCharacter));
-        }
-
-        var codePattern = LikePattern(code);
-        if (codePattern is not null)
-        {
-            query = query.Where(product => product.Variants.Any(variant =>
-                EF.Functions.ILike(variant.Code, codePattern, LikeEscapeCharacter)));
-        }
+        // Los mismos filtros de texto que el listado: se exporta lo que la grilla está mostrando.
+        query = ApplyTextFilters(query, search, name, code);
 
         // Por codigo y no por relevancia: una planilla se lee y se compara en un orden estable,
         // y el export no tiene un termino de busqueda contra el cual medir relevancia.
@@ -346,6 +336,57 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             .ToArray();
     }
 
+    // Los filtros de texto del listado, compartidos con la exportación: que los dos filtren con el
+    // mismo código es lo que hace que el Excel traiga exactamente lo que la grilla muestra.
+    //
+    // ILike es la coincidencia case-insensitive de Npgsql. Los comodines tienen que ser
+    // sólo los dos que pone LikePattern: `%` y `_` son comodines de LIKE, así que un
+    // término sin escapar los convierte en parte de la sintaxis. `?search=_` devolvía el
+    // catálogo entero —coincide con cualquier carácter—, que es lo contrario de filtrar.
+    // Lo encontró la revisión de fiabilidad de CAT-02, contra un comentario previo que
+    // afirmaba justo lo que no pasaba.
+    private static IQueryable<Product> ApplyTextFilters(
+        IQueryable<Product> query,
+        string? search,
+        string? name,
+        string? code)
+    {
+        // Con variantes, `search` también encuentra por código de barras de una variante
+        // (spec 2026-10-20 §5, la búsqueda del POS). Lo usan el POS y el `search` del listado, del
+        // combobox de cotizaciones y de la exportación, que también quedan encontrando por código
+        // de barras: es la misma caja de búsqueda y no hay motivo para que un código escaneado no
+        // la encuentre. name/code (las cajas separadas del listado) no cambian.
+        var searchPattern = LikePattern(search);
+        if (searchPattern is not null)
+        {
+            query = query.Where(product =>
+                EF.Functions.ILike(product.Name, searchPattern, LikeEscapeCharacter) ||
+                product.Variants.Any(variant =>
+                    EF.Functions.ILike(variant.Code, searchPattern, LikeEscapeCharacter) ||
+                    (variant.Barcode != null &&
+                        EF.Functions.ILike(variant.Barcode, searchPattern, LikeEscapeCharacter))));
+        }
+
+        // Las dos cajas separadas del listado (CAT-FILTROS-01), cada una filtra su propia
+        // columna y se combinan con AND entre sí y con `search` cuando el llamador manda varias.
+        var namePattern = LikePattern(name);
+        if (namePattern is not null)
+        {
+            query = query.Where(product =>
+                EF.Functions.ILike(product.Name, namePattern, LikeEscapeCharacter));
+        }
+
+        // Un producto coincide si alguna de sus variantes coincide.
+        var codePattern = LikePattern(code);
+        if (codePattern is not null)
+        {
+            query = query.Where(product => product.Variants.Any(variant =>
+                EF.Functions.ILike(variant.Code, codePattern, LikeEscapeCharacter)));
+        }
+
+        return query;
+    }
+
     // El filtro y el orden del listado, compartidos por el que trae el agregado (POS) y el que
     // proyecta la fila (listado de productos): que los dos ordenen y cuenten igual es lo que hace
     // que una misma búsqueda dé la misma página en las dos pantallas.
@@ -378,45 +419,10 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             query = query.Where(product => ids.Contains(product.CategoryId));
         }
 
-        // ILike es la coincidencia case-insensitive de Npgsql. Los comodines tienen que ser
-        // sólo los dos que pone LikePattern: `%` y `_` son comodines de LIKE, así que un
-        // término sin escapar los convierte en parte de la sintaxis. `?search=_` devolvía el
-        // catálogo entero —coincide con cualquier carácter—, que es lo contrario de filtrar.
-        // Lo encontró la revisión de fiabilidad de CAT-02, contra un comentario previo que
-        // afirmaba justo lo que no pasaba.
-        //
-        // Con variantes, `search` también encuentra por código de barras de una variante
-        // (spec 2026-10-20 §5, la búsqueda del POS). Lo usan el POS y el `search` del listado y del
-        // combobox de cotizaciones, que también quedan encontrando por código de barras: es la
-        // misma caja de búsqueda y no hay motivo para que un código escaneado no la encuentre.
-        // name/code (las cajas separadas del listado) no cambian.
+        query = ApplyTextFilters(query, search, name, code);
         var searchPattern = LikePattern(search);
-        if (searchPattern is not null)
-        {
-            query = query.Where(product =>
-                EF.Functions.ILike(product.Name, searchPattern, LikeEscapeCharacter) ||
-                product.Variants.Any(variant =>
-                    EF.Functions.ILike(variant.Code, searchPattern, LikeEscapeCharacter) ||
-                    (variant.Barcode != null &&
-                        EF.Functions.ILike(variant.Barcode, searchPattern, LikeEscapeCharacter))));
-        }
-
-        // Las dos cajas separadas del listado (CAT-FILTROS-01), cada una filtra su propia
-        // columna y se combinan con AND cuando el llamador manda las dos.
         var namePattern = LikePattern(name);
-        if (namePattern is not null)
-        {
-            query = query.Where(product =>
-                EF.Functions.ILike(product.Name, namePattern, LikeEscapeCharacter));
-        }
-
-        // Un producto coincide si alguna de sus variantes coincide.
         var codePattern = LikePattern(code);
-        if (codePattern is not null)
-        {
-            query = query.Where(product => product.Variants.Any(variant =>
-                EF.Functions.ILike(variant.Code, codePattern, LikeEscapeCharacter)));
-        }
 
         // El total se cuenta sobre la consulta ya filtrada y antes de paginar — mismo criterio
         // que CustomerRepository.SearchAsync.
