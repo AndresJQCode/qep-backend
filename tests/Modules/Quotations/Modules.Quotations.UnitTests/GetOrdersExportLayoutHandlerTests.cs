@@ -27,7 +27,7 @@ public sealed class GetOrdersExportLayoutHandlerTests
         Assert.All(dto.Columns, column => Assert.Equal("Catalog", column.Kind));
         // Sin fila, cada columna sale como nace: todas visibles menos "coordinadora_city"
         // (ajuste 2026-10-02), las "payment_method_N" (ajuste 2026-10-03) y "carrier" (ajuste
-        // 2026-10-05) y las cuatro del flete salvo "freight_amount" (2026-10-17) , "variant" (2026-10-21) y "customer_person_type" (2026-10-26), que nacen ocultas.
+        // 2026-10-05) y las cuatro del flete salvo "freight_amount" (2026-10-17), "variant" (2026-10-21) y "customer_person_type" (2026-10-26), que nacen ocultas.
         Assert.All(dto.Columns, column => Assert.Equal(column.DefaultVisible, column.Visible));
         Assert.All(dto.Columns, column => Assert.Null(column.Value));
         Assert.Equal(new OrdersExportColumnDto("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, true), dto.Columns[0]);
@@ -92,7 +92,7 @@ public sealed class GetOrdersExportLayoutHandlerTests
             new OrdersExportColumnDto("Catalog", "coordinadora_city", "Ciudad Coordinadora", 41, false, "Ciudad (P4)", null, true),
             dto.Columns[1]);
         // El resto nace visible, menos las "Forma de pago N" (ajuste 2026-10-03) y "carrier" (ajuste
-        // 2026-10-05) y las cuatro del flete salvo "freight_amount" (2026-10-17) , "variant" (2026-10-21) y "customer_person_type" (2026-10-26), que nacen ocultas.
+        // 2026-10-05) y las cuatro del flete salvo "freight_amount" (2026-10-17), "variant" (2026-10-21) y "customer_person_type" (2026-10-26), que nacen ocultas.
         Assert.All(
             dto.Columns.Skip(2),
             column => Assert.Equal(
