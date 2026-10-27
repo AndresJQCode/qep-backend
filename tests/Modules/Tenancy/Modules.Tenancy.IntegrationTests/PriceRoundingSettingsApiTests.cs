@@ -60,6 +60,30 @@ public sealed class PriceRoundingSettingsApiTests
         AssertRow(read[2], "EUR", 2, "Nearest", 2, true);
     }
 
+    // D3: guardar el valor por defecto borra la fila, así «sin configurar» tiene una sola forma.
+    [Fact]
+    public async Task PuttingTheDefaultBackRemovesTheStoredRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        (await PutAsync(client, Body(("USD", 2, "Up")))).EnsureSuccessStatusCode();
+
+        var put = await PutAsync(client, Body(("USD", 2, "Nearest")));
+
+        put.EnsureSuccessStatusCode();
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT count(*) FROM tenancy.tenant_price_roundings WHERE tenant_id = @tenantId", connection);
+        command.Parameters.AddWithValue("tenantId", Guid.Parse(TenantId));
+        Assert.Equal(0L, await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+        var read = (await client.GetFromJsonAsync<JsonElement>(Url, TestContext.Current.CancellationToken))
+            .GetProperty("currencies");
+        AssertRow(read[1], "USD", 2, "Nearest", 2, true);
+    }
+
     [Theory]
     [InlineData("USD", 3, "Up", "Currencies[1].Decimals")]
     [InlineData("USD", -1, "Up", "Currencies[1].Decimals")]
