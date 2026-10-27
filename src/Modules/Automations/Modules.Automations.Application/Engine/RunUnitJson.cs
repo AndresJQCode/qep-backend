@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Modules.Automations.Domain.Engine;
 
@@ -19,6 +21,10 @@ public static class RunUnitJson
 {
     public const int ValueMaxBytes = 8 * 1024;
     public const int RowMaxBytes = 256 * 1024;
+
+    // El mismo encoder mide y guarda: con el predeterminado una á pesa 6 bytes en el JSON y 2 en UTF-8, y el "bytes: N" de un valor
+    // truncado no sería el tamaño real. jsonb de Postgres acepta la forma sin escapar.
+    private static readonly JsonSerializerOptions StoredJson = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     public static string Serialize(IReadOnlyList<RunUnitStep> steps, IReadOnlySet<string> attachmentVariables)
     {
@@ -72,7 +78,7 @@ public static class RunUnitJson
             node["input"]?["messageId"] is { } input ? Guid.Parse(input.GetValue<string>()) : null, node["reset"]?.GetValue<bool>() ?? false);
     }
 
-    private static string ToJson(List<Row> rows) => new JsonArray(rows.Select(row => (JsonNode?)row.ToNode()).ToArray()).ToJsonString();
+    private static string ToJson(List<Row> rows) => new JsonArray(rows.Select(row => (JsonNode?)row.ToNode()).ToArray()).ToJsonString(StoredJson);
 
     // Copia: el valor es el de las variables vivas de la corrida y no se muta.
     private static JsonNode? Sanitize(StepWrite write, IReadOnlySet<string> attachmentVariables)
@@ -96,7 +102,7 @@ public static class RunUnitJson
         {
             _name = name;
             _value = value;
-            Size = Encoding.UTF8.GetByteCount(value?.ToJsonString() ?? "null");
+            Size = Encoding.UTF8.GetByteCount(value?.ToJsonString(StoredJson) ?? "null");
             if (Size > ValueMaxBytes)
             {
                 Drop();

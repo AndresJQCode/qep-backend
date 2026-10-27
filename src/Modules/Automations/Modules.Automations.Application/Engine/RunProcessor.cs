@@ -373,6 +373,7 @@ public sealed partial class RunProcessor(
         {
             if (await inbox.ReadAsync(item.TenantId, item.MessageId, cancellationToken) is not { } inbound)
             {
+                // Sin fila a propósito: la corrida no se movió.
                 return null;
             }
 

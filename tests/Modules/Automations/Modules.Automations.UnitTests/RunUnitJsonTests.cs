@@ -71,6 +71,21 @@ public sealed class RunUnitJsonTests
     }
 
     [Fact]
+    public void TruncatedBytesIsTheRealUtf8SizeOfTheUnescapedCompactJson()
+    {
+        var options = new System.Text.Json.JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+        var big = JsonValue.Create(new string('á', 5000) + "😀")!;
+
+        var json = RunUnitJson.Serialize([Step(1, new StepWrite("x", big), new StepWrite("s", JsonValue.Create("Cómo estás 😀")))], NoAttachments);
+
+        var writes = JsonNode.Parse(json)![0]!["writes"]!;
+        Assert.Equal(Encoding.UTF8.GetByteCount(big.ToJsonString(options)), writes[0]!["bytes"]!.GetValue<int>());
+        Assert.Equal("Cómo estás 😀", writes[1]!["value"]!.GetValue<string>());
+        // Las tildes no se escapan; el emoji (fuera del BMP) sí, y el tamaño medido lo cuenta tal como se guarda.
+        Assert.Contains("Cómo estás", json);
+    }
+
+    [Fact]
     public void RoundTrips()
     {
         var m = Guid.NewGuid();

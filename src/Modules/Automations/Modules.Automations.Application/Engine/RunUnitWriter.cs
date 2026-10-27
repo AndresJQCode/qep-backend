@@ -9,7 +9,8 @@ namespace Modules.Automations.Application.Engine;
 /// Spec 2026-10-25 D-E5 y D-E14, plan D-P4: arma la fila de <c>run_units</c> de una unidad del procesador y la agrega al contexto, para
 /// que viaje en el único <c>SaveChanges</c> de la unidad (si la unidad se deshace, la fila se va con ella). Nunca lanza: un fallo al
 /// armarla no puede deshacer la unidad, que repetiría envíos y llamadas HTTP; queda un log con ids y el nombre del error, sin la
-/// excepción (su mensaje podría traer un valor del cliente) y la unidad sigue sin fila.
+/// excepción (su mensaje podría traer un valor del cliente) y la unidad sigue sin fila. La garantía cubre armar y agregar la fila; una fila que la base rechaza en el
+/// <c>SaveChanges</c> de la unidad la deshace, así que nada se escribe ahí que no sea ya seguro en <c>conversation_runs.variables</c>.
 /// </summary>
 public sealed partial class RunUnitWriter(IRunUnitRepository units, IClock clock, ILogger<RunUnitWriter> logger)
 {
