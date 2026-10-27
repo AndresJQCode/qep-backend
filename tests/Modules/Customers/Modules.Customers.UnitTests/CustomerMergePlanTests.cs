@@ -58,6 +58,17 @@ public sealed class CustomerMergePlanTests
             CustomerId.New(), TenantId, "Laura", new CustomerIdentification { Type = IdentificationType.Cc, Number = number },
             "+573001234567", Created, new PlusNormalizer());
 
+    // Una ficha incompleta con documento y tipo de persona: ningún constructor público las junta (el tipo se guarda al
+    // completar), así que el tipo se fija por reflexión sobre el setter privado (spec 2026-10-26, fusión).
+    private static Customer RegisterWith(IdentificationType type, string number, PersonType? personType)
+    {
+        var customer = Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "Laura", new CustomerIdentification { Type = type, Number = number },
+            "+573001234567", Created, new PlusNormalizer());
+        typeof(Customer).GetProperty(nameof(Customer.PersonType))!.SetValue(customer, personType);
+        return customer;
+    }
+
     private static Customer Shopify(string? email = null) =>
         Customer.CreateIncompleteFromExternalSale(CustomerId.New(), TenantId, "Laura", null, email, null, Created, new PlusNormalizer());
 
@@ -232,6 +243,49 @@ public sealed class CustomerMergePlanTests
         Assert.Equal(MarketingConsentSource.Manual, survivor.MarketingOptOutSource);
         Assert.Equal(own, survivor.MarketingOptOutAt);
         Assert.DoesNotContain(CustomerMergeField.MarketingOptOut, plan.FilledFields);
+    }
+
+    [Fact]
+    public void ASurvivorWithoutDocumentTakesThePersonTypeWithTheDocument()
+    {
+        var survivor = Shopify();
+        var merged = RegisterWith(IdentificationType.Nit, "900123456", PersonType.Juridica);
+
+        var plan = CustomerMergePlan.Create(survivor, [merged]);
+        plan.MarkMerged(Now);
+        plan.FillSurvivor(Now);
+
+        Assert.Equal(IdentificationType.Nit, survivor.IdentificationType);
+        Assert.Equal("900123456", survivor.IdentificationNumber);
+        Assert.Equal(PersonType.Juridica, survivor.PersonType);
+    }
+
+    [Fact]
+    public void ASurvivorWithItsOwnDocumentKeepsItsPersonType()
+    {
+        var survivor = RegisterWith(IdentificationType.Cc, "1020", PersonType.Natural);
+        var merged = RegisterWith(IdentificationType.Nit, "900123456", PersonType.Juridica);
+
+        var plan = CustomerMergePlan.Create(survivor, [merged]);
+        plan.MarkMerged(Now);
+        plan.FillSurvivor(Now);
+
+        Assert.Equal(IdentificationType.Cc, survivor.IdentificationType);
+        Assert.Equal(PersonType.Natural, survivor.PersonType);
+    }
+
+    [Fact]
+    public void ASurvivorWithDocumentButNoPersonTypeDoesNotTakeTheMergedOne()
+    {
+        var survivor = RegisterWith(IdentificationType.Cc, "1020", null);
+        var merged = RegisterWith(IdentificationType.Nit, "900123456", PersonType.Juridica);
+
+        var plan = CustomerMergePlan.Create(survivor, [merged]);
+        plan.MarkMerged(Now);
+        plan.FillSurvivor(Now);
+
+        Assert.Equal(IdentificationType.Cc, survivor.IdentificationType);
+        Assert.Null(survivor.PersonType);
     }
 
     [Fact]

@@ -437,7 +437,8 @@ public sealed record CustomerMergePartyDto(
     string? Cuc,
     bool IsComplete,
     bool IsActive,
-    long Version);
+    long Version,
+    string? PersonType = null);
 
 /// <summary>Una clase de lo que la fusión mueve al que queda, con cuántas hay. <c>Kind</c> viaja con el nombre del enum.</summary>
 public sealed record CustomerMergeMoveDto(string Kind, int Count);

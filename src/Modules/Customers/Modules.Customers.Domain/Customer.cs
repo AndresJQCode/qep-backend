@@ -970,10 +970,13 @@ public sealed class Customer
         InstagramUsername = username;
     }
 
-    internal void FillIdentification(IdentificationType type, string number)
+    // El tipo de persona se llena junto con el documento y solo con él: un sobreviviente que ya tenía documento no pasa por
+    // aquí, y uno sin tipo nunca recibe el del fusionado si conservó el suyo (spec 2026-10-26, fusión).
+    internal void FillIdentification(Domain.IdentificationType type, string number, Domain.PersonType? personType)
     {
         IdentificationType = type;
         IdentificationNumber = number;
+        PersonType = personType;
     }
 
     internal void FillCountry(string value) => Country = value;
