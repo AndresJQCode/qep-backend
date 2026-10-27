@@ -1521,6 +1521,56 @@ public sealed class OrderApiTests
         Assert.NotNull(approved.ApprovedAt);
     }
 
+    // Spec 2026-10-26: con OnOrderApproval, aprobar un pedido sin fila de facturación lee el cliente vigente a
+    // través del adaptador real (QuotationCustomerLookup): sin tipo de persona es un 422 con missingOn, y al
+    // clasificarlo el mismo pedido se aprueba.
+    [Fact]
+    public async Task ApproveWithOnOrderApprovalIsA422UntilTheCustomerHasAPersonType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
+        using var _ = client;
+        const string identificationNumber = "900.123.456-1";
+        var clientId = await CreateActiveCustomerAsync(client, tenantId, identificationNumber);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var created = await ReadOrderAsync(await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            TestContext.Current.CancellationToken));
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var tenancy = scope.ServiceProvider
+                .GetRequiredService<Modules.Tenancy.Infrastructure.Persistence.TenancyDbContext>();
+            await tenancy.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE tenancy.tenants SET person_type_requirement = 'OnOrderApproval' WHERE id = {tenantId}",
+                TestContext.Current.CancellationToken);
+        }
+
+        var rejected = await client.PostAsync(
+            $"{OrderByIdUrl(tenantId, created.Id)}/approve",
+            content: null,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+        using var body = JsonDocument.Parse(
+            await rejected.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("order.order.billed_person_type_required", body.RootElement.GetProperty("code").GetString());
+        Assert.Equal("Customer", body.RootElement.GetProperty("missingOn").GetString());
+
+        await UpdateCustomerRetentionAsync(
+            client, tenantId, clientId, identificationNumber,
+            withRetention: false, vatSurplus: false, personType: "Natural");
+
+        var approved = await ReadOrderAsync(await client.PostAsync(
+            $"{OrderByIdUrl(tenantId, created.Id)}/approve",
+            content: null,
+            TestContext.Current.CancellationToken));
+        Assert.Equal("Approved", approved.Status);
+    }
+
     // Decisión 5: gestionar pedidos no alcanza para anularlos.
     [Fact]
     public async Task CancelWithOnlyTheManagePermissionIsForbidden()

@@ -356,22 +356,15 @@ public sealed class OrdersExportProcessor(
     }
 
     private static string BilledIdentificationFor(
-        Order order, OrderParty? billing, QuotationCustomerRef? customer)
-    {
-        if (order.BillsToFinalConsumer)
+        Order order, OrderParty? billing, QuotationCustomerRef? customer) =>
+        OrderBilledParty.SourceFor(order.BillsToFinalConsumer, billing) switch
         {
-            return FinalConsumer.IdentificationNumber;
-        }
-
-        if (billing?.Name is { Length: > 0 })
-        {
+            BilledPartySource.FinalConsumer => FinalConsumer.IdentificationNumber,
             // Una parte guardada antes del número lo deja vacío, nunca con el del cliente, que es
             // otra persona.
-            return billing.IdentificationNumber ?? string.Empty;
-        }
-
-        return customer?.IdentificationNumber ?? string.Empty;
-    }
+            BilledPartySource.BillingParty => billing!.IdentificationNumber ?? string.Empty,
+            _ => customer?.IdentificationNumber ?? string.Empty
+        };
 
     private static (string Ciudad, string Direccion, string Telefono, string Email) ContactFor(
         OrderParty? shipping,
