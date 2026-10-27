@@ -69,6 +69,7 @@ public interface IProductRepository
     /// </summary>
     Task<IReadOnlyList<Product>> ListForExportAsync(
         Guid tenantId,
+        string? search,
         string? name,
         string? code,
         bool? isActive,
