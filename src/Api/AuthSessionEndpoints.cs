@@ -56,14 +56,7 @@ public static class AuthSessionEndpoints
     private static async Task<IResult> EstablishAsync(
         HttpContext httpContext,
         IProviderLinking providerLinking,
-        IMembershipActivation membershipActivation,
-        IActiveTenantsQuery activeTenantsQuery,
-        ITenantRoleCatalog roleCatalog,
-        ITenantDirectory tenantDirectory,
-        ICurrenciesInUse currenciesInUse,
-        ISessionService sessionService,
-        IOptions<QepSessionOptions> sessionOptions,
-        IHostEnvironment environment,
+        SessionEstablisher establisher,
         CancellationToken cancellationToken)
     {
         var user = httpContext.User;
@@ -98,44 +91,12 @@ public static class AuthSessionEndpoints
                 detail: outcome.DenialReason);
         }
 
-        var userId = outcome.UserId!.Value;
-        // El valor de retorno se descarta a propósito: activeTenantsQuery.ListActiveTenantsAsync
-        // de abajo es la única consulta detrás de los dos campos de SessionResponse, para que
-        // ids y nombres no puedan discrepar si una membresía cambia entre dos consultas
-        // separadas.
-        await membershipActivation.AcceptInvitedMembershipsAsync(
-            userId,
-            httpContext.TraceIdentifier,
-            cancellationToken);
-        var activeTenants = await activeTenantsQuery.ListActiveTenantsAsync(
-            userId,
-            cancellationToken);
-        var activeTenantIds = activeTenants.Select(tenant => tenant.TenantId).ToArray();
-        // Antes de emitir la sesión: si leer el catálogo falla, que no quede una cookie viva
-        // detrás de una respuesta de error.
-        var tenants = await ToActiveTenantResponsesAsync(
-            activeTenants,
-            roleCatalog,
-            tenantDirectory,
-            currenciesInUse,
-            cancellationToken);
-
-        var issued = await sessionService.IssueAsync(
-            userId,
-            httpContext.Request.Headers.UserAgent.ToString(),
-            httpContext.Connection.RemoteIpAddress?.ToString(),
-            cancellationToken);
-        SessionCookieWriter.Append(httpContext, sessionOptions.Value, environment, issued);
-
-        return Results.Ok(new SessionResponse(userId, email, activeTenantIds, tenants, Currencies.All));
+        return await establisher.EstablishAsync(httpContext, outcome.UserId!.Value, email, cancellationToken);
     }
 
     private static async Task<IResult> GetCurrentSessionAsync(
         HttpContext httpContext,
-        IActiveTenantsQuery activeTenantsQuery,
-        ITenantRoleCatalog roleCatalog,
-        ITenantDirectory tenantDirectory,
-        ICurrenciesInUse currenciesInUse,
+        SessionEstablisher establisher,
         IUserDirectory userDirectory,
         CancellationToken cancellationToken)
     {
@@ -146,74 +107,7 @@ public static class AuthSessionEndpoints
         }
 
         var email = await userDirectory.GetEmailAsync(userId.Value, cancellationToken);
-        var activeTenants = await activeTenantsQuery.ListActiveTenantsAsync(
-            userId.Value,
-            cancellationToken);
-        var activeTenantIds = activeTenants.Select(tenant => tenant.TenantId).ToArray();
-        var tenants = await ToActiveTenantResponsesAsync(
-            activeTenants,
-            roleCatalog,
-            tenantDirectory,
-            currenciesInUse,
-            cancellationToken);
-        return Results.Ok(new SessionResponse(userId.Value, email, activeTenantIds, tenants, Currencies.All));
-    }
-
-    /// <summary>
-    /// Le pone a cada rol de cada tenant activo el nombre que ve la persona, y a cada tenant su
-    /// formato regional.
-    /// </summary>
-    /// <remarks>
-    /// Se resuelve acá y no en Tenancy porque el catálogo de roles es de Authorization, que ya
-    /// referencia a Tenancy: consultarlo desde Tenancy cerraría un ciclo. El catálogo es por
-    /// tenant —los de sistema más los custom de ese tenant (TenantRoleCatalog.cs:62-110)—, así
-    /// que se pide uno por tenant.
-    ///
-    /// Una clave que el catálogo no conoce sale con la clave como nombre y no se descarta:
-    /// puede ser un rol retirado que la membresía todavía nombra, el mismo caso que
-    /// TenantRoleCatalog.cs:32-34 tolera sin fallar. Descartarla escondería un rol que la
-    /// membresía sí tiene. El orden es el de la membresía, no el del catálogo.
-    /// </remarks>
-    private static async Task<IReadOnlyCollection<ActiveTenantResponse>> ToActiveTenantResponsesAsync(
-        IReadOnlyCollection<ActiveTenantSummary> activeTenants,
-        ITenantRoleCatalog roleCatalog,
-        ITenantDirectory tenantDirectory,
-        ICurrenciesInUse currenciesInUse,
-        CancellationToken cancellationToken)
-    {
-        var responses = new List<ActiveTenantResponse>(activeTenants.Count);
-        foreach (var tenant in activeTenants)
-        {
-            var catalog = await roleCatalog.ListRolesAsync(tenant.TenantId, cancellationToken);
-            var displayNames = catalog.ToDictionary(
-                definition => definition.Role,
-                definition => definition.DisplayName,
-                StringComparer.Ordinal);
-            var regional = await tenantDirectory.GetRegionalSettingsAsync(
-                new TenantId(tenant.TenantId),
-                cancellationToken);
-            // Through the port and not through a catalog permission: like the regional format, it is how
-            // this tenant's money is shown, and every member needs it before the first paint.
-            var inUse = await currenciesInUse.GetAsync(tenant.TenantId, cancellationToken);
-
-            responses.Add(new ActiveTenantResponse(
-                tenant.TenantId,
-                tenant.DisplayName,
-                tenant.Roles
-                    .Select(role => new SessionRoleResponse(
-                        role,
-                        displayNames.GetValueOrDefault(role, role)))
-                    .ToArray(),
-                regional?.TimeZone,
-                regional?.DateFormat,
-                regional?.DefaultCurrency,
-                regional?.NumberFormat,
-                inUse,
-                regional?.Country,
-                regional?.EffectivePersonTypeRequirement.ToString()));
-        }
-
-        return responses;
+        return Results.Ok(await establisher.DescribeAsync(userId.Value, email, cancellationToken));
     }
 
     private static async Task<IResult> LogoutAsync(

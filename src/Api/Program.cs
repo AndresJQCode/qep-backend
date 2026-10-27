@@ -58,6 +58,7 @@ builder.Services.AddOpenApi();
 builder.Services.AddQepPlatform(
     builder.Configuration,
     builder.Environment);
+builder.Services.AddScoped<SessionEstablisher>();
 builder.Services.AddQepHealthChecks(builder.Configuration);
 builder.Services.AddQepForwardedHeaders(builder.Configuration);
 builder.Services.AddQepCors(builder.Configuration);
