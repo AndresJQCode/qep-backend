@@ -151,6 +151,9 @@ public static class QuotationsSeeder
         // Ajuste 2026-09-26: el NIT de la empresa por la que se factura —la de "EMPRESA"—, no uno
         // escrito a mano, que salía mal en cuanto la cotización se facturaba por otra empresa.
         OrdersExportColumnSetting.Catalog("company_tax_id", "Nit", visible: true),
+        // Spec 2026-10-26 tipo de persona: visible, justo detrás de «Nit». Su encabezado por defecto
+        // («Tipo de persona») no choca con ningún otro de la hoja.
+        OrdersExportColumnSetting.Catalog("customer_person_type", "Tipo de persona", visible: true),
         .. HiddenCatalogKeys().Select(key => OrdersExportColumnSetting.Catalog(
             key,
             OrdersExportColumnCatalog.Columns[OrdersExportColumnCatalog.IndexOf(key)].DefaultHeader,
