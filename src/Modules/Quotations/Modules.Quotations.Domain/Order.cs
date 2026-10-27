@@ -511,7 +511,9 @@ public sealed class Order
     /// Cambia a quién se le factura en un pedido pendiente (spec 2026-10-26): la fila de facturación, el
     /// consumidor final, la razón social y el perfil fiscal de la fila. La fila existente se <b>modifica</b>
     /// y no se reemplaza: borrar y re-crear en el mismo guardado choca con <c>IX_order_parties_order_role</c>.
-    /// Devuelve <c>false</c>, sin tocar la versión, si nada cambió.
+    /// Devuelve <c>false</c>, sin tocar la versión, si nada cambió. Con <paramref name="enforceCompleteness"/> en
+    /// <c>false</c> (el cálculo previo, que se hace mientras la persona teclea) se omiten las exigencias de fila
+    /// completa, identificación y perfil fiscal; la consistencia con el consumidor final sigue.
     /// </summary>
     public bool SetBilling(
         QuotationPartyDetails? billing,
@@ -520,7 +522,8 @@ public sealed class Order
         bool? partyWithRetention,
         bool? partyVatSurplus,
         MemberId updatedBy,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        bool enforceCompleteness = true)
     {
         EnsurePending("The billing can only change while the order is pending.");
         EnsureBillingIsConsistent(billsToFinalConsumer, billing is not null, billingUsesBusinessName);
@@ -529,7 +532,10 @@ public sealed class Order
         var candidate = billing is null ? null : OrderParty.Create(Id, QuotationPartyRole.Billing, billing);
         var withRetention = billing is null ? null : partyWithRetention;
         var vatSurplus = billing is null ? null : partyVatSurplus;
-        EnsureBillingRules(candidate, withRetention, vatSurplus);
+        if (enforceCompleteness)
+        {
+            EnsureBillingRules(candidate, withRetention, vatSurplus);
+        }
 
         var current = Billing;
         if (current?.ToDetails() == candidate?.ToDetails()

@@ -102,9 +102,9 @@ public sealed class PreviewOrderEditsHandler(
         }
 
         // Mismo orden que el guardado: la facturación mueve la retención y el excedente de IVA, así que va antes
-        // de recalcular. Sin la regla NIT por país: el preview no la aplica mientras la persona teclea.
+        // de recalcular. Sin la regla NIT ni las exigencias de fila completa: el preview no las aplica mientras la persona teclea.
         OrderBillingEdits.Apply(
-            order, query.Billing, tenantCountry: null, enforceFiscalRules: false, updatedBy, now);
+            order, query.Billing, tenantCountry: null, strict: false, updatedBy, now);
 
         // Mismo orden que el guardado: el envío antes de recalcular el estado de pago.
         var shipping = await shippingResolver.ResolveAsync(

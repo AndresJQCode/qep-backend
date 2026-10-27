@@ -175,7 +175,9 @@ public sealed class SaveOrderEditsHandler(
                 var regional = await tenantDirectory.GetRegionalSettingsAsync(
                     new TenantId(command.TenantId), cancellationToken);
                 billingSummary = OrderBillingEdits.Apply(
-                    order, command.Billing, regional?.Country, enforceFiscalRules: true, updatedBy, now);
+                    order, command.Billing, regional?.Country, strict: true, updatedBy, now);
+                await BillingPersonTypeRequirement.EnsureForOrderAsync(
+                    tenantDirectory, command.TenantId, order, cancellationToken);
             }
 
             var billingChanged = billingSummary is not null;

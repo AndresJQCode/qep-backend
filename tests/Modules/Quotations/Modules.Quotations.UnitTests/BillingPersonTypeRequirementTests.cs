@@ -102,4 +102,41 @@ public sealed class BillingPersonTypeRequirementTests
             new StubTenantDirectory { Regional = null }, TenantId, NewQuotation(null),
             TestContext.Current.CancellationToken);
     }
+
+    [Fact]
+    public async Task OnCustomerSaveRequiresThePersonTypeOnAnEditedOrderBillingRow()
+    {
+        var advisor = new MemberId(Guid.CreateVersion7());
+        var order = Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0001",
+            new OrderHeader(Guid.CreateVersion7(), advisor, "COP", null, false, null, false, false),
+            QuotationParties.Empty,
+            new QuotationBillingAccount
+            {
+                CompanyId = Guid.CreateVersion7(), BankName = "Bancolombia", AccountNumber = "7542", Currency = "COP",
+            },
+            new ShippingDetails(null, null, null, 0m, 0, false),
+            [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"))],
+            OrderPaymentStatus.PaymentPending, null, advisor, [], DateTimeOffset.UtcNow);
+        order.SetBilling(
+            new QuotationPartyDetails
+            {
+                Name = "Otra S.A.S.",
+                IdentificationNumber = "900123456",
+                IdentificationType = PartyIdentificationType.Nit,
+                Phone = "3001234567",
+                Email = "otra@example.com",
+                Address = "Calle 1 # 2-3",
+                DepartmentId = Guid.CreateVersion7(),
+                CityId = Guid.CreateVersion7(),
+            },
+            false, false, false, false, advisor, DateTimeOffset.UtcNow);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            BillingPersonTypeRequirement.EnsureForOrderAsync(
+                Directory(PersonTypeRequirement.OnCustomerSave), TenantId, order, TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.billing.person_type_required", error.Code);
+        Assert.Equal(["Parties.Billing.PersonType"], error.FieldErrors.Keys);
+    }
 }

@@ -787,6 +787,27 @@ public sealed class OrderEditsApiTests
             (await ReadDetailAsync(saved)).Order.RetentionAmount, previewed.Order.RetentionAmount);
     }
 
+    // El preview se hace mientras la persona teclea: una fila a medias y sin perfil fiscal no es un 422.
+    [Fact]
+    public async Task PreviewAcceptsAnIncompleteBillingRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+
+        var preview = await client.PostAsJsonAsync(
+            $"{OrderByIdUrl(tenantId, order.Id)}/preview",
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 1m)], null, null,
+                Billing: new OrderBillingEditRequest(
+                    new QuotationPartyRequest("Otra S.A.S.", null, null, null, null, null, null, PersonType: "Juridica"))),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+    }
+
     // Para el caso de «sin persistir»: antes del guardado el pedido sigue sin fila ni retención.
     [Fact]
     public async Task PreviewWithBillingLeavesTheStoredOrderWithoutTheRow()

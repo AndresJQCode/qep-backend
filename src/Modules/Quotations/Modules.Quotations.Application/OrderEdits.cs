@@ -60,12 +60,13 @@ public interface IOrderEdits
 internal static class OrderBillingEdits
 {
     /// <summary>Devuelve <c>null</c> si no hay bloque o nada cambió; si cambió, el texto del historial.
-    /// <paramref name="enforceFiscalRules"/> es la regla NIT, que sólo el guardado aplica.</summary>
+    /// <paramref name="strict"/> aplica la regla NIT y las exigencias de fila completa, que sólo el guardado
+    /// exige: el cálculo previo se hace mientras la persona teclea.</summary>
     public static string? Apply(
         Order order,
         OrderBillingEditRequest? billing,
         string? tenantCountry,
-        bool enforceFiscalRules,
+        bool strict,
         MemberId updatedBy,
         DateTimeOffset now)
     {
@@ -75,7 +76,7 @@ internal static class OrderBillingEdits
         }
 
         var party = billing.Party.ToDomain();
-        if (enforceFiscalRules)
+        if (strict)
         {
             BillingPartyFiscalRules.EnsureConsistent(party, tenantCountry);
         }
@@ -83,7 +84,8 @@ internal static class OrderBillingEdits
         var before = OrderChangeSummary.BillingLabel(order);
         var changed = order.SetBilling(
             party, billing.BillsToFinalConsumer, billing.BillingUsesBusinessName, billing.BillingWithRetention,
-            billing.BillingVatSurplus, updatedBy, now);
+            billing.BillingVatSurplus, updatedBy, now,
+            enforceCompleteness: strict);
         return changed ? OrderChangeSummary.BillingChanged(before, OrderChangeSummary.BillingLabel(order)) : null;
     }
 }

@@ -19,16 +19,36 @@ internal static class BillingPersonTypeRequirement
     public const string ErrorCode = "quotation.billing.person_type_required";
     public const string BillingPersonTypeKey = "Parties.Billing.PersonType";
 
-    public static async Task EnsureForQuotationAsync(
+    public static Task EnsureForQuotationAsync(
         ITenantDirectory directory,
         Guid tenantId,
         Quotation quotation,
+        CancellationToken cancellationToken) =>
+        EnsureAsync(
+            directory, tenantId, quotation.BillsToFinalConsumer, quotation.Billing?.PersonType,
+            quotation.Billing?.Name, quotation.Billing is not null, cancellationToken);
+
+    /// <summary>Lo mismo para el pedido, cuando «Editar pedido» trae el bloque <c>billing</c>.</summary>
+    public static Task EnsureForOrderAsync(
+        ITenantDirectory directory,
+        Guid tenantId,
+        Order order,
+        CancellationToken cancellationToken) =>
+        EnsureAsync(
+            directory, tenantId, order.BillsToFinalConsumer, order.Billing?.PersonType,
+            order.Billing?.Name, order.Billing is not null, cancellationToken);
+
+    private static async Task EnsureAsync(
+        ITenantDirectory directory,
+        Guid tenantId,
+        bool billsToFinalConsumer,
+        PartyPersonType? personType,
+        string? name,
+        bool hasBillingRow,
         CancellationToken cancellationToken)
     {
         // Lo barato primero: sin fila propia, con consumidor final o con el tipo ya dicho no hace falta leer el tenant.
-        if (quotation.BillsToFinalConsumer
-            || quotation.Billing is not { PersonType: null } billing
-            || string.IsNullOrWhiteSpace(billing.Name))
+        if (billsToFinalConsumer || !hasBillingRow || personType is not null || string.IsNullOrWhiteSpace(name))
         {
             return;
         }
