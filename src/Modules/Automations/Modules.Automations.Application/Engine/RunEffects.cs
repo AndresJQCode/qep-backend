@@ -135,6 +135,8 @@ public sealed partial class RunEffects(
                             {
                                 HandoffReasons.InvalidReply => HandoffCauseKind.InvalidReply,
                                 HandoffReasons.AttemptsExhausted => HandoffCauseKind.AttemptsExhausted,
+                                HandoffReasons.DataConsentRejected => HandoffCauseKind.DataConsentRejected,
+                                HandoffReasons.DataConsentUnavailable => HandoffCauseKind.DataConsentUnavailable,
                                 _ => HandoffCauseKind.Block,
                             },
                             null, handoff.NodeId, TitleOf(unit.Flow, handoff.NodeId), null, null, http);

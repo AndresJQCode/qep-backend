@@ -39,6 +39,12 @@ public enum AutomationHandoffKind
 
     /// <summary>Spec 2026-10-25 D-1: el asistente agotó los reintentos de una pregunta y el traspaso lo decide el destino configurado.</summary>
     AttemptsExhausted,
+
+    /// <summary>Spec 2026-10-26 repetir R-4c: el cliente no aceptó la política de datos (al tope de <c>repeat</c> o en <c>handoff</c>).</summary>
+    DataConsentRejected,
+
+    /// <summary>Spec 2026-10-26 repetir R-4b: la política de datos no se pudo preguntar porque no hay cliente al que registrarle la respuesta.</summary>
+    DataConsentUnavailable,
 }
 
 /// <summary>Spec 2026-10-24 D-T6: el bloque HTTP fallido que arrancó el paso que terminó en traspaso. Sólo códigos y la foto de

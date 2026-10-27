@@ -121,6 +121,23 @@ public sealed class ConversationEventJsonTests
         Assert.DoesNotContain("assignedMemberId", unassigned, StringComparison.Ordinal);
     }
 
+    // Spec 2026-10-26 repetir R-4c y R-4b: las causas de la política de datos viajan por nombre con el miembro asignado.
+    [Theory]
+    [InlineData(AutomationHandoffKind.DataConsentRejected)]
+    [InlineData(AutomationHandoffKind.DataConsentUnavailable)]
+    public void TheConsentKindsRoundTrip(AutomationHandoffKind kind)
+    {
+        var value = new ConversationEvent(
+            ConversationEventType.AutomationPaused,
+            PauseReason: AutomationPauseReason.Handoff,
+            Handoff: AutomationHandoff.Create(kind, null, "consent", "Política de datos", null, null, null, Guid.CreateVersion7()));
+
+        var json = ConversationEventJson.Serialize(value);
+
+        Assert.Contains($"\"kind\":\"{kind}\"", json, StringComparison.Ordinal);
+        Assert.Equal(value, ConversationEventJson.Parse(json));
+    }
+
     [Theory]
     [InlineData("\"ana\"")]
     [InlineData("12")]
