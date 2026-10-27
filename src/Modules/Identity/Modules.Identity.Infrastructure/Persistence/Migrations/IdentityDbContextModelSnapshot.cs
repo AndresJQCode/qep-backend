@@ -91,6 +91,26 @@ namespace Modules.Identity.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Identity.Domain.PasswordCredential", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Hash")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("hash");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("UserId");
+
+                    b.ToTable("password_credentials", "identity");
+                });
+
             modelBuilder.Entity("Modules.Identity.Domain.ProviderLink", b =>
                 {
                     b.Property<Guid>("Id")
@@ -316,6 +336,15 @@ namespace Modules.Identity.Infrastructure.Persistence.Migrations
                         {
                             t.ExcludeFromMigrations();
                         });
+                });
+
+            modelBuilder.Entity("Modules.Identity.Domain.PasswordCredential", b =>
+                {
+                    b.HasOne("Modules.Identity.Domain.User", null)
+                        .WithOne()
+                        .HasForeignKey("Modules.Identity.Domain.PasswordCredential", "UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Identity.Domain.ProviderLink", b =>

@@ -14,6 +14,8 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
 
     public DbSet<UserPreference> UserPreferences => Set<UserPreference>();
 
+    public DbSet<PasswordCredential> PasswordCredentials => Set<PasswordCredential>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     internal DbSet<IdentityInboxMessage> Inbox => Set<IdentityInboxMessage>();
@@ -25,6 +27,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
         ConfigureUser(modelBuilder);
         ConfigureProviderLink(modelBuilder);
         ConfigureSession(modelBuilder);
+        ConfigurePasswordCredential(modelBuilder);
         ConfigureUserPreference(modelBuilder);
         // audit.entries es propiedad del módulo Audit; acá se mapea como proyección de
         // escritura ExcludeFromMigrations para que las auditorías de emisión/revocación de sesión
@@ -97,6 +100,23 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
         preference.HasOne<User>()
             .WithMany()
             .HasForeignKey(value => value.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigurePasswordCredential(ModelBuilder modelBuilder)
+    {
+        var credential = modelBuilder.Entity<PasswordCredential>();
+        credential.ToTable("password_credentials", "identity");
+        credential.HasKey(value => value.UserId);
+        credential.Property(value => value.UserId)
+            .HasColumnName("user_id")
+            .HasConversion(id => id.Value, value => new UserId(value))
+            .ValueGeneratedNever();
+        credential.Property(value => value.Hash).HasColumnName("hash");
+        credential.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        credential.HasOne<User>()
+            .WithOne()
+            .HasForeignKey<PasswordCredential>(value => value.UserId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 

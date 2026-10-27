@@ -25,6 +25,9 @@ public static class IdentityInfrastructureExtensions
                     "__ef_migrations_history",
                     "identity")));
         services.AddScoped<IUserRepository, UserRepository>();
+        services.AddScoped<IPasswordCredentialRepository, PasswordCredentialRepository>();
+        // Sin estado por request: el hash ficticio se calcula una vez por proceso.
+        services.AddSingleton<IPasswordHasher, AspNetCorePasswordHasher>();
         services.AddScoped<IIdentityUnitOfWork, IdentityUnitOfWork>();
         services.AddScoped<IIdentityProvisioning, IdentityProvisioningService>();
         services.AddScoped<IProviderLinking, ProviderLinkingService>();

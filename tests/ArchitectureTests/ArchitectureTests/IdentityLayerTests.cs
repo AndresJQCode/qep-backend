@@ -24,6 +24,20 @@ public sealed class IdentityLayerTests
             typeof(IdentityInfrastructureExtensions).Assembly);
     }
 
+    [Fact]
+    public void ApplicationDoesNotReferenceAspNetCoreIdentity()
+    {
+        var references = typeof(IIdentityProvisioning).Assembly
+            .GetReferencedAssemblies()
+            .Select(name => name.Name!)
+            .ToArray();
+
+        Assert.DoesNotContain(
+            references,
+            name => name.StartsWith("Microsoft.AspNetCore.Identity", StringComparison.Ordinal)
+                || name == "Microsoft.Extensions.Identity.Core");
+    }
+
     private static void AssertDoesNotReference(
         Assembly source,
         params Assembly[] forbiddenAssemblies)

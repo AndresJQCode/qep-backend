@@ -11,5 +11,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Modules\Identity\Modules.Identity.Domain\Modules.Identity.Domain.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Identity\Modules.Identity.Application\Modules.Identity.Application.csproj" />
   </ItemGroup>
 </Project>

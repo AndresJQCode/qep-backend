@@ -41,4 +41,15 @@ internal static class PasswordAuthApiHarness
         var value = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         return value is null or DBNull ? null : new DateTimeOffset((DateTime)value, TimeSpan.Zero);
     }
+
+    // `table` es siempre una constante de la prueba, nunca entrada externa.
+    public static async Task<long> CountRowsAsync(string connectionString, string table, Guid userId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            $"SELECT COUNT(*) FROM {table} WHERE user_id = @id", connection);
+        command.Parameters.AddWithValue("id", userId);
+        return (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
+    }
 }
