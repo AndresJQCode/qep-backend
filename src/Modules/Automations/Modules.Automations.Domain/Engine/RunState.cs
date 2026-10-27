@@ -55,9 +55,12 @@ public sealed record ConsentPrompt(string NodeId, string ShownText, Guid? Prompt
 /// <param name="Trace">Las últimas <see cref="TraceMax"/> entradas, de la más vieja a la más nueva.</param>
 /// <param name="ConsentPrompt">Spec 2026-10-26 D-6: la pregunta de Política de datos que espera respuesta; <c>null</c> en cualquier otro
 /// momento.</param>
+/// <param name="ConsentRejections">Spec 2026-10-26 repetir R-3: los «No acepto» al bloque Política de datos en que espera la corrida, para
+/// el tope de <c>repeat</c>. Aparte de <see cref="Attempts"/> (R-4). Vuelve a cero al entrar en un bloque, al salir de él y al reiniciar;
+/// no al reenviar la pregunta ni al pasar a la bandeja, que la deja para quien lea por qué.</param>
 public sealed record RunState(
     RunStatus Status, string? CurrentNodeId, int StepNumber, int Attempts, RunVariables Variables, IReadOnlyList<TraceEntry> Trace,
-    ConsentPrompt? ConsentPrompt = null)
+    ConsentPrompt? ConsentPrompt = null, int ConsentRejections = 0)
 {
     /// <summary>§4.2: el trace guarda sólo las últimas 200 entradas.</summary>
     public const int TraceMax = 200;

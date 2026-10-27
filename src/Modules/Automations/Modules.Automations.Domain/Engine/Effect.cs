@@ -64,6 +64,14 @@ public static class HandoffReasons
 
     /// <summary>Spec 2026-10-25 D-2: se agotaron los intentos y la regla del chatbot es pasar a un asesor.</summary>
     public const string AttemptsExhausted = "attempts_exhausted";
+
+    /// <summary>Spec 2026-10-26 repetir R-3 y R-4c: Política de datos con «No acepto» al tope de <c>repeat</c>, o al primero en
+    /// <c>handoff</c>.</summary>
+    public const string DataConsentRejected = "data_consent_rejected";
+
+    /// <summary>Spec 2026-10-26 repetir R-4b: Política de datos en <c>repeat</c> o <c>handoff</c> sin cliente al que registrarle la
+    /// respuesta.</summary>
+    public const string DataConsentUnavailable = "data_consent_unavailable";
 }
 
 public static class EndReasons
