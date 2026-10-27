@@ -8,8 +8,9 @@ using Modules.Automations.Domain.Flow;
 namespace Modules.Automations.Application.Engine;
 
 /// <summary>Una corrida dentro de una unidad del procesador. <see cref="BaseStepNumber"/> es el <c>StepNumber</c> guardado al empezar la
-/// unidad (0 en una corrida nueva): la base de los clientIds de P2-R5.</summary>
-public sealed record RunUnit(ConversationRun Run, FlowDefinition Flow, EngineSettings Settings, int BaseStepNumber);
+/// unidad (0 en una corrida nueva): la base de los clientIds de P2-R5. <see cref="Log"/> (spec 2026-10-25 D-E5) junta los pasos de la unidad
+/// para su fila de <c>run_units</c>; sin él no se registra nada.</summary>
+public sealed record RunUnit(ConversationRun Run, FlowDefinition Flow, EngineSettings Settings, int BaseStepNumber, RunUnitLog? Log = null);
 
 /// <summary>
 /// Spec 2026-10-21 §5.2 paso 5, D-M5 y D-M14: el bucle de efectos que <see cref="RunProcessor"/> delega. Ejecuta en orden lo que pide
@@ -66,15 +67,19 @@ public sealed partial class RunEffects(
             // es consecuencia de la entrada que lo arrancó. Si fue un HTTP fallido, la causa lo nombra.
             var http = FailedHttpOf(unit.Flow, next);
             var step = FlowEngine.Step(unit.Flow, unit.Settings, state, next, now);
+            unit.Log?.Record(step, next);
             state = step.State;
             next = null;
-            foreach (var effect in step.Effects)
+            for (var i = 0; i < step.Effects.Count; i++)
             {
+                var effect = step.Effects[i];
                 switch (effect)
                 {
                     case Effect.SendText or Effect.SendInteractive:
                         var clientId = DeterministicClientId.For(run.Id, unit.BaseStepNumber, sends++);
                         var outcome = await SendAsync(run, effect, clientId, cancellationToken);
+                        // D-E5: el clientId que Mensajería recibió, también si no salió (la fila cuenta lo que se intentó).
+                        unit.Log?.Sent(i, clientId, null);
                         if (outcome is not BotSendOutcome.Sent sent)
                         {
                             await StopAsync(run, state, outcome, effect, TitleOf(unit.Flow, effect.NodeId), http, now, cancellationToken);

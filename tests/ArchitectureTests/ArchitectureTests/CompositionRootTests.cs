@@ -609,6 +609,27 @@ public sealed class CompositionRootTests
             scope.ServiceProvider.GetRequiredService<Modules.Automations.Application.Http.IHttpBlockExecutor>());
     }
 
+    /// <summary>
+    /// Spec 2026-10-25 D-E5: <c>RunUnitWriter</c> es un parámetro opcional de <c>RunProcessor</c>, así que sin su registro el contenedor
+    /// arma el procesador igual, sin registro de unidades, y ninguna corrida deja su fila en <c>run_units</c> sin error en ningún lado.
+    /// </summary>
+    [Fact]
+    public void TheContainerBuildsTheRunProcessorWithItsRunUnitWriter()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var processor = scope.ServiceProvider.GetRequiredService<Modules.Automations.Application.Engine.RunProcessor>();
+
+        var writer = typeof(Modules.Automations.Application.Engine.RunProcessor)
+            .GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Single(field => field.FieldType == typeof(Modules.Automations.Application.Engine.RunUnitWriter));
+        Assert.NotNull(writer.GetValue(processor));
+    }
+
     [Fact]
     public void TheContainerCanBuildTheEntitlementMask()
     {

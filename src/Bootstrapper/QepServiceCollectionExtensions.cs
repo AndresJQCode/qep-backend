@@ -1040,6 +1040,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAutomationTenantNames, AutomationTenantNames>();
         // Spec 2026-10-21 §5.2: una unidad del motor por fila del inbox, en el scope que abre AutomationInboxWorker.
         services.AddScoped<RunEffects>();
+        // Spec 2026-10-25 D-E5: el parámetro es opcional en RunProcessor; sin este registro el contenedor lo arma sin registro de unidades
+        // y nada se pone rojo. CompositionRootTests lo amarra.
+        services.AddScoped<RunUnitWriter>();
         services.AddScoped<RunProcessor>();
         // Spec 2026-10-21 §8: el simulador usa el mismo ejecutor HTTP y el mismo puerto de horario que el motor.
         services.AddScoped<SimulationRunner>();
