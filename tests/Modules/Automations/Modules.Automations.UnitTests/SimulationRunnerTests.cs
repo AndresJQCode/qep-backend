@@ -62,6 +62,20 @@ public sealed class SimulationRunnerTests
     }
 
     [Fact]
+    public void ASimulationKeepsTheConsentRejections()
+    {
+        var simulation = Simulation.Start(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), false, Initial() with { ConsentRejections = 2 }, DateTimeOffset.UtcNow);
+
+        Assert.Equal(2, simulation.ToState().ConsentRejections);
+
+        var old = Simulation.Start(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), false, Initial(), DateTimeOffset.UtcNow);
+        var field = typeof(Simulation).GetProperty(nameof(Simulation.StateJson))!;
+        field.SetValue(old, """{"status":"Running","currentNodeId":null,"stepNumber":0,"attempts":0,"variables":{},"trace":[]}""");
+
+        Assert.Equal(0, old.ToState().ConsentRejections);
+    }
+
+    [Fact]
     public async Task StartTranscribesTheBotMessagesAndStopsAtTheWait()
     {
         var http = new RecordingHttpBlocks(null);

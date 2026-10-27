@@ -203,6 +203,7 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
         run.Property(value => value.CurrentNodeId).HasColumnName("current_node_id").HasMaxLength(64);
         run.Property(value => value.StepNumber).HasColumnName("step_number").HasDefaultValue(0);
         run.Property(value => value.Attempts).HasColumnName("attempts").HasColumnType("smallint").HasDefaultValue(0);
+        run.Property(value => value.ConsentRejections).HasColumnName("consent_rejections").HasColumnType("smallint").HasDefaultValue(0);
         run.Property(value => value.VariablesJson).HasColumnName("variables").HasColumnType("jsonb").HasDefaultValueSql("'{}'");
         run.Property(value => value.TraceJson).HasColumnName("trace").HasColumnType("jsonb").HasDefaultValueSql("'[]'");
         run.Property(value => value.ConsentPromptJson).HasColumnName("consent_prompt").HasColumnType("jsonb");
