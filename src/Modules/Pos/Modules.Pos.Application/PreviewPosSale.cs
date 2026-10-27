@@ -92,10 +92,10 @@ public sealed class PreviewPosSaleHandler(
         }
 
         var amounts = VatIncludedLine.Compute(
-            line.Quantity, price!.Value, line.DiscountPercentage, product.TaxPercentage, currency);
+            line.Quantity, price!.Value, line.DiscountPercentage, product.TaxPercentage, PriceRounding.LegacyFor(currency));
         return new PosPreviewLineResponse(
             line.VariantId, product.ProductId, product.Code, product.Name, line.Quantity,
-            VatIncludedLine.ChargedListPrice(price.Value, currency), product.TaxPercentage,
+            VatIncludedLine.ChargedListPrice(price.Value, PriceRounding.LegacyFor(currency)), product.TaxPercentage,
             line.DiscountPercentage, amounts.DiscountAmount, amounts.TaxAmount, amounts.Subtotal, amounts.LineTotal,
             true, null);
     }

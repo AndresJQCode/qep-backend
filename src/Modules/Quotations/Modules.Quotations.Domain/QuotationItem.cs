@@ -263,7 +263,7 @@ public sealed class QuotationItem
 
         // En COP el precio con IVA se cobra en pesos enteros, el de lista y el ya descontado
         // (hotfix 2026-10-14): la regla y su motivo viven en VatIncludedLine, compartida con POS.
-        unitPrice = VatIncludedLine.ChargedListPrice(unitPrice, currency);
+        unitPrice = VatIncludedLine.ChargedListPrice(unitPrice, PriceRounding.LegacyFor(currency));
 
         // Fuera de COP el IVA no se discrimina (hotfix 2026-10-14; en main era solo USD, develop
         // ya maneja cualquier moneda del catalogo). El precio se cobra completo, como si trajera
@@ -286,7 +286,7 @@ public sealed class QuotationItem
         // centavo lo mismo que una cotización detal. Las validaciones y los códigos
         // quotation.item.* siguen aquí.
         var amounts = VatIncludedLine.Compute(
-            quantity, unitPrice, discountPercentage, taxPercentage, currency);
+            quantity, unitPrice, discountPercentage, taxPercentage, PriceRounding.LegacyFor(currency));
         DiscountAmount = amounts.DiscountAmount;
         TaxAmount = amounts.TaxAmount;
         Subtotal = amounts.Subtotal;

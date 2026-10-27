@@ -166,7 +166,7 @@ public sealed class OrderItem
 
         // Mismas dos reglas que QuotationItem.Apply: pesos enteros en COP y sin IVA discriminado
         // fuera de COP.
-        unitPrice = VatIncludedLine.ChargedListPrice(unitPrice, currency);
+        unitPrice = VatIncludedLine.ChargedListPrice(unitPrice, PriceRounding.LegacyFor(currency));
         if (!QuotationItem.ItemizesTaxIn(currency))
         {
             taxPercentage = 0;
@@ -176,7 +176,7 @@ public sealed class OrderItem
         UnitPrice = unitPrice;
         DiscountPercentage = discountPercentage;
         TaxPercentage = taxPercentage;
-        var amounts = VatIncludedLine.Compute(quantity, unitPrice, discountPercentage, taxPercentage, currency);
+        var amounts = VatIncludedLine.Compute(quantity, unitPrice, discountPercentage, taxPercentage, PriceRounding.LegacyFor(currency));
         DiscountAmount = amounts.DiscountAmount;
         TaxAmount = amounts.TaxAmount;
         Subtotal = amounts.Subtotal;

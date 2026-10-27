@@ -93,14 +93,15 @@ public sealed class QuotationWholePesoUnitPriceTests
         Assert.Equal(2_333_500m, quotation.Total);
     }
 
-    // En dólares los centavos son plata: 24,63 con 5% siguen siendo 23,3985 por unidad.
+    // En dólares el unitario se cobra en centavos (spec 2026-10-27): 24,63 × 0,95 = 23,3985 → 23,40,
+    // y 100 × 23,40 = 2.340,00 (antes 2.339,85 con el unitario sin redondear).
     [Fact]
-    public void InUsdTheCentsStay()
+    public void InUsdTheUnitIsChargedInCents()
     {
         var quotation = NewQuotation("USD");
         AddItem(quotation, quantity: 100m, unitPrice: 24.63m, discountPercentage: 5m, taxPercentage: 19);
 
-        Assert.Equal(2_339.85m, quotation.Total);
+        Assert.Equal(2_340.00m, quotation.Total);
     }
 
     // Pasar de USD a COP vuelve a calcular las líneas con la moneda nueva, no con la vieja.

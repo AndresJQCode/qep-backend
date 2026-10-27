@@ -81,7 +81,7 @@ public sealed class PosSaleLine
 
         // La moneda de la caja: en COP se cobra igual que la cotización, unitario en pesos enteros.
         var amounts = VatIncludedLine.Compute(
-            input.Quantity, input.UnitPrice, input.DiscountPercentage, input.TaxPercentage, currency);
+            input.Quantity, input.UnitPrice, input.DiscountPercentage, input.TaxPercentage, PriceRounding.LegacyFor(currency));
 
         return new PosSaleLine
         {
@@ -93,7 +93,7 @@ public sealed class PosSaleLine
             ProductCode = input.ProductCode,
             ProductName = SnapshotText.Fit(input.ProductName, ProductNameMaxLength),
             Quantity = input.Quantity,
-            UnitPrice = VatIncludedLine.ChargedListPrice(input.UnitPrice, currency),
+            UnitPrice = VatIncludedLine.ChargedListPrice(input.UnitPrice, PriceRounding.LegacyFor(currency)),
             DiscountPercentage = input.DiscountPercentage,
             TaxPercentage = input.TaxPercentage,
             DiscountAmount = amounts.DiscountAmount,

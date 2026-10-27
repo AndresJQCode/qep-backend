@@ -12,21 +12,27 @@ public readonly record struct VatIncludedLineAmounts(
 }
 
 /// <summary>
-/// La fórmula de línea de una cotización detal, extraída de QuotationItem.Apply para que POS cobre
-/// al centavo lo mismo que cotizaría (spec 2026-10-07, criterio de éxito 3). Dos copias de la
-/// fórmula del IVA pueden divergir sin que ninguna prueba lo note; una sola no.
+/// La fórmula de línea compartida entre cotización, pedido y POS, para que POS cobre al centavo lo
+/// mismo que cotizaría (spec 2026-10-07). Desde el spec 2026-10-27 el unitario va primero: se
+/// redondea el unitario ya descontado con la regla de la moneda y la línea sale de unitario ×
+/// cantidad, porque lo que el cliente ve, unitario × cantidad, tiene que dar la línea. El
+/// descuento es lo que falta para llegar al bruto de la lista redondeada.
 /// </summary>
 public static class VatIncludedLine
 {
     public static VatIncludedLineAmounts Compute(
-        decimal quantity, decimal unitPrice, decimal discountPercentage, int taxPercentage)
+        decimal quantity, decimal listPrice, decimal discountPercentage, int taxPercentage,
+        PriceRounding rounding)
     {
-        // El precio se carga con IVA incluido: aquí no se suma impuesto, se extrae el que ya viene.
-        var gross = quantity * unitPrice;
-        var discountAmount = Round(gross * discountPercentage / 100m);
+        var charged = ChargedListPrice(listPrice, rounding);
+        var unit = ChargedUnitPrice(listPrice, discountPercentage, rounding);
 
-        // Lo que efectivamente se cobra por la línea, IVA adentro.
-        var lineTotal = Round(gross) - discountAmount;
+        // El precio se carga con IVA incluido: aquí no se suma impuesto, se extrae el que ya viene.
+        var lineTotal = Round(quantity * unit);
+
+        // Con menos decimales que el precio de lista, el bruto se calcula sobre la lista ya
+        // redondeada: así el descuento nunca queda negativo.
+        var discountAmount = Round(quantity * charged) - lineTotal;
 
         // total × tasa / (100 + tasa), no total × tasa / 100: esa es la de agregar IVA a una base, y
         // sobre un precio que ya lo trae cobraría el impuesto dos veces. Con tasa 0 da 0.
@@ -35,43 +41,17 @@ public static class VatIncludedLine
         return new VatIncludedLineAmounts(discountAmount, taxAmount, lineTotal - taxAmount);
     }
 
-    /// <summary>
-    /// La línea en la moneda en que se cobra. En COP el unitario ya descontado se cobra en pesos
-    /// enteros (fix 2026-10-14), y el descuento es lo que falta para llegar al bruto: la facturación
-    /// masiva le manda a Siigo round("Valor Unit" × (1 + IVA)) × cantidad, y sólo con el unitario
-    /// entero eso da lo mismo que se cobró. 100 kits a 35.000 con 33,33% eran 23.334,50 c/u y
-    /// 2.333.450; Siigo facturaba 23.334 × 100. En otra moneda los centavos son plata y la
-    /// fórmula es la de siempre.
-    /// </summary>
-    public static VatIncludedLineAmounts Compute(
-        decimal quantity, decimal unitPrice, decimal discountPercentage, int taxPercentage, string currency)
-    {
-        if (currency != WholePesoCurrency)
-        {
-            return Compute(quantity, unitPrice, discountPercentage, taxPercentage);
-        }
-
-        var listPrice = ChargedListPrice(unitPrice, currency);
-        var chargedUnitPrice = RoundToPeso(listPrice * (1m - discountPercentage / 100m));
-        var charged = Compute(quantity, chargedUnitPrice, 0m, taxPercentage);
-        return charged with { DiscountAmount = Round(quantity * listPrice) - charged.LineTotal };
-    }
+    /// <summary>El precio de lista con el que se cobra: redondeado con la regla.</summary>
+    public static decimal ChargedListPrice(decimal unitPrice, PriceRounding rounding) =>
+        rounding.Apply(unitPrice);
 
     /// <summary>
-    /// El precio de lista con el que se cobra: en COP, en pesos enteros. Redondearlo también, y no
-    /// sólo el descontado, es lo que impide que el descuento quede negativo con un precio que
-    /// trae centavos.
+    /// El unitario ya descontado con el que se cobra: la lista redondeada por el descuento,
+    /// redondeado otra vez. Es el que se multiplica por la cantidad (y el que Siigo recibe).
     /// </summary>
-    public static decimal ChargedListPrice(decimal unitPrice, string currency) =>
-        currency == WholePesoCurrency ? RoundToPeso(unitPrice) : unitPrice;
-
-    // Código ISO literal y no el catálogo de monedas de Tenancy: BuildingBlocks no lo referencia, y
-    // la regla es de la facturación masiva en pesos, no de los decimales con que se muestra cada
-    // moneda.
-    private const string WholePesoCurrency = "COP";
-
-    private static decimal RoundToPeso(decimal value) =>
-        Math.Round(value, 0, MidpointRounding.AwayFromZero);
+    public static decimal ChargedUnitPrice(
+        decimal listPrice, decimal discountPercentage, PriceRounding rounding) =>
+        rounding.Apply(rounding.Apply(listPrice) * (1m - discountPercentage / 100m));
 
     public static decimal Round(decimal value) =>
         Math.Round(value, 2, MidpointRounding.AwayFromZero);

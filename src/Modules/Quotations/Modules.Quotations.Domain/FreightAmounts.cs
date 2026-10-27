@@ -23,7 +23,7 @@ public readonly record struct FreightAmounts(decimal Subtotal, decimal TaxAmount
             return new FreightAmounts(amount, 0m);
         }
 
-        var line = VatIncludedLine.Compute(1m, amount, 0m, taxPercentage, currency);
+        var line = VatIncludedLine.Compute(1m, amount, 0m, taxPercentage, PriceRounding.LegacyFor(currency));
         return new FreightAmounts(line.Subtotal, line.TaxAmount);
     }
 }
