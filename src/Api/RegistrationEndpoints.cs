@@ -78,19 +78,23 @@ public static class RegistrationEndpoints
             user.FindFirstValue("email_verified"),
             "true",
             StringComparison.OrdinalIgnoreCase);
-        if (string.IsNullOrWhiteSpace(email) || !emailVerified)
+
+        // El servicio decide: un email vacío o sin verificar se rechaza con el mismo 403 de siempre.
+        var provisioned = await ownerProvisioning.ProvisionOwnerAsync(
+            Provider,
+            subject,
+            email,
+            emailVerified,
+            cancellationToken);
+        if (provisioned.IsDenied)
         {
             return Results.Problem(
                 statusCode: StatusCodes.Status403Forbidden,
                 title: "A verified email is required to register a tenant.",
-                detail: "email_not_verified");
+                detail: provisioned.DenialReason);
         }
 
-        var ownerUserId = await ownerProvisioning.ProvisionOwnerAsync(
-            Provider,
-            subject,
-            email,
-            cancellationToken);
+        var ownerUserId = provisioned.UserId!.Value;
 
         var tenantId = await tenantRegistration.RegisterOwnerTenantAsync(
             ownerUserId,

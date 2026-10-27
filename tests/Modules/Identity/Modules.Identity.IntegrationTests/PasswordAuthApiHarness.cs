@@ -1,10 +1,18 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.IdentityModel.Tokens.Jwt;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.IdentityModel.Tokens;
+using Modules.Identity.Application;
+using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
 using Modules.Notifications.Application;
 using Npgsql;
@@ -84,6 +92,103 @@ internal static class PasswordAuthApiHarness
         Assert.Fail($"Condition was not met within {limit.TotalSeconds:0} seconds.");
     }
 
+    // Cliente sobre https, como RealAuthenticationApiTests.CreateClient: la cookie de sesión es
+    // Secure y con http el CookieContainer la guarda pero no la reenvía.
+    //
+    // TestServer no tiene RemoteIpAddress, así que toda prueba comparte la partición `unknown` del
+    // limitador: máximo 10 requests por endpoint y por prueba, y cada prueba crea su propia fábrica
+    // (nunca una fixture de clase).
+    public static HttpClient CreateClient(PasswordAuthApiFactory factory) =>
+        factory.CreateClient(
+            new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
+
+    // Id token con forma de Google firmado con la TestSigningKey de la fábrica. Copia de
+    // RealAuthenticationApiTests.IssueGoogleIdToken.
+    public static string IssueGoogleIdToken(string subject, string email, bool emailVerified)
+    {
+        var credentials = new SigningCredentials(
+            new SymmetricSecurityKey(PasswordAuthApiFactory.SigningKeyBytes),
+            SecurityAlgorithms.HmacSha256);
+        var now = DateTime.UtcNow;
+        var token = new JwtSecurityToken(
+            issuer: PasswordAuthApiFactory.Issuer,
+            audience: PasswordAuthApiFactory.Audience,
+            claims:
+            [
+                new Claim("sub", subject),
+                new Claim("email", email),
+                new Claim("email_verified", emailVerified ? "true" : "false"),
+            ],
+            notBefore: now.AddMinutes(-1),
+            expires: now.AddMinutes(30),
+            signingCredentials: credentials);
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+    public static Task<HttpResponseMessage> PostJsonAsync(HttpClient client, string path, object body)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = JsonContent.Create(body),
+        };
+        request.Headers.Add("X-Qep-Client", "web");
+        return client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    public static Task<HttpResponseMessage> PostWithGoogleAsync(
+        HttpClient client,
+        string path,
+        string idToken,
+        object? body = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = JsonContent.Create(body ?? new { }),
+        };
+        request.Headers.Add("X-Qep-Client", "web");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", idToken);
+        return client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    // Un usuario que se registró con contraseña y nunca verificó el email: el atacante que
+    // pre-registra el correo de su víctima.
+    public static async Task<Guid> SeedUnverifiedPasswordUserAsync(
+        PasswordAuthApiFactory factory,
+        string email,
+        string password)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var services = scope.ServiceProvider;
+        var now = DateTimeOffset.UtcNow;
+        var user = User.CreateInvited(UserId.New(), email, now);
+        user.Activate(now);
+        services.GetRequiredService<IUserRepository>().Add(user);
+        services.GetRequiredService<IPasswordCredentialRepository>().Add(
+            PasswordCredential.Create(
+                user.Id, services.GetRequiredService<IPasswordHasher>().Hash(password), now));
+        await services.GetRequiredService<IEmailTokenIssuer>().IssueAsync(
+            user.Id.Value, EmailTokenPurpose.Verify, TestContext.Current.CancellationToken);
+        // El emisor no guarda: el token entra en la unidad de trabajo del llamador.
+        await services.GetRequiredService<IIdentityUnitOfWork>().SaveChangesAsync(
+            TestContext.Current.CancellationToken);
+        return user.Id.Value;
+    }
+
+    public static async Task<long> CountUnusedTokensAsync(string connectionString, Guid userId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT COUNT(*) FROM identity.email_tokens WHERE user_id = @id AND used_at IS NULL",
+            connection);
+        command.Parameters.AddWithValue("id", userId);
+        return (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
+    }
+
+    public static string NewEmail() => $"user-{Guid.NewGuid():N}@example.com";
+
+    public static string NewSlug() => $"t-{Guid.NewGuid():N}"[..20];
+
     public sealed record OutboxRow(string PayloadText, string CorrelationId, DateTimeOffset? ProcessedAt);
 
     // La fila más reciente del evento. `payload::text` devuelve el jsonb normalizado por Postgres.
@@ -126,8 +231,11 @@ internal sealed class PasswordAuthApiFactory(
 {
     public const string Audience = "test-audience";
 
-    private static readonly string SigningKeyBase64 =
-        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+    internal const string Issuer = "https://accounts.google.com";
+
+    internal static readonly byte[] SigningKeyBytes = RandomNumberGenerator.GetBytes(32);
+
+    private static readonly string SigningKeyBase64 = Convert.ToBase64String(SigningKeyBytes);
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -156,5 +264,33 @@ internal sealed class PasswordAuthApiFactory(
                 services.AddSingleton(emailChannel);
             });
         }
+    }
+}
+
+/// <summary>
+/// El canal de correo de las pruebas: guarda lo enviado. Copia de
+/// <c>NotificationsDeliveryHarness.RecordingEmailChannel</c>.
+/// </summary>
+internal sealed class RecordingEmailChannel : IEmailChannel
+{
+    private readonly ConcurrentQueue<EmailMessage> _sent = new();
+    private int _calls;
+
+    /// <summary>Lo que pasa en cada envío antes de contarlo: esperar para abrir una carrera, o
+    /// fallar. Recibe el número de llamada, empezando en 1.</summary>
+    public Func<int, Task>? OnSend { get; init; }
+
+    /// <summary>Sólo los envíos que terminaron bien.</summary>
+    public IReadOnlyCollection<EmailMessage> Sent => _sent;
+
+    public async Task SendAsync(EmailMessage message, CancellationToken cancellationToken)
+    {
+        var call = Interlocked.Increment(ref _calls);
+        if (OnSend is { } onSend)
+        {
+            await onSend(call);
+        }
+
+        _sent.Enqueue(message);
     }
 }

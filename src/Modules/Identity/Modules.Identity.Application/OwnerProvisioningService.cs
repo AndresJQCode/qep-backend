@@ -5,16 +5,24 @@ namespace Modules.Identity.Application;
 
 public sealed class OwnerProvisioningService(
     IUserRepository userRepository,
+    IVerifiedProviderLinker providerLinker,
     IIdentityUnitOfWork unitOfWork,
     IClock clock)
     : IOwnerProvisioning
 {
-    public async Task<Guid> ProvisionOwnerAsync(
+    public async Task<ProviderLinkOutcome> ProvisionOwnerAsync(
         string provider,
         string subject,
-        string email,
+        string? email,
+        bool emailVerified,
         CancellationToken cancellationToken)
     {
+        // Un email vacío o sin verificar nunca crea ni toca un usuario (D11).
+        if (string.IsNullOrWhiteSpace(email) || !emailVerified)
+        {
+            return ProviderLinkOutcome.Denied("email_not_verified");
+        }
+
         var normalizedEmail = User.NormalizeEmail(email);
         var now = clock.UtcNow;
 
@@ -26,8 +34,8 @@ public sealed class OwnerProvisioningService(
         }
 
         user.Activate(now);
-        user.LinkProvider(provider, subject, now);
+        await providerLinker.LinkAsync(user, provider, subject, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return user.Id.Value;
+        return ProviderLinkOutcome.Linked(user.Id.Value);
     }
 }

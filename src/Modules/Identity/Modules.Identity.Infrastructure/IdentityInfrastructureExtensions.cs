@@ -33,6 +33,7 @@ public static class IdentityInfrastructureExtensions
         services.AddScoped<IIdentityUnitOfWork, IdentityUnitOfWork>();
         services.AddScoped<IIdentityOutbox, IdentityOutboxWriter>();
         services.AddScoped<IIdentityProvisioning, IdentityProvisioningService>();
+        services.AddScoped<IVerifiedProviderLinker, VerifiedProviderLinker>();
         services.AddScoped<IProviderLinking, ProviderLinkingService>();
         services.AddScoped<IOwnerProvisioning, OwnerProvisioningService>();
         services.AddScoped<IProviderIdentityResolver, ProviderIdentityResolver>();
