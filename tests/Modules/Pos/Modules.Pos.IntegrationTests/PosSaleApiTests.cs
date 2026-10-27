@@ -510,6 +510,13 @@ public sealed class PosSaleApiTests
         Assert.Equal(112.20m, sale!.Total);
         Assert.Equal(112.20m, read!.Total);
         Assert.Equal(19.70m, read.DiscountAmount);
+        // La venta guarda la regla que usó: lo prueban las columnas, no la respuesta.
+        Assert.Equal(
+            1,
+            await CountAsync(
+                database,
+                "SELECT count(*) FROM pos.sales WHERE id = @id AND price_rounding_decimals = 2 AND price_rounding_mode = 'Up'",
+                ("id", id)));
     }
 
     private static Task<HttpResponseMessage> PutRuleAsync(HttpClient client, Guid tenantId, string usdMode) =>

@@ -32,6 +32,17 @@ public sealed class QuotationPriceRoundingApiTests
         Assert.Equal((11.22m, 112.20m, 19.70m), (line.DiscountedUnitPrice, line.Subtotal, line.DiscountAmount));
         Assert.Equal(112.20m, updated.Total);
 
+        // La regla usada queda escrita en las columnas de la cotización, no sólo en la respuesta.
+        await using (var connection = new Npgsql.NpgsqlConnection(database.GetConnectionString()))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var command = new Npgsql.NpgsqlCommand(
+                "SELECT price_rounding_decimals::text || '/' || price_rounding_mode::text FROM quotations.quotations WHERE id = @id",
+                connection);
+            command.Parameters.AddWithValue("id", quotation.Id);
+            Assert.Equal("2/Up", (string?)await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+        }
+
         var export = await setup.Client.PostAsync(
             $"{QuotationsUrl(setup.TenantId)}/{quotation.Id}/pdf", content: null, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, export.StatusCode);
