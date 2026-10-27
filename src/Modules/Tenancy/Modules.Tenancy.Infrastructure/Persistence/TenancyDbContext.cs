@@ -75,6 +75,11 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         tenant.Property(value => value.DefaultCurrency).HasColumnName("default_currency").HasMaxLength(3).IsRequired();
         tenant.Property(value => value.NumberFormat).HasColumnName("number_format").HasMaxLength(10).IsRequired();
         tenant.Property(value => value.Country).HasColumnName("country").HasMaxLength(2).IsRequired();
+        tenant.Property(value => value.PersonTypeRequirement)
+            .HasColumnName("person_type_requirement")
+            .HasMaxLength(20)
+            .HasConversion<string>()
+            .IsRequired();
         // 512 es el largo de storage.file_resources.public_storage_key (StorageDbContext.cs:56):
         // la clave que se guarda acá es esa misma.
         tenant.Property(value => value.LogoFileId).HasColumnName("logo_file_id");

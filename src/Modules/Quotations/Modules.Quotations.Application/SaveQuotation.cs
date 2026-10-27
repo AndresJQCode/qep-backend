@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -92,6 +93,10 @@ public sealed class SaveQuotationHandler(
         // mientras la persona escribe. El guardado sí: nada se persiste si esto lanza. El
         // validador ya lo frena antes con el campo en `errors`; esto es el respaldo del dominio.
         quotation.EnsureBillingIdentified();
+        var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(command.TenantId), cancellationToken);
+        BillingPartyFiscalRules.EnsureConsistent(quotation.Billing?.ToDetails(), regional?.Country);
+        await BillingPersonTypeRequirement.EnsureForQuotationAsync(
+            tenantDirectory, command.TenantId, quotation, cancellationToken);
 
         var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
         // Guardar sin cambiar el encabezado no deja fila: una lista de "editó" vacíos esconde las

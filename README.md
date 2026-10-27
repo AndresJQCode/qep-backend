@@ -1630,6 +1630,7 @@ contraentrega.
   hay transportadora elegida, que recaude (`cash_on_delivery_not_supported`). Con contraentrega, el PDF
   imprime «Forma de pago: Contraentrega» en lugar de la forma de pago escrita.
 - Cambiar el envío de un pedido pendiente se audita como `quotation.order.shipping_changed`.
+- Cambiar la facturación de un pedido pendiente se audita como `quotation.order.billing_changed`.
 
 Los códigos de error nuevos, con lo que los corrige:
 [guía de integración § Códigos de error](docs/integracion-cotizaciones-y-pedidos.md#códigos-de-error-propios-del-módulo).

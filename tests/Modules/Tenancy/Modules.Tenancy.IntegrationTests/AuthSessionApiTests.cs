@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -276,6 +277,68 @@ public sealed class AuthSessionApiTests
             .Select(tenant => tenant.TenantId)
             .ToArray();
         Assert.Equal(expectedOrder, session.ActiveTenants.Select(tenant => tenant.TenantId));
+    }
+
+    // Spec 2026-10-26: la SPA decide el país de la parte y si exige tipo de persona desde la sesión,
+    // porque `cashier` no puede leer /settings. Publica el requisito **efectivo**, no el guardado.
+    [Fact]
+    public async Task SessionCarriesTheTenantCountryAndEffectivePersonTypeRequirement()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        await StoreSettingsAsync(factory, "CO", PersonTypeRequirement.OnCustomerSave);
+
+        var tenant = await LoginAndGetSeededTenantAsync(factory);
+
+        Assert.Equal("CO", tenant.GetProperty("country").GetString());
+        Assert.Equal("OnCustomerSave", tenant.GetProperty("personTypeRequirement").GetString());
+    }
+
+    // Un tenant no colombiano guarda el valor pero la sesión publica Never: el cliente no tiene que
+    // repetir la regla del país.
+    [Fact]
+    public async Task ANonColombianTenantPublishesNever()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        await StoreSettingsAsync(factory, "ES", PersonTypeRequirement.OnOrderApproval);
+
+        var tenant = await LoginAndGetSeededTenantAsync(factory);
+
+        Assert.Equal("ES", tenant.GetProperty("country").GetString());
+        Assert.Equal("Never", tenant.GetProperty("personTypeRequirement").GetString());
+    }
+
+    private static async Task StoreSettingsAsync(
+        QepApiFactory factory, string country, PersonTypeRequirement requirement)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var tenant = dbContext.Tenants.Single();
+        tenant.UpdateSettings(
+            tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
+            tenant.DefaultCurrency, tenant.NumberFormat, country, requirement, DateTimeOffset.UtcNow);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<JsonElement> LoginAndGetSeededTenantAsync(QepApiFactory factory)
+    {
+        var email = NewEmail();
+        using (var admin = CreateAdminClient(factory))
+        {
+            await InviteAsync(admin, email);
+        }
+
+        using var client = CreateLoginClient(factory, Guid.CreateVersion7().ToString(), email, verified: true);
+        var login = await client.PostAsync(
+            "/api/v1/auth/session", null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var body = await login.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        return body.GetProperty("activeTenants").EnumerateArray()
+            .Single(tenant => tenant.GetProperty("tenantId").GetGuid() == Guid.Parse(SeededTenantId));
     }
 
     [Fact]

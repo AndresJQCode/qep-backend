@@ -208,7 +208,9 @@ public static class AuthSessionEndpoints
                 regional?.DateFormat,
                 regional?.DefaultCurrency,
                 regional?.NumberFormat,
-                inUse));
+                inUse,
+                regional?.Country,
+                regional?.EffectivePersonTypeRequirement.ToString()));
         }
 
         return responses;
@@ -270,7 +272,9 @@ public sealed record SessionResponse(
 /// formato antes de la primera pintura. No es sensible: es cómo se muestran fechas y montos de un
 /// tenant al que la persona pertenece. Null sólo si el tenant no tiene fila.
 /// <c>CurrenciesInUse</c>: currencies with at least one product price in the tenant, catalogue
-/// order (spec D10).
+/// order (spec D10). <c>Country</c> and <c>PersonTypeRequirement</c> (spec 2026-10-26): the
+/// requirement is the **effective** one (<c>Never</c> outside Colombia), so the SPA does not repeat
+/// the country rule.
 /// </remarks>
 public sealed record ActiveTenantResponse(
     Guid TenantId,
@@ -280,7 +284,9 @@ public sealed record ActiveTenantResponse(
     string? DateFormat,
     string? DefaultCurrency,
     string? NumberFormat,
-    IReadOnlyList<string> CurrenciesInUse);
+    IReadOnlyList<string> CurrenciesInUse,
+    string? Country,
+    string? PersonTypeRequirement);
 
 /// <summary>
 /// <c>Role</c> es la clave que guarda la membresía; <c>DisplayName</c>, el nombre que ve la

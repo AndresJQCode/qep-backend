@@ -108,7 +108,8 @@ public static class TenantSettingsEndpoints
                 numberFormat,
                 request.Country,
                 expectedVersion,
-                httpContext.TraceIdentifier),
+                httpContext.TraceIdentifier,
+                request.PersonTypeRequirement),
             cancellationToken);
         return SettingsResult(settings, httpContext);
     }
@@ -158,7 +159,8 @@ public static class TenantSettingsEndpoints
             settings.NumberFormat,
             settings.Country,
             settings.Version,
-            settings.Logo is { } logo ? new TenantLogoResponse(logo.FileId, logo.Url) : null));
+            settings.Logo is { } logo ? new TenantLogoResponse(logo.FileId, logo.Url) : null,
+            settings.PersonTypeRequirement));
     }
 }
 
@@ -169,7 +171,8 @@ public sealed record UpdateTenantSettingsRequest(
     string DateFormat,
     string? DefaultCurrency,
     string? NumberFormat,
-    string? Country);
+    string? Country,
+    string? PersonTypeRequirement = null);
 
 public sealed record SetTenantLogoRequest(Guid FileId);
 
@@ -191,4 +194,7 @@ public sealed record TenantSettingsResponse(
     /// clientes); el backend sólo guarda el código.</summary>
     string Country,
     long Version,
-    TenantLogoResponse? Logo);
+    TenantLogoResponse? Logo,
+    /// <summary>`Never` | `OnCustomerSave` | `OnOrderApproval`: lo guardado, no lo efectivo
+    /// (`/auth/me` publica el efectivo). Spec 2026-10-26.</summary>
+    string PersonTypeRequirement);

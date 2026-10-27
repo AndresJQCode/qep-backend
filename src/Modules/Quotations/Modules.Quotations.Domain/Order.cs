@@ -76,7 +76,7 @@ public sealed class Order
         GlobalScaleFloor = header.GlobalScaleFloor;
         CustomerWithRetention = header.CustomerWithRetention;
         CustomerVatSurplus = header.CustomerVatSurplus;
-        EnsureBillingIsConsistent(parties);
+        EnsureBillingIsConsistent(parties.BillsToFinalConsumer, parties.Billing is not null, parties.BillingUsesBusinessName);
         AssignParties(parties);
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
         IsStorePickup = parties.IsStorePickup;
@@ -465,12 +465,7 @@ public sealed class Order
                 "An order needs at least one product.");
         }
 
-        if (Billing is { } billing && !billing.IsComplete)
-        {
-            throw new QuotationsDomainException(
-                "order.billing.party_incomplete",
-                "The billing party must have all its fields filled.");
-        }
+        EnsureBillingRules(Billing, PartyWithRetention, PartyVatSurplus);
 
         if (Shipping is { } shipping && !shipping.IsComplete)
         {
@@ -478,22 +473,103 @@ public sealed class Order
                 ExternalOrderErrors.ShippingPartyIncomplete,
                 "The shipping party must have all its fields filled.");
         }
+    }
 
-        if (Billing is { } named
-            && !string.IsNullOrWhiteSpace(named.Name)
-            && string.IsNullOrWhiteSpace(named.IdentificationNumber))
+    // Las reglas de facturación del alta, compartidas con SetBilling para que editar no pueda dejar un
+    // pedido que crear habría rechazado (spec 2026-10-26).
+    private static void EnsureBillingRules(OrderParty? billing, bool? partyWithRetention, bool? partyVatSurplus)
+    {
+        if (billing is null)
+        {
+            return;
+        }
+
+        if (!billing.IsComplete)
+        {
+            throw new QuotationsDomainException(
+                "order.billing.party_incomplete",
+                "The billing party must have all its fields filled.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(billing.Name)
+            && (string.IsNullOrWhiteSpace(billing.IdentificationNumber) || billing.IdentificationType is null))
         {
             throw new QuotationsDomainException(
                 "order.billing.identification_required",
                 "A billing party with its own name requires an identification number.");
         }
 
-        if (Billing is not null && (PartyWithRetention is null || PartyVatSurplus is null))
+        if (partyWithRetention is null || partyVatSurplus is null)
         {
             throw new QuotationsDomainException(
                 "order.billing.tax_profile_required",
                 "The billing party must state whether it applies withholding tax and VAT surplus.");
         }
+    }
+
+    /// <summary>
+    /// Cambia a quién se le factura en un pedido pendiente (spec 2026-10-26): la fila de facturación, el
+    /// consumidor final, la razón social y el perfil fiscal de la fila. La fila existente se <b>modifica</b>
+    /// y no se reemplaza: borrar y re-crear en el mismo guardado choca con <c>IX_order_parties_order_role</c>.
+    /// Devuelve <c>false</c>, sin tocar la versión, si nada cambió. Con <paramref name="enforceCompleteness"/> en
+    /// <c>false</c> (el cálculo previo, que se hace mientras la persona teclea) se omiten las exigencias de fila
+    /// completa, identificación y perfil fiscal; la consistencia con el consumidor final sigue.
+    /// </summary>
+    public bool SetBilling(
+        QuotationPartyDetails? billing,
+        bool billsToFinalConsumer,
+        bool billingUsesBusinessName,
+        bool? partyWithRetention,
+        bool? partyVatSurplus,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt,
+        bool enforceCompleteness = true)
+    {
+        EnsurePending("The billing can only change while the order is pending.");
+        EnsureBillingIsConsistent(billsToFinalConsumer, billing is not null, billingUsesBusinessName);
+
+        // La fila candidata se arma aparte para validar lo normalizado antes de mutar nada.
+        var candidate = billing is null ? null : OrderParty.Create(Id, QuotationPartyRole.Billing, billing);
+        var withRetention = billing is null ? null : partyWithRetention;
+        var vatSurplus = billing is null ? null : partyVatSurplus;
+        if (enforceCompleteness)
+        {
+            EnsureBillingRules(candidate, withRetention, vatSurplus);
+        }
+
+        var current = Billing;
+        if (current?.ToDetails() == candidate?.ToDetails()
+            && (current is null) == (candidate is null)
+            && BillsToFinalConsumer == billsToFinalConsumer
+            && BillingUsesBusinessName == billingUsesBusinessName
+            && PartyWithRetention == withRetention
+            && PartyVatSurplus == vatSurplus)
+        {
+            return false;
+        }
+
+        if (candidate is null)
+        {
+            if (current is not null)
+            {
+                _parties.Remove(current);
+            }
+        }
+        else if (current is not null)
+        {
+            current.Apply(candidate.ToDetails());
+        }
+        else
+        {
+            _parties.Add(candidate);
+        }
+
+        BillsToFinalConsumer = billsToFinalConsumer;
+        BillingUsesBusinessName = billingUsesBusinessName;
+        PartyWithRetention = withRetention;
+        PartyVatSurplus = vatSurplus;
+        Touch(updatedBy, occurredAt);
+        return true;
     }
 
     public void AddItem(
@@ -1123,9 +1199,9 @@ public sealed class Order
         }
     }
 
-    private static void EnsureBillingIsConsistent(QuotationParties parties)
+    private static void EnsureBillingIsConsistent(bool billsToFinalConsumer, bool hasBillingRow, bool usesBusinessName)
     {
-        if (parties.BillsToFinalConsumer && (parties.Billing is not null || parties.BillingUsesBusinessName))
+        if (billsToFinalConsumer && (hasBillingRow || usesBusinessName))
         {
             throw new QuotationsDomainException(
                 "order.billing.final_consumer_conflict",

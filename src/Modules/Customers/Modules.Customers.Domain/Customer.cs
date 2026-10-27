@@ -59,11 +59,14 @@ public sealed class Customer
         string? businessName,
         CustomerAddressDetails? principalAddress,
         CustomerIdentification identification,
+        PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
         DateTimeOffset occurredAt,
         IPhoneNumberNormalizer? phoneNormalizer)
     {
+        // Antes de cualquier asignación: el país que cuenta es el del contacto ya normalizado.
+        EnsurePersonTypeMatches(personType, identification.Type, contact.Normalized().Country);
         Id = id;
         TenantId = tenantId;
         Cuc = cuc;
@@ -88,6 +91,7 @@ public sealed class Customer
         // Assign(contact) la pisa enseguida con el valor normalizado real. Country igual.
         IdentificationType = identification.Type;
         IdentificationNumber = identification.Number;
+        PersonType = personType;
         Address = string.Empty;
         Country = string.Empty;
         Assign(contact);
@@ -167,6 +171,12 @@ public sealed class Customer
     /// Nulo en un cliente incompleto (spec 2026-10-10 §6.2).
     /// </summary>
     public IdentificationType? IdentificationType { get; private set; }
+
+    /// <summary>
+    /// Natural o jurídica (spec 2026-10-26). Nulo es «no se sabe»: un cliente viejo, uno incompleto o uno
+    /// que el tenant no obliga a clasificar. Ver <see cref="EnsurePersonTypeMatches"/> para la regla con el NIT.
+    /// </summary>
+    public PersonType? PersonType { get; private set; }
 
     /// <summary>Nulo en un cliente incompleto (spec 2026-10-10 §6.2).</summary>
     public string? IdentificationNumber { get; private set; }
@@ -309,6 +319,7 @@ public sealed class Customer
         string? businessName,
         CustomerAddressDetails? principalAddress,
         CustomerIdentification identification,
+        PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
         DateTimeOffset occurredAt,
@@ -321,6 +332,7 @@ public sealed class Customer
             NormalizeBusinessName(businessName),
             principalAddress,
             identification.Normalized(),
+            personType,
             contact,
             commercial,
             occurredAt,
@@ -418,6 +430,7 @@ public sealed class Customer
         string? businessName,
         CustomerAddressDetails? principalAddress,
         CustomerIdentification identification,
+        PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
         DateTimeOffset occurredAt,
@@ -439,12 +452,14 @@ public sealed class Customer
         var normalizedIdentification = identification.Normalized();
         var normalizedContact = contact.Normalized();
         var location = EnsureValidLocation(normalizedContact);
+        EnsurePersonTypeMatches(personType, normalizedIdentification.Type, normalizedContact.Country);
         _ = EnsureValidClassificationId(commercial.ClassificationId);
 
         Cuc = normalizedCuc;
         Name = normalizedName;
         BusinessName = normalizedBusinessName;
         Assign(normalizedIdentification);
+        PersonType = personType;
         Assign(normalizedContact);
         PhoneE164 = phoneNormalizer?.ToE164(Phone, location.Country);
         Assign(commercial);
@@ -720,6 +735,7 @@ public sealed class Customer
         string name,
         string? businessName,
         CustomerIdentification identification,
+        PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
         string? classificationPrefix,
@@ -744,6 +760,7 @@ public sealed class Customer
         // El pais y la ciudad se comprueban acá y no sólo en Assign: hacen falta **antes** de
         // asignar el nombre, dentro de la misma garantía de todo-o-nada que el resto del método.
         EnsureValidLocation(normalizedContact);
+        EnsurePersonTypeMatches(personType, normalizedIdentification.Type, normalizedContact.Country);
         var normalizedClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
         // Sin clasificacion no hay prefijo que validar: el CUC queda con sus ocho caracteres
         // estables. Con clasificacion, el prefijo es obligatorio, llegue nulo o en blanco.
@@ -754,6 +771,7 @@ public sealed class Customer
         Name = normalizedName;
         BusinessName = normalizedBusinessName;
         Assign(normalizedIdentification);
+        PersonType = personType;
         Assign(normalizedContact);
         PhoneE164 = phoneNormalizer?.ToE164(Phone, Country ?? UnknownRegion);
 
@@ -952,10 +970,13 @@ public sealed class Customer
         InstagramUsername = username;
     }
 
-    internal void FillIdentification(IdentificationType type, string number)
+    // El tipo de persona se llena junto con el documento y solo con él: un sobreviviente que ya tenía documento no pasa por
+    // aquí, y uno sin tipo nunca recibe el del fusionado si conservó el suyo (spec 2026-10-26, fusión).
+    internal void FillIdentification(Domain.IdentificationType type, string number, Domain.PersonType? personType)
     {
         IdentificationType = type;
         IdentificationNumber = number;
+        PersonType = personType;
     }
 
     internal void FillCountry(string value) => Country = value;
@@ -1081,6 +1102,31 @@ public sealed class Customer
                 "customers.customer.city_name_required",
                 "The customer city is required for a customer outside Colombia.")
             : (country, null, normalized.CityName);
+    }
+
+    /// <summary>
+    /// Spec 2026-10-26: en Colombia una persona jurídica se identifica con NIT. Fuera de Colombia el NIT no
+    /// aplica y la regla tampoco. Se comprueba **antes** de asignar nada, dentro de la garantía de
+    /// todo-o-nada de <see cref="Update"/> y <see cref="Complete"/>. Marca <c>IdentificationType</c> porque es el
+    /// campo que la persona corrige en el formulario.
+    /// </summary>
+    private static void EnsurePersonTypeMatches(
+        PersonType? personType, IdentificationType identificationType, string country)
+    {
+        if (personType != Domain.PersonType.Juridica
+            || identificationType == Domain.IdentificationType.Nit
+            || !string.Equals(country, ColombiaCountryCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        throw new CustomersDomainException(
+            CustomersErrorCodes.PersonTypeRequiresNit,
+            "A legal entity is identified by its NIT.",
+            new Dictionary<string, string[]>(StringComparer.Ordinal)
+            {
+                ["IdentificationType"] = ["A legal entity is identified by its NIT."]
+            });
     }
 
     // Nulo es un cliente sin clasificacion y vale. Un Guid.Empty, en cambio, es un id roto y no

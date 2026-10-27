@@ -1052,7 +1052,7 @@ public sealed class Quotation
     private bool BillingLacksIdentification =>
         Billing is { } billing
         && !string.IsNullOrWhiteSpace(billing.Name)
-        && string.IsNullOrWhiteSpace(billing.IdentificationNumber);
+        && (string.IsNullOrWhiteSpace(billing.IdentificationNumber) || billing.IdentificationType is null);
 
     // Reemplaza las dos partes siempre, incluidas las ausentes: `UpdateDetails` reemplaza el
     // recurso entero, así que una parte que llega null borra la fila que hubiera -- que es

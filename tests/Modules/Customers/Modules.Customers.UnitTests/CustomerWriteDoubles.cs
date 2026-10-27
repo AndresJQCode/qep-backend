@@ -1,6 +1,8 @@
 using BuildingBlocks.Application;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Customers.UnitTests;
 
@@ -20,6 +22,31 @@ internal static class CustomerWriteDoubles
     public sealed class FixedClock : IClock
     {
         public DateTimeOffset UtcNow => Now;
+    }
+
+    /// <summary>El tenant que lee <see cref="CustomerPersonTypeRequirement"/>: sólo <see cref="Regional"/> responde; por
+    /// defecto es colombiano y sin requisito (<c>Never</c>), que es lo que las pruebas anteriores al spec 2026-10-26 suponen.</summary>
+    public sealed class TenantDirectory : ITenantDirectory
+    {
+        public TenantRegionalSettings? Regional { get; init; } = new("America/Bogota", "dd/MM/yyyy", "COP", "1.234,56");
+
+        public static TenantDirectory With(string country, PersonTypeRequirement requirement) =>
+            new() { Regional = new("America/Bogota", "dd/MM/yyyy", "COP", "1.234,56", country, requirement) };
+
+        public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult(Regional);
+
+        public Task<string?> GetSlugAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<string?> GetDisplayNameAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<string?> GetDefaultCurrencyAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     public sealed class PlusNormalizer : IPhoneNumberNormalizer

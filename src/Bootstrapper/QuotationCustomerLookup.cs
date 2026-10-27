@@ -115,7 +115,10 @@ internal sealed class QuotationCustomerLookup(
             customer.UpdatedAt,
             customer.BusinessName,
             customer.IdentificationNumber,
-            customer.IsComplete);
+            customer.IsComplete,
+            customer.PersonType?.ToWireValue(),
+            customer.Country,
+            customer.IdentificationType?.ToWireValue());
     }
 
     private static QuotationCustomerAddressRef ToAddressRef(

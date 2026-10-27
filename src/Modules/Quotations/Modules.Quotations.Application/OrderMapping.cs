@@ -106,7 +106,9 @@ internal static class OrderMapping
         party.Email,
         party.Address,
         party.DepartmentId,
-        party.CityId);
+        party.CityId,
+        party.PersonType?.ToWireValue(),
+        party.IdentificationType?.ToWireValue());
 
     private static QuotationItemDto ToDto(OrderItem item) => new(
         item.Id.Value,

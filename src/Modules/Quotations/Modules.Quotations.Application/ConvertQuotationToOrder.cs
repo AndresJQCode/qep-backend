@@ -61,6 +61,7 @@ public sealed class ConvertQuotationToOrderHandler(
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     ITenantClock tenantClock,
+    ITenantDirectory tenantDirectory,
     IValidator<ConvertQuotationToOrderCommand> validator)
     : ICommandHandler<ConvertQuotationToOrderCommand, OrderDetailDto>
 {
@@ -107,6 +108,9 @@ public sealed class ConvertQuotationToOrderHandler(
         // de pedir el número: una cotización ya convertida, anulada o incompleta sale 422 sin tocar
         // el contador. ConvertToOrder las vuelve a revisar más abajo, pero para entonces ya pasaron.
         quotation.EnsureConvertibleToOrder();
+        // Antes de pedir el número, como las demás precondiciones: el 422 no gasta el consecutivo.
+        await BillingPersonTypeRequirement.EnsureForQuotationAsync(
+            tenantDirectory, command.TenantId, quotation, cancellationToken);
 
         // Convertir también saca del borrador: las líneas que todavía no congelaron su producto
         // (un borrador convertido sin enviarse, o una enviada antes del snapshot) lo congelan acá.

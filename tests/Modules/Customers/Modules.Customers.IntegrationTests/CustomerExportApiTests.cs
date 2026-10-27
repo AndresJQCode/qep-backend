@@ -161,7 +161,9 @@ public sealed class CustomerExportApiTests
         using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
         var sheet = workbook.Worksheets.First();
         Assert.Equal("Estado de la ficha", sheet.Cell(1, StatusColumnIndex).GetString());
-        Assert.Equal(StatusColumnIndex, sheet.Row(1).LastCellUsed()!.Address.ColumnNumber);
+        // «Tipo de persona» (spec 2026-10-26) es ahora la última; el estado le queda justo antes.
+        Assert.Equal(StatusColumnIndex + 1, sheet.Row(1).LastCellUsed()!.Address.ColumnNumber);
+        Assert.Equal("Tipo de persona", sheet.Cell(1, StatusColumnIndex + 1).GetString());
         var columns = HeaderColumns(sheet);
         var rows = new[] { sheet.Row(2), sheet.Row(3) };
         var incomplete = Assert.Single(rows, row => row.Cell(columns[CustomerImportColumns.Name]).GetString() == "Laura Pérez");
@@ -220,7 +222,7 @@ public sealed class CustomerExportApiTests
         Assert.Equal("Completa", Value("Estado de la ficha"));
     }
 
-    // 13 de la importacion + Activo, Creado, Actualizado + «Estado de la ficha».
+    // 13 de la importacion + Activo, Creado, Actualizado + «Estado de la ficha» (y después «Tipo de persona»).
     private const int StatusColumnIndex = 17;
 
     // Por nombre, como lo hace el importador. Con cabeceras repetidas gana la primera; la prueba de

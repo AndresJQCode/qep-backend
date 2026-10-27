@@ -15,7 +15,8 @@ public sealed class SaveOrderEditsValidatorTests
     private static SaveOrderEditsCommand Command(
         IReadOnlyList<OrderItemAddition>? items = null,
         OrderEditProofs? proofs = null,
-        string? notes = null) =>
+        string? notes = null,
+        OrderBillingEditRequest? billing = null) =>
         new(
             Guid.CreateVersion7(),
             Guid.CreateVersion7(),
@@ -24,7 +25,8 @@ public sealed class SaveOrderEditsValidatorTests
             proofs ?? OrderEditProofs.None,
             notes,
             null,
-            false);
+            false,
+            Billing: billing);
 
     private static PreviewOrderEditsQuery Query(OrderEditProofs proofs) =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), [new OrderItemAddition(ProductId, 1m)], proofs, null, null, false);
@@ -47,6 +49,23 @@ public sealed class SaveOrderEditsValidatorTests
 
         Assert.True(result.IsValid);
     }
+
+    // Spec 2026-10-26: la parte de facturación propia exige número y tipo de documento, como al crear.
+    [Fact]
+    public void ABillingPartyWithANameRequiresNumberAndIdentificationType()
+    {
+        var billing = new OrderBillingEditRequest(
+            new QuotationPartyRequest("Otra S.A.S.", null, null, null, null, null, null, PersonType: "Juridica"));
+
+        var result = _save.Validate(Command(billing: billing));
+
+        AssertFailsOn(result, "Billing.Party.IdentificationNumber");
+        AssertFailsOn(result, "Billing.Party.IdentificationType");
+    }
+
+    [Fact]
+    public void AnAbsentBillingIsValid() =>
+        Assert.True(_save.Validate(Command(billing: null)).IsValid);
 
     [Fact]
     public void RejectsAnEmptyItemList() =>

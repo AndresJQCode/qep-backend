@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -97,6 +98,10 @@ public sealed class CreateQuotationHandler(
         // El armado no lo exige para que el cálculo previo no falle mientras la persona escribe. Crear sí,
         // como el guardado: el validador ya lo frena antes con el campo en `errors`; esto es el respaldo.
         quotation.EnsureBillingIdentified();
+        var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(command.TenantId), cancellationToken);
+        BillingPartyFiscalRules.EnsureConsistent(quotation.Billing?.ToDetails(), regional?.Country);
+        await BillingPersonTypeRequirement.EnsureForQuotationAsync(
+            tenantDirectory, command.TenantId, quotation, cancellationToken);
         var historyFormat = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
 
         repository.Add(quotation);

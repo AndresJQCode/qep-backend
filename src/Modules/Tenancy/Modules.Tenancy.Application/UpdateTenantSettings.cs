@@ -17,7 +17,9 @@ public sealed record UpdateTenantSettingsCommand(
     // window). The handler resolves it against the tenant it already loaded, not with a second read.
     string? Country,
     long ExpectedVersion,
-    string CorrelationId) : ICommand<TenantSettingsDto>;
+    string CorrelationId,
+    // Null keeps the stored requirement, same deployment window as Country (spec 2026-10-26).
+    string? PersonTypeRequirement = null) : ICommand<TenantSettingsDto>;
 
 public sealed class UpdateTenantSettingsValidator
     : AbstractValidator<UpdateTenantSettingsCommand>
@@ -33,6 +35,8 @@ public sealed class UpdateTenantSettingsValidator
         // Only the column limit: the two-letter shape is a domain rule, and its code
         // (tenancy.settings.country.invalid) is what the settings form maps to the field.
         RuleFor(command => command.Country).MaximumLength(2);
+        // Only the column limit: an unknown value is a domain rule (PersonTypeRequirementPolicy.Parse).
+        RuleFor(command => command.PersonTypeRequirement).MaximumLength(20);
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
     }
 }
@@ -85,6 +89,9 @@ public sealed class UpdateTenantSettingsHandler(
             command.DefaultCurrency,
             command.NumberFormat,
             command.Country ?? tenant.Country,
+            command.PersonTypeRequirement is { } requirement
+                ? PersonTypeRequirementPolicy.Parse(requirement)
+                : tenant.PersonTypeRequirement,
             clock.UtcNow);
 
         if (!changed)

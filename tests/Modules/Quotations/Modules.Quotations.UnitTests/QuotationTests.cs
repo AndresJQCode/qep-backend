@@ -447,7 +447,7 @@ public sealed class QuotationTests
         var quotation = NewQuotation(notes: "nota original");
         var validUntil = new DateOnly(2026, 9, 30);
         var parties = new QuotationParties(
-            new QuotationPartyDetails { Name = "Nombre alterno", IdentificationNumber = "1020304050" }, Shipping: null);
+            new QuotationPartyDetails { Name = "Nombre alterno", IdentificationNumber = "1020304050", IdentificationType = PartyIdentificationType.Nit }, Shipping: null);
 
         quotation.UpdateDetails(validUntil, "Efectivo", null, parties, null, null, isRetail: false, globalScaleFloor: null, AdvisorId, Now);
 
@@ -476,7 +476,7 @@ public sealed class QuotationTests
     public void CreateWithStorePickupDropsTheShippingPartyAndKeepsTheBilling()
     {
         var parties = new QuotationParties(
-            new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" },
+            new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050", IdentificationType = PartyIdentificationType.Nit },
             new QuotationPartyDetails { Name = "Bodega Fontibon", Address = "Zona Franca" },
             IsStorePickup: true);
 
@@ -620,7 +620,7 @@ public sealed class QuotationTests
     [Fact]
     public void AnOwnBillingPartyAnsweringYesAppliesRetentionAndVatSurplusRegardlessOfTheCustomer()
     {
-        var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" };
+        var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050", IdentificationType = PartyIdentificationType.Nit };
         var quotation = NewQuotation(
             parties: new QuotationParties(
                 ownBilling, Shipping: null,
@@ -642,7 +642,7 @@ public sealed class QuotationTests
     [Fact]
     public void AnOwnBillingPartyAnsweringNoIgnoresACustomerThatDoesApply()
     {
-        var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" };
+        var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050", IdentificationType = PartyIdentificationType.Nit };
         var quotation = NewQuotation(
             parties: new QuotationParties(
                 ownBilling, Shipping: null,
@@ -679,7 +679,7 @@ public sealed class QuotationTests
     [Fact]
     public void ChangeClientResetsTheOwnBillingPartyTaxProfileAnswers()
     {
-        var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" };
+        var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050", IdentificationType = PartyIdentificationType.Nit };
         var quotation = NewQuotation(
             parties: new QuotationParties(
                 ownBilling, Shipping: null,
@@ -701,7 +701,7 @@ public sealed class QuotationTests
     {
         var error = Assert.Throws<QuotationsDomainException>(() =>
             NewQuotation(parties: new QuotationParties(
-                new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" },
+                new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050", IdentificationType = PartyIdentificationType.Nit },
                 Shipping: null,
                 BillsToFinalConsumer: true)));
 
@@ -732,7 +732,7 @@ public sealed class QuotationTests
             quotation.UpdateDetails(
                 ValidUntil, "Efectivo", "nota nueva",
                 new QuotationParties(
-                    new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" },
+                    new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050", IdentificationType = PartyIdentificationType.Nit },
                     Shipping: null,
                     BillsToFinalConsumer: true),
                 null, null, isRetail: false, globalScaleFloor: null, AdvisorId, Now));
@@ -1241,7 +1241,7 @@ public sealed class QuotationTests
         var quotation = NewQuotation(
             billingAccount: BillingAccount,
             parties: new QuotationParties(
-                new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" }, Shipping: null));
+                new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050", IdentificationType = PartyIdentificationType.Nit }, Shipping: null));
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
@@ -1281,6 +1281,7 @@ public sealed class QuotationTests
         {
             Name = "Sede administrativa",
             IdentificationNumber = "1020304050",
+            IdentificationType = PartyIdentificationType.Nit,
             Phone = "3105550134",
             Email = "compras@sede.co",
             Address = "Calle 10 # 45-12",
@@ -1310,6 +1311,7 @@ public sealed class QuotationTests
         {
             Name = "Sede administrativa",
             IdentificationNumber = "1020304050",
+            IdentificationType = PartyIdentificationType.Nit,
             Phone = "3105550134",
             Email = "compras@sede.co",
             Address = "Calle 10 # 45-12",
@@ -1368,7 +1370,7 @@ public sealed class QuotationTests
     public void EnsureBillingIdentifiedAcceptsABillingPartyWithItsNumberOrWithoutAName()
     {
         NewQuotation(parties: new QuotationParties(
-            new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050" },
+            new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050", IdentificationType = PartyIdentificationType.Nit },
             Shipping: null)).EnsureBillingIdentified();
         NewQuotation(parties: new QuotationParties(
             new QuotationPartyDetails { Phone = "3105550134" }, Shipping: null)).EnsureBillingIdentified();
@@ -1412,7 +1414,7 @@ public sealed class QuotationTests
     public void CreateTrimsTheBillingPartyIdentificationNumber()
     {
         var quotation = NewQuotation(parties: new QuotationParties(
-            new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "  1020304050  " },
+            new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "  1020304050  ", IdentificationType = PartyIdentificationType.Nit },
             Shipping: null));
 
         Assert.Equal("1020304050", quotation.Billing?.IdentificationNumber);
@@ -1459,6 +1461,7 @@ public sealed class QuotationTests
         {
             Name = "Sede administrativa",
             IdentificationNumber = "1020304050",
+            IdentificationType = PartyIdentificationType.Nit,
             Phone = "3105550134",
             Email = "compras@sede.co",
             Address = "Calle 10 # 45-12",
@@ -1486,6 +1489,76 @@ public sealed class QuotationTests
         typeof(QuotationParty)
             .GetProperty(nameof(QuotationParty.IdentificationNumber))!
             .SetValue(party, null);
+
+    // Spec 2026-10-26: el tipo de persona y el de documento viajan con la parte de facturación.
+    [Fact]
+    public void ABillingPartyKeepsPersonTypeAndIdentificationType()
+    {
+        var quotation = NewQuotation(parties: new QuotationParties(
+            new QuotationPartyDetails
+            {
+                Name = "Sede administrativa",
+                IdentificationNumber = "9001234561",
+                PersonType = PartyPersonType.Juridica,
+                IdentificationType = PartyIdentificationType.Nit,
+            },
+            Shipping: null));
+
+        Assert.Equal(PartyPersonType.Juridica, quotation.Billing?.PersonType);
+        Assert.Equal(PartyIdentificationType.Nit, quotation.Billing?.IdentificationType);
+    }
+
+    [Fact]
+    public void AShippingPartyNeverKeepsPersonTypeOrIdentificationType()
+    {
+        var quotation = NewQuotation(parties: new QuotationParties(
+            Billing: null,
+            new QuotationPartyDetails
+            {
+                Name = "Bodega Fontibon",
+                PersonType = PartyPersonType.Natural,
+                IdentificationType = PartyIdentificationType.Cc,
+            }));
+
+        Assert.Null(quotation.Shipping?.PersonType);
+        Assert.Null(quotation.Shipping?.IdentificationType);
+    }
+
+    // Una fila con número pero sin tipo de documento (guardada antes de la columna) se lee, pero
+    // no avanza: mismo código que la falta del número.
+    [Fact]
+    public void ABillingRowWithANumberButNoIdentificationTypeIsNotIdentified()
+    {
+        var completeParty = new QuotationPartyDetails
+        {
+            Name = "Sede administrativa",
+            IdentificationNumber = "1020304050",
+            IdentificationType = PartyIdentificationType.Nit,
+            Phone = "3105550134",
+            Email = "compras@sede.co",
+            Address = "Calle 10 # 45-12",
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = Guid.CreateVersion7(),
+        };
+        var quotation = NewQuotation(
+            billingAccount: BillingAccount,
+            parties: new QuotationParties(
+                completeParty, Shipping: null,
+                BillingWithRetention: false, BillingVatSurplus: false));
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
+        typeof(QuotationParty)
+            .GetProperty(nameof(QuotationParty.IdentificationType))!
+            .SetValue(quotation.Billing, null);
+
+        Assert.Equal("quotation.billing.identification_required",
+            Assert.Throws<QuotationsDomainException>(quotation.EnsureBillingIdentified).Code);
+        Assert.Equal("quotation.billing.identification_required",
+            Assert.Throws<QuotationsDomainException>(quotation.EnsureSendable).Code);
+        Assert.Equal("quotation.billing.identification_required",
+            Assert.Throws<QuotationsDomainException>(quotation.EnsureConvertibleToOrder).Code);
+    }
 
     // Spec 2026-10-15 §4.4: convertir es copiar; la cotización Converted queda congelada como el
     // documento que el cliente vio. Editar el pedido pendiente se hace sobre el pedido.

@@ -12,7 +12,9 @@ public sealed record TenantSettingsDto(
     string NumberFormat,
     string Country,
     long Version,
-    TenantLogoDto? Logo);
+    TenantLogoDto? Logo,
+    // The stored value, not the effective one: the settings form edits what is saved.
+    string PersonTypeRequirement);
 
 /// <summary>
 /// La URL viaja **resuelta**: es la regla BFF del repo — el sidebar necesita un `src` listo, no

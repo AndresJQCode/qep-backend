@@ -118,6 +118,64 @@ public sealed class OrderTests
     }
 
     [Fact]
+    public void CreateManualRejectsABillingPartyWithoutIdentificationType()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            Order.CreateManual(
+                OrderId.New(), TenantId, "PED-2026-0001", Header(),
+                new QuotationParties(
+                    new QuotationPartyDetails
+                    {
+                        Name = "Otra S.A.S.",
+                        IdentificationNumber = "9001234561",
+                        Phone = "1",
+                        Email = "a@b.co",
+                        Address = "x",
+                        DepartmentId = Guid.CreateVersion7(),
+                        CityId = Guid.CreateVersion7(),
+                    },
+                    null, BillingWithRetention: false, BillingVatSurplus: false),
+                Account, ShippingDetails.None, [Line()], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now));
+
+        Assert.Equal("order.billing.identification_required", error.Code);
+    }
+
+    [Fact]
+    public void ConvertingCarriesTheBillingPartysPersonTypeAndIdentificationType()
+    {
+        var quotation = Quotation.Create(
+            QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 11, 1), "Transferencia",
+            null,
+            new QuotationParties(
+                new QuotationPartyDetails
+                {
+                    Name = "Otra persona",
+                    IdentificationNumber = "1020304050",
+                    PersonType = PartyPersonType.Natural,
+                    IdentificationType = PartyIdentificationType.Ce,
+                    Phone = "3001234567",
+                    Email = "otra@x.co",
+                    Address = "Cl 1",
+                    DepartmentId = Guid.CreateVersion7(),
+                    CityId = Guid.CreateVersion7(),
+                },
+                null, BillingWithRetention: false, BillingVatSurplus: false),
+            Account, "COP", customerWithRetention: false, customerVatSurplus: false, Advisor, Now);
+        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);
+        quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>
+        {
+            [quotation.Items.Single().VariantId] = new("ABC", "Aceite"),
+        });
+
+        var order = Order.FromQuotation(
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, OrderPaymentStatus.PaymentPending, null,
+            ConvertedBy, [], Now);
+
+        Assert.Equal(PartyPersonType.Natural, order.Billing?.PersonType);
+        Assert.Equal(PartyIdentificationType.Ce, order.Billing?.IdentificationType);
+    }
+
+    [Fact]
     public void CreateExternalAcceptsTheSourceAndReference()
     {
         var order = Order.CreateExternal(

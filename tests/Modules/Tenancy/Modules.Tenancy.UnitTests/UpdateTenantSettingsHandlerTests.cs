@@ -55,10 +55,49 @@ public sealed class UpdateTenantSettingsHandlerTests
         Assert.Equal(1, result.Version);
     }
 
+    // Ventana de despliegue: un frontend anterior al requisito no lo manda. Sin él se conserva lo
+    // guardado, y como nada más cambió, la versión no sube.
+    [Fact]
+    public async Task ANullPersonTypeRequirementKeepsTheStoredOne()
+    {
+        await Handler().HandleAsync(
+            Command(personTypeRequirement: "OnCustomerSave"), TestContext.Current.CancellationToken);
+
+        var result = await Handler().HandleAsync(
+            Command(personTypeRequirement: null, expectedVersion: 2),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("OnCustomerSave", result.PersonTypeRequirement);
+        Assert.Equal(2, result.Version);
+    }
+
+    [Fact]
+    public async Task AnUnknownPersonTypeRequirementIsRejected()
+    {
+        var exception = await Assert.ThrowsAsync<TenantDomainException>(() =>
+            Handler().HandleAsync(
+                Command(personTypeRequirement: "Always"), TestContext.Current.CancellationToken));
+
+        Assert.Equal("tenancy.settings.person_type_requirement.invalid", exception.Code);
+    }
+
+    // El valor se guarda aunque el tenant no sea colombiano: sólo deja de aplicar (Effective).
+    [Fact]
+    public async Task ANonColombianTenantStillStoresTheValue()
+    {
+        var result = await Handler().HandleAsync(
+            Command(country: "ES", personTypeRequirement: "OnOrderApproval"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("ES", result.Country);
+        Assert.Equal("OnOrderApproval", result.PersonTypeRequirement);
+    }
+
     private UpdateTenantSettingsCommand Command(
-        string defaultCurrency = "COP", string numberFormat = "1.234,56", string? country = "CO") =>
+        string defaultCurrency = "COP", string numberFormat = "1.234,56", string? country = "CO",
+        string? personTypeRequirement = null, long expectedVersion = 1) =>
         new(_tenant.Id, "QCode Demo", "es-CO", "America/Bogota", "yyyy-MM-dd",
-            defaultCurrency, numberFormat, country, 1, "corr-1");
+            defaultCurrency, numberFormat, country, expectedVersion, "corr-1", personTypeRequirement);
 
     private UpdateTenantSettingsHandler Handler() =>
         new(

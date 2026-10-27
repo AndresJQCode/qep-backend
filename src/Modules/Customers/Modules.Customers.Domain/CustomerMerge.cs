@@ -38,6 +38,8 @@ public sealed class CustomerMergePlan
     private readonly string? _instagramUserId;
     private readonly string? _instagramUsername;
     private readonly CustomerIdentification? _identification;
+    // El tipo de persona viaja con el documento: se captura aquí por lo mismo que _identification (spec 2026-10-26).
+    private readonly PersonType? _personType;
     private readonly MarketingConsentSource? _optOutSource;
     private readonly DateTimeOffset? _optOutAt;
 
@@ -66,6 +68,7 @@ public sealed class CustomerMergePlan
         _instagramUserId = _instagramFrom?.InstagramUserId;
         _instagramUsername = _instagramFrom?.InstagramUsername;
         _identification = _identificationFrom?.Identification;
+        _personType = _identificationFrom?.PersonType;
         _optOutSource = _optOutFrom?.MarketingOptOutSource;
         _optOutAt = _optOutFrom?.MarketingOptOutAt;
 
@@ -183,7 +186,7 @@ public sealed class CustomerMergePlan
 
         if (_identification is { } identification)
         {
-            Survivor.FillIdentification(identification.Type, identification.Number);
+            Survivor.FillIdentification(identification.Type, identification.Number, _personType);
         }
 
         if (_countryFrom is not null)

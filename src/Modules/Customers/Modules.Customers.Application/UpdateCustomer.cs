@@ -20,7 +20,8 @@ public sealed record UpdateCustomerCommand(
     string? CityName,
     Guid? ClassificationId,
     bool WithRetention,
-    bool VatSurplus) : ICommand<CustomerDto>, ICustomerWriteCommand;
+    bool VatSurplus,
+    string? PersonType = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Mismas reglas que el POST, por inclusion y no por copia. Ver CustomerWriteRules.
 public sealed class UpdateCustomerValidator : AbstractValidator<UpdateCustomerCommand>
@@ -39,7 +40,8 @@ public sealed class UpdateCustomerHandler(
     IExecutionContext executionContext,
     IClock clock,
     IValidator<UpdateCustomerCommand> validator,
-    IPhoneNumberNormalizer phoneNormalizer)
+    IPhoneNumberNormalizer phoneNormalizer,
+    ITenantDirectory tenantDirectory)
     : ICommandHandler<UpdateCustomerCommand, CustomerDto>
 {
     public async Task<CustomerDto> HandleAsync(
@@ -50,6 +52,8 @@ public sealed class UpdateCustomerHandler(
         CustomersAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+        await CustomerPersonTypeRequirement.EnsureSatisfiedAsync(
+            tenantDirectory, command.TenantId, command.Country, command.PersonType, cancellationToken);
 
         var customer = await repository.FindAsync(
             command.TenantId,
@@ -111,6 +115,7 @@ public sealed class UpdateCustomerHandler(
                     },
                 CustomerMapping.ToIdentification(
                     command.IdentificationType, command.IdentificationNumber),
+                PersonTypeParser.ParseOptional(command.PersonType),
                 new CustomerContactInfo
                 {
                     Phone = command.Phone,
@@ -153,6 +158,8 @@ public sealed class UpdateCustomerHandler(
             command.BusinessName,
             CustomerMapping.ToIdentification(
                 command.IdentificationType, command.IdentificationNumber),
+            // El PUT reemplaza el recurso entero: sin personType, el tipo se borra (spec 2026-10-26).
+            PersonTypeParser.ParseOptional(command.PersonType),
             new CustomerContactInfo
             {
                 Phone = command.Phone,

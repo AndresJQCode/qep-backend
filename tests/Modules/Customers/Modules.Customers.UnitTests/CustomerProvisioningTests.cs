@@ -72,6 +72,7 @@ public sealed class CustomerProvisioningTests
         var existing = Customer.Create(
             CustomerId.New(), Tenant, "CLI08000001", "Laura", null, null,
             new CustomerIdentification { Type = IdentificationType.Cc, Number = "1020304050" },
+            null,
             new CustomerContactInfo { Phone = "3000000000", Email = "otra@verde.co", Address = "Calle 1", Country = "CO", CityId = CityId },
             new CustomerCommercialInfo { ClassificationId = Classification.Id },
             Now);
@@ -220,6 +221,7 @@ public sealed class CustomerProvisioningTests
             CustomerId.New(), Tenant, "CLI08000001", "Laura", null,
             new CustomerAddressDetails { Name = "Laura", Address = "Calle 1", CityId = cityId ?? CityId },
             new CustomerIdentification { Type = IdentificationType.Cc, Number = "1020304050" },
+            null,
             new CustomerContactInfo { Phone = "3000000000", Email = "otra@verde.co", Address = "Calle 1", Country = "CO", CityId = cityId ?? CityId },
             new CustomerCommercialInfo { ClassificationId = Classification.Id },
             Now);

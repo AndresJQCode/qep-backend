@@ -75,7 +75,9 @@ internal static class QuotationMapping
         party.Email,
         party.Address,
         party.DepartmentId,
-        party.CityId);
+        party.CityId,
+        party.PersonType?.ToWireValue(),
+        party.IdentificationType?.ToWireValue());
 
     /// <summary>
     /// La fila del listado. <paramref name="hasItems"/> y <paramref name="order"/> llegan
@@ -155,13 +157,15 @@ internal static class QuotationMapping
                 request.BillingWithRetention,
                 request.BillingVatSurplus);
 
-    private static QuotationPartyDetails? ToDomain(this QuotationPartyRequest? request) =>
+    internal static QuotationPartyDetails? ToDomain(this QuotationPartyRequest? request) =>
         request is null
             ? null
             : new QuotationPartyDetails
             {
                 Name = request.Name,
                 IdentificationNumber = request.IdentificationNumber,
+                PersonType = PartyFiscalTypesParser.ParsePersonType(request.PersonType),
+                IdentificationType = PartyFiscalTypesParser.ParseIdentificationType(request.IdentificationType),
                 Phone = request.Phone,
                 Email = request.Email,
                 Address = request.Address,

@@ -56,7 +56,8 @@ internal static class CustomerMapping
         // piden y pasan una colección vacía.
         tags,
         customer.ToConsentDto(),
-        customer.InstagramUsername);
+        customer.InstagramUsername,
+        PersonType: customer.PersonType?.ToWireValue());
 
     // La FK de base garantiza que la ciudad de cada direccion exista, asi que un miss aca es
     // corrupcion de datos: se prefiere un nombre vacio a tirar la ficha entera abajo, que es lo

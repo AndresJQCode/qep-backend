@@ -213,6 +213,8 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         // traduce por este nombre.
         customer.Property(value => value.InstagramUserId).HasColumnName("instagram_user_id").HasMaxLength(Customer.InstagramUserIdMaxLength);
         customer.Property(value => value.InstagramUsername).HasColumnName("instagram_username").HasMaxLength(Customer.InstagramUsernameMaxLength);
+        // Spec 2026-10-26: texto ("Natural" / "Juridica") y nulable; sin backfill, un cliente existente queda en NULL.
+        customer.Property(value => value.PersonType).HasColumnName("person_type").HasConversion<string>().HasMaxLength(16);
         customer.HasIndex(value => new { value.TenantId, value.InstagramUserId }, "IX_customers_tenant_instagram_user_id")
             .IsUnique().HasFilter("instagram_user_id IS NOT NULL");
 
