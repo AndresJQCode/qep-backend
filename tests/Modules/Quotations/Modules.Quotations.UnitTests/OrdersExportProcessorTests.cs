@@ -646,6 +646,126 @@ public sealed class OrdersExportProcessorTests
     private static InMemoryOrdersExportLayoutRepository CoordinadoraCityVisibleFirst() =>
         StoredLayout(OrdersExportColumnSetting.Catalog("coordinadora_city", "Ciudad Coordinadora", visible: true));
 
+    // Spec 2026-10-26 tipo de persona: «Tipo de persona» describe a quien describe «Documento de
+    // identidad» (OrderBilledParty.SourceFor), con el valor de contrato «Natural» / «Juridica».
+    private static InMemoryOrdersExportLayoutRepository PersonTypeVisibleFirst() =>
+        StoredLayout(OrdersExportColumnSetting.Catalog("customer_person_type", "Tipo de persona", visible: true));
+
+    private static QuotationParties BillingPartyOf(PartyPersonType? personType) =>
+        new(
+            Billing: CompleteBillingParty("Distribuciones Andinas S.A.S.") with { PersonType = personType },
+            Shipping: null,
+            BillingWithRetention: false,
+            BillingVatSurplus: false);
+
+    [Fact]
+    public async Task PersonTypeIsTheCustomersWhenThereIsNoBillingRow()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { PersonType = "Juridica" });
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: QuotationParties.Empty)),
+                writer,
+                customers: customers,
+                layouts: PersonTypeVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Tipo de persona", writer.Columns[0].Header);
+        Assert.Equal(ExportCell.OfText("Juridica"), Assert.Single(writer.Rows)[0]);
+    }
+
+    [Fact]
+    public async Task PersonTypeIsTheBillingRowsWhenItHasAName()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { PersonType = "Natural" });
+
+        await NewProcessor(
+                new StubOrderListRepository(
+                    NewRow("PED-2026-0001", parties: BillingPartyOf(PartyPersonType.Juridica))),
+                writer,
+                customers: customers,
+                layouts: PersonTypeVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("Juridica"), Assert.Single(writer.Rows)[0]);
+    }
+
+    // La fila de facturación es otra persona: si no trae tipo, la celda queda vacía y no toma el del cliente.
+    [Fact]
+    public async Task ABillingRowWithoutPersonTypeIsEmptyEvenIfTheCustomerHasOne()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { PersonType = "Juridica" });
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: BillingPartyOf(null))),
+                writer,
+                customers: customers,
+                layouts: PersonTypeVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText(string.Empty), Assert.Single(writer.Rows)[0]);
+    }
+
+    [Fact]
+    public async Task AFinalConsumerIsNatural()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { PersonType = "Juridica" });
+        var parties = QuotationParties.Empty with { BillsToFinalConsumer = true };
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)),
+                writer,
+                customers: customers,
+                layouts: PersonTypeVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("Natural"), Assert.Single(writer.Rows)[0]);
+    }
+
+    [Fact]
+    public async Task PersonTypeIsRepeatedOnEveryLine()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { PersonType = "Natural" });
+        var row = NewRow(
+            "PED-2026-0001",
+            parties: QuotationParties.Empty,
+            items:
+            [
+                (ProductId, 2m, 1000m, 0m, 19),
+                (OtherProductId, 5m, 500m, 0m, 19),
+            ]);
+
+        await NewProcessor(
+                new StubOrderListRepository(row),
+                writer,
+                customers: customers,
+                layouts: PersonTypeVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, writer.Rows.Count);
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfText("Natural"), cells[0]));
+    }
+
+    // Oculta por defecto: el Excel de un tenant que no la prende no cambia.
+    [Fact]
+    public async Task WithoutALayoutThatShowsItPersonTypeIsNotWritten()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { PersonType = "Natural" });
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001")), writer, customers: customers)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(writer.Columns, column => column.Header == "Tipo de persona");
+        Assert.Equal(writer.Columns.Count, Assert.Single(writer.Rows).Count);
+    }
+
     // Spec 2026-10-05 (recoger en tienda): "Transportadora" sale por pedido desde la cotización.
     // Hasta entonces la hoja del tenant la tenía fija en "Coordinadora", así que quien despachaba no
     // se enteraba de que el cliente pasaba a recoger. Los dos textos son contrato del ERP del tenant

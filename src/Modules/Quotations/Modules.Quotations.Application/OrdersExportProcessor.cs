@@ -224,6 +224,7 @@ public sealed class OrdersExportProcessor(
         var ciudadCoordinadora = CoordinadoraCityFor(shipping, customer, context.CoordinadoraCityNames);
         var cliente = BilledNameFor(order, billingParty, customer);
         var documentoIdentidad = BilledIdentificationFor(order, billingParty, customer);
+        var tipoPersona = BilledPersonTypeFor(order, billingParty, customer);
         // D-R8 (spec 2026-10-23): ISO fijo a propósito. Esta hoja es el contrato con el importador del
         // ERP, no un documento para una persona: no sigue el formato de fecha del tenant. No lo «arregles».
         var fechaPedido = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -316,6 +317,7 @@ public sealed class OrdersExportProcessor(
                 fleteModo,
                 contraentrega,
                 variante,
+                ExportCell.OfText(tipoPersona),
             ];
         }
     }
@@ -364,6 +366,18 @@ public sealed class OrdersExportProcessor(
             // otra persona.
             BilledPartySource.BillingParty => billing!.IdentificationNumber ?? string.Empty,
             _ => customer?.IdentificationNumber ?? string.Empty
+        };
+
+    // Spec 2026-10-26 tipo de persona: la misma fuente que «Documento de identidad» (SourceFor), para que las
+    // dos celdas describan siempre a la misma persona. Sin filtro de país: el Excel muestra lo guardado.
+    private static string BilledPersonTypeFor(
+        Order order, OrderParty? billing, QuotationCustomerRef? customer) =>
+        OrderBilledParty.SourceFor(order.BillsToFinalConsumer, billing) switch
+        {
+            BilledPartySource.FinalConsumer => PartyPersonType.Natural.ToWireValue(),
+            // Una parte sin tipo lo deja vacío, nunca con el del cliente, que es otra persona.
+            BilledPartySource.BillingParty => billing!.PersonType?.ToWireValue() ?? string.Empty,
+            _ => customer?.PersonType ?? string.Empty
         };
 
     private static (string Ciudad, string Direccion, string Telefono, string Email) ContactFor(
